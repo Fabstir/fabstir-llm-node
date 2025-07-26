@@ -1,0 +1,38 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Test data
+test-data/
+*.test
+
+# Logs
+*.log
+
+# Model files (large)
+models/
+*.gguf
+*.bin
+
+# Temporary files
+tmp/
+temp/
