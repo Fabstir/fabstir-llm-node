@@ -130,6 +130,7 @@ impl Node {
                 config_clone.dht_bootstrap_interval,
                 config_clone.dht_republish_interval,
             );
+            let mut peer_last_seen: HashMap<PeerId, Instant> = HashMap::new();
             
             // Start bootstrap if we have bootstrap peers
             if !config_clone.bootstrap_peers.is_empty() {
@@ -156,6 +157,10 @@ impl Node {
             
             // Set up periodic cleanup (every 60 seconds)
             let mut cleanup_interval = interval(Duration::from_secs(60));
+            
+            // Set up peer expiration check
+            let peer_expiration_time = config_clone.peer_expiration_time;
+            let mut peer_check_interval = interval(Duration::from_secs(1));
             
             loop {
                 tokio::select! {
@@ -219,10 +224,12 @@ impl Node {
                             }
                             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                                 connected_peers_clone.write().await.insert(peer_id);
+                                peer_last_seen.insert(peer_id, Instant::now());
                                 let _ = event_tx.send(NodeEvent::ConnectionEstablished { peer_id }).await;
                             }
                             SwarmEvent::ConnectionClosed { peer_id, .. } => {
                                 connected_peers_clone.write().await.remove(&peer_id);
+                                peer_last_seen.remove(&peer_id);
                                 let _ = event_tx.send(NodeEvent::ConnectionClosed { peer_id }).await;
                             }
                             SwarmEvent::Behaviour(event) => {
@@ -235,6 +242,7 @@ impl Node {
                                             libp2p::mdns::Event::Discovered(peers) => {
                                                 for (peer_id, addr) in peers {
                                                     discovered_peers_clone.write().await.insert(peer_id);
+                                                    peer_last_seen.insert(peer_id, Instant::now());
                                                     swarm.behaviour_mut().kad.add_address(&peer_id, addr.clone());
                                                     let _ = event_tx.send(NodeEvent::DiscoveryEvent(
                                                         DiscoveryEvent::PeerDiscovered {
@@ -248,6 +256,7 @@ impl Node {
                                             libp2p::mdns::Event::Expired(peers) => {
                                                 for (peer_id, _) in peers {
                                                     discovered_peers_clone.write().await.remove(&peer_id);
+                                                    peer_last_seen.remove(&peer_id);
                                                     let _ = event_tx.send(NodeEvent::DiscoveryEvent(
                                                         DiscoveryEvent::PeerExpired { peer_id }
                                                     )).await;
@@ -286,6 +295,31 @@ impl Node {
                     _ = cleanup_interval.tick() => {
                         // Periodic cleanup of expired records
                         dht_handler.cleanup_expired_records();
+                    }
+                    _ = peer_check_interval.tick() => {
+                        // Check for expired peers
+                        let now = Instant::now();
+                        let mut expired_peers = Vec::new();
+                        
+                        // Check discovered peers for expiration
+                        let discovered = discovered_peers_clone.read().await.clone();
+                        for peer_id in discovered {
+                            if let Some(last_seen) = peer_last_seen.get(&peer_id) {
+                                if now.duration_since(*last_seen) > peer_expiration_time {
+                                    expired_peers.push(peer_id);
+                                }
+                            } else if !connected_peers_clone.read().await.contains(&peer_id) {
+                                // If we have no last seen time and not connected, consider expired
+                                expired_peers.push(peer_id);
+                            }
+                        }
+                        
+                        // Remove expired peers
+                        for peer_id in expired_peers {
+                            discovered_peers_clone.write().await.remove(&peer_id);
+                            peer_last_seen.remove(&peer_id);
+                            let _ = event_tx.send(NodeEvent::DiscoveryEvent(DiscoveryEvent::PeerExpired { peer_id })).await;
+                        }
                     }
                 }
             }
@@ -528,8 +562,42 @@ impl Node {
     }
 
     pub async fn discover_peers_sorted_by_priority(&mut self) -> Result<Vec<(PeerId, u32)>> {
-        // Simplified implementation
-        Ok(vec![])
+        // Get both discovered and connected peers
+        let discovered = self.discovered_peers.read().await.clone();
+        let connected = self.connected_peers.read().await.clone();
+        
+        // Combine both sets
+        let all_peers: HashSet<PeerId> = discovered.union(&connected).cloned().collect();
+        
+        let mut peers_with_priority = Vec::new();
+        
+        // Collect all peer IDs that need metadata
+        let peers_to_fetch: Vec<PeerId> = all_peers.iter()
+            .filter(|peer_id| !self.peer_metadata.try_read().map(|m| m.contains_key(peer_id)).unwrap_or(false))
+            .cloned()
+            .collect();
+        
+        // Fetch metadata for peers we don't have cached
+        for peer_id in peers_to_fetch {
+            if let Ok(peer_info) = self.get_peer_metadata(peer_id).await {
+                self.peer_metadata.write().await.insert(peer_id, peer_info.metadata);
+            }
+        }
+        
+        // Now read from cached metadata
+        let metadata = self.peer_metadata.read().await;
+        for peer_id in all_peers.iter() {
+            if let Some(meta) = metadata.get(peer_id) {
+                if let Some(priority) = meta.get("priority").and_then(|p| p.as_u64()) {
+                    peers_with_priority.push((*peer_id, priority as u32));
+                }
+            }
+        }
+        
+        // Sort by priority (descending)
+        peers_with_priority.sort_by(|a, b| b.1.cmp(&a.1));
+        
+        Ok(peers_with_priority)
     }
 
     // Rendezvous operations
