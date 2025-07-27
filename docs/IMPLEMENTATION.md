@@ -2,51 +2,85 @@
 
 ## Overview
 
-P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to renters without central coordination.
+P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination.
 
-## Development Setup
+## Technical Stack
 
 - **Language**: Rust
-- **P2P**: libp2p
-- **LLM**: llama.cpp bindings
+- **P2P Networking**: libp2p (v0.54)
+- **Async Runtime**: tokio
+- **LLM Inference**: llama.cpp bindings
 - **Storage**: Enhanced S5.js with vector-db
+- **Smart Contracts**: ethers-rs for Base L2 integration
+- **Serialization**: serde, bincode
+- **Testing**: tokio-test, mockall
 
-## Phase 1: Foundation (Month 1)
+## Architecture
 
-### Sub-phase 1.1: Project Setup
+```
+fabstir-llm-node/
+├── src/
+│   ├── main.rs              # Entry point
+│   ├── config.rs            # Configuration management
+│   ├── p2p/                 # P2P networking layer
+│   │   ├── mod.rs
+│   │   ├── node.rs          # libp2p node implementation
+│   │   ├── discovery.rs     # Peer discovery & DHT
+│   │   ├── protocols.rs     # Custom protocols
+│   │   └── behaviour.rs     # Network behaviour
+│   ├── inference/           # LLM inference engine
+│   │   ├── mod.rs
+│   │   ├── engine.rs        # llama.cpp integration
+│   │   ├── models.rs        # Model management
+│   │   └── cache.rs         # S5.js caching
+│   ├── contracts/           # Smart contract integration
+│   │   ├── mod.rs
+│   │   ├── client.rs        # Web3 client
+│   │   ├── monitor.rs       # Event monitoring
+│   │   └── types.rs         # Contract types
+│   └── api/                 # Client communication
+│       ├── mod.rs
+│       ├── handlers.rs      # Request handlers
+│       └── streaming.rs     # Response streaming
+├── tests/                   # Integration tests
+└── Cargo.toml
+```
 
-- [ ] Initialize Rust project structure
-- [ ] Configure libp2p dependencies
-- [ ] Set up development environment
-- [ ] Create module structure
+## Phase 1: Foundation
+
+### Sub-phase 1.1: Project Setup ✅
+
+- [x] Initialize Rust project structure
+- [x] Configure dependencies
+- [x] Set up development environment
+- [x] Create module structure
+
+### Sub-phase 1.2: P2P Networking (Current)
+
+- [x] Implement libp2p node creation with identity management (test_node_creation: 11/11 passing)
+- [x] Implement Kademlia DHT for peer discovery (test_dht: 10/10 passing)
+- [ ] Implement mDNS for local peer discovery (test_discovery: not yet implemented)
+- [ ] Implement custom protocols for job handling (test_protocols: not yet implemented)
 
 **Test Files:**
 
-- `tests/setup/test_project_structure.rs`
-- `tests/setup/test_dependencies.rs`
-- `tests/setup/test_modules.rs`
-- `tests/setup/test_config.rs`
+- `tests/p2p/test_node_creation.rs` - Node lifecycle and identity
+- `tests/p2p/test_dht.rs` - DHT operations and peer routing
+- `tests/p2p/test_discovery.rs` - Peer discovery mechanisms
+- `tests/p2p/test_protocols.rs` - Custom protocol handling
 
-### Sub-phase 1.2: P2P Networking
-
-- [ ] Implement libp2p node creation
-- [ ] Implement DHT participation
-- [ ] Implement peer discovery
-- [ ] Implement message protocols
-
-**Test Files:**
-
-- `tests/p2p/test_node_creation.rs`
-- `tests/p2p/test_dht.rs`
-- `tests/p2p/test_discovery.rs`
-- `tests/p2p/test_protocols.rs`
+**Progress**: 
+- test_node_creation.rs - ✅ All 11 tests passing
+- test_dht.rs - ✅ All 10 tests passing  
+- test_discovery.rs - 🔄 In progress
+- test_protocols.rs - 🔄 In progress
 
 ### Sub-phase 1.3: Client Communication
 
-- [ ] Implement request handling
-- [ ] Implement response streaming
-- [ ] Implement error handling
-- [ ] Implement connection management
+- [ ] Implement inference request protocol
+- [ ] Implement streaming response protocol
+- [ ] Implement error handling and retries
+- [ ] Implement connection pooling
 
 **Test Files:**
 
@@ -57,105 +91,63 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 
 ### Sub-phase 1.4: Contract Integration
 
-- [ ] Implement Web3 connection
-- [ ] Implement job monitoring
+- [ ] Implement Base L2 connection
+- [ ] Implement job event monitoring
 - [ ] Implement payment verification
-- [ ] Implement state sync
+- [ ] Implement proof submission
 
 **Test Files:**
 
 - `tests/contracts/test_web3.rs`
 - `tests/contracts/test_job_monitor.rs`
 - `tests/contracts/test_payments.rs`
-- `tests/contracts/test_state_sync.rs`
+- `tests/contracts/test_proofs.rs`
 
-## Phase 2: LLM Integration (Month 2)
+## Phase 2: Core Features
 
-### Sub-phase 2.1: Model Management
+### Sub-phase 2.1: LLM Integration
 
+- [ ] Implement llama.cpp bindings
 - [ ] Implement model loading
-- [ ] Implement model validation
-- [ ] Implement model caching
-- [ ] Implement GPU management
+- [ ] Implement inference pipeline
+- [ ] Implement result formatting
 
-**Test Files:**
+### Sub-phase 2.2: Caching System
 
-- `tests/models/test_loading.rs`
-- `tests/models/test_validation.rs`
-- `tests/models/test_caching.rs`
-- `tests/models/test_gpu.rs`
+- [ ] Implement S5.js integration
+- [ ] Implement vector-db for semantic search
+- [ ] Implement cache management
+- [ ] Implement distributed caching
 
-### Sub-phase 2.2: Inference Engine
+### Sub-phase 2.3: Job Processing
 
-- [ ] Implement prompt processing
-- [ ] Implement token generation
-- [ ] Implement streaming output
-- [ ] Implement batch processing
-
-**Test Files:**
-
-- `tests/inference/test_prompts.rs`
-- `tests/inference/test_generation.rs`
-- `tests/inference/test_streaming.rs`
-- `tests/inference/test_batching.rs`
-
-### Sub-phase 2.3: Enhanced S5 Integration
-
-- [ ] Implement S5 client
-- [ ] Implement vector-db connection
-- [ ] Implement semantic caching
-- [ ] Implement result storage
-
-**Test Files:**
-
-- `tests/s5/test_client.rs`
-- `tests/s5/test_vector_db.rs`
-- `tests/s5/test_semantic_cache.rs`
-- `tests/s5/test_storage.rs`
+- [ ] Implement job queue
+- [ ] Implement resource allocation
+- [ ] Implement progress tracking
+- [ ] Implement result delivery
 
 ### Sub-phase 2.4: Proof Generation
 
 - [ ] Implement EZKL integration
-- [ ] Implement proof creation
-- [ ] Implement proof optimization
-- [ ] Implement proof submission
+- [ ] Implement proof generation
+- [ ] Implement proof verification
+- [ ] Implement on-chain submission
 
-**Test Files:**
-
-- `tests/proofs/test_ezkl.rs`
-- `tests/proofs/test_creation.rs`
-- `tests/proofs/test_optimization.rs`
-- `tests/proofs/test_submission.rs`
-
-## Phase 3: Production Features (Month 3)
+## Phase 3: Production Ready
 
 ### Sub-phase 3.1: Performance
 
 - [ ] Implement connection pooling
-- [ ] Implement request queuing
-- [ ] Implement load balancing
+- [ ] Implement request batching
 - [ ] Implement resource optimization
-
-**Test Files:**
-
-- `tests/performance/test_pooling.rs`
-- `tests/performance/test_queuing.rs`
-- `tests/performance/test_balancing.rs`
-- `tests/performance/test_optimization.rs`
+- [ ] Implement monitoring
 
 ### Sub-phase 3.2: Reliability
 
 - [ ] Implement health checks
-- [ ] Implement auto-recovery
-- [ ] Implement backup systems
-- [ ] Implement monitoring
-
-**Test Files:**
-
-- `tests/reliability/test_health.rs`
-- `tests/reliability/test_recovery.rs`
-- `tests/reliability/test_backup.rs`
-- `tests/reliability/test_monitoring.rs`
+- [ ] Implement automatic recovery
+- [ ] Implement backup mechanisms
+- [ ] Implement logging
 
 ### Sub-phase 3.3: Security
 
@@ -164,23 +156,27 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - [ ] Implement sandboxing
 - [ ] Implement audit logging
 
-**Test Files:**
-
-- `tests/security/test_auth.rs`
-- `tests/security/test_rate_limit.rs`
-- `tests/security/test_sandbox.rs`
-- `tests/security/test_audit.rs`
-
 ### Sub-phase 3.4: Deployment
 
 - [ ] Create Docker images
 - [ ] Create systemd services
 - [ ] Create update mechanism
-- [ ] Create backup procedures
+- [ ] Create documentation
 
-**Test Files:**
+## Key Design Decisions
 
-- `tests/deploy/test_docker.rs`
-- `tests/deploy/test_systemd.rs`
-- `tests/deploy/test_updates.rs`
-- `tests/deploy/test_backups.rs`
+1. **Pure P2P**: No relay servers or centralized components
+2. **Direct Connections**: Clients connect directly to nodes via libp2p
+3. **DHT Discovery**: Nodes announce capabilities in Kademlia DHT
+4. **Smart Contract State**: All job state managed on Base L2
+5. **Streaming Inference**: Results streamed as generated
+6. **Proof System**: EZKL proofs for verifiable inference
+
+## Success Criteria
+
+- [ ] Node can join P2P network and be discovered
+- [ ] Node can receive and process inference requests
+- [ ] Node can monitor and claim jobs from contracts
+- [ ] Node can generate and submit proofs
+- [ ] Node can handle 100+ concurrent connections
+- [ ] Node achieves <2s inference latency
