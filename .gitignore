@@ -36,3 +36,8 @@ models/
 # Temporary files
 tmp/
 temp/
+
+# Model files
+models/
+*.gguf
+*.ggml

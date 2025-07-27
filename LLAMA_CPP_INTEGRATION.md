@@ -5,6 +5,7 @@
 The inference module is currently using a **mock implementation** that simulates LLM inference. This allows the system to compile and run while we work on integrating real llama.cpp functionality.
 
 ### What's Working:
+
 - ✅ Full API surface implemented
 - ✅ Mock model that responds to prompts
 - ✅ Example runs successfully
@@ -12,6 +13,7 @@ The inference module is currently using a **mock implementation** that simulates
 - ✅ Tests have the interfaces they need (though they don't compile due to other issues)
 
 ### What's Mock:
+
 - Model loading (accepts any path)
 - Inference (returns predefined responses)
 - Token generation (simulated)
@@ -37,6 +39,7 @@ llama-cpp-rs = "0.3"
 ```
 
 Example integration:
+
 ```rust
 use llama_cpp_rs::{Model, InferenceParameters};
 
@@ -73,6 +76,7 @@ Wait for or contribute to updates for the `llm` crate to support the latest API.
 1. **Choose Integration Method**: Recommend starting with llama-cpp-rs for simplicity
 
 2. **Update Cargo.toml**:
+
    ```toml
    [dependencies]
    llama-cpp-rs = "0.3"
@@ -80,16 +84,18 @@ Wait for or contribute to updates for the `llm` crate to support the latest API.
    ```
 
 3. **Update engine.rs**:
+
    - Replace `MockLlmModel` trait with real model wrapper
    - Update `load_model()` to load actual GGUF files
    - Update `run_inference()` to use real inference
 
 4. **Download Test Model**:
+
    ```bash
    mkdir -p models
    # Download a small model for testing
-   wget https://huggingface.co/TheBloke/TinyLlama-1.1B-GGUF/resolve/main/tinyllama-1.1b.Q4_K_M.gguf \
-        -O models/tinyllama-1.1b.Q4_K_M.gguf
+   wget https://huggingface.co/TheBloke/TinyLlama-1.1B-GGUF/resolve/main/tiny-vicuna-1b.q4_k_m.gguf \
+        -O models/tiny-vicuna-1b.q4_k_m.gguf
    ```
 
 5. **Update Example**:
@@ -99,6 +105,7 @@ Wait for or contribute to updates for the `llm` crate to support the latest API.
 ## Mock Implementation Details
 
 The current mock (`SimpleMockModel`) provides intelligent responses for testing:
+
 - "capital of france" → "Paris. It is the largest city in France."
 - "hello" → "Hello! How can I help you today?"
 - Default → "This is a mock response from the model."
@@ -110,7 +117,7 @@ Once integrated, test with:
 ```rust
 // Load a real model
 let model_id = engine.load_model(ModelConfig {
-    model_path: PathBuf::from("models/tinyllama-1.1b.Q4_K_M.gguf"),
+    model_path: PathBuf::from("models/tiny-vicuna-1b.q4_k_m.gguf"),
     model_type: "llama".to_string(),
     context_size: 2048,
     gpu_layers: 0, // Start with CPU
