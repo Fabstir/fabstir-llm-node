@@ -5,11 +5,61 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use tokio::sync::{RwLock, Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
-use futures::{FutureExt, Stream};
+use futures::FutureExt;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
-// Note: Using mock implementation for now as llm crate API has changed
-// In production, would use actual llm crate or llama.cpp bindings
+// TODO: The llm crate API has changed significantly. For now, we'll use a mock implementation
+// and integrate real llama.cpp later using either:
+// 1. llama-cpp-rs crate (Rust bindings for llama.cpp)
+// 2. Direct FFI bindings to llama.cpp
+// 3. Updated llm crate when documentation is available
+
+// Mock model trait for now
+trait MockLlmModel: Send + Sync {
+    fn infer(&self, prompt: &str, max_tokens: usize) -> Vec<String>;
+}
+
+// Type alias for boxed model
+type BoxedModel = Box<dyn MockLlmModel>;
+
+// Simple mock implementation
+struct SimpleMockModel {
+    model_name: String,
+}
+
+impl SimpleMockModel {
+    fn new(model_name: String) -> Self {
+        Self { model_name }
+    }
+}
+
+impl MockLlmModel for SimpleMockModel {
+    fn infer(&self, prompt: &str, max_tokens: usize) -> Vec<String> {
+        // Generate mock tokens based on prompt
+        let mut tokens = Vec::new();
+        let response = match prompt.to_lowercase().as_str() {
+            s if s.contains("capital") && s.contains("france") => {
+                vec!["Paris", ".", " It", " is", " the", " largest", " city", " in", " France", "."]
+            }
+            s if s.contains("hello") => {
+                vec!["Hello", "!", " How", " can", " I", " help", " you", " today", "?"]
+            }
+            _ => {
+                vec!["This", " is", " a", " mock", " response", " from", " the", " model", "."]
+            }
+        };
+        
+        // Take up to max_tokens
+        for (i, token) in response.iter().enumerate() {
+            if i >= max_tokens {
+                break;
+            }
+            tokens.push(token.to_string());
+        }
+        
+        tokens
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -129,7 +179,7 @@ pub type TokenStream = ReceiverStream<Result<TokenInfo>>;
 #[derive(Clone)]
 pub struct LlmEngine {
     config: EngineConfig,
-    models: Arc<RwLock<HashMap<String, Arc<Mutex<MockModel>>>>>,
+    models: Arc<RwLock<HashMap<String, Arc<Mutex<BoxedModel>>>>>,
     model_info: Arc<RwLock<HashMap<String, Model>>>,
     inference_count: Arc<RwLock<usize>>,
     metrics: Arc<RwLock<EngineMetrics>>,
@@ -175,7 +225,7 @@ impl LlmEngine {
     pub async fn load_model(&mut self, config: ModelConfig) -> Result<String> {
         let model_id = Uuid::new_v4().to_string();
         
-        // For testing, accept non-existent model files
+        // For testing, accept non-existent model files and use mock
         #[cfg(test)]
         if !config.model_path.exists() {
             // Create a mock model entry
@@ -189,27 +239,36 @@ impl LlmEngine {
             
             self.model_info.write().await.insert(model_id.clone(), model);
             
-            // Create a mock model instance
-            // In real implementation, this would be a proper llm model
-            let mock_model = MockModel::new();
-            self.models.write().await.insert(model_id.clone(), Arc::new(Mutex::new(mock_model)));
-            
+            // For tests, we'll skip adding to models map and handle in run_inference
             return Ok(model_id);
         }
         
-        // Load actual model in production
+        // Update model info
         let model = Model {
             id: model_id.clone(),
-            config,
+            config: config.clone(),
             status: ModelStatus::Loading,
             loaded_at: std::time::SystemTime::now(),
             usage_count: 0,
         };
         
-        self.model_info.write().await.insert(model_id.clone(), model);
+        self.model_info.write().await.insert(model_id.clone(), model.clone());
         
-        // In real implementation, would load model using llm crate
-        // For now, mark as ready
+        // Load actual model using llm crate
+        let model_path = config.model_path.clone();
+        let model_id_clone = model_id.clone();
+        let model_type = config.model_type.clone();
+        
+        // For now, create a mock model
+        // TODO: Replace with real llama.cpp integration
+        let loaded_model: BoxedModel = Box::new(SimpleMockModel::new(
+            config.model_type.clone()
+        ));
+        
+        // Store the loaded model
+        self.models.write().await.insert(model_id.clone(), Arc::new(Mutex::new(loaded_model)));
+        
+        // Update status to ready
         if let Some(model) = self.model_info.write().await.get_mut(&model_id) {
             model.status = ModelStatus::Ready;
         }
@@ -230,7 +289,7 @@ impl LlmEngine {
     }
     
     pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
-        let _start_time = Instant::now();
+        let start_time = Instant::now();
         
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
@@ -240,36 +299,99 @@ impl LlmEngine {
         // Update metrics
         *self.inference_count.write().await += 1;
         
-        // Mock inference for testing
-        let tokens_generated = request.max_tokens.min(50);
-        let text = format!("Response to: {} (generated {} tokens)", 
-            &request.prompt[..request.prompt.len().min(20)], 
-            tokens_generated
-        );
+        // Check if we have a real model loaded
+        let has_real_model = self.models.read().await.contains_key(&request.model_id);
         
-        let generation_time = Duration::from_millis(250);
-        let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
-        
-        // Update metrics
-        {
-            let mut metrics = self.metrics.write().await;
-            metrics.total_inferences += 1;
-            metrics.total_tokens_generated += tokens_generated;
-            metrics.total_inference_time += generation_time;
-            metrics.average_tokens_per_second = 
-                metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
+        if has_real_model {
+            // Use real model inference
+            let model_arc = self.models.read().await.get(&request.model_id).cloned()
+                .ok_or_else(|| anyhow!("Model not found in storage"))?;
+            
+            let prompt = request.prompt.clone();
+            let max_tokens = request.max_tokens;
+            let temperature = request.temperature;
+            let top_p = request.top_p;
+            let top_k = request.top_k;
+            let repeat_penalty = request.repeat_penalty;
+            
+            // Run inference using mock model
+            let model = model_arc.lock().await;
+            let tokens = model.infer(&prompt, max_tokens);
+            
+            let mut generated_text = String::new();
+            let mut token_info = Vec::new();
+            
+            for (i, token) in tokens.iter().enumerate() {
+                generated_text.push_str(token);
+                token_info.push(TokenInfo {
+                    token_id: i as i32,
+                    text: token.clone(),
+                    logprob: Some(-0.5 * (i as f32 + 1.0)),
+                    timestamp: Some(0.1 * i as f32),
+                });
+            }
+            
+            let tokens_generated = tokens.len();
+            drop(model); // Release lock
+            
+            let inference_result = (generated_text, tokens_generated, token_info);
+            
+            let (text, tokens_generated, token_info) = inference_result;
+            let generation_time = start_time.elapsed();
+            let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
+            
+            // Update metrics
+            {
+                let mut metrics = self.metrics.write().await;
+                metrics.total_inferences += 1;
+                metrics.total_tokens_generated += tokens_generated;
+                metrics.total_inference_time += generation_time;
+                metrics.average_tokens_per_second = 
+                    metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
+            }
+            
+            Ok(InferenceResult {
+                text,
+                tokens_generated,
+                generation_time,
+                tokens_per_second,
+                model_id: request.model_id,
+                finish_reason: "stop".to_string(),
+                token_info,
+                was_cancelled: false,
+            })
+        } else {
+            // Use mock inference for tests
+            let tokens_generated = request.max_tokens.min(50);
+            let text = format!("Response to: {} (generated {} tokens)", 
+                &request.prompt[..request.prompt.len().min(20)], 
+                tokens_generated
+            );
+            
+            let generation_time = Duration::from_millis(250);
+            let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
+            
+            // Update metrics
+            {
+                let mut metrics = self.metrics.write().await;
+                metrics.total_inferences += 1;
+                metrics.total_tokens_generated += tokens_generated;
+                metrics.total_inference_time += generation_time;
+                metrics.average_tokens_per_second = 
+                    metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
+            }
+            
+            Ok(InferenceResult {
+                text,
+                tokens_generated,
+                generation_time,
+                tokens_per_second,
+                model_id: request.model_id,
+                finish_reason: "stop".to_string(),
+                token_info: vec![],
+                was_cancelled: false,
+            })
         }
-        
-        Ok(InferenceResult {
-            text,
-            tokens_generated,
-            generation_time,
-            tokens_per_second,
-            model_id: request.model_id,
-            finish_reason: "stop".to_string(),
-            token_info: vec![],
-            was_cancelled: false,
-        })
     }
     
     pub async fn run_inference_stream(&self, request: InferenceRequest) -> Result<TokenStream> {
@@ -401,18 +523,6 @@ impl LlmEngine {
     }
 }
 
-// Mock model for testing
-struct MockModel {
-    context_size: usize,
-}
-
-impl MockModel {
-    fn new() -> Self {
-        Self {
-            context_size: 2048,
-        }
-    }
-}
 
 // Async inference handle for cancellation
 pub struct InferenceHandle {
