@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
-libp2p = { version = "0.54", features = ["kad", "mdns", "noise", "tcp", "yamux", "websocket", "quic", "identify", "rendezvous", "macros", "serde", "tokio", "dns"] }
+libp2p = { version = "0.54", features = ["kad", "mdns", "noise", "tcp", "yamux", "websocket", "quic", "identify", "rendezvous", "macros", "serde", "tokio", "dns", "request-response"] }
 futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -14,6 +14,8 @@ ethers = "2.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+async-trait = "0.1"
+asynchronous-codec = "0.7"
 
 [dev-dependencies]
 tokio-test = "0.4"

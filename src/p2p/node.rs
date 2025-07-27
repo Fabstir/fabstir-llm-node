@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     sync::{mpsc as tokio_mpsc, oneshot, Mutex, RwLock},
-    time::interval,
+    time::{interval, timeout},
     task::JoinHandle,
 };
 
@@ -26,6 +26,7 @@ use crate::p2p::{
         InferenceRequest, InferenceResponse, JobClaim, JobResult, ProtocolEvent,
         ProtocolHandler,
     },
+    protocol_impl::{FabstirRequest, FabstirResponse, RequestTracker, RateLimiter, StreamingHandler, ResponseChannel},
 };
 
 #[derive(Debug, Clone)]
@@ -46,6 +47,10 @@ enum Command {
     DhtGetProviders { key: RecordKey, result_sender: oneshot::Sender<Result<HashSet<PeerId>>> },
     GetListeners { result_sender: oneshot::Sender<Vec<Multiaddr>> },
     SendEvent { event: NodeEvent, result_sender: oneshot::Sender<()> },
+    SendInferenceRequest { peer_id: PeerId, request: InferenceRequest, result_sender: oneshot::Sender<Result<()>> },
+    SendInferenceResponse { peer_id: PeerId, response: InferenceResponse, result_sender: oneshot::Sender<Result<()>> },
+    SendJobClaim { peer_id: PeerId, claim: JobClaim, result_sender: oneshot::Sender<Result<()>> },
+    SendJobResult { peer_id: PeerId, result: JobResult, result_sender: oneshot::Sender<Result<()>> },
     Shutdown,
 }
 
@@ -122,6 +127,7 @@ impl Node {
         let is_running_clone = is_running.clone();
         let listeners_clone = listeners.clone();
         let config_clone = config.clone();
+        let peer_id_clone = peer_id;
 
         // Spawn swarm event loop
         let swarm_task = tokio::spawn(async move {
@@ -131,6 +137,10 @@ impl Node {
                 config_clone.dht_republish_interval,
             );
             let mut peer_last_seen: HashMap<PeerId, Instant> = HashMap::new();
+            let mut request_tracker = RequestTracker::new(Duration::from_secs(60));
+            let mut rate_limiter = RateLimiter::new(config_clone.max_requests_per_minute);
+            let mut streaming_handler = StreamingHandler::new();
+            let mut pending_responses: HashMap<String, ResponseChannel> = HashMap::new();
             
             // Start bootstrap if we have bootstrap peers
             if !config_clone.bootstrap_peers.is_empty() {
@@ -161,6 +171,9 @@ impl Node {
             // Set up peer expiration check
             let peer_expiration_time = config_clone.peer_expiration_time;
             let mut peer_check_interval = interval(Duration::from_secs(1));
+            
+            // Set up request timeout check
+            let mut timeout_check_interval = interval(Duration::from_secs(1));
             
             loop {
                 tokio::select! {
@@ -210,6 +223,50 @@ impl Node {
                             Command::SendEvent { event, result_sender } => {
                                 let _ = event_tx.send(event).await;
                                 let _ = result_sender.send(());
+                            }
+                            Command::SendInferenceRequest { peer_id, request, result_sender } => {
+                                // Check rate limit
+                                match rate_limiter.check_rate_limit(&peer_id_clone) {
+                                    Ok(_) => {
+                                        let _request_id = swarm.behaviour_mut().request_response
+                                            .send_request(&peer_id, FabstirRequest::Inference(request.clone()));
+                                        
+                                        // Track the request for timeout
+                                        let _ = request_tracker.track_request(request.request_id.clone());
+                                        
+                                        let _ = result_sender.send(Ok(()));
+                                    }
+                                    Err(e) => {
+                                        let count = rate_limiter.get_request_count(&peer_id_clone);
+                                        let _ = event_tx.send(NodeEvent::ProtocolEvent(ProtocolEvent::RateLimitExceeded {
+                                            peer_id: peer_id_clone,
+                                            requests_made: count,
+                                            limit: config_clone.max_requests_per_minute,
+                                        })).await;
+                                        let _ = result_sender.send(Err(e));
+                                    }
+                                }
+                            }
+                            Command::SendInferenceResponse { peer_id: _, response, result_sender } => {
+                                // Find the response channel for this request
+                                if let Some(channel) = pending_responses.remove(&response.request_id) {
+                                    let result = swarm.behaviour_mut().request_response
+                                        .send_response(channel, FabstirResponse::Inference(response))
+                                        .map_err(|_| anyhow::anyhow!("Failed to send response"));
+                                    let _ = result_sender.send(result);
+                                } else {
+                                    let _ = result_sender.send(Err(anyhow::anyhow!("No pending request found")));
+                                }
+                            }
+                            Command::SendJobClaim { peer_id, claim, result_sender } => {
+                                let _ = swarm.behaviour_mut().request_response
+                                    .send_request(&peer_id, FabstirRequest::JobClaim(claim));
+                                let _ = result_sender.send(Ok(()));
+                            }
+                            Command::SendJobResult { peer_id, result, result_sender } => {
+                                let _ = swarm.behaviour_mut().request_response
+                                    .send_request(&peer_id, FabstirRequest::JobResult(result));
+                                let _ = result_sender.send(Ok(()));
                             }
                             Command::Shutdown => {
                                 break;
@@ -262,6 +319,98 @@ impl Node {
                                                     )).await;
                                                 }
                                             }
+                                        }
+                                    }
+                                    crate::p2p::behaviour::NodeBehaviourEvent::RequestResponse(req_resp_event) => {
+                                        use libp2p::request_response::{Event as ReqRespEvent, Message};
+                                        
+                                        match req_resp_event {
+                                            ReqRespEvent::Message { peer, message } => {
+                                                match message {
+                                                    Message::Request { request, channel, .. } => {
+                                                        // Check rate limit for incoming requests
+                                                        if let Err(_) = rate_limiter.check_rate_limit(&peer) {
+                                                            let count = rate_limiter.get_request_count(&peer);
+                                                            let _ = event_tx.send(NodeEvent::ProtocolEvent(
+                                                                ProtocolEvent::RateLimitExceeded {
+                                                                    peer_id: peer,
+                                                                    requests_made: count,
+                                                                    limit: config_clone.max_requests_per_minute,
+                                                                }
+                                                            )).await;
+                                                            // Drop the request
+                                                            continue;
+                                                        }
+                                                        
+                                                        match request {
+                                                            FabstirRequest::Inference(req) => {
+                                                                // Store the channel so we can respond later
+                                                                pending_responses.insert(req.request_id.clone(), channel);
+                                                                
+                                                                let _ = event_tx.send(NodeEvent::ProtocolEvent(
+                                                                    ProtocolEvent::InferenceRequestReceived {
+                                                                        peer_id: peer,
+                                                                        request: req,
+                                                                    }
+                                                                )).await;
+                                                            }
+                                                            FabstirRequest::JobClaim(claim) => {
+                                                                // For job claims, we might send an acknowledgment
+                                                                let ack = FabstirResponse::JobClaimAck {
+                                                                    job_id: claim.job_id,
+                                                                    accepted: true,
+                                                                };
+                                                                let _ = swarm.behaviour_mut().request_response
+                                                                    .send_response(channel, ack);
+                                                                
+                                                                let _ = event_tx.send(NodeEvent::ProtocolEvent(
+                                                                    ProtocolEvent::JobClaimReceived {
+                                                                        peer_id: peer,
+                                                                        claim,
+                                                                    }
+                                                                )).await;
+                                                            }
+                                                            FabstirRequest::JobResult(result) => {
+                                                                // For job results, we might send an acknowledgment
+                                                                let ack = FabstirResponse::JobResultAck {
+                                                                    job_id: result.job_id,
+                                                                    accepted: true,
+                                                                };
+                                                                let _ = swarm.behaviour_mut().request_response
+                                                                    .send_response(channel, ack);
+                                                                
+                                                                let _ = event_tx.send(NodeEvent::ProtocolEvent(
+                                                                    ProtocolEvent::JobResultReceived {
+                                                                        peer_id: peer,
+                                                                        result,
+                                                                    }
+                                                                )).await;
+                                                            }
+                                                        }
+                                                    }
+                                                    Message::Response { response, .. } => {
+                                                        match response {
+                                                            FabstirResponse::Inference(resp) => {
+                                                                // Complete the tracked request
+                                                                request_tracker.complete_request(&resp.request_id, resp.clone());
+                                                                
+                                                                // Handle streaming response
+                                                                if let Err(_) = streaming_handler.send_chunk(resp.clone()).await {
+                                                                    // Not a streaming response or stream closed
+                                                                    let _ = event_tx.send(NodeEvent::ProtocolEvent(
+                                                                        ProtocolEvent::InferenceResponseReceived {
+                                                                            peer_id: peer,
+                                                                            response: resp,
+                                                                        }
+                                                                    )).await;
+                                                                }
+                                                            }
+                                                            _ => {} // Handle other response types
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ => {} // Handle other events like OutboundFailure, ResponseSent, etc.
                                         }
                                     }
                                     _ => {}
@@ -319,6 +468,16 @@ impl Node {
                             discovered_peers_clone.write().await.remove(&peer_id);
                             peer_last_seen.remove(&peer_id);
                             let _ = event_tx.send(NodeEvent::DiscoveryEvent(DiscoveryEvent::PeerExpired { peer_id })).await;
+                        }
+                    }
+                    _ = timeout_check_interval.tick() => {
+                        // Check for timed out requests
+                        let timed_out = request_tracker.check_timeouts();
+                        for request_id in timed_out {
+                            let _ = event_tx.send(NodeEvent::ProtocolEvent(ProtocolEvent::RequestTimeout {
+                                peer_id: peer_id_clone, // In real impl, we'd track which peer each request was sent to
+                                request_id,
+                            })).await;
                         }
                     }
                 }
@@ -625,20 +784,31 @@ impl Node {
     // Protocol operations
     pub async fn send_inference_request(
         &mut self,
-        _peer_id: PeerId,
-        _request: InferenceRequest,
+        peer_id: PeerId,
+        request: InferenceRequest,
     ) -> Result<()> {
-        // TODO: Implement
-        Ok(())
+        if let Some(tx) = &self.command_sender {
+            let (result_tx, result_rx) = oneshot::channel();
+            tx.send(Command::SendInferenceRequest { peer_id, request, result_sender: result_tx }).await?;
+            result_rx.await?
+        } else {
+            Err(anyhow!("Node not started"))
+        }
     }
 
     pub async fn send_inference_request_with_timeout(
         &mut self,
         peer_id: PeerId,
         request: InferenceRequest,
-        _timeout: Duration,
+        timeout_duration: Duration,
     ) -> Result<()> {
-        self.send_inference_request(peer_id, request).await
+        // The timeout is handled by the request tracker
+        let result = timeout(timeout_duration, self.send_inference_request(peer_id, request)).await;
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(anyhow!("Request timed out")),
+        }
     }
 
     pub async fn send_streaming_inference_request(
@@ -658,11 +828,16 @@ impl Node {
 
     pub async fn send_inference_response(
         &mut self,
-        _peer_id: PeerId,
-        _response: InferenceResponse,
+        peer_id: PeerId,
+        response: InferenceResponse,
     ) -> Result<()> {
-        // TODO: Implement
-        Ok(())
+        if let Some(tx) = &self.command_sender {
+            let (result_tx, result_rx) = oneshot::channel();
+            tx.send(Command::SendInferenceResponse { peer_id, response, result_sender: result_tx }).await?;
+            result_rx.await?
+        } else {
+            Err(anyhow!("Node not started"))
+        }
     }
 
     pub async fn send_streaming_response(
@@ -673,14 +848,24 @@ impl Node {
         self.send_inference_response(peer_id, response).await
     }
 
-    pub async fn send_job_claim(&mut self, _peer_id: PeerId, _claim: JobClaim) -> Result<()> {
-        // TODO: Implement
-        Ok(())
+    pub async fn send_job_claim(&mut self, peer_id: PeerId, claim: JobClaim) -> Result<()> {
+        if let Some(tx) = &self.command_sender {
+            let (result_tx, result_rx) = oneshot::channel();
+            tx.send(Command::SendJobClaim { peer_id, claim, result_sender: result_tx }).await?;
+            result_rx.await?
+        } else {
+            Err(anyhow!("Node not started"))
+        }
     }
 
-    pub async fn send_job_result(&mut self, _peer_id: PeerId, _result: JobResult) -> Result<()> {
-        // TODO: Implement
-        Ok(())
+    pub async fn send_job_result(&mut self, peer_id: PeerId, result: JobResult) -> Result<()> {
+        if let Some(tx) = &self.command_sender {
+            let (result_tx, result_rx) = oneshot::channel();
+            tx.send(Command::SendJobResult { peer_id, result, result_sender: result_tx }).await?;
+            result_rx.await?
+        } else {
+            Err(anyhow!("Node not started"))
+        }
     }
 
     // Helper methods

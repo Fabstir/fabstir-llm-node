@@ -1,10 +1,12 @@
 use libp2p::{
-    identify, kad, mdns, rendezvous,
+    identify, kad, mdns, rendezvous, request_response,
     swarm::NetworkBehaviour,
+    StreamProtocol,
 };
 use std::time::Duration;
 
 use crate::config::NodeConfig;
+use super::protocol_impl::FabstirCodec;
 
 #[derive(NetworkBehaviour)]
 pub struct NodeBehaviour {
@@ -12,6 +14,7 @@ pub struct NodeBehaviour {
     pub mdns: mdns::tokio::Behaviour,
     pub identify: identify::Behaviour,
     pub rendezvous: rendezvous::client::Behaviour,
+    pub request_response: request_response::Behaviour<FabstirCodec>,
 }
 
 impl NodeBehaviour {
@@ -61,11 +64,28 @@ impl NodeBehaviour {
         // Configure Rendezvous
         let rendezvous = rendezvous::client::Behaviour::new(keypair.clone());
 
+        // Configure Request-Response
+        let protocols = vec![
+            (StreamProtocol::new("/fabstir/inference/1.0.0"), request_response::ProtocolSupport::Full),
+            (StreamProtocol::new("/fabstir/job/1.0.0"), request_response::ProtocolSupport::Full),
+        ];
+        
+        let request_response_config = request_response::Config::default()
+            .with_request_timeout(Duration::from_secs(60))
+            .with_max_concurrent_streams(100);
+            
+        let request_response = request_response::Behaviour::with_codec(
+            FabstirCodec::default(),
+            protocols,
+            request_response_config,
+        );
+
         Ok(Self {
             kad,
             mdns,
             identify,
             rendezvous,
+            request_response,
         })
     }
 }
