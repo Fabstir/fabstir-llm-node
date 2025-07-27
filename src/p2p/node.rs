@@ -661,7 +661,7 @@ impl Node {
         }
     }
 
-    pub async fn dht_get_closest_peers(&mut self, peer_id: PeerId) -> Result<Vec<PeerId>> {
+    pub async fn dht_get_closest_peers(&mut self, _peer_id: PeerId) -> Result<Vec<PeerId>> {
         // For now, return connected peers as a simple implementation
         let peers = self.connected_peers.read().await;
         Ok(peers.iter().take(20).cloned().collect())
