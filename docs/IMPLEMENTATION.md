@@ -103,7 +103,10 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 
 - [ ] Implement result packaging
 - [ ] Implement P2P delivery
-- [ ] Implement S5 storage
+- [ ] Implement S5 storage integration (**NEW**)
+  - [ ] Store results using Enhanced S5.js path API
+  - [ ] Use CBOR encoding matching s5-rs
+  - [ ] Implement result retrieval by CID
 - [ ] Implement proof generation
 
 **Test Files:**
@@ -154,6 +157,34 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - `tests/qa/test_response_time.rs`
 - `tests/qa/test_accuracy.rs`
 - `tests/qa/test_ratings.rs`
+
+### Sub-phase 2.7: Storage Integration (**NEW**)
+
+- [ ] Implement S5 client wrapper
+- [ ] Implement model storage on S5
+- [ ] Implement result caching with paths
+- [ ] Implement CBOR compatibility
+
+**Test Files:**
+
+- `tests/storage/test_s5_client.rs`
+- `tests/storage/test_model_storage.rs`
+- `tests/storage/test_result_cache.rs`
+- `tests/storage/test_cbor_compat.rs`
+
+### Sub-phase 2.8: Vector DB Integration (**NEW**)
+
+- [ ] Implement Vector DB client
+- [ ] Implement prompt embedding generation
+- [ ] Implement semantic cache lookup
+- [ ] Implement embedding storage
+
+**Test Files:**
+
+- `tests/vector/test_client.rs`
+- `tests/vector/test_embeddings.rs`
+- `tests/vector/test_semantic_cache.rs`
+- `tests/vector/test_storage.rs`
 
 ## Phase 3: Advanced Features (Month 3)
 
@@ -226,3 +257,28 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - `tests/models/test_private.rs`
 - `tests/models/test_gdpr.rs`
 - `tests/models/test_specialization.rs`
+
+## Phase 4: Storage & Caching Integration (NEW)
+
+### Sub-phase 4.1: S5 Storage Layer
+
+- [ ] Create S5 storage module matching Enhanced S5.js API
+- [ ] Implement path structure (/models, /results, /proofs)
+- [ ] Add CBOR encoding matching s5-rs format
+- [ ] Implement chunked upload for large models
+- [ ] Add compression support (zstd)
+
+### Sub-phase 4.2: Vector DB Semantic Cache
+
+- [ ] Integrate Vector DB REST client
+- [ ] Implement embedding generation for prompts
+- [ ] Add semantic similarity threshold (0.95)
+- [ ] Create cache-first inference pipeline
+- [ ] Add metrics for cache hit rates
+
+### Sub-phase 4.3: Integration Testing
+
+- [ ] Test S5 storage with real Enhanced S5.js
+- [ ] Test Vector DB with real deployment
+- [ ] Verify CBOR compatibility across systems
+- [ ] Performance benchmarks with caching
