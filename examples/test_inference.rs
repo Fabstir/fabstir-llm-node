@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = LlmEngine::new(EngineConfig::default()).await?;
     
     let model_id = engine.load_model(ModelConfig {
-        model_path: PathBuf::from("models/tinyllama-1.1b.Q4_K_M.gguf"),
+        model_path: PathBuf::from("models/tiny-vicuna-1b.q4_k_m.gguf"),
         model_type: "llama".to_string(),
         context_size: 2048,
         gpu_layers: 0, // CPU only for now
