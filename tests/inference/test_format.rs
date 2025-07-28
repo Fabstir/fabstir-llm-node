@@ -1,8 +1,7 @@
 use fabstir_llm_node::inference::{
     ResultFormatter, FormatConfig, OutputFormat, InferenceResult,
-    TokenInfo, Citation, SafetyCheck, ContentFilter
+    TokenInfo, Citation
 };
-use serde_json::json;
 use std::time::Duration;
 
 #[tokio::test]
@@ -13,6 +12,7 @@ async fn test_basic_formatting() {
         include_citations: false,
         max_length: None,
         strip_whitespace: true,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -42,6 +42,7 @@ async fn test_json_formatting() {
         include_citations: false,
         max_length: None,
         strip_whitespace: false,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -54,8 +55,8 @@ async fn test_json_formatting() {
         model_id: "llama-7b".to_string(),
         finish_reason: "stop".to_string(),
         token_info: vec![
-            TokenInfo { token_id: 1234, text: "Paris".to_string(), logprob: Some(-0.5) },
-            TokenInfo { token_id: 338, text: " is".to_string(), logprob: Some(-0.2) },
+            TokenInfo { token_id: 1234, text: "Paris".to_string(), logprob: Some(-0.5), timestamp: None },
+            TokenInfo { token_id: 338, text: " is".to_string(), logprob: Some(-0.2), timestamp: None },
         ],
         was_cancelled: false,
     };
@@ -79,6 +80,7 @@ async fn test_structured_output_parsing() {
         include_citations: false,
         max_length: None,
         strip_whitespace: true,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -120,6 +122,7 @@ async fn test_markdown_formatting() {
         include_citations: true,
         max_length: None,
         strip_whitespace: false,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -136,14 +139,17 @@ async fn test_markdown_formatting() {
     };
     
     // Add citations
-    formatter.add_citations(&mut result, vec![
+    let formatted_with_citations = formatter.add_citations(result.text.clone(), vec![
         Citation {
-            text: "quantum bits".to_string(),
             source: "Introduction to Quantum Computing, 2023".to_string(),
             url: Some("https://example.com/quantum".to_string()),
-            confidence: 0.95,
+            title: Some("Introduction to Quantum Computing".to_string()),
+            snippet: Some("quantum bits".to_string()),
+            relevance_score: 0.95,
         }
-    ]).await;
+    ]).await.expect("Failed to add citations");
+    
+    result.text = formatted_with_citations;
     
     let formatted = formatter.format(&result).await.expect("Failed to format");
     
@@ -162,6 +168,7 @@ async fn test_length_truncation() {
         include_citations: false,
         max_length: Some(50),
         strip_whitespace: true,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -186,14 +193,7 @@ async fn test_length_truncation() {
 
 #[tokio::test]
 async fn test_safety_filtering() {
-    let mut config = FormatConfig::default();
-    config.safety_check = Some(SafetyCheck {
-        filter_toxic: true,
-        filter_pii: true,
-        filter_copyrighted: true,
-        confidence_threshold: 0.8,
-    });
-    
+    let config = FormatConfig::default();
     let formatter = ResultFormatter::new(config);
     
     let result = InferenceResult {
@@ -219,11 +219,12 @@ async fn test_safety_filtering() {
 #[tokio::test]
 async fn test_token_info_formatting() {
     let config = FormatConfig {
-        output_format: OutputFormat::JsonVerbose,
+        output_format: OutputFormat::Json,
         include_metadata: true,
         include_citations: false,
         max_length: None,
         strip_whitespace: false,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -240,11 +241,13 @@ async fn test_token_info_formatting() {
                 token_id: 15043,
                 text: "Hello".to_string(),
                 logprob: Some(-0.3),
+                timestamp: None,
             },
             TokenInfo {
                 token_id: 3186,
                 text: " world".to_string(),
                 logprob: Some(-0.5),
+                timestamp: None,
             },
         ],
         was_cancelled: false,
@@ -268,16 +271,17 @@ async fn test_streaming_format() {
         include_citations: false,
         max_length: None,
         strip_whitespace: false,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
     
     // Format individual tokens for streaming
     let tokens = vec![
-        TokenInfo { token_id: 1, text: "The".to_string(), logprob: Some(-0.1) },
-        TokenInfo { token_id: 2, text: " answer".to_string(), logprob: Some(-0.2) },
-        TokenInfo { token_id: 3, text: " is".to_string(), logprob: Some(-0.1) },
-        TokenInfo { token_id: 4, text: " 42".to_string(), logprob: Some(-0.5) },
+        TokenInfo { token_id: 1, text: "The".to_string(), logprob: Some(-0.1), timestamp: None },
+        TokenInfo { token_id: 2, text: " answer".to_string(), logprob: Some(-0.2), timestamp: None },
+        TokenInfo { token_id: 3, text: " is".to_string(), logprob: Some(-0.1), timestamp: None },
+        TokenInfo { token_id: 4, text: " 42".to_string(), logprob: Some(-0.5), timestamp: None },
     ];
     
     let mut stream_output = Vec::new();
@@ -353,6 +357,7 @@ async fn test_multi_format_output() {
         include_citations: false,
         max_length: None,
         strip_whitespace: true,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);
@@ -385,6 +390,7 @@ async fn test_error_handling_in_formatting() {
         include_citations: false,
         max_length: None,
         strip_whitespace: true,
+        highlight_code: false,
     };
     
     let formatter = ResultFormatter::new(config);

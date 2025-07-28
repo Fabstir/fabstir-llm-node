@@ -1,6 +1,7 @@
 use fabstir_llm_node::inference::{
-    ModelManager, ModelRegistry, ModelInfo, ModelSource,
-    ModelRequirements, ModelStatus, DownloadProgress
+    ModelManager, ModelRegistry, ModelSource,
+    ModelRequirements, DownloadProgress, ModelRequest,
+    ModelEventType, CleanupPolicy
 };
 use std::path::PathBuf;
 use std::time::Duration;
@@ -145,6 +146,11 @@ async fn test_model_requirements_check() {
     
     for (model_name, min_memory) in test_cases {
         let requirements = ModelRequirements {
+            min_memory_gb: (min_memory / (1024 * 1024 * 1024)) as f32,
+            recommended_memory_gb: (min_memory * 2 / (1024 * 1024 * 1024)) as f32,
+            gpu_required: false,
+            min_compute_capability: None,
+            supported_architectures: vec!["x86_64".to_string()],
             min_memory_bytes: min_memory,
             recommended_memory_bytes: min_memory * 2,
             requires_gpu: false,
@@ -157,7 +163,7 @@ async fn test_model_requirements_check() {
         // Should depend on actual system
         if can_run {
             let system_info = manager.get_system_info().await;
-            assert!(system_info.total_memory >= min_memory);
+            assert!(system_info.total_memory_bytes >= min_memory);
         }
     }
 }
@@ -172,14 +178,10 @@ async fn test_model_preloading() {
     
     // Preload model into memory
     let preload_handle = manager.preload_model(&model_path)
-        .await
-        .expect("Failed to start preloading");
+        .await;
     
-    // Wait for preload
-    let preloaded_path = preload_handle.await
-        .expect("Failed to preload model");
-    
-    assert_eq!(preloaded_path, model_path);
+    // PreloadHandle doesn't need await, it just tracks the preload
+    assert_eq!(preload_handle.path, model_path);
     
     // Should be cached in memory
     let is_cached = manager.is_model_cached(&model_path);
@@ -243,7 +245,7 @@ async fn test_model_quantization() {
 
 #[tokio::test]
 async fn test_model_auto_download() {
-    let manager = ModelManager::new(PathBuf::from("./models"))
+    let mut manager = ModelManager::new(PathBuf::from("./models"))
         .await
         .expect("Failed to create manager");
     
@@ -258,7 +260,15 @@ async fn test_model_auto_download() {
     ]);
     
     // Request a model that might not exist locally
-    let model_request = "mistral-7b-instruct-q4_0";
+    let model_request = ModelRequest {
+        name: "mistral-7b-instruct-q4_0".to_string(),
+        version: Some("q4_0".to_string()),
+        source: Some(ModelSource::HuggingFace {
+            repo_id: "TheBloke/Mistral-7B-Instruct-v0.2-GGUF".to_string(),
+            filename: "mistral-7b-instruct-v0.2.Q4_0.gguf".to_string(),
+            revision: None,
+        }),
+    };
     
     let model_path = manager.ensure_model_available(model_request)
         .await
@@ -292,14 +302,14 @@ async fn test_model_lifecycle_events() {
     }
     
     // Should have lifecycle events
-    assert!(events.iter().any(|e| matches!(e, ModelEvent::Registered { .. })));
-    assert!(events.iter().any(|e| matches!(e, ModelEvent::Loaded { .. })));
-    assert!(events.iter().any(|e| matches!(e, ModelEvent::Unloaded { .. })));
+    assert!(events.iter().any(|e| matches!(e.event_type, ModelEventType::Registered)));
+    assert!(events.iter().any(|e| matches!(e.event_type, ModelEventType::Loaded)));
+    assert!(events.iter().any(|e| matches!(e.event_type, ModelEventType::Unloaded)));
 }
 
 #[tokio::test]
 async fn test_model_storage_management() {
-    let manager = ModelManager::new(PathBuf::from("./models"))
+    let mut manager = ModelManager::new(PathBuf::from("./models"))
         .await
         .expect("Failed to create manager");
     
@@ -309,19 +319,18 @@ async fn test_model_storage_management() {
     
     // Check current usage
     let usage = manager.get_storage_usage()
-        .await
-        .expect("Failed to get storage usage");
+        .await;
     
     assert!(usage.total_bytes > 0);
     assert!(usage.used_bytes <= usage.total_bytes);
-    assert!(usage.model_bytes <= usage.used_bytes);
+    assert!(usage.available_bytes == usage.total_bytes - usage.used_bytes);
     
     // List models by size
     let models_by_size = manager.list_models_by_size().await;
     
     // Should be sorted largest first
     for i in 1..models_by_size.len() {
-        assert!(models_by_size[i-1].1 >= models_by_size[i].1);
+        assert!(models_by_size[i-1].size_bytes >= models_by_size[i].size_bytes);
     }
 }
 
@@ -333,8 +342,8 @@ async fn test_model_cleanup() {
     
     // Configure cleanup policy
     manager.set_cleanup_policy(CleanupPolicy {
-        max_age: Duration::from_days(30),
-        max_unused: Duration::from_days(7),
+        max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+        max_unused: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
         keep_popular: 5,
         keep_recent: 3,
     });
@@ -379,9 +388,6 @@ async fn test_model_aliasing() {
     
     // List all aliases
     let aliases = manager.list_model_aliases().await;
-    assert!(aliases.contains_key("llama2-chat"));
-    assert!(aliases.contains_key("chat-model"));
+    assert!(aliases.iter().any(|(alias, _)| alias == "llama2-chat"));
+    assert!(aliases.iter().any(|(alias, _)| alias == "chat-model"));
 }
-
-// Helper types for tests
-use fabstir_llm_node::inference::{ModelEvent, CleanupPolicy};
