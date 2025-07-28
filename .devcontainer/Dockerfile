@@ -1,5 +1,25 @@
 # fabstir-llm-node/.devcontainer/Dockerfile
-FROM rust:1.88.0-bookworm
+FROM nvidia/cuda:12.3.1-devel-ubuntu22.04
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust system-wide
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+# Verify installations
+RUN nvcc --version && rustc --version
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -20,7 +40,7 @@ RUN cargo install --locked cargo-watch && \
     cargo install --locked wasm-bindgen-cli && \
     cargo install --locked wasm-pack
 
-# Install sccache BEFORE creating developer user
+# Install sccache
 RUN cargo install sccache
 ENV RUSTC_WRAPPER=sccache
 
@@ -34,7 +54,7 @@ RUN chmod +x /usr/local/bin/*.sh
 RUN useradd -m -s /bin/bash developer && \
     echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Switch to developer user AFTER all installations
+# Switch to developer user
 USER developer
 WORKDIR /workspace
 

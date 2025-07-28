@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model_path: PathBuf::from("models/tiny-vicuna-1b.q4_k_m.gguf"),
         model_type: "llama".to_string(),
         context_size: 2048,
-        gpu_layers: 0, // CPU only for now
+        gpu_layers: 35, // Use GPU
         rope_freq_base: 10000.0,
         rope_freq_scale: 1.0,
     }).await?;
@@ -20,12 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let result = engine.run_inference(InferenceRequest {
         model_id,
-        prompt: "The capital of France is".to_string(),
-        max_tokens: 20,
+        prompt: "Explain how a quantum computer works in simple terms:".to_string(),
+        max_tokens: 512,
         temperature: 0.7,
         top_p: 0.9,
         top_k: 40,
-        repeat_penalty: 1.1,
+        repeat_penalty: 1.5,
         seed: None,
         stop_sequences: vec![],
         stream: false,
