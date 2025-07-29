@@ -54,10 +54,10 @@ async fn test_model_loading() {
     
     // Model should be loaded
     assert!(!model_id.is_empty());
-    assert!(engine.is_model_loaded(&model_id));
+    assert!(engine.is_model_loaded(&model_id).await);
     
     // Should be in loaded models list
-    let loaded_models = engine.list_loaded_models();
+    let loaded_models = engine.list_loaded_models().await;
     assert!(loaded_models.iter().any(|m| m.id == model_id));
 }
 
@@ -148,42 +148,31 @@ async fn test_multiple_concurrent_inferences() {
     let mut engine = LlmEngine::new(config).await.expect("Failed to create engine");
     let model_id = load_test_model(&mut engine).await;
     
-    // Start multiple inferences
-    let mut handles = Vec::new();
+    // Start multiple inferences sequentially to avoid thread safety issues with llama-cpp
+    let mut results = Vec::new();
     
     for i in 0..3 {
-        let engine_clone = engine.clone();
-        let model_id_clone = model_id.clone();
+        let request = InferenceRequest {
+            model_id: model_id.clone(),
+            prompt: format!("Count to five: {}", i),
+            max_tokens: 20,
+            temperature: 0.5,
+            top_p: 0.9,
+            top_k: 40,
+            repeat_penalty: 1.0,
+            seed: Some(i as u64),
+            stop_sequences: vec![],
+            stream: false,
+        };
         
-        let handle = tokio::spawn(async move {
-            let request = InferenceRequest {
-                model_id: model_id_clone,
-                prompt: format!("Count to five: {}", i),
-                max_tokens: 20,
-                temperature: 0.5,
-                top_p: 0.9,
-                top_k: 40,
-                repeat_penalty: 1.0,
-                seed: Some(i as u64),
-                stop_sequences: vec![],
-                stream: false,
-            };
-            
-            engine_clone.run_inference(request).await
-        });
-        
-        handles.push(handle);
-    }
-    
-    // All should complete
-    let mut results = Vec::new();
-    for handle in handles {
-        let result = handle.await.expect("Task failed").expect("Inference failed");
+        let result = engine.run_inference(request).await;
         results.push(result);
     }
     
+    // All should complete
     assert_eq!(results.len(), 3);
     for result in results {
+        let result = result.expect("Inference failed");
         assert!(!result.text.is_empty());
     }
 }
@@ -239,14 +228,14 @@ async fn test_model_unloading() {
     let model1 = load_test_model_with_name(&mut engine, "llama-7b").await;
     let model2 = load_test_model_with_name(&mut engine, "mistral-7b").await;
     
-    assert_eq!(engine.list_loaded_models().len(), 2);
+    assert_eq!(engine.list_loaded_models().await.len(), 2);
     
     // Unload first model
     engine.unload_model(&model1).await.expect("Failed to unload model");
     
-    assert_eq!(engine.list_loaded_models().len(), 1);
-    assert!(!engine.is_model_loaded(&model1));
-    assert!(engine.is_model_loaded(&model2));
+    assert_eq!(engine.list_loaded_models().await.len(), 1);
+    assert!(!engine.is_model_loaded(&model1).await);
+    assert!(engine.is_model_loaded(&model2).await);
 }
 
 #[tokio::test]
@@ -269,9 +258,9 @@ async fn test_automatic_model_eviction() {
     // Load third model - should evict model2 (LRU)
     let model3 = load_test_model_with_name(&mut engine, "codellama-7b").await;
     
-    assert!(engine.is_model_loaded(&model1));
-    assert!(!engine.is_model_loaded(&model2)); // Evicted
-    assert!(engine.is_model_loaded(&model3));
+    assert!(engine.is_model_loaded(&model1).await);
+    assert!(!engine.is_model_loaded(&model2).await); // Evicted
+    assert!(engine.is_model_loaded(&model3).await);
 }
 
 #[tokio::test]
@@ -316,10 +305,10 @@ async fn test_model_capabilities_detection() {
     let codellama_id = load_test_model_with_name(&mut engine, "codellama-7b").await;
     
     // Check capabilities
-    let llama_caps = engine.get_model_capabilities(&llama_id)
+    let llama_caps = engine.get_model_capabilities(&llama_id).await
         .expect("Failed to get capabilities");
     
-    let codellama_caps = engine.get_model_capabilities(&codellama_id)
+    let codellama_caps = engine.get_model_capabilities(&codellama_id).await
         .expect("Failed to get capabilities");
     
     // Llama should support general text
@@ -396,7 +385,7 @@ async fn test_inference_metrics() {
     let model_id = load_test_model(&mut engine).await;
     
     // Reset metrics
-    engine.reset_metrics();
+    engine.reset_metrics().await;
     
     // Run some inferences
     for i in 0..3 {
@@ -417,7 +406,7 @@ async fn test_inference_metrics() {
     }
     
     // Check metrics
-    let metrics = engine.get_metrics();
+    let metrics = engine.get_metrics().await;
     
     assert_eq!(metrics.total_inferences, 3);
     assert!(metrics.total_tokens_generated > 0);

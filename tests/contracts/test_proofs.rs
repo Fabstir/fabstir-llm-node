@@ -11,6 +11,7 @@ async fn test_proof_submitter_creation() {
         proof_generation_timeout: Duration::from_secs(300),
         max_proof_size: 10 * 1024, // 10KB
         challenge_period: Duration::from_secs(86400), // 24 hours
+        ..Default::default()
     };
     
     let web3_client = create_test_web3_client().await;

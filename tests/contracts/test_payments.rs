@@ -1,4 +1,5 @@
 use fabstir_llm_node::contracts::{PaymentVerifier, PaymentConfig, PaymentStatus, TokenInfo};
+use fabstir_llm_node::{Web3Client, Web3Config};
 use ethers::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +22,7 @@ async fn test_payment_verifier_creation() {
         ],
         min_payment_amount: U256::from(1_000_000), // $1 in USDC
         payment_timeout: Duration::from_secs(3600),
+        platform_fee_percentage: 250, // 2.5%
     };
     
     let web3_client = create_test_web3_client().await;
@@ -158,7 +160,7 @@ async fn test_multi_token_job_payments() {
     
     // Create jobs with different payment tokens
     let usdc_job = create_job_with_token(&web3_client, "USDC", U256::from(100_000_000)).await;
-    let eth_job = create_job_with_token(&web3_client, "ETH", U256::from(1_000_000_000_000_000)).await;
+    let eth_job = create_job_with_token(&web3_client, "ETH", U256::from(1_000_000_000_000_000u64)).await;
     
     // Verify both payments
     let usdc_deposit = verifier.verify_escrow_deposit(usdc_job)

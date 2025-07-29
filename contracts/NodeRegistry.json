@@ -1,0 +1,42 @@
+{
+  "abi": [
+    {
+      "inputs": [
+        {"name": "nodeAddress", "type": "address"},
+        {"name": "supportedModels", "type": "string[]"},
+        {"name": "minPayment", "type": "uint256"}
+      ],
+      "name": "registerNode",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [{"name": "nodeAddress", "type": "address"}],
+      "name": "isNodeRegistered",
+      "outputs": [{"name": "", "type": "bool"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"name": "nodeAddress", "type": "address"}],
+      "name": "getNodeInfo",
+      "outputs": [
+        {"name": "supportedModels", "type": "string[]"},
+        {"name": "minPayment", "type": "uint256"},
+        {"name": "isActive", "type": "bool"}
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {"indexed": true, "name": "node", "type": "address"},
+        {"indexed": false, "name": "supportedModels", "type": "string[]"}
+      ],
+      "name": "NodeRegistered",
+      "type": "event"
+    }
+  ]
+}
