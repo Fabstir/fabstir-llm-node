@@ -113,12 +113,12 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - `tests/results/test_s5_storage.rs`
 - `tests/results/test_proofs.rs`
 
-### Sub-phase 2.4: Payment Integration
+### Sub-phase 2.4: Payment Integration ✅ **COMPLETE**
 
-- [ ] Implement payment tracking
-- [ ] Implement revenue calculation
-- [ ] Implement withdrawal mechanism
-- [ ] Implement fee distribution
+- [x] Implement payment tracking
+- [x] Implement revenue calculation
+- [x] Implement withdrawal mechanism
+- [x] Implement fee distribution
 
 **Test Files:**
 
