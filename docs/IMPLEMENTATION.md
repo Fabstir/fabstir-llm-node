@@ -155,12 +155,12 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - `tests/qa/test_accuracy.rs`
 - `tests/qa/test_ratings.rs`
 
-### Sub-phase 2.7: Storage Integration (**NEW**)
+### Sub-phase 2.7: Storage Integration (**NEW**) ✅ **COMPLETE**
 
-- [ ] Implement S5 client wrapper
-- [ ] Implement model storage on S5
-- [ ] Implement result caching with paths
-- [ ] Implement CBOR compatibility
+- [x] Implement S5 client wrapper
+- [x] Implement model storage on S5
+- [x] Implement result caching with paths
+- [x] Implement CBOR compatibility
 
 **Test Files:**
 
