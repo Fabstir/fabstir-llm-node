@@ -169,10 +169,10 @@ Master implementation tracking for the Fabstir decentralized P2P LLM marketplace
 
 ### Sub-phase 2.8: Vector DB Integration (Current)
 
-- [ ] Implement Vector DB client (mock)
-- [ ] Implement prompt embedding generation
-- [ ] Implement semantic cache lookup
-- [ ] Implement embedding storage
+- [x] Implement Vector DB client (mock)
+- [x] Implement prompt embedding generation
+- [x] Implement semantic cache lookup
+- [x] Implement embedding storage
 
 **Test Files:**
 
