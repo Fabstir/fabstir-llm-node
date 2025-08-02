@@ -13,6 +13,7 @@ pub mod host;
 pub mod qa;
 pub mod storage;
 pub mod vector;
+pub mod ezkl;
 
 // Re-export main types from new modules
 pub use job_processor::{

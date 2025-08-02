@@ -10,6 +10,9 @@ pub use engine::{
     TokenStream, TokenInfo, Model, ModelCapability, EngineCapabilities, EngineMetrics,
     InferenceHandle, ModelCapabilities, ChatMessage
 };
+
+// Create alias for all uses (tests expect this name)
+pub use engine::LlmEngine as InferenceEngine;
 pub use models::{
     ModelRegistry, ModelManager, ModelInfo, ModelSource, ModelRequirements, 
     ModelStatus, DownloadProgress, ModelEvent, ModelEventType, CleanupPolicy,

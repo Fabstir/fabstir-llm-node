@@ -65,6 +65,12 @@ bytes = "1.5"
 # Storage dependencies
 serde_cbor = "0.11"
 
+# EZKL dependencies (for mock implementation)
+blake3 = "1.5"
+
+# Optional: For future real EZKL integration (commented out for now)
+# ezkl = { version = "7.0", optional = true }
+
 [dev-dependencies]
 tokio-test = "0.4"
 mockall = "0.12"
@@ -76,3 +82,6 @@ rand = "0.8"
 [features]
 default = ["inference"]
 inference = []
+
+# Optional: Add feature flag for real EZKL (for future use)
+# real-ezkl = ["ezkl"]
