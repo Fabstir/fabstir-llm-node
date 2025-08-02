@@ -127,12 +127,12 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - `tests/payments/test_withdrawal.rs`
 - `tests/payments/test_fees.rs`
 
-### Sub-phase 2.5: Host Management (**NEW**)
+### Sub-phase 2.5: Host Management (**NEW**) ✅ **COMPLETE**
 
-- [ ] Implement model hosting configuration
-- [ ] Implement pricing per token/minute
-- [ ] Implement availability management
-- [ ] Implement resource monitoring
+- [x] Implement model hosting configuration
+- [x] Implement pricing per token/minute
+- [x] Implement availability management
+- [x] Implement resource monitoring
 
 **Test Files:**
 

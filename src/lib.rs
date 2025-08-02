@@ -9,6 +9,7 @@ pub mod result_submission;
 pub mod payment_claim;
 pub mod results;
 pub mod payments;
+pub mod host;
 
 // Re-export main types from new modules
 pub use job_processor::{
