@@ -5,4 +5,5 @@ mod models {
     mod test_validation;
     mod test_caching;
     mod test_updates;
+    mod test_finetuned;
 }

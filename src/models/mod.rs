@@ -4,6 +4,7 @@ pub mod downloading;
 pub mod validation;
 pub mod caching;
 pub mod updates;
+pub mod finetuned;
 
 // Re-export downloading types
 pub use downloading::{
@@ -38,6 +39,17 @@ pub use updates::{
     UpdateNotification, MigrationPlan, UpdateSchedule,
     RecoveryInfo, UpdateInfo, CleanupResult, MigrationStep,
     BatchUpdateResult, UpdateTracking
+};
+
+// Re-export fine-tuned types
+pub use finetuned::{
+    FineTunedManager, FineTunedConfig, FineTunedModel, BaseModel,
+    FineTuneMetadata, FineTuneType, ModelAdapter, AdapterConfig,
+    FineTuneRegistry, FineTuneStatus, FineTuneCapabilities,
+    ModelMerger, MergeStrategy, FineTuneValidator, 
+    ValidationResult as FineTuneValidationResult,
+    ValidationLevel as FineTuneValidationLevel, 
+    InferenceSession, GenerationConfig, GenerationResponse,
 };
 
 // Common types used across modules
