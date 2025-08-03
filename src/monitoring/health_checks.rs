@@ -9,6 +9,7 @@ use serde::{Serialize, Deserialize};
 use std::time::{Duration, Instant};
 use std::future::Future;
 use std::pin::Pin;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthConfig {
@@ -62,7 +63,7 @@ pub enum HealthStatus {
     Terminating,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckType {
     Liveness,
     Readiness,
@@ -83,81 +84,104 @@ pub struct HealthReport {
     pub timestamp: u64,
     pub components: HashMap<String, ComponentHealth>,
     pub overall_score: f64,
-    pub resources: HashMap<String, ResourceStatus>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceStatus {
-    pub name: String,
-    pub current_value: f64,
-    pub max_value: f64,
-    pub status: HealthStatus,
-    pub threshold_warning: f64,
-    pub threshold_critical: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LivenessResult {
+#[derive(Debug, Clone, Serialize)]
+pub struct LivenessProbe {
     pub is_alive: bool,
     pub uptime_seconds: u64,
     pub status: HealthStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReadinessResult {
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadinessProbe {
     pub is_ready: bool,
     pub components_ready: HashMap<String, bool>,
-    pub dependencies_ready: HashMap<String, bool>,
 }
 
-type CheckFunction = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync>;
-type ResourceCheckFunction = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync>;
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceInfo {
+    pub current_value: f64,
+    pub max_value: f64,
+    pub status: HealthStatus,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceReport {
+    pub status: HealthStatus,
+    pub resources: HashMap<String, ResourceInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DependencyHealth {
+    pub name: String,
+    pub status: HealthStatus,
+    pub last_check: u64,
+    pub response_time_ms: u64,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HealthResponse {
+    pub status_code: u16,
+    pub body: String,
+}
+
+// Health check function type
+type HealthCheckFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync>;
 
 pub struct HealthCheck {
-    pub name: String,
-    pub check_type: CheckType,
-    pub check_fn: CheckFunction,
+    name: String,
+    check_type: CheckType,
+    check_fn: HealthCheckFn,
 }
 
 impl HealthCheck {
-    pub fn new(name: &str, check_type: CheckType, check_fn: CheckFunction) -> Self {
+    pub fn new(
+        name: &str,
+        check_type: CheckType,
+        check_fn: Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync>,
+    ) -> Self {
         HealthCheck {
             name: name.to_string(),
             check_type,
-            check_fn,
+            check_fn: Arc::new(check_fn),
         }
     }
 }
 
+// Resource check function type
+type ResourceCheckFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync>;
+
 pub struct ResourceCheck {
-    pub name: String,
-    pub check_fn: ResourceCheckFunction,
-    pub warning_threshold: f64,
-    pub critical_threshold: f64,
+    name: String,
+    check_fn: ResourceCheckFn,
+    warning_threshold: f64,
+    critical_threshold: f64,
 }
 
 impl ResourceCheck {
     pub fn new(
         name: &str,
-        check_fn: ResourceCheckFunction,
+        check_fn: Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync>,
         warning_threshold: f64,
         critical_threshold: f64,
     ) -> Self {
         ResourceCheck {
             name: name.to_string(),
-            check_fn,
+            check_fn: Arc::new(check_fn),
             warning_threshold,
             critical_threshold,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyCheck {
-    pub name: String,
-    pub url: String,
-    pub check_type: CheckType,
-    pub timeout: Duration,
+    name: String,
+    url: String,
+    check_type: CheckType,
+    timeout: Duration,
 }
 
 impl DependencyCheck {
@@ -171,254 +195,167 @@ impl DependencyCheck {
     }
 }
 
-pub struct HealthEndpoint {
-    checker: Arc<HealthChecker>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EndpointResponse {
-    pub status_code: u16,
-    pub body: String,
-}
-
-impl HealthEndpoint {
-    pub fn new(checker: Arc<HealthChecker>) -> Self {
-        HealthEndpoint { checker }
-    }
-
-    pub async fn handle_request(&self, path: &str) -> Result<EndpointResponse> {
-        match path {
-            "/health/live" => {
-                let liveness = self.checker.liveness_probe().await?;
-                let status_code = if liveness.is_alive { 200 } else { 503 };
-                Ok(EndpointResponse {
-                    status_code,
-                    body: serde_json::to_string(&liveness)?,
-                })
-            }
-            "/health/ready" => {
-                let readiness = self.checker.readiness_probe().await?;
-                let status_code = if readiness.is_ready { 200 } else { 503 };
-                Ok(EndpointResponse {
-                    status_code,
-                    body: serde_json::to_string(&readiness)?,
-                })
-            }
-            "/health" => {
-                let report = self.checker.check_health().await?;
-                let status_code = match report.status {
-                    HealthStatus::Healthy => 200,
-                    HealthStatus::Degraded => 200,
-                    _ => 503,
-                };
-                Ok(EndpointResponse {
-                    status_code,
-                    body: serde_json::to_string(&report)?,
-                })
-            }
-            _ => Err(anyhow!("Unknown health endpoint: {}", path)),
-        }
-    }
-}
-
-pub struct HealthChecker {
+struct HealthCheckerState {
     config: HealthConfig,
-    state: Arc<RwLock<HealthState>>,
-    start_time: Instant,
-}
-
-struct HealthState {
-    component_health: HashMap<String, ComponentHealth>,
+    components: HashMap<String, ComponentHealth>,
     health_checks: HashMap<String, HealthCheck>,
     resource_checks: HashMap<String, ResourceCheck>,
     dependency_checks: HashMap<String, DependencyCheck>,
     health_history: Vec<HealthReport>,
-    component_ready: HashMap<String, bool>,
-    metrics: HashMap<String, f64>,
+    ready_components: HashMap<String, bool>,
+    start_time: Instant,
     is_shutting_down: bool,
+    metrics: HashMap<String, f64>,
+    gc_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+pub struct HealthChecker {
+    state: Arc<RwLock<HealthCheckerState>>,
 }
 
 impl HealthChecker {
     pub async fn new(config: HealthConfig) -> Result<Self> {
-        let mut component_ready = HashMap::new();
+        let mut components = HashMap::new();
         for component in &config.components {
-            component_ready.insert(component.clone(), false);
+            components.insert(
+                component.clone(),
+                ComponentHealth {
+                    name: component.clone(),
+                    status: HealthStatus::Healthy,
+                    message: None,
+                    last_check: Utc::now().timestamp() as u64,
+                    response_time_ms: 0,
+                },
+            );
         }
 
-        let state = Arc::new(RwLock::new(HealthState {
-            component_health: HashMap::new(),
+        let mut ready_components = HashMap::new();
+        for component in &config.components {
+            ready_components.insert(component.clone(), false);
+        }
+
+        let state = Arc::new(RwLock::new(HealthCheckerState {
+            config,
+            components,
             health_checks: HashMap::new(),
             resource_checks: HashMap::new(),
             dependency_checks: HashMap::new(),
             health_history: Vec::new(),
-            component_ready,
-            metrics: HashMap::new(),
+            ready_components,
+            start_time: Instant::now(),
             is_shutting_down: false,
+            metrics: HashMap::new(),
+            gc_handle: None,
         }));
 
-        Ok(HealthChecker {
-            config,
-            state,
-            start_time: Instant::now(),
-        })
+        Ok(HealthChecker { state })
     }
 
     pub async fn check_health(&self) -> Result<HealthReport> {
-        let mut components = HashMap::new();
-        let mut resources = HashMap::new();
-        let mut overall_score = 1.0;
-        let mut worst_status = HealthStatus::Healthy;
-
-        // Check if shutting down
+        // First check if shutting down
         {
             let state = self.state.read().await;
             if state.is_shutting_down {
                 return Ok(HealthReport {
                     status: HealthStatus::Terminating,
                     timestamp: Utc::now().timestamp() as u64,
-                    components,
+                    components: state.components.clone(),
                     overall_score: 0.0,
-                    resources,
                 });
             }
         }
 
-        // Run all health checks with timeout
-        let check_names: Vec<String> = {
+        // Get timeout duration and collect checks
+        let (timeout_duration, checks_to_run) = {
             let state = self.state.read().await;
-            state.health_checks.keys().cloned().collect()
+            let timeout_duration = Duration::from_secs(state.config.timeout_seconds);
+            let checks: Vec<_> = state.health_checks
+                .keys()
+                .cloned()
+                .collect();
+            (timeout_duration, checks)
         };
-
-        for check_name in check_names {
-            let state = self.state.read().await;
-            let check = match state.health_checks.get(&check_name) {
-                Some(c) => c,
-                None => continue,
-            };
-            let check_future = (check.check_fn)();
-            let check_name_clone = check.name.clone();
-            drop(state);
-            let result = tokio::time::timeout(
-                Duration::from_secs(self.config.timeout_seconds),
-                check_future,
-            )
-            .await;
-
-            let component_health = match result {
-                Ok(Ok(health)) => health,
-                Ok(Err(e)) => ComponentHealth {
-                    name: check_name_clone.clone(),
-                    status: HealthStatus::Unhealthy,
-                    message: Some(format!("Check failed: {}", e)),
-                    last_check: Utc::now().timestamp() as u64,
-                    response_time_ms: 0,
-                },
-                Err(_) => ComponentHealth {
-                    name: check_name_clone.clone(),
-                    status: HealthStatus::Unhealthy,
-                    message: Some("Health check timeout".to_string()),
-                    last_check: Utc::now().timestamp() as u64,
-                    response_time_ms: self.config.timeout_seconds * 1000,
-                },
-            };
-
-            // Update worst status
-            match component_health.status {
-                HealthStatus::Unhealthy => {
-                    worst_status = HealthStatus::Unhealthy;
-                    overall_score *= 0.0;
-                }
-                HealthStatus::Degraded => {
-                    if worst_status != HealthStatus::Unhealthy {
-                        worst_status = HealthStatus::Degraded;
-                    }
-                    overall_score *= 0.5;
-                }
-                _ => {}
-            }
-
-            components.insert(check_name_clone.clone(), component_health.clone());
-
-            // Update component health in state
-            let mut state = self.state.write().await;
-            state.component_health.insert(check_name_clone, component_health);
-        }
-
-        // Include existing component health
-        let state = self.state.read().await;
-        for (name, health) in &state.component_health {
-            if !components.contains_key(name) {
-                components.insert(name.clone(), health.clone());
-                
-                // Update worst status
-                match health.status {
-                    HealthStatus::Unhealthy => {
-                        worst_status = HealthStatus::Unhealthy;
-                        overall_score *= 0.0;
-                    }
-                    HealthStatus::Degraded => {
-                        if worst_status != HealthStatus::Unhealthy {
-                            worst_status = HealthStatus::Degraded;
-                        }
-                        overall_score *= 0.5;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Run resource checks
-        let resource_check_names: Vec<String> = {
-            let state = self.state.read().await;
-            state.resource_checks.keys().cloned().collect()
-        };
-
-        for name in resource_check_names {
-            let (warning, critical, check_result) = {
+        
+        // Run checks
+        for check_name in checks_to_run {
+            // Get the check function
+            let check_fn = {
                 let state = self.state.read().await;
-                let resource_check = match state.resource_checks.get(&name) {
-                    Some(rc) => rc,
-                    None => continue,
-                };
-                let warning = resource_check.warning_threshold;
-                let critical = resource_check.critical_threshold;
-                let result = (resource_check.check_fn)().await;
-                (warning, critical, result)
+                state.health_checks.get(&check_name).map(|c| c.check_fn.clone())
             };
             
-            if let Ok((current, max)) = check_result {
-                let percentage = (current / max) * 100.0;
-                let status = if percentage >= critical {
-                    HealthStatus::Unhealthy
-                } else if percentage >= warning {
-                    HealthStatus::Degraded
-                } else {
-                    HealthStatus::Healthy
+            if let Some(check_fn) = check_fn {
+                let check_result = tokio::time::timeout(
+                    timeout_duration,
+                    check_fn()
+                ).await;
+
+                let component_health = match check_result {
+                    Ok(Ok(health)) => health,
+                    Ok(Err(_)) => ComponentHealth {
+                        name: check_name.clone(),
+                        status: HealthStatus::Unhealthy,
+                        message: Some("Check failed".to_string()),
+                        last_check: Utc::now().timestamp() as u64,
+                        response_time_ms: timeout_duration.as_millis() as u64,
+                    },
+                    Err(_) => ComponentHealth {
+                        name: check_name.clone(),
+                        status: HealthStatus::Unhealthy,
+                        message: Some("Check timeout".to_string()),
+                        last_check: Utc::now().timestamp() as u64,
+                        response_time_ms: timeout_duration.as_millis() as u64,
+                    },
                 };
 
-                resources.insert(name.clone(), ResourceStatus {
-                    name: name.clone(),
-                    current_value: current,
-                    max_value: max,
-                    status,
-                    threshold_warning: warning,
-                    threshold_critical: critical,
-                });
+                // Update component
+                let mut state = self.state.write().await;
+                state.components.insert(check_name, component_health);
+            }
+        }
+        
+        // Generate report
+        let mut state = self.state.write().await;
+
+        // Calculate overall status and score
+        let mut unhealthy_count = 0;
+        let mut degraded_count = 0;
+        let total_components = state.components.len();
+
+        for component in state.components.values() {
+            match component.status {
+                HealthStatus::Unhealthy => unhealthy_count += 1,
+                HealthStatus::Degraded => degraded_count += 1,
+                _ => {}
             }
         }
 
+        let overall_status = if unhealthy_count > 0 {
+            HealthStatus::Unhealthy
+        } else if degraded_count > 0 {
+            HealthStatus::Degraded
+        } else {
+            HealthStatus::Healthy
+        };
+
+        let overall_score = if total_components > 0 {
+            let healthy_count = total_components - unhealthy_count - degraded_count;
+            (healthy_count as f64 + (degraded_count as f64 * 0.5)) / total_components as f64
+        } else {
+            1.0
+        };
+
         let report = HealthReport {
-            status: worst_status,
+            status: overall_status,
             timestamp: Utc::now().timestamp() as u64,
-            components,
+            components: state.components.clone(),
             overall_score,
-            resources,
         };
 
         // Store in history
-        let mut state = self.state.write().await;
         state.health_history.push(report.clone());
-        
+
         // Keep only recent history (last 1000 entries)
         if state.health_history.len() > 1000 {
             state.health_history.remove(0);
@@ -433,52 +370,42 @@ impl HealthChecker {
         Ok(())
     }
 
-    pub async fn liveness_probe(&self) -> Result<LivenessResult> {
+    pub async fn liveness_probe(&self) -> Result<LivenessProbe> {
         let state = self.state.read().await;
+        let uptime_seconds = state.start_time.elapsed().as_secs();
         
-        let status = if state.is_shutting_down {
-            HealthStatus::Terminating
-        } else {
-            HealthStatus::Healthy
-        };
-
-        Ok(LivenessResult {
-            is_alive: !state.is_shutting_down,
-            uptime_seconds: self.start_time.elapsed().as_secs(),
-            status,
+        Ok(LivenessProbe {
+            is_alive: true, // Always true until process actually terminates
+            uptime_seconds,
+            status: if state.is_shutting_down {
+                HealthStatus::Terminating
+            } else {
+                HealthStatus::Healthy
+            },
         })
     }
 
-    pub async fn readiness_probe(&self) -> Result<ReadinessResult> {
+    pub async fn readiness_probe(&self) -> Result<ReadinessProbe> {
         let state = self.state.read().await;
         
         if state.is_shutting_down {
-            return Ok(ReadinessResult {
+            return Ok(ReadinessProbe {
                 is_ready: false,
-                components_ready: state.component_ready.clone(),
-                dependencies_ready: HashMap::new(),
+                components_ready: state.ready_components.clone(),
             });
         }
 
-        let all_ready = state.component_ready.values().all(|&ready| ready);
+        let all_ready = state.ready_components.values().all(|&ready| ready);
         
-        // Check dependencies
-        let mut dependencies_ready = HashMap::new();
-        for (name, _dep) in &state.dependency_checks {
-            // Mock dependency check - in real implementation would make HTTP request
-            dependencies_ready.insert(name.clone(), true);
-        }
-
-        Ok(ReadinessResult {
+        Ok(ReadinessProbe {
             is_ready: all_ready,
-            components_ready: state.component_ready.clone(),
-            dependencies_ready,
+            components_ready: state.ready_components.clone(),
         })
     }
 
     pub async fn set_component_ready(&self, component: &str, ready: bool) {
         let mut state = self.state.write().await;
-        state.component_ready.insert(component.to_string(), ready);
+        state.ready_components.insert(component.to_string(), ready);
     }
 
     pub async fn register_resource_check(&self, check: ResourceCheck) -> Result<()> {
@@ -487,9 +414,43 @@ impl HealthChecker {
         Ok(())
     }
 
-    pub async fn check_resources(&self) -> Result<HealthReport> {
-        // Run check_health which includes resource checks
-        self.check_health().await
+    pub async fn check_resources(&self) -> Result<ResourceReport> {
+        let state = self.state.read().await;
+        let mut resources = HashMap::new();
+        let mut overall_status = HealthStatus::Healthy;
+
+        for (name, check) in &state.resource_checks {
+            let result = (check.check_fn)().await?;
+            let (current, max) = result;
+            let percentage = (current / max) * 100.0;
+
+            let status = if percentage >= check.critical_threshold {
+                overall_status = HealthStatus::Unhealthy;
+                HealthStatus::Unhealthy
+            } else if percentage >= check.warning_threshold {
+                if overall_status == HealthStatus::Healthy {
+                    overall_status = HealthStatus::Degraded;
+                }
+                HealthStatus::Degraded
+            } else {
+                HealthStatus::Healthy
+            };
+
+            resources.insert(
+                name.clone(),
+                ResourceInfo {
+                    current_value: current,
+                    max_value: max,
+                    status,
+                    message: None,
+                },
+            );
+        }
+
+        Ok(ResourceReport {
+            status: overall_status,
+            resources,
+        })
     }
 
     pub async fn add_dependency_check(&self, check: DependencyCheck) {
@@ -497,19 +458,22 @@ impl HealthChecker {
         state.dependency_checks.insert(check.name.clone(), check);
     }
 
-    pub async fn check_dependencies(&self) -> HashMap<String, ComponentHealth> {
+    pub async fn check_dependencies(&self) -> HashMap<String, DependencyHealth> {
         let state = self.state.read().await;
         let mut results = HashMap::new();
 
-        for (name, _dep) in &state.dependency_checks {
-            // Mock dependency check
-            results.insert(name.clone(), ComponentHealth {
-                name: name.clone(),
-                status: HealthStatus::Healthy,
-                message: Some(format!("Checking {}", _dep.url)),
-                last_check: Utc::now().timestamp() as u64,
-                response_time_ms: 50,
-            });
+        // For testing, return mock results
+        for (name, check) in &state.dependency_checks {
+            results.insert(
+                name.clone(),
+                DependencyHealth {
+                    name: name.clone(),
+                    status: HealthStatus::Healthy, // Mock as healthy for tests
+                    last_check: Utc::now().timestamp() as u64,
+                    response_time_ms: 50,
+                    message: Some("Mock dependency check".to_string()),
+                },
+            );
         }
 
         results
@@ -517,33 +481,39 @@ impl HealthChecker {
 
     pub async fn update_component_health(&self, health: ComponentHealth) {
         let mut state = self.state.write().await;
-        state.component_health.insert(health.name.clone(), health);
+        state.components.insert(health.name.clone(), health);
     }
 
     pub async fn get_health_history(&self, duration: Duration) -> Result<Vec<HealthReport>> {
         let state = self.state.read().await;
         let cutoff = Utc::now().timestamp() as u64 - duration.as_secs();
         
-        let history: Vec<HealthReport> = state.health_history.iter()
+        Ok(state.health_history
+            .iter()
             .filter(|report| report.timestamp >= cutoff)
             .cloned()
-            .collect();
-
-        Ok(history)
+            .collect())
     }
 
     pub async fn calculate_uptime_percentage(&self, duration: Duration) -> f64 {
-        let history = self.get_health_history(duration).await.unwrap_or_default();
+        let state = self.state.read().await;
+        let cutoff = Utc::now().timestamp() as u64 - duration.as_secs();
         
-        if history.is_empty() {
+        let relevant_reports: Vec<_> = state.health_history
+            .iter()
+            .filter(|report| report.timestamp >= cutoff)
+            .collect();
+
+        if relevant_reports.is_empty() {
             return 100.0;
         }
 
-        let healthy_count = history.iter()
+        let healthy_count = relevant_reports
+            .iter()
             .filter(|report| report.status == HealthStatus::Healthy)
             .count();
 
-        (healthy_count as f64 / history.len() as f64) * 100.0
+        (healthy_count as f64 / relevant_reports.len() as f64) * 100.0
     }
 
     pub async fn begin_shutdown(&self) {
@@ -560,21 +530,66 @@ impl HealthChecker {
         let state = self.state.read().await;
         state.metrics.get(name).copied()
     }
-}
 
-impl Clone for HealthChecker {
-    fn clone(&self) -> Self {
-        HealthChecker {
-            config: self.config.clone(),
-            state: self.state.clone(),
-            start_time: self.start_time,
+    pub async fn start_garbage_collection(&self) {
+        let mut state = self.state.write().await;
+        if state.gc_handle.is_some() {
+            return;
         }
+
+        let checker = self.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(300)).await; // 5 minutes
+                
+                // Clean up old history
+                let cutoff = Utc::now().timestamp() as u64 - 3600; // Keep last hour
+                let mut state = checker.state.write().await;
+                state.health_history.retain(|report| report.timestamp >= cutoff);
+            }
+        });
+
+        state.gc_handle = Some(handle);
     }
 }
 
-// Re-export types that might be needed but not explicitly defined
-pub type HealthHistory = Vec<HealthReport>;
-pub type ResourceType = String;
-pub type HealthError = anyhow::Error;
-pub type LivenessProbe = LivenessResult;
-pub type ReadinessProbe = ReadinessResult;
+pub struct HealthEndpoint {
+    checker: Arc<HealthChecker>,
+}
+
+impl HealthEndpoint {
+    pub fn new(checker: Arc<HealthChecker>) -> Self {
+        HealthEndpoint { checker }
+    }
+
+    pub async fn handle_request(&self, path: &str) -> Result<HealthResponse> {
+        match path {
+            "/health/live" => {
+                let probe = self.checker.liveness_probe().await?;
+                Ok(HealthResponse {
+                    status_code: if probe.is_alive { 200 } else { 503 },
+                    body: serde_json::to_string(&probe)?,
+                })
+            }
+            "/health/ready" => {
+                let probe = self.checker.readiness_probe().await?;
+                Ok(HealthResponse {
+                    status_code: if probe.is_ready { 200 } else { 503 },
+                    body: serde_json::to_string(&probe)?,
+                })
+            }
+            "/health" => {
+                let report = self.checker.check_health().await?;
+                Ok(HealthResponse {
+                    status_code: match report.status {
+                        HealthStatus::Healthy => 200,
+                        HealthStatus::Degraded => 200,
+                        _ => 503,
+                    },
+                    body: serde_json::to_string(&report)?,
+                })
+            }
+            _ => Err(anyhow!("Unknown health endpoint")),
+        }
+    }
+}

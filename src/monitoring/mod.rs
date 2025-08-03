@@ -17,7 +17,8 @@ pub use health_checks::{
     HealthChecker, HealthConfig, HealthStatus, ComponentHealth,
     CheckType, HealthCheck, HealthReport, DependencyCheck,
     ResourceCheck, ThresholdConfig, HealthEndpoint,
-    ResourceType, HealthHistory, LivenessProbe, ReadinessProbe, HealthError,
+    LivenessProbe, ReadinessProbe, ResourceInfo, ResourceReport,
+    DependencyHealth, HealthResponse,
 };
 
 pub use alerting::{
