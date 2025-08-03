@@ -28,7 +28,8 @@ hyper = "1.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # LLM Inference
-llama-cpp-2 = { version = "0.1.55", features = ["cuda"] }
+# TODO: Re-enable CUDA for production: features = ["cuda"]
+llama-cpp-2 = { version = "0.1.55" }
 
 # Model Management  
 hf-hub = "0.3"

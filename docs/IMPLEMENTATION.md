@@ -204,6 +204,14 @@ Master implementation tracking for the Fabstir decentralized P2P LLM marketplace
 - [x] Implement model caching
 - [x] Implement model updates
 
+# TODO: Fix test API mismatches in Phase 3.2 tests
+
+# - Update method signatures in test files
+
+# - Adjust type imports to match src/models/mod.rs
+
+# - Ensure all 52 tests compile and pass
+
 **Test Files:**
 
 - `tests/models/test_downloading.rs`
@@ -213,10 +221,10 @@ Master implementation tracking for the Fabstir decentralized P2P LLM marketplace
 
 ### Sub-phase 3.3: Performance Optimization
 
-- [ ] Implement GPU management
-- [ ] Implement batching
-- [ ] Implement caching
-- [ ] Implement load balancing
+- [x] Implement GPU management
+- [x] Implement batching
+- [x] Implement caching
+- [x] Implement load balancing
 
 **Test Files:**
 
