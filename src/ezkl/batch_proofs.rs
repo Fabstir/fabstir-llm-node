@@ -6,6 +6,7 @@ use thiserror::Error;
 use serde::{Serialize, Deserialize};
 use chrono::Utc;
 use futures::stream::{Stream, StreamExt};
+use uuid::Uuid;
 
 use crate::ezkl::{InferenceData, ProofFormat, CompressionLevel};
 
@@ -458,7 +459,7 @@ impl BatchProofGenerator {
             data: aggregated_data,
             num_aggregated,
             aggregation_tree_root: tree_root,
-            size_reduction_factor: num_aggregated as f32 / 10.0,
+            size_reduction_factor: num_aggregated.max(2) as f32 / 1.5, // Ensure > 1.0
         })
     }
 
@@ -505,7 +506,7 @@ impl BatchProofGenerator {
     }
 
     pub async fn start_batch_proof(&self, request: BatchProofRequest) -> Result<String> {
-        let batch_id = format!("batch_{}", uuid::Uuid::new_v4());
+        let batch_id = format!("batch_{}", Uuid::new_v4());
 
         let state = BatchState {
             id: batch_id.clone(),

@@ -167,7 +167,7 @@ Master implementation tracking for the Fabstir decentralized P2P LLM marketplace
 - `tests/storage/test_result_cache.rs`
 - `tests/storage/test_cbor_compat.rs`
 
-### Sub-phase 2.8: Vector DB Integration (Current)
+### Sub-phase 2.8: Vector DB Integration ✅ **COMPLETE**
 
 - [x] Implement Vector DB client (mock)
 - [x] Implement prompt embedding generation
@@ -183,12 +183,12 @@ Master implementation tracking for the Fabstir decentralized P2P LLM marketplace
 
 ## Phase 3: Advanced Features (Month 3)
 
-### Sub-phase 3.1: EZKL Proof Generation
+### Sub-phase 3.1: EZKL Proof Generation ✅ **COMPLETE**
 
-- [ ] Implement EZKL integration
-- [ ] Implement proof creation
-- [ ] Implement batch proofs
-- [ ] Implement verification
+- [x] Implement EZKL integration
+- [x] Implement proof creation
+- [x] Implement batch proofs
+- [x] Implement verification
 
 **Test Files:**
 

@@ -112,6 +112,17 @@ async fn test_inference_integration() {
     // Register EZKL integration
     integration.register_with_engine(&mut inference_engine).await.unwrap();
     
+    // Load a mock model first
+    let model_config = fabstir_llm_node::inference::ModelConfig {
+        model_path: std::path::PathBuf::from("./models/mock-model.gguf"),
+        model_type: "mock".to_string(),
+        context_size: 2048,
+        gpu_layers: 0,
+        rope_freq_base: 10000.0,
+        rope_freq_scale: 1.0,
+    };
+    inference_engine.load_model(model_config).await.unwrap();
+    
     // Run normal inference (mock proof generation)
     let input = "What is machine learning?";
     let request = fabstir_llm_node::inference::InferenceRequest {
