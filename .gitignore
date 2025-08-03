@@ -28,18 +28,18 @@ test-data/
 # Logs
 *.log
 
-# Model files (large)
-models/
+# Model files (large) - only in root directory
+/models/
 *.gguf
+*.ggml
 *.bin
 
 # Temporary files
 tmp/
 temp/
 
-# Model files
-models/
-*.gguf
-*.ggml
-
+# Cargo
 .cargo/
+
+# Make sure src/models/ is NOT ignored
+!src/models/
