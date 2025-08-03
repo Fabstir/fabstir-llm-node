@@ -69,6 +69,9 @@ serde_cbor = "0.11"
 # EZKL dependencies (for mock implementation)
 blake3 = "1.5"
 
+# System monitoring dependencies
+sysinfo = "0.30"
+
 # Optional: For future real EZKL integration (commented out for now)
 # ezkl = { version = "7.0", optional = true }
 

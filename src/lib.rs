@@ -16,6 +16,7 @@ pub mod vector;
 pub mod ezkl;
 pub mod models;
 pub mod performance;
+pub mod monitoring;
 
 // Re-export main types from new modules
 pub use job_processor::{
