@@ -7,6 +7,7 @@ pub mod updates;
 pub mod finetuned;
 pub mod private;
 pub mod gdpr;
+pub mod specialization;
 
 // Re-export downloading types
 pub use downloading::{
@@ -71,6 +72,20 @@ pub use gdpr::{
     RegionalPreference, ZkComplianceProof, EncryptedData,
     P2PGdprNetwork, OnChainConsent, UserControlledData,
     AnonymizationProof, AuditProof, ComplianceAttestation,
+};
+
+// Re-export specialization types
+pub use specialization::{
+    SpecializationManager, SpecializationConfig, ModelSpecialization,
+    DomainType, TaskType, LanguageSupport, IndustryVertical,
+    SpecializedModel, SpecializationMetrics, TokenizerConfig,
+    InferencePipeline, EnsembleStrategy, BenchmarkResult,
+    QueryAnalyzer, CostOptimizer, SpecializationMarketplace,
+    PerformanceProfile, AccuracyRequirement, SpecializedRouter,
+    RegistrationResult, QueryAnalysis, TokenizationResult, PipelineResult,
+    EnsembleInfo, EnsembleResult, DetectionResult, CostProfile,
+    CostRequirements, CostOptimalModel, MarketplaceListing, PricingModel,
+    MarketplaceRatings, SearchCriteria, TransactionType, Transaction,
 };
 
 // Common types used across modules
