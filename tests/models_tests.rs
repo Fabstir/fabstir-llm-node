@@ -6,4 +6,5 @@ mod models {
     mod test_caching;
     mod test_updates;
     mod test_finetuned;
+    mod test_private;
 }

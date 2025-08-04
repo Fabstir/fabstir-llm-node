@@ -5,6 +5,7 @@ pub mod validation;
 pub mod caching;
 pub mod updates;
 pub mod finetuned;
+pub mod private;
 
 // Re-export downloading types
 pub use downloading::{
@@ -50,6 +51,16 @@ pub use finetuned::{
     ValidationResult as FineTuneValidationResult,
     ValidationLevel as FineTuneValidationLevel, 
     InferenceSession, GenerationConfig, GenerationResponse,
+};
+
+// Re-export private model types
+pub use private::{
+    PrivateModelManager, PrivateModelConfig, PrivateModel, AccessLevel,
+    ModelOwner, AccessToken, ModelLicense, LicenseType, UsagePolicy,
+    PrivateModelRegistry, ModelVisibility, SharingSettings, AuditLog,
+    EncryptionConfig, StorageIsolation, AccessControl, RateLimits,
+    ExportPolicy, StorageInfo, UsageStats, LicenseAcceptance,
+    IsolatedSession, ApiSession,
 };
 
 // Common types used across modules

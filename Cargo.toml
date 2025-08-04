@@ -72,6 +72,11 @@ blake3 = "1.5"
 # System monitoring dependencies
 sysinfo = "0.30"
 
+# Encryption dependencies
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+base64 = "0.22"
+
 # Optional: For future real EZKL integration (commented out for now)
 # ezkl = { version = "7.0", optional = true }
 
