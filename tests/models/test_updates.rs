@@ -157,6 +157,7 @@ async fn test_update_strategies() {
             UpdateStrategy::Balanced => assert!(!should_update),
             UpdateStrategy::Aggressive => assert!(should_update),
             UpdateStrategy::SecurityOnly => assert!(!should_update),
+            UpdateStrategy::Manual => assert!(!should_update),
         }
     }
 }
@@ -214,11 +215,13 @@ async fn test_update_verification() {
     
     match verification_result {
         Ok(verified) => assert!(verified),
-        Err(UpdateError::VerificationFailed { reason }) => {
-            // Mock might not match - that's ok
-            assert!(!reason.is_empty());
+        Err(e) => match e.downcast_ref::<UpdateError>() {
+            Some(UpdateError::VerificationFailed { reason }) => {
+                // Mock might not match - that's ok
+                assert!(!reason.is_empty());
+            }
+            _ => panic!("Unexpected error: {:?}", e),
         }
-        Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }
 
@@ -276,6 +279,8 @@ async fn test_update_notifications() {
             UpdateNotification::UpdateCompleted { .. } => {}
             UpdateNotification::UpdateFailed { .. } => {}
             UpdateNotification::RollbackCompleted { .. } => {}
+            UpdateNotification::HotUpdateAvailable { .. } => {}
+            UpdateNotification::RollbackInitiated { .. } => {}
         }
     }
 }

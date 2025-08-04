@@ -3,6 +3,7 @@ name = "fabstir-llm-node"
 version = "0.1.0"
 edition = "2021"
 
+
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
 libp2p = { version = "0.54", features = ["kad", "mdns", "noise", "tcp", "yamux", "websocket", "quic", "identify", "rendezvous", "macros", "serde", "tokio", "dns", "request-response"] }
@@ -76,6 +77,9 @@ sysinfo = "0.30"
 aes-gcm = "0.10"
 pbkdf2 = "0.12"
 base64 = "0.22"
+
+# GDPR module dependencies
+bs58 = "0.5"
 
 # Optional: For future real EZKL integration (commented out for now)
 # ezkl = { version = "7.0", optional = true }

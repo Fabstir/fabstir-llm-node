@@ -6,6 +6,7 @@ pub mod caching;
 pub mod updates;
 pub mod finetuned;
 pub mod private;
+pub mod gdpr;
 
 // Re-export downloading types
 pub use downloading::{
@@ -61,6 +62,15 @@ pub use private::{
     EncryptionConfig, StorageIsolation, AccessControl, RateLimits,
     ExportPolicy, StorageInfo, UsageStats, LicenseAcceptance,
     IsolatedSession, ApiSession,
+};
+
+// Re-export GDPR compliance types
+pub use gdpr::{
+    DecentralizedGdprManager, GdprConfig, UserKeys, SignedRequest,
+    ConsentRecord, DeletionBroadcast, PortableDataPackage, 
+    RegionalPreference, ZkComplianceProof, EncryptedData,
+    P2PGdprNetwork, OnChainConsent, UserControlledData,
+    AnonymizationProof, AuditProof, ComplianceAttestation,
 };
 
 // Common types used across modules

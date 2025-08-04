@@ -17,6 +17,7 @@ async fn create_test_downloader() -> Result<ModelDownloader> {
         retry_policy: RetryPolicy::default(),
         verify_checksum: true,
         use_cache: true,
+        max_bandwidth_bytes_per_sec: None,
     };
     
     ModelDownloader::new(config).await
@@ -212,12 +213,14 @@ async fn test_download_with_checksum_verification() {
             assert_eq!(download_result.status, DownloadStatus::Completed);
             assert!(download_result.checksum_verified);
         }
-        Err(DownloadError::ChecksumMismatch { expected, actual }) => {
-            // This is also valid if checksums don't match
-            assert_eq!(expected, expected_checksum);
-            assert!(!actual.is_empty());
+        Err(e) => match e.downcast_ref::<DownloadError>() {
+            Some(DownloadError::ChecksumMismatch { expected, actual }) => {
+                // This is also valid if checksums don't match
+                assert_eq!(expected, &expected_checksum);
+                assert!(!actual.is_empty());
+            }
+            _ => panic!("Unexpected error: {:?}", e),
         }
-        Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }
 
@@ -243,8 +246,8 @@ async fn test_download_retry_on_failure() {
     
     // Should eventually succeed after retries
     assert!(result.is_ok() || matches!(
-        result,
-        Err(DownloadError::MaxRetriesExceeded { attempts: 3 })
+        result.as_ref().err().and_then(|e| e.downcast_ref::<DownloadError>()),
+        Some(DownloadError::MaxRetriesExceeded { attempts: 3 })
     ));
 }
 
@@ -339,12 +342,14 @@ async fn test_storage_space_check() {
     
     // Should handle insufficient space gracefully
     match result {
-        Err(DownloadError::InsufficientSpace { required, available }) => {
-            assert!(required > available);
-        }
+        Err(e) => match e.downcast_ref::<DownloadError>() {
+            Some(DownloadError::InsufficientSpace { required, available }) => {
+                assert!(required > available);
+            }
+            _ => panic!("Unexpected error: {:?}", e),
+        },
         Ok(_) => {
             // Mock might succeed - that's ok too
         }
-        Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }

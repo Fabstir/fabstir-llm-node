@@ -131,6 +131,9 @@ async fn test_hardware_compatibility() {
         min_disk_gb: 20,
         cuda_compute_capability: Some(7.0),
         cpu_features: vec!["avx2".to_string()],
+        gpu_compute_capability: Some("7.0".to_string()),
+        supports_cpu: true,
+        supports_gpu: true,
     };
     
     let compat_result = validator
@@ -217,9 +220,9 @@ async fn test_model_size_validation() {
     match result {
         Err(e) => {
             match e.downcast::<ValidationError>() {
-                Ok(ValidationError::ModelTooLarge { size_gb, max_gb }) => {
-                    assert!(size_gb > max_gb);
-                    assert_eq!(max_gb, 100.0);
+                Ok(ValidationError::ModelTooLarge { size_gb, limit_gb }) => {
+                    assert!(size_gb > limit_gb);
+                    assert_eq!(limit_gb, 100);
                 }
                 _ => panic!("Expected ModelTooLarge error"),
             }

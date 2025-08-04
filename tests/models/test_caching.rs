@@ -106,8 +106,8 @@ async fn test_memory_limit_enforcement() {
             Ok(_) => loaded_count += 1,
             Err(e) => {
                 // Should eventually hit memory limit
-                match e.downcast::<CacheError>() {
-                    Ok(CacheError::InsufficientMemory { .. }) => break,
+                match e.downcast_ref::<CacheError>() {
+                    Some(CacheError::InsufficientMemory { .. }) => break,
                     _ => panic!("Unexpected error: {:?}", e),
                 }
             }
@@ -387,8 +387,8 @@ async fn test_memory_pressure_handling() {
             assert!(metrics.memory_usage_gb + 2.0 <= 8.0); // Respects min free memory
         }
         Err(e) => {
-            match e.downcast::<CacheError>() {
-                Ok(CacheError::InsufficientMemory { .. }) => {
+            match e.downcast_ref::<CacheError>() {
+                Some(CacheError::InsufficientMemory { .. }) => {
                     // Expected if model is too large
                 }
                 _ => panic!("Unexpected error: {:?}", e),
