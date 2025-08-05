@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js for tooling
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
 # Install Rust tools (with --locked flag for stability)
@@ -46,9 +46,9 @@ ENV RUSTC_WRAPPER=sccache
 
 WORKDIR /workspace
 
-# Copy YOLO scripts
-COPY yolo-runner.sh test-watcher.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/*.sh
+# Copy test watcher script
+COPY test-watcher.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/test-watcher.sh
 
 # Create developer user
 RUN useradd -m -s /bin/bash developer && \
@@ -57,5 +57,3 @@ RUN useradd -m -s /bin/bash developer && \
 # Switch to developer user
 USER developer
 WORKDIR /workspace
-
-ENTRYPOINT ["/usr/local/bin/yolo-runner.sh"]

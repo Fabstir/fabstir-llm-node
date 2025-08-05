@@ -1,5 +1,6 @@
 pub mod cbor_compat;
 pub mod s5_client;
+pub mod enhanced_s5_client;
 pub mod model_storage;
 pub mod result_cache;
 

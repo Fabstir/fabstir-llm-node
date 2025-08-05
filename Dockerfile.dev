@@ -1,0 +1,16 @@
+FROM rust:1.75-bullseye as development
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build && rm -rf src
+VOLUME ["/workspace"]
+ENV RUST_BACKTRACE=1
+CMD ["bash"]

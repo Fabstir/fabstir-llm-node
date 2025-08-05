@@ -1,80 +1,73 @@
-# Fabstir LLM Marketplace - Master Implementation Plan
-
-## Recent Milestones 🎉
-
-- **2025-01-28**: Successfully implemented real LLaMA inference!
-  - Fixed memory corruption issues by switching from llama_cpp_rs to llama-cpp-2
-  - Achieved stable text generation with GGUF model support
-  - Ready for GPU acceleration with RTX 4090
+# Fabstir LLM Node - Implementation Plan
 
 ## Overview
 
-Master implementation tracking for the Fabstir decentralized P2P LLM marketplace coordinating work across three repositories:
+P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to renters without central coordination.
 
-- `fabstir-compute-contracts` - Base L2 smart contracts
-- `fabstir-llm-node` - P2P node operator software (Rust)
-- `fabstir-llm-sdk` - Client libraries for marketplace access (TypeScript)
+## Development Setup
 
-## Architecture Summary
+- **Language**: Rust
+- **P2P**: libp2p
+- **LLM**: llama.cpp bindings
+- **Storage**: Enhanced S5.js with vector-db
 
-- **Pure P2P**: Direct client-to-node connections via libp2p
-- **No Central Components**: No servers, databases, or coordinators
-- **Enhanced S5.js**: Decentralized storage with path-based API and HAMT sharding
-- **Vector DB**: Semantic caching for efficient prompt reuse
-- **Base L2**: Smart contracts for state and payments
+## Phase 1: Foundation
 
-## Implementation Order (Recommended)
+### Sub-phase 1.1: Project Setup ✅ **COMPLETE**
 
-### Phase 1: Foundation (Start Here) ⬅️
+- [x] Initialize Rust project structure
+- [x] Configure libp2p dependencies
+- [x] Set up development environment
+- [x] Create module structure
 
-1. **Smart Contracts FIRST** - Define the on-chain protocol
-2. **P2P Node** - Implement host functionality
-3. **Client SDK** - Enable renter access
+**Test Files:**
 
-### Phase 2: Integration
+- `tests/setup/test_project_structure.rs`
+- `tests/setup/test_dependencies.rs`
+- `tests/setup/test_modules.rs`
+- `tests/setup/test_config.rs`
 
-- Contract events ↔️ Node monitoring
-- Node P2P ↔️ SDK discovery
-- SDK transactions ↔️ Contract state
+### Sub-phase 1.2: P2P Networking
 
-### Phase 3: Advanced Features
+- [x] Implement libp2p node creation
+- [x] Implement DHT participation
+- [x] Implement peer discovery
+- [x] Implement message protocols
 
-- EZKL proofs
-- Performance optimization
-- Multi-language SDKs
+**Test Files:**
 
-### Phase 4: Production Services
+- `tests/p2p/test_node_creation.rs`
+- `tests/p2p/test_dht.rs`
+- `tests/p2p/test_discovery.rs`
+- `tests/p2p/test_protocols.rs`
 
-- Real Enhanced S5.js integration
-- Real Vector DB deployment
-- Production testing
+### Sub-phase 1.3: Client Communication ✅ **COMPLETE**
 
-## Current Status
+- [x] Implement request handling
+- [x] Implement response streaming
+- [x] Implement error handling
+- [x] Implement connection management
 
-### fabstir-compute-contracts
+**Test Files:**
 
-#### Phase 1: Foundation
+- `tests/client/test_requests.rs`
+- `tests/client/test_streaming.rs`
+- `tests/client/test_errors.rs`
+- `tests/client/test_connections.rs`
 
-- [x] Phase 1.1: Project Setup
-- [x] Phase 1.2: NodeRegistry Contract
-- [x] Phase 1.3: JobMarketplace Contract
-- [x] Phase 1.4: PaymentEscrow Contract
+### Sub-phase 1.4: Contract Integration ✅ **COMPLETE**
 
-#### Phase 2: Advanced Features
+- [x] Implement Base L2 connection
+- [x] Implement job event monitoring
+- [x] Implement payment verification
+- [x] Implement proof submission
 
-- [x] Phase 2.1: ReputationSystem Contract
-- [x] Phase 2.2: Base Account Integration
-- [x] Phase 2.3: ProofSystem Contract
-- [x] Phase 2.4: Governance Contract
+**Test Files:**
 
-### fabstir-llm-node
-
-#### Phase 1: Foundation
-
-- [x] Phase 1.1: Project Setup
-- [x] Phase 1.2: P2P Networking
-- [x] Phase 1.3: Client Communication
-- [x] Phase 1.4: Contract Integration
+- `tests/contracts/test_web3.rs`
+- `tests/contracts/test_job_monitor.rs`
+- `tests/contracts/test_payments.rs`
+- `tests/contracts/test_proofs.rs`
 
 #### Phase 2: Core Features
 
@@ -261,144 +254,270 @@ Master implementation tracking for the Fabstir decentralized P2P LLM marketplace
 - `tests/models/test_gdpr.rs`
 - `tests/models/test_specialization.rs`
 
-## Phase 4: Production Services Integration
+## Phase 4: Production Services Integration (Progressive Approach)
 
-### Sub-phase 4.1: Enhanced S5.js Real Integration
+**Strategy**: Progressive integration minimizes risk and speeds development by using internal mocks first, then gradually connecting real services.
 
-- [ ] **4.1.1: S5 Client Configuration**
+### Sub-phase 4.1: Mock-to-Mock Development (Week 1)
 
-  - [ ] Configure S5 portal URL (s5.vup.cx or custom)
-  - [ ] Set up seed phrase management (env var or file)
-  - [ ] Implement authentication token handling
-  - [ ] Configure retry and timeout parameters
+**Goal**: Implement full functionality using only internal mocks for fastest development.
 
-- [ ] **4.1.2: Path-Based Storage Implementation**
+#### 4.1.1: Enhanced S5.js with Internal Mock
 
-  - [ ] Replace mock HashMap with real S5 client calls
-  - [ ] Implement path structure: `/models/`, `/results/`, `/proofs/`, `/cache/`
-  - [ ] Handle HAMT sharding activation (1000+ entries)
-  - [ ] Implement batch operations for efficiency
+- [ ] **Setup Enhanced S5.js with mock backend**
 
-- [ ] **4.1.3: CBOR Serialization Compatibility**
+  - [ ] Run Enhanced S5.js Docker container with S5_MODE=mock
+  - [ ] Configure S5 client to use Enhanced S5.js API (not direct S5 portal)
+  - [ ] Verify health check endpoint connectivity
+  - [ ] Test basic put/get operations with mock
 
-  - [ ] Ensure Rust CBOR matches Enhanced S5.js format
-  - [ ] Test deterministic encoding across platforms
-  - [ ] Implement proper metadata structures
-  - [ ] Handle compression (zstd) for large data
+- [ ] **Implement Enhanced S5.js path operations**
 
-- [ ] **4.1.4: Directory Operations**
-  - [ ] Implement DirectoryWalker integration
-  - [ ] Use BatchOperations for bulk uploads
-  - [ ] Handle cursor-based pagination
-  - [ ] Test with large model collections
+  - [ ] Replace direct HashMap calls with Enhanced S5.js API calls
+  - [ ] Implement proper path structure (`/home/`, `/archive/`)
+  - [ ] Handle API authentication if required
+  - [ ] Add retry logic for API calls
 
-**Test Files:**
+- [ ] **Test HAMT sharding behavior**
 
-- `tests/storage/integration/test_real_s5.rs`
-- `tests/storage/integration/test_cbor_compat.rs`
-- `tests/storage/integration/test_batch_ops.rs`
-- `tests/storage/integration/test_hamt_sharding.rs`
+  - [ ] Create 1000+ files to trigger HAMT activation
+  - [ ] Verify directory listing performance
+  - [ ] Test cursor-based pagination
+  - [ ] Measure response times with large directories
 
-### Sub-phase 4.2: Vector DB Real Deployment
-
-- [ ] **4.2.1: Vector DB Client Setup**
-
-  - [ ] Configure real Vector DB endpoint
-  - [ ] Set up authentication (API key)
-  - [ ] Configure hybrid index parameters (HNSW + IVF)
-  - [ ] Set HAMT activation threshold (1000 vectors)
-
-- [ ] **4.2.2: Semantic Cache Implementation**
-
-  - [ ] Replace mock with real REST API calls
-  - [ ] Implement embedding generation service
-  - [ ] Configure similarity threshold (0.95)
-  - [ ] Set up time-based index migration
-
-- [ ] **4.2.3: S5 Storage Backend**
-
-  - [ ] Configure Vector DB to use Enhanced S5.js
-  - [ ] Verify CBOR compatibility
-  - [ ] Test HAMT sharding with large vector sets
-  - [ ] Monitor performance metrics
-
-- [ ] **4.2.4: MCP Server Integration**
-  - [ ] Deploy MCP server (port 7531)
-  - [ ] Configure LLM tool access
-  - [ ] Test semantic search from LLMs
-  - [ ] Implement access controls
+- [ ] **Verify CBOR compatibility**
+  - [ ] Test Rust CBOR encoding matches Enhanced S5.js format
+  - [ ] Verify deterministic encoding
+  - [ ] Test metadata serialization
+  - [ ] Handle binary data correctly
 
 **Test Files:**
 
-- `tests/vector/integration/test_real_vectordb.rs`
-- `tests/vector/integration/test_semantic_search.rs`
-- `tests/vector/integration/test_mcp_tools.rs`
-- `tests/vector/integration/test_performance.rs`
+- `tests/storage/mock/test_enhanced_s5_api.rs`
+- `tests/storage/mock/test_hamt_activation.rs`
+- `tests/storage/mock/test_cbor_format.rs`
+- `tests/storage/mock/test_pagination.rs`
 
-### Sub-phase 4.3: Integration Testing
+#### 4.1.2: Fabstir Vector DB with Internal Mock
 
-- [ ] **4.3.1: End-to-End Storage Flow**
+- [ ] **Setup Vector DB with mock backend**
 
-  - [ ] Test model upload to S5 → Vector DB indexing
-  - [ ] Verify result caching with semantic search
-  - [ ] Test proof storage and retrieval
-  - [ ] Benchmark storage performance
+  - [ ] Run Vector DB Docker container with S5_MODE=mock
+  - [ ] Configure Vector DB client to use REST API
+  - [ ] Test health check endpoint
+  - [ ] Verify API authentication
 
-- [ ] **4.3.2: Cache Hit Rate Testing**
+- [ ] **Implement vector operations**
 
-  - [ ] Measure semantic cache effectiveness
-  - [ ] Test with real inference workloads
-  - [ ] Optimize embedding generation
-  - [ ] Tune similarity thresholds
+  - [ ] Replace mock HashMap with REST API calls
+  - [ ] Implement vector insertion with metadata
+  - [ ] Implement similarity search
+  - [ ] Handle batch operations
 
-- [ ] **4.3.3: Scalability Testing**
+- [ ] **Test index behavior**
 
-  - [ ] Test with 10K+ models on S5
-  - [ ] Test with 1M+ vectors in Vector DB
-  - [ ] Verify HAMT performance at scale
-  - [ ] Monitor resource utilization
+  - [ ] Verify HNSW index for recent vectors
+  - [ ] Verify IVF index for historical vectors
+  - [ ] Test automatic migration between indices
+  - [ ] Monitor memory usage
 
-- [ ] **4.3.4: Failover and Recovery**
-  - [ ] Test S5 portal failover
-  - [ ] Test Vector DB recovery
-  - [ ] Implement backup strategies
-  - [ ] Document disaster recovery
+- [ ] **MCP server integration**
+  - [ ] Test MCP server connectivity (port 7531)
+  - [ ] Implement vector_search tool
+  - [ ] Implement insert_vector tool
+  - [ ] Test from LLM client
 
 **Test Files:**
 
-- `tests/integration/test_e2e_storage.rs`
-- `tests/integration/test_cache_performance.rs`
-- `tests/integration/test_scalability.rs`
-- `tests/integration/test_failover.rs`
+- `tests/vector/mock/test_vector_api.rs`
+- `tests/vector/mock/test_index_behavior.rs`
+- `tests/vector/mock/test_mcp_server.rs`
+- `tests/vector/mock/test_batch_ops.rs`
 
-### Sub-phase 4.4: Production Deployment
+#### 4.1.3: Integration with Both Mocks
 
-- [ ] **4.4.1: Environment Configuration**
+- [ ] **Complete workflow testing**
 
-  - [ ] Set up production S5 portal access
-  - [ ] Configure Vector DB cluster
-  - [ ] Set up monitoring and alerting
-  - [ ] Configure backup schedules
+  - [ ] Store model in Enhanced S5.js
+  - [ ] Generate embeddings for model
+  - [ ] Store embeddings in Vector DB
+  - [ ] Test semantic search for similar models
 
-- [ ] **4.4.2: Migration from Mock**
+- [ ] **Cache flow implementation**
+  - [ ] Hash prompts for cache lookup
+  - [ ] Search Vector DB for similar prompts
+  - [ ] Retrieve cached results from S5
+  - [ ] Measure cache hit rates
 
-  - [ ] Migrate existing mock data to S5
-  - [ ] Migrate vector indices to real DB
+**Test Files:**
+
+- `tests/integration/mock/test_e2e_workflow.rs`
+- `tests/integration/mock/test_cache_flow.rs`
+
+### Sub-phase 4.2: Service-to-Service Integration (Week 2)
+
+**Goal**: Connect Vector DB to Enhanced S5.js (both still using internal mocks).
+
+#### 4.2.1: Vector DB → Enhanced S5.js Connection
+
+- [ ] **Configure Vector DB to use Enhanced S5.js**
+
+  - [ ] Update Vector DB S5_MODE=real
+  - [ ] Set S5_PORTAL_URL to Enhanced S5.js endpoint
+  - [ ] Verify connectivity between containers
+  - [ ] Test vector persistence in S5
+
+- [ ] **Verify integrated storage**
+
+  - [ ] Store vectors via Vector DB API
+  - [ ] Verify vectors appear in Enhanced S5.js
+  - [ ] Test HAMT sharding for vector storage
+  - [ ] Monitor storage paths and structure
+
+- [ ] **Test persistence and recovery**
+  - [ ] Restart Vector DB container
+  - [ ] Verify vectors persist via S5
+  - [ ] Test backup and restore
+  - [ ] Measure recovery time
+
+**Test Files:**
+
+- `tests/integration/connected/test_vectordb_s5_storage.rs`
+- `tests/integration/connected/test_persistence.rs`
+- `tests/integration/connected/test_recovery.rs`
+
+#### 4.2.2: Performance Testing with Connected Mocks
+
+- [ ] **Benchmark operations**
+
+  - [ ] Measure vector insertion throughput
+  - [ ] Test search latency at scale
+  - [ ] Monitor S5 API call patterns
+  - [ ] Identify bottlenecks
+
+- [ ] **Scale testing**
+  - [ ] Insert 10K+ vectors (HAMT trigger)
+  - [ ] Test with 100K+ vectors
+  - [ ] Monitor memory and CPU usage
+  - [ ] Test concurrent operations
+
+**Test Files:**
+
+- `tests/performance/connected/test_throughput.rs`
+- `tests/performance/connected/test_scale.rs`
+
+### Sub-phase 4.3: Real Backend Integration (Week 3)
+
+**Goal**: Switch services to real backends one at a time.
+
+#### 4.3.1: Enhanced S5.js → Real S5 Portal
+
+- [ ] **Configure Enhanced S5.js for real S5**
+
+  - [ ] Update S5_MODE=real
+  - [ ] Configure S5_PORTAL_URL=https://s5.vup.cx
+  - [ ] Set up S5_SEED_PHRASE authentication
+  - [ ] Test portal connectivity
+
+- [ ] **Verify real storage operations**
+
+  - [ ] Test file upload to real S5
+  - [ ] Verify CID generation
+  - [ ] Test file retrieval
+  - [ ] Monitor bandwidth usage
+
+- [ ] **Test reliability**
+  - [ ] Handle network timeouts
+  - [ ] Implement retry strategies
+  - [ ] Test error recovery
+  - [ ] Monitor success rates
+
+**Test Files:**
+
+- `tests/storage/real/test_s5_portal.rs`
+- `tests/storage/real/test_reliability.rs`
+
+#### 4.3.2: Complete Real Integration
+
+- [ ] **Vector DB with real S5 backend**
+
+  - [ ] Verify Vector DB → Enhanced S5.js → S5 Portal chain
+  - [ ] Test vector persistence on real S5
+  - [ ] Monitor storage costs
+  - [ ] Test at production scale
+
+- [ ] **Migration from mock data**
+  - [ ] Export mock data
+  - [ ] Import to real S5
   - [ ] Verify data integrity
-  - [ ] Update configuration files
+  - [ ] Update references
 
-- [ ] **4.4.3: Performance Tuning**
+**Test Files:**
 
-  - [ ] Optimize S5 connection pooling
-  - [ ] Tune Vector DB index parameters
-  - [ ] Configure caching layers
-  - [ ] Set up CDN for model distribution
+- `tests/integration/real/test_full_chain.rs`
+- `tests/integration/real/test_migration.rs`
 
-- [ ] **4.4.4: Documentation**
-  - [ ] Update deployment guides
+### Sub-phase 4.4: Production Readiness (Week 4)
+
+#### 4.4.1: Full System Testing
+
+- [ ] **End-to-end production tests**
+
+  - [ ] Complete inference workflow with real backends
+  - [ ] Load testing at expected scale
+  - [ ] Chaos testing (kill containers, network issues)
+  - [ ] Security audit
+
+- [ ] **Performance validation**
+  - [ ] Verify < 100ms S5 latency (p95)
+  - [ ] Verify < 50ms vector search (p99)
+  - [ ] Test 30%+ cache hit rate
+  - [ ] Monitor resource usage
+
+**Test Files:**
+
+- `tests/production/test_e2e_real.rs`
+- `tests/production/test_load.rs`
+- `tests/production/test_chaos.rs`
+- `tests/production/test_performance.rs`
+
+#### 4.4.2: Deployment Configuration
+
+- [ ] **Production environment setup**
+
+  - [ ] Create production docker-compose.yml
+  - [ ] Configure environment variables
+  - [ ] Set up monitoring (Prometheus/Grafana)
+  - [ ] Create backup procedures
+
+- [ ] **Documentation**
+  - [ ] Update deployment guide
   - [ ] Document configuration options
   - [ ] Create troubleshooting guide
-  - [ ] Update API documentation
+  - [ ] Write operational runbooks
+
+**Files:**
+
+- `deployment/docker-compose.prod.yml`
+- `deployment/.env.production`
+- `docs/deployment.md`
+- `docs/operations.md`
+
+## Docker Commands for Phase 4
+
+```bash
+# Week 1: Both services with mocks
+docker-compose -f docker-compose.mocks.yml up -d
+
+# Week 2: Vector DB uses Enhanced S5.js
+docker-compose -f docker-compose.connected.yml up -d
+
+# Week 3: Enhanced S5.js uses real S5 portal
+docker-compose -f docker-compose.real.yml up -d
+
+# Week 4: Production configuration
+docker-compose -f docker-compose.prod.yml up -d
+```
 
 ## Phase 5: SDK Development
 
@@ -419,35 +538,48 @@ Each phase follows strict TDD principles:
 4. **Production Tests**: Real service validation
 5. **Performance Tests**: Scalability verification
 
-## Environment Variables for Production
+## Environment Variables for Phase 4 Progression
 
-### Enhanced S5.js Configuration
+### Week 1: Both Mocks
 
 ```bash
-# S5 Storage Configuration
-S5_MODE=real                            # Switch from 'mock' to 'real'
-S5_PORTAL_URL=https://s5.vup.cx        # Production S5 portal
-S5_SEED_PHRASE_FILE=~/.s5-seed        # Secure seed phrase storage
-S5_CONNECTION_TIMEOUT=5000             # Connection timeout (ms)
-S5_RETRY_ATTEMPTS=3                    # Retry attempts
+# Enhanced S5.js
+ENHANCED_S5_MODE=mock
+ENHANCED_S5_PORT=5050
+
+# Vector DB
+VECTOR_DB_MODE=mock
+VECTOR_DB_PORT=7530
 ```
 
-### Vector DB Configuration
+### Week 2: Connected Mocks
 
 ```bash
-# Vector DB Configuration
-VECTOR_DB_MODE=real                    # Switch from 'mock' to 'real'
-VECTOR_DB_URL=http://vectordb:7530    # Production Vector DB
-VECTOR_DB_API_KEY=${VECTOR_DB_KEY}    # API authentication
-VECTOR_DIMENSION=1536                  # OpenAI embedding dimension
-HAMT_ACTIVATION_THRESHOLD=1000         # HAMT sharding threshold
-HNSW_M=16                             # HNSW connectivity
-IVF_N_CLUSTERS=256                    # IVF clusters
+# Enhanced S5.js (still mock)
+ENHANCED_S5_MODE=mock
+ENHANCED_S5_PORT=5050
+
+# Vector DB (using Enhanced S5.js)
+VECTOR_DB_MODE=real
+VECTOR_DB_S5_URL=http://enhanced-s5:5050
+```
+
+### Week 3-4: Real Backends
+
+```bash
+# Enhanced S5.js (real S5 portal)
+ENHANCED_S5_MODE=real
+ENHANCED_S5_PORTAL_URL=https://s5.vup.cx
+ENHANCED_S5_SEED_PHRASE=${S5_SEED_PHRASE}
+
+# Vector DB (using real Enhanced S5.js)
+VECTOR_DB_MODE=real
+VECTOR_DB_S5_URL=http://enhanced-s5:5050
 ```
 
 ## Key Decisions Summary
 
-1. **Development Approach**: Use mocks during development (Phases 1-3), switch to real services in Phase 4
+1. **Development Approach**: Progressive integration from mocks to real services
 2. **Storage Architecture**: Enhanced S5.js provides decentralized storage with path-based API
 3. **Caching Strategy**: Vector DB provides semantic caching to reduce redundant inference
 4. **CBOR Standard**: All components use deterministic CBOR for cross-platform compatibility
@@ -455,11 +587,10 @@ IVF_N_CLUSTERS=256                    # IVF clusters
 
 ## Migration Path
 
-1. **Phase 2.7-2.8**: Implement with mock services
-2. **Phase 3**: Complete advanced features with mocks
-3. **Phase 4.1-4.2**: Connect real services
-4. **Phase 4.3**: Validate with integration tests
-5. **Phase 4.4**: Deploy to production
+1. **Week 1**: Both services with internal mocks
+2. **Week 2**: Vector DB uses Enhanced S5.js (both mocked)
+3. **Week 3**: Enhanced S5.js uses real S5 portal
+4. **Week 4**: Production testing and deployment
 
 ## Success Metrics
 

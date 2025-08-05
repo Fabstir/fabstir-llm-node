@@ -1,0 +1,56 @@
+services:
+  # Enhanced S5.js mock server
+  enhanced-s5:
+    build:
+      context: /root/dev/Fabstir/partners/S5/GitHub/s5.js
+      dockerfile: Dockerfile.mock
+    container_name: enhanced-s5-mock
+    hostname: enhanced-s5
+    ports:
+      - "5524:5524"
+    environment:
+      - PORT=5524
+      - NODE_ENV=test
+    networks:
+      - phase4-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5524/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  # Fabstir LLM Node test container
+  llm-node-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: llm-node-phase4-test
+    hostname: llm-node
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-cache:/workspace/target
+    environment:
+      - ENHANCED_S5_URL=http://enhanced-s5:5524
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=1
+    networks:
+      - phase4-network
+    depends_on:
+      enhanced-s5:
+        condition: service_healthy
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    command: ["tail", "-f", "/dev/null"]
+
+volumes:
+  cargo-cache:
+  cargo-git:
+  target-cache:
+
+networks:
+  phase4-network:
+    driver: bridge
