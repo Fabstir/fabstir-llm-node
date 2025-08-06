@@ -43,3 +43,12 @@ temp/
 
 # Make sure src/models/ is NOT ignored
 !src/models/
+# Phase 4.3.1 sensitive files
+.env.real_s5
+*.env.local
+*.env.production
+
+# Temporary test files
+s5-mock-service/
+s5-client/
+s5-storage-proxy/

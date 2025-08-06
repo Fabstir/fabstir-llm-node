@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  # Enhanced S5 with actual source code mounted
+  s5-enhanced-real:
+    image: fabstir-llm-marketplace-s5-enhanced-dev:latest
+    container_name: s5-enhanced-real
+    ports:
+      - "5525:5522"
+    environment:
+      - NODE_ENV=production
+      - S5_NODE_URL=https://s5.vup.cx
+      - S5_SEED_PHRASE=${S5_SEED_PHRASE}
+      - PORT=5522
+      - ENABLE_MOCK=false
+    env_file:
+      - .env.real_s5
+    volumes:
+      - ~/dev/Fabstir/partners/S5/GitHub/s5.js:/home/developer/s5.js:cached
+      - ./uploads:/home/developer/uploads
+    working_dir: /home/developer/s5.js
+    command: sh -c "if [ -f dist/index.js ]; then npm start; else npm install && npm run build && npm start; fi"
+    networks:
+      - fabstir-real
+    restart: unless-stopped
+
+  # Vector DB with the correct binary name "server"
+  vector-db-real:
+    image: fabstir-vectordb-fabstir-ai-vector-db:latest
+    container_name: vector-db-real
+    ports:
+      - "8081:8080"
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=postgresql://postgres:postgres@postgres-real:5432/vectordb
+    volumes:
+      - ~/dev/Fabstir/fabstir-vectordb:/workspace:cached
+    working_dir: /workspace
+    command: sh -c "if [ -f target/release/server ]; then ./target/release/server; else cargo build --release && ./target/release/server; fi"
+    networks:
+      - fabstir-real
+    depends_on:
+      - postgres-real
+    restart: unless-stopped
+
+  postgres-real:
+    image: postgres:14
+    container_name: postgres-real
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=vectordb
+    volumes:
+      - postgres-real-data:/var/lib/postgresql/data
+    networks:
+      - fabstir-real
+    restart: unless-stopped
+
+networks:
+  fabstir-real:
+    driver: bridge
+
+volumes:
+  postgres-real-data:

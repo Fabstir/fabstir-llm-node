@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  enhanced-s5-real:
+    image: fabstir-llm-marketplace-s5-enhanced-dev:latest
+    container_name: enhanced-s5-real
+    ports:
+      - "5525:5522"
+    environment:
+      - NODE_ENV=production
+      - S5_NODE_URL=https://s5.vup.cx
+      - S5_API_KEY=${S5_API_KEY}
+      - S5_SEED_PHRASE=${S5_SEED_PHRASE}
+      - PORT=5522
+      - ENABLE_MOCK=false
+    env_file:
+      - .env.real_s5
+    volumes:
+      - ./uploads:/app/uploads
+    networks:
+      - fabstir-real
+    restart: unless-stopped
+
+  vector-db-real:
+    image: fabstir-vectordb-fabstir-ai-vector-db:latest
+    container_name: vector-db-real
+    ports:
+      - "8081:8080"
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=postgresql://postgres:postgres@postgres-real:5432/vectordb
+    networks:
+      - fabstir-real
+    depends_on:
+      - postgres-real
+    restart: unless-stopped
+
+  postgres-real:
+    image: postgres:14
+    container_name: postgres-real
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=vectordb
+    volumes:
+      - postgres-real-data:/var/lib/postgresql/data
+    networks:
+      - fabstir-real
+    restart: unless-stopped
+
+networks:
+  fabstir-real:
+    driver: bridge
+
+volumes:
+  postgres-real-data:
