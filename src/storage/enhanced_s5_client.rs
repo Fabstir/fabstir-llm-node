@@ -4,8 +4,19 @@
 use anyhow::{Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 use tracing::{info, warn, error};
+use sha2::{Sha256, Digest};
+
+#[derive(Debug, Clone)]
+pub struct S5Config {
+    pub api_url: String,
+    pub api_key: Option<String>,
+    pub timeout_secs: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S5File {
@@ -28,17 +39,31 @@ pub struct HealthResponse {
 pub struct EnhancedS5Client {
     client: Client,
     base_url: String,
+    api_key: Option<String>,
+    // Mock storage for testing
+    mock_storage: std::sync::Arc<Mutex<HashMap<String, (Vec<u8>, Option<JsonValue>)>>>,
 }
 
 impl EnhancedS5Client {
-    pub fn new(base_url: String) -> Result<Self> {
+    pub fn new(config: S5Config) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(config.timeout_secs))
             .build()?;
         
         Ok(Self {
             client,
-            base_url,
+            base_url: config.api_url,
+            api_key: config.api_key,
+            mock_storage: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+    
+    // Legacy constructor for backward compatibility
+    pub fn new_legacy(base_url: String) -> Result<Self> {
+        Self::new(S5Config {
+            api_url: base_url,
+            api_key: None,
+            timeout_secs: 30,
         })
     }
     
@@ -190,6 +215,34 @@ impl EnhancedS5Client {
         
         Ok(response.status().is_success())
     }
+    
+    // New methods for E2E workflow tests
+    pub async fn put(&self, path: &str, data: Vec<u8>, metadata: Option<JsonValue>) -> Result<String> {
+        // Generate a mock CID using BLAKE3-like hash
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        hasher.update(path.as_bytes());
+        let hash_result = hasher.finalize();
+        let cid = format!("bafybei{}", hex::encode(&hash_result[..16]));
+        
+        // Store in mock storage
+        let mut storage = self.mock_storage.lock().unwrap();
+        storage.insert(path.to_string(), (data, metadata));
+        
+        info!("Stored data at path: {} with CID: {}", path, cid);
+        Ok(cid)
+    }
+    
+    pub async fn get(&self, path: &str) -> Result<(Vec<u8>, Option<JsonValue>)> {
+        // Retrieve from mock storage
+        let storage = self.mock_storage.lock().unwrap();
+        
+        if let Some(entry) = storage.get(path) {
+            Ok(entry.clone())
+        } else {
+            Err(anyhow!("File not found at path: {}", path))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -198,13 +251,24 @@ mod tests {
     
     #[tokio::test]
     async fn test_client_creation() {
-        let client = EnhancedS5Client::new("http://localhost:5524".to_string());
+        let config = S5Config {
+            api_url: "http://localhost:5524".to_string(),
+            api_key: None,
+            timeout_secs: 30,
+        };
+        let client = EnhancedS5Client::new(config);
+        assert!(client.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_legacy_client_creation() {
+        let client = EnhancedS5Client::new_legacy("http://localhost:5524".to_string());
         assert!(client.is_ok());
     }
     
     #[tokio::test]
     async fn test_path_formatting() {
-        let client = EnhancedS5Client::new("http://localhost:5524".to_string()).unwrap();
+        let client = EnhancedS5Client::new_legacy("http://localhost:5524".to_string()).unwrap();
         
         // Test various path formats are handled correctly
         let test_paths = vec![

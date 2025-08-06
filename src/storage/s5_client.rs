@@ -797,7 +797,7 @@ impl S5Client {
             }
             S5Backend::EnhancedS5 { base_url } => {
                 // Use EnhancedS5 backend when configured
-                if let Ok(enhanced_client) = super::enhanced_s5_client::EnhancedS5Client::new(base_url.clone()) {
+                if let Ok(enhanced_client) = super::enhanced_s5_client::EnhancedS5Client::new_legacy(base_url.clone()) {
                     Ok(Box::new(EnhancedS5Backend::new(enhanced_client)))
                 } else {
                     // Fallback to mock if Enhanced S5 client creation fails

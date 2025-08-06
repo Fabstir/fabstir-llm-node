@@ -99,6 +99,16 @@ pub enum ModelFormat {
     Unknown,
 }
 
+// Basic structs for E2E workflow tests
+// ModelRegistry is defined below with actual implementation
+
+#[derive(Debug, Clone)]
+pub struct ModelConfig;
+
+// Note: ModelMetadata is already defined in downloading module, 
+// but we'll re-export it at the top level for convenience
+// It's already re-exported above from the downloading module
+
 impl ModelFormat {
     pub fn from_extension(ext: &str) -> Self {
         match ext.to_lowercase().as_str() {

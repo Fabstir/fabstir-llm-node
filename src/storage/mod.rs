@@ -24,3 +24,8 @@ pub use result_cache::{
     ResultCache, CacheConfig, CacheEntry, CacheStats,
     EvictionPolicy, StorageInfo
 };
+
+// Re-export Enhanced S5 types
+pub use enhanced_s5_client::{
+    EnhancedS5Client, S5Config, S5File, HealthResponse
+};

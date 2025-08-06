@@ -37,4 +37,4 @@ pub use storage::{
 pub use crate::storage::{S5Storage, S5StorageConfig, S5Backend, S5Client};
 
 // Keep the vector_db_client export
-pub use vector_db_client::VectorDbClient;
+pub use vector_db_client::{VectorDbClient, VectorDbConfig};

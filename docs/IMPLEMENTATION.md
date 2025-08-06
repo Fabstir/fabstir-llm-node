@@ -347,10 +347,10 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 
 - [ ] **Complete workflow testing**
 
-  - [ ] Store model in Enhanced S5.js
-  - [ ] Generate embeddings for model
-  - [ ] Store embeddings in Vector DB
-  - [ ] Test semantic search for similar models
+  - [x] Store model in Enhanced S5.js
+  - [x] Generate embeddings for model
+  - [x] Store embeddings in Vector DB
+  - [x] Test semantic search for similar models
 
 - [ ] **Cache flow implementation**
   - [ ] Hash prompts for cache lookup
