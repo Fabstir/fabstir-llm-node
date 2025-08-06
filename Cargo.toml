@@ -98,3 +98,7 @@ inference = []
 
 # Optional: Add feature flag for real EZKL (for future use)
 # real-ezkl = ["ezkl"]
+
+[[test]]
+name = "performance_tests"
+path = "tests/performance/mod.rs"

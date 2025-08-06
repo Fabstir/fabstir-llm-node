@@ -179,7 +179,7 @@ async fn test_batch_updates() {
     
     assert!(batch_result.total_models == 3);
     assert!(batch_result.updates_available <= 3);
-    assert!(batch_result.total_download_size >= 0);
+    // total_download_size is u64, so it's always >= 0
     
     if batch_result.updates_available > 0 {
         // Apply batch updates

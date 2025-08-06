@@ -1,9 +1,19 @@
-use fabstir_llm_node::vector::vector_db_client::VectorDbClient;
+use fabstir_llm_node::vector::vector_db_client::{VectorDbClient, VectorDbConfig};
 use serde_json::json;
+use std::time::Duration;
+
+// Helper function to create test config
+fn test_config() -> VectorDbConfig {
+    VectorDbConfig {
+        api_url: "http://host.docker.internal:7530".to_string(),
+        api_key: None,
+        timeout_secs: 30,
+    }
+}
 
 #[tokio::test]
 async fn test_vector_db_health_check() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     let result = client.health_check().await;
     assert!(result.is_ok(), "Health check should succeed");
@@ -14,7 +24,7 @@ async fn test_vector_db_health_check() {
 
 #[tokio::test]
 async fn test_insert_single_vector() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     let vector_data = json!({
         "vector": [0.1, 0.2, 0.3],
@@ -24,7 +34,7 @@ async fn test_insert_single_vector() {
         }
     });
     
-    let result = client.insert_vector(vector_data).await;
+    let result = client.insert_vector_json(vector_data).await;
     assert!(result.is_ok(), "Insert should succeed");
     
     let response = result.unwrap();
@@ -34,7 +44,7 @@ async fn test_insert_single_vector() {
 
 #[tokio::test]
 async fn test_get_vector_by_id() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     // First insert a vector
     let vector_data = json!({
@@ -44,11 +54,11 @@ async fn test_get_vector_by_id() {
         }
     });
     
-    let insert_result = client.insert_vector(vector_data.clone()).await.unwrap();
+    let insert_result = client.insert_vector_json(vector_data.clone()).await.unwrap();
     let vector_id = insert_result["id"].as_str().unwrap();
     
     // Now get it back
-    let result = client.get_vector(vector_id).await;
+    let result = client.get_vector_old(vector_id).await;
     assert!(result.is_ok(), "Get should succeed");
     
     let retrieved = result.unwrap();
@@ -58,7 +68,7 @@ async fn test_get_vector_by_id() {
 
 #[tokio::test]
 async fn test_search_similar_vectors() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     // Insert some vectors first
     for i in 0..3 {
@@ -68,7 +78,7 @@ async fn test_search_similar_vectors() {
                 "index": i
             }
         });
-        client.insert_vector(vector_data).await.unwrap();
+        client.insert_vector_json(vector_data).await.unwrap();
     }
     
     // Search for similar vectors
@@ -88,7 +98,7 @@ async fn test_search_similar_vectors() {
 
 #[tokio::test]
 async fn test_delete_vector() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     // Insert a vector
     let vector_data = json!({
@@ -98,7 +108,7 @@ async fn test_delete_vector() {
         }
     });
     
-    let insert_result = client.insert_vector(vector_data).await.unwrap();
+    let insert_result = client.insert_vector_json(vector_data).await.unwrap();
     let vector_id = insert_result["id"].as_str().unwrap();
     
     // Delete it
@@ -115,7 +125,7 @@ async fn test_delete_vector() {
 
 #[tokio::test]
 async fn test_batch_insert_vectors() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     let batch_data = json!({
         "vectors": [
@@ -144,13 +154,21 @@ async fn test_batch_insert_vectors() {
 
 #[tokio::test]
 async fn test_error_handling_invalid_url() {
-    let result = VectorDbClient::new("not-a-valid-url");
+    let result = VectorDbClient::new(VectorDbConfig {
+        api_url: "not-a-valid-url".to_string(),
+        api_key: None,
+        timeout_secs: 30,
+    });
     assert!(result.is_err(), "Should fail with invalid URL");
 }
 
 #[tokio::test]
 async fn test_error_handling_connection_refused() {
-    let client = VectorDbClient::new("http://localhost:9999").unwrap();
+    let client = VectorDbClient::new(VectorDbConfig {
+        api_url: "http://localhost:9999".to_string(),
+        api_key: None,
+        timeout_secs: 30,
+    }).unwrap();
     
     let result = client.health_check().await;
     assert!(result.is_err(), "Should fail when server is not running");
@@ -158,7 +176,7 @@ async fn test_error_handling_connection_refused() {
 
 #[tokio::test]
 async fn test_search_with_filters() {
-    let client = VectorDbClient::new("http://host.docker.internal:7530").unwrap();
+    let client = VectorDbClient::new(test_config()).unwrap();
     
     // Insert vectors with different metadata
     for i in 0..5 {
@@ -169,7 +187,7 @@ async fn test_search_with_filters() {
                 "value": i
             }
         });
-        client.insert_vector(vector_data).await.unwrap();
+        client.insert_vector_json(vector_data).await.unwrap();
     }
     
     // Search with filters

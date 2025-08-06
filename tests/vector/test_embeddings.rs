@@ -203,7 +203,7 @@ mod tests {
         let cosine_sim = emb1.cosine_similarity(&emb2);
         let euclidean_dist = emb1.euclidean_distance(&emb2);
         let manhattan_dist = emb1.manhattan_distance(&emb2);
-        let dot_product = emb1.dot_product(&emb2);
+        let _dot_product = emb1.dot_product(&emb2);
         
         // Basic sanity checks
         assert!(cosine_sim >= -1.0 && cosine_sim <= 1.0);

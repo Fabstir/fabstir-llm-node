@@ -48,7 +48,7 @@ impl VectorDbClient {
     }
 
     pub async fn health_check(&self) -> Result<Value> {
-        let url = format!("{}/api/v1/health", self.base_url);
+        let url = format!("{}/api/v1/api/v1/health", self.base_url);
         let response = self.client
             .get(&url)
             .send()

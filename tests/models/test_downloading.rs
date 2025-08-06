@@ -329,7 +329,7 @@ async fn test_storage_space_check() {
     // Check available space before download
     let space_info = downloader.check_storage_space().await.unwrap();
     assert!(space_info.available_bytes > 0);
-    assert!(space_info.required_bytes >= 0);
+    // required_bytes is u64, so it's always >= 0
     
     // Try to download model that might exceed space (mock)
     let source = DownloadSource::HuggingFace {

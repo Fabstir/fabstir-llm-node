@@ -180,7 +180,7 @@ mod tests {
         let mut progress_rx = service.deliver_result(request).await.unwrap();
         
         // Should eventually timeout and fail
-        let timeout_duration = Duration::from_secs(30);
+        let _timeout_duration = Duration::from_secs(30);
         let start = std::time::Instant::now();
         
         // Since the mock doesn't actually timeout, we'll just check the first few updates
