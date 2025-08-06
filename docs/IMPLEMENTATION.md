@@ -343,7 +343,7 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - Handled API differences (field mappings, UUID generation)
 - All core functionality working with mock S5 storage
 
-#### 4.1.3: Integration with Both Mocks
+#### 4.1.3: Integration with Both Mocks ✅
 
 - [ ] **Complete workflow testing**
 
@@ -353,10 +353,10 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
   - [x] Test semantic search for similar models
 
 - [ ] **Cache flow implementation**
-  - [ ] Hash prompts for cache lookup
-  - [ ] Search Vector DB for similar prompts
-  - [ ] Retrieve cached results from S5
-  - [ ] Measure cache hit rates
+  - [x] Hash prompts for cache lookup
+  - [x] Search Vector DB for similar prompts
+  - [x] Retrieve cached results from S5
+  - [x] Measure cache hit rates
 
 **Test Files:**
 

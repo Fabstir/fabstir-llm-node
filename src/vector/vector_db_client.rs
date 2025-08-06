@@ -219,16 +219,19 @@ impl VectorDbClient {
                 }
             }
             
-            // Calculate simple similarity score (cosine similarity approximation)
-            let mut score = 0.0f32;
-            for (i, val) in vector.iter().enumerate() {
-                if i < stored_vec.len() {
-                    score += val * stored_vec[i];
-                }
+            // Calculate cosine similarity (for normalized vectors, this is just the dot product)
+            let mut dot_product = 0.0f32;
+            
+            // Ensure both vectors have the same length
+            let min_len = vector.len().min(stored_vec.len());
+            for i in 0..min_len {
+                dot_product += vector[i] * stored_vec[i];
             }
-            // Normalize to [0, 1] range
-            score = (score + 1.0) / 2.0;
-            score = score.min(1.0).max(0.0);
+            
+            // For normalized vectors, dot product is cosine similarity in range [-1, 1]
+            // Convert to [0, 1] range for similarity score
+            let score = (dot_product + 1.0) / 2.0;
+            let score = score.min(1.0).max(0.0);
             
             results.push(json!({
                 "id": id,
