@@ -126,13 +126,8 @@ async fn main() -> Result<()> {
     api_server.set_engine(Arc::new(llm_engine)).await;
     api_server.set_default_model_id(if model_id.is_empty() { "tiny-vicuna".to_string() } else { model_id }).await;
     
-    // Start API server in background
-    let api_server_clone = api_server.clone();
-    let api_handle = tokio::spawn(async move {
-        if let Err(e) = api_server_clone.run().await {
-            eprintln!("API server error: {}", e);
-        }
-    });
+    // The API server is already running in the background (started in new())
+    // We don't need to call run() or spawn a task
 
     println!("✅ API server started on http://0.0.0.0:{}", api_port);
 
@@ -188,7 +183,6 @@ async fn main() -> Result<()> {
     
     // Cleanup
     p2p_node.shutdown().await;
-    api_handle.abort();
     event_handle.abort();
     
     println!("👋 Goodbye!");

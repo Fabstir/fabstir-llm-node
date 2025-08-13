@@ -1,7 +1,7 @@
 use axum::{
-    extract::{State},
+    extract::{State, Json},
     http::{StatusCode, header},
-    response::{Json, IntoResponse, Response, Sse},
+    response::{IntoResponse, Response, Sse},
     routing::{get, post},
     Router,
 };
@@ -62,38 +62,41 @@ pub async fn start_server(api_server: ApiServer) -> Result<(), Box<dyn std::erro
 
 async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     let health = state.api_server.health_check().await;
-    Json(health)
+    axum::response::Json(health)
 }
 
-async fn models_handler(State(state): State<AppState>) -> Result<Json<ModelsResponse>, ApiErrorResponse> {
+async fn models_handler(State(state): State<AppState>) -> Result<axum::response::Json<ModelsResponse>, ApiErrorResponse> {
     state.api_server.get_available_models().await
-        .map(Json)
+        .map(axum::response::Json)
         .map_err(|e| ApiErrorResponse(e))
 }
 
 async fn inference_handler(
     State(state): State<AppState>,
     Json(request): Json<InferenceRequest>,
-) -> Result<Response, ApiErrorResponse> {
+) -> impl IntoResponse {
     let client_ip = "127.0.0.1".to_string(); // In production, extract from request
     
     if request.stream {
         // Streaming response
-        let receiver = state.api_server.handle_streaming_request(request, client_ip).await
-            .map_err(|e| ApiErrorResponse(e))?;
-        
-        let stream = tokio_stream::wrappers::ReceiverStream::new(receiver);
-        let sse_stream = stream.map(|response| {
-            Ok::<_, Infallible>(axum::response::sse::Event::default()
-                .data(serde_json::to_string(&response).unwrap_or_default()))
-        });
-        
-        Ok(Sse::new(sse_stream).into_response())
+        match state.api_server.handle_streaming_request(request, client_ip).await {
+            Ok(receiver) => {
+                let stream = tokio_stream::wrappers::ReceiverStream::new(receiver);
+                let sse_stream = stream.map(|response| {
+                    Ok::<_, Infallible>(axum::response::sse::Event::default()
+                        .data(serde_json::to_string(&response).unwrap_or_default()))
+                });
+                
+                Sse::new(sse_stream).into_response()
+            }
+            Err(e) => ApiErrorResponse(e).into_response()
+        }
     } else {
         // Non-streaming response
-        let response = state.api_server.handle_inference_request(request, client_ip).await
-            .map_err(|e| ApiErrorResponse(e))?;
-        Ok(Json(response).into_response())
+        match state.api_server.handle_inference_request(request, client_ip).await {
+            Ok(response) => axum::response::Json(response).into_response(),
+            Err(e) => ApiErrorResponse(e).into_response()
+        }
     }
 }
 
@@ -181,6 +184,6 @@ impl IntoResponse for ApiErrorResponse {
         let status = StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let error_response = self.0.to_response(None);
         
-        (status, Json(error_response)).into_response()
+        (status, axum::response::Json(error_response)).into_response()
     }
 }

@@ -583,8 +583,9 @@ impl PrivateModelManager {
             return Err(anyhow!("Insufficient permissions to generate token"));
         }
 
+        use base64::Engine;
         let token = AccessToken {
-            value: base64::encode(Uuid::new_v4().as_bytes()),
+            value: base64::engine::general_purpose::STANDARD.encode(Uuid::new_v4().as_bytes()),
             model_id: model_id.to_string(),
             owner_id: owner.id.clone(),
             access_level,

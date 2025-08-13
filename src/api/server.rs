@@ -162,7 +162,6 @@ impl CircuitBreaker {
     }
 }
 
-#[derive(Clone)]
 pub struct ApiServer {
     config: ApiConfig,
     addr: SocketAddr,
@@ -291,14 +290,6 @@ impl ApiServer {
         }
     }
     
-    pub async fn run(&self) -> Result<()> {
-        // The HTTP server is already started in the background by start_http_server
-        // This method just waits indefinitely
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }
-    
     pub async fn handle_inference_request(
         &self,
         request: InferenceRequest,
@@ -354,7 +345,7 @@ impl ApiServer {
         
         // Run inference with real model
         let result = engine.run_inference(engine_request).await
-            .map_err(|e| ApiError::InferenceError(e.to_string()))?;
+            .map_err(|e| ApiError::InternalError(format!("Inference failed: {}", e)))?;
         
         // Convert to API response
         let response = InferenceResponse {
@@ -451,60 +442,64 @@ impl ApiServer {
     
     fn create_router(server: Arc<Self>) -> Router {
         Router::new()
-            .route("/health", get(Self::health_handler))
-            .route("/v1/models", get(Self::models_handler))
-            .route("/v1/inference", post(Self::inference_handler))
-            .route("/metrics", get(Self::metrics_handler))
+            .route("/health", get(health_handler))
+            .route("/v1/models", get(models_handler))
+            .route("/v1/inference", post(simple_inference_handler))
+            .route("/metrics", get(metrics_handler))
             .layer(
                 CorsLayer::permissive()
             )
             .with_state(server)
     }
-    
-    async fn health_handler(State(server): State<Arc<Self>>) -> impl IntoResponse {
-        Json(server.health_check().await)
+}
+
+// Handler functions as free functions
+async fn health_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    axum::response::Json(server.health_check().await)
+}
+
+async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    match server.get_available_models().await {
+        Ok(models) => (StatusCode::OK, axum::response::Json(models)).into_response(),
+        Err(e) => ApiServer::error_response(e),
     }
+}
+
+// Inference handler that properly uses axum extractors
+async fn simple_inference_handler(
+    State(server): State<Arc<ApiServer>>,
+    Json(request): Json<InferenceRequest>,
+) -> impl IntoResponse {
+    let client_ip = "127.0.0.1".to_string();
     
-    async fn models_handler(State(server): State<Arc<Self>>) -> impl IntoResponse {
-        match server.get_available_models().await {
-            Ok(models) => (StatusCode::OK, Json(models)).into_response(),
-            Err(e) => Self::error_response(e),
-        }
+    match server.handle_inference_request(request, client_ip).await {
+        Ok(response) => (StatusCode::OK, axum::response::Json(response)).into_response(),
+        Err(e) => ApiServer::error_response(e),
     }
+}
+
+async fn metrics_handler() -> impl IntoResponse {
+    let metrics = "# HELP http_requests_total Total HTTP requests\n\
+                  # TYPE http_requests_total counter\n\
+                  http_requests_total 0\n\
+                  # HELP http_request_duration_seconds Request duration\n\
+                  # TYPE http_request_duration_seconds histogram\n\
+                  http_request_duration_seconds_bucket{le=\"0.1\"} 0\n";
     
-    async fn inference_handler(
-        State(server): State<Arc<Self>>,
-        Json(request): Json<InferenceRequest>,
-    ) -> impl IntoResponse {
-        let client_ip = "127.0.0.1".to_string(); // In production, extract from headers
-        
-        match server.handle_inference_request(request, client_ip).await {
-            Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-            Err(e) => Self::error_response(e),
-        }
-    }
-    
-    async fn metrics_handler() -> impl IntoResponse {
-        let metrics = "# HELP http_requests_total Total HTTP requests\n\
-                      # TYPE http_requests_total counter\n\
-                      http_requests_total 0\n\
-                      # HELP http_request_duration_seconds Request duration\n\
-                      # TYPE http_request_duration_seconds histogram\n\
-                      http_request_duration_seconds_bucket{le=\"0.1\"} 0\n";
-        
-        (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-            metrics,
-        )
-    }
-    
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics,
+    )
+}
+
+impl ApiServer {
     fn error_response(error: ApiError) -> Response {
         let status = StatusCode::from_u16(error.status_code())
             .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = error.to_response(None);
         
-        (status, Json(body)).into_response()
+        (status, axum::response::Json(body)).into_response()
     }
 }
 

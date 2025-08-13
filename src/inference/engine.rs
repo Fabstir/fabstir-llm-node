@@ -247,11 +247,15 @@ impl LlmEngine {
         // Update metrics
         *self.inference_count.write().await += 1;
         
-        // Check if we have a real model loaded
-        let mut models = self.models.lock().unwrap();
-        let has_real_model = models.contains_key(&request.model_id);
-        
-        if has_real_model {
+        // Check if we have a real model loaded and perform generation
+        let (output, tokens_generated, generation_time) = {
+            let mut models = self.models.lock().unwrap();
+            let has_real_model = models.contains_key(&request.model_id);
+            
+            if !has_real_model {
+                return Err(anyhow!("Model {} is not loaded in memory", request.model_id));
+            }
+            
             // Create necessary data before borrowing the model
             let (prompt_tokens, context_size, eos_token) = {
                 let model = models.get_mut(&request.model_id)
@@ -328,32 +332,32 @@ impl LlmEngine {
             
             let tokens_generated = n_cur - prompt_tokens.len();
             let generation_time = start_time.elapsed();
-            let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
             
-            // Update metrics
-            {
-                let mut metrics = self.metrics.write().await;
-                metrics.total_inferences += 1;
-                metrics.total_tokens_generated += tokens_generated;
-                metrics.total_inference_time += generation_time;
-                metrics.average_tokens_per_second = 
-                    metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
-            }
-            
-            Ok(InferenceResult {
-                text: output,
-                tokens_generated,
-                generation_time,
-                tokens_per_second,
-                model_id: request.model_id,
-                finish_reason: "stop".to_string(),
-                token_info: vec![],
-                was_cancelled: false,
-            })
-        } else {
-            // Model not loaded in memory
-            return Err(anyhow!("Model {} is not loaded in memory", request.model_id));
+            (output, tokens_generated, generation_time)
+        }; // Release the mutex here before any await
+        
+        let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
+        
+        // Update metrics
+        {
+            let mut metrics = self.metrics.write().await;
+            metrics.total_inferences += 1;
+            metrics.total_tokens_generated += tokens_generated;
+            metrics.total_inference_time += generation_time;
+            metrics.average_tokens_per_second = 
+                metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
         }
+        
+        Ok(InferenceResult {
+            text: output,
+            tokens_generated,
+            generation_time,
+            tokens_per_second,
+            model_id: request.model_id,
+            finish_reason: "stop".to_string(),
+            token_info: vec![],
+            was_cancelled: false,
+        })
     }
     
     pub async fn run_inference_stream(&self, request: InferenceRequest) -> Result<TokenStream> {
