@@ -14,6 +14,7 @@ use axum::{
 use tower_http::cors::CorsLayer;
 
 use crate::p2p::Node;
+use crate::inference::LlmEngine;
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use super::handlers::{ModelInfo, ModelsResponse, HealthResponse};
 use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
@@ -161,10 +162,13 @@ impl CircuitBreaker {
     }
 }
 
+#[derive(Clone)]
 pub struct ApiServer {
     config: ApiConfig,
     addr: SocketAddr,
     node: Arc<RwLock<Option<Node>>>,
+    engine: Arc<RwLock<Option<Arc<LlmEngine>>>>,
+    default_model_id: Arc<RwLock<String>>,
     rate_limiter: Arc<RateLimiter>,
     circuit_breaker: Arc<CircuitBreaker>,
     connection_pool: Arc<ConnectionPool>,
@@ -203,6 +207,8 @@ impl ApiServer {
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
+            engine: Arc::new(RwLock::new(None)),
+            default_model_id: Arc::new(RwLock::new("tiny-vicuna".to_string())),
             rate_limiter: Arc::new(RateLimiter::new(config.rate_limit_per_minute)),
             circuit_breaker: Arc::new(CircuitBreaker::new(
                 config.circuit_breaker_threshold,
@@ -251,6 +257,8 @@ impl ApiServer {
             config: self.config.clone(),
             addr: self.addr,
             node: self.node.clone(),
+            engine: self.engine.clone(),
+            default_model_id: self.default_model_id.clone(),
             rate_limiter: self.rate_limiter.clone(),
             circuit_breaker: self.circuit_breaker.clone(),
             connection_pool: self.connection_pool.clone(),
@@ -265,6 +273,14 @@ impl ApiServer {
         *self.node.blocking_write() = Some(node);
     }
     
+    pub async fn set_engine(&self, engine: Arc<LlmEngine>) {
+        *self.engine.write().await = Some(engine);
+    }
+    
+    pub async fn set_default_model_id(&self, model_id: String) {
+        *self.default_model_id.write().await = model_id;
+    }
+    
     pub async fn connection_stats(&self) -> ConnectionStats {
         self.connection_pool.stats().await
     }
@@ -272,6 +288,14 @@ impl ApiServer {
     pub async fn shutdown(mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
+        }
+    }
+    
+    pub async fn run(&self) -> Result<()> {
+        // The HTTP server is already started in the background by start_http_server
+        // This method just waits indefinitely
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
     
@@ -295,26 +319,49 @@ impl ApiServer {
             return Err(ApiError::CircuitBreakerOpen);
         }
         
-        // Get node
-        let node_guard = self.node.read().await;
-        let node = node_guard.as_ref()
-            .ok_or_else(|| ApiError::ServiceUnavailable("no available nodes".to_string()))?;
+        // Get engine
+        let engine_guard = self.engine.read().await;
+        let engine = engine_guard.as_ref()
+            .ok_or_else(|| ApiError::ServiceUnavailable("inference engine not initialized".to_string()))?;
         
-        // Check if model is available
-        let capabilities = node.capabilities();
-        if !capabilities.contains(&request.model) {
-            return Err(ApiError::ModelNotFound {
-                model: request.model.clone(),
-                available_models: capabilities,
-            });
-        }
+        // Use default model ID if model field is "tiny-vicuna" or similar
+        let model_id = if request.model == "tiny-vicuna" || request.model.is_empty() {
+            self.default_model_id.read().await.clone()
+        } else {
+            // Check if this specific model ID is loaded
+            let loaded_models = engine.list_loaded_models().await;
+            if loaded_models.contains(&request.model) {
+                request.model.clone()
+            } else {
+                // Fall back to default
+                self.default_model_id.read().await.clone()
+            }
+        };
         
-        // Simulate inference (in real implementation, this would use the P2P node)
+        // Create inference request for the engine
+        let engine_request = crate::inference::InferenceRequest {
+            model_id: model_id.clone(),
+            prompt: request.prompt,
+            max_tokens: request.max_tokens as usize,
+            temperature: request.temperature,
+            top_p: 0.9,
+            top_k: 40,
+            repeat_penalty: 1.1,
+            seed: None,
+            stop_sequences: vec![],
+            stream: false,
+        };
+        
+        // Run inference with real model
+        let result = engine.run_inference(engine_request).await
+            .map_err(|e| ApiError::InferenceError(e.to_string()))?;
+        
+        // Convert to API response
         let response = InferenceResponse {
             model: request.model,
-            content: "This is a simulated response.".to_string(),
-            tokens_used: 10,
-            finish_reason: "stop".to_string(),
+            content: result.text,
+            tokens_used: result.tokens_generated as u32,
+            finish_reason: result.finish_reason,
             request_id: request.request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         };
         

@@ -232,8 +232,8 @@ impl LlmEngine {
         self.model_info.read().await.contains_key(model_id)
     }
     
-    pub async fn list_loaded_models(&self) -> Vec<Model> {
-        self.model_info.read().await.values().cloned().collect()
+    pub async fn list_loaded_models(&self) -> Vec<String> {
+        self.model_info.read().await.keys().cloned().collect()
     }
     
     pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
@@ -351,36 +351,8 @@ impl LlmEngine {
                 was_cancelled: false,
             })
         } else {
-            // Use mock inference for tests
-            let tokens_generated = request.max_tokens.min(50);
-            let text = format!("Response to: {} (generated {} tokens)", 
-                &request.prompt[..request.prompt.len().min(20)], 
-                tokens_generated
-            );
-            
-            let generation_time = Duration::from_millis(250);
-            let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
-            
-            // Update metrics
-            {
-                let mut metrics = self.metrics.write().await;
-                metrics.total_inferences += 1;
-                metrics.total_tokens_generated += tokens_generated;
-                metrics.total_inference_time += generation_time;
-                metrics.average_tokens_per_second = 
-                    metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
-            }
-            
-            Ok(InferenceResult {
-                text,
-                tokens_generated,
-                generation_time,
-                tokens_per_second,
-                model_id: request.model_id,
-                finish_reason: "stop".to_string(),
-                token_info: vec![],
-                was_cancelled: false,
-            })
+            // Model not loaded in memory
+            return Err(anyhow!("Model {} is not loaded in memory", request.model_id));
         }
     }
     
@@ -418,25 +390,8 @@ impl LlmEngine {
                 }
             });
         } else {
-            // Spawn task to generate mock tokens for tests
-            tokio::spawn(async move {
-                let tokens = vec!["The", " meaning", " of", " life", " is", " 42"];
-                
-                for (i, token_text) in tokens.iter().enumerate() {
-                    let token = TokenInfo {
-                        token_id: i as i32,
-                        text: token_text.to_string(),
-                        logprob: Some(-0.5 * (i as f32 + 1.0)),
-                        timestamp: Some(0.1 * i as f32),
-                    };
-                    
-                    if tx.send(Ok(token)).await.is_err() {
-                        break;
-                    }
-                    
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            });
+            // Model not loaded in memory
+            return Err(anyhow!("Model {} is not loaded in memory for streaming", request.model_id));
         }
         
         Ok(ReceiverStream::new(rx))
