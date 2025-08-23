@@ -12,6 +12,15 @@ use tracing::{info, warn, error, debug};
 use crate::contracts::{Web3Client, JobMonitor, JobEvent as ContractJobEvent, JobStatus as ContractJobStatus};
 use crate::inference::{LlmEngine, InferenceRequest};
 
+// Message struct for conversation context
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,  // "user", "assistant", "system"
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
+}
+
 // Extended JobStatus for internal processing states
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobStatus {
@@ -32,6 +41,9 @@ pub struct JobRequest {
     pub payment_amount: U256,
     pub deadline: U256,
     pub timestamp: U256,
+    // ADD conversation context field
+    #[serde(default)]
+    pub conversation_context: Vec<Message>,
 }
 
 impl Default for JobRequest {
@@ -45,6 +57,7 @@ impl Default for JobRequest {
             payment_amount: U256::zero(),
             deadline: U256::zero(),
             timestamp: U256::zero(),
+            conversation_context: Vec::new(),
         }
     }
 }
@@ -299,6 +312,7 @@ impl JobProcessor {
             payment_amount: event.payment_amount,
             deadline: U256::zero(),
             timestamp: U256::zero(),
+            conversation_context: Vec::new(),
         };
 
         // Filter by supported models

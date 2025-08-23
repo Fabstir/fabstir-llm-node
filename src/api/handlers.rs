@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::job_processor::Message;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceRequest {
@@ -11,6 +12,8 @@ pub struct InferenceRequest {
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    #[serde(default)]
+    pub conversation_context: Vec<Message>,
 }
 
 fn default_temperature() -> f32 {

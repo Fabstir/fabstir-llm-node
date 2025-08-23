@@ -8,4 +8,5 @@ mod models {
     mod test_finetuned;
     mod test_private;
     mod test_gdpr;
+    mod test_job_request;
 }

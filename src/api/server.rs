@@ -12,9 +12,11 @@ use axum::{
     http::StatusCode,
 };
 use tower_http::cors::CorsLayer;
+use tracing::info;
 
 use crate::p2p::Node;
 use crate::inference::LlmEngine;
+use crate::utils::context::{build_prompt_with_context, count_context_tokens};
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use super::handlers::{ModelInfo, ModelsResponse, HealthResponse};
 use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
@@ -329,10 +331,24 @@ impl ApiServer {
             }
         };
         
+        // Build prompt with context if provided
+        let full_prompt = if !request.conversation_context.is_empty() {
+            info!("Processing with {} context messages, ~{} tokens",
+                request.conversation_context.len(),
+                count_context_tokens(&request.conversation_context)
+            );
+            build_prompt_with_context(
+                &request.conversation_context,
+                &request.prompt
+            )
+        } else {
+            request.prompt.clone()
+        };
+        
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
             model_id: model_id.clone(),
-            prompt: request.prompt,
+            prompt: full_prompt,
             max_tokens: request.max_tokens as usize,
             temperature: request.temperature,
             top_p: 0.9,

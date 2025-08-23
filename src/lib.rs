@@ -19,11 +19,12 @@ pub mod performance;
 pub mod monitoring;
 pub mod embeddings;
 pub mod cache;
+pub mod utils;
 
 // Re-export main types from new modules
 pub use job_processor::{
     JobProcessor, JobStatus, JobRequest, JobResult, NodeConfig, NodeConfig as JobNodeConfig,
-    LLMService, JobEvent, ContractClientTrait
+    LLMService, JobEvent, ContractClientTrait, Message
 };
 pub use job_claim::{
     JobClaimer, ClaimError, ClaimResult, ClaimEvent, ClaimConfig,
