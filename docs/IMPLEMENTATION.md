@@ -583,6 +583,66 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - Multiple test suites passing (test_phase_4.3.1_complete.sh, test_phase_4.3.1_full.sh)
 - Services stable and running in production configuration
 
+### Sub-phase 4.3.3: Stateless Embeddings with Future RAG Support### Sub-phase 4.3.3: Progressive Context Support (MVP to RAG)
+
+#### Overview
+Three-stage implementation: Context passing (MVP) → Compaction support → Full RAG integration
+
+#### Stage 1: Context Passing (MVP - Implement Now)
+
+##### Chunk 1: Add Context Support to Job Processing
+
+###### Implementation Tasks
+- [ ] Add `conversation_context` field to JobRequest
+- [ ] Update request validation to accept context
+- [ ] Format context with prompt for LLM
+- [ ] Implement context size limits
+- [ ] Add context truncation if too large
+
+#### Stage 2: Compaction Support (Phase 2)
+
+##### Chunk 2: Batch Embedding Generation
+
+###### Implementation Tasks
+- [ ] Add batch embedding endpoint
+- [ ] Implement conversation summarization
+- [ ] Create compaction metadata structure
+- [ ] Add progress tracking for long operations
+- [ ] Cache embeddings temporarily
+
+#### Stage 3: RAG Preparation (Phase 3 - Future)
+
+##### Chunk 3: Session Management Structure
+
+###### Design Tasks (No Implementation Yet)
+- [ ] Define SessionManager trait
+- [ ] Create session configuration types
+- [ ] Plan delegation token validation
+- [ ] Design session lifecycle hooks
+- [ ] Document RAG integration points
+```
+
+#### Testing Requirements
+
+##### MVP Tests
+- [ ] Test context formatting
+- [ ] Test context size limits
+- [ ] Test without vectordb
+- [ ] Verify token counting
+- [ ] Load test with context
+
+##### Phase 2 Tests
+- [ ] Test batch embedding generation
+- [ ] Test summarization quality
+- [ ] Test compaction endpoint
+- [ ] Measure compaction performance
+
+##### Phase 3 Tests (Future)
+- [ ] Test session creation
+- [ ] Test RAG context retrieval
+- [ ] Test delegation validation
+- [ ] Test session cleanup
+
 ### Sub-phase 4.4: Production Readiness (Week 4)
 
 #### 4.4.1: Full System Testing
