@@ -18,5 +18,5 @@ RUN mkdir -p /models && \
         curl -LO https://huggingface.co/afrideva/Tiny-Vicuna-1B-GGUF/resolve/main/tiny-vicuna-1b.q4_k_m.gguf; \
     fi
 
-EXPOSE 9003
+EXPOSE 9001 9002 9003 8080
 CMD ["fabstir-llm-node"]
