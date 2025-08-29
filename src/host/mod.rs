@@ -4,6 +4,7 @@ pub mod availability;
 pub mod registration;
 pub mod registry;
 pub mod resources;
+pub mod selection;
 
 pub use model_config::{
     ModelConfig, ModelHostingManager, ModelParameters, ModelStatus,
@@ -32,4 +33,8 @@ pub use resources::{
     ResourceMonitor, ResourceMetrics, GpuMetrics, CpuMetrics,
     MemoryMetrics, NetworkMetrics, AlertThreshold, AlertLevel,
     ResourceAlert, MonitoringError
+};
+
+pub use selection::{
+    HostSelector, PerformanceMetrics, ScoringWeights, JobRequirements
 };
