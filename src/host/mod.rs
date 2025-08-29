@@ -1,6 +1,7 @@
 pub mod model_config;
 pub mod pricing;
 pub mod availability;
+pub mod registry;
 pub mod resources;
 
 pub use model_config::{
@@ -16,6 +17,10 @@ pub use pricing::{
 pub use availability::{
     AvailabilityManager, AvailabilitySchedule, MaintenanceWindow,
     AvailabilityStatus, CapacityConfig, ScheduleError
+};
+
+pub use registry::{
+    HostRegistry, HostInfo, RegistryStats
 };
 
 pub use resources::{

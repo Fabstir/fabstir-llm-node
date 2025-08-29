@@ -4,4 +4,5 @@ mod host {
     mod test_pricing;
     mod test_availability;
     mod test_resources;
+    mod test_registry;
 }

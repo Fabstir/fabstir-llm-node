@@ -606,12 +606,12 @@ Implement comprehensive host management functionality for SDK integration, enabl
 - [x] Implement event replay from specific block
 
 ##### 3. Host Discovery Implementation
-- [ ] Implement getRegisteredHosts() - query all registered nodes from contract
-- [ ] Implement getHostMetadata(address) - retrieve host capabilities and specs
-- [ ] Implement isHostOnline(address) - check host availability status
-- [ ] Implement getAvailableHosts(modelId) - filter hosts by model support
-- [ ] Implement getHostsByCapability(capability) - filter by specific capabilities
-- [ ] Add caching layer to reduce blockchain queries
+- [x] Implement getRegisteredHosts() - query all registered nodes from contract
+- [x] Implement getHostMetadata(address) - retrieve host capabilities and specs
+- [x] Implement isHostOnline(address) - check host availability status
+- [x] Implement getAvailableHosts(modelId) - filter hosts by model support
+- [x] Implement getHostsByCapability(capability) - filter by specific capabilities
+- [x] Add caching layer to reduce blockchain queries
 
 ##### 4. Node Registration Workflow
 - [ ] Implement registerNode() - register this node with contract
