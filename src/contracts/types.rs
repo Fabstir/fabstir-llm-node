@@ -1,6 +1,49 @@
 use ethers::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// NodeRegistry Events
+#[derive(Debug, Clone, EthEvent)]
+#[ethevent(name = "NodeRegistered", abi = "NodeRegistered(address,string,uint256)")]
+pub struct NodeRegisteredEvent {
+    #[ethevent(indexed)]
+    pub node: Address,
+    pub metadata: String,
+    pub stake: U256,
+}
+
+#[derive(Debug, Clone, EthEvent)]
+#[ethevent(name = "NodeUpdated", abi = "NodeUpdated(address,string)")]
+pub struct NodeUpdatedEvent {
+    #[ethevent(indexed)]
+    pub node: Address,
+    pub metadata: String,
+}
+
+#[derive(Debug, Clone, EthEvent)]
+#[ethevent(name = "NodeUnregistered", abi = "NodeUnregistered(address)")]
+pub struct NodeUnregisteredEvent {
+    #[ethevent(indexed)]
+    pub node: Address,
+}
+
+// NodeRegistry Function Calls
+#[derive(Debug, Clone)]
+pub struct RegisterNodeCall {
+    pub metadata: String,
+    pub stake: U256,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryRegisteredNodesReturn {
+    pub nodes: Vec<Address>,
+    pub metadatas: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetNodeCapabilitiesReturn {
+    pub capabilities: String,
+}
+
 // Contract ABIs - these would normally be generated from the contract JSON
 abigen!(
     NodeRegistry,
@@ -13,6 +56,60 @@ abigen!(
                 {"internalType": "string[]", "name": "capabilities", "type": "string[]"},
                 {"internalType": "uint256", "name": "stake", "type": "uint256"}
             ],
+            "stateMutability": "view",
+            "type": "function"
+        },
+        {
+            "anonymous": false,
+            "inputs": [
+                {"indexed": true, "internalType": "address", "name": "node", "type": "address"},
+                {"indexed": false, "internalType": "string", "name": "metadata", "type": "string"},
+                {"indexed": false, "internalType": "uint256", "name": "stake", "type": "uint256"}
+            ],
+            "name": "NodeRegistered",
+            "type": "event"
+        },
+        {
+            "anonymous": false,
+            "inputs": [
+                {"indexed": true, "internalType": "address", "name": "node", "type": "address"},
+                {"indexed": false, "internalType": "string", "name": "metadata", "type": "string"}
+            ],
+            "name": "NodeUpdated",
+            "type": "event"
+        },
+        {
+            "anonymous": false,
+            "inputs": [
+                {"indexed": true, "internalType": "address", "name": "node", "type": "address"}
+            ],
+            "name": "NodeUnregistered",
+            "type": "event"
+        },
+        {
+            "inputs": [
+                {"internalType": "string", "name": "metadata", "type": "string"},
+                {"internalType": "uint256", "name": "stake", "type": "uint256"}
+            ],
+            "name": "registerNode",
+            "outputs": [],
+            "stateMutability": "nonpayable",
+            "type": "function"
+        },
+        {
+            "inputs": [],
+            "name": "queryRegisteredNodes",
+            "outputs": [
+                {"internalType": "address[]", "name": "", "type": "address[]"},
+                {"internalType": "string[]", "name": "", "type": "string[]"}
+            ],
+            "stateMutability": "view",
+            "type": "function"
+        },
+        {
+            "inputs": [{"internalType": "address", "name": "node", "type": "address"}],
+            "name": "getNodeCapabilities",
+            "outputs": [{"internalType": "string", "name": "", "type": "string"}],
             "stateMutability": "view",
             "type": "function"
         }
