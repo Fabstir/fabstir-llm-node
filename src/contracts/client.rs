@@ -139,14 +139,62 @@ impl Web3Client {
     }
 
     pub async fn load_contract_addresses(&self, _path: &str) -> Result<HashMap<String, Address>> {
-        // In a real implementation, this would load from a JSON file
-        // For testing, we'll return mock addresses
+        // Load from environment variables or .env.contracts file
         let mut addresses = HashMap::new();
-        addresses.insert("NodeRegistry".to_string(), "0x5FbDB2315678afecb367f032d93F642f64180aa3".parse()?);
-        addresses.insert("JobMarketplace".to_string(), "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".parse()?);
-        addresses.insert("PaymentEscrow".to_string(), "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0".parse()?);
-        addresses.insert("ReputationSystem".to_string(), "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9".parse()?);
-        addresses.insert("ProofSystem".to_string(), "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9".parse()?);
+        
+        // Try to load from environment variables first
+        if let Ok(addr) = std::env::var("NODE_REGISTRY_FAB_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("NodeRegistry".to_string(), addr.parse()?);
+            }
+        }
+        
+        if let Ok(addr) = std::env::var("JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("JobMarketplace".to_string(), addr.parse()?);
+            }
+        }
+        
+        if let Ok(addr) = std::env::var("PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("PaymentEscrow".to_string(), addr.parse()?);
+            }
+        }
+        
+        if let Ok(addr) = std::env::var("HOST_EARNINGS_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("HostEarnings".to_string(), addr.parse()?);
+            }
+        }
+        
+        if let Ok(addr) = std::env::var("REPUTATION_SYSTEM_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("ReputationSystem".to_string(), addr.parse()?);
+            }
+        }
+        
+        if let Ok(addr) = std::env::var("PROOF_SYSTEM_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("ProofSystem".to_string(), addr.parse()?);
+            }
+        }
+        
+        if let Ok(addr) = std::env::var("EZKL_VERIFIER_ADDRESS") {
+            if !addr.is_empty() {
+                addresses.insert("EzklVerifier".to_string(), addr.parse()?);
+            }
+        }
+        
+        // If no environment variables found, fall back to default addresses
+        if addresses.is_empty() {
+            // Default addresses for testing/development
+            addresses.insert("NodeRegistry".to_string(), "0x87516C13Ea2f99de598665e14cab64E191A0f8c4".parse()?);
+            addresses.insert("JobMarketplace".to_string(), "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".parse()?);
+            addresses.insert("PaymentEscrow".to_string(), "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".parse()?);
+            addresses.insert("HostEarnings".to_string(), "0xbFfCd6BAaCCa205d471bC52Bd37e1957B1A43d4a".parse()?);
+            addresses.insert("ReputationSystem".to_string(), "0x4504CC06C47a4E4d9a14Bd5eF9766395B7c76865".parse()?);
+            addresses.insert("ProofSystem".to_string(), "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".parse()?);
+        }
         
         *self.contract_addresses.write().await = addresses.clone();
         Ok(addresses)
@@ -226,8 +274,10 @@ impl Web3Client {
     }
 
     pub async fn create_multicall(&self) -> Result<Multicall3<Provider<Http>>> {
-        // Multicall3 address is the same on all chains
-        let multicall_address = "0xcA11bde05977b3631167028862bE2a173976CA11".parse::<Address>()?;
+        // Try to load from environment variable, fall back to default
+        let multicall_address = std::env::var("MULTICALL3_ADDRESS")
+            .unwrap_or_else(|_| "0xcA11bde05977b3631167028862bE2a173976CA11".to_string())
+            .parse::<Address>()?;
         
         let multicall = Multicall3::new(multicall_address, self.provider.clone());
         

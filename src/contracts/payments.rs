@@ -20,8 +20,14 @@ pub struct PaymentConfig {
 
 impl Default for PaymentConfig {
     fn default() -> Self {
+        // Try to load from environment variables, fall back to defaults
+        let escrow_address = std::env::var("PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS")
+            .unwrap_or_else(|_| "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".to_string())
+            .parse()
+            .unwrap_or_else(|_| "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".parse().unwrap());
+            
         Self {
-            escrow_address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0".parse().unwrap(),
+            escrow_address,
             supported_tokens: vec![
                 TokenInfo {
                     symbol: "USDC".to_string(),

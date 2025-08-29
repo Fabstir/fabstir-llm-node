@@ -1,0 +1,615 @@
+● To get the last Job ID for jobs in different states (pending, claimed, completed), you'll need to implement a solution since the contract doesn't have built-in functions for this.
+   Here are several approaches:
+
+  Approach 1: Iterate Through Jobs (Simple but Gas-Intensive for Reading)
+
+  async function getLastJobsByStatus() {
+      const results = {
+          lastPending: null,
+          lastClaimed: null,
+          lastCompleted: null
+      };
+
+      // Start from a recent job ID and work backwards
+      // You could store the last known job ID to optimize this
+      let jobId = 100; // Or get from a stored value
+      let found = 0;
+
+      while (jobId > 0 && found < 3) {
+          try {
+              const job = await jobMarketplace.getJob(jobId);
+              const status = job[2]; // status is at index 2
+
+              // Status: 0 = Posted/Pending, 1 = Claimed, 2 = Completed
+              if (status === 0n && !results.lastPending) {
+                  results.lastPending = jobId;
+                  found++;
+              } else if (status === 1n && !results.lastClaimed) {
+                  results.lastClaimed = jobId;
+                  found++;
+              } else if (status === 2n && !results.lastCompleted) {
+                  results.lastCompleted = jobId;
+                  found++;
+              }
+          } catch (e) {
+              // Job doesn't exist, continue
+          }
+          jobId--;
+      }
+
+      return results;
+  }
+
+  Approach 2: Use Event Logs (Most Efficient)
+
+  async function getLastJobsByStatusFromEvents() {
+      const jobMarketplaceAddress = '0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304';
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+      // Get recent blocks (adjust range as needed)
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = currentBlock - 10000; // Look back 10000 blocks
+
+      // Event signatures
+      const jobCreatedTopic = ethers.id('JobCreatedWithToken(bytes32,address,address,uint256,string)');
+      const jobClaimedTopic = ethers.id('JobClaimed(uint256,address)');
+      const jobCompletedTopic = ethers.id('JobCompleted(uint256,string)');
+
+      // Get all events
+      const [createdLogs, claimedLogs, completedLogs] = await Promise.all([
+          provider.getLogs({
+              address: jobMarketplaceAddress,
+              topics: [jobCreatedTopic],
+              fromBlock,
+              toBlock: currentBlock
+          }),
+          provider.getLogs({
+              address: jobMarketplaceAddress,
+              topics: [jobClaimedTopic],
+              fromBlock,
+              toBlock: currentBlock
+          }),
+          provider.getLogs({
+              address: jobMarketplaceAddress,
+              topics: [jobCompletedTopic],
+              fromBlock,
+              toBlock: currentBlock
+          })
+      ]);
+
+      // Extract job IDs from events
+      const claimedJobIds = new Set();
+      const completedJobIds = new Set();
+
+      // Parse claimed jobs
+      claimedLogs.forEach(log => {
+          const jobId = parseInt(log.topics[1], 16); // Job ID is first indexed param
+          claimedJobIds.add(jobId);
+      });
+
+      // Parse completed jobs
+      completedLogs.forEach(log => {
+          const jobId = parseInt(log.topics[1], 16);
+          completedJobIds.add(jobId);
+      });
+
+      // Find last pending (created but not claimed or completed)
+      let lastPending = null;
+      for (let i = createdLogs.length - 1; i >= 0; i--) {
+          // For JobCreatedWithToken, we need to map the escrowId to actual jobId
+          // This is tricky - you might need to track the internal job counter
+      }
+
+      return {
+          lastClaimed: Math.max(...Array.from(claimedJobIds)),
+          lastCompleted: Math.max(...Array.from(completedJobIds))
+      };
+  }
+
+  Approach 3: Track Job IDs Off-Chain (Recommended for Production)
+
+  // Store job IDs by status in your database/backend
+  class JobTracker {
+      constructor() {
+          this.jobsByStatus = {
+              pending: [],
+              claimed: [],
+              completed: []
+          };
+      }
+
+      // Listen to events and update tracking
+      async startTracking(jobMarketplace) {
+          // Listen for JobCreatedWithToken
+          jobMarketplace.on('JobCreatedWithToken', (escrowId, renter, token, amount, cid, event) => {
+              // You need to get the actual job ID from the transaction
+              const jobId = this.getJobIdFromTransaction(event.transactionHash);
+              this.jobsByStatus.pending.push(jobId);
+          });
+
+          // Listen for JobClaimed
+          jobMarketplace.on('JobClaimed', (jobId, host) => {
+              // Move from pending to claimed
+              this.jobsByStatus.pending = this.jobsByStatus.pending.filter(id => id !== jobId);
+              this.jobsByStatus.claimed.push(jobId);
+          });
+
+          // Listen for JobCompleted
+          jobMarketplace.on('JobCompleted', (jobId, responseCID) => {
+              // Move from claimed to completed
+              this.jobsByStatus.claimed = this.jobsByStatus.claimed.filter(id => id !== jobId);
+              this.jobsByStatus.completed.push(jobId);
+          });
+      }
+
+      getLastJobsByStatus() {
+          return {
+              lastPending: this.jobsByStatus.pending[this.jobsByStatus.pending.length - 1],
+              lastClaimed: this.jobsByStatus.claimed[this.jobsByStatus.claimed.length - 1],
+              lastCompleted: this.jobsByStatus.completed[this.jobsByStatus.completed.length - 1]
+          };
+      }
+  }
+
+  Approach 4: Binary Search for Efficiency
+
+  async function findLastJobId(jobMarketplace) {
+      let low = 1;
+      let high = 10000; // Set a reasonable upper bound
+      let lastValidJob = 0;
+
+      // Binary search to find the highest job ID
+      while (low <= high) {
+          const mid = Math.floor((low + high) / 2);
+          try {
+              await jobMarketplace.getJob(mid);
+              lastValidJob = mid;
+              low = mid + 1;
+          } catch (e) {
+              high = mid - 1;
+          }
+      }
+
+      return lastValidJob;
+  }
+
+  async function getLastJobsByStatusEfficient(jobMarketplace) {
+      const lastJobId = await findLastJobId(jobMarketplace);
+      const results = {
+          lastPending: null,
+          lastClaimed: null,
+          lastCompleted: null
+      };
+
+      // Now scan backwards from lastJobId
+      for (let id = lastJobId; id > 0 && Object.values(results).some(v => v === null); id--) {
+          try {
+              const job = await jobMarketplace.getJob(id);
+              const status = Number(job[2]);
+
+              if (status === 0 && !results.lastPending) {
+                  results.lastPending = id;
+              } else if (status === 1 && !results.lastClaimed) {
+                  results.lastClaimed = id;
+              } else if (status === 2 && !results.lastCompleted) {
+                  results.lastCompleted = id;
+              }
+          } catch (e) {
+              continue;
+          }
+      }
+
+      return results;
+  }
+
+  Quick Implementation for Your Client:
+
+  // Add this to your SDK
+  async function getJobsByStatus(maxJobs = 50) {
+      const jobs = {
+          pending: [],
+          claimed: [],
+          completed: []
+      };
+
+      // Start from job ID 1 and check up to maxJobs
+      for (let jobId = 1; jobId <= maxJobs; jobId++) {
+          try {
+              const job = await this.contracts.jobMarketplace.getJob(jobId);
+              const status = Number(job[2]);
+
+              const jobData = {
+                  id: jobId,
+                  renter: job[0],
+                  payment: job[1],
+                  status: status,
+                  assignedHost: job[3],
+                  promptCID: job[4],
+                  responseCID: job[5],
+                  deadline: job[6]
+              };
+
+              if (status === 0) jobs.pending.push(jobData);
+              else if (status === 1) jobs.claimed.push(jobData);
+              else if (status === 2) jobs.completed.push(jobData);
+
+          } catch (e) {
+              // Job doesn't exist, could break here if jobs are sequential
+              break;
+          }
+      }
+
+      return {
+          pending: jobs.pending,
+          claimed: jobs.claimed,
+          completed: jobs.completed,
+          lastPending: jobs.pending[jobs.pending.length - 1]?.id || null,
+          lastClaimed: jobs.claimed[jobs.claimed.length - 1]?.id || null,
+          lastCompleted: jobs.completed[jobs.completed.length - 1]?.id || null
+      };
+  }
+
+  The most efficient approach for production would be to:
+  1. Use events to track job state changes
+  2. Store this information in an off-chain database
+  3. Query your database for the latest jobs by status
+
+  This avoids repeatedly calling the contract and provides much better performance.
+
+> I need three example TypeScript functions for jobs pending, claimed and completed that will use events to get the last N entries in timestamp descending order (so from oldest 
+  first)
+
+● Here are three TypeScript functions that use events to get the last N jobs by status in timestamp descending order (newest first, not oldest first as you mentioned - I'll provide
+  both options):
+
+  TypeScript Functions Using Events
+
+  import { ethers } from 'ethers';
+
+  interface JobEvent {
+    jobId: number;
+    timestamp: number;
+    blockNumber: number;
+    transactionHash: string;
+    renter?: string;
+    host?: string;
+    payment?: bigint;
+    promptCID?: string;
+    responseCID?: string;
+  }
+
+  class JobEventTracker {
+    private provider: ethers.Provider;
+    private jobMarketplace: ethers.Contract;
+    private jobMarketplaceAddress: string;
+
+    constructor(
+      provider: ethers.Provider,
+      jobMarketplaceAddress: string,
+      jobMarketplaceABI: any[]
+    ) {
+      this.provider = provider;
+      this.jobMarketplaceAddress = jobMarketplaceAddress;
+      this.jobMarketplace = new ethers.Contract(
+        jobMarketplaceAddress,
+        jobMarketplaceABI,
+        provider
+      );
+    }
+
+    /**
+     * Get last N pending jobs (created but not claimed or completed)
+     * Returns jobs in timestamp descending order (newest first)
+     */
+    async getLastNPendingJobs(n: number = 10, fromBlock?: number): Promise<JobEvent[]> {
+      const currentBlock = await this.provider.getBlockNumber();
+      const startBlock = fromBlock || currentBlock - 10000; // Default: look back 10k blocks
+
+      // Get all three event types
+      const [createdEvents, claimedEvents, completedEvents] = await Promise.all([
+        this.getJobCreatedEvents(startBlock, currentBlock),
+        this.getJobClaimedEvents(startBlock, currentBlock),
+        this.getJobCompletedEvents(startBlock, currentBlock)
+      ]);
+
+      // Build sets of claimed and completed job IDs
+      const claimedJobIds = new Set(claimedEvents.map(e => e.jobId));
+      const completedJobIds = new Set(completedEvents.map(e => e.jobId));
+
+      // Filter created jobs that are neither claimed nor completed
+      const pendingJobs = createdEvents.filter(job =>
+        !claimedJobIds.has(job.jobId) && !completedJobIds.has(job.jobId)
+      );
+
+      // Sort by timestamp descending (newest first)
+      pendingJobs.sort((a, b) => b.timestamp - a.timestamp);
+
+      // Return last N jobs
+      return pendingJobs.slice(0, n);
+    }
+
+    /**
+     * Get last N claimed jobs (claimed but not completed)
+     * Returns jobs in timestamp descending order (newest first)
+     */
+    async getLastNClaimedJobs(n: number = 10, fromBlock?: number): Promise<JobEvent[]> {
+      const currentBlock = await this.provider.getBlockNumber();
+      const startBlock = fromBlock || currentBlock - 10000;
+
+      // Get claimed and completed events
+      const [claimedEvents, completedEvents] = await Promise.all([
+        this.getJobClaimedEvents(startBlock, currentBlock),
+        this.getJobCompletedEvents(startBlock, currentBlock)
+      ]);
+
+      // Build set of completed job IDs
+      const completedJobIds = new Set(completedEvents.map(e => e.jobId));
+
+      // Filter claimed jobs that are not completed
+      const activeClaimedJobs = claimedEvents.filter(job =>
+        !completedJobIds.has(job.jobId)
+      );
+
+      // Sort by timestamp descending (newest first)
+      activeClaimedJobs.sort((a, b) => b.timestamp - a.timestamp);
+
+      // Return last N jobs
+      return activeClaimedJobs.slice(0, n);
+    }
+
+    /**
+     * Get last N completed jobs
+     * Returns jobs in timestamp descending order (newest first)
+     */
+    async getLastNCompletedJobs(n: number = 10, fromBlock?: number): Promise<JobEvent[]> {
+      const currentBlock = await this.provider.getBlockNumber();
+      const startBlock = fromBlock || currentBlock - 10000;
+
+      // Get completed events
+      const completedEvents = await this.getJobCompletedEvents(startBlock, currentBlock);
+
+      // Sort by timestamp descending (newest first)
+      completedEvents.sort((a, b) => b.timestamp - a.timestamp);
+
+      // Return last N jobs
+      return completedEvents.slice(0, n);
+    }
+
+    /**
+     * Alternative: Get jobs in ASCENDING order (oldest first)
+     * Just change the sort comparison
+     */
+    async getLastNPendingJobsAscending(n: number = 10, fromBlock?: number): Promise<JobEvent[]> {
+      const jobs = await this.getLastNPendingJobs(Number.MAX_SAFE_INTEGER, fromBlock);
+
+      // Sort by timestamp ascending (oldest first)
+      jobs.sort((a, b) => a.timestamp - b.timestamp);
+
+      // Return last N jobs (which are now the N oldest pending jobs)
+      return jobs.slice(-n);
+    }
+
+    // Helper functions to get events
+
+    private async getJobCreatedEvents(
+      fromBlock: number,
+      toBlock: number
+    ): Promise<JobEvent[]> {
+      // For JobCreatedWithToken event
+      const filter = {
+        address: this.jobMarketplaceAddress,
+        topics: [ethers.id('JobCreatedWithToken(bytes32,address,address,uint256,string)')],
+        fromBlock,
+        toBlock
+      };
+
+      const logs = await this.provider.getLogs(filter);
+      const events: JobEvent[] = [];
+
+      for (const log of logs) {
+        const block = await this.provider.getBlock(log.blockNumber!);
+
+        // Decode the event
+        const decoded = this.jobMarketplace.interface.parseLog({
+          topics: log.topics as string[],
+          data: log.data
+        });
+
+        if (decoded) {
+          // Note: JobCreatedWithToken emits escrowId, not jobId
+          // You need to map this to actual jobId - this is a challenge
+          // One approach is to get the transaction receipt and find the internal jobId
+          const receipt = await this.provider.getTransactionReceipt(log.transactionHash);
+
+          // Parse logs to find the internal job ID (you might need to adjust this)
+          // This assumes there's another event or you track job counter
+          const jobId = await this.extractJobIdFromTransaction(log.transactionHash);
+
+          events.push({
+            jobId,
+            timestamp: block!.timestamp,
+            blockNumber: log.blockNumber!,
+            transactionHash: log.transactionHash,
+            renter: decoded.args[1], // renter address
+            payment: decoded.args[3], // payment amount
+            promptCID: decoded.args[4] // prompt CID
+          });
+        }
+      }
+
+      return events;
+    }
+
+    private async getJobClaimedEvents(
+      fromBlock: number,
+      toBlock: number
+    ): Promise<JobEvent[]> {
+      const filter = {
+        address: this.jobMarketplaceAddress,
+        topics: [ethers.id('JobClaimed(uint256,address)')],
+        fromBlock,
+        toBlock
+      };
+
+      const logs = await this.provider.getLogs(filter);
+      const events: JobEvent[] = [];
+
+      for (const log of logs) {
+        const block = await this.provider.getBlock(log.blockNumber!);
+
+        // Decode the event
+        const decoded = this.jobMarketplace.interface.parseLog({
+          topics: log.topics as string[],
+          data: log.data
+        });
+
+        if (decoded) {
+          events.push({
+            jobId: Number(decoded.args[0]), // jobId
+            timestamp: block!.timestamp,
+            blockNumber: log.blockNumber!,
+            transactionHash: log.transactionHash,
+            host: decoded.args[1] // host address
+          });
+        }
+      }
+
+      return events;
+    }
+
+    private async getJobCompletedEvents(
+      fromBlock: number,
+      toBlock: number
+    ): Promise<JobEvent[]> {
+      const filter = {
+        address: this.jobMarketplaceAddress,
+        topics: [ethers.id('JobCompleted(uint256,string)')],
+        fromBlock,
+        toBlock
+      };
+
+      const logs = await this.provider.getLogs(filter);
+      const events: JobEvent[] = [];
+
+      for (const log of logs) {
+        const block = await this.provider.getBlock(log.blockNumber!);
+
+        // Decode the event
+        const decoded = this.jobMarketplace.interface.parseLog({
+          topics: log.topics as string[],
+          data: log.data
+        });
+
+        if (decoded) {
+          events.push({
+            jobId: Number(decoded.args[0]), // jobId
+            timestamp: block!.timestamp,
+            blockNumber: log.blockNumber!,
+            transactionHash: log.transactionHash,
+            responseCID: decoded.args[1] // response CID
+          });
+        }
+      }
+
+      return events;
+    }
+
+    /**
+     * Extract job ID from transaction
+     * This is tricky because JobCreatedWithToken doesn't emit the internal jobId
+     * You might need to:
+     * 1. Track a job counter
+     * 2. Call getJob with incrementing IDs until you find one matching this tx
+     * 3. Store mapping off-chain
+     */
+    private async extractJobIdFromTransaction(txHash: string): Promise<number> {
+      // Option 1: Parse transaction logs for other events that might contain jobId
+      const receipt = await this.provider.getTransactionReceipt(txHash);
+
+      // Option 2: You could maintain a counter
+      // This is a simplified approach - you'd need to track this properly
+      // Perhaps by checking the last known job ID and incrementing
+
+      // For now, returning a placeholder
+      // In production, you'd need a proper solution for this
+      return 0; // TODO: Implement proper job ID extraction
+    }
+
+    /**
+     * Enhanced function with full job details
+     */
+    async getLastNPendingJobsWithDetails(n: number = 10): Promise<any[]> {
+      const jobEvents = await this.getLastNPendingJobs(n);
+      const jobsWithDetails = [];
+
+      for (const event of jobEvents) {
+        try {
+          // Get full job details from contract
+          const jobDetails = await this.jobMarketplace.getJob(event.jobId);
+
+          jobsWithDetails.push({
+            jobId: event.jobId,
+            timestamp: event.timestamp,
+            blockNumber: event.blockNumber,
+            transactionHash: event.transactionHash,
+            renter: jobDetails[0],
+            payment: jobDetails[1],
+            status: Number(jobDetails[2]),
+            assignedHost: jobDetails[3],
+            promptCID: jobDetails[4],
+            responseCID: jobDetails[5],
+            deadline: jobDetails[6]
+          });
+        } catch (error) {
+          console.error(`Error fetching job ${event.jobId} details:`, error);
+        }
+      }
+
+      return jobsWithDetails;
+    }
+  }
+
+  // Usage example
+  async function example() {
+    const provider = new ethers.JsonRpcProvider('https://sepolia.base.org');
+    const jobMarketplaceAddress = '0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304';
+    const jobMarketplaceABI = [...]; // Your ABI here
+
+    const tracker = new JobEventTracker(provider, jobMarketplaceAddress, jobMarketplaceABI);
+
+    // Get last 5 pending jobs (newest first)
+    const pendingJobs = await tracker.getLastNPendingJobs(5);
+    console.log('Last 5 pending jobs:', pendingJobs);
+
+    // Get last 5 claimed jobs (newest first)
+    const claimedJobs = await tracker.getLastNClaimedJobs(5);
+    console.log('Last 5 claimed jobs:', claimedJobs);
+
+    // Get last 5 completed jobs (newest first)
+    const completedJobs = await tracker.getLastNCompletedJobs(5);
+    console.log('Last 5 completed jobs:', completedJobs);
+
+    // Get last 5 pending jobs in ascending order (oldest first)
+    const oldestPendingJobs = await tracker.getLastNPendingJobsAscending(5);
+    console.log('Last 5 pending jobs (oldest first):', oldestPendingJobs);
+
+    // Get with full details
+    const pendingWithDetails = await tracker.getLastNPendingJobsWithDetails(5);
+    console.log('Pending jobs with full details:', pendingWithDetails);
+  }
+
+  Key Points:
+
+  1. Timestamp Order: The functions sort by timestamp descending (newest first) by default. To get oldest first, use the Ascending variant or change the sort comparison from
+  b.timestamp - a.timestamp to a.timestamp - b.timestamp.
+  2. Job ID Challenge: The JobCreatedWithToken event emits an escrowId (bytes32), not the internal jobId (uint256). You'll need to implement a mapping mechanism to track this.
+  3. Performance: These functions fetch blocks for timestamps, which adds overhead. Consider caching block timestamps or using a more efficient approach for production.
+  4. Block Range: Adjust the fromBlock parameter based on your needs. Looking back 10,000 blocks might not be enough for all jobs.
+  5. Error Handling: Add proper error handling for production use.
+  6. Optimization: For production, consider:
+    - Caching event data
+    - Using a database to track job states
+    - Implementing pagination for large result sets
+    - Using WebSocket subscriptions for real-time updates
+
+  This approach gives you accurate job states by combining events, ensuring you only get truly pending (unclaimed), claimed (not completed), and completed jobs.

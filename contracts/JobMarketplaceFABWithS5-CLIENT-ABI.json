@@ -1,0 +1,243 @@
+[
+  {
+    "type": "function",
+    "name": "claimJob",
+    "inputs": [
+      {
+        "name": "_jobId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "completeJob",
+    "inputs": [
+      {
+        "name": "_jobId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_responseCID",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getJob",
+    "inputs": [
+      {
+        "name": "_jobId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "renter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "payment",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum JobMarketplaceFABWithS5.JobStatus"
+      },
+      {
+        "name": "assignedHost",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "promptCID",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "responseCID",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getJobCIDs",
+    "inputs": [
+      {
+        "name": "_jobId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promptCID",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "responseCID",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "postJobWithDetails",
+    "inputs": [
+      {
+        "name": "details",
+        "type": "tuple",
+        "internalType": "struct JobMarketplaceFABWithS5.JobDetails",
+        "components": [
+          {
+            "name": "modelId",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "promptCID",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "responseCID",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "resultFormat",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "temperature",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxTokens",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "seed",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      },
+      {
+        "name": "requirements",
+        "type": "tuple",
+        "internalType": "struct IJobMarketplace.JobRequirements",
+        "components": [
+          {
+            "name": "minGPUMemory",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minReputationScore",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxTimeToComplete",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requiresProof",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "paymentToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "paymentAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "postJobWithToken",
+    "inputs": [
+      {
+        "name": "promptCID",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "modelId",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "paymentToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "paymentAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hostAddress",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  }
+]

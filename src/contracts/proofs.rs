@@ -26,9 +26,21 @@ pub struct ProofConfig {
 
 impl Default for ProofConfig {
     fn default() -> Self {
+        // Try to load from environment variables, fall back to defaults
+        let proof_system_address = std::env::var("PROOF_SYSTEM_ADDRESS")
+            .unwrap_or_else(|_| "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".to_string())
+            .parse()
+            .unwrap_or_else(|_| "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".parse().unwrap());
+            
+        // EZKL verifier is optional (blank means not deployed)
+        let ezkl_verifier_address = std::env::var("EZKL_VERIFIER_ADDRESS")
+            .ok()
+            .and_then(|s| if s.is_empty() { None } else { s.parse().ok() })
+            .unwrap_or_else(Address::zero);
+            
         Self {
-            proof_system_address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9".parse().unwrap(),
-            ezkl_verifier_address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9".parse().unwrap(),
+            proof_system_address,
+            ezkl_verifier_address,
             proof_generation_timeout: Duration::from_secs(300),
             max_proof_size: 10 * 1024,
             challenge_period: Duration::from_secs(86400),

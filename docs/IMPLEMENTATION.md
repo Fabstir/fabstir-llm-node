@@ -583,7 +583,88 @@ P2P node software for the Fabstir LLM marketplace, enabling GPU owners to provid
 - Multiple test suites passing (test_phase_4.3.1_complete.sh, test_phase_4.3.1_full.sh)
 - Services stable and running in production configuration
 
-### Sub-phase 4.3.3: Stateless Embeddings with Future RAG Support### Sub-phase 4.3.3: Progressive Context Support (MVP to RAG)
+### Sub-phase 4.3.3: Host Registry and Management
+
+#### Overview
+Implement comprehensive host management functionality for SDK integration, enabling automatic job routing and host discovery.
+
+#### Implementation Tasks
+
+##### 1. Contract Types Enhancement
+- [ ] Add NodeRegistered event to NodeRegistry ABI
+- [ ] Add queryRegisteredNodes function to NodeRegistry ABI  
+- [ ] Add getNodeCapabilities function to NodeRegistry ABI
+- [ ] Add registerNode function to NodeRegistry ABI
+- [ ] Add NodeUpdated and NodeUnregistered events
+
+##### 2. Registry Event Monitoring
+- [ ] Create RegistryMonitor (similar to JobMonitor)
+- [ ] Monitor NodeRegistered events from blockchain
+- [ ] Monitor NodeUpdated events for capability changes
+- [ ] Monitor NodeUnregistered events for offline nodes
+- [ ] Cache registered hosts locally for fast access
+- [ ] Implement event replay from specific block
+
+##### 3. Host Discovery Implementation
+- [ ] Implement getRegisteredHosts() - query all registered nodes from contract
+- [ ] Implement getHostMetadata(address) - retrieve host capabilities and specs
+- [ ] Implement isHostOnline(address) - check host availability status
+- [ ] Implement getAvailableHosts(modelId) - filter hosts by model support
+- [ ] Implement getHostsByCapability(capability) - filter by specific capabilities
+- [ ] Add caching layer to reduce blockchain queries
+
+##### 4. Node Registration Workflow
+- [ ] Implement registerNode() - register this node with contract
+- [ ] Implement updateCapabilities() - update node capabilities on-chain
+- [ ] Implement unregisterNode() - remove node from registry
+- [ ] Add automatic registration on node startup
+- [ ] Implement stake management for registration
+- [ ] Add heartbeat mechanism for liveness
+
+##### 5. Host Selection Algorithms
+- [ ] Create host scoring algorithm based on:
+  - [ ] Performance history
+  - [ ] Cost per token
+  - [ ] Network latency
+  - [ ] Reliability score
+  - [ ] Current load
+- [ ] Implement performance tracking system
+- [ ] Add cost optimization logic
+- [ ] Create load balancing strategy
+- [ ] Implement fallback host selection
+
+##### 6. Job Assignment Enhancement
+- [ ] Add assignJobToHost(jobId, hostAddress) to JobClaimer
+- [ ] Support delegation of job claims
+- [ ] Add batch job assignment for multiple jobs
+- [ ] Implement job reassignment on failure
+- [ ] Add priority queue for job assignments
+
+##### 7. Testing
+- [ ] Test registry event monitoring
+- [ ] Test host discovery methods
+- [ ] Test registration workflow
+- [ ] Test host selection algorithms
+- [ ] Test job assignment delegation
+- [ ] Integration test: registration → discovery → selection → assignment
+- [ ] Performance test with 100+ hosts
+
+**Test Files:**
+- `tests/contracts/test_registry_monitor.rs`
+- `tests/host/test_registry.rs`
+- `tests/host/test_registration.rs`
+- `tests/host/test_selection.rs`
+- `tests/integration/test_host_management.rs`
+
+**Implementation Files:**
+- `src/contracts/registry_monitor.rs` - NEW: Registry event monitoring
+- `src/host/registry.rs` - NEW: Host registry interaction
+- `src/host/registration.rs` - NEW: Node registration workflow
+- `src/host/selection.rs` - NEW: Host selection algorithms
+- `src/contracts/types.rs` - MODIFY: Add registry events and functions
+- `src/job_claim.rs` - MODIFY: Add job assignment delegation
+
+### Sub-phase 4.3.4: Progressive Context Support (MVP to RAG)
 
 #### Overview
 Three-stage implementation: Context passing (MVP) → Compaction support → Full RAG integration

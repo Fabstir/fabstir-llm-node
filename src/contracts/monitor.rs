@@ -25,9 +25,20 @@ pub struct JobMonitorConfig {
 
 impl Default for JobMonitorConfig {
     fn default() -> Self {
+        // Try to load from environment variables, fall back to defaults
+        let marketplace_address = std::env::var("JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS")
+            .unwrap_or_else(|_| "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string())
+            .parse()
+            .unwrap_or_else(|_| "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".parse().unwrap());
+            
+        let registry_address = std::env::var("NODE_REGISTRY_FAB_ADDRESS")
+            .unwrap_or_else(|_| "0x87516C13Ea2f99de598665e14cab64E191A0f8c4".to_string())
+            .parse()
+            .unwrap_or_else(|_| "0x87516C13Ea2f99de598665e14cab64E191A0f8c4".parse().unwrap());
+            
         Self {
-            marketplace_address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".parse().unwrap(),
-            registry_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".parse().unwrap(),
+            marketplace_address,
+            registry_address,
             polling_interval: Duration::from_millis(100),
             confirmation_blocks: 1,
             event_buffer_size: 100,
