@@ -5,6 +5,7 @@ pub mod contracts;
 pub mod inference;
 pub mod job_processor;
 pub mod job_claim;
+pub mod job_assignment_types;
 pub mod result_submission;
 pub mod payment_claim;
 pub mod results;
@@ -28,7 +29,10 @@ pub use job_processor::{
 };
 pub use job_claim::{
     JobClaimer, ClaimError, ClaimResult, ClaimEvent, ClaimConfig,
-    JobMarketplaceTrait as ClaimMarketplaceTrait
+    JobMarketplaceTrait as ClaimMarketplaceTrait, MockMarketplace
+};
+pub use job_assignment_types::{
+    JobClaimConfig, AssignmentRecord, AssignmentStatus
 };
 pub use result_submission::{
     ResultSubmitter, SubmissionError, InferenceResult, SubmissionConfig,
