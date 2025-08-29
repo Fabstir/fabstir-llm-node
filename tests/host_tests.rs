@@ -5,4 +5,5 @@ mod host {
     mod test_availability;
     mod test_resources;
     mod test_registry;
+    mod test_registration;
 }

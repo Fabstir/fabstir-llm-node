@@ -614,12 +614,12 @@ Implement comprehensive host management functionality for SDK integration, enabl
 - [x] Add caching layer to reduce blockchain queries
 
 ##### 4. Node Registration Workflow
-- [ ] Implement registerNode() - register this node with contract
-- [ ] Implement updateCapabilities() - update node capabilities on-chain
-- [ ] Implement unregisterNode() - remove node from registry
-- [ ] Add automatic registration on node startup
-- [ ] Implement stake management for registration
-- [ ] Add heartbeat mechanism for liveness
+- [x] Implement registerNode() - register this node with contract
+- [x] Implement updateCapabilities() - update node capabilities on-chain
+- [x] Implement unregisterNode() - remove node from registry
+- [x] Add automatic registration on node startup
+- [x] Implement stake management for registration
+- [x] Add heartbeat mechanism for liveness
 
 ##### 5. Host Selection Algorithms
 - [ ] Create host scoring algorithm based on:

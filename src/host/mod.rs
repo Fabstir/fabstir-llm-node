@@ -1,6 +1,7 @@
 pub mod model_config;
 pub mod pricing;
 pub mod availability;
+pub mod registration;
 pub mod registry;
 pub mod resources;
 
@@ -17,6 +18,10 @@ pub use pricing::{
 pub use availability::{
     AvailabilityManager, AvailabilitySchedule, MaintenanceWindow,
     AvailabilityStatus, CapacityConfig, ScheduleError
+};
+
+pub use registration::{
+    NodeRegistration, NodeMetadata, RegistrationConfig
 };
 
 pub use registry::{
