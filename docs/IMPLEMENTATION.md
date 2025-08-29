@@ -591,11 +591,11 @@ Implement comprehensive host management functionality for SDK integration, enabl
 #### Implementation Tasks
 
 ##### 1. Contract Types Enhancement
-- [ ] Add NodeRegistered event to NodeRegistry ABI
-- [ ] Add queryRegisteredNodes function to NodeRegistry ABI  
-- [ ] Add getNodeCapabilities function to NodeRegistry ABI
-- [ ] Add registerNode function to NodeRegistry ABI
-- [ ] Add NodeUpdated and NodeUnregistered events
+- [x] Add NodeRegistered event to NodeRegistry ABI
+- [x] Add queryRegisteredNodes function to NodeRegistry ABI  
+- [x] Add getNodeCapabilities function to NodeRegistry ABI
+- [x] Add registerNode function to NodeRegistry ABI
+- [x] Add NodeUpdated and NodeUnregistered events
 
 ##### 2. Registry Event Monitoring
 - [ ] Create RegistryMonitor (similar to JobMonitor)
