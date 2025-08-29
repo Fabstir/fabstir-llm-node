@@ -4,4 +4,5 @@ mod contracts {
     mod test_payments;
     mod test_proofs;
     mod test_registry_types;
+    mod test_registry_monitor;
 }

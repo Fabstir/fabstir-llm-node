@@ -598,12 +598,12 @@ Implement comprehensive host management functionality for SDK integration, enabl
 - [x] Add NodeUpdated and NodeUnregistered events
 
 ##### 2. Registry Event Monitoring
-- [ ] Create RegistryMonitor (similar to JobMonitor)
-- [ ] Monitor NodeRegistered events from blockchain
-- [ ] Monitor NodeUpdated events for capability changes
-- [ ] Monitor NodeUnregistered events for offline nodes
-- [ ] Cache registered hosts locally for fast access
-- [ ] Implement event replay from specific block
+- [x] Create RegistryMonitor (similar to JobMonitor)
+- [x] Monitor NodeRegistered events from blockchain
+- [x] Monitor NodeUpdated events for capability changes
+- [x] Monitor NodeUnregistered events for offline nodes
+- [x] Cache registered hosts locally for fast access
+- [x] Implement event replay from specific block
 
 ##### 3. Host Discovery Implementation
 - [ ] Implement getRegisteredHosts() - query all registered nodes from contract
