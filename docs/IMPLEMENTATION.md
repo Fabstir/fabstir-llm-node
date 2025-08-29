@@ -641,13 +641,13 @@ Implement comprehensive host management functionality for SDK integration, enabl
 - [x] Add priority queue for job assignments
 
 ##### 7. Testing
-- [ ] Test registry event monitoring
-- [ ] Test host discovery methods
-- [ ] Test registration workflow
-- [ ] Test host selection algorithms
-- [ ] Test job assignment delegation
-- [ ] Integration test: registration → discovery → selection → assignment
-- [ ] Performance test with 100+ hosts
+- [x] Test registry event monitoring
+- [x] Test host discovery methods
+- [x] Test registration workflow
+- [x] Test host selection algorithms
+- [x] Test job assignment delegation
+- [x] Integration test: registration → discovery → selection → assignment
+- [x] Performance test with 100+ hosts
 
 **Test Files:**
 - `tests/contracts/test_registry_monitor.rs`

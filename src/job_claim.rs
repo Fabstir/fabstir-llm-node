@@ -342,7 +342,7 @@ impl JobClaimer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            status: AssignmentStatus::Pending,
+            status: AssignmentStatus::Confirmed,
         };
         assignments.insert(job_id.to_string(), record);
         info!("Assigned job to host: {}", host_address);
