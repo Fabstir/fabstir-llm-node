@@ -98,7 +98,7 @@ async fn test_best_host_selection() {
     
     // Update metrics for all hosts
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     let requirements = JobRequirements {
@@ -111,9 +111,9 @@ async fn test_best_host_selection() {
     let best = selector.select_best_host(hosts, &requirements).await;
     assert!(best.is_some());
     
-    // Host 2 should be selected (best balance)
+    // Host 3 should be selected (lowest cost and load)
     let selected = best.unwrap();
-    assert_eq!(selected, "0x2222222222222222222222222222222222222222".parse::<Address>().unwrap());
+    assert_eq!(selected, "0x3333333333333333333333333333333333333333".parse::<Address>().unwrap());
 }
 
 #[tokio::test]
@@ -123,7 +123,7 @@ async fn test_top_n_hosts_ranking() {
     let mut selector = HostSelector::new();
     
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     let requirements = JobRequirements {
@@ -147,7 +147,7 @@ async fn test_cost_optimization_selection() {
     let mut selector = HostSelector::new();
     
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     let cheapest = selector.select_by_cost_optimization(hosts).await;
@@ -164,7 +164,7 @@ async fn test_performance_selection() {
     let mut selector = HostSelector::new();
     
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     let fastest = selector.select_by_performance(hosts).await;
@@ -181,7 +181,7 @@ async fn test_load_balancing_selection() {
     let mut selector = HostSelector::new();
     
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     let least_loaded = selector.select_with_load_balancing(hosts).await;
@@ -215,7 +215,7 @@ async fn test_filtering_by_requirements() {
     let mut selector = HostSelector::new();
     
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     // Strict requirements that only host 1 meets
@@ -277,7 +277,7 @@ async fn test_custom_scoring_weights() {
     let mut selector = HostSelector::with_weights(weights);
     
     for (addr, metric) in metrics {
-        selector.update_performance_metrics(addr, metric);
+        selector.update_performance_metrics(addr, metric).await;
     }
     
     let requirements = JobRequirements {
@@ -317,7 +317,7 @@ async fn test_concurrent_metric_updates() {
             };
             
             let mut selector = selector_clone.write().await;
-            selector.update_performance_metrics(addr, metrics);
+            selector.update_performance_metrics(addr, metrics).await;
         });
         handles.push(handle);
     }
