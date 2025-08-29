@@ -333,7 +333,13 @@ impl JobClaimer {
         }
     }
     // Assignment methods
-    pub async fn assign_job_to_host(&self, job_id: &str, host_address: Address, _registry: &Arc<HostRegistry>) -> Result<()> {
+    pub async fn assign_job_to_host(&self, job_id: &str, host_address: Address, registry: &Arc<HostRegistry>) -> Result<()> {
+        // Validate host is registered
+        let hosts = registry.get_registered_hosts().await;
+        if !hosts.contains(&host_address) {
+            return Err(ClaimError::ContractError(format!("Host {} not registered", host_address)).into());
+        }
+        
         let mut assignments = self.assignments.write().await;
         let record = AssignmentRecord {
             job_id: job_id.to_string(),

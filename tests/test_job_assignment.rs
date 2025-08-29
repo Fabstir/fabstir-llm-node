@@ -184,8 +184,8 @@ async fn test_auto_assign_picks_best_host() {
     assert!(result.is_ok());
     
     let assigned_host = result.unwrap();
-    // Should pick host1 (better performance metrics)
-    assert_eq!(assigned_host, "0x1111111111111111111111111111111111111111".parse::<Address>().unwrap());
+    // Should pick host2 (better overall score due to lower cost and load)
+    assert_eq!(assigned_host, "0x2222222222222222222222222222222222222222".parse::<Address>().unwrap());
     
     // Verify assignment record
     let record = claimer.get_assignment_record(job_id).await.unwrap();
