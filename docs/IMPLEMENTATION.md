@@ -1007,65 +1007,127 @@ Replace test infrastructure with production WebSocket server.
 - Graceful connection cleanup on disconnect
 - < 10ms connection establishment time
 
-### Sub-phase 8.8: Client Context Management & Stateless Host Integration
+### Sub-phase 8.8: Protocol Message Types and Handlers
 
-Implement proper client-owned conversation storage and stateless host inference.
+Implement WebSocket message types and handlers aligned with the Fabstir SDK protocol specification.
 
 #### Tasks
 
-- [ ] Implement client-side conversation storage interface (S5/IPFS)
-- [ ] Add conversation context in each inference request from client
-- [ ] Implement host-side memory-only conversation cache
-- [ ] Connect WebSocket handler to real LlmEngine (already in Phase 4)
-- [ ] Add conversation context rebuilding on host from client data
-- [ ] Implement streaming responses back to client
-- [ ] Add session handoff support when switching hosts
-- [ ] Ensure host state is fully reconstructible from client data
+- [ ] Define message types matching SDK protocol (session_init, session_resume, prompt, response, error)
+- [ ] Implement session_init handler with context loading
+- [ ] Implement session_resume handler for recovery
+- [ ] Create prompt handler with memory caching
+- [ ] Implement response streaming handler
+- [ ] Add session_end cleanup handler
 
 **Test Files:**
-- `tests/websocket/test_client_storage.rs` - Client storage operations
-- `tests/websocket/test_stateless_host.rs` - Host statelessness verification  
-- `tests/websocket/test_session_handoff.rs` - Switching between hosts
+- `tests/websocket/test_message_types.rs` (max 250 lines)
+- `tests/websocket/test_session_init.rs` (max 300 lines)
+- `tests/websocket/test_session_resume.rs` (max 300 lines)
+- `tests/websocket/test_prompt_handler.rs` (max 350 lines)
+- `tests/websocket/test_response_streaming.rs` (max 300 lines)
 
 **Implementation Files:**
-- `src/api/websocket/client_context.rs` - Client-side context management
-- `src/api/websocket/host_cache.rs` - Host memory-only cache
-- Update `src/api/websocket/handler.rs` - Handle full context from client
+- `src/api/websocket/messages.rs` (max 300 lines) - Message type definitions
+- `src/api/websocket/handlers/session_init.rs` (max 250 lines)
+- `src/api/websocket/handlers/session_resume.rs` (max 250 lines)
+- `src/api/websocket/handlers/prompt.rs` (max 300 lines)
+- `src/api/websocket/handlers/response.rs` (max 250 lines)
+- `src/api/websocket/handlers/mod.rs` (max 150 lines) - Handler routing
+
+**Protocol Message Structures:**
+```rust
+// Aligned with TypeScript SDK protocol
+enum MessageType {
+    SessionInit { session_id: String, job_id: u64, conversation_context: Vec<Message> },
+    SessionResume { session_id: String, job_id: u64, conversation_context: Vec<Message>, last_message_index: u32 },
+    Prompt { session_id: String, content: String, message_index: u32 },
+    Response { session_id: String, content: String, tokens_used: u32, message_index: u32 },
+    Error { session_id: String, error: String, code: String },
+    SessionEnd { session_id: String }
+}
+```
 
 **Success Criteria:**
-- Client successfully stores conversation on S5/IPFS
-- Host reconstructs session from client-provided context
-- Real LLM responses generated with full context
-- Session handoff between hosts works seamlessly
-- Host memory cache improves performance
-- No data loss when host crashes
-- < 100ms context reconstruction time
+- Message types match SDK protocol exactly
+- Session initialization accepts conversation context
+- Session resume rebuilds memory from context
+- Prompts work with minimal data transfer
+- Response streaming implemented
+- Clean session termination
 
-### Sub-phase 8.9: Monitoring and Production Features
+### Sub-phase 8.9: Stateless Memory Cache and Inference Integration
 
-Implement real metrics, compression, and production hardening.
+Implement stateless host memory caching and integrate with real LLM inference.
 
 #### Tasks
 
-- [ ] Replace simulated CPU/memory monitoring with actual system metrics
-- [ ] Implement real compression (gzip/zstd) for WebSocket messages
-- [ ] Add Prometheus metrics collection
-- [ ] Implement WebSocket rate limiting
-- [ ] Add client authentication (JWT/signature-based)
-- [ ] Create production configuration management
-- [ ] Add memory cache eviction policies for hosts
+- [ ] Create in-memory conversation cache (no persistence)
+- [ ] Integrate llama-cpp-2 for real inference
+- [ ] Implement context window management
+- [ ] Add token counting and limits
+- [ ] Create cache eviction policies
+- [ ] Implement streaming token generation
 
 **Test Files:**
-- `tests/websocket/test_real_metrics.rs` (max 250 lines)
-- `tests/websocket/test_compression.rs` (max 200 lines)
-- `tests/websocket/test_rate_limiting.rs` (max 250 lines)
-- `tests/websocket/test_auth.rs` (max 300 lines)
+- `tests/websocket/test_memory_cache.rs` (max 300 lines)
+- `tests/websocket/test_llm_integration.rs` (max 400 lines)
+- `tests/websocket/test_context_window.rs` (max 250 lines)
+- `tests/websocket/test_token_counting.rs` (max 200 lines)
+- `tests/websocket/test_streaming_generation.rs` (max 300 lines)
 
 **Implementation Files:**
-- Update `src/api/websocket/metrics.rs` - Real system metrics
-- `src/api/websocket/compression.rs` (max 250 lines) - Real compression
-- `src/api/websocket/auth.rs` (max 350 lines) - Authentication/authorization
+- `src/api/websocket/memory_cache.rs` (max 350 lines) - In-memory conversation cache
+- `src/api/websocket/llm_integration.rs` (max 400 lines) - LLM inference integration
+- `src/api/websocket/context_window.rs` (max 250 lines) - Context window management
+- `src/api/websocket/token_counter.rs` (max 200 lines) - Token counting
+- `src/api/websocket/streaming.rs` (max 300 lines) - Streaming generation
+
+**Memory Cache Structure:**
+```rust
+// Stateless in-memory cache, cleared on disconnect
+struct ConversationCache {
+    session_id: String,
+    messages: VecDeque<Message>,  // Rolling window
+    total_tokens: usize,
+    max_context_tokens: usize,
+    created_at: Instant,
+}
+```
+
+**Success Criteria:**
+- Memory-only caching (no disk persistence)
+- Real LLM inference working
+- Context window properly managed
+- Token limits enforced
+- Streaming responses functional
+- Cache cleared on session end
+
+### Sub-phase 8.10: Production Hardening and Monitoring
+
+Implement production features including compression, metrics, rate limiting, and authentication.
+
+#### Tasks
+
+- [ ] Implement real compression (gzip/deflate) for WebSocket messages
+- [ ] Add Prometheus metrics collection
+- [ ] Implement WebSocket rate limiting
+- [ ] Add client authentication (job_id verification)
+- [ ] Create production configuration management
+- [ ] Add system health monitoring
+
+**Test Files:**
+- `tests/websocket/test_compression.rs` (max 200 lines)
+- `tests/websocket/test_metrics.rs` (max 250 lines)
+- `tests/websocket/test_rate_limiting.rs` (max 250 lines)
+- `tests/websocket/test_auth.rs` (max 300 lines)
+- `tests/websocket/test_health.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/api/websocket/compression.rs` (max 250 lines) - Message compression
+- `src/api/websocket/metrics.rs` (max 300 lines) - Prometheus metrics
 - `src/api/websocket/rate_limiter.rs` (max 200 lines) - Rate limiting
+- `src/api/websocket/auth.rs` (max 250 lines) - Job-based authentication
 - `src/api/websocket/config.rs` (max 200 lines) - Configuration management
 
 **Production Configuration:**
@@ -1074,34 +1136,36 @@ Implement real metrics, compression, and production hardening.
 max_connections = 10000
 max_connections_per_ip = 100
 rate_limit_per_minute = 600
-compression_algorithm = "zstd"
-compression_level = 3
+compression_enabled = true
+compression_threshold = 1024  # bytes
 auth_required = true
 metrics_enabled = true
 metrics_port = 9090
-database_pool_size = 20
-database_timeout_ms = 5000
+memory_cache_max_mb = 2048
+context_window_max_tokens = 4096
 ```
 
 **Success Criteria:**
-- Real CPU/memory metrics collected
-- Compression achieves >50% reduction
+- Compression reduces bandwidth >40%
+- Metrics exported to Prometheus
 - Rate limiting prevents abuse
-- Authentication works with JWT tokens
-- Prometheus metrics exported
+- Job-based auth validates clients
+- Configuration hot-reloadable
 - < 1ms overhead for monitoring
 
 ### Implementation Priority
 
-1. **8.7 First** - Need working WebSocket server as foundation
-2. **8.8 Second** - Core functionality with real inference
-3. **8.9 Last** - Production hardening and optimization
+1. **8.7 Complete** ✅ - WebSocket server foundation implemented
+2. **8.8 Next** - Protocol message types and handlers
+3. **8.9 Then** - Stateless memory cache and LLM integration
+4. **8.10 Last** - Production hardening and monitoring
 
 ### Migration Path from Mocks
 
-1. **Phase 8.7**: Test server → Real WebSocket server
-2. **Phase 8.8**: Mock inference → Real LLM, Mock persistence → PostgreSQL
-3. **Phase 8.9**: Simulated metrics → Real metrics, Basic features → Production features
+1. **Phase 8.7**: ✅ Real WebSocket server implemented
+2. **Phase 8.8**: Define protocol-aligned message types
+3. **Phase 8.9**: Integrate real LLM with memory-only caching
+4. **Phase 8.10**: Add production features (compression, metrics, auth)
 
 ### fabstir-llm-sdk
 
