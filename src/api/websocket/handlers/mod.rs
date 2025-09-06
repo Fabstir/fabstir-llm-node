@@ -2,6 +2,7 @@ pub mod session_init;
 pub mod session_resume;
 pub mod prompt;
 pub mod response;
+pub mod inference;
 
 use super::messages::{WebSocketMessage, ErrorCode};
 use anyhow::Result;

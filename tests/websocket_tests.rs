@@ -19,4 +19,7 @@ mod websocket {
     mod test_session_resume;
     mod test_prompt_handler;
     mod test_response_streaming;
+    mod test_inference_integration;
+    mod test_context_management;
+    mod test_error_handling;
 }

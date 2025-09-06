@@ -6,7 +6,8 @@ use tokio::sync::RwLock;
 use std::time::Instant;
 
 /// Maximum context window in tokens
-const DEFAULT_MAX_CONTEXT_TOKENS: usize = 4096;
+pub const MAX_CONTEXT_TOKENS: usize = 4096;
+const DEFAULT_MAX_CONTEXT_TOKENS: usize = MAX_CONTEXT_TOKENS;
 
 /// In-memory conversation cache (stateless, cleared on disconnect)
 #[derive(Debug, Clone)]
@@ -49,9 +50,16 @@ impl ConversationCache {
         *total_tokens = 0;
         
         // Add all context messages
-        for msg in context {
-            let tokens = msg.tokens.unwrap_or(0) as usize;
+        for mut msg in context {
+            // Estimate tokens if not provided (roughly 4 chars per token)
+            let tokens = msg.tokens
+                .unwrap_or_else(|| (msg.content.len() / 4).max(1) as u32) as usize;
             *total_tokens += tokens;
+            
+            // Store with estimated tokens if needed
+            if msg.tokens.is_none() {
+                msg.tokens = Some(tokens as u32);
+            }
             messages.push_back(msg);
         }
         
@@ -66,9 +74,17 @@ impl ConversationCache {
         let mut messages = self.messages.write().await;
         let mut total_tokens = self.total_tokens.write().await;
         
-        let tokens = message.tokens.unwrap_or(0) as usize;
+        // Estimate tokens if not provided (roughly 4 chars per token)
+        let tokens = message.tokens
+            .unwrap_or_else(|| (message.content.len() / 4).max(1) as u32) as usize;
         *total_tokens += tokens;
-        messages.push_back(message);
+        
+        // Store message with estimated tokens if needed
+        let mut msg = message;
+        if msg.tokens.is_none() {
+            msg.tokens = Some(tokens as u32);
+        }
+        messages.push_back(msg);
         
         // Trim if exceeds token limit
         self.trim_to_token_limit(&mut messages, &mut total_tokens).await;
@@ -123,6 +139,14 @@ impl ConversationCache {
     /// Get age of cache
     pub fn age(&self) -> std::time::Duration {
         self.created_at.elapsed()
+    }
+    
+    /// Get messages sorted by timestamp
+    pub async fn get_messages_sorted(&self) -> Vec<ConversationMessage> {
+        let messages = self.messages.read().await;
+        let mut sorted: Vec<_> = messages.iter().cloned().collect();
+        sorted.sort_by_key(|m| m.timestamp.unwrap_or(0));
+        sorted
     }
     
     /// Trim messages to stay within token limit

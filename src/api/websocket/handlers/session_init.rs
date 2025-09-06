@@ -69,6 +69,12 @@ impl SessionInitHandler {
         self.cache_manager.get_cache(session_id).await.is_some()
     }
     
+    /// End session (alias for cleanup_session)
+    pub async fn end_session(&self, session_id: &str) -> Result<()> {
+        self.cleanup_session(session_id).await;
+        Ok(())
+    }
+    
     /// Clean up session (called on session end)
     pub async fn cleanup_session(&self, session_id: &str) {
         if let Some(cache) = self.cache_manager.remove_cache(session_id).await {

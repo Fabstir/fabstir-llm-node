@@ -16,29 +16,35 @@ pub struct ConversationMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
+    InvalidRequest,
     SessionNotFound,
     InvalidJobId,
     InvalidMessageIndex,
     EmptyPrompt,
+    ModelNotLoaded,
     InferenceError,
     TokenLimitExceeded,
     RateLimitExceeded,
     AuthenticationFailed,
     InternalError,
+    Timeout,
 }
 
 impl fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ErrorCode::InvalidRequest => write!(f, "INVALID_REQUEST"),
             ErrorCode::SessionNotFound => write!(f, "SESSION_NOT_FOUND"),
             ErrorCode::InvalidJobId => write!(f, "INVALID_JOB_ID"),
             ErrorCode::InvalidMessageIndex => write!(f, "INVALID_MESSAGE_INDEX"),
             ErrorCode::EmptyPrompt => write!(f, "EMPTY_PROMPT"),
+            ErrorCode::ModelNotLoaded => write!(f, "MODEL_NOT_LOADED"),
             ErrorCode::InferenceError => write!(f, "INFERENCE_ERROR"),
             ErrorCode::TokenLimitExceeded => write!(f, "TOKEN_LIMIT_EXCEEDED"),
             ErrorCode::RateLimitExceeded => write!(f, "RATE_LIMIT_EXCEEDED"),
             ErrorCode::AuthenticationFailed => write!(f, "AUTHENTICATION_FAILED"),
             ErrorCode::InternalError => write!(f, "INTERNAL_ERROR"),
+            ErrorCode::Timeout => write!(f, "TIMEOUT"),
         }
     }
 }
@@ -151,6 +157,14 @@ pub struct StreamToken {
     pub is_final: bool,
     pub total_tokens: u32,
     pub message_index: u32,
+}
+
+/// WebSocket error type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketError {
+    pub code: ErrorCode,
+    pub message: String,
+    pub session_id: Option<String>,
 }
 
 #[cfg(test)]

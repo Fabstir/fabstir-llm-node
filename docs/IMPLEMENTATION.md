@@ -1062,12 +1062,12 @@ Implement stateless host memory caching and integrate with real LLM inference.
 
 #### Tasks
 
-- [ ] Create in-memory conversation cache (no persistence)
-- [ ] Integrate llama-cpp-2 for real inference
-- [ ] Implement context window management
-- [ ] Add token counting and limits
-- [ ] Create cache eviction policies
-- [ ] Implement streaming token generation
+- [x] Create in-memory conversation cache (no persistence)
+- [x] Integrate llama-cpp-2 for real inference
+- [x] Implement context window management
+- [x] Add token counting and limits
+- [x] Create cache eviction policies
+- [x] Implement streaming token generation
 
 **Test Files:**
 - `tests/websocket/test_memory_cache.rs` (max 300 lines)
