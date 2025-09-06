@@ -23,6 +23,8 @@ async fn test_websocket_server_start() -> Result<()> {
     assert_eq!(response.status(), 101); // 101 Switching Protocols
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -52,6 +54,8 @@ async fn test_client_connection_lifecycle() -> Result<()> {
     ws_stream.close(None).await?;
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -82,6 +86,8 @@ async fn test_multiple_concurrent_connections() -> Result<()> {
     assert_eq!(handle.connection_count().await, 5);
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -112,6 +118,8 @@ async fn test_message_echo() -> Result<()> {
     }
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -144,6 +152,8 @@ async fn test_ping_pong_heartbeat() -> Result<()> {
     assert!(response.is_ok(), "Server should respond, indicating heartbeat is active");
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -180,6 +190,8 @@ async fn test_connection_limit() -> Result<()> {
     });
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -229,6 +241,8 @@ async fn test_error_handling() -> Result<()> {
     assert!(response.is_some());
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -256,6 +270,8 @@ async fn test_session_association() -> Result<()> {
     }
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }
 
@@ -287,5 +303,7 @@ async fn test_reconnection_support() -> Result<()> {
     }
     
     handle.shutdown().await?;
+    // Ensure port is released
+    tokio::time::sleep(Duration::from_millis(100)).await;
     Ok(())
 }

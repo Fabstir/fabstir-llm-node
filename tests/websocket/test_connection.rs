@@ -11,10 +11,15 @@ async fn test_connection_handler_creation() -> Result<()> {
     let handler = ConnectionHandler::new(tx);
     assert_eq!(handler.active_connections().await, 0);
     
-    // Should be able to handle messages
+    // Register a connection first
+    let session = WebSocketSession::new("test-session");
+    handler.register_connection("test", session).await?;
+    
+    // Now handle message
     handler.handle_message("test", "hello").await?;
     
-    let msg = rx.recv().await;
+    // Use timeout to avoid hanging forever
+    let msg = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await?;
     assert!(msg.is_some());
     
     Ok(())

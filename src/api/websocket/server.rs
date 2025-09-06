@@ -145,14 +145,24 @@ impl ServerHandle {
         }
         drop(connections);
 
-        // Wait for tasks to finish
+        // Wait for tasks to finish with timeout
         if let Some(handle) = self.accept_handle.take() {
             handle.abort();
+            // Wait for abort to complete
+            tokio::time::timeout(Duration::from_millis(100), async {
+                let _ = handle.await;
+            }).await.ok();
         }
         if let Some(handle) = self.heartbeat_handle.take() {
-            // Give it a moment to exit cleanly, then abort if needed
-            tokio::time::timeout(Duration::from_millis(100), handle).await.ok();
+            handle.abort();
+            // Wait for abort to complete
+            tokio::time::timeout(Duration::from_millis(100), async {
+                let _ = handle.await;
+            }).await.ok();
         }
+        
+        // Give connections time to close
+        tokio::time::sleep(Duration::from_millis(10)).await;
 
         self.connections.write().await.clear();
         info!("WebSocket server shutdown complete");
