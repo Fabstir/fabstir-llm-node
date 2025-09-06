@@ -1,6 +1,7 @@
 use crate::job_processor::Message;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -124,6 +125,24 @@ impl WebSocketSession {
         self.last_activity.elapsed().as_secs() > self.config.timeout_seconds
     }
 
+    pub fn created_at_iso(&self) -> String {
+        // Return ISO timestamp of creation time
+        let elapsed = self.created_at.elapsed();
+        let now = std::time::SystemTime::now();
+        let created = now - elapsed;
+        let datetime: chrono::DateTime<chrono::Utc> = created.into();
+        datetime.to_rfc3339()
+    }
+
+    pub fn last_activity_iso(&self) -> String {
+        // Return ISO timestamp of last activity
+        let elapsed = self.last_activity.elapsed();
+        let now = std::time::SystemTime::now();
+        let last = now - elapsed;
+        let datetime: chrono::DateTime<chrono::Utc> = last.into();
+        datetime.to_rfc3339()
+    }
+
     pub fn total_tokens(&self) -> usize {
         // Rough estimate: ~1 token per 4 characters
         self.conversation_history
@@ -134,6 +153,12 @@ impl WebSocketSession {
 
     pub fn memory_used(&self) -> usize {
         self.total_memory_used
+    }
+
+    pub fn get_metadata(&self) -> HashMap<String, serde_json::Value> {
+        // Return empty metadata for now
+        // In a real implementation, this would store session metadata
+        HashMap::new()
     }
 
     pub fn metrics(&self) -> SessionMetrics {

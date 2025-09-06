@@ -58,6 +58,18 @@ impl SessionStore {
         0
     }
 
+    pub async fn create_session_with_id(&mut self, session_id: String, config: SessionConfig) -> Result<()> {
+        let sessions_count = self.sessions.read().await.len();
+        if sessions_count >= self.config.max_sessions {
+            return Err(anyhow!("Maximum sessions limit reached"));
+        }
+        
+        let session = WebSocketSession::new(session_id.clone(), config);
+        let mut sessions = self.sessions.write().await;
+        sessions.insert(session_id, session);
+        Ok(())
+    }
+
     pub async fn create_session(&mut self, config: SessionConfig) -> String {
         let session_id = WebSocketSession::generate_id();
         let session = WebSocketSession::new(session_id.clone(), config);
@@ -91,6 +103,11 @@ impl SessionStore {
         sessions.get(session_id).cloned()
     }
 
+    pub async fn get_session_mut(&self, session_id: &str) -> Option<WebSocketSession> {
+        let sessions = self.sessions.read().await;
+        sessions.get(session_id).cloned()
+    }
+
     pub async fn update_session(&mut self, session_id: &str, message: Message) -> Result<()> {
         let mut sessions = self.sessions.write().await;
         
@@ -111,6 +128,13 @@ impl SessionStore {
     pub async fn session_exists(&self, session_id: &str) -> bool {
         let sessions = self.sessions.read().await;
         sessions.contains_key(session_id)
+    }
+
+
+    pub async fn remove_session(&self, session_id: &str) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        sessions.remove(session_id);
+        Ok(())
     }
 
     pub async fn cleanup_expired(&mut self) -> usize {
