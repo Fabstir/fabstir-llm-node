@@ -1007,54 +1007,39 @@ Replace test infrastructure with production WebSocket server.
 - Graceful connection cleanup on disconnect
 - < 10ms connection establishment time
 
-### Sub-phase 8.8: Inference and Persistence Integration
+### Sub-phase 8.8: Client Context Management & Stateless Host Integration
 
-Connect to real LLM engine and implement persistent storage.
+Implement proper client-owned conversation storage and stateless host inference.
 
 #### Tasks
 
-- [ ] Replace mock inference responses with actual LlmEngine calls
-- [ ] Design and implement database schema for sessions (PostgreSQL)
-- [ ] Implement session save to database
-- [ ] Implement session restore from database
-- [ ] Connect context building to actual inference pipeline
-- [ ] Add real result streaming from LLM
-- [ ] Implement transaction support for session operations
+- [ ] Implement client-side conversation storage interface (S5/IPFS)
+- [ ] Add conversation context in each inference request from client
+- [ ] Implement host-side memory-only conversation cache
+- [ ] Connect WebSocket handler to real LlmEngine (already in Phase 4)
+- [ ] Add conversation context rebuilding on host from client data
+- [ ] Implement streaming responses back to client
+- [ ] Add session handoff support when switching hosts
+- [ ] Ensure host state is fully reconstructible from client data
 
 **Test Files:**
-- `tests/websocket/test_real_inference.rs` (max 300 lines)
-- `tests/websocket/test_persistence.rs` (max 350 lines)
-- `tests/websocket/test_streaming.rs` (max 250 lines)
+- `tests/websocket/test_client_storage.rs` - Client storage operations
+- `tests/websocket/test_stateless_host.rs` - Host statelessness verification  
+- `tests/websocket/test_session_handoff.rs` - Switching between hosts
 
 **Implementation Files:**
-- Update `src/api/websocket/handler.rs` - Replace mocks with real calls
-- `src/api/websocket/persistence.rs` (max 400 lines) - Database operations
-- `src/api/websocket/inference_bridge.rs` (max 300 lines) - LLM integration
-- `migrations/001_websocket_sessions.sql` - Database schema
-
-**Database Schema:**
-```sql
-CREATE TABLE websocket_sessions (
-    id VARCHAR(36) PRIMARY KEY,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    state VARCHAR(20) NOT NULL,
-    metadata JSONB,
-    messages JSONB,
-    total_memory_used BIGINT,
-    compressed_data BYTEA
-);
-
-CREATE INDEX idx_sessions_updated ON websocket_sessions(updated_at);
-CREATE INDEX idx_sessions_state ON websocket_sessions(state);
-```
+- `src/api/websocket/client_context.rs` - Client-side context management
+- `src/api/websocket/host_cache.rs` - Host memory-only cache
+- Update `src/api/websocket/handler.rs` - Handle full context from client
 
 **Success Criteria:**
-- Real LLM responses generated
-- Sessions persist across server restarts
-- < 50ms database operation latency
-- Streaming responses work end-to-end
-- Transaction rollback on errors
+- Client successfully stores conversation on S5/IPFS
+- Host reconstructs session from client-provided context
+- Real LLM responses generated with full context
+- Session handoff between hosts works seamlessly
+- Host memory cache improves performance
+- No data loss when host crashes
+- < 100ms context reconstruction time
 
 ### Sub-phase 8.9: Monitoring and Production Features
 
@@ -1063,12 +1048,12 @@ Implement real metrics, compression, and production hardening.
 #### Tasks
 
 - [ ] Replace simulated CPU/memory monitoring with actual system metrics
-- [ ] Implement real compression (gzip/zstd) for session data
+- [ ] Implement real compression (gzip/zstd) for WebSocket messages
 - [ ] Add Prometheus metrics collection
 - [ ] Implement WebSocket rate limiting
-- [ ] Add authentication and authorization
+- [ ] Add client authentication (JWT/signature-based)
 - [ ] Create production configuration management
-- [ ] Add connection pooling for database
+- [ ] Add memory cache eviction policies for hosts
 
 **Test Files:**
 - `tests/websocket/test_real_metrics.rs` (max 250 lines)
