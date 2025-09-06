@@ -3,4 +3,6 @@ mod websocket {
     mod test_session_lifecycle;
     mod test_stateful_handler;
     mod test_handler_fallback;
+    mod test_context_building;
+    mod test_context_limits;
 }

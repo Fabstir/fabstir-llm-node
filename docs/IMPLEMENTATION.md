@@ -859,12 +859,12 @@ Implement intelligent context management and optimization.
 
 #### Tasks
 
-- [ ] Create context builder with session history
-- [ ] Implement sliding window for context (last N messages)
-- [ ] Add token counting for context size management
-- [ ] Implement context compression for long conversations
-- [ ] Add context validation and sanitization
-- [ ] Create context overflow strategies (truncate, summarize)
+- [x] Create context builder with session history
+- [x] Implement sliding window for context (last N messages)
+- [x] Add token counting for context size management
+- [x] Implement context compression for long conversations
+- [x] Add context validation and sanitization
+- [x] Create context overflow strategies (truncate, summarize)
 
 **Test Files:**
 - `tests/websocket/test_context_building.rs` (max 300 lines)

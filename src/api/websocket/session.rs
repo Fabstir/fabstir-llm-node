@@ -99,6 +99,7 @@ impl WebSocketSession {
     }
 
     pub fn get_context_messages(&self) -> Vec<Message> {
+        // Apply session's context window for backward compatibility
         let history_len = self.conversation_history.len();
         if history_len <= self.config.context_window_size {
             self.conversation_history.clone()
@@ -106,6 +107,11 @@ impl WebSocketSession {
             let start_idx = history_len - self.config.context_window_size;
             self.conversation_history[start_idx..].to_vec()
         }
+    }
+    
+    pub fn get_all_messages(&self) -> Vec<Message> {
+        // Return all messages for ContextManager to process
+        self.conversation_history.clone()
     }
 
     pub fn clear(&mut self) {
