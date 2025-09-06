@@ -976,6 +976,148 @@ enable_persistence = false
 - Document protocol changes clearly
 - Consider security implications of maintaining session state
 
+### Sub-phase 8.7: WebSocket Server Implementation
+
+Replace test infrastructure with production WebSocket server.
+
+#### Tasks
+
+- [x] Implement WebSocket server in ApiServer with `run()` method
+- [x] Add WebSocket upgrade handling in Axum router
+- [x] Implement connection lifecycle management
+- [x] Add WebSocket ping/pong for connection health
+- [x] Create WebSocket message framing and protocol handling
+- [x] Implement concurrent connection handling with tokio
+
+**Test Files:**
+- `tests/websocket/test_server_startup.rs` (max 250 lines)
+- `tests/websocket/test_connection_lifecycle.rs` (max 300 lines)
+- `tests/websocket/test_concurrent_connections.rs` (max 250 lines)
+
+**Implementation Files:**
+- Update `src/api/server.rs` - Add WebSocket server implementation
+- `src/api/websocket/server.rs` (max 400 lines) - WebSocket server core
+- `src/api/websocket/connection.rs` (max 350 lines) - Connection management
+- Update `src/api/http_server.rs` - Add WebSocket routes
+
+**Success Criteria:**
+- WebSocket server starts and accepts connections
+- Handles 1000+ concurrent connections
+- Ping/pong keeps connections alive
+- Graceful connection cleanup on disconnect
+- < 10ms connection establishment time
+
+### Sub-phase 8.8: Inference and Persistence Integration
+
+Connect to real LLM engine and implement persistent storage.
+
+#### Tasks
+
+- [ ] Replace mock inference responses with actual LlmEngine calls
+- [ ] Design and implement database schema for sessions (PostgreSQL)
+- [ ] Implement session save to database
+- [ ] Implement session restore from database
+- [ ] Connect context building to actual inference pipeline
+- [ ] Add real result streaming from LLM
+- [ ] Implement transaction support for session operations
+
+**Test Files:**
+- `tests/websocket/test_real_inference.rs` (max 300 lines)
+- `tests/websocket/test_persistence.rs` (max 350 lines)
+- `tests/websocket/test_streaming.rs` (max 250 lines)
+
+**Implementation Files:**
+- Update `src/api/websocket/handler.rs` - Replace mocks with real calls
+- `src/api/websocket/persistence.rs` (max 400 lines) - Database operations
+- `src/api/websocket/inference_bridge.rs` (max 300 lines) - LLM integration
+- `migrations/001_websocket_sessions.sql` - Database schema
+
+**Database Schema:**
+```sql
+CREATE TABLE websocket_sessions (
+    id VARCHAR(36) PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    state VARCHAR(20) NOT NULL,
+    metadata JSONB,
+    messages JSONB,
+    total_memory_used BIGINT,
+    compressed_data BYTEA
+);
+
+CREATE INDEX idx_sessions_updated ON websocket_sessions(updated_at);
+CREATE INDEX idx_sessions_state ON websocket_sessions(state);
+```
+
+**Success Criteria:**
+- Real LLM responses generated
+- Sessions persist across server restarts
+- < 50ms database operation latency
+- Streaming responses work end-to-end
+- Transaction rollback on errors
+
+### Sub-phase 8.9: Monitoring and Production Features
+
+Implement real metrics, compression, and production hardening.
+
+#### Tasks
+
+- [ ] Replace simulated CPU/memory monitoring with actual system metrics
+- [ ] Implement real compression (gzip/zstd) for session data
+- [ ] Add Prometheus metrics collection
+- [ ] Implement WebSocket rate limiting
+- [ ] Add authentication and authorization
+- [ ] Create production configuration management
+- [ ] Add connection pooling for database
+
+**Test Files:**
+- `tests/websocket/test_real_metrics.rs` (max 250 lines)
+- `tests/websocket/test_compression.rs` (max 200 lines)
+- `tests/websocket/test_rate_limiting.rs` (max 250 lines)
+- `tests/websocket/test_auth.rs` (max 300 lines)
+
+**Implementation Files:**
+- Update `src/api/websocket/metrics.rs` - Real system metrics
+- `src/api/websocket/compression.rs` (max 250 lines) - Real compression
+- `src/api/websocket/auth.rs` (max 350 lines) - Authentication/authorization
+- `src/api/websocket/rate_limiter.rs` (max 200 lines) - Rate limiting
+- `src/api/websocket/config.rs` (max 200 lines) - Configuration management
+
+**Production Configuration:**
+```toml
+[websocket.production]
+max_connections = 10000
+max_connections_per_ip = 100
+rate_limit_per_minute = 600
+compression_algorithm = "zstd"
+compression_level = 3
+auth_required = true
+metrics_enabled = true
+metrics_port = 9090
+database_pool_size = 20
+database_timeout_ms = 5000
+```
+
+**Success Criteria:**
+- Real CPU/memory metrics collected
+- Compression achieves >50% reduction
+- Rate limiting prevents abuse
+- Authentication works with JWT tokens
+- Prometheus metrics exported
+- < 1ms overhead for monitoring
+
+### Implementation Priority
+
+1. **8.7 First** - Need working WebSocket server as foundation
+2. **8.8 Second** - Core functionality with real inference
+3. **8.9 Last** - Production hardening and optimization
+
+### Migration Path from Mocks
+
+1. **Phase 8.7**: Test server → Real WebSocket server
+2. **Phase 8.8**: Mock inference → Real LLM, Mock persistence → PostgreSQL
+3. **Phase 8.9**: Simulated metrics → Real metrics, Basic features → Production features
+
 ### fabstir-llm-sdk
 
 - [ ] Phase 5.1: Core SDK

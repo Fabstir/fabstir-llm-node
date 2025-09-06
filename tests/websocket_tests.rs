@@ -11,4 +11,7 @@ mod websocket {
     mod test_performance;
     mod test_integration;
     mod test_e2e_scenarios;
+    mod test_server;
+    mod test_connection;
+    mod test_transport;
 }
