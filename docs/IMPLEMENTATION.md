@@ -797,6 +797,185 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ## Phase 5: SDK Development
 
+## Phase 8: WebSocket Stateful Session Management
+
+### Overview
+
+Implement stateful WebSocket session management to maintain conversation context in memory during active connections. This enables efficient multi-turn conversations without clients needing to send full context with each message.
+
+### Architecture Goals
+
+- **Stateful Sessions**: Maintain conversation history in host memory during WebSocket connections
+- **Efficient Communication**: Clients send only new prompts, not full history
+- **Memory Management**: Automatic cleanup on disconnect, configurable limits
+- **Backward Compatibility**: Preserve existing stateless WebSocket behavior as fallback
+- **Session Persistence**: Optional session save/restore capability for reconnection
+
+### Sub-phase 8.1: Session State Foundation
+
+Implement core session management infrastructure and data structures.
+
+#### Tasks
+
+- [x] Create `WebSocketSession` struct with conversation history
+- [x] Implement session ID generation and tracking
+- [x] Add session storage with concurrent HashMap
+- [x] Implement session lifecycle (create, update, destroy)
+- [x] Add memory limit configuration per session
+- [x] Create session metrics tracking
+
+**Test Files:**
+- `tests/websocket/test_session_state.rs` (max 300 lines)
+- `tests/websocket/test_session_lifecycle.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/api/websocket/session.rs` (max 400 lines)
+- `src/api/websocket/session_store.rs` (max 300 lines)
+
+### Sub-phase 8.2: WebSocket Handler Enhancement
+
+Modify existing WebSocket handler to support stateful sessions.
+
+#### Tasks
+
+- [x] Add session initialization on WebSocket connect
+- [x] Implement message type discrimination (stateful vs stateless)
+- [x] Add automatic context building from session history
+- [x] Implement session cleanup on disconnect
+- [x] Add session timeout handling
+- [x] Create session-aware error handling
+
+**Test Files:**
+- `tests/websocket/test_stateful_handler.rs` (max 350 lines)
+- `tests/websocket/test_handler_fallback.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/api/websocket/handler.rs` (max 500 lines)
+- `src/api/websocket/message_types.rs` (max 200 lines)
+
+### Sub-phase 8.3: Context Management
+
+Implement intelligent context management and optimization.
+
+#### Tasks
+
+- [ ] Create context builder with session history
+- [ ] Implement sliding window for context (last N messages)
+- [ ] Add token counting for context size management
+- [ ] Implement context compression for long conversations
+- [ ] Add context validation and sanitization
+- [ ] Create context overflow strategies (truncate, summarize)
+
+**Test Files:**
+- `tests/websocket/test_context_building.rs` (max 300 lines)
+- `tests/websocket/test_context_limits.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/api/websocket/context_manager.rs` (max 400 lines)
+- `src/api/websocket/context_strategies.rs` (max 300 lines)
+
+### Sub-phase 8.4: Session Protocol
+
+Define and implement WebSocket protocol for session management.
+
+#### Tasks
+
+- [ ] Define session control messages (init, resume, clear)
+- [ ] Implement session metadata exchange
+- [ ] Add session state synchronization protocol
+- [ ] Create session heartbeat/keepalive mechanism
+- [ ] Implement graceful session handoff
+- [ ] Add session capability negotiation
+
+**Test Files:**
+- `tests/websocket/test_session_protocol.rs` (max 350 lines)
+- `tests/websocket/test_protocol_messages.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/api/websocket/protocol.rs` (max 400 lines)
+- `src/api/websocket/protocol_handlers.rs` (max 350 lines)
+
+### Sub-phase 8.5: Memory and Performance Optimization
+
+Optimize memory usage and performance for concurrent sessions.
+
+#### Tasks
+
+- [ ] Implement session memory pooling
+- [ ] Add LRU eviction for inactive sessions
+- [ ] Create session compression for idle periods
+- [ ] Implement session metrics and monitoring
+- [ ] Add memory pressure handling
+- [ ] Create session load balancing logic
+
+**Test Files:**
+- `tests/websocket/test_memory_management.rs` (max 300 lines)
+- `tests/websocket/test_performance.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/api/websocket/memory_manager.rs` (max 350 lines)
+- `src/api/websocket/metrics.rs` (max 200 lines)
+
+### Sub-phase 8.6: Integration and E2E Testing
+
+Complete integration with existing systems and end-to-end testing.
+
+#### Tasks
+
+- [ ] Integrate with existing inference pipeline
+- [ ] Add session support to job processor
+- [ ] Implement session persistence hooks
+- [ ] Create E2E test scenarios
+- [ ] Add load testing for concurrent sessions
+- [ ] Implement session recovery testing
+
+**Test Files:**
+- `tests/websocket/test_integration.rs` (max 400 lines)
+- `tests/websocket/test_e2e_scenarios.rs` (max 350 lines)
+
+**Implementation Files:**
+- `src/api/websocket/integration.rs` (max 300 lines)
+- Updates to `src/api/http_server.rs` (keep under current size)
+
+### Configuration
+
+```toml
+[websocket.sessions]
+enabled = true
+max_sessions_per_host = 1000
+max_session_memory_mb = 10
+session_timeout_seconds = 1800
+context_window_size = 20
+enable_compression = true
+enable_persistence = false
+# All WebSocket connections will use stateful sessions
+```
+
+### Success Criteria
+
+1. **Performance**: < 5ms overhead for session context building
+2. **Memory**: < 10MB per average session
+3. **Scalability**: Support 1000+ concurrent sessions
+4. **Reliability**: Automatic recovery from session failures
+5. **Testing**: > 90% code coverage with comprehensive tests
+
+### Implementation Order
+
+1. Start with Sub-phase 8.1 (Session State Foundation)
+2. Then 8.2 (WebSocket Handler Enhancement)
+3. Then 8.3 (Context Management)
+4. Then 8.4 (Session Protocol)
+5. Then 8.5 (Memory Optimization)
+6. Finally 8.6 (Integration Testing)
+
+### Notes
+
+- Use TDD approach: Write tests first, then implementation
+- Keep files under specified line limits for maintainability
+- Ensure each sub-phase can be tested independently
+- Document protocol changes clearly
+- Consider security implications of maintaining session state
+
 ### fabstir-llm-sdk
 
 - [ ] Phase 5.1: Core SDK

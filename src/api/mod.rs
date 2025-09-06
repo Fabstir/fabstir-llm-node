@@ -4,6 +4,7 @@ pub mod streaming;
 pub mod errors;
 pub mod pool;
 pub mod http_server;
+pub mod websocket;
 
 pub use server::{ApiServer, ApiConfig};
 pub use handlers::{InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, HealthResponse};
