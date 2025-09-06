@@ -219,10 +219,7 @@ impl SessionSerializer {
         let id = data["id"].as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing session id"))?;
         
-        let mut session = WebSocketSession::new(
-            id.to_string(),
-            SessionConfig::default(),
-        );
+        let mut session = WebSocketSession::new(id.to_string());
         
         // Restore conversation history
         if let Some(history) = data["conversation_history"].as_array() {

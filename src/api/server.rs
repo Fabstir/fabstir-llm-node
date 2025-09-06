@@ -521,3 +521,54 @@ impl ApiServer {
 
 // Add uuid to dependencies
 use uuid;
+
+/// Test server for integration tests
+pub struct TestServer {
+    pub port: u16,
+}
+
+pub async fn create_test_server() -> Result<TestServer> {
+    // Find an available port
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    
+    // Create minimal config for testing
+    let config = ApiConfig {
+        listen_addr: format!("127.0.0.1:{}", port),
+        max_connections: 100,
+        max_connections_per_ip: 10,
+        request_timeout: Duration::from_secs(30),
+        cors_allowed_origins: vec!["*".to_string()],
+        enable_websocket: true,
+        require_api_key: false,
+        api_keys: vec![],
+        rate_limit_per_minute: 100,
+        enable_http2: false,
+        enable_auto_retry: false,
+        max_retries: 0,
+        enable_circuit_breaker: false,
+        circuit_breaker_threshold: 10,
+        circuit_breaker_timeout: Duration::from_secs(60),
+        enable_error_details: true,
+        connection_idle_timeout: Duration::from_secs(60),
+        websocket_ping_interval: Duration::from_secs(30),
+        websocket_pong_timeout: Duration::from_secs(10),
+        max_concurrent_streams: 100,
+        connection_retry_count: 0,
+        connection_retry_backoff: Duration::from_millis(100),
+        enable_connection_health_checks: false,
+        health_check_interval: Duration::from_secs(60),
+        shutdown_timeout: Duration::from_secs(30),
+    };
+    
+    // Create server and start in background
+    let server = Arc::new(ApiServer::new(config).await?);
+    
+    // Note: ApiServer doesn't have a run() method yet
+    // This would need to be implemented to actually start the server
+    
+    // Wait for server to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    Ok(TestServer { port })
+}

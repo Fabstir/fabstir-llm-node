@@ -189,10 +189,7 @@ async fn test_context_with_system_prompt() {
     };
     let manager = ContextManager::new(config);
     
-    let session = WebSocketSession::new(
-        "test-id".to_string(),
-        SessionConfig::default(),
-    );
+    let session = WebSocketSession::new("test-id".to_string());
     
     let context = manager.build_context(&session, "Write hello world").await.unwrap();
     
@@ -262,10 +259,7 @@ async fn test_empty_session_context() {
     let config = ContextConfig::default();
     let manager = ContextManager::new(config);
     
-    let session = WebSocketSession::new(
-        "empty-session".to_string(),
-        SessionConfig::default(),
-    );
+    let session = WebSocketSession::new("empty-session".to_string());
     
     let context = manager.build_context(&session, "First message").await.unwrap();
     
@@ -276,10 +270,7 @@ async fn test_empty_session_context() {
 
 // Helper functions
 fn create_test_session_with_messages() -> WebSocketSession {
-    let mut session = WebSocketSession::new(
-        "test-session".to_string(),
-        SessionConfig::default(),
-    );
+    let mut session = WebSocketSession::new("test-session".to_string());
     
     session.add_message(Message {
         role: "user".to_string(),
@@ -297,10 +288,7 @@ fn create_test_session_with_messages() -> WebSocketSession {
 }
 
 fn create_large_session() -> WebSocketSession {
-    let mut session = WebSocketSession::new(
-        "large-session".to_string(),
-        SessionConfig::default(),
-    );
+    let mut session = WebSocketSession::new("large-session".to_string());
     
     for i in 0..10 {
         session.add_message(Message {

@@ -8,3 +8,5 @@ pub mod protocol;
 pub mod protocol_handlers;
 pub mod memory_manager;
 pub mod metrics;
+pub mod integration;
+pub mod manager;

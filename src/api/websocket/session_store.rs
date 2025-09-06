@@ -64,7 +64,7 @@ impl SessionStore {
             return Err(anyhow!("Maximum sessions limit reached"));
         }
         
-        let session = WebSocketSession::new(session_id.clone(), config);
+        let session = WebSocketSession::with_config(session_id.clone(), config);
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id, session);
         Ok(())
@@ -72,7 +72,7 @@ impl SessionStore {
 
     pub async fn create_session(&mut self, config: SessionConfig) -> String {
         let session_id = WebSocketSession::generate_id();
-        let session = WebSocketSession::new(session_id.clone(), config);
+        let session = WebSocketSession::with_config(session_id.clone(), config);
         
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id.clone(), session);
@@ -90,7 +90,7 @@ impl SessionStore {
         drop(sessions); // Release read lock before getting write lock
         
         let session_id = WebSocketSession::generate_id();
-        let session = WebSocketSession::new(session_id.clone(), config);
+        let session = WebSocketSession::with_config(session_id.clone(), config);
         
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id.clone(), session);

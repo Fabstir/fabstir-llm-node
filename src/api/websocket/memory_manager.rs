@@ -47,10 +47,7 @@ impl SessionPool {
     pub fn new(size: usize) -> Self {
         let mut sessions = VecDeque::new();
         for i in 0..size {
-            let session = WebSocketSession::new(
-                format!("pool-session-{}", i),
-                SessionConfig::default(),
-            );
+            let session = WebSocketSession::new(format!("pool-session-{}", i));
             sessions.push_back(session);
         }
         
@@ -114,7 +111,7 @@ impl MemoryManager {
     }
     
     pub async fn add_session(&self, session_id: String) -> Result<()> {
-        let session = WebSocketSession::new(session_id.clone(), SessionConfig::default());
+        let session = WebSocketSession::new(session_id.clone());
         let session_size = std::mem::size_of::<WebSocketSession>() + session_id.len();
         
         // Check memory pressure
@@ -214,10 +211,7 @@ impl MemoryManager {
         
         // For simplicity, create new session
         // In real implementation, would deserialize full state
-        let session = WebSocketSession::new(
-            session_id.to_string(),
-            SessionConfig::default(),
-        );
+        let session = WebSocketSession::new(session_id.to_string());
         
         Some(session)
     }

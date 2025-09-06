@@ -8,7 +8,7 @@ fn test_session_creation() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
     
-    let session = WebSocketSession::new(session_id.clone(), config);
+    let session = WebSocketSession::with_config(session_id.clone(), config);
     
     assert_eq!(session.id(), &session_id);
     assert_eq!(session.message_count(), 0);
@@ -20,7 +20,7 @@ fn test_session_creation() {
 fn test_add_message_to_session() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     let message = Message {
         role: "user".to_string(),
@@ -42,7 +42,7 @@ fn test_session_memory_limit() {
         max_memory_bytes: 1024, // 1KB limit
         ..Default::default()
     };
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     // Add messages until we exceed memory limit
     let large_message = Message {
@@ -67,7 +67,7 @@ fn test_session_context_window() {
         context_window_size: 3,
         ..Default::default()
     };
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     // Add 5 messages
     for i in 0..5 {
@@ -94,7 +94,7 @@ fn test_session_context_window() {
 fn test_session_clear() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     // Add some messages
     for i in 0..3 {
@@ -119,7 +119,7 @@ fn test_session_clear() {
 fn test_session_last_activity() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     let initial_activity = session.last_activity();
     
@@ -142,7 +142,7 @@ fn test_session_last_activity() {
 fn test_session_metrics() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     // Add messages with different roles
     session.add_message(Message {
@@ -179,7 +179,7 @@ fn test_session_is_expired() {
         timeout_seconds: 1, // 1 second timeout
         ..Default::default()
     };
-    let session = WebSocketSession::new(session_id, config);
+    let session = WebSocketSession::with_config(session_id, config);
     
     // Initially not expired
     assert!(!session.is_expired());
@@ -195,7 +195,7 @@ fn test_session_is_expired() {
 fn test_session_token_counting() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     let message = Message {
         role: "user".to_string(),
@@ -215,7 +215,7 @@ fn test_session_token_counting() {
 fn test_session_memory_calculation() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     let initial_memory = session.memory_used();
     
@@ -259,7 +259,7 @@ fn test_session_config_defaults() {
 fn test_session_with_system_message() {
     let session_id = Uuid::new_v4().to_string();
     let config = SessionConfig::default();
-    let mut session = WebSocketSession::new(session_id, config);
+    let mut session = WebSocketSession::with_config(session_id, config);
     
     let system_message = Message {
         role: "system".to_string(),

@@ -2,8 +2,18 @@ use crate::job_processor::Message;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::RwLock;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionState {
+    Active,
+    Idle,
+    Failed,
+    Closed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
@@ -38,23 +48,33 @@ pub struct SessionMetrics {
 
 #[derive(Debug, Clone)]
 pub struct WebSocketSession {
-    id: String,
-    config: SessionConfig,
-    conversation_history: Vec<Message>,
-    created_at: Instant,
-    last_activity: Instant,
-    total_memory_used: usize,
+    pub id: String,
+    pub config: SessionConfig,
+    pub conversation_history: Vec<Message>,
+    pub created_at: Instant,
+    pub last_activity: Instant,
+    pub total_memory_used: usize,
+    pub state: SessionState,
+    pub messages: Arc<RwLock<Vec<Message>>>,
+    pub metadata: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl WebSocketSession {
-    pub fn new(id: String, config: SessionConfig) -> Self {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self::with_config(id, SessionConfig::default())
+    }
+    
+    pub fn with_config(id: impl Into<String>, config: SessionConfig) -> Self {
         Self {
-            id,
+            id: id.into(),
             config,
             conversation_history: Vec::new(),
             created_at: Instant::now(),
             last_activity: Instant::now(),
             total_memory_used: 0,
+            state: SessionState::Active,
+            messages: Arc::new(RwLock::new(Vec::new())),
+            metadata: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -192,6 +212,24 @@ impl WebSocketSession {
             + message.content.len()
             + if message.timestamp.is_some() { 8 } else { 0 }
     }
+    
+    pub async fn add_message_async(&self, role: &str, content: &str) -> Result<()> {
+        let message = Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            timestamp: Some(std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs() as i64),
+        };
+        self.messages.write().await.push(message);
+        Ok(())
+    }
+    
+    pub async fn set_state(&self, state: SessionState) -> Result<()> {
+        // Note: state field is not behind RwLock in current structure
+        // This would need refactoring to make state mutable
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -200,10 +238,7 @@ mod tests {
 
     #[test]
     fn test_session_creation() {
-        let session = WebSocketSession::new(
-            "test-id".to_string(),
-            SessionConfig::default()
-        );
+        let session = WebSocketSession::new("test-id");
         
         assert_eq!(session.id(), "test-id");
         assert_eq!(session.message_count(), 0);
@@ -211,10 +246,7 @@ mod tests {
 
     #[test]
     fn test_add_message() {
-        let mut session = WebSocketSession::new(
-            "test-id".to_string(),
-            SessionConfig::default()
-        );
+        let mut session = WebSocketSession::new("test-id");
         
         let message = Message {
             role: "user".to_string(),

@@ -142,10 +142,7 @@ async fn test_priority_message_preservation() {
     };
     let manager = ContextManager::new(config);
     
-    let mut session = WebSocketSession::new(
-        "test".to_string(),
-        SessionConfig::default(),
-    );
+    let mut session = WebSocketSession::new("test".to_string());
     
     // Add system message
     session.add_message(Message {
@@ -225,10 +222,7 @@ async fn test_multi_turn_context_coherence() {
     };
     let manager = ContextManager::new(config);
     
-    let mut session = WebSocketSession::new(
-        "test".to_string(),
-        SessionConfig::default(),
-    );
+    let mut session = WebSocketSession::new("test".to_string());
     
     // Add a multi-turn conversation
     session.add_message(Message {
@@ -263,10 +257,7 @@ async fn test_multi_turn_context_coherence() {
 
 // Helper functions
 fn create_session_with_many_messages(count: usize) -> WebSocketSession {
-    let mut session = WebSocketSession::new(
-        "test-session".to_string(),
-        SessionConfig::default(),
-    );
+    let mut session = WebSocketSession::new("test-session".to_string());
     
     for i in 0..count {
         session.add_message(Message {

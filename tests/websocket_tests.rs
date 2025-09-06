@@ -9,4 +9,6 @@ mod websocket {
     mod test_protocol_messages;
     mod test_memory_management;
     mod test_performance;
+    mod test_integration;
+    mod test_e2e_scenarios;
 }
