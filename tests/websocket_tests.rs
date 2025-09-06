@@ -14,4 +14,9 @@ mod websocket {
     mod test_server;
     mod test_connection;
     mod test_transport;
+    mod test_message_types;
+    mod test_session_init;
+    mod test_session_resume;
+    mod test_prompt_handler;
+    mod test_response_streaming;
 }

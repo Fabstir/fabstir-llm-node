@@ -1013,12 +1013,12 @@ Implement WebSocket message types and handlers aligned with the Fabstir SDK prot
 
 #### Tasks
 
-- [ ] Define message types matching SDK protocol (session_init, session_resume, prompt, response, error)
-- [ ] Implement session_init handler with context loading
-- [ ] Implement session_resume handler for recovery
-- [ ] Create prompt handler with memory caching
-- [ ] Implement response streaming handler
-- [ ] Add session_end cleanup handler
+- [x] Define message types matching SDK protocol (session_init, session_resume, prompt, response, error)
+- [x] Implement session_init handler with context loading
+- [x] Implement session_resume handler for recovery
+- [x] Create prompt handler with memory caching
+- [x] Implement response streaming handler
+- [x] Add session_end cleanup handler
 
 **Test Files:**
 - `tests/websocket/test_message_types.rs` (max 250 lines)
