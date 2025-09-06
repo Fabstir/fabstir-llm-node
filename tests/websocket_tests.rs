@@ -7,4 +7,6 @@ mod websocket {
     mod test_context_limits;
     mod test_session_protocol;
     mod test_protocol_messages;
+    mod test_memory_management;
+    mod test_performance;
 }
