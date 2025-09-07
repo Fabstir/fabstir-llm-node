@@ -1160,19 +1160,152 @@ context_window_max_tokens = 4096
 - Mock implementations for testing without external dependencies
 - Full TDD methodology followed
 
+### Sub-phase 8.11: Core Functionality - Inference Engine & Job Verification
+
+Replace critical mocks that block core functionality for production deployment.
+
+#### Tasks
+
+- [ ] Integrate real LLM inference engine with InferenceHandler
+- [ ] Remove mock responses from inference.rs (lines 110-157)
+- [ ] Implement real blockchain job verification in auth.rs
+- [ ] Replace mock JobVerifier with actual Web3Client integration
+- [ ] Add proper model loading and management
+- [ ] Implement real streaming token generation
+
+**Test Files:**
+- `tests/websocket/test_real_inference.rs` (max 300 lines)
+- `tests/websocket/test_blockchain_auth.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/api/websocket/handlers/inference.rs` (enhance existing)
+- `src/api/websocket/auth.rs` (enhance JobVerifier section)
+
+**Success Criteria:**
+- Real LLM responses generated from actual models
+- Job IDs verified against Base Sepolia blockchain
+- Model switching works correctly
+- Streaming responses with actual tokens
+- No mock responses in production path
+
+### Sub-phase 8.12: Security & Monitoring - JWT, Signatures & Prometheus
+
+Replace security and monitoring mocks for production readiness.
+
+#### Tasks
+
+- [ ] Implement real JWT token generation/validation using jsonwebtoken crate
+- [ ] Add proper cryptographic signature verification (ed25519-dalek)
+- [ ] Replace mock Prometheus metrics with real prometheus crate integration
+- [ ] Implement actual system resource monitoring with sysinfo
+- [ ] Add real health check dependency verification
+- [ ] Implement proper metric aggregation and export
+
+**Test Files:**
+- `tests/websocket/test_jwt_security.rs` (max 250 lines)
+- `tests/websocket/test_real_metrics.rs` (max 300 lines)
+- `tests/websocket/test_system_monitoring.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/api/websocket/auth.rs` (JWT and signature sections)
+- `src/api/websocket/metrics.rs` (Prometheus integration)
+- `src/api/websocket/health.rs` (System monitoring)
+
+**Success Criteria:**
+- JWT tokens are cryptographically secure
+- Ed25519 signatures properly validated
+- Metrics exported in proper Prometheus format
+- Real system resources (CPU, memory, disk) reported
+- Health checks reflect actual service status
+
+### Sub-phase 8.13: Distributed Features - Redis & Advanced Monitoring (DEFERRED)
+
+Add distributed system support for multi-node deployments. Can be deferred for initial production.
+
+#### Tasks
+
+- [ ] Implement Redis backend for distributed rate limiting
+- [ ] Add Redis-based session storage for failover
+- [ ] Implement distributed metrics aggregation
+- [ ] Add detailed system monitoring (CPU per core, network by interface)
+- [ ] Implement distributed circuit breaker state
+- [ ] Add cache synchronization across nodes
+
+**Test Files:**
+- `tests/websocket/test_redis_integration.rs` (max 300 lines)
+- `tests/websocket/test_distributed_features.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/api/websocket/rate_limiter.rs` (Redis backend)
+- `src/api/websocket/memory_cache.rs` (Distributed cache)
+- `src/api/websocket/redis_client.rs` (new file, max 400 lines)
+
+**Success Criteria:**
+- Rate limits shared across multiple nodes
+- Session failover works between nodes
+- Metrics aggregated from all nodes
+- Circuit breaker state synchronized
+- Can deploy multiple load-balanced nodes
+
 ### Implementation Priority
 
 1. **8.7 Complete** ✅ - WebSocket server foundation implemented
-2. **8.8 Next** - Protocol message types and handlers
-3. **8.9 Then** - Stateless memory cache and LLM integration
-4. **8.10 Last** - Production hardening and monitoring
+2. **8.8 Complete** ✅ - Protocol message types and handlers
+3. **8.9 Complete** ✅ - Stateless memory cache and LLM integration  
+4. **8.10 Complete** ✅ - Production hardening and monitoring
+5. **8.11 Next** - Core functionality (MUST FIX for production)
+6. **8.12 Then** - Security & monitoring (SHOULD FIX for production)
+7. **8.13 Later** - Distributed features (CAN DEFER)
+
+### Mock Replacement Summary
+
+**Current Mock Implementations (from 8.10):**
+
+1. **MUST FIX (8.11)** - Blocks core functionality:
+   - `handlers/inference.rs:110-157` - Mock LLM responses
+   - `auth.rs:86-99` - Mock JobVerifier
+   - `handlers/handler.rs:209,236` - Old mock TODOs
+
+2. **SHOULD FIX (8.12)** - Security and monitoring:
+   - `auth.rs:265-271` - Mock JWT encoding/decoding
+   - `auth.rs:275-280` - Mock signature generation
+   - `metrics.rs:412-413,555` - Mock Prometheus format
+   - `health.rs:235-243` - Hardcoded system resources
+
+3. **CAN DEFER (8.13)** - Distributed features:
+   - `rate_limiter.rs:187` - Mock Redis backend
+   - `health.rs:346` - Mock dependency checks
+   - `metrics.rs:437` - Fixed message rate calculation
 
 ### Migration Path from Mocks
 
-1. **Phase 8.7**: ✅ Real WebSocket server implemented
-2. **Phase 8.8**: Define protocol-aligned message types
-3. **Phase 8.9**: Integrate real LLM with memory-only caching
-4. **Phase 8.10**: Add production features (compression, metrics, auth)
+1. **Phase 8.7-8.10**: ✅ WebSocket infrastructure with mocks for testing
+2. **Phase 8.11**: Replace core functionality mocks (inference & auth)
+3. **Phase 8.12**: Replace security & monitoring mocks (JWT, metrics)
+4. **Phase 8.13**: Add distributed features (Redis, multi-node)
+
+### Production Readiness Checklist
+
+**Minimum Viable Production (after 8.11):**
+- ✅ WebSocket server with compression, rate limiting, health checks (8.7-8.10)
+- [ ] Real LLM inference working (8.11)
+- [ ] Blockchain job verification active (8.11)
+- [ ] Basic authentication with session tokens (8.10)
+- ✅ Memory-only stateless architecture (8.9)
+
+**Recommended Production (after 8.12):**
+- [ ] JWT tokens with proper cryptography (8.12)
+- [ ] Ed25519 signature verification (8.12)
+- [ ] Prometheus metrics export (8.12)
+- [ ] Real system monitoring (8.12)
+- [ ] Dependency health checks (8.12)
+
+**Enterprise Production (after 8.13):**
+- [ ] Redis-backed rate limiting (8.13)
+- [ ] Distributed session storage (8.13)
+- [ ] Multi-node deployment support (8.13)
+- [ ] Cross-node metrics aggregation (8.13)
+- [ ] Distributed circuit breakers (8.13)
 
 ### fabstir-llm-sdk
 
