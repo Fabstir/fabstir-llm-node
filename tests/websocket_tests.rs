@@ -22,4 +22,9 @@ mod websocket {
     mod test_inference_integration;
     mod test_context_management;
     mod test_error_handling;
+    mod test_compression;
+    mod test_metrics;
+    mod test_rate_limiting;
+    mod test_auth;
+    mod test_health;
 }

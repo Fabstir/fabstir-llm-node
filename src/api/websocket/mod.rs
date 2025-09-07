@@ -16,3 +16,8 @@ pub mod transport;
 pub mod messages;
 pub mod memory_cache;
 pub mod handlers;
+pub mod compression;
+pub mod rate_limiter;
+pub mod auth;
+pub mod health;
+pub mod config;

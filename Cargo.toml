@@ -77,6 +77,10 @@ aes-gcm = "0.10"
 pbkdf2 = "0.12"
 base64 = "0.22"
 
+# Production hardening dependencies  
+toml = "0.8"
+prometheus = "0.13"
+
 # GDPR module dependencies
 bs58 = "0.5"
 
