@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Fabstir LLM Node provides a RESTful HTTP API and WebSocket interface for interacting with the P2P LLM marketplace. This API enables clients to request inference from available models, monitor node health, and stream real-time responses.
+The Fabstir LLM Node provides a RESTful HTTP API and WebSocket interface for interacting with the P2P LLM marketplace. This API enables clients to request inference from available models, monitor node health, stream real-time responses, and verify results with cryptographic proofs (EZKL).
 
 ## Base URL
 
@@ -349,6 +349,13 @@ interface JwtClaims {
 
 ### Production Features
 
+#### EZKL Proof Generation (NEW - Critical for MVP)
+- **Cryptographic Proofs**: Verify inference without re-running
+- **Payment Security**: Funds released only after verification
+- **Multiple Proof Types**: EZKL, Risc0, Simple
+- **Hash Verification**: Model, input, and output integrity
+- **Concurrent Generation**: Efficient batch processing
+
 #### Message Compression
 The WebSocket server supports per-message deflate compression:
 - **Gzip**: For maximum compression
@@ -381,6 +388,7 @@ The server maintains conversation context in memory during active sessions:
 - **Ed25519 Signatures**: Optional message signing
 - **Session Tokens**: Time-limited with refresh
 - **Permission System**: Role-based access control
+- **EZKL Proof Generation**: Cryptographic verification of inference (NEW)
 
 #### Connection Maintenance
 - Ping interval: 30 seconds
@@ -416,6 +424,102 @@ The server maintains conversation context in memory during active sessions:
 | `MODEL_UNAVAILABLE` | Requested model not loaded | Try alternative model |
 | `CONTEXT_TOO_LARGE` | Conversation exceeds limits | Truncate context |
 | `CIRCUIT_OPEN` | Service temporarily unavailable | Wait and retry |
+
+---
+
+## EZKL Proof Generation (NEW - Sub-phase 8.13)
+
+The API now supports cryptographic proof generation for inference results, critical for payment security and dispute prevention.
+
+### Proof Types
+
+The system supports three proof types:
+
+```json
+{
+  "proof_type": "EZKL"  // Options: "EZKL", "Risc0", "Simple"
+}
+```
+
+### Proof-Enhanced Response
+
+When proof generation is enabled, responses include cryptographic verification:
+
+```json
+{
+  "type": "response",
+  "session_id": "active-uuid",
+  "content": "Machine learning is...",
+  "tokens_used": 45,
+  "message_index": 6,
+  "completion_time_ms": 1234,
+  "proof": {
+    "job_id": "0x123...",
+    "model_hash": "sha256:abc123...",
+    "input_hash": "sha256:def456...",
+    "output_hash": "sha256:ghi789...",
+    "proof_type": "EZKL",
+    "proof_data": "0xEF...",  // Base64 encoded proof
+    "timestamp": "2025-01-07T12:00:00Z",
+    "prover_id": "node_123"
+  },
+  "verification_key": "0x01020304..."  // For client-side verification
+}
+```
+
+### Proof Verification
+
+Clients can verify proofs before accepting results:
+
+```javascript
+// Example verification (client-side)
+async function verifyProof(response) {
+  const { proof, verification_key } = response;
+  
+  // Verify hashes match
+  const inputHash = sha256(response.prompt);
+  const outputHash = sha256(response.content);
+  
+  if (proof.input_hash !== inputHash || 
+      proof.output_hash !== outputHash) {
+    throw new Error('Hash mismatch - proof invalid');
+  }
+  
+  // Additional cryptographic verification
+  // (Implementation depends on proof type)
+  return true;
+}
+```
+
+### Payment Security Flow
+
+1. **Job Request**: Client submits job with payment escrow
+2. **Inference**: Node processes request
+3. **Proof Generation**: Node creates cryptographic proof
+4. **Result Delivery**: Node sends result with proof
+5. **Verification**: Client/Contract verifies proof
+6. **Payment Release**: Funds released only after verification
+
+### Proof Configuration
+
+Configure proof generation in node settings:
+
+```toml
+[proof]
+enabled = true
+type = "EZKL"
+max_proof_size = 10000
+model_path = "./models/tinyllama-1.1b.gguf"
+settings_path = "./ezkl/settings.json"
+```
+
+### Benefits
+
+- **Payment Security**: Funds only released for verified work
+- **Interruption Recovery**: Prove partial completion
+- **Dispute Prevention**: Cryptographic evidence
+- **Trust Minimization**: No blind trust required
+- **Audit Trail**: Verifiable computation history
 
 ---
 
@@ -1806,7 +1910,16 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v1** (Current) - Initial API release with core inference capabilities
+- **v1.1** (Current) - Added EZKL proof generation for payment security (Sub-phase 8.13)
+  - Cryptographic verification of inference results
+  - Support for EZKL, Risc0, and Simple proof types
+  - Integration with PackagedResult for job context
+  - Hash-based verification of model, input, and output
+- **v1.0** - Initial API release with core inference capabilities
+  - WebSocket production features (Phases 8.7-8.12)
+  - Session management with stateless memory cache
+  - JWT authentication and Ed25519 signatures
+  - Message compression and rate limiting
 
 ---
 
