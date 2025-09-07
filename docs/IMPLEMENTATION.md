@@ -1166,12 +1166,12 @@ Replace critical mocks that block core functionality for production deployment.
 
 #### Tasks
 
-- [ ] Integrate real LLM inference engine with InferenceHandler
-- [ ] Remove mock responses from inference.rs (lines 110-157)
-- [ ] Implement real blockchain job verification in auth.rs
-- [ ] Replace mock JobVerifier with actual Web3Client integration
-- [ ] Add proper model loading and management
-- [ ] Implement real streaming token generation
+- [x] Integrate real LLM inference engine with InferenceHandler
+- [x] Remove mock responses from inference.rs (lines 110-157)
+- [x] Implement real blockchain job verification in auth.rs
+- [x] Replace mock JobVerifier with actual Web3Client integration
+- [x] Add proper model loading and management
+- [x] Implement real streaming token generation
 
 **Test Files:**
 - `tests/websocket/test_real_inference.rs` (max 300 lines)

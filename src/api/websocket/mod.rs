@@ -21,3 +21,5 @@ pub mod rate_limiter;
 pub mod auth;
 pub mod health;
 pub mod config;
+pub mod inference;
+pub mod job_verification;

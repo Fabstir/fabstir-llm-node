@@ -27,4 +27,7 @@ mod websocket {
     mod test_rate_limiting;
     mod test_auth;
     mod test_health;
+    mod test_real_inference;
+    mod test_real_job_verification;
+    mod test_real_basic;
 }
