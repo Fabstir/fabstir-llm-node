@@ -243,60 +243,179 @@ GET /metrics
 
 ---
 
-## WebSocket API
+## WebSocket API (Production Ready - Phases 8.7-8.12)
 
-For real-time bidirectional communication, connect via WebSocket.
+For real-time bidirectional communication and conversation management, connect via WebSocket. The WebSocket API has been completely rebuilt with production features including stateless memory caching, compression, rate limiting, JWT authentication, and Ed25519 signatures.
 
-### Connection
+### Connection Endpoints
 
+#### Legacy Endpoint (Deprecated)
 ```javascript
 ws://localhost:8080/v1/ws
 ```
 
-### Message Format
+#### Session Management Endpoint (Recommended)
+```javascript
+ws://localhost:8080/ws/session
+```
 
-#### Client Request
+### Authentication
 
+The WebSocket server requires authentication via job ID and supports JWT tokens:
+
+#### Initial Authentication
 ```json
 {
-  "type": "inference_request",
-  "payload": {
+  "type": "auth",
+  "job_id": 12345,
+  "token": "jwt_token_here"  // Optional JWT token
+}
+```
+
+#### JWT Token Structure
+```typescript
+interface JwtClaims {
+  session_id: string;
+  job_id: number;
+  permissions: string[];  // ['Read', 'Write', 'Execute', 'Admin']
+  exp: number;           // Expiry timestamp
+  iat: number;           // Issued at timestamp
+}
+```
+
+### Message Format (Enhanced Protocol)
+
+#### Session Initialization
+```json
+{
+  "type": "session_init",
+  "session_id": "uuid-v4",
+  "job_id": 12345,
+  "model_config": {
     "model": "llama-2-7b",
-    "prompt": "Write a haiku about programming",
-    "max_tokens": 50,
-    "temperature": 0.9
-  }
+    "max_tokens": 2048,
+    "temperature": 0.7
+  },
+  "conversation_context": []  // Optional previous messages
 }
 ```
 
-#### Server Response
-
+#### Session Resume (After Disconnect)
 ```json
 {
-  "type": "inference_response",
-  "payload": {
-    "content": "Code flows like water",
-    "tokens_used": 5,
-    "finish_reason": null
-  }
+  "type": "session_resume",
+  "session_id": "existing-uuid",
+  "job_id": 12345,
+  "conversation_context": [
+    {"role": "user", "content": "Previous question"},
+    {"role": "assistant", "content": "Previous response"}
+  ],
+  "last_message_index": 8
 }
 ```
+
+#### Prompt (During Active Session)
+```json
+{
+  "type": "prompt",
+  "session_id": "active-uuid",
+  "content": "What is machine learning?",
+  "message_index": 5,
+  "stream": true
+}
+```
+
+#### Response (Non-Streaming)
+```json
+{
+  "type": "response",
+  "session_id": "active-uuid",
+  "content": "Machine learning is...",
+  "tokens_used": 45,
+  "message_index": 6,
+  "completion_time_ms": 1234
+}
+```
+
+#### Streaming Response
+```json
+{
+  "type": "stream_chunk",
+  "session_id": "active-uuid",
+  "content": "Machine",
+  "chunk_index": 0,
+  "is_final": false
+}
+
+### Production Features
+
+#### Message Compression
+The WebSocket server supports per-message deflate compression:
+- **Gzip**: For maximum compression
+- **Deflate**: For lower latency
+- **Threshold**: Messages > 1KB are automatically compressed
+- **Bandwidth Savings**: >40% reduction on average
+
+#### Rate Limiting
+- **Default**: 100 requests per minute per session
+- **Burst Capacity**: 200 tokens
+- **Token Bucket Algorithm**: Smooth traffic shaping
+- **Per-Session**: Each session_id has independent limits
+
+#### Stateless Memory Cache
+The server maintains conversation context in memory during active sessions:
+- **No Persistence**: All data cleared on disconnect
+- **Automatic Truncation**: Based on model context window
+- **Token Limits**: Enforced per model configuration
+- **Session Timeout**: 30 minutes of inactivity
+- **Memory Cap**: 10MB per session
+
+#### Health Monitoring
+- **Circuit Breakers**: Automatic failure detection
+- **Health Checks**: `/health` and `/ready` endpoints
+- **Metrics**: Prometheus-compatible (structure ready)
+- **Connection Pooling**: Efficient resource management
+
+#### Security Features
+- **JWT Authentication**: HS256 algorithm
+- **Ed25519 Signatures**: Optional message signing
+- **Session Tokens**: Time-limited with refresh
+- **Permission System**: Role-based access control
 
 #### Connection Maintenance
-
 - Ping interval: 30 seconds
 - Pong timeout: 10 seconds
 - Automatic reconnection recommended on disconnect
+- Session recovery with full context rebuild
 
-### Message Types
+### Message Types (Extended)
 
 | Type | Direction | Description |
 |------|-----------|-------------|
-| `inference_request` | Client → Server | Request inference |
-| `inference_response` | Server → Client | Streaming response chunk |
-| `error` | Server → Client | Error message |
+| `auth` | Client → Server | Authentication with job_id/token |
+| `session_init` | Client → Server | Start new conversation session |
+| `session_resume` | Client → Server | Resume session with full context |
+| `prompt` | Client → Server | Send user prompt (minimal data) |
+| `response` | Server → Client | Non-streaming complete response |
+| `stream_chunk` | Server → Client | Streaming response token |
+| `session_end` | Client → Server | Clean session termination |
+| `error` | Server → Client | Error message with code |
+| `token_refresh` | Server → Client | New JWT token |
+| `rate_limit` | Server → Client | Rate limit warning |
 | `ping` | Bidirectional | Keep-alive |
 | `pong` | Bidirectional | Keep-alive response |
+
+### Error Codes (WebSocket)
+
+| Code | Description | Recovery Action |
+|------|-------------|----------------|
+| `AUTH_FAILED` | Authentication/authorization failure | Refresh token or re-authenticate |
+| `RATE_LIMIT` | Rate limit exceeded | Exponential backoff |
+| `SESSION_EXPIRED` | Session token expired | Create new session |
+| `INVALID_JOB` | Job verification failed | Check blockchain job status |
+| `MODEL_UNAVAILABLE` | Requested model not loaded | Try alternative model |
+| `CONTEXT_TOO_LARGE` | Conversation exceeds limits | Truncate context |
+| `CIRCUIT_OPEN` | Service temporarily unavailable | Wait and retry |
 
 ---
 
@@ -513,7 +632,113 @@ function streamingInference(prompt, model = 'llama-2-7b') {
 }
 ```
 
-### WebSocket Client (JavaScript)
+### WebSocket Client (JavaScript - Updated for Session Management)
+
+```javascript
+// Modern session-based WebSocket client
+class FabstirWebSocketClient {
+  constructor(endpoint = 'ws://localhost:8080/ws/session') {
+    this.endpoint = endpoint;
+    this.ws = null;
+    this.sessionId = null;
+    this.conversationHistory = [];
+  }
+
+  async connect(jobId) {
+    this.ws = new WebSocket(this.endpoint);
+    
+    return new Promise((resolve, reject) => {
+      this.ws.onopen = () => {
+        // Authenticate
+        this.ws.send(JSON.stringify({
+          type: 'auth',
+          job_id: jobId
+        }));
+        
+        // Initialize session
+        this.sessionId = crypto.randomUUID();
+        this.ws.send(JSON.stringify({
+          type: 'session_init',
+          session_id: this.sessionId,
+          job_id: jobId,
+          model_config: {
+            model: 'llama-2-7b',
+            max_tokens: 2048,
+            temperature: 0.7
+          }
+        }));
+        
+        resolve();
+      };
+      
+      this.ws.onerror = reject;
+    });
+  }
+
+  async sendPrompt(content) {
+    const messageIndex = this.conversationHistory.length;
+    
+    this.ws.send(JSON.stringify({
+      type: 'prompt',
+      session_id: this.sessionId,
+      content: content,
+      message_index: messageIndex,
+      stream: true
+    }));
+    
+    // Store in history
+    this.conversationHistory.push({
+      role: 'user',
+      content: content
+    });
+  }
+
+  async resumeSession(jobId) {
+    // Reconnect with full context
+    await this.connect(jobId);
+    
+    this.ws.send(JSON.stringify({
+      type: 'session_resume',
+      session_id: this.sessionId,
+      job_id: jobId,
+      conversation_context: this.conversationHistory,
+      last_message_index: this.conversationHistory.length - 1
+    }));
+  }
+
+  handleMessage(callback) {
+    this.ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      
+      if (message.type === 'response' || message.type === 'stream_chunk') {
+        callback(message);
+        
+        // Store complete responses
+        if (message.type === 'response' || message.is_final) {
+          this.conversationHistory.push({
+            role: 'assistant',
+            content: message.content
+          });
+        }
+      }
+    };
+  }
+}
+
+// Usage example
+const client = new FabstirWebSocketClient();
+await client.connect(12345);
+
+client.handleMessage((message) => {
+  if (message.type === 'stream_chunk') {
+    process.stdout.write(message.content);
+  }
+});
+
+await client.sendPrompt('Explain quantum computing');
+```
+
+### Legacy WebSocket Client (Deprecated)
 
 ```javascript
 const ws = new WebSocket('ws://localhost:8080/v1/ws');

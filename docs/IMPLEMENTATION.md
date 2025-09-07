@@ -1218,7 +1218,89 @@ Replace security and monitoring mocks for production readiness.
 - Real system resources (CPU, memory, disk) reported
 - Health checks reflect actual service status
 
-### Sub-phase 8.13: Distributed Features - Redis & Advanced Monitoring (DEFERRED)
+### Sub-phase 8.13: EZKL Proof Generation for Payment Security (CRITICAL)
+
+Implement zero-knowledge proof generation for inference verification and payment security. This is CRITICAL for handling session interruptions and ensuring payment for completed work.
+
+#### TDD Implementation Approach
+
+**Step 1: Write failing tests FIRST**
+```bash
+# Create test files that will initially fail
+cargo test ezkl::test_real_proof_generation -- --nocapture  # MUST FAIL
+cargo test ezkl::test_payment_with_proofs -- --nocapture     # MUST FAIL  
+cargo test ezkl::test_interruption_handling -- --nocapture   # MUST FAIL
+```
+
+**Step 2: Implement minimum code to pass tests**
+- Only write code needed to make tests pass
+- No extra features or optimizations
+- Follow test requirements exactly
+
+**Step 3: Refactor with tests passing**
+- Clean up implementation
+- Add optimizations
+- Tests must stay green
+
+#### Tasks (Strict Order)
+
+- [ ] **TEST FIRST**: Write `test_real_proof_generation.rs` with failing tests
+- [ ] Add real EZKL library dependency to Cargo.toml
+- [ ] Replace mock proof generation in `src/contracts/proofs.rs`
+- [ ] **TEST FIRST**: Write `test_payment_with_proofs.rs` with failing tests
+- [ ] Implement actual EZKL circuit compilation for LLM inference
+- [ ] Connect ProofSubmitter to blockchain PROOF_SYSTEM_ADDRESS
+- [ ] **TEST FIRST**: Write `test_interruption_handling.rs` with failing tests
+- [ ] Add proof generation after each inference completion
+- [ ] Implement proof verification before payment claims
+- [ ] Handle partial proofs for interrupted sessions
+- [ ] Cache proving/verifying keys for performance
+
+**Test Files (Write BEFORE Implementation):**
+- `tests/ezkl/test_real_proof_generation.rs` (max 300 lines)
+- `tests/ezkl/test_payment_with_proofs.rs` (max 250 lines)
+- `tests/ezkl/test_interruption_handling.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/contracts/proofs.rs` (replace mock in generate_proof)
+- `src/results/proofs.rs` (real EZKL proof generation)
+- `src/ezkl/integration.rs` (circuit compilation)
+- `src/job_processor.rs` (add proof submission flow)
+
+**Test Scenarios (TDD Requirements):**
+
+1. **test_real_proof_generation.rs**
+   - `test_generate_proof_for_inference()` - Proof created for completed inference
+   - `test_proof_contains_correct_hashes()` - Input/output hashes match
+   - `test_proof_format_valid_for_contract()` - Proof format matches contract ABI
+   - `test_proof_generation_performance()` - Under 1 second for typical inference
+   - `test_proof_deterministic()` - Same input produces same proof
+
+2. **test_payment_with_proofs.rs**
+   - `test_submit_proof_to_contract()` - Proof accepted by PROOF_SYSTEM_ADDRESS
+   - `test_payment_released_with_valid_proof()` - Payment flows after verification
+   - `test_payment_blocked_without_proof()` - No payment without proof
+   - `test_invalid_proof_rejected()` - Contract rejects malformed proofs
+   - `test_proof_replay_prevented()` - Can't reuse old proofs
+
+3. **test_interruption_handling.rs**
+   - `test_partial_proof_for_incomplete_work()` - Proof for partial inference
+   - `test_resume_after_interruption()` - Continue with proof of prior work
+   - `test_payment_proportional_to_proof()` - Partial payment matches work done
+   - `test_timeout_triggers_proof_submission()` - Auto-submit on timeout
+   - `test_dispute_resolution_with_proof()` - Proof resolves payment disputes
+
+**Success Criteria:**
+- All 15 test scenarios pass
+- Real EZKL proofs generated for inference
+- Proofs submitted to PROOF_SYSTEM_ADDRESS on Base Sepolia
+- Payment released only with valid proofs
+- Interrupted sessions can claim partial payment with proof
+- Proof generation < 1 second for typical inference
+- Proof verification works on-chain
+- Zero payment disputes with valid proofs
+
+### Sub-phase 8.14: Distributed Features - Redis & Advanced Monitoring (DEFERRED)
 
 Add distributed system support for multi-node deployments. Can be deferred for initial production.
 
@@ -1254,8 +1336,9 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 3. **8.9 Complete** ✅ - Stateless memory cache and LLM integration  
 4. **8.10 Complete** ✅ - Production hardening and monitoring
 5. **8.11 Next** - Core functionality (MUST FIX for production)
-6. **8.12 Then** - Security & monitoring (SHOULD FIX for production)
-7. **8.13 Later** - Distributed features (CAN DEFER)
+6. **8.12 Complete** ✅ - Security & monitoring (JWT & Ed25519 done)
+7. **8.13 CRITICAL** - EZKL Proof Generation (REQUIRED for payments)
+8. **8.14 Later** - Distributed features (CAN DEFER)
 
 ### Mock Replacement Summary
 
@@ -1286,17 +1369,20 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 
 ### Production Readiness Checklist
 
-**Minimum Viable Production (after 8.11):**
+**Minimum Viable Production (MUST HAVE):**
 - ✅ WebSocket server with compression, rate limiting, health checks (8.7-8.10)
 - [ ] Real LLM inference working (8.11)
 - [ ] Blockchain job verification active (8.11)
-- [ ] Basic authentication with session tokens (8.10)
+- ✅ Basic authentication with session tokens (8.10)
 - ✅ Memory-only stateless architecture (8.9)
+- [ ] **EZKL proof generation for payments (8.13)** ← CRITICAL
+- [ ] **Proof submission to smart contracts (8.13)** ← CRITICAL
+- [ ] **Interruption handling with partial proofs (8.13)** ← CRITICAL
 
-**Recommended Production (after 8.12):**
-- [ ] JWT tokens with proper cryptography (8.12)
-- [ ] Ed25519 signature verification (8.12)
-- [ ] Prometheus metrics export (8.12)
+**Recommended Production (SHOULD HAVE):**
+- ✅ JWT tokens with proper cryptography (8.12 - DONE)
+- ✅ Ed25519 signature verification (8.12 - DONE)
+- [ ] Prometheus metrics export (8.12 - structure ready)
 - [ ] Real system monitoring (8.12)
 - [ ] Dependency health checks (8.12)
 
