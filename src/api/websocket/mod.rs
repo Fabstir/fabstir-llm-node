@@ -19,6 +19,8 @@ pub mod handlers;
 pub mod compression;
 pub mod rate_limiter;
 pub mod auth;
+#[cfg(test)]
+mod auth_test;
 pub mod health;
 pub mod config;
 pub mod inference;

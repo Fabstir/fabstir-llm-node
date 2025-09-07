@@ -47,6 +47,7 @@ pulldown-cmark = "0.9"
 
 # Utils
 tempfile = "3.8"
+jsonwebtoken = "9.2"
 
 # Storage
 ipfs-api = "0.17"

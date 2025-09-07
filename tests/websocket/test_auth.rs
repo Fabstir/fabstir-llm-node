@@ -13,6 +13,8 @@ async fn test_job_id_verification() {
         verify_job_id: true,
         require_signature: false,
         token_expiry: Duration::from_secs(3600),
+        jwt_secret: "test_secret_minimum_32_characters_long".to_string(),
+        max_sessions_per_user: 5,
     };
     
     let auth = Authenticator::new_mock(config);
@@ -37,6 +39,8 @@ async fn test_session_authentication_tokens() {
         verify_job_id: true,
         require_signature: false,
         token_expiry: Duration::from_secs(3600),
+        jwt_secret: "test_secret_minimum_32_characters_long".to_string(),
+        max_sessions_per_user: 5,
     };
     
     let auth = Authenticator::new_mock(config);
@@ -67,6 +71,8 @@ async fn test_authentication_failures() {
         verify_job_id: true,
         require_signature: true,
         token_expiry: Duration::from_secs(3600),
+        jwt_secret: "test_secret_minimum_32_characters_long".to_string(),
+        max_sessions_per_user: 5,
     };
     
     let auth = Authenticator::new_mock(config);
@@ -112,6 +118,8 @@ async fn test_authentication_caching() {
         verify_job_id: true,
         require_signature: false,
         token_expiry: Duration::from_secs(3600),
+        jwt_secret: "test_secret_minimum_32_characters_long".to_string(),
+        max_sessions_per_user: 5,
     };
     
     let auth = Authenticator::with_cache(config, Duration::from_secs(60));
@@ -146,7 +154,7 @@ async fn test_jwt_token_validation() {
         vec![Permission::Read, Permission::Write],
     );
     
-    let jwt = auth.encode_jwt(claims).await.unwrap();
+    let jwt = auth.encode_jwt(&claims).await.unwrap();
     
     // Validate JWT
     let decoded = auth.decode_jwt(&jwt).await.unwrap();
@@ -162,6 +170,8 @@ async fn test_signature_verification() {
         verify_job_id: false,
         require_signature: true,
         token_expiry: Duration::from_secs(3600),
+        jwt_secret: "test_secret_minimum_32_characters_long".to_string(),
+        max_sessions_per_user: 5,
     };
     
     let auth = Authenticator::new_mock(config);
@@ -244,6 +254,8 @@ async fn test_auth_disabled_mode() {
         verify_job_id: true,
         require_signature: true,
         token_expiry: Duration::from_secs(3600),
+        jwt_secret: "test_secret_minimum_32_characters_long".to_string(),
+        max_sessions_per_user: 5,
     };
     
     let auth = Authenticator::new_mock(config);

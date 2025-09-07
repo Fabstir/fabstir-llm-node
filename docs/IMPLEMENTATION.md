@@ -1194,12 +1194,12 @@ Replace security and monitoring mocks for production readiness.
 
 #### Tasks
 
-- [ ] Implement real JWT token generation/validation using jsonwebtoken crate
-- [ ] Add proper cryptographic signature verification (ed25519-dalek)
-- [ ] Replace mock Prometheus metrics with real prometheus crate integration
-- [ ] Implement actual system resource monitoring with sysinfo
-- [ ] Add real health check dependency verification
-- [ ] Implement proper metric aggregation and export
+- [x] Implement real JWT token generation/validation using jsonwebtoken crate
+- [x] Add proper cryptographic signature verification (ed25519-dalek)
+- [x] Replace mock Prometheus metrics with real prometheus crate integration
+- [x] Implement actual system resource monitoring with sysinfo
+- [x] Add real health check dependency verification
+- [x] Implement proper metric aggregation and export
 
 **Test Files:**
 - `tests/websocket/test_jwt_security.rs` (max 250 lines)
