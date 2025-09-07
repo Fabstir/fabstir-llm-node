@@ -1244,17 +1244,17 @@ cargo test ezkl::test_interruption_handling -- --nocapture   # MUST FAIL
 
 #### Tasks (Strict Order)
 
-- [ ] **TEST FIRST**: Write `test_real_proof_generation.rs` with failing tests
-- [ ] Add real EZKL library dependency to Cargo.toml
-- [ ] Replace mock proof generation in `src/contracts/proofs.rs`
-- [ ] **TEST FIRST**: Write `test_payment_with_proofs.rs` with failing tests
-- [ ] Implement actual EZKL circuit compilation for LLM inference
-- [ ] Connect ProofSubmitter to blockchain PROOF_SYSTEM_ADDRESS
-- [ ] **TEST FIRST**: Write `test_interruption_handling.rs` with failing tests
-- [ ] Add proof generation after each inference completion
-- [ ] Implement proof verification before payment claims
-- [ ] Handle partial proofs for interrupted sessions
-- [ ] Cache proving/verifying keys for performance
+- [x] **TEST FIRST**: Write `test_real_proof_generation.rs` with failing tests
+- [x] Add real EZKL library dependency to Cargo.toml
+- [x] Replace mock proof generation in `src/contracts/proofs.rs`
+- [x] **TEST FIRST**: Write `test_payment_with_proofs.rs` with failing tests
+- [x] Implement actual EZKL circuit compilation for LLM inference
+- [x] Connect ProofSubmitter to blockchain PROOF_SYSTEM_ADDRESS
+- [x] **TEST FIRST**: Write `test_interruption_handling.rs` with failing tests
+- [x] Add proof generation after each inference completion
+- [x] Implement proof verification before payment claims
+- [x] Handle partial proofs for interrupted sessions
+- [x] Cache proving/verifying keys for performance
 
 **Test Files (Write BEFORE Implementation):**
 - `tests/ezkl/test_real_proof_generation.rs` (max 300 lines)

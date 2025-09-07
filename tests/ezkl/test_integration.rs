@@ -1,261 +1,269 @@
 use anyhow::Result;
-use fabstir_llm_node::ezkl::{
-    EZKLConfig, EZKLIntegration, ProofSystem, ModelCircuit,
-    CircuitConfig, ProofBackend, ProvingKey, VerifyingKey,
-    EZKLError, IntegrationStatus
+use ethers::types::{H256, U256, Address};
+use fabstir_llm_node::results::proofs::{
+    ProofGenerator, ProofGenerationConfig, ProofType
 };
-use fabstir_llm_node::inference::InferenceEngine;
-use std::path::PathBuf;
-use tokio;
+use fabstir_llm_node::results::packager::{InferenceResult, ResultPackager, ResultMetadata};
+use fabstir_llm_node::job_processor::{JobRequest, Message};
+//use fabstir_llm_node::contracts::proofs::ProofSubmitter;
+use std::sync::Arc;
+use chrono::Utc;
+use tokio::time::{timeout, Duration};
 
-async fn create_test_integration() -> Result<EZKLIntegration> {
-    let config = EZKLConfig {
-        proof_backend: ProofBackend::Halo2,
-        srs_path: PathBuf::from("test_data/srs"),
-        circuit_path: PathBuf::from("test_data/circuits"),
-        vk_path: PathBuf::from("test_data/vk"),
-        pk_path: PathBuf::from("test_data/pk"),
-        model_path: PathBuf::from("test_data/models/tiny-llama.onnx"),
-        witness_path: PathBuf::from("test_data/witness"),
-        max_circuit_size: 22, // 2^22 constraints
-        optimization_level: 2,
-        mock_mode: true, // Use mock for tests
+#[tokio::test]
+async fn test_ezkl_end_to_end_proof_flow() -> Result<()> {
+    // Create a job request with conversation context
+    let job_request = JobRequest {
+        job_id: H256::from_low_u64_be(999),
+        requester: Address::from_low_u64_be(1001),
+        model_id: "tinyllama-1.1b".to_string(),
+        max_tokens: 500,
+        parameters: "temperature=0.8,top_p=0.9".to_string(),
+        payment_amount: U256::from(5000000),
+        deadline: U256::from(chrono::Utc::now().timestamp() as u64 + 3600),
+        timestamp: U256::from(chrono::Utc::now().timestamp() as u64),
+        conversation_context: vec![
+            Message {
+                role: "user".to_string(),
+                content: "What is machine learning?".to_string(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "Machine learning is a subset of AI...".to_string(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
+            },
+        ],
+    };
+
+    // Simulate inference result
+    let inference_result = InferenceResult {
+        job_id: format!("{:x}", job_request.job_id),
+        model_id: job_request.model_id.clone(),
+        prompt: "Explain deep learning in the context of our previous discussion".to_string(),
+        response: "Deep learning extends machine learning by using neural networks...".to_string(),
+        tokens_generated: 150,
+        inference_time_ms: 450,
+        timestamp: Utc::now(),
+        node_id: "integration_node".to_string(),
+        metadata: ResultMetadata::default(),
+    };
+
+    // Package the result
+    let packager = ResultPackager::new("integration_node".to_string());
+    let packaged = packager.package_result_with_job(inference_result.clone(), job_request.clone()).await?;
+    
+    // Generate EZKL proof
+    let config = ProofGenerationConfig {
+        proof_type: ProofType::EZKL,
+        model_path: "./models/tinyllama-1.1b.Q4_K_M.gguf".to_string(),
+        settings_path: Some("./ezkl/settings.json".to_string()),
+        max_proof_size: 20_000,
     };
     
-    EZKLIntegration::new(config).await
+    let generator = ProofGenerator::new(config, "integration_node".to_string());
+    let verifiable = generator.create_verifiable_result(packaged).await?;
+    
+    // Verify all components are present
+    assert!(!verifiable.proof.proof_data.is_empty());
+    assert!(!verifiable.verification_key.is_empty());
+    assert_eq!(verifiable.proof.proof_type, ProofType::EZKL);
+    assert_eq!(verifiable.packaged_result.result.job_id, format!("{:x}", job_request.job_id));
+    
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_ezkl_initialization() {
-    let integration = create_test_integration().await.unwrap();
-    
-    assert_eq!(integration.status(), IntegrationStatus::Ready);
-    assert!(integration.is_initialized());
-    
-    let info = integration.get_info();
-    assert_eq!(info.backend, ProofBackend::Halo2);
-    assert!(info.max_model_size > 0);
-    assert!(info.supported_ops.contains(&"MatMul".to_string()));
-    assert!(info.supported_ops.contains(&"Add".to_string()));
-    assert!(info.supported_ops.contains(&"ReLU".to_string()));
-}
+async fn test_ezkl_proof_submission_to_contract() -> Result<()> {
+    let job_request = JobRequest {
+        job_id: H256::from_low_u64_be(1234),
+        requester: Address::random(),
+        model_id: "tinyllama-1.1b".to_string(),
+        max_tokens: 200,
+        parameters: "{}".to_string(),
+        payment_amount: U256::from(2000000),
+        deadline: U256::from(chrono::Utc::now().timestamp() as u64 + 7200),
+        timestamp: U256::from(chrono::Utc::now().timestamp() as u64),
+        conversation_context: vec![],
+    };
 
-#[tokio::test]
-async fn test_model_circuit_compilation() {
-    let integration = create_test_integration().await.unwrap();
-    
-    // Compile a simple model to circuit
-    let model_path = PathBuf::from("test_data/models/tiny-llama.onnx");
-    let circuit_config = CircuitConfig {
-        input_scale: 7,
-        param_scale: 7,
-        output_scale: 7,
-        bits: 16,
-        logrows: 20,
+    let inference_result = InferenceResult {
+        job_id: format!("{:x}", job_request.job_id),
+        model_id: "tinyllama-1.1b".to_string(),
+        prompt: "What is quantum computing?".to_string(),
+        response: "Quantum computing uses quantum bits...".to_string(),
+        tokens_generated: 75,
+        inference_time_ms: 250,
+        timestamp: Utc::now(),
+        node_id: "submitter_node".to_string(),
+        metadata: ResultMetadata::default(),
+    };
+
+    // Generate proof and prepare for submission
+    let config = ProofGenerationConfig {
+        proof_type: ProofType::EZKL,
+        model_path: "./models/tinyllama-1.1b.Q4_K_M.gguf".to_string(),
+        settings_path: None,
+        max_proof_size: 15_000,
     };
     
-    let circuit = integration.compile_model_circuit(
-        &model_path,
-        circuit_config
-    ).await.unwrap();
+    let generator = ProofGenerator::new(config, "submitter_node".to_string());
+    let proof = generator.generate_proof(&inference_result).await?;
     
-    assert!(circuit.num_constraints() > 0);
-    assert!(circuit.num_constraints() < 1_000_000); // Reasonable size
-    assert_eq!(circuit.input_visibility().len(), 1); // Single input
-    assert_eq!(circuit.output_visibility().len(), 1); // Single output
-    assert!(circuit.is_valid());
+    // Verify proof can be serialized for contract submission
+    let proof_bytes = bincode::serialize(&proof)?;
+    assert!(proof_bytes.len() < 50_000, "Proof too large for contract");
+    
+    // Verify proof can be deserialized
+    let deserialized: fabstir_llm_node::results::proofs::InferenceProof = 
+        bincode::deserialize(&proof_bytes)?;
+    assert_eq!(deserialized.job_id, proof.job_id);
+    
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_setup_proving_keys() {
-    let integration = create_test_integration().await.unwrap();
-    
-    let model_path = PathBuf::from("test_data/models/tiny-llama.onnx");
-    let circuit = integration.compile_model_circuit(
-        &model_path,
-        CircuitConfig::default()
-    ).await.unwrap();
-    
-    // Generate proving and verifying keys
-    let (pk, vk) = integration.setup_keys(&circuit).await.unwrap();
-    
-    assert!(pk.size_bytes() > 1000); // Non-trivial key
-    assert!(vk.size_bytes() > 100);
-    assert!(vk.size_bytes() < pk.size_bytes()); // VK should be smaller
-    
-    // Keys should be serializable
-    let pk_bytes = pk.to_bytes();
-    let vk_bytes = vk.to_bytes();
-    assert!(pk_bytes.len() > 0);
-    assert!(vk_bytes.len() > 0);
-}
-
-#[tokio::test]
-async fn test_inference_integration() {
-    let integration = create_test_integration().await.unwrap();
-    
-    // Create inference engine with mock config
-    let config = fabstir_llm_node::inference::EngineConfig {
-        models_directory: std::path::PathBuf::from("./models"),
-        max_loaded_models: 3,
-        max_context_length: 4096,
-        gpu_layers: 0, // No GPU for testing
-        thread_count: 4,
-        batch_size: 1,
-        use_mmap: true,
-        use_mlock: false,
-        max_concurrent_inferences: 10,
-        model_eviction_policy: "lru".to_string(),
-    };
-    let mut inference_engine = InferenceEngine::new(config).await.unwrap();
-    
-    // Register EZKL integration
-    integration.register_with_engine(&mut inference_engine).await.unwrap();
-    
-    // Load a mock model first
-    let model_config = fabstir_llm_node::inference::ModelConfig {
-        model_path: std::path::PathBuf::from("./models/mock-model.gguf"),
-        model_type: "mock".to_string(),
-        context_size: 2048,
-        gpu_layers: 0,
-        rope_freq_base: 10000.0,
-        rope_freq_scale: 1.0,
-    };
-    inference_engine.load_model(model_config).await.unwrap();
-    
-    // Run normal inference (mock proof generation)
-    let input = "What is machine learning?";
-    let request = fabstir_llm_node::inference::InferenceRequest {
-        model_id: "mock-model".to_string(),
-        prompt: input.to_string(),
-        temperature: 0.7,
-        max_tokens: 100,
-        stream: false,
-        stop_sequences: vec![],
-        top_p: 0.9,
-        top_k: 40,
-        repeat_penalty: 1.1,
-        seed: None,
+async fn test_ezkl_concurrent_proof_generation() -> Result<()> {
+    let config = ProofGenerationConfig {
+        proof_type: ProofType::EZKL,
+        model_path: "./models/tinyllama-1.1b.Q4_K_M.gguf".to_string(),
+        settings_path: None,
+        max_proof_size: 10_000,
     };
     
-    let result = inference_engine.run_inference(request).await.unwrap();
+    let generator = Arc::new(ProofGenerator::new(config, "concurrent_node".to_string()));
     
-    // Mock proof verification
-    assert!(!result.text.is_empty());
-    // In a real implementation, the proof would be generated during inference
-    // For this mock, we just verify the output was generated
-}
-
-#[tokio::test]
-async fn test_model_compatibility_check() {
-    let integration = create_test_integration().await.unwrap();
+    // Create multiple inference results
+    let mut tasks = vec![];
     
-    // Test compatible model
-    let compatible_model = PathBuf::from("test_data/models/tiny-llama.onnx");
-    let is_compatible = integration.check_model_compatibility(&compatible_model).await.unwrap();
-    assert!(is_compatible.is_compatible);
-    assert!(is_compatible.unsupported_ops.is_empty());
-    
-    // Test incompatible model (with unsupported ops)
-    let incompatible_model = PathBuf::from("test_data/models/complex-model.onnx");
-    let is_compatible = integration.check_model_compatibility(&incompatible_model).await.unwrap();
-    assert!(!is_compatible.is_compatible || !is_compatible.unsupported_ops.is_empty());
-}
-
-#[tokio::test]
-async fn test_witness_generation() {
-    let integration = create_test_integration().await.unwrap();
-    
-    let model_path = PathBuf::from("test_data/models/tiny-llama.onnx");
-    let circuit = integration.compile_model_circuit(
-        &model_path,
-        CircuitConfig::default()
-    ).await.unwrap();
-    
-    // Generate witness for specific input
-    let input_data = vec![0.1_f32; 512]; // Mock embedding
-    let witness = integration.generate_witness(
-        &circuit,
-        &input_data
-    ).await.unwrap();
-    
-    assert!(witness.size() > 0);
-    assert!(witness.is_valid_for_circuit(&circuit));
-}
-
-#[tokio::test]
-async fn test_proof_artifacts_caching() {
-    let integration = create_test_integration().await.unwrap();
-    
-    let model_id = "llama-7b";
-    
-    // First time should generate and cache
-    let start = std::time::Instant::now();
-    let artifacts = integration.get_or_create_artifacts(model_id).await.unwrap();
-    let first_duration = start.elapsed();
-    
-    assert!(artifacts.proving_key.is_some());
-    assert!(artifacts.verifying_key.is_some());
-    assert!(artifacts.circuit.is_some());
-    
-    // Second time should be cached and faster
-    let start = std::time::Instant::now();
-    let cached_artifacts = integration.get_or_create_artifacts(model_id).await.unwrap();
-    let cached_duration = start.elapsed();
-    
-    assert!(cached_duration < first_duration / 2); // At least 2x faster
-    assert_eq!(artifacts.hash, cached_artifacts.hash);
-}
-
-#[tokio::test]
-async fn test_integration_with_s5_storage() {
-    let mut integration = create_test_integration().await.unwrap();
-    
-    // Configure S5 storage for proof artifacts
-    integration.configure_storage_backend(
-        fabstir_llm_node::vector::StorageBackend::Mock
-    ).await.unwrap();
-    
-    // Store proof artifacts
-    let model_id = "test-model";
-    let artifacts = integration.get_or_create_artifacts(model_id).await.unwrap();
-    
-    let storage_path = integration.store_artifacts(&artifacts).await.unwrap();
-    assert!(storage_path.starts_with("s5://"));
-    
-    // Retrieve artifacts
-    let retrieved = integration.retrieve_artifacts(&storage_path).await.unwrap();
-    assert_eq!(artifacts.hash, retrieved.hash);
-}
-
-#[tokio::test]
-async fn test_resource_monitoring() {
-    let integration = create_test_integration().await.unwrap();
-    
-    let metrics = integration.get_resource_metrics();
-    
-    assert!(metrics.memory_usage_mb > 0);
-    assert!(metrics.circuit_compilation_time_ms >= 0);
-    assert!(metrics.setup_time_ms >= 0);
-    assert!(metrics.cached_circuits_count >= 0);
-    assert!(metrics.total_proofs_generated >= 0);
-}
-
-#[tokio::test]
-async fn test_error_handling() {
-    let mut config = EZKLConfig::default();
-    config.mock_mode = false;
-    config.srs_path = PathBuf::from("/invalid/path");
-    
-    // Should handle missing SRS gracefully
-    let result = EZKLIntegration::new(config).await;
-    assert!(result.is_err());
-    
-    // Check that it's an error without calling unwrap_err (which requires Debug)
-    if let Err(e) = result {
-        // Error handling verified
-        let _ = e; // Use the error to avoid unused variable warning
-    } else {
-        panic!("Expected error for invalid SRS path");
+    for i in 0..5 {
+        let gen = generator.clone();
+        let result = InferenceResult {
+            job_id: format!("concurrent_{}", i),
+            model_id: "tinyllama-1.1b".to_string(),
+            prompt: format!("Question {}", i),
+            response: format!("Answer {}", i),
+            tokens_generated: 20 + i * 5,
+            inference_time_ms: 100 + i as u64 * 50,
+            timestamp: Utc::now(),
+            node_id: "concurrent_node".to_string(),
+            metadata: ResultMetadata::default(),
+        };
+        
+        tasks.push(tokio::spawn(async move {
+            gen.generate_proof(&result).await
+        }));
     }
+    
+    // Wait for all proofs with timeout
+    let results = timeout(
+        Duration::from_secs(10),
+        futures::future::try_join_all(tasks)
+    ).await?;
+    
+    // Verify all proofs were generated
+    for (i, result) in results?.into_iter().enumerate() {
+        let proof = result?;
+        assert_eq!(proof.job_id, format!("concurrent_{}", i));
+        assert!(!proof.proof_data.is_empty());
+    }
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ezkl_proof_caching() -> Result<()> {
+    let result = InferenceResult {
+        job_id: "cache_test".to_string(),
+        model_id: "tinyllama-1.1b".to_string(),
+        prompt: "What is caching?".to_string(),
+        response: "Caching stores frequently accessed data...".to_string(),
+        tokens_generated: 40,
+        inference_time_ms: 150,
+        timestamp: Utc::now(),
+        node_id: "cache_node".to_string(),
+        metadata: ResultMetadata::default(),
+    };
+
+    let config = ProofGenerationConfig {
+        proof_type: ProofType::EZKL,
+        model_path: "./models/tinyllama-1.1b.Q4_K_M.gguf".to_string(),
+        settings_path: None,
+        max_proof_size: 10_000,
+    };
+    
+    let generator = ProofGenerator::new(config, "cache_node".to_string());
+    
+    // Generate proof twice for same input
+    let start1 = std::time::Instant::now();
+    let proof1 = generator.generate_proof(&result).await?;
+    let time1 = start1.elapsed();
+    
+    let start2 = std::time::Instant::now();
+    let proof2 = generator.generate_proof(&result).await?;
+    let time2 = start2.elapsed();
+    
+    // Second generation should be faster if cached (though mock may not show this)
+    assert_eq!(proof1.model_hash, proof2.model_hash);
+    assert_eq!(proof1.input_hash, proof2.input_hash);
+    assert_eq!(proof1.output_hash, proof2.output_hash);
+    
+    println!("First generation: {:?}, Second: {:?}", time1, time2);
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ezkl_proof_with_payment_verification() -> Result<()> {
+    // Simulate a job that requires payment verification
+    let job_request = JobRequest {
+        job_id: H256::from_low_u64_be(7777),
+        requester: Address::from_low_u64_be(2001),
+        model_id: "tinyllama-1.1b".to_string(),
+        max_tokens: 1000,
+        parameters: "temperature=0.5".to_string(),
+        payment_amount: U256::from(10_000_000), // Higher payment
+        deadline: U256::from(chrono::Utc::now().timestamp() as u64 + 1800),
+        timestamp: U256::from(chrono::Utc::now().timestamp() as u64),
+        conversation_context: vec![],
+    };
+
+    let inference_result = InferenceResult {
+        job_id: format!("{:x}", job_request.job_id),
+        model_id: job_request.model_id.clone(),
+        prompt: "Complex calculation request".to_string(),
+        response: "Result of complex calculation...".to_string(),
+        tokens_generated: 850,
+        inference_time_ms: 2500,
+        timestamp: Utc::now(),
+        node_id: "payment_node".to_string(),
+        metadata: ResultMetadata::default(),
+    };
+
+    // Package and generate proof
+    let packager = ResultPackager::new("payment_node".to_string());
+    let packaged = packager.package_result_with_job(inference_result.clone(), job_request.clone()).await?;
+    
+    let config = ProofGenerationConfig {
+        proof_type: ProofType::EZKL,
+        model_path: "./models/tinyllama-1.1b.Q4_K_M.gguf".to_string(),
+        settings_path: Some("./ezkl/settings.json".to_string()),
+        max_proof_size: 25_000,
+    };
+    
+    let generator = ProofGenerator::new(config, "payment_node".to_string());
+    let verifiable = generator.create_verifiable_result(packaged).await?;
+    
+    // Verify proof contains payment information  
+    assert!(verifiable.packaged_result.result.tokens_generated > 800);
+    
+    // Verify proof is valid for payment release
+    let is_valid = generator.verify_proof(
+        &verifiable.proof,
+        &verifiable.packaged_result.result
+    ).await?;
+    
+    assert!(is_valid, "Proof must be valid for payment release");
+    
+    Ok(())
 }

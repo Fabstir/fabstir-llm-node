@@ -26,12 +26,13 @@ pub struct ResultMetadata {
     pub presence_penalty: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackagedResult {
     pub result: InferenceResult,
     pub signature: Vec<u8>,
     pub encoding: String,
     pub version: String,
+    pub job_request: Option<crate::job_processor::JobRequest>,
 }
 
 #[derive(Clone)]
@@ -65,6 +66,23 @@ impl ResultPackager {
             signature: signature.to_bytes().to_vec(),
             encoding: "cbor".to_string(),
             version: "1.0".to_string(),
+            job_request: None,
+        })
+    }
+    
+    pub async fn package_result_with_job(&self, result: InferenceResult, job_request: crate::job_processor::JobRequest) -> Result<PackagedResult> {
+        // Serialize result to CBOR deterministically
+        let cbor_data = self.encode_cbor(&result)?;
+        
+        // Sign the serialized data
+        let signature = self.signing_key.sign(&cbor_data);
+        
+        Ok(PackagedResult {
+            result,
+            signature: signature.to_bytes().to_vec(),
+            encoding: "cbor".to_string(),
+            version: "1.0".to_string(),
+            job_request: Some(job_request),
         })
     }
     
