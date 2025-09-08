@@ -103,6 +103,122 @@ Combines PackagedResult with proof:
 - Cryptographic proof
 - Verification key for validation
 
+### WebSocket Integration (Sub-phases 8.14-8.15)
+
+#### 5. **ProofData Structure for WebSocket**
+```rust
+pub struct ProofData {
+    pub hash: String,              // SHA256 hash of proof
+    pub proof_type: String,        // "ezkl", "risc0", "simple"
+    pub model_hash: String,        // Hash of model used
+    pub input_hash: String,        // Hash of input prompt
+    pub output_hash: String,       // Hash of generated output
+    pub timestamp: u64,            // Millisecond timestamp
+}
+```
+
+#### 6. **Enhanced Message Types**
+```rust
+// ConversationMessage with proof field
+pub struct ConversationMessage {
+    pub role: String,              // "user", "assistant", "system"
+    pub content: String,           // Message content
+    pub timestamp: Option<u64>,    // Optional timestamp
+    pub tokens: Option<u32>,       // Token count for message
+    pub proof: Option<ProofData>,  // Cryptographic proof (NEW)
+}
+
+// StreamToken with proof for final token
+pub struct StreamToken {
+    pub content: String,           // Token content
+    pub is_final: bool,           // Is this the last token?
+    pub tokens_used: u32,         // Total tokens so far
+    pub proof: Option<ProofData>, // Proof on final token
+}
+```
+
+#### 7. **ProofManager with LRU Cache**
+```rust
+pub struct ProofManager {
+    generator: ProofGenerator,
+    cache: Arc<RwLock<HashMap<String, ProofData>>>,
+    cache_order: Arc<RwLock<VecDeque<String>>>, // LRU tracking
+    config: ProofConfig,
+}
+
+impl ProofManager {
+    // Generate proof with caching
+    pub async fn generate_proof(
+        &self,
+        model: &str,
+        prompt: &str,
+        output: &str,
+    ) -> Result<ProofData> {
+        let cache_key = format!("{}-{}-{}", model, prompt, output);
+        
+        // Check cache with LRU update
+        if let Some(proof) = self.check_cache(&cache_key).await {
+            return Ok(proof);
+        }
+        
+        // Generate new proof
+        let proof = self.generate_new_proof(model, prompt, output).await?;
+        
+        // Cache with LRU eviction
+        self.cache_with_eviction(cache_key, proof.clone()).await;
+        
+        Ok(proof)
+    }
+}
+```
+
+#### 8. **ProofConfig for Environment Variables**
+```rust
+pub struct ProofConfig {
+    pub enabled: bool,             // ENABLE_PROOF_GENERATION
+    pub proof_type: String,        // PROOF_TYPE (EZKL, Risc0, Simple)
+    pub model_path: String,        // PROOF_MODEL_PATH
+    pub cache_size: usize,         // PROOF_CACHE_SIZE (default: 100)
+    pub batch_size: usize,         // PROOF_BATCH_SIZE (default: 10)
+}
+
+impl ProofConfig {
+    pub fn from_env() -> Self {
+        Self {
+            enabled: env::var("ENABLE_PROOF_GENERATION")
+                .unwrap_or("false".to_string())
+                .parse().unwrap_or(false),
+            proof_type: env::var("PROOF_TYPE")
+                .unwrap_or("Simple".to_string()),
+            model_path: env::var("PROOF_MODEL_PATH")
+                .unwrap_or("./models/model.gguf".to_string()),
+            cache_size: env::var("PROOF_CACHE_SIZE")
+                .unwrap_or("100".to_string())
+                .parse().unwrap_or(100),
+            batch_size: env::var("PROOF_BATCH_SIZE")
+                .unwrap_or("10".to_string())
+                .parse().unwrap_or(10),
+        }
+    }
+}
+```
+
+#### 9. **LRU Cache Implementation**
+The ProofManager uses a proper LRU (Least Recently Used) cache:
+- **HashMap** for O(1) lookups
+- **VecDeque** for maintaining insertion order
+- **Automatic eviction** when cache exceeds size limit
+- **Millisecond timestamps** for better granularity
+
+```rust
+// Cache eviction logic
+while cache.len() > self.config.cache_size {
+    if let Some(oldest_key) = order.pop_front() {
+        cache.remove(&oldest_key);
+    }
+}
+```
+
 ## Current Implementation
 
 The system uses SHA256-based proof generation:
@@ -307,16 +423,40 @@ proof_cache_size = 1000
 4. **Compliance**: Auditable computation for regulated industries
 5. **Efficiency**: Verify without re-computing
 
+## WebSocket Proof Integration Status (Sub-phases 8.14-8.15)
+
+### Completed Features
+- ✅ **ProofData structure** added to ConversationMessage and StreamToken
+- ✅ **ProofManager** with intelligent LRU cache eviction
+- ✅ **ProofConfig** for environment-based configuration
+- ✅ **ResponseHandler integration** for streaming proofs
+- ✅ **28 passing tests** for proof functionality
+
+### Key Implementation Details
+1. **Proof Fields in Messages**: All WebSocket messages can include cryptographic proofs
+2. **Smart Caching**: LRU eviction prevents memory bloat while maintaining performance
+3. **Configurable**: Environment variables control proof generation behavior
+4. **Streaming Support**: Final tokens in streams include complete proofs
+5. **Multiple Proof Types**: Support for EZKL, Risc0, and Simple proofs
+
+### Test Coverage
+- **Sub-phase 8.14**: 8 tests for basic proof integration
+- **Sub-phase 8.15**: 20 tests for configuration and advanced features
+- **Total**: 28/28 tests passing (100% success rate)
+
 ## Summary
 
-EZKL proof generation is now a **CRITICAL MVP FEATURE** that provides cryptographic verifiability for payment security in the Fabstir LLM Node. The implementation is complete with 15 passing tests following strict TDD methodology.
+EZKL proof generation is now a **CRITICAL MVP FEATURE** that provides cryptographic verifiability for payment security in the Fabstir LLM Node. The implementation is complete with comprehensive test coverage following strict TDD methodology.
 
 **Implementation Highlights**:
 - ✅ ProofGenerator with multiple proof types (EZKL, Risc0, Simple)
 - ✅ Hash-based verification of model, input, and output
 - ✅ Integration with PackagedResult for job context
+- ✅ WebSocket integration with ProofData in messages
+- ✅ ProofManager with LRU cache eviction
+- ✅ Environment-based ProofConfig
 - ✅ Concurrent proof generation support
-- ✅ Comprehensive test suite (15 tests, all passing)
+- ✅ Comprehensive test suite (43 tests total: 15 EZKL + 28 WebSocket)
 
 **Why It's Critical for MVP**:
 1. **Payment Security**: Ensures funds are only released for verified work
