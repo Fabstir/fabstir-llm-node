@@ -11,6 +11,13 @@ use fabstir_llm_node::api::websocket::{
 
 #[tokio::test]
 async fn test_proof_config_from_env() -> Result<()> {
+    // Clean up any existing env vars first
+    env::remove_var("ENABLE_PROOF_GENERATION");
+    env::remove_var("PROOF_TYPE");
+    env::remove_var("PROOF_MODEL_PATH");
+    env::remove_var("PROOF_CACHE_SIZE");
+    env::remove_var("PROOF_BATCH_SIZE");
+    
     // Set environment variables
     env::set_var("ENABLE_PROOF_GENERATION", "true");
     env::set_var("PROOF_TYPE", "EZKL");
@@ -22,19 +29,24 @@ async fn test_proof_config_from_env() -> Result<()> {
     assert_eq!(config.proof_type, "EZKL");
     assert_eq!(config.model_path, "/models/test.gguf");
     
-    // Clean up
+    // Clean up all env vars
     env::remove_var("ENABLE_PROOF_GENERATION");
     env::remove_var("PROOF_TYPE");
     env::remove_var("PROOF_MODEL_PATH");
+    env::remove_var("PROOF_CACHE_SIZE");
+    env::remove_var("PROOF_BATCH_SIZE");
     
     Ok(())
 }
 
 #[tokio::test]
 async fn test_proof_config_defaults() -> Result<()> {
-    // Ensure env vars are not set
+    // Ensure env vars are not set (remove all proof-related vars)
     env::remove_var("ENABLE_PROOF_GENERATION");
     env::remove_var("PROOF_TYPE");
+    env::remove_var("PROOF_MODEL_PATH");
+    env::remove_var("PROOF_CACHE_SIZE");
+    env::remove_var("PROOF_BATCH_SIZE");
     
     let config = ProofConfig::from_env();
     
@@ -140,7 +152,6 @@ async fn test_response_handler_respects_proof_config() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "Cache eviction logic needs improvement in HashMap-based cache"]
 async fn test_proof_cache_size_configuration() -> Result<()> {
     let config = ProofConfig {
         enabled: true,
@@ -170,7 +181,7 @@ async fn test_proof_cache_size_configuration() -> Result<()> {
     // Add small delay to ensure different timestamp
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     
-    // At least one of the original proofs should be evicted
+    // Check if original proofs are still cached
     let proof1_new = manager.generate_proof("model", "prompt1", "output1").await?;
     let proof2_new = manager.generate_proof("model", "prompt2", "output2").await?;
     

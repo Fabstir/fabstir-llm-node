@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sha2::{Sha256, Digest};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -17,6 +17,7 @@ use crate::results::packager::{InferenceResult, ResultMetadata};
 pub struct ProofManager {
     generator: ProofGenerator,
     cache: Arc<RwLock<HashMap<String, ProofData>>>,
+    cache_order: Arc<RwLock<VecDeque<String>>>, // Track insertion order for LRU
     config: ProofConfig,
 }
 
@@ -48,10 +49,12 @@ impl ProofManager {
         
         // Create cache with configured size
         let cache = Arc::new(RwLock::new(HashMap::with_capacity(validated_config.cache_size)));
+        let cache_order = Arc::new(RwLock::new(VecDeque::with_capacity(validated_config.cache_size)));
         
         Self {
             generator,
             cache,
+            cache_order,
             config: validated_config,
         }
     }
@@ -61,6 +64,7 @@ impl ProofManager {
         Self {
             generator,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_order: Arc::new(RwLock::new(VecDeque::new())),
             config: ProofConfig::default(),
         }
     }
@@ -93,9 +97,21 @@ impl ProofManager {
         {
             let cache = self.cache.read().await;
             if let Some(proof) = cache.get(&cache_key) {
-                debug!("Returning cached proof for key: {}", cache_key);
+                debug!("Cache hit for key: {}", cache_key);
+                // Update LRU order (move to back)
+                {
+                    let mut order = self.cache_order.write().await;
+                    if let Some(pos) = order.iter().position(|k| k == &cache_key) {
+                        order.remove(pos);
+                        order.push_back(cache_key.clone());
+                    } else {
+                        // Key exists in cache but not in order - this shouldn't happen
+                        debug!("Warning: Key {} in cache but not in order queue", cache_key);
+                    }
+                }
                 return Ok(proof.clone());
             }
+            debug!("Cache miss for key: {}", cache_key);
         }
 
         // Generate new proof
@@ -125,28 +141,33 @@ impl ProofManager {
                     model_hash: proof.model_hash,
                     input_hash: proof.input_hash,
                     output_hash: proof.output_hash,
-                    timestamp: proof.timestamp.timestamp() as u64,
+                    timestamp: proof.timestamp.timestamp_millis() as u64,
                 };
 
-                // Cache the proof
+                // Cache the proof with LRU eviction
                 {
                     let mut cache = self.cache.write().await;
-                    cache.insert(cache_key, proof_data.clone());
+                    let mut order = self.cache_order.write().await;
+                    
+                    // Add to cache
+                    cache.insert(cache_key.clone(), proof_data.clone());
+                    order.push_back(cache_key.clone());
+                    
+                    debug!("Cache size after insert: {}, max: {}", cache.len(), self.config.cache_size);
                     
                     // Limit cache size based on configuration
-                    if cache.len() > self.config.cache_size {
-                        // Remove oldest entries (keep 80% of max size)
-                        let to_keep = (self.config.cache_size as f32 * 0.8) as usize;
-                        let to_remove = cache.len() - to_keep;
-                        let keys_to_remove: Vec<String> = cache
-                            .keys()
-                            .take(to_remove)
-                            .cloned()
-                            .collect();
-                        for key in keys_to_remove {
-                            cache.remove(&key);
+                    while cache.len() > self.config.cache_size {
+                        debug!("Cache size {} exceeds max {}, evicting oldest entry", cache.len(), self.config.cache_size);
+                        // Remove oldest entry (front of queue)
+                        if let Some(oldest_key) = order.pop_front() {
+                            debug!("Evicting key: {}", oldest_key);
+                            cache.remove(&oldest_key);
+                        } else {
+                            debug!("Warning - no key in order queue to evict!");
+                            break;
                         }
                     }
+                    debug!("Cache size after potential eviction: {}", cache.len());
                 }
 
                 Ok(proof_data)
@@ -163,7 +184,7 @@ impl ProofManager {
                     timestamp: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
-                        .as_secs(),
+                        .as_millis() as u64,
                 })
             }
         }
