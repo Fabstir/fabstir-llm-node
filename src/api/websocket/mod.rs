@@ -25,3 +25,5 @@ pub mod health;
 pub mod config;
 pub mod inference;
 pub mod job_verification;
+pub mod proof_manager;
+pub mod proof_config;

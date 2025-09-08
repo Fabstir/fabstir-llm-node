@@ -1300,7 +1300,122 @@ cargo test ezkl::test_interruption_handling -- --nocapture   # MUST FAIL
 - Proof verification works on-chain
 - Zero payment disputes with valid proofs
 
-### Sub-phase 8.14: Distributed Features - Redis & Advanced Monitoring (DEFERRED)
+### Sub-phase 8.14: Basic Proof Integration in WebSocket Responses ✅ COMPLETE
+
+Add proof field to WebSocket response messages and integrate ProofGenerator with ResponseHandler. This is the minimal integration to get proofs into responses.
+
+#### TDD Implementation Steps
+
+##### Step 1: Write failing tests for responses with proof fields ✅
+##### Step 2: Add proof field to message types ✅
+##### Step 3: Integrate ProofGenerator into ResponseHandler ✅
+##### Step 4: Make all tests pass ✅
+
+#### Tasks (TEST FIRST approach)
+
+- [x] TEST FIRST: Create tests for WebSocket responses with proof fields (5 tests) ✅
+- [x] TEST FIRST: Create tests for proof generation during inference (3 tests) ✅
+- [x] Add proof field to WebSocket response message type ✅
+- [x] Create basic ProofManager to coordinate proof generation ✅
+- [x] Integrate ProofGenerator into ResponseHandler ✅
+- [x] Add basic environment variable for enabling proofs ✅
+
+**Test Files:**
+- `tests/websocket/test_proof_responses.rs` (8 tests max)
+
+**Implementation Files:**
+- `src/api/websocket/messages.rs` (add proof field to response)
+- `src/api/websocket/proof_manager.rs` (new file, max 200 lines)
+- `src/api/websocket/handlers/response.rs` (integrate ProofManager)
+
+**Basic Response Format with Proof:**
+```json
+{
+  "type": "response",
+  "session_id": "uuid-v4",
+  "content": "The answer is...",
+  "tokens_used": 45,
+  "message_index": 6,
+  "proof": {
+    "job_id": "123",
+    "model_hash": "sha256:abc...",
+    "input_hash": "sha256:def...",
+    "output_hash": "sha256:ghi...",
+    "proof_type": "Simple",
+    "proof_data": "0xEF..."
+  }
+}
+```
+
+**Success Criteria:**
+- WebSocket responses include proof field when ENABLE_PROOF_GENERATION=true
+- Proof generation works with Simple type
+- Tests pass with mock responses including proofs
+- Basic integration complete, ready for configuration in 8.15
+
+### Sub-phase 8.15: Proof Configuration and Advanced Features ✅ COMPLETE
+
+Add configuration options, proof type selection, and verification keys to make the proof system production-ready.
+
+#### Tasks (TEST FIRST approach)
+
+- [x] TEST FIRST: Create tests for proof configuration (5 tests) ✅
+- [x] TEST FIRST: Create tests for different proof types (5 tests) ✅
+- [x] Add comprehensive proof configuration to config.rs ✅
+- [x] Implement proof type selection (EZKL, Risc0, Simple) ✅
+- [x] Add verification_key to response format ✅
+- [x] Add proof-related environment variables ✅
+- [x] Update WebSocket protocol documentation ✅
+
+**Test Files:**
+- `tests/websocket/test_proof_configuration.rs` (10 tests)
+
+**Implementation Files:**
+- `src/api/websocket/config.rs` (add proof configuration)
+- `src/api/websocket/proof_manager.rs` (extend with type selection)
+
+**Environment Variables:**
+```bash
+ENABLE_PROOF_GENERATION=true
+PROOF_TYPE=EZKL  # Options: EZKL, Risc0, Simple
+PROOF_MAX_SIZE=10000
+PROOF_MODEL_PATH=./models/tinyllama-1.1b.Q4_K_M.gguf
+```
+
+**Success Criteria:**
+- Configuration allows selecting proof type
+- Verification keys included in responses
+- Different proof types generate correctly
+- SDK can disable proofs for development
+
+### Sub-phase 8.16: Proof Performance and Integration Testing
+
+Add caching, metrics, and comprehensive integration tests to ensure the proof system performs well in production.
+
+#### Tasks (TEST FIRST approach)
+
+- [ ] TEST FIRST: Create integration tests for end-to-end flow (5 tests)
+- [ ] TEST FIRST: Create performance tests for proof generation (3 tests)
+- [ ] Implement proof caching for repeated requests
+- [ ] Add metrics for proof generation performance
+- [ ] Create comprehensive integration tests
+
+**Test Files:**
+- `tests/integration/test_ezkl_websocket_e2e.rs` (5 tests)
+- `tests/websocket/test_proof_performance.rs` (3 tests)
+
+**Implementation Files:**
+- `src/api/websocket/proof_manager.rs` (add caching)
+- `src/api/websocket/metrics.rs` (add proof metrics)
+
+**Success Criteria:**
+- Proof generation adds < 100ms latency (Simple)
+- Caching reduces repeated proof generation
+- Metrics track proof generation performance
+- Integration tests pass with real WebSocket connections
+- Ready for SDK integration
+
+### Sub-phase 8.17: Distributed Features - Redis & Advanced Monitoring (DEFERRED)
 
 Add distributed system support for multi-node deployments. Can be deferred for initial production.
 
@@ -1337,8 +1452,11 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 4. **8.10 Complete** ✅ - Production hardening and monitoring
 5. **8.11 Next** - Core functionality (MUST FIX for production)
 6. **8.12 Complete** ✅ - Security & monitoring (JWT & Ed25519 done)
-7. **8.13 CRITICAL** - EZKL Proof Generation (REQUIRED for payments)
-8. **8.14 Later** - Distributed features (CAN DEFER)
+7. **8.13 Complete** ✅ - EZKL Proof Generation (tests passing)
+8. **8.14 CRITICAL** - Basic Proof Integration (REQUIRED for SDK)
+9. **8.15 CRITICAL** - Proof Configuration (REQUIRED for SDK)
+10. **8.16 Important** - Proof Performance & Testing
+11. **8.17 Later** - Distributed features (CAN DEFER)
 
 ### Mock Replacement Summary
 
@@ -1375,9 +1493,11 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 - [ ] Blockchain job verification active (8.11)
 - ✅ Basic authentication with session tokens (8.10)
 - ✅ Memory-only stateless architecture (8.9)
-- [ ] **EZKL proof generation for payments (8.13)** ← CRITICAL
-- [ ] **Proof submission to smart contracts (8.13)** ← CRITICAL
-- [ ] **Interruption handling with partial proofs (8.13)** ← CRITICAL
+- ✅ **EZKL proof generation implemented (8.13)** ← DONE
+- [ ] **Basic proof integration in responses (8.14)** ← CRITICAL FOR SDK
+- [ ] **Proof configuration and types (8.15)** ← CRITICAL FOR SDK
+- [ ] **Proof performance and caching (8.16)** ← Important
+- [ ] **Proof submission to smart contracts** ← Future phase
 
 **Recommended Production (SHOULD HAVE):**
 - ✅ JWT tokens with proper cryptography (8.12 - DONE)
@@ -1386,12 +1506,12 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 - [ ] Real system monitoring (8.12)
 - [ ] Dependency health checks (8.12)
 
-**Enterprise Production (after 8.13):**
-- [ ] Redis-backed rate limiting (8.13)
-- [ ] Distributed session storage (8.13)
-- [ ] Multi-node deployment support (8.13)
-- [ ] Cross-node metrics aggregation (8.13)
-- [ ] Distributed circuit breakers (8.13)
+**Enterprise Production (after 8.17):**
+- [ ] Redis-backed rate limiting (8.17)
+- [ ] Distributed session storage (8.17)
+- [ ] Multi-node deployment support (8.17)
+- [ ] Cross-node metrics aggregation (8.17)
+- [ ] Distributed circuit breakers (8.17)
 
 ### fabstir-llm-sdk
 

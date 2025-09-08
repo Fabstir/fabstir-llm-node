@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Proof data for verifiable inference
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProofData {
+    pub hash: String,
+    pub proof_type: String,
+    pub model_hash: String,
+    pub input_hash: String,
+    pub output_hash: String,
+    pub timestamp: u64,
+}
+
 /// Conversation message structure aligned with TypeScript SDK
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConversationMessage {
@@ -10,6 +21,8 @@ pub struct ConversationMessage {
     pub timestamp: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof: Option<ProofData>,
 }
 
 /// Error codes for WebSocket messages
@@ -157,6 +170,8 @@ pub struct StreamToken {
     pub is_final: bool,
     pub total_tokens: u32,
     pub message_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof: Option<ProofData>,
 }
 
 /// WebSocket error type

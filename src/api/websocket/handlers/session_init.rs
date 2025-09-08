@@ -114,6 +114,7 @@ mod tests {
                 content: "Hello".to_string(),
                 timestamp: None,
                 tokens: Some(2),
+                proof: None,
             },
         ];
         

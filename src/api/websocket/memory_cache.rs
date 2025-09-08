@@ -256,6 +256,7 @@ mod tests {
             content: "Hello".to_string(),
             timestamp: None,
             tokens: Some(2),
+            proof: None,
         }).await;
         
         assert_eq!(cache.message_count().await, 1);
@@ -273,6 +274,7 @@ mod tests {
                 content: format!("Message {}", i),
                 timestamp: None,
                 tokens: Some(3),
+                proof: None,
             }).await;
         }
         

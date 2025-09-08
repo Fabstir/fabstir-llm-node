@@ -110,12 +110,14 @@ mod tests {
                 content: "Question 1".to_string(),
                 timestamp: None,
                 tokens: Some(3),
+                proof: None,
             },
             ConversationMessage {
                 role: "assistant".to_string(),
                 content: "Answer 1".to_string(),
                 timestamp: None,
                 tokens: Some(5),
+                proof: None,
             },
         ];
         
@@ -142,6 +144,7 @@ mod tests {
                 content: "Test".to_string(),
                 timestamp: None,
                 tokens: None,
+                proof: None,
             },
         ];
         

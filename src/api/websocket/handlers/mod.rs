@@ -23,7 +23,7 @@ impl MessageRouter {
         let session_init_handler = Arc::new(session_init::SessionInitHandler::new());
         let session_resume_handler = Arc::new(session_resume::SessionResumeHandler::new());
         let prompt_handler = Arc::new(prompt::PromptHandler::new(session_init_handler.clone()));
-        let response_handler = Arc::new(response::ResponseHandler::new(session_init_handler.clone()));
+        let response_handler = Arc::new(response::ResponseHandler::new(session_init_handler.clone(), None));
         
         Self {
             session_init_handler,

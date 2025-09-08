@@ -60,6 +60,7 @@ impl PromptHandler {
                     .as_secs(),
             ),
             tokens: None, // Will be counted later if needed
+            proof: None,
         };
         
         cache.add_message(message).await;

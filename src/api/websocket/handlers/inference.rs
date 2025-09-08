@@ -168,6 +168,7 @@ impl InferenceHandler {
                     .as_secs(),
             ),
             tokens: Some(result.tokens_generated as u32),
+            proof: None,
         };
         
         // Add to cache
@@ -249,6 +250,7 @@ impl InferenceHandler {
                     .as_secs(),
             ),
             tokens: Some(config.max_tokens.min(10) as u32),
+            proof: None,
         };
         
         // Add to cache
@@ -335,6 +337,7 @@ impl InferenceHandler {
                     is_final,
                     total_tokens: if is_final { total_tokens } else { 0 },
                     message_index: message_index + 1,
+                    proof: None,
                 };
                 
                 if tx.send(Ok(token)).await.is_err() {
@@ -356,6 +359,7 @@ impl InferenceHandler {
                         .as_secs(),
                 ),
                 tokens: Some(total_tokens),
+                proof: None,
             }).await;
             
             debug!("Streaming response complete for session {}", session_id_clone);
