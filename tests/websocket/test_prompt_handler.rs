@@ -17,12 +17,14 @@ async fn test_prompt_handler_adds_to_cache() {
             content: "Hello".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Hi there!".to_string(),
             timestamp: None,
             tokens: Some(3),
+            proof: None,
         },
     ];
     
@@ -132,6 +134,7 @@ async fn test_prompt_handler_with_context_window() {
             content: format!("Message {}", i),
             timestamp: None,
             tokens: if i % 2 == 1 { Some(10) } else { None },
+            proof: None,
         });
     }
     

@@ -14,24 +14,28 @@ async fn test_session_resume_rebuilds_cache() {
             content: "What is AI?".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "AI is artificial intelligence".to_string(),
             timestamp: Some(2),
             tokens: Some(10),
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "Tell me more".to_string(),
             timestamp: Some(3),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Machine learning is a subset...".to_string(),
             timestamp: Some(4),
             tokens: Some(20),
+            proof: None,
         },
     ];
 
@@ -58,12 +62,14 @@ async fn test_session_resume_with_partial_history() {
             content: "Hello".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Hi there!".to_string(),
             timestamp: Some(2),
             tokens: Some(3),
+            proof: None,
         },
     ];
 
@@ -87,6 +93,7 @@ async fn test_session_resume_validates_message_index() {
             content: "Test".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
     ];
 
@@ -113,6 +120,7 @@ async fn test_session_resume_handles_large_context() {
             content: format!("Question {}", i),
             timestamp: Some(i * 2),
             tokens: None,
+            proof: None,
         });
         
         let tokens = (i + 1) * 2;
@@ -123,6 +131,7 @@ async fn test_session_resume_handles_large_context() {
             content: format!("Answer {}", i),
             timestamp: Some(i * 2 + 1),
             tokens: Some(tokens as u32),
+            proof: None,
         });
     }
 
@@ -146,6 +155,7 @@ async fn test_session_resume_clears_old_session() {
             content: "Old question".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
     ];
     
@@ -161,12 +171,14 @@ async fn test_session_resume_clears_old_session() {
             content: "New question".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "New answer".to_string(),
             timestamp: None,
             tokens: Some(5),
+            proof: None,
         },
     ];
     
@@ -194,18 +206,21 @@ async fn test_session_resume_with_system_message() {
             content: "You are a helpful AI assistant".to_string(),
             timestamp: Some(0),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "What can you do?".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "I can help with various tasks".to_string(),
             timestamp: Some(2),
             tokens: Some(8),
+            proof: None,
         },
     ];
 
@@ -238,12 +253,14 @@ async fn test_concurrent_session_resumes() {
                     content: format!("Question {}", i),
                     timestamp: None,
                     tokens: None,
+            proof: None,
                 },
                 ConversationMessage {
                     role: "assistant".to_string(),
                     content: format!("Answer {}", i),
                     timestamp: None,
                     tokens: Some(i as u32 + 1),
+            proof: None,
                 },
             ];
             

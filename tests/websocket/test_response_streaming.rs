@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 #[tokio::test]
 async fn test_response_streaming_basic() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     // Initialize session
     session_handler
@@ -39,7 +39,7 @@ async fn test_response_streaming_basic() {
 #[tokio::test]
 async fn test_response_streaming_with_tokens() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     session_handler
         .handle_session_init("token-session", 200, vec![])
@@ -53,6 +53,7 @@ async fn test_response_streaming_with_tokens() {
         content: "Short prompt".to_string(),
         timestamp: None,
         tokens: None,
+        proof: None,
     }).await;
     
     let mut stream = response_handler
@@ -84,7 +85,7 @@ async fn test_response_streaming_with_tokens() {
 #[tokio::test]
 async fn test_response_streaming_session_not_found() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler);
+    let response_handler = ResponseHandler::new(session_handler, None);
     
     let result = response_handler
         .create_response_stream("non-existent", "Test", 1)
@@ -99,7 +100,7 @@ async fn test_response_streaming_session_not_found() {
 #[tokio::test]
 async fn test_response_streaming_with_context() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     // Initialize with context
     let context = vec![
@@ -108,12 +109,14 @@ async fn test_response_streaming_with_context() {
             content: "What is 2+2?".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "2+2 equals 4".to_string(),
             timestamp: None,
             tokens: Some(5),
+            proof: None,
         },
     ];
     
@@ -143,7 +146,7 @@ async fn test_response_streaming_with_context() {
 #[tokio::test]
 async fn test_response_streaming_cancellation() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     session_handler
         .handle_session_init("cancel-session", 400, vec![])
@@ -169,7 +172,7 @@ async fn test_response_streaming_cancellation() {
 #[tokio::test]
 async fn test_response_streaming_message_index() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     session_handler
         .handle_session_init("index-stream", 500, vec![])
@@ -197,7 +200,7 @@ async fn test_response_streaming_message_index() {
 #[tokio::test]
 async fn test_concurrent_response_streams() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = Arc::new(ResponseHandler::new(session_handler.clone()));
+    let response_handler = Arc::new(ResponseHandler::new(session_handler.clone(), None));
     
     // Initialize multiple sessions
     for i in 0..3 {
@@ -243,7 +246,7 @@ async fn test_concurrent_response_streams() {
 #[tokio::test]
 async fn test_response_streaming_error_handling() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     session_handler
         .handle_session_init("error-session", 600, vec![])
@@ -271,7 +274,7 @@ async fn test_response_streaming_error_handling() {
 #[tokio::test]
 async fn test_response_streaming_adds_to_cache() {
     let session_handler = Arc::new(SessionInitHandler::new());
-    let response_handler = ResponseHandler::new(session_handler.clone());
+    let response_handler = ResponseHandler::new(session_handler.clone(), None);
     
     session_handler
         .handle_session_init("cache-stream", 700, vec![])
@@ -285,6 +288,7 @@ async fn test_response_streaming_adds_to_cache() {
         content: "Hello AI".to_string(),
         timestamp: Some(1),
         tokens: None,
+        proof: None,
     }).await;
     
     // Stream response

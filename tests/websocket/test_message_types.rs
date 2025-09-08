@@ -27,12 +27,14 @@ mod tests {
                 content: "What is AI?".to_string(),
                 timestamp: Some(1234567890),
                 tokens: None,
+            proof: None,
             },
             ConversationMessage {
                 role: "assistant".to_string(),
                 content: "AI is...".to_string(),
                 timestamp: Some(1234567891),
                 tokens: Some(45),
+            proof: None,
             },
         ];
 
@@ -57,6 +59,7 @@ mod tests {
                 content: "Previous question".to_string(),
                 timestamp: None,
                 tokens: None,
+            proof: None,
             },
         ];
 

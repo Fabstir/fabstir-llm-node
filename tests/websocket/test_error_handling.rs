@@ -74,6 +74,7 @@ async fn test_token_limit_exceeded_error() {
             content: "x".repeat(1000), // Very long messages
             timestamp: Some(i),
             tokens: Some(250), // High token count
+            proof: None,
         });
     }
     
@@ -137,6 +138,7 @@ async fn test_concurrent_error_isolation() {
             content: "Valid prompt".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         }).await;
         
         ih1.generate_response("valid-session", "Valid prompt", 1).await
@@ -168,6 +170,7 @@ async fn test_malformed_message_handling() {
             content: "Test".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
     ];
     
@@ -213,6 +216,7 @@ async fn test_recovery_after_error() {
         content: "Valid prompt".to_string(),
         timestamp: Some(1),
         tokens: None,
+        proof: None,
     }).await;
     
     let result2 = inference_handler

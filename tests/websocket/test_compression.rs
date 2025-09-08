@@ -216,6 +216,7 @@ async fn test_compression_with_conversation_context() {
             content: format!("Message {}: {}", i, "x".repeat(50)),
             timestamp: Some(i),
             tokens: Some(10),
+            proof: None,
         });
     }
     

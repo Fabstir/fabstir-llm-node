@@ -16,12 +16,14 @@ async fn test_session_init_creates_memory_cache() {
             content: "What is AI?".to_string(),
             timestamp: Some(1234567890),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "AI is artificial intelligence".to_string(),
             timestamp: Some(1234567891),
             tokens: Some(10),
+            proof: None,
         },
     ];
 
@@ -75,6 +77,7 @@ async fn test_session_init_replaces_existing_session() {
             content: "First question".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
     ];
     
@@ -91,12 +94,14 @@ async fn test_session_init_replaces_existing_session() {
             content: "New question".to_string(),
             timestamp: None,
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "New answer".to_string(),
             timestamp: None,
             tokens: Some(5),
+            proof: None,
         },
     ];
     
@@ -119,24 +124,28 @@ async fn test_session_init_counts_tokens_correctly() {
             content: "Question 1".to_string(),
             timestamp: None,
             tokens: Some(2), // User tokens should be counted
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Answer 1".to_string(),
             timestamp: None,
             tokens: Some(10),
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "Question 2".to_string(),
             timestamp: None,
             tokens: Some(3),
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Answer 2".to_string(),
             timestamp: None,
             tokens: Some(15),
+            proof: None,
         },
     ];
 
@@ -158,18 +167,21 @@ async fn test_session_init_preserves_message_order() {
             content: "You are a helpful assistant".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "Hello".to_string(),
             timestamp: Some(2),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Hi there!".to_string(),
             timestamp: Some(3),
             tokens: Some(3),
+            proof: None,
         },
     ];
 
@@ -204,6 +216,7 @@ async fn test_concurrent_session_inits() {
                     content: format!("Question {}", i),
                     timestamp: None,
                     tokens: None,
+            proof: None,
                 },
             ];
             

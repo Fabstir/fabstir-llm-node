@@ -21,6 +21,7 @@ async fn test_context_window_trimming() {
             content: format!("This is message number {} with some content", i),
             timestamp: Some(i as u64),
             tokens: Some(50), // Each message ~50 tokens = 5000 total (exceeds 4096 limit)
+            proof: None,
         });
     }
     
@@ -55,6 +56,7 @@ async fn test_context_window_with_system_prompt() {
             content: "You are a helpful assistant. Always be concise.".to_string(),
             timestamp: Some(0),
             tokens: Some(10),
+            proof: None,
         },
     ];
     
@@ -65,6 +67,7 @@ async fn test_context_window_with_system_prompt() {
             content: format!("Message {}: {}", i, "x".repeat(100)),
             timestamp: Some(i as u64),
             tokens: Some(50),
+            proof: None,
         });
     }
     
@@ -92,18 +95,21 @@ async fn test_context_preparation_for_llm() {
             content: "What's the weather?".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "I don't have weather data.".to_string(),
             timestamp: Some(2),
             tokens: Some(6),
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "Tell me a joke instead".to_string(),
             timestamp: Some(3),
             tokens: None,
+            proof: None,
         },
     ];
     
@@ -146,6 +152,7 @@ async fn test_sliding_window_context() {
             content: format!("Question {}", i),
             timestamp: Some(i * 2),
             tokens: Some(100), // Large tokens to trigger trimming
+            proof: None,
         }).await;
         
         // Add assistant response
@@ -154,6 +161,7 @@ async fn test_sliding_window_context() {
             content: format!("Answer {}", i),
             timestamp: Some(i * 2 + 1),
             tokens: Some(100),
+            proof: None,
         }).await;
         
         // Verify we stay within token limit
@@ -179,18 +187,21 @@ async fn test_context_token_counting() {
             content: "Short".to_string(),
             timestamp: Some(1),
             tokens: Some(1),
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Medium length response here".to_string(),
             timestamp: Some(2),
             tokens: Some(5),
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "This is a much longer message with many words".to_string(),
             timestamp: Some(3),
             tokens: Some(10),
+            proof: None,
         },
     ];
     
@@ -216,12 +227,14 @@ async fn test_context_with_no_token_info() {
             content: "Hello world".to_string(),
             timestamp: Some(1),
             tokens: None, // No token count
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Hi there, how can I help you today?".to_string(),
             timestamp: Some(2),
             tokens: None, // No token count
+            proof: None,
         },
     ];
     
@@ -249,18 +262,21 @@ async fn test_context_message_ordering() {
             content: "Third message".to_string(),
             timestamp: Some(3),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "user".to_string(),
             content: "First message".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Second message".to_string(),
             timestamp: Some(2),
             tokens: Some(3),
+            proof: None,
         },
     ];
     
@@ -293,6 +309,7 @@ async fn test_max_context_boundary() {
             content: format!("Message {}", i),
             timestamp: Some(i as u64),
             tokens: Some(tokens_per_msg as u32),
+            proof: None,
         });
     }
     
@@ -312,6 +329,7 @@ async fn test_max_context_boundary() {
         content: "One more message".to_string(),
         timestamp: Some(num_messages as u64),
         tokens: Some(100),
+            proof: None,
     }).await;
     
     // Should still be within limit after trimming
@@ -334,12 +352,14 @@ async fn test_context_continuity_across_sessions() {
             content: "My favorite color is blue".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Blue is a nice color!".to_string(),
             timestamp: Some(2),
             tokens: Some(5),
+            proof: None,
         },
     ];
     
@@ -364,6 +384,7 @@ async fn test_context_continuity_across_sessions() {
         content: "What was my favorite color?".to_string(),
         timestamp: Some(3),
         tokens: None,
+            proof: None,
     }).await;
     
     // Context should contain the color reference

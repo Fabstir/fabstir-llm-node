@@ -43,12 +43,14 @@ async fn test_inference_handler_with_context() {
             content: "My name is Alice".to_string(),
             timestamp: Some(1),
             tokens: None,
+            proof: None,
         },
         ConversationMessage {
             role: "assistant".to_string(),
             content: "Nice to meet you, Alice!".to_string(),
             timestamp: Some(2),
             tokens: Some(6),
+            proof: None,
         },
     ];
     
@@ -64,6 +66,7 @@ async fn test_inference_handler_with_context() {
         content: "What's my name?".to_string(),
         timestamp: Some(3),
         tokens: None,
+        proof: None,
     }).await;
     
     // Generate response with context awareness
@@ -94,6 +97,7 @@ async fn test_inference_handler_streaming() {
         content: "Tell me a story".to_string(),
         timestamp: Some(1),
         tokens: None,
+        proof: None,
     }).await;
     
     // Create streaming response
@@ -223,6 +227,7 @@ async fn test_inference_handler_with_system_prompt() {
             content: "You are a helpful math tutor.".to_string(),
             timestamp: Some(0),
             tokens: None,
+            proof: None,
         },
     ];
     
@@ -237,6 +242,7 @@ async fn test_inference_handler_with_system_prompt() {
         content: "What is calculus?".to_string(),
         timestamp: Some(1),
         tokens: None,
+        proof: None,
     }).await;
     
     let response = inference_handler
@@ -276,6 +282,7 @@ async fn test_concurrent_inference_requests() {
                 content: format!("Question {}", i),
                 timestamp: Some(1),
                 tokens: None,
+                proof: None,
             }).await;
             
             ih.generate_response(
@@ -332,6 +339,7 @@ async fn test_inference_handler_streaming_cancellation() {
         content: "Long story please".to_string(),
         timestamp: Some(1),
         tokens: None,
+        proof: None,
     }).await;
     
     let config = StreamConfig {

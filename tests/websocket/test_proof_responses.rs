@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use futures::StreamExt;
 
 use fabstir_llm_node::api::websocket::{
     handlers::{response::ResponseHandler, session_init::SessionInitHandler},
@@ -21,16 +22,29 @@ async fn test_response_includes_proof_field() -> Result<()> {
         .handle_session_init("test-proof-1", 123, vec![])
         .await?;
 
-    // Generate response
-    let response = response_handler
-        .generate_response("test-proof-1", "What is 2+2?", 0)
+    // Create response stream
+    let mut stream = response_handler
+        .create_response_stream("test-proof-1", "What is 2+2?", 0)
         .await?;
 
-    // Verify response has proof field
-    assert!(response.proof.is_some(), "Response should include proof");
-    let proof = response.proof.unwrap();
+    // Collect tokens from stream
+    let mut final_token = None;
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(token) => {
+                final_token = Some(token);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    // Verify final token has proof field
+    assert!(final_token.is_some(), "Should have received tokens");
+    let token = final_token.unwrap();
+    assert!(token.proof.is_some(), "Final token should include proof");
+    let proof = token.proof.unwrap();
     assert!(!proof.hash.is_empty(), "Proof hash should not be empty");
-    assert_eq!(proof.proof_type, "ezkl", "Proof type should be ezkl");
+    assert_eq!(proof.proof_type, "simple", "Proof type should be simple by default");
 
     Ok(())
 }
@@ -69,9 +83,9 @@ async fn test_streaming_response_includes_proof_in_final_token() -> Result<()> {
     assert!(token_count > 0, "Should have received tokens");
     assert!(final_token.is_some(), "Should have final token");
     
-    let final = final_token.unwrap();
-    assert!(final.proof.is_some(), "Final token should include proof");
-    let proof = final.proof.unwrap();
+    let final_tok = final_token.unwrap();
+    assert!(final_tok.proof.is_some(), "Final token should include proof");
+    let proof = final_tok.proof.unwrap();
     assert!(!proof.hash.is_empty(), "Proof hash should not be empty");
 
     Ok(())
