@@ -1,0 +1,101 @@
+version: '3.8'
+
+# This version assumes S5 server and Vector DB are already running separately
+# Use this if you already have the backend services running
+
+services:
+  # First LLM Node - WebSocket on port 8080
+  llm-node-1:
+    image: llm-node-prod:latest
+    container_name: llm-node-1
+    ports:
+      - "9001:9001"  # P2P port
+      - "9002:9002"  # P2P port
+      - "9003:9003"  # P2P port
+      - "8080:8080"  # WebSocket API port
+    environment:
+      # P2P and API Configuration
+      - P2P_PORT=9001
+      - API_PORT=8080
+      - NODE_ID=node-1
+      
+      # Model Configuration
+      - MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf
+      
+      # Proof System Configuration
+      - ENABLE_PROOF_GENERATION=true
+      - PROOF_TYPE=EZKL
+      - PROOF_MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf
+      - PROOF_CACHE_SIZE=100
+      - PROOF_BATCH_SIZE=10
+      
+      # Backend Services (assuming they're running on host)
+      - VECTOR_DB_URL=http://host.docker.internal:8081
+      - S5_URL=http://host.docker.internal:5522
+      
+      # Logging
+      - RUST_LOG=info
+    volumes:
+      - ./models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - fabstir-network
+    restart: unless-stopped
+
+  # Second LLM Node - WebSocket on port 8081  
+  llm-node-2:
+    image: llm-node-prod:latest
+    container_name: llm-node-2
+    ports:
+      - "9011:9011"  # P2P port (different from node-1)
+      - "9012:9012"  # P2P port
+      - "9013:9013"  # P2P port
+      - "8081:8081"  # WebSocket API port (different from node-1)
+    environment:
+      # P2P and API Configuration
+      - P2P_PORT=9011
+      - API_PORT=8081
+      - NODE_ID=node-2
+      
+      # Model Configuration
+      - MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf
+      
+      # Proof System Configuration
+      - ENABLE_PROOF_GENERATION=true
+      - PROOF_TYPE=EZKL
+      - PROOF_MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf
+      - PROOF_CACHE_SIZE=100
+      - PROOF_BATCH_SIZE=10
+      
+      # Backend Services (assuming they're running on host)
+      - VECTOR_DB_URL=http://host.docker.internal:8081
+      - S5_URL=http://host.docker.internal:5522
+      
+      # Logging
+      - RUST_LOG=info
+    volumes:
+      - ./models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - fabstir-network
+    restart: unless-stopped
+
+networks:
+  fabstir-network:
+    driver: bridge

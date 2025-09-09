@@ -1444,6 +1444,59 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 - Circuit breaker state synchronized
 - Can deploy multiple load-balanced nodes
 
+### Sub-phase 8.18: WebSocket Route Integration with Main HTTP Server
+
+Integrate the existing WebSocket implementation with the main HTTP server to make WebSocket endpoints accessible via the API.
+
+#### Current Issue
+- WebSocket implementation exists in `/src/api/websocket/` but is not wired to the main server
+- The `ApiConfig` has `enable_websocket: true` but it's not used
+- The router in `src/api/server.rs` doesn't include WebSocket routes
+- Main.rs incorrectly claims WebSocket is available at `/v1/ws`
+
+#### Tasks
+
+- [ ] Add WebSocket upgrade handler to Axum router in `create_router()`
+- [ ] Create `/v1/ws` route that upgrades HTTP connections to WebSocket
+- [ ] Integrate existing WebSocket handlers from `/src/api/websocket/`
+- [ ] Connect SessionStore and ResponseHandler to the main server
+- [ ] Add WebSocket connection tracking to ApiServer
+- [ ] Implement proper WebSocket lifecycle in the HTTP server context
+- [ ] Update health endpoint to report WebSocket availability
+- [ ] Add WebSocket-specific error handling in the main server
+
+**Test Files:**
+- `tests/websocket/test_route_integration.rs` (max 300 lines)
+- `tests/websocket/test_upgrade_handler.rs` (max 250 lines)
+- `tests/websocket/test_endpoint_availability.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/api/server.rs` - Add WebSocket route and upgrade handler
+- `src/api/websocket/upgrade.rs` (new file, max 300 lines) - WebSocket upgrade logic
+- `src/api/websocket/integration.rs` (new file, max 250 lines) - Integration helpers
+- Update `src/main.rs` - Ensure correct WebSocket initialization
+
+**Route Configuration:**
+```rust
+// In create_router() method
+.route("/v1/ws", get(websocket_upgrade_handler))
+.route("/ws/session", get(websocket_session_handler)) // Alternative endpoint
+```
+
+**Success Criteria:**
+- WebSocket endpoint `/v1/ws` responds to upgrade requests
+- Existing WebSocket handlers process messages correctly
+- SDK can connect via `ws://localhost:8080/v1/ws`
+- Health endpoint reports WebSocket as "available"
+- Graceful fallback if WebSocket is disabled in config
+- All existing REST endpoints continue to work
+
+**Integration Points:**
+1. Use the existing `WebSocketHandler` from `/src/api/websocket/handlers/handler.rs`
+2. Leverage `SessionStore` for connection management
+3. Connect `ResponseHandler` for streaming responses
+4. Maintain compatibility with proof generation system
+
 ### Implementation Priority
 
 1. **8.7 Complete** ✅ - WebSocket server foundation implemented
@@ -1453,10 +1506,11 @@ Add distributed system support for multi-node deployments. Can be deferred for i
 5. **8.11 Next** - Core functionality (MUST FIX for production)
 6. **8.12 Complete** ✅ - Security & monitoring (JWT & Ed25519 done)
 7. **8.13 Complete** ✅ - EZKL Proof Generation (tests passing)
-8. **8.14 CRITICAL** - Basic Proof Integration (REQUIRED for SDK)
-9. **8.15 CRITICAL** - Proof Configuration (REQUIRED for SDK)
+8. **8.14 Complete** ✅ - Basic Proof Integration (REQUIRED for SDK)
+9. **8.15 Complete** ✅ - Proof Configuration (REQUIRED for SDK)
 10. **8.16 Important** - Proof Performance & Testing
 11. **8.17 Later** - Distributed features (CAN DEFER)
+12. **8.18 CRITICAL** - WebSocket Route Integration (REQUIRED for SDK)
 
 ### Mock Replacement Summary
 

@@ -1,22 +1,17 @@
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS runtime
-
 RUN apt-get update && apt-get install -y \
     curl ca-certificates \
     libgomp1 \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
-
 # Copy pre-built binary
 COPY target/release/fabstir-llm-node /usr/local/bin/
-
 # Download default model if needed
 RUN mkdir -p /models && \
     cd /models && \
     if [ ! -f tiny-vicuna-1b.q4_k_m.gguf ]; then \
         curl -LO https://huggingface.co/afrideva/Tiny-Vicuna-1B-GGUF/resolve/main/tiny-vicuna-1b.q4_k_m.gguf; \
     fi
-
 EXPOSE 9001 9002 9003 8080
 CMD ["fabstir-llm-node"]
