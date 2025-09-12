@@ -4,7 +4,13 @@
 
 This document describes the current state of the fabstir-llm-node WebSocket API implementation and provides guidance for SDK developers working with TypeScript/JavaScript to integrate with the node's capabilities. This covers all work completed from Sub-phase 8.7 through 8.12 in this session.
 
-## Current Implementation Status (Phases 8.7-8.12 Completed in This Session)
+## Current Implementation Status (Updated January 2025)
+
+### ✅ Phase 8.18: WebSocket Integration with Main HTTP Server (COMPLETED)
+- **WebSocket endpoint now available at `/v1/ws`**
+- **Integrated with main Axum HTTP server on port 8080**
+- **Streaming inference with proof generation**
+- **Direct SDK connection support**
 
 ### ✅ Phase 8.7: WebSocket Server Implementation
 - **Production WebSocket Server**: Full async server with Axum integration
@@ -50,23 +56,37 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 
 ### Connection Endpoint
 ```
-ws://[host-address]:8080/ws/session
+ws://[host-address]:8080/v1/ws
 ```
+
+**Note**: The WebSocket endpoint has been integrated into the main HTTP server at `/v1/ws` (Sub-phase 8.18 completed).
 
 ### Authentication Flow
 
 #### 1. Initial Connection
 ```typescript
 // SDK establishes WebSocket connection
-const ws = new WebSocket('ws://host:8080/ws/session');
+const ws = new WebSocket('ws://host:8080/v1/ws');
 
-// Send authentication message
+// For simple inference (no auth required currently)
+const inferenceMessage = {
+  type: 'inference',
+  request: {
+    model: 'tinyllama',  // or any available model
+    prompt: 'Your prompt here',
+    max_tokens: 100,
+    stream: true
+  }
+};
+ws.send(JSON.stringify(inferenceMessage));
+
+// For authenticated sessions (future implementation)
 const authMessage = {
   type: 'auth',
   job_id: 12345,  // From blockchain job creation
   token: 'session_token_here'  // Optional if using JWT
 };
-ws.send(JSON.stringify(authMessage));
+// ws.send(JSON.stringify(authMessage));
 ```
 
 #### 2. JWT Token Structure
@@ -567,3 +587,119 @@ describe('End-to-End Conversation', () => {
 - `MODEL_UNAVAILABLE`: Model not loaded
 - `CONTEXT_TOO_LARGE`: Exceeds token limit
 - `CIRCUIT_OPEN`: Service temporarily unavailable
+
+## Current Working Implementation (January 2025)
+
+### Simple WebSocket Connection Example
+
+The WebSocket endpoint is now live at `/v1/ws`. Here's a working example:
+
+```javascript
+// Minimal working example for SDK developers
+const WebSocket = require('ws');
+
+async function testInference() {
+  const ws = new WebSocket('ws://localhost:8080/v1/ws');
+  
+  ws.on('open', () => {
+    console.log('Connected to WebSocket');
+    
+    // Send inference request
+    const request = {
+      type: 'inference',
+      request: {
+        model: 'tinyllama',
+        prompt: 'What is the capital of France?',
+        max_tokens: 50,
+        stream: true
+      }
+    };
+    
+    ws.send(JSON.stringify(request));
+  });
+  
+  ws.on('message', (data) => {
+    const msg = JSON.parse(data);
+    
+    if (msg.type === 'stream_chunk') {
+      process.stdout.write(msg.content);  // Print tokens as they arrive
+      console.log('\nProof:', msg.proof);  // Proof data included
+    } else if (msg.type === 'stream_end') {
+      console.log('\nStreaming complete');
+      console.log('Final proof:', msg.proof);
+      ws.close();
+    } else if (msg.type === 'error') {
+      console.error('Error:', msg.error);
+      ws.close();
+    }
+  });
+  
+  ws.on('error', (err) => {
+    console.error('WebSocket error:', err);
+  });
+}
+
+testInference();
+```
+
+### Response Format with Proofs
+
+All responses now include cryptographic proof data:
+
+```json
+{
+  "type": "stream_chunk",
+  "content": "Paris",
+  "tokens": 1,
+  "proof": {
+    "proof_type": "EZKL",
+    "proof_data": "0xEF...",  // Mock EZKL proof (SHA256 based)
+    "model_hash": "sha256:abc123...",
+    "timestamp": 1737000000,
+    "input_hash": "0x123...",
+    "output_hash": "0x456...",
+    "parameters": {
+      "temperature": 0.7,
+      "max_tokens": 50
+    }
+  }
+}
+```
+
+### Host Discovery via Smart Contract
+
+Hosts register their API URLs in the NodeRegistry contract:
+
+```javascript
+// Get host's WebSocket URL from contract
+const registry = new ethers.Contract(registryAddress, ABI, provider);
+const apiUrl = await registry.getNodeApiUrl(hostAddress);
+// Returns: "http://host.example.com:8080"
+
+// Convert to WebSocket URL
+const wsUrl = apiUrl.replace('http://', 'ws://') + '/v1/ws';
+// Result: "ws://host.example.com:8080/v1/ws"
+```
+
+### Known Limitations
+
+1. **Authentication**: Job-based auth not yet wired (use without auth for now)
+2. **Session Management**: Stateless only, no conversation persistence
+3. **Proof Verification**: Using mock EZKL proofs (SHA256-based)
+4. **Rate Limiting**: Not enforced on WebSocket endpoint yet
+
+### Troubleshooting
+
+**Connection Refused**: Ensure node is running on port 8080
+```bash
+cargo run --release
+```
+
+**No Response**: Check if model is loaded
+```bash
+curl http://localhost:8080/v1/models
+```
+
+**Invalid Message Format**: Use exact JSON structure shown above
+
+**Proof Verification Fails**: Mock proofs won't verify on-chain yet (use for testing only)

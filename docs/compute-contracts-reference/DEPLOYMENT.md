@@ -4,19 +4,19 @@
 
 ### 🚀 Active Contracts (Base Sepolia)
 
-- **JobMarketplaceFABWithEarnings**: `0xEB646BF2323a441698B256623F858c8787d70f9F` ✅ (LATEST)
+- **JobMarketplaceFABWithEarnings**: `0x3B632813c3e31D94Fd552b4aE387DD321eec67Ba` ✅ (LATEST)
   - FAB token staking integration
   - USDC payments enabled
   - 10% platform fee
   - **NEW: Earnings accumulation system**
   
-- **HostEarnings**: `0xcbD91249cC8A7634a88d437Eaa083496C459Ef4E` ✅ (NEW)
+- **HostEarnings**: `0x908962e8c6CE72610021586f85ebDE09aAc97776` ✅ (NEW)
   - Accumulates host earnings instead of direct transfers
   - Batch withdrawal support for gas savings
   - 40-46% gas reduction for multiple jobs
   - Transparent balance tracking
   
-- **NodeRegistryFAB**: `0x87516C13Ea2f99de598665e14cab64E191A0f8c4` ✅
+- **NodeRegistryFAB**: `0x2B745E45818e1dE570f253259dc46b91A82E3204` ✅
   - 1000 FAB minimum stake
   - ~$1,000 entry cost
   - Non-custodial staking

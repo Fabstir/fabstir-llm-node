@@ -249,19 +249,47 @@ For real-time bidirectional communication and conversation management, connect v
 
 ### Connection Endpoints
 
-#### Legacy Endpoint (Deprecated)
+#### Main WebSocket Endpoint (Active)
 ```javascript
 ws://localhost:8080/v1/ws
 ```
 
-#### Session Management Endpoint (Recommended)
-```javascript
-ws://localhost:8080/ws/session
+This endpoint is integrated with the main HTTP server and supports streaming inference with proof generation.
+
+### Simple Inference (No Auth Required)
+
+For basic inference without job management:
+
+```json
+{
+  "type": "inference",
+  "request": {
+    "model": "tinyllama",
+    "prompt": "What is machine learning?",
+    "max_tokens": 100,
+    "stream": true
+  }
+}
 ```
 
-### Authentication
+Response format:
+```json
+{
+  "type": "stream_chunk",
+  "content": "Machine learning is",
+  "tokens": 3,
+  "proof": {
+    "proof_type": "EZKL",
+    "proof_data": "0xEF...",
+    "model_hash": "sha256:...",
+    "timestamp": 1737000000
+  }
+}
+```
 
-The WebSocket server requires authentication via job ID and supports JWT tokens:
+### Authentication (For Job-Based Sessions)
+
+The WebSocket server supports authentication via job ID and JWT tokens:
 
 #### Initial Authentication
 ```json

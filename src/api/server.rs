@@ -7,7 +7,7 @@ use anyhow::Result;
 use axum::{
     Router,
     routing::{get, post},
-    extract::{State, Json},
+    extract::{State, Json, ws::{WebSocket, WebSocketUpgrade}},
     response::{IntoResponse, Response},
     http::StatusCode,
 };
@@ -461,6 +461,7 @@ impl ApiServer {
             .route("/health", get(health_handler))
             .route("/v1/models", get(models_handler))
             .route("/v1/inference", post(simple_inference_handler))
+            .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(
                 CorsLayer::permissive()
@@ -507,6 +508,68 @@ async fn metrics_handler() -> impl IntoResponse {
         [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         metrics,
     )
+}
+
+async fn websocket_handler(
+    ws: WebSocketUpgrade,
+    State(server): State<Arc<ApiServer>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_websocket(socket, server))
+}
+
+async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
+    use serde_json::json;
+    
+    while let Some(msg) = socket.recv().await {
+        match msg {
+            Ok(axum::extract::ws::Message::Text(text)) => {
+                // Parse WebSocket message
+                if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if json_msg["type"] == "inference" {
+                        if let Ok(request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
+                            // Handle streaming inference
+                            match server.handle_streaming_request(request, "ws-client".to_string()).await {
+                                Ok(mut receiver) => {
+                                    while let Some(response) = receiver.recv().await {
+                                        let ws_msg = json!({
+                                            "type": "stream_chunk",
+                                            "content": response.content,
+                                            "tokens": response.tokens,
+                                            "proof": response.proof,
+                                        });
+                                        
+                                        if socket.send(axum::extract::ws::Message::Text(ws_msg.to_string())).await.is_err() {
+                                            break;
+                                        }
+                                        
+                                        if response.finish_reason.is_some() {
+                                            let end_msg = json!({"type": "stream_end", "proof": response.proof});
+                                            let _ = socket.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let error_msg = json!({
+                                        "type": "error",
+                                        "error": e.to_string()
+                                    });
+                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(axum::extract::ws::Message::Ping(data)) => {
+                if socket.send(axum::extract::ws::Message::Pong(data)).await.is_err() {
+                    break;
+                }
+            }
+            Ok(axum::extract::ws::Message::Close(_)) => break,
+            _ => {}
+        }
+    }
 }
 
 impl ApiServer {

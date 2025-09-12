@@ -1567,6 +1567,228 @@ Integrate the existing WebSocket implementation with the main HTTP server to mak
 - [ ] Cross-node metrics aggregation (8.17)
 - [ ] Distributed circuit breakers (8.17)
 
+## Phase 9: Production Cryptographic Output Proofs
+
+### Overview
+
+Replace the mock EZKL implementation with production-ready cryptographic output proofs using Ed25519 signatures. This provides the security benefits needed for MVP without the computational complexity of full zero-knowledge proofs.
+
+### Goals
+
+- **Cryptographic Non-repudiation**: Hosts cannot deny generating specific outputs
+- **Payment Security**: Automatic payment release upon proof verification
+- **Efficient Verification**: < 1ms overhead for proof generation/verification
+- **Smart Contract Compatible**: On-chain verification for dispute resolution
+- **Backward Compatible**: Maintains same API as mock EZKL implementation
+
+### Sub-phase 9.1: Core Cryptographic Proof Implementation
+
+Implement Ed25519-based output proof generation to replace mock EZKL proofs.
+
+#### Tasks
+
+- [ ] Create `OutputProof` structure with proper fields
+- [ ] Implement Ed25519 key pair generation for hosts
+- [ ] Create signature generation over (job_id, input_hash, output_hash, timestamp)
+- [ ] Implement signature verification logic
+- [ ] Add proof serialization/deserialization
+- [ ] Create proof storage with expiration
+- [ ] Implement proof deduplication to prevent replay attacks
+- [ ] Add comprehensive error handling for cryptographic operations
+
+**Test Files:**
+- `tests/crypto/test_output_proofs.rs` (max 300 lines)
+- `tests/crypto/test_signature_verification.rs` (max 250 lines)
+- `tests/crypto/test_proof_serialization.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/crypto/output_proof.rs` (max 400 lines) - Core proof structure and logic
+- `src/crypto/ed25519_signer.rs` (max 300 lines) - Ed25519 operations
+- `src/crypto/proof_store.rs` (max 350 lines) - Proof storage and retrieval
+- Update `src/results/proofs.rs` - Replace mock with real signatures
+
+**Success Criteria:**
+- Proofs generated in < 1ms
+- Signatures verify correctly
+- Proof size < 1KB
+- 100% test coverage for crypto operations
+
+### Sub-phase 9.2: Smart Contract Proof Verification
+
+Integrate cryptographic proofs with smart contracts for on-chain verification.
+
+#### Tasks
+
+- [ ] Create Solidity function for Ed25519 signature verification
+- [ ] Implement proof submission transaction builder
+- [ ] Add proof data encoding for EVM compatibility
+- [ ] Create gas-optimized verification logic
+- [ ] Implement proof challenge period mechanism
+- [ ] Add event emission for proof submissions
+- [ ] Create proof dispute resolution flow
+- [ ] Test with Base Sepolia contracts
+
+**Test Files:**
+- `tests/contracts/test_proof_submission.rs` (max 350 lines)
+- `tests/contracts/test_on_chain_verification.rs` (max 300 lines)
+- `tests/contracts/test_dispute_resolution.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/contracts/proof_verifier.rs` (max 400 lines) - Contract interaction
+- `src/contracts/proof_encoder.rs` (max 250 lines) - EVM encoding
+- `contracts/ProofVerifier.sol` (new contract, max 200 lines)
+- Update `src/contracts/job_marketplace.rs` - Add proof integration
+
+**Success Criteria:**
+- On-chain verification works on Base Sepolia
+- Gas cost < 100,000 for verification
+- Proofs trigger automatic payment release
+- Dispute mechanism functions correctly
+
+### Sub-phase 9.3: Host Identity and Key Management
+
+Implement secure key management for host nodes with rotation and backup.
+
+#### Tasks
+
+- [ ] Create host identity registry in smart contract
+- [ ] Implement secure key storage using OS keyring
+- [ ] Add key rotation mechanism with grace period
+- [ ] Create key backup and recovery system
+- [ ] Implement multi-signature support for high-value jobs
+- [ ] Add key revocation list management
+- [ ] Create host reputation tracking based on verified proofs
+- [ ] Implement emergency key replacement protocol
+
+**Test Files:**
+- `tests/identity/test_host_registry.rs` (max 300 lines)
+- `tests/identity/test_key_rotation.rs` (max 250 lines)
+- `tests/identity/test_key_storage.rs` (max 250 lines)
+
+**Implementation Files:**
+- `src/identity/host_identity.rs` (max 400 lines) - Identity management
+- `src/identity/key_manager.rs` (max 350 lines) - Key lifecycle
+- `src/identity/keyring_storage.rs` (max 300 lines) - Secure storage
+- Update `src/host/registration.rs` - Add identity registration
+
+**Success Criteria:**
+- Keys stored securely in OS keyring
+- Key rotation works without service interruption
+- Backup/recovery tested successfully
+- Multi-sig reduces single point of failure
+
+### Sub-phase 9.4: Client-Side Proof Verification
+
+Implement client SDK components for proof verification and validation.
+
+#### Tasks
+
+- [ ] Create JavaScript/TypeScript proof verification library
+- [ ] Implement proof caching with TTL
+- [ ] Add batch proof verification for efficiency
+- [ ] Create proof validation UI components
+- [ ] Implement proof status tracking
+- [ ] Add WebSocket integration for real-time proof updates
+- [ ] Create proof explorer for transparency
+- [ ] Implement automated proof challenge triggers
+
+**Test Files:**
+- `tests/client/test_proof_verification.rs` (max 300 lines)
+- `sdk/tests/proof_verification.test.ts` (max 400 lines)
+- `tests/client/test_proof_cache.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/client/proof_verifier.rs` (max 350 lines) - Rust verification
+- `sdk/src/proof_verifier.ts` (max 400 lines) - TypeScript SDK
+- `src/client/proof_cache.rs` (max 250 lines) - Client-side caching
+- Update `src/api/websocket/messages.rs` - Ensure proof field compatibility
+
+**Success Criteria:**
+- Client can verify proofs independently
+- TypeScript SDK works in browser and Node.js
+- Proof verification < 10ms client-side
+- Cache hit rate > 80% for repeated verifications
+
+### Sub-phase 9.5: Migration from Mock EZKL
+
+Implement seamless migration path from mock to production proofs.
+
+#### Tasks
+
+- [ ] Create migration script for existing proofs
+- [ ] Implement dual-mode operation (mock + real)
+- [ ] Add feature flag for gradual rollout
+- [ ] Create backward compatibility layer
+- [ ] Implement proof type auto-detection
+- [ ] Add monitoring for migration progress
+- [ ] Create rollback mechanism if needed
+- [ ] Document breaking changes and migration guide
+
+**Test Files:**
+- `tests/migration/test_proof_migration.rs` (max 350 lines)
+- `tests/migration/test_compatibility.rs` (max 250 lines)
+- `tests/migration/test_dual_mode.rs` (max 200 lines)
+
+**Implementation Files:**
+- `src/migration/proof_migrator.rs` (max 400 lines) - Migration logic
+- `src/migration/compatibility.rs` (max 300 lines) - Compatibility layer
+- Update `src/results/proofs.rs` - Add migration support
+- `docs/MIGRATION_GUIDE.md` - User migration documentation
+
+**Environment Variables:**
+```bash
+# Proof system configuration
+PROOF_SYSTEM=ed25519  # or "mock" for backward compatibility
+PROOF_SIGNING_KEY_PATH=/secure/path/to/key
+PROOF_VERIFICATION_TIMEOUT_MS=1000
+PROOF_CACHE_SIZE=10000
+PROOF_SUBMISSION_GAS_LIMIT=100000
+ENABLE_PROOF_MIGRATION=true
+MIGRATION_GRACE_PERIOD_HOURS=48
+```
+
+**Success Criteria:**
+- Zero downtime during migration
+- Existing proofs remain valid
+- Feature flag controls rollout
+- Rollback possible within grace period
+- Performance metrics show improvement
+
+### Implementation Priority
+
+1. **9.1 CRITICAL** - Core cryptographic implementation (Required for production)
+2. **9.2 CRITICAL** - Smart contract integration (Required for payments)
+3. **9.3 Important** - Key management (Required for security)
+4. **9.4 Important** - Client verification (Required for trust)
+5. **9.5 Nice-to-have** - Migration tools (Can do manual migration)
+
+### Performance Requirements
+
+- **Proof Generation**: < 1ms per inference
+- **Proof Verification**: < 10ms (client), < 100k gas (on-chain)
+- **Proof Size**: < 1KB per proof
+- **Key Operations**: < 5ms for signing/verification
+- **Storage**: < 100MB for 100,000 proofs
+
+### Security Considerations
+
+1. **Key Security**: Use OS keyring, never store keys in plaintext
+2. **Replay Protection**: Include nonce/timestamp in signed data
+3. **Challenge Period**: 1 hour window for proof disputes
+4. **Multi-sig**: Required for jobs > $100 value
+5. **Audit Trail**: All proof operations logged
+
+### Comparison with Mock EZKL
+
+| Aspect | Mock EZKL | Ed25519 Output Proofs |
+|--------|-----------|----------------------|
+| Proof Generation Time | ~10ms | < 1ms |
+| Proof Size | 200-500 bytes | ~200 bytes |
+| Verification Time | ~5ms | < 1ms |
+| Security Level | Mock only | Cryptographically secure |
+| On-chain Compatible | No | Yes |
+| Production Ready | No | Yes |
+
 ### fabstir-llm-sdk
 
 - [ ] Phase 5.1: Core SDK
