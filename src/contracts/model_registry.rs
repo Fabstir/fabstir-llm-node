@@ -97,9 +97,35 @@ impl ModelRegistryClient {
         model_registry_address: Address,
         node_registry_address: Option<Address>,
     ) -> Result<Self> {
+        // Verify ModelRegistry contract exists
+        let code = provider
+            .get_code(model_registry_address, None)
+            .await
+            .map_err(|e| anyhow!("Failed to check ModelRegistry contract: {}", e))?;
+
+        if code == ethers::types::Bytes::from(vec![]) {
+            return Err(anyhow!(
+                "ModelRegistry contract not deployed at address: {:?}",
+                model_registry_address
+            ));
+        }
+
         let contract = Arc::new(ModelRegistry::new(model_registry_address, provider.clone()));
 
         let node_registry = if let Some(addr) = node_registry_address {
+            // Verify NodeRegistryWithModels contract exists
+            let node_code = provider
+                .get_code(addr, None)
+                .await
+                .map_err(|e| anyhow!("Failed to check NodeRegistryWithModels contract: {}", e))?;
+
+            if node_code == ethers::types::Bytes::from(vec![]) {
+                return Err(anyhow!(
+                    "NodeRegistryWithModels contract not deployed at address: {:?}",
+                    addr
+                ));
+            }
+
             Some(Arc::new(NodeRegistryWithModels::new(addr, provider.clone())))
         } else {
             None
@@ -121,49 +147,66 @@ impl ModelRegistryClient {
     pub async fn is_model_approved(&self, model_id: H256) -> Result<bool> {
         debug!("Checking if model {:?} is approved", model_id);
 
-        // For MVP, check against our known approved models
-        let is_approved = self.approved_models.get_all_ids().contains(&model_id);
+        // Call the actual contract
+        let method = self.contract
+            .method::<_, bool>("isModelApproved", model_id)
+            .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
-        // Optional: Also check on-chain (commented out for mock)
-        // let approved = self.contract.is_model_approved(model_id).call().await?;
+        let approved = method
+            .call()
+            .await
+            .map_err(|e| anyhow!("Failed to check model approval: {}", e))?;
 
-        Ok(is_approved)
+        Ok(approved)
     }
 
     /// Get model details from registry
     pub async fn get_model_details(&self, model_id: H256) -> Result<ModelInfo> {
         debug!("Getting details for model {:?}", model_id);
 
-        // For MVP, return mock data for approved models
-        if model_id == self.approved_models.tiny_vicuna.id {
-            Ok(ModelInfo {
-                huggingface_repo: self.approved_models.tiny_vicuna.repo.clone(),
-                file_name: self.approved_models.tiny_vicuna.file.clone(),
-                sha256_hash: H256::from_slice(&hex::decode(&self.approved_models.tiny_vicuna.sha256)?),
-                approval_tier: 1,
-                active: true,
-                timestamp: 1735000000, // Mock timestamp
-            })
-        } else if model_id == self.approved_models.tiny_llama.id {
-            Ok(ModelInfo {
-                huggingface_repo: self.approved_models.tiny_llama.repo.clone(),
-                file_name: self.approved_models.tiny_llama.file.clone(),
-                sha256_hash: H256::from_slice(&hex::decode(&self.approved_models.tiny_llama.sha256)?),
-                approval_tier: 1,
-                active: true,
-                timestamp: 1735000000, // Mock timestamp
-            })
-        } else {
-            Err(anyhow!("Model not found in registry"))
-        }
+        // Call the actual contract to get model details
+        let method = self.contract
+            .method::<_, (String, String, H256, u8, bool, u64)>("getModel", model_id)
+            .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+        let model_data = method
+            .call()
+            .await
+            .map_err(|e| anyhow!("Failed to get model details: {}", e))?;
+
+        Ok(ModelInfo {
+            huggingface_repo: model_data.0,
+            file_name: model_data.1,
+            sha256_hash: model_data.2,
+            approval_tier: model_data.3,
+            active: model_data.4,
+            timestamp: model_data.5,
+        })
     }
 
     /// Get all approved model IDs
     pub async fn get_all_approved_models(&self) -> Result<Vec<H256>> {
         info!("Getting all approved models");
 
-        // For MVP, return our two approved models
-        Ok(self.approved_models.get_all_ids())
+        // Call the actual contract to get all model IDs
+        let method = self.contract
+            .method::<_, Vec<H256>>("getAllModels", ())
+            .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+        let model_ids = method
+            .call()
+            .await
+            .map_err(|e| anyhow!("Failed to get all models: {}", e))?;
+
+        // Filter to only approved models
+        let mut approved = Vec::new();
+        for id in model_ids {
+            if self.is_model_approved(id).await? {
+                approved.push(id);
+            }
+        }
+
+        Ok(approved)
     }
 
     /// Verify model file integrity
@@ -247,11 +290,17 @@ impl ModelRegistryClient {
         if let Some(registry) = &self.node_registry {
             debug!("Finding hosts for model {:?}", model_id);
 
-            // Mock implementation - would call contract in production
-            // let addresses = registry.get_nodes_for_model(model_id).call().await?;
+            // Call the actual contract
+            let method = registry
+                .method::<_, Vec<Address>>("getNodesForModel", model_id)
+                .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
-            // For testing, return empty vec
-            Ok(Vec::new())
+            let addresses = method
+                .call()
+                .await
+                .map_err(|e| anyhow!("Failed to get nodes for model: {}", e))?;
+
+            Ok(addresses)
         } else {
             Err(anyhow!("NodeRegistryWithModels not configured"))
         }

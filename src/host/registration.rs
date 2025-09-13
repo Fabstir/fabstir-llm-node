@@ -130,79 +130,162 @@ impl NodeRegistration {
             }
         }
 
-        // Mock: In real implementation, would approve stake token transfer
-        debug!("Approving stake transfer (mocked)");
-
         // Build metadata JSON
         let metadata_json = self.build_metadata_json();
 
-        // Mock: In real implementation, would call contract
-        if self.use_new_registry {
-            info!("Calling registerNode on NodeRegistryWithModels (mocked)");
-            debug!("Metadata: {}", metadata_json);
-            debug!("API URL: {}", self.metadata.api_url);
-            debug!("Model IDs: {:?}", self.metadata.model_ids);
-        } else {
-            info!("Calling registerNode on legacy NodeRegistry (mocked)");
-            debug!("Metadata: {}", metadata_json);
-        }
+        // Call the actual contract
+        let receipt = if self.use_new_registry {
+            if let Some(ref new_contract) = self.new_contract {
+                info!("Calling registerNode on NodeRegistryWithModels");
+                debug!("Metadata: {}", metadata_json);
+                debug!("API URL: {}", self.metadata.api_url);
+                debug!("Model IDs: {:?}", self.metadata.model_ids);
 
-        // Mark as registered
+                let method = new_contract
+                    .method::<_, ()>(
+                        "registerNode",
+                        (metadata_json.clone(), self.metadata.api_url.clone(), self.metadata.model_ids.clone())
+                    )
+                    .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+                let method_with_value = method.value(self.stake_amount);
+                let tx = method_with_value
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("Failed to register node: {}", e))?;
+
+                tx.await
+                    .map_err(|e| anyhow!("Transaction failed: {}", e))?
+                    .ok_or_else(|| anyhow!("Transaction receipt not found"))?
+            } else {
+                return Err(anyhow!("NodeRegistryWithModels contract not configured"));
+            }
+        } else {
+            info!("Calling registerNode on legacy NodeRegistry");
+            debug!("Metadata: {}", metadata_json);
+
+            let method = self.contract
+                .method::<_, ()>("registerNode", (metadata_json, self.stake_amount))
+                .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+            let tx = method
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to register node: {}", e))?;
+
+            tx.await
+                .map_err(|e| anyhow!("Transaction failed: {}", e))?
+                .ok_or_else(|| anyhow!("Transaction receipt not found"))?
+        };
+
+        // Mark as registered only after successful transaction
         self.is_registered.store(true, Ordering::Relaxed);
 
         // Start heartbeat
         self.start_heartbeat();
 
-        // Return mock receipt
-        Ok(TransactionReceipt {
-            transaction_hash: H256::random(),
-            block_hash: Some(H256::random()),
-            block_number: Some(U64::from(12345)),
-            gas_used: Some(U256::from(100000)),
-            status: Some(U64::from(1)),
-            ..Default::default()
-        })
+        Ok(receipt)
     }
     
     pub async fn update_capabilities(&mut self, metadata: NodeMetadata) -> Result<()> {
         info!("Updating node capabilities");
-        
+
         if !self.is_registered.load(Ordering::Relaxed) {
             return Err(anyhow!("Node not registered"));
         }
-        
+
         // Update metadata
         self.metadata = metadata;
-        
+
         // Build new metadata JSON
         let metadata_json = self.build_metadata_json();
-        
-        // Mock: In real implementation, would call contract update
-        debug!("Calling updateNode on contract (mocked)");
-        debug!("New metadata: {}", metadata_json);
-        
+
+        // Call the actual contract to update metadata
+        if self.use_new_registry {
+            if let Some(ref new_contract) = self.new_contract {
+                let method = new_contract
+                    .method::<_, ()>("updateMetadata", metadata_json)
+                    .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+                let tx = method
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("Failed to update metadata: {}", e))?;
+
+                tx.await
+                    .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+            } else {
+                return Err(anyhow!("NodeRegistryWithModels contract not configured"));
+            }
+        } else {
+            let method = self.contract
+                .method::<_, ()>("updateNode", metadata_json)
+                .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+            let tx = method
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to update node: {}", e))?;
+
+            tx.await
+                .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+        }
+
         Ok(())
     }
     
     pub async fn unregister_node(&mut self) -> Result<()> {
         info!("Unregistering node");
-        
+
         if !self.is_registered.load(Ordering::Relaxed) {
             return Err(anyhow!("Node not registered"));
         }
-        
+
         // Stop heartbeat first
         self.stop_heartbeat().await;
-        
-        // Mock: In real implementation, would call contract
-        debug!("Calling unregisterNode on contract (mocked)");
-        
-        // Mark as unregistered
+
+        // Call the actual contract to unregister
+        if self.use_new_registry {
+            if let Some(ref new_contract) = self.new_contract {
+                let method = new_contract
+                    .method::<_, ()>("unregisterNode", ())
+                    .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+                let tx = method
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("Failed to unregister node: {}", e))?;
+
+                let receipt = tx.await
+                    .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+
+                if let Some(receipt) = receipt {
+                    info!("Node unregistered, stake returned in tx: {:?}", receipt.transaction_hash);
+                }
+            } else {
+                return Err(anyhow!("NodeRegistryWithModels contract not configured"));
+            }
+        } else {
+            let method = self.contract
+                .method::<_, ()>("unregisterNode", ())
+                .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
+
+            let tx = method
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to unregister node: {}", e))?;
+
+            let receipt = tx.await
+                .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+
+            if let Some(receipt) = receipt {
+                info!("Node unregistered, stake returned in tx: {:?}", receipt.transaction_hash);
+            }
+        }
+
+        // Mark as unregistered only after successful transaction
         self.is_registered.store(false, Ordering::Relaxed);
-        
-        // Mock: Return stake (in real implementation)
-        info!("Stake returned (mocked): {}", self.stake_amount);
-        
+
         Ok(())
     }
     
@@ -224,16 +307,17 @@ impl NodeRegistration {
             info!("Starting heartbeat with interval: {}s", interval);
             
             loop {
-                // Mock: In real implementation, would send transaction
-                debug!("Sending heartbeat for node: {} (mocked)", node_address);
-                
+                // Note: Heartbeat is typically handled off-chain or via a separate service
+                // This is a placeholder for actual heartbeat implementation
+                debug!("Heartbeat check for node: {}", node_address);
+
                 // Update last heartbeat timestamp
                 let now = chrono::Utc::now().timestamp() as u64;
                 last_heartbeat.store(now, Ordering::Relaxed);
-                
+
                 // Wait for next interval
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
-                
+
                 // Check if should stop (for unregistration)
                 if !is_registered.load(Ordering::Relaxed) {
                     debug!("Node unregistered, stopping heartbeat");
@@ -253,10 +337,46 @@ impl NodeRegistration {
     }
     
     pub async fn check_stake_requirement(&self) -> bool {
-        // Mock: Check if stake amount meets minimum requirement
-        // In real implementation, would check contract for minimum stake
-        let min_stake = U256::from(500000u64); // 500K wei minimum
-        
+        // Check contract for minimum stake requirement
+        let min_stake = if self.use_new_registry {
+            if let Some(ref new_contract) = self.new_contract {
+                let method = match new_contract.method::<_, U256>("MIN_STAKE", ()) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("Failed to create method call: {}", e);
+                        return false;
+                    }
+                };
+
+                match method.call().await {
+                    Ok(stake) => stake,
+                    Err(e) => {
+                        error!("Failed to get minimum stake requirement: {}", e);
+                        return false;
+                    }
+                }
+            } else {
+                error!("NodeRegistryWithModels contract not configured");
+                return false;
+            }
+        } else {
+            let method = match self.contract.method::<_, U256>("getMinimumStake", ()) {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to create method call: {}", e);
+                    return false;
+                }
+            };
+
+            match method.call().await {
+                Ok(stake) => stake,
+                Err(e) => {
+                    error!("Failed to get minimum stake requirement: {}", e);
+                    return false;
+                }
+            }
+        };
+
         if self.stake_amount < min_stake {
             warn!("Stake amount {} is less than minimum {}", self.stake_amount, min_stake);
             false
