@@ -520,6 +520,15 @@ async fn websocket_handler(
 async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
     use serde_json::json;
     
+    // Send connection acknowledgment
+    let welcome_msg = json!({
+        "type": "connected",
+        "message": "WebSocket connected successfully"
+    });
+    if socket.send(axum::extract::ws::Message::Text(welcome_msg.to_string())).await.is_err() {
+        return;
+    }
+    
     while let Some(msg) = socket.recv().await {
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
@@ -535,7 +544,6 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             "type": "stream_chunk",
                                             "content": response.content,
                                             "tokens": response.tokens,
-                                            "proof": response.proof,
                                         });
                                         
                                         if socket.send(axum::extract::ws::Message::Text(ws_msg.to_string())).await.is_err() {
@@ -543,7 +551,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         }
                                         
                                         if response.finish_reason.is_some() {
-                                            let end_msg = json!({"type": "stream_end", "proof": response.proof});
+                                            let end_msg = json!({"type": "stream_end"});
                                             let _ = socket.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
                                             break;
                                         }

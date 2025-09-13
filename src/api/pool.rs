@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 use std::collections::HashMap;
 use anyhow::Result;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PoolConfig {
     pub min_connections: usize,
     pub max_connections: usize,
