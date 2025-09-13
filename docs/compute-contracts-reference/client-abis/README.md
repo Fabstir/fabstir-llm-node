@@ -24,7 +24,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - Total gas savings: ~80%
 
 ### ModelRegistry (NEW - CORRECTED)
-- **Address**: 0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357
+- **Address**: 0x92b2De840bB2171203011A6dBA928d855cA8183E
 - **Network**: Base Sepolia
 - **Status**: ✅ MODEL GOVERNANCE ENABLED
 - **Purpose**: Manages approved AI models for the marketplace
@@ -38,7 +38,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - TinyLlama-1.1B Chat (TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
 
 ### NodeRegistryWithModels (DEPLOYED)
-- **Address**: 0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100
+- **Address**: 0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
 - **Network**: Base Sepolia
 - **Status**: ✅ DEPLOYED AND READY
 - **Stake Required**: 1000 FAB tokens
@@ -81,7 +81,7 @@ const provider = new ethers.providers.JsonRpcProvider('https://base-sepolia.g.al
 
 // Model Registry instance
 const modelRegistry = new ethers.Contract(
-  '0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357',  // CORRECTED - Only 2 models
+  '0x92b2De840bB2171203011A6dBA928d855cA8183E',  // CORRECTED - Only 2 models
   ModelRegistryABI,
   provider
 );
@@ -103,7 +103,7 @@ console.log(`Active: ${model.active}`);
 
 // For hosts - register with approved models only
 const nodeRegistry = new ethers.Contract(
-  '0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100',  // NodeRegistryWithModels
+  '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218',  // NodeRegistryWithModels
   NodeRegistryABI,
   signer
 );
@@ -172,7 +172,7 @@ const marketplace = new ethers.Contract(
 );
 
 const nodeRegistry = new ethers.Contract(
-  '0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100', // NodeRegistryWithModels
+  '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218', // NodeRegistryWithModels
   NodeRegistryABI,
   provider
 );
@@ -262,9 +262,9 @@ await nodeRegistry.updateApiUrl('http://your-host.com:8080');
 ### For SDK Developers
 Update contract addresses and use the new discovery functions:
 ```javascript
-const NODE_REGISTRY = '0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100';
+const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
 const JOB_MARKETPLACE = '0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0';
-const MODEL_REGISTRY = '0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357';
+const MODEL_REGISTRY = '0x92b2De840bB2171203011A6dBA928d855cA8183E';
 ```
 
 ## Last Updated

@@ -81,7 +81,7 @@ Or when issues are present:
 
 ### List Available Models
 
-Retrieve a list of models available on this node.
+Retrieve a list of models available on this node. With the new model governance system, only approved models from the ModelRegistry are available.
 
 #### Request
 
@@ -95,14 +95,20 @@ GET /v1/models
 {
   "models": [
     {
-      "id": "llama-2-7b",
-      "name": "Llama 2 7B",
-      "description": "Meta's Llama 2 model with 7 billion parameters"
+      "id": "0x1234...abcd",
+      "name": "tiny-vicuna-1b.q4_k_m.gguf",
+      "huggingface_repo": "CohereForAI/TinyVicuna-1B-32k-GGUF",
+      "sha256_hash": "329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f",
+      "approval_tier": 1,
+      "description": "TinyVicuna 1B model with 32k context, Q4_K_M quantization"
     },
     {
-      "id": "vicuna-13b",
-      "name": "Vicuna 13B",
-      "description": "Fine-tuned LLaMA model for conversation"
+      "id": "0x5678...efgh",
+      "name": "tinyllama-1b.Q4_K_M.gguf",
+      "huggingface_repo": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+      "sha256_hash": "45b71fe98efe5f530b825dce6f5049d738e9c16869f10be4370ab81a9912d4a6",
+      "approval_tier": 1,
+      "description": "TinyLlama 1.1B Chat model, Q4_K_M quantization"
     }
   ]
 }
@@ -112,9 +118,12 @@ GET /v1/models
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `models` | Array | List of available models |
-| `models[].id` | String | Unique model identifier |
-| `models[].name` | String | Human-readable model name |
+| `models` | Array | List of available models approved by ModelRegistry |
+| `models[].id` | String | Keccak256 hash of repo/filename (model ID) |
+| `models[].name` | String | Model filename (GGUF format) |
+| `models[].huggingface_repo` | String | HuggingFace repository path |
+| `models[].sha256_hash` | String | SHA256 hash for integrity verification |
+| `models[].approval_tier` | Integer | Approval level (1=trusted, 2=community) |
 | `models[].description` | String? | Optional model description |
 
 #### Status Codes
@@ -2026,7 +2035,13 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v1.2** (Current) - Enhanced proof integration in WebSocket messages (Sub-phases 8.14-8.15)
+- **v1.3** (Current) - Model Governance and Registry Integration
+  - Integration with ModelRegistry smart contract for approved models
+  - Model validation with SHA256 hash verification
+  - Node registration with validated model IDs
+  - Support for NodeRegistryWithModels contract
+  - Only approved models (TinyVicuna, TinyLlama) available for inference
+- **v1.2** - Enhanced proof integration in WebSocket messages (Sub-phases 8.14-8.15)
   - ProofData structure in ConversationMessage and StreamToken
   - ProofManager with LRU cache eviction (HashMap + VecDeque)
   - ProofConfig for environment-based configuration

@@ -8,27 +8,34 @@ use tracing::{info, warn, error, debug};
 use serde::{Serialize, Deserialize};
 use serde_json;
 
-use crate::contracts::types::NodeRegistry;
+use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
+use crate::contracts::model_registry::{ModelRegistryClient, ApprovedModels};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
-    pub models: Vec<String>,        // ["llama-3.2", "tiny-vicuna"]
+    pub models: Vec<String>,        // Model file paths
+    pub model_ids: Vec<H256>,       // Validated model IDs from registry
     pub gpu: String,                // "RTX 4090"
     pub ram_gb: u32,                // 64
     pub cost_per_token: f64,        // 0.0001
     pub max_concurrent_jobs: u32,   // 5
+    pub api_url: String,            // Node's API endpoint URL
 }
 
 #[derive(Debug, Clone)]
 pub struct RegistrationConfig {
     pub contract_address: Address,
+    pub model_registry_address: Address,
     pub stake_amount: U256,
     pub auto_register: bool,
     pub heartbeat_interval: u64, // seconds
+    pub use_new_registry: bool,  // Use NodeRegistryWithModels if true
 }
 
 pub struct NodeRegistration {
     contract: Arc<NodeRegistry<SignerMiddleware<Provider<Http>, LocalWallet>>>,
+    new_contract: Option<Arc<NodeRegistryWithModels<SignerMiddleware<Provider<Http>, LocalWallet>>>>,
+    model_registry: Option<ModelRegistryClient>,
     node_address: Address,
     stake_amount: U256,
     metadata: NodeMetadata,
@@ -36,27 +43,54 @@ pub struct NodeRegistration {
     is_registered: Arc<AtomicBool>,
     last_heartbeat: Arc<AtomicU64>,
     heartbeat_interval: u64,
+    use_new_registry: bool,
 }
 
 impl NodeRegistration {
     pub async fn new(
         provider: Arc<Provider<Http>>,
         wallet: LocalWallet,
-        metadata: NodeMetadata,
+        mut metadata: NodeMetadata,
         config: RegistrationConfig,
     ) -> Result<Self> {
         // Create signer middleware
         let chain_id = provider.get_chainid().await.unwrap_or(U256::from(1));
         let wallet = wallet.with_chain_id(chain_id.as_u64());
         let client = Arc::new(SignerMiddleware::new(provider.as_ref().clone(), wallet.clone()));
-        
-        // Create contract instance
-        let contract = Arc::new(NodeRegistry::new(config.contract_address, client));
-        
+
+        // Create contract instances
+        let contract = Arc::new(NodeRegistry::new(config.contract_address, client.clone()));
+
+        let new_contract = if config.use_new_registry {
+            Some(Arc::new(NodeRegistryWithModels::new(config.contract_address, client.clone())))
+        } else {
+            None
+        };
+
+        // Create model registry client
+        let model_registry = if config.use_new_registry {
+            let registry_client = ModelRegistryClient::new(
+                provider.clone(),
+                config.model_registry_address,
+                Some(config.contract_address),
+            ).await?;
+
+            // Validate models and get their IDs
+            let model_ids = registry_client.validate_models_for_registration(&metadata.models).await?;
+            metadata.model_ids = model_ids;
+
+            Some(registry_client)
+        } else {
+            metadata.model_ids = Vec::new();
+            None
+        };
+
         let node_address = wallet.address();
-        
+
         let mut registration = Self {
             contract,
+            new_contract,
+            model_registry,
             node_address,
             stake_amount: config.stake_amount,
             metadata,
@@ -64,6 +98,7 @@ impl NodeRegistration {
             is_registered: Arc::new(AtomicBool::new(false)),
             last_heartbeat: Arc::new(AtomicU64::new(0)),
             heartbeat_interval: config.heartbeat_interval,
+            use_new_registry: config.use_new_registry,
         };
         
         // Auto-register if configured
@@ -77,28 +112,47 @@ impl NodeRegistration {
     
     pub async fn register_node(&mut self) -> Result<TransactionReceipt> {
         info!("Registering node with stake: {}", self.stake_amount);
-        
+
         // Check stake requirement first
         if !self.check_stake_requirement().await {
             return Err(anyhow!("Insufficient stake amount"));
         }
-        
+
+        // If using new registry, validate models
+        if self.use_new_registry {
+            if self.metadata.model_ids.is_empty() {
+                return Err(anyhow!("No approved models configured for registration"));
+            }
+
+            info!("Registering with {} approved models", self.metadata.model_ids.len());
+            for model_id in &self.metadata.model_ids {
+                debug!("Model ID: {:?}", model_id);
+            }
+        }
+
         // Mock: In real implementation, would approve stake token transfer
         debug!("Approving stake transfer (mocked)");
-        
+
         // Build metadata JSON
         let metadata_json = self.build_metadata_json();
-        
+
         // Mock: In real implementation, would call contract
-        info!("Calling registerNode on contract (mocked)");
-        debug!("Metadata: {}", metadata_json);
-        
+        if self.use_new_registry {
+            info!("Calling registerNode on NodeRegistryWithModels (mocked)");
+            debug!("Metadata: {}", metadata_json);
+            debug!("API URL: {}", self.metadata.api_url);
+            debug!("Model IDs: {:?}", self.metadata.model_ids);
+        } else {
+            info!("Calling registerNode on legacy NodeRegistry (mocked)");
+            debug!("Metadata: {}", metadata_json);
+        }
+
         // Mark as registered
         self.is_registered.store(true, Ordering::Relaxed);
-        
+
         // Start heartbeat
         self.start_heartbeat();
-        
+
         // Return mock receipt
         Ok(TransactionReceipt {
             transaction_hash: H256::random(),
@@ -212,14 +266,30 @@ impl NodeRegistration {
     }
     
     pub fn build_metadata_json(&self) -> String {
-        let metadata_obj = serde_json::json!({
-            "models": self.metadata.models,
-            "gpu": self.metadata.gpu,
-            "ram": self.metadata.ram_gb,
-            "cost_per_token": self.metadata.cost_per_token,
-            "max_concurrent_jobs": self.metadata.max_concurrent_jobs,
-        });
-        
+        let metadata_obj = if self.use_new_registry {
+            // New format for NodeRegistryWithModels
+            serde_json::json!({
+                "hardware": {
+                    "gpu": self.metadata.gpu,
+                    "vram": 24, // Mock VRAM value
+                    "ram_gb": self.metadata.ram_gb,
+                },
+                "capabilities": ["inference", "streaming"],
+                "location": "us-east",
+                "maxConcurrent": self.metadata.max_concurrent_jobs,
+                "cost_per_token": self.metadata.cost_per_token,
+            })
+        } else {
+            // Legacy format
+            serde_json::json!({
+                "models": self.metadata.models,
+                "gpu": self.metadata.gpu,
+                "ram": self.metadata.ram_gb,
+                "cost_per_token": self.metadata.cost_per_token,
+                "max_concurrent_jobs": self.metadata.max_concurrent_jobs,
+            })
+        };
+
         metadata_obj.to_string()
     }
     
@@ -245,6 +315,14 @@ impl NodeRegistration {
     
     pub fn get_metadata(&self) -> &NodeMetadata {
         &self.metadata
+    }
+
+    pub fn get_model_ids(&self) -> &[H256] {
+        &self.metadata.model_ids
+    }
+
+    pub fn get_api_url(&self) -> &str {
+        &self.metadata.api_url
     }
     
     /// Check if heartbeat is healthy (not stale)

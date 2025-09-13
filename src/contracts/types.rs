@@ -386,3 +386,14 @@ pub struct BlockRange {
     pub from: Option<BlockNumber>,
     pub to: Option<BlockNumber>,
 }
+
+// Model Registry ABIs
+abigen!(
+    ModelRegistry,
+    "./contracts/ModelRegistry-CLIENT-ABI.json"
+);
+
+abigen!(
+    NodeRegistryWithModels,
+    "./contracts/NodeRegistryWithModels-CLIENT-ABI.json"
+);
