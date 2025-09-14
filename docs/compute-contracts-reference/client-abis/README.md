@@ -2,18 +2,23 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (January 13, 2025)
+## Current Deployed Contracts (January 14, 2025 FINAL)
 
-### JobMarketplace
-- **Address**: 0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0
-- **Previous**: 0x6b4D28bD09Ba31394972B55E8870CFD4F835Acb6
+### JobMarketplaceWithModels
+- **Address**: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
+- **Previous**: 0xb082Ae609D59BFB21073AF73eB37BFe4C36ab1c9
 - **Network**: Base Sepolia
-- **Status**: ✅ API DISCOVERY COMPATIBLE + TREASURY ACCUMULATION
+- **Status**: ✅ FULLY WORKING - ALL ISSUES FIXED
+- **Configuration**:
+  - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
+  - Authorized in HostEarnings: ✅ CONFIRMED
 - **Key Features**:
-  - Compatible with 5-field Node struct from updated NodeRegistry (NEW)
+  - FIXED: Properly calls creditEarnings() for host balance tracking
+  - Compatible with NodeRegistryWithModels 6-field struct
+  - Validates hosts have supported models
   - User refunds fixed for session jobs
   - Treasury fee accumulation for batch withdrawals
-  - Host earnings accumulation (70% gas savings)
+  - Host earnings accumulation WITH PROPER TRACKING
   - USDC payment settlement with 97.5% host / 2.5% treasury distribution
   - ETH and USDC payment support fully functional
   - Direct payment distribution (no external escrow)
@@ -166,7 +171,7 @@ const provider = new ethers.providers.JsonRpcProvider('https://base-sepolia.g.al
 
 // Create contract instances
 const marketplace = new ethers.Contract(
-  '0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0', // CURRENT deployment with USDC fixed
+  '0x56431bDeA20339c40470eC86BC2E3c09B065AFFe', // CURRENT deployment compatible with NodeRegistryWithModels
   JobMarketplaceABI,
   provider
 );
@@ -263,7 +268,7 @@ await nodeRegistry.updateApiUrl('http://your-host.com:8080');
 Update contract addresses and use the new discovery functions:
 ```javascript
 const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
-const JOB_MARKETPLACE = '0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0';
+const JOB_MARKETPLACE = '0x56431bDeA20339c40470eC86BC2E3c09B065AFFe';
 const MODEL_REGISTRY = '0x92b2De840bB2171203011A6dBA928d855cA8183E';
 ```
 

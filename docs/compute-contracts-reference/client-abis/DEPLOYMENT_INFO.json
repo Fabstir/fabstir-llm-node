@@ -1,19 +1,23 @@
 {
   "network": "Base Sepolia",
   "chainId": 84532,
-  "lastUpdated": "2025-01-13",
-  "status": "Model Governance + API Discovery + Treasury Accumulation Deployed",
+  "lastUpdated": "2025-01-14 FINAL",
+  "status": "FULLY WORKING JobMarketplace - All Issues Fixed",
   "contracts": {
-    "JobMarketplace": {
-      "address": "0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0",
-      "previousAddress": "0x6b4D28bD09Ba31394972B55E8870CFD4F835Acb6",
-      "deploymentDate": "2025-09-13",
-      "status": "ACTIVE - API DISCOVERY COMPATIBLE",
+    "JobMarketplaceWithModels": {
+      "address": "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944",
+      "previousAddress": "0xb082Ae609D59BFB21073AF73eB37BFe4C36ab1c9",
+      "deploymentDate": "2025-01-14 FINAL",
+      "status": "ACTIVE - FULLY WORKING",
       "features": [
-        "Compatible with 5-field Node struct (NEW)",
+        "Compatible with NodeRegistryWithModels 6-field struct",
+        "FIXED: Properly calls creditEarnings() in HostEarnings",
+        "ProofSystem configured at 0x2ACcc60893872A499700908889B38C5420CBcFD1",
+        "Authorized in HostEarnings contract",
+        "Validates host has supported models",
         "User refunds fixed",
         "Treasury fee accumulation",
-        "Host earnings accumulation",
+        "Host earnings accumulation WITH PROPER TRACKING",
         "USDC payment settlement working",
         "90% host / 10% treasury distribution",
         "ETH payments working",
@@ -74,11 +78,12 @@
       "address": "0x908962e8c6CE72610021586f85ebDE09aAc97776",
       "deploymentDate": "2025-01-05",
       "status": "ACTIVE",
-      "authorizedMarketplace": "0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0",
+      "authorizedMarketplace": "0xb082Ae609D59BFB21073AF73eB37BFe4C36ab1c9",
       "features": [
         "Batch withdrawal for hosts",
         "Multi-token support (ETH + USDC)",
-        "Gas-efficient accumulation pattern"
+        "Gas-efficient accumulation pattern",
+        "creditEarnings() properly called by JobMarketplace"
       ]
     },
     "ProofSystem": {
