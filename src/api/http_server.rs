@@ -114,7 +114,17 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                 // Parse WebSocket message
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
                     if json_msg["type"] == "inference" {
+                        // Debug: Log the entire request
+                        tracing::info!("🔍 WebSocket inference request received: {:?}", json_msg["request"]);
+
                         if let Ok(request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
+                            // Log job_id for payment tracking visibility
+                            if let Some(job_id) = request.job_id {
+                                tracing::info!("📋 Processing inference request for blockchain job_id: {}", job_id);
+                            } else {
+                                tracing::info!("⚠️  No job_id in WebSocket request");
+                            }
+
                             // Handle streaming inference
                             match state.api_server.handle_streaming_request(request, "ws-client".to_string()).await {
                                 Ok(mut receiver) => {

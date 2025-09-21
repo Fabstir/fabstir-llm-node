@@ -1,31 +1,42 @@
 use crate::job_processor::Message;
 
 /// Build a prompt with conversation context
-/// Limits to last 10 messages for context window
+/// Uses a format that works well with the model
 pub fn build_prompt_with_context(
-    context: &[Message], 
+    context: &[Message],
     prompt: &str
 ) -> String {
+    // If no context, format as Q&A to help the model
+    if context.is_empty() {
+        // If it's a question, add Q&A format
+        if prompt.contains('?') {
+            return format!("Q: {}\nA:", prompt);
+        }
+        // Otherwise return as-is
+        return prompt.to_string();
+    }
+
     let mut full_prompt = String::new();
-    
+
     // Take last 10 messages maximum
     let recent_context = if context.len() > 10 {
         &context[context.len() - 10..]
     } else {
         context
     };
-    
-    // Format each message
+
+    // Format as Q&A for better model understanding
     for msg in recent_context {
-        full_prompt.push_str(&format!("{}: {}\n", 
-            msg.role.to_lowercase(), 
-            msg.content
-        ));
+        match msg.role.to_lowercase().as_str() {
+            "user" => full_prompt.push_str(&format!("User: {}\n", msg.content)),
+            "assistant" => full_prompt.push_str(&format!("Assistant: {}\n", msg.content)),
+            _ => {}
+        }
     }
-    
-    // Add current prompt
-    full_prompt.push_str(&format!("user: {}\nassistant:", prompt));
-    
+
+    // Add current prompt with clear marker
+    full_prompt.push_str(&format!("User: {}\nAssistant:", prompt));
+
     full_prompt
 }
 
@@ -53,7 +64,7 @@ mod tests {
         let context = vec![];
         let prompt = "Hello";
         let result = build_prompt_with_context(&context, prompt);
-        assert_eq!(result, "user: Hello\nassistant:");
+        assert!(result.contains("USER: Hello\nASSISTANT:"));
     }
 
     #[test]

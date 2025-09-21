@@ -238,7 +238,10 @@ impl LlmEngine {
     
     pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
         let start_time = Instant::now();
-        
+
+        // Debug log the prompt
+        println!("DEBUG: Inference prompt: {:?}", request.prompt);
+
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
             return Err(anyhow!("Model not found: {}", request.model_id));
@@ -248,7 +251,7 @@ impl LlmEngine {
         *self.inference_count.write().await += 1;
         
         // Check if we have a real model loaded and perform generation
-        let (output, tokens_generated, generation_time) = {
+        let (output, tokens_generated, generation_time, token_info_list) = {
             let mut models = self.models.lock().unwrap();
             let has_real_model = models.contains_key(&request.model_id);
             
@@ -297,9 +300,12 @@ impl LlmEngine {
             
             // Generate tokens
             let mut output = String::new();
+            let mut token_info_list: Vec<TokenInfo> = Vec::new();
             let mut n_cur = prompt_tokens.len();
             let max_tokens = request.max_tokens;
-            
+            let mut recent_text = String::new();  // Track recent text for pattern detection
+            let mut seen_first_response = false; // Track if we've started generating assistant response
+
             while n_cur < prompt_tokens.len() + max_tokens {
                 // Sample next token using sampler chain
                 let mut sampler = LlamaSampler::chain_simple([
@@ -307,33 +313,159 @@ impl LlmEngine {
                     LlamaSampler::top_p(request.top_p, 1),
                     LlamaSampler::greedy(),
                 ]);
-                
+
                 let new_token_id = sampler.sample(&context, -1);
-                
+
                 // Check for EOS
                 if new_token_id == eos_token {
                     break;
                 }
-                
+
                 // Convert token to string
                 let token_str = model.model.token_to_str(new_token_id, Special::Plaintext)
                     .map_err(|e| anyhow!("Token to string failed: {:?}", e))?;
+
+                // Update recent text buffer (keep last 50 chars for pattern detection)
+                recent_text.push_str(&token_str);
+                if recent_text.len() > 50 {
+                    recent_text = recent_text.chars().skip(recent_text.len() - 50).collect();
+                }
+
+                // Mark that we've started generating content
+                if !output.is_empty() {
+                    seen_first_response = true;
+                }
+
+                // Check for conversation patterns that indicate we should stop
+                // This prevents the model from continuing to generate conversation history
+                // BUT only after we've generated at least some response
+
+                let mut should_stop = false;
+                if output.len() > 5 {  // After we have at least some content
+                    // Check various conversation continuation patterns
+                    let stop_patterns = [
+                        // Our format
+                        "\nUser:", "\nAssistant:",
+                        ". User:", ". Assistant:",
+                        // Common continuations
+                        "\nuser:", "\nassistant:",
+                        // Q&A patterns
+                        "\nQ:", "\nA:",
+                        ". Q:", ". A:",
+                    ];
+
+                    // Check if output contains any of these patterns
+                    for pattern in &stop_patterns {
+                        if output.contains(pattern) {
+                            // Find where the pattern starts and truncate there
+                            if let Some(pos) = output.rfind(pattern) {
+                                output.truncate(pos);
+
+                                // Also truncate token_info_list to match
+                                // Count how many tokens to keep
+                                let mut kept_len = 0;
+                                let mut tokens_to_keep = 0;
+                                for (i, token) in token_info_list.iter().enumerate() {
+                                    kept_len += token.text.len();
+                                    if kept_len >= output.len() {
+                                        tokens_to_keep = i + 1;
+                                        break;
+                                    }
+                                }
+                                token_info_list.truncate(tokens_to_keep);
+
+                                // Stop generation completely
+                                should_stop = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if should_stop {
+                    break;  // Break from the main generation loop
+                }
+
+                // Pattern 2: Check if we're about to start a conversation turn
+                // (when we have a newline and the current token starts a role)
+                // Only check this after we've generated some response
+                if seen_first_response && output.len() > 10 && (output.ends_with('\n') || output.ends_with("\n\n")) {
+                    // Check for Vicuna format role markers (uppercase)
+                    if token_str.starts_with("USER") || token_str.starts_with("ASSISTANT") ||
+                       token_str.starts_with("User") || token_str.starts_with("Assistant") {
+                        // Don't include this token, stop here
+                        break;
+                    }
+                }
+
+                // Pattern 3: Stop if output is getting repetitive or too long for a single response
+                // This helps when the model starts hallucinating conversations
+                if output.len() > 500 {  // Reasonable response length
+                    // Check if we're starting to repeat conversation patterns
+                    if output.contains("\nuser:") && output.contains("\nassistant:") {
+                        // We already have a full exchange, stop here
+                        break;
+                    }
+                }
+
+                // Additional check: Stop if model starts asking questions
+                // This is a common pattern when models continue conversations
+                if output.len() > 20 {
+                    // Check if we're starting a new question
+                    let last_30 = if output.len() > 30 {
+                        &output[output.len() - 30..]
+                    } else {
+                        &output
+                    };
+
+                    // If we just finished a sentence and starting a question
+                    if (last_30.contains(". What ") || last_30.contains("? What ") ||
+                        last_30.contains("! What ") || last_30.contains("\nWhat ")) {
+                        // Stop before "What"
+                        if let Some(pos) = output.rfind(" What") {
+                            output.truncate(pos);
+                            // Adjust token list
+                            let mut kept_len = 0;
+                            let mut tokens_to_keep = 0;
+                            for (i, token) in token_info_list.iter().enumerate() {
+                                kept_len += token.text.len();
+                                if kept_len >= output.len() {
+                                    tokens_to_keep = i + 1;
+                                    break;
+                                }
+                            }
+                            token_info_list.truncate(tokens_to_keep);
+                            break;
+                        }
+                    }
+                }
+
+                // If we get here, the token is safe to add
                 output.push_str(&token_str);
-                
+
+                // Store token info for streaming
+                // Clone the token_str since we're moving it into TokenInfo
+                token_info_list.push(TokenInfo {
+                    token_id: new_token_id.0 as i32,
+                    text: token_str.clone(),
+                    logprob: None,
+                    timestamp: None,
+                });
+
                 // Add token to batch for next iteration
                 batch.clear();
                 batch.add(new_token_id, n_cur as i32, &[0], true)
                     .map_err(|e| anyhow!("Failed to add token: {:?}", e))?;
                 context.decode(&mut batch)
                     .map_err(|e| anyhow!("Decode failed: {:?}", e))?;
-                
+
                 n_cur += 1;
             }
             
             let tokens_generated = n_cur - prompt_tokens.len();
             let generation_time = start_time.elapsed();
-            
-            (output, tokens_generated, generation_time)
+
+            (output, tokens_generated, generation_time, token_info_list)
         }; // Release the mutex here before any await
         
         let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
@@ -355,7 +487,7 @@ impl LlmEngine {
             tokens_per_second,
             model_id: request.model_id,
             finish_reason: "stop".to_string(),
-            token_info: vec![],
+            token_info: token_info_list,  // Use the collected tokens!
             was_cancelled: false,
         })
     }
@@ -374,7 +506,10 @@ impl LlmEngine {
         if has_real_model {
             // For real models, we need to run synchronously due to !Send constraint
             // We'll generate all tokens at once and then stream them
-            let result = self.run_inference(request).await;
+            // Make sure stream is false for the actual inference
+            let mut inference_request = request;
+            inference_request.stream = false;
+            let result = self.run_inference(inference_request).await;
             
             // Spawn a task to stream the already-generated tokens
             tokio::spawn(async move {

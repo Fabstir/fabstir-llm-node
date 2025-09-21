@@ -398,7 +398,7 @@ impl VectorStorage {
     pub async fn store_batch(&self, entries: Vec<VectorEntry>) -> Result<BatchStoreResult, StorageError> {
         let mut successful = 0;
         let mut failed = 0;
-        let mut errors = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
 
         for entry in entries {
             match self.store_vector(&entry).await {
@@ -531,7 +531,7 @@ impl VectorStorage {
         let threshold = Utc::now() - Duration::hours(self.config.recent_threshold_hours as i64);
         let mut vectors_checked = 0;
         let mut vectors_migrated = 0;
-        let mut errors = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
 
         // This is a simplified migration check
         match &self.config.backend {

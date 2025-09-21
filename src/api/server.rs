@@ -12,11 +12,13 @@ use axum::{
     http::StatusCode,
 };
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tracing::{info, error};
 
 use crate::p2p::Node;
 use crate::inference::LlmEngine;
 use crate::utils::context::{build_prompt_with_context, count_context_tokens};
+use crate::api::token_tracker::TokenTracker;
+use crate::contracts::checkpoint_manager::CheckpointManager;
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use super::handlers::{ModelInfo, ModelsResponse, HealthResponse};
 use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
@@ -175,6 +177,8 @@ pub struct ApiServer {
     connection_pool: Arc<ConnectionPool>,
     active_connections: Arc<RwLock<HashMap<String, usize>>>,
     metrics: Arc<RwLock<Metrics>>,
+    token_tracker: Arc<TokenTracker>,
+    checkpoint_manager: Arc<RwLock<Option<Arc<CheckpointManager>>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
 }
@@ -218,6 +222,8 @@ impl ApiServer {
             connection_pool,
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(RwLock::new(Metrics::default())),
+            token_tracker: Arc::new(TokenTracker::new()),
+            checkpoint_manager: Arc::new(RwLock::new(None)),
             shutdown_tx: None,
             listener: Some(listener),
             config,
@@ -265,6 +271,8 @@ impl ApiServer {
             connection_pool: self.connection_pool.clone(),
             active_connections: self.active_connections.clone(),
             metrics: self.metrics.clone(),
+            token_tracker: self.token_tracker.clone(),
+            checkpoint_manager: self.checkpoint_manager.clone(),
             shutdown_tx: None,
             listener: None,
         })
@@ -281,7 +289,11 @@ impl ApiServer {
     pub async fn set_default_model_id(&self, model_id: String) {
         *self.default_model_id.write().await = model_id;
     }
-    
+
+    pub async fn set_checkpoint_manager(&self, checkpoint_manager: Arc<CheckpointManager>) {
+        *self.checkpoint_manager.write().await = Some(checkpoint_manager);
+    }
+
     pub async fn connection_stats(&self) -> ConnectionStats {
         self.connection_pool.stats().await
     }
@@ -331,19 +343,21 @@ impl ApiServer {
             }
         };
         
-        // Build prompt with context if provided
-        let full_prompt = if !request.conversation_context.is_empty() {
+        // Build prompt (always use the formatter for consistency)
+        let full_prompt = build_prompt_with_context(
+            &request.conversation_context,
+            &request.prompt
+        );
+
+        if !request.conversation_context.is_empty() {
             info!("Processing with {} context messages, ~{} tokens",
                 request.conversation_context.len(),
                 count_context_tokens(&request.conversation_context)
             );
-            build_prompt_with_context(
-                &request.conversation_context,
-                &request.prompt
-            )
-        } else {
-            request.prompt.clone()
-        };
+        }
+
+        // DEBUG: Log the actual prompt
+        println!("DEBUG API: Sending prompt to engine: {:?}", full_prompt);
         
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
@@ -388,28 +402,165 @@ impl ApiServer {
         // Validate and check limits (same as non-streaming)
         request.validate()?;
         self.rate_limiter.check_rate_limit(&client_ip).await?;
-        
+
         if self.config.enable_circuit_breaker && self.circuit_breaker.is_open().await {
             return Err(ApiError::CircuitBreakerOpen);
         }
-        
-        let (tx, rx) = mpsc::channel(100);
-        
-        // Simulate streaming response
-        tokio::spawn(async move {
-            for i in 0..5 {
-                let response = StreamingResponse {
-                    content: format!("chunk {}", i),
-                    tokens: 1,
-                    finish_reason: if i == 4 { Some("stop".to_string()) } else { None },
-                };
-                if tx.send(response).await.is_err() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Get engine (same as non-streaming)
+        let engine_guard = self.engine.read().await;
+        let engine = engine_guard.as_ref()
+            .ok_or_else(|| ApiError::ServiceUnavailable("inference engine not initialized".to_string()))?;
+
+        // Use default model ID if model field is "tiny-vicuna" or similar
+        let model_id = if request.model == "tiny-vicuna" || request.model.is_empty() {
+            self.default_model_id.read().await.clone()
+        } else {
+            // Check if this specific model ID is loaded
+            let loaded_models = engine.list_loaded_models().await;
+            if loaded_models.contains(&request.model) {
+                request.model.clone()
+            } else {
+                // Fall back to default
+                self.default_model_id.read().await.clone()
             }
+        };
+
+        // Build prompt (always use the formatter for consistency)
+        let full_prompt = build_prompt_with_context(
+            &request.conversation_context,
+            &request.prompt
+        );
+
+        if !request.conversation_context.is_empty() {
+            info!("Processing streaming request with {} context messages",
+                request.conversation_context.len()
+            );
+        }
+
+        // DEBUG: Log the actual prompt
+        println!("DEBUG STREAMING: Sending prompt to engine: {:?}", full_prompt);
+
+        // Log the request for debugging
+        info!("Streaming inference request: model={}, prompt_len={}, max_tokens={}",
+            model_id, full_prompt.len(), request.max_tokens);
+
+        // Create inference request for the engine with stream=true
+        let engine_request = crate::inference::InferenceRequest {
+            model_id: model_id.clone(),
+            prompt: full_prompt,
+            max_tokens: request.max_tokens as usize,
+            temperature: request.temperature,
+            top_p: 0.9,
+            top_k: 40,
+            repeat_penalty: 1.1,
+            seed: None,
+            stop_sequences: vec![],
+            stream: true,  // Enable streaming!
+        };
+
+        // Run streaming inference with real model
+        let token_stream = engine.run_inference_stream(engine_request).await
+            .map_err(|e| {
+                error!("Failed to start streaming inference: {}", e);
+                ApiError::InternalError(format!("Streaming inference failed: {}", e))
+            })?;
+
+        let (tx, rx) = mpsc::channel(100);
+
+        // Clone values for the spawned task
+        let job_id = request.job_id;
+        let session_id = request.session_id.clone();
+        let token_tracker = self.token_tracker.clone();
+        let checkpoint_manager = self.checkpoint_manager.read().await.clone();
+
+        // Spawn task to convert token stream to streaming responses
+        tokio::spawn(async move {
+            use futures::StreamExt;
+            futures::pin_mut!(token_stream);
+
+            let mut accumulated_text = String::new();
+            let mut total_tokens = 0;
+            let mut got_any_tokens = false;
+
+            while let Some(token_result) = token_stream.next().await {
+                match token_result {
+                    Ok(token_info) => {
+                        got_any_tokens = true;
+                        accumulated_text.push_str(&token_info.text);
+                        total_tokens += 1;
+
+                        // Skip empty tokens except for the first one
+                        if token_info.text.is_empty() && total_tokens > 1 {
+                            continue;
+                        }
+
+                        // Track only non-empty tokens for checkpoint submission
+                        if let Some(jid) = job_id {
+                            // Use checkpoint manager if available, otherwise use simple token tracker
+                            if let Some(cm) = checkpoint_manager.as_ref() {
+                                let _ = cm.track_tokens(jid, 1, session_id.clone()).await;
+                            } else {
+                                token_tracker.track_tokens(Some(jid), 1, session_id.clone()).await;
+                            }
+                        }
+
+                        let response = StreamingResponse {
+                            content: token_info.text.clone(),
+                            tokens: 1,
+                            finish_reason: None,
+                        };
+
+                        if tx.send(response).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Token stream error: {}", e);
+                        // Send error message to client
+                        let error_response = StreamingResponse {
+                            content: format!("Error: {}", e),
+                            tokens: 0,
+                            finish_reason: Some("error".to_string()),
+                        };
+                        let _ = tx.send(error_response).await;
+                        break;
+                    }
+                }
+            }
+
+            // Log if we got no tokens
+            if !got_any_tokens {
+                error!("Stream completed with no tokens generated");
+            }
+
+            // Force checkpoint and cleanup if session ends with a job_id
+            if let Some(jid) = job_id {
+                if let Some(cm) = checkpoint_manager.as_ref() {
+                    let _ = cm.force_checkpoint(jid).await;
+                    // Clean up to prevent memory leak
+                    cm.cleanup_job(jid).await;
+                } else {
+                    token_tracker.force_checkpoint(jid).await;
+                    // Clean up the simple tracker too
+                    token_tracker.cleanup_job(jid).await;
+                }
+            }
+
+            // Send final message with finish reason
+            let final_response = StreamingResponse {
+                content: String::new(),
+                tokens: 0,
+                finish_reason: Some("stop".to_string()),
+            };
+            let _ = tx.send(final_response).await;
         });
-        
+
+        // Record success
+        if self.config.enable_circuit_breaker {
+            self.circuit_breaker.record_success().await;
+        }
+
         Ok(rx)
     }
     
@@ -535,7 +686,17 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                 // Parse WebSocket message
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
                     if json_msg["type"] == "inference" {
+                        // Debug: Log the entire request
+                        info!("🔍 WebSocket inference request received: {:?}", json_msg["request"]);
+
                         if let Ok(request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
+                            // Log job_id for payment tracking visibility
+                            if let Some(job_id) = request.job_id {
+                                info!("📋 Processing inference request for blockchain job_id: {}", job_id);
+                            } else {
+                                info!("⚠️  No job_id in WebSocket request");
+                            }
+
                             // Handle streaming inference
                             match server.handle_streaming_request(request, "ws-client".to_string()).await {
                                 Ok(mut receiver) => {

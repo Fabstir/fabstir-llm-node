@@ -2,6 +2,7 @@ use anyhow::Result;
 use fabstir_llm_node::{
     api::{ApiConfig, ApiServer},
     config::NodeConfig,
+    contracts::{checkpoint_manager::CheckpointManager, Web3Client, Web3Config},
     inference::{EngineConfig, LlmEngine, ModelConfig},
     p2p::{Node, NodeEvent},
 };
@@ -10,10 +11,11 @@ use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Simple logging setup
+    // Initialize tracing subscriber for logging
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "info");
     }
+    tracing_subscriber::fmt::init();
 
     println!("🚀 Starting Fabstir LLM Node...\n");
 
@@ -125,7 +127,46 @@ async fn main() -> Result<()> {
     let api_server = ApiServer::new(api_config).await?;
     api_server.set_engine(Arc::new(llm_engine)).await;
     api_server.set_default_model_id(if model_id.is_empty() { "tiny-vicuna".to_string() } else { model_id }).await;
-    
+
+    // Initialize Web3 and CheckpointManager if HOST_PRIVATE_KEY is available
+    if let Ok(host_private_key) = env::var("HOST_PRIVATE_KEY") {
+        println!("🔗 Initializing Web3 client for checkpoint submission...");
+
+        // Load RPC URL from env or use default
+        let rpc_url = env::var("RPC_URL")
+            .unwrap_or_else(|_| "https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR".to_string());
+
+        let web3_config = Web3Config {
+            rpc_url,
+            chain_id: 84532, // Base Sepolia
+            private_key: Some(host_private_key),
+            ..Default::default()
+        };
+
+        match Web3Client::new(web3_config).await {
+            Ok(web3_client) => {
+                let web3_client = Arc::new(web3_client);
+                match CheckpointManager::new(web3_client) {
+                    Ok(checkpoint_manager) => {
+                        api_server.set_checkpoint_manager(Arc::new(checkpoint_manager)).await;
+                        println!("✅ Checkpoint manager initialized - payments enabled!");
+                    }
+                    Err(e) => {
+                        println!("⚠️  Failed to initialize checkpoint manager: {}", e);
+                        println!("   Node will run but automatic checkpoint submission disabled");
+                    }
+                }
+            }
+            Err(e) => {
+                println!("⚠️  Failed to initialize Web3 client: {}", e);
+                println!("   Node will run but automatic checkpoint submission disabled");
+            }
+        }
+    } else {
+        println!("ℹ️  HOST_PRIVATE_KEY not set - checkpoint submission disabled");
+        println!("   To enable payments, set HOST_PRIVATE_KEY environment variable");
+    }
+
     // The API server is already running in the background (started in new())
     // We don't need to call run() or spawn a task
 
