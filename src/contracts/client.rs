@@ -253,24 +253,59 @@ impl Web3Client {
     }
 
     pub async fn wait_for_confirmation(&self, tx_hash: H256) -> Result<TransactionReceipt> {
-        let receipt = self.provider
-            .get_transaction_receipt(tx_hash)
-            .await?
-            .ok_or_else(|| anyhow!("Transaction not found"))?;
-        
-        // Wait for confirmations
-        if self.config.confirmations > 1 {
-            let current_block = self.provider.get_block_number().await?;
-            let tx_block = receipt.block_number.unwrap();
-            let confirmations = current_block.saturating_sub(tx_block);
-            
-            if confirmations < U64::from(self.config.confirmations) {
-                // In production, would implement proper waiting logic
-                tokio::time::sleep(Duration::from_secs(1)).await;
+        // Poll for the transaction receipt with retries
+        // Base Sepolia can take 15-30 seconds to mine a transaction
+        let max_attempts = 60; // 60 attempts with 1 second delay = 60 seconds max
+        let mut attempts = 0;
+
+        loop {
+            attempts += 1;
+
+            // Try to get the transaction receipt
+            match self.provider.get_transaction_receipt(tx_hash).await {
+                Ok(Some(receipt)) => {
+                    // Transaction mined! Now wait for confirmations if needed
+                    if self.config.confirmations > 1 {
+                        let tx_block = receipt.block_number
+                            .ok_or_else(|| anyhow!("Receipt missing block number"))?;
+
+                        // Wait for required confirmations
+                        loop {
+                            let current_block = self.provider.get_block_number().await?;
+                            let confirmations = current_block.saturating_sub(tx_block);
+
+                            if confirmations >= U64::from(self.config.confirmations) {
+                                break;
+                            }
+
+                            // Wait a bit before checking again
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                    }
+
+                    return Ok(receipt);
+                }
+                Ok(None) => {
+                    // Transaction not mined yet
+                    if attempts >= max_attempts {
+                        return Err(anyhow!(
+                            "Transaction not mined after {} seconds. Tx hash: {:?}",
+                            max_attempts, tx_hash
+                        ));
+                    }
+
+                    // Wait before retrying
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(e) => {
+                    // RPC error - retry a few times
+                    if attempts >= 3 {
+                        return Err(anyhow!("Failed to get transaction receipt: {}", e));
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
             }
         }
-        
-        Ok(receipt)
     }
 
     pub async fn create_multicall(&self) -> Result<Multicall3<Provider<Http>>> {

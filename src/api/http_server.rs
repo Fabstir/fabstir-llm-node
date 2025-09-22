@@ -108,6 +108,8 @@ async fn websocket_handler(
 }
 
 async fn handle_websocket(mut socket: WebSocket, state: AppState) {
+    let mut current_job_id: Option<u64> = None;
+
     while let Some(msg) = socket.recv().await {
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
@@ -117,12 +119,31 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                         // Debug: Log the entire request
                         tracing::info!("🔍 WebSocket inference request received: {:?}", json_msg["request"]);
 
-                        if let Ok(request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
+                        if let Ok(mut request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
+                            eprintln!("🔍 RAW REQUEST - job_id: {:?}, session_id: {:?}", request.job_id, request.session_id);
+
+                            // If job_id is not provided but session_id is, try to parse session_id as job_id
+                            if request.job_id.is_none() && request.session_id.is_some() {
+                                if let Some(ref sid) = request.session_id {
+                                    // Try to parse session_id as a number (SDK sends it as "139n" or just "139")
+                                    if let Ok(parsed_id) = sid.trim_end_matches('n').parse::<u64>() {
+                                        request.job_id = Some(parsed_id);
+                                        current_job_id = Some(parsed_id);  // Track current job ID
+                                        eprintln!("📋 CONVERTED session_id {} to job_id {}", sid, parsed_id);
+                                        tracing::info!("📋 Using session_id {} as job_id for checkpoint tracking", parsed_id);
+                                    } else {
+                                        eprintln!("❌ FAILED to parse session_id '{}' as number", sid);
+                                    }
+                                }
+                            } else if let Some(jid) = request.job_id {
+                                current_job_id = Some(jid);  // Track current job ID
+                            }
+
                             // Log job_id for payment tracking visibility
                             if let Some(job_id) = request.job_id {
                                 tracing::info!("📋 Processing inference request for blockchain job_id: {}", job_id);
                             } else {
-                                tracing::info!("⚠️  No job_id in WebSocket request");
+                                tracing::info!("⚠️  No job_id or session_id in WebSocket request");
                             }
 
                             // Handle streaming inference
@@ -163,8 +184,38 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                     break;
                 }
             }
-            Ok(axum::extract::ws::Message::Close(_)) => break,
+            Ok(axum::extract::ws::Message::Close(_)) => {
+                // Trigger payment settlement before closing
+                if let Some(job_id) = current_job_id {
+                    tracing::info!("💰 WebSocket closing - triggering payment settlement for job {}", job_id);
+
+                    // Get checkpoint manager and complete the session
+                    if let Some(checkpoint_manager) = state.api_server.get_checkpoint_manager().await {
+                        if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
+                            tracing::error!("❌ Failed to complete session job {}: {:?}", job_id, e);
+                        } else {
+                            tracing::info!("✅ Session job {} completed - payments should be distributed", job_id);
+                        }
+                    } else {
+                        tracing::warn!("⚠️ No checkpoint manager available to complete session job {}", job_id);
+                    }
+                }
+                break;
+            }
             _ => {}
+        }
+    }
+
+    // Also trigger payment settlement when connection drops unexpectedly
+    if let Some(job_id) = current_job_id {
+        tracing::info!("💰 WebSocket disconnected - triggering payment settlement for job {}", job_id);
+
+        if let Some(checkpoint_manager) = state.api_server.get_checkpoint_manager().await {
+            if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
+                tracing::error!("❌ Failed to complete session job {} on disconnect: {:?}", job_id, e);
+            } else {
+                tracing::info!("✅ Session job {} completed on disconnect - payments should be distributed", job_id);
+            }
         }
     }
 }

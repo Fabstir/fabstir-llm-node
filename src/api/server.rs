@@ -192,6 +192,10 @@ struct Metrics {
 
 impl ApiServer {
     pub async fn new(config: ApiConfig) -> Result<Self> {
+        // Version stamp for deployment verification
+        eprintln!("🚀 API SERVER VERSION: v6-minimum-token-fix-2024-09-22-05:05");
+        eprintln!("✅ Token tracking enabled in non-streaming path");
+
         // Parse the address
         let addr: SocketAddr = config.listen_addr.parse()?;
         
@@ -294,6 +298,10 @@ impl ApiServer {
         *self.checkpoint_manager.write().await = Some(checkpoint_manager);
     }
 
+    pub async fn get_checkpoint_manager(&self) -> Option<Arc<CheckpointManager>> {
+        self.checkpoint_manager.read().await.clone()
+    }
+
     pub async fn connection_stats(&self) -> ConnectionStats {
         self.connection_pool.stats().await
     }
@@ -379,18 +387,41 @@ impl ApiServer {
         
         // Convert to API response
         let response = InferenceResponse {
-            model: request.model,
+            model: request.model.clone(),
             content: result.text,
             tokens_used: result.tokens_generated as u32,
             finish_reason: result.finish_reason,
-            request_id: request.request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            request_id: request.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         };
-        
+
+        // Track tokens for checkpoint submission (non-streaming path)
+        let job_id = request.job_id.or_else(|| {
+            request.session_id.as_ref().and_then(|sid| {
+                let parsed = sid.trim_end_matches('n').parse::<u64>().ok();
+                if parsed.is_some() {
+                    eprintln!("📋 Converted session_id {} to job_id {:?}", sid, parsed);
+                }
+                parsed
+            })
+        });
+
+        if let Some(jid) = job_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                eprintln!("📊 Tracking {} tokens for job {} (non-streaming)", response.tokens_used, jid);
+                let _ = cm.track_tokens(jid, response.tokens_used as u64, request.session_id.clone()).await;
+            } else {
+                eprintln!("📊 Using simple token tracker for job {} (no checkpoint manager)", jid);
+                self.token_tracker.track_tokens(Some(jid), response.tokens_used as usize, request.session_id.clone()).await;
+            }
+        } else {
+            eprintln!("⚠️ No job_id available for token tracking in non-streaming request");
+        }
+
         // Record success
         if self.config.enable_circuit_breaker {
             self.circuit_breaker.record_success().await;
         }
-        
+
         Ok(response)
     }
     
@@ -469,7 +500,24 @@ impl ApiServer {
         let (tx, rx) = mpsc::channel(100);
 
         // Clone values for the spawned task
-        let job_id = request.job_id;
+        // If job_id is not provided but session_id is, try to parse session_id as job_id
+        let job_id = request.job_id.or_else(|| {
+            request.session_id.as_ref().and_then(|sid| {
+                // Try to parse session_id as a number (SDK sends it as "139n" or just "139")
+                let parsed = sid.trim_end_matches('n').parse::<u64>().ok();
+                eprintln!("DEBUG: Parsing session_id '{}' -> job_id: {:?}", sid, parsed);
+                parsed
+            })
+        });
+
+        // Log the job/session tracking
+        if let Some(jid) = job_id {
+            eprintln!("📝 TRACKING TOKENS for job_id/session_id: {}", jid);
+            info!("📝 Tracking tokens for job_id/session_id: {}", jid);
+        } else {
+            eprintln!("⚠️ NO JOB_ID - session_id: {:?}, job_id: {:?}", request.session_id, request.job_id);
+        }
+
         let session_id = request.session_id.clone();
         let token_tracker = self.token_tracker.clone();
         let checkpoint_manager = self.checkpoint_manager.read().await.clone();
@@ -499,10 +547,14 @@ impl ApiServer {
                         if let Some(jid) = job_id {
                             // Use checkpoint manager if available, otherwise use simple token tracker
                             if let Some(cm) = checkpoint_manager.as_ref() {
+                                eprintln!("📊 Calling checkpoint_manager.track_tokens for job {}", jid);
                                 let _ = cm.track_tokens(jid, 1, session_id.clone()).await;
                             } else {
+                                eprintln!("📊 Using simple token tracker (no checkpoint manager) for job {}", jid);
                                 token_tracker.track_tokens(Some(jid), 1, session_id.clone()).await;
                             }
+                        } else {
+                            eprintln!("⚠️ No job_id available for token tracking");
                         }
 
                         let response = StreamingResponse {
@@ -534,16 +586,16 @@ impl ApiServer {
                 error!("Stream completed with no tokens generated");
             }
 
-            // Force checkpoint and cleanup if session ends with a job_id
+            // Try to submit checkpoint if we have enough tokens
+            // BUT DON'T CLEANUP - the session might continue!
             if let Some(jid) = job_id {
                 if let Some(cm) = checkpoint_manager.as_ref() {
                     let _ = cm.force_checkpoint(jid).await;
-                    // Clean up to prevent memory leak
-                    cm.cleanup_job(jid).await;
+                    // DON'T cleanup here - session continues across multiple prompts!
+                    // Cleanup should only happen when websocket disconnects
                 } else {
                     token_tracker.force_checkpoint(jid).await;
-                    // Clean up the simple tracker too
-                    token_tracker.cleanup_job(jid).await;
+                    // DON'T cleanup here either
                 }
             }
 

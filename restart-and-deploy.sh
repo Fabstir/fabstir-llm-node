@@ -1,10 +1,13 @@
 #!/bin/bash
+# Complete restart and deployment script
 
 source .env.local.test
 
+# Stop and remove old containers
 docker stop llm-node-prod-1 llm-node-prod-2 2>/dev/null || true
 docker rm llm-node-prod-1 llm-node-prod-2 2>/dev/null || true
 
+# Start node 1 with all proper settings
 docker run -d \
   --name llm-node-prod-1 \
   -p 9001-9003:9001-9003 \
@@ -19,6 +22,7 @@ docker run -d \
   --add-host host.docker.internal:host-gateway \
   llm-node-prod:latest
 
+# Start node 2 with all proper settings
 docker run -d \
   --name llm-node-prod-2 \
   -p 9011-9013:9011-9013 \
@@ -33,4 +37,21 @@ docker run -d \
   --add-host host.docker.internal:host-gateway \
   llm-node-prod:latest
 
-echo "Done"
+# Wait for containers to start
+sleep 3
+
+# Copy the correct binary into both containers
+echo "Deploying latest binary..."
+docker cp target/release/fabstir-llm-node llm-node-prod-1:/usr/local/bin/fabstir-llm-node
+docker cp target/release/fabstir-llm-node llm-node-prod-2:/usr/local/bin/fabstir-llm-node
+
+# Restart to use new binary
+docker restart llm-node-prod-1 llm-node-prod-2
+
+echo "Done - nodes started with correct ports and latest binary"
+
+# Verify
+sleep 5
+echo ""
+echo "Verification:"
+docker logs llm-node-prod-1 2>&1 | grep -E "VERSION" | head -2

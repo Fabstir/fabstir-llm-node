@@ -3,6 +3,7 @@ use ethers::abi::Token;
 use ethers::types::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, error};
@@ -10,7 +11,11 @@ use tracing::{info, warn, error};
 use super::client::Web3Client;
 
 const CHECKPOINT_THRESHOLD: u64 = 100; // Submit checkpoint every 100 tokens
-const PROOF_SYSTEM_ADDRESS: &str = "0x2ACcc60893872A499700908889B38C5420CBcFD1";
+// Changed to JobMarketplace contract where checkpoints should be submitted
+const PROOF_SYSTEM_ADDRESS: &str = "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944";
+
+// Minimum tokens required for checkpoint submission (contract requirement)
+const MIN_PROVEN_TOKENS: u64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct JobTokenTracker {
@@ -36,6 +41,10 @@ impl CheckpointManager {
         // Get host address from web3 client
         let host_address = web3_client.address();
 
+        eprintln!("🏠 CheckpointManager initialized with host address: {:?}", host_address);
+        eprintln!("📝 CONTRACT VERSION: Using JobMarketplace at {}", PROOF_SYSTEM_ADDRESS);
+        eprintln!("🔖 BUILD VERSION: v3-token-tracking-fixed-2024-09-22-02:54");
+
         Ok(Self {
             web3_client,
             job_trackers: Arc::new(RwLock::new(HashMap::new())),
@@ -46,6 +55,8 @@ impl CheckpointManager {
 
     /// Track tokens generated for a specific job
     pub async fn track_tokens(&self, job_id: u64, tokens: u64, session_id: Option<String>) -> Result<()> {
+        println!("🔔 CHECKPOINT MANAGER: track_tokens called for job {} with {} tokens", job_id, tokens);
+
         let mut trackers = self.job_trackers.write().await;
 
         let tracker = trackers.entry(job_id).or_insert_with(|| {
@@ -67,7 +78,11 @@ impl CheckpointManager {
 
         // Check if we need to submit a checkpoint
         let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
+        println!("🔍 Checkpoint check: job {} has {} total tokens, {} since last checkpoint (threshold: {})",
+                 job_id, tracker.tokens_generated, tokens_since_checkpoint, CHECKPOINT_THRESHOLD);
+
         if tokens_since_checkpoint >= CHECKPOINT_THRESHOLD && !tracker.submission_in_progress {
+            println!("🚨 TRIGGERING CHECKPOINT for job {} with {} tokens!", job_id, tracker.tokens_generated);
             let tokens_to_submit = tracker.tokens_generated;
             let previous_checkpoint = tracker.last_checkpoint; // Save for rollback
 
@@ -113,12 +128,18 @@ impl CheckpointManager {
     /// Submit checkpoint to the blockchain
     async fn submit_checkpoint(&self, job_id: u64, tokens_generated: u64) -> Result<()> {
         info!(
-            "Submitting checkpoint for job {} with {} tokens...",
+            "Submitting proof of work for job {} with {} tokens...",
             job_id, tokens_generated
         );
 
-        // Create minimal proof data (32 bytes of zeros for now)
-        let proof_data = vec![0u8; 32];
+        // Create proof data with timestamp and token info
+        let proof_json = serde_json::json!({
+            "timestamp": chrono::Utc::now().timestamp_millis(),
+            "tokensUsed": tokens_generated,
+            "hostAddress": format!("{:?}", self.host_address),
+            "jobId": job_id
+        });
+        let proof_data = proof_json.to_string().into_bytes();
 
         // Properly encode the function call with selector
         let data = encode_checkpoint_call(job_id, tokens_generated, proof_data);
@@ -131,27 +152,57 @@ impl CheckpointManager {
         ).await {
             Ok(tx_hash) => {
                 info!(
-                    "Checkpoint submitted successfully for job {} - tx_hash: {:?}",
+                    "Transaction sent for job {} - tx_hash: {:?}",
                     job_id, tx_hash
                 );
+                info!("⏳ Waiting for confirmation (this can take 15-30 seconds on Base Sepolia)...");
 
-                // Wait for confirmation
-                if let Ok(receipt) = self.web3_client.wait_for_confirmation(tx_hash).await {
-                    if receipt.status == Some(U64::from(1)) {
+                // CRITICAL: Wait for confirmation with proper timeout
+                // Base Sepolia can take 15-30 seconds for confirmation
+                let start_time = std::time::Instant::now();
+
+                // Use tokio timeout to wait up to 60 seconds for confirmation
+                match tokio::time::timeout(
+                    Duration::from_secs(60),
+                    self.web3_client.wait_for_confirmation(tx_hash)
+                ).await {
+                    Ok(Ok(receipt)) => {
+                        let elapsed = start_time.elapsed();
                         info!(
-                            "Checkpoint confirmed for job {} - payment distributed (90% host, 10% treasury)",
-                            job_id
+                            "✅ Transaction confirmed after {:.1}s for job {}",
+                            elapsed.as_secs_f32(), job_id
                         );
-                    } else {
-                        warn!("Checkpoint transaction failed for job {}", job_id);
+
+                        if receipt.status == Some(U64::from(1)) {
+                            info!(
+                                "✅ Checkpoint SUCCESS for job {} - payment distributed (90% host, 10% treasury)",
+                                job_id
+                            );
+                            info!("Transaction receipt: {:?}", receipt);
+                        } else {
+                            error!("❌ Checkpoint transaction FAILED for job {} - status: {:?}", job_id, receipt.status);
+                            return Err(anyhow!("Transaction failed with status: {:?}", receipt.status));
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        error!("❌ Failed to get receipt for job {}: {}", job_id, e);
+                        return Err(anyhow!("Failed to get transaction receipt: {}", e));
+                    }
+                    Err(_) => {
+                        error!(
+                            "❌ TIMEOUT waiting for confirmation after 60 seconds for job {} - tx_hash: {:?}",
+                            job_id, tx_hash
+                        );
+                        // Don't fail here - transaction might still succeed
+                        warn!("Transaction might still be pending. Check tx_hash: {:?}", tx_hash);
                     }
                 }
 
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to submit checkpoint for job {}: {}", job_id, e);
-                Err(anyhow!("Checkpoint submission failed: {}", e))
+                error!("❌ Failed to send transaction for job {}: {}", job_id, e);
+                Err(anyhow!("Transaction send failed: {}", e))
             }
         }
     }
@@ -164,33 +215,49 @@ impl CheckpointManager {
         if let Some(tracker) = trackers.get_mut(&job_id) {
             let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
 
-            if tokens_since_checkpoint > 0 && !tracker.submission_in_progress {
-                let tokens_to_submit = tracker.tokens_generated;
-                let previous_checkpoint = tracker.last_checkpoint;
+            // Check if submission is already in progress
+            if tracker.submission_in_progress {
+                info!("⏸️ Skipping force checkpoint for job {} - submission already in progress", job_id);
+                return Ok(());
+            }
 
-                info!(
-                    "Force submitting checkpoint for job {} with {} tokens",
-                    job_id, tokens_to_submit
-                );
+            // Only submit if we have at least MIN_PROVEN_TOKENS since last checkpoint
+            if tokens_since_checkpoint < MIN_PROVEN_TOKENS {
+                if tokens_since_checkpoint > 0 {
+                    info!(
+                        "⏸️ Skipping force checkpoint for job {} - only {} tokens since last checkpoint (minimum: {})",
+                        job_id, tokens_since_checkpoint, MIN_PROVEN_TOKENS
+                    );
+                }
+                return Ok(());
+            }
 
-                // Mark as in progress and update checkpoint optimistically
-                tracker.submission_in_progress = true;
-                tracker.last_checkpoint = tokens_to_submit;
+            // We have enough tokens to submit
+            let tokens_to_submit = tracker.tokens_generated;
+            let previous_checkpoint = tracker.last_checkpoint;
 
-                drop(trackers); // Release lock for async operation
+            info!(
+                "Force submitting checkpoint for job {} with {} total tokens ({} since last checkpoint)",
+                job_id, tokens_to_submit, tokens_since_checkpoint
+            );
 
-                let result = self.submit_checkpoint(job_id, tokens_to_submit).await;
+            // Mark as in progress and update checkpoint optimistically
+            tracker.submission_in_progress = true;
+            tracker.last_checkpoint = tokens_to_submit;
 
-                // Update tracker based on result
-                let mut trackers = self.job_trackers.write().await;
-                if let Some(tracker) = trackers.get_mut(&job_id) {
-                    tracker.submission_in_progress = false;
+            drop(trackers); // Release lock for async operation
 
-                    if let Err(e) = result {
-                        // Rollback on error
-                        tracker.last_checkpoint = previous_checkpoint;
-                        return Err(e);
-                    }
+            let result = self.submit_checkpoint(job_id, tokens_to_submit).await;
+
+            // Update tracker based on result
+            let mut trackers = self.job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                tracker.submission_in_progress = false;
+
+                if let Err(e) = result {
+                    // Rollback on error
+                    tracker.last_checkpoint = previous_checkpoint;
+                    return Err(e);
                 }
             }
         }
@@ -202,6 +269,65 @@ impl CheckpointManager {
     pub async fn get_token_count(&self, job_id: u64) -> u64 {
         let trackers = self.job_trackers.read().await;
         trackers.get(&job_id).map(|t| t.tokens_generated).unwrap_or(0)
+    }
+
+    /// Complete a session job and trigger payment settlement
+    pub async fn complete_session_job(&self, job_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+        // First submit any pending checkpoint
+        let _ = self.force_checkpoint(job_id).await;
+
+        // Now call completeSessionJob on the contract to trigger payment settlement
+        info!("💰 Completing session job {} to trigger payment settlement...", job_id);
+
+        let data = encode_complete_session_call(job_id);
+        let tx_request = TransactionRequest::new()
+            .to(self.proof_system_address)
+            .data(data)
+            .gas(U256::from(300_000));
+
+        match self.web3_client.provider.send_transaction(tx_request, None).await {
+                Ok(pending_tx) => {
+                    info!("Transaction sent for completing job {} - tx_hash: {:?}", job_id, pending_tx.tx_hash());
+
+                    // Wait for confirmation
+                    let start = std::time::Instant::now();
+                    match pending_tx.await {
+                        Ok(Some(receipt)) => {
+                            let elapsed = start.elapsed().as_secs_f32();
+                            info!("✅ Transaction confirmed after {:.1}s for job {}", elapsed, job_id);
+
+                            if receipt.status == Some(U64::from(1)) {
+                                info!(
+                                    "💰 Session completed and payments distributed for job {}",
+                                    job_id
+                                );
+                                info!("  - Host earnings (97.5%) sent to HostEarnings contract");
+                                info!("  - Treasury fee (2.5%) collected");
+                                info!("  - Unused deposit refunded to user");
+                            } else {
+                                error!("❌ Transaction failed for job {}", job_id);
+                            }
+                        }
+                        Ok(None) => {
+                            error!("❌ Transaction dropped for job {}", job_id);
+                        }
+                        Err(e) => {
+                            error!("❌ Transaction error for job {}: {:?}", job_id, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Failed to send complete session transaction for job {}: {:?}", job_id, e);
+                }
+            }
+
+        // Clean up tracker
+        let mut trackers = self.job_trackers.write().await;
+        if trackers.remove(&job_id).is_some() {
+            info!("Cleaned up tracker for job {}", job_id);
+        }
+
+        Ok(())
     }
 
     /// Clean up job tracker (when job completes)
@@ -217,13 +343,37 @@ impl CheckpointManager {
     }
 }
 
-// ABI encoding helper
+// ABI encoding helper for completeSessionJob
+fn encode_complete_session_call(job_id: u64) -> Vec<u8> {
+    use ethers::abi::Function;
+
+    // Define the function signature for completeSessionJob
+    let function = Function {
+        name: "completeSessionJob".to_string(),
+        inputs: vec![
+            ethers::abi::Param {
+                name: "jobId".to_string(),
+                kind: ethers::abi::ParamType::Uint(256),
+                internal_type: None,
+            },
+        ],
+        outputs: vec![],
+        constant: None,
+        state_mutability: ethers::abi::StateMutability::NonPayable,
+    };
+
+    // Encode the call data
+    let tokens = vec![ethers::abi::Token::Uint(U256::from(job_id))];
+    function.encode_input(&tokens).unwrap()
+}
+
+// ABI encoding helper for submitProofOfWork
 fn encode_checkpoint_call(job_id: u64, tokens_generated: u64, proof: Vec<u8>) -> Vec<u8> {
     use ethers::abi::Function;
 
-    // Define the function signature
+    // Define the function signature for submitProofOfWork
     let function = Function {
-        name: "submitCheckpoint".to_string(),
+        name: "submitProofOfWork".to_string(),
         inputs: vec![
             ethers::abi::Param {
                 name: "jobId".to_string(),
@@ -231,7 +381,7 @@ fn encode_checkpoint_call(job_id: u64, tokens_generated: u64, proof: Vec<u8>) ->
                 internal_type: None,
             },
             ethers::abi::Param {
-                name: "tokensGenerated".to_string(),
+                name: "tokensClaimed".to_string(),
                 kind: ethers::abi::ParamType::Uint(256),
                 internal_type: None,
             },
