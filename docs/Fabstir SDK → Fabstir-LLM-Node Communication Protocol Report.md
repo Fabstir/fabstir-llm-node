@@ -51,6 +51,23 @@ Fabstir SDK → Fabstir-LLM-Node Communication Protocol Report
     "message_index": 6
   }
 
+  Session Termination and Payment Settlement (v5+)
+
+  // When WebSocket disconnects (any reason)
+  // Node automatically triggers payment settlement
+  {
+    "type": "session_end",  // Optional - disconnect auto-settles
+    "session_id": "user-generated-uuid"
+  }
+
+  // Node automatically on disconnect:
+  // 1. Submits pending checkpoints (100+ tokens)
+  // 2. Calls completeSessionJob() on blockchain
+  // 3. Distributes payments:
+  //    - 90% to HostEarnings contract
+  //    - 10% to Treasury
+  //    - Refunds unused deposit to user
+
   Session Recovery (After Host Crash)
 
   // User reconnects to new host with full history
@@ -110,7 +127,7 @@ Fabstir SDK → Fabstir-LLM-Node Communication Protocol Report
   Normal Session Flow
 
   1. User discovers host via P2P/registry
-  2. User creates blockchain job (payment escrow)
+  2. User creates blockchain job (payment escrow in USDC)
   3. User connects WebSocket to host
   4. User sends session_init with any prior context
   5. Host creates in-memory conversation cache
@@ -121,17 +138,24 @@ Fabstir SDK → Fabstir-LLM-Node Communication Protocol Report
      d. Host returns response
      e. User stores prompt + response in S5
      f. Host adds response to memory cache
-  7. Session ends: Host clears memory, User has full history
+  7. Session ends:
+     - Host automatically settles payment on disconnect (v5+)
+     - Host clears memory
+     - User has full history in S5
 
-  Recovery Flow (Host Crash)
+  Recovery Flow (Host Crash or Connection Loss)
 
   1. WebSocket connection drops
-  2. User discovers new host
-  3. User loads full conversation from S5
-  4. User connects to new host
-  5. User sends session_resume with full context
-  6. New host rebuilds memory cache
-  7. Session continues normally
+  2. Previous host automatically settles payment (v5+):
+     - Submits any pending checkpoints
+     - Calls completeSessionJob() on blockchain
+     - Payments distributed (90% host, 10% treasury, refund to user)
+  3. User discovers new host
+  4. User loads full conversation from S5
+  5. User connects to new host (new job/payment if needed)
+  6. User sends session_resume with full context
+  7. New host rebuilds memory cache
+  8. Session continues normally
 
   Message Format Specifications
 
@@ -170,7 +194,11 @@ Fabstir SDK → Fabstir-LLM-Node Communication Protocol Report
   1. On session_init/resume: Build conversation cache from provided context
   2. On each prompt: Append to cache, maintain last N messages based on token limit
   3. On response generation: Add to cache for context continuity
-  4. On session_end/disconnect: Clear all session data from memory
+  4. On session_end/disconnect:
+     - Automatically trigger payment settlement (v5+)
+     - Call completeSessionJob() on blockchain
+     - Distribute payments (90% host, 10% treasury)
+     - Clear all session data from memory
   5. Never persist: No disk storage of conversation data
 
   SDK Responsibilities
@@ -189,6 +217,7 @@ Fabstir SDK → Fabstir-LLM-Node Communication Protocol Report
   2. Message Signing: Optional ECDSA signatures for high-value sessions
   3. Encryption: S5 handles encryption at rest, TLS for transport
   4. Rate Limiting: Host enforces based on payment/tokens
+  5. Payment Protection: Automatic settlement on disconnect ensures hosts get paid (v5+)
 
   Performance Optimizations
 
@@ -203,6 +232,9 @@ Fabstir SDK → Fabstir-LLM-Node Communication Protocol Report
   - Full recovery is possible since users have complete history
   - WebSocket maintains efficiency by sending only new prompts during active sessions
   - HTTP provides fallback for simple stateless queries
+  - Payment settlement is automatic on disconnect (v5+), ensuring hosts are always compensated
 
-  The key insight is that hosts act as stateless compute providers with temporary memory cache, while users maintain full data 
-  sovereignty through decentralized storage.
+  The key insight is that hosts act as stateless compute providers with temporary memory cache and guaranteed payment settlement,
+  while users maintain full data sovereignty through decentralized storage. The automatic payment mechanism (v5+) ensures hosts
+  receive compensation even if connections drop unexpectedly, with 90% going to the host via HostEarnings contract, 10% to
+  treasury, and unused deposits refunded to users.

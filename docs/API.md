@@ -254,7 +254,7 @@ GET /metrics
 
 ## WebSocket API (Production Ready - Phases 8.7-8.12)
 
-For real-time bidirectional communication and conversation management, connect via WebSocket. The WebSocket API has been completely rebuilt with production features including stateless memory caching, compression, rate limiting, JWT authentication, and Ed25519 signatures.
+For real-time bidirectional communication and conversation management, connect via WebSocket. The WebSocket API has been completely rebuilt with production features including stateless memory caching, compression, rate limiting, JWT authentication, Ed25519 signatures, and **automatic payment settlement on disconnect (v5+)**.
 
 ### Connection Endpoints
 
@@ -512,7 +512,7 @@ The server maintains conversation context in memory during active sessions:
 | `prompt` | Client → Server | Send user prompt (minimal data) |
 | `response` | Server → Client | Non-streaming complete response |
 | `stream_chunk` | Server → Client | Streaming response token |
-| `session_end` | Client → Server | Clean session termination |
+| `session_end` | Client → Server | Clean session termination (optional - disconnect auto-settles v5+) |
 | `error` | Server → Client | Error message with code |
 | `token_refresh` | Server → Client | New JWT token |
 | `rate_limit` | Server → Client | Rate limit warning |
@@ -605,6 +605,37 @@ async function verifyProof(response) {
 4. **Result Delivery**: Node sends result with proof
 5. **Verification**: Client/Contract verifies proof
 6. **Payment Release**: Funds released only after verification
+
+### Automatic Payment Settlement (v5+, September 2024)
+
+**WebSocket Disconnect Triggers Settlement**
+
+Starting with v5, payment settlement is automatic when WebSocket disconnects:
+
+1. **Connection Closes**: Any disconnect reason (user action, network, timeout)
+2. **Node Action**: Automatically calls `completeSessionJob()`
+3. **Blockchain Transaction**: Submits settlement to JobMarketplace contract
+4. **Payment Distribution**:
+   - Host: 90% sent to HostEarnings contract (0x908962e8c6CE72610021586f85ebDE09aAc97776)
+   - Treasury: 10% fee (0xbeaBB2a5AEd358aA0bd442dFFd793411519Bdc11)
+   - User: Unused deposit refunded
+
+**No User Action Required**: Sessions settle automatically, ensuring hosts always get paid for completed work.
+
+**Monitoring Settlement**:
+```javascript
+// SDK developers should monitor blockchain events
+// Transaction will emit SessionCompleted event
+const filter = jobMarketplace.filters.SessionCompleted(jobId);
+jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
+  console.log(`Session ${jobId} settled: ${tokensUsed} tokens`);
+});
+```
+
+**Requirements**:
+- Node must have `HOST_PRIVATE_KEY` configured
+- Node version v5-payment-settlement or later
+- JobMarketplace: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
 
 ### Proof Configuration
 
@@ -951,6 +982,15 @@ class FabstirWebSocketClient {
     }
     
     return true;
+  }
+
+  disconnect() {
+    // Note: Disconnect triggers automatic payment settlement (v5+)
+    // No need to explicitly call completeSessionJob
+    if (this.ws) {
+      this.ws.close();
+      console.log('WebSocket disconnected - payment settlement triggered automatically');
+    }
   }
 }
 
@@ -2035,7 +2075,14 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v1.3** (Current) - Model Governance and Registry Integration
+- **v1.5** (Current) - Automatic Payment Settlement on WebSocket Disconnect (September 2024)
+  - WebSocket disconnect triggers `completeSessionJob()` automatically
+  - Ensures payment distribution even on unexpected disconnects
+  - Host earnings (90%) automatically sent to HostEarnings contract
+  - Treasury fee (10%) and user refund handled automatically
+  - Requires HOST_PRIVATE_KEY configuration
+  - Available in node v5-payment-settlement and later
+- **v1.3** - Model Governance and Registry Integration
   - Integration with ModelRegistry smart contract for approved models
   - Model validation with SHA256 hash verification
   - Node registration with validated model IDs
