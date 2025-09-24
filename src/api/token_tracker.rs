@@ -63,23 +63,28 @@ impl TokenTracker {
                 job_id, job_info.tokens_generated
             );
 
+            // Get payment split percentages from environment
+            let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE").unwrap_or_else(|_| "90".to_string());
+            let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE").unwrap_or_else(|_| "10".to_string());
+
             // Log what should be submitted
             warn!(
                 "CHECKPOINT SUBMISSION REQUIRED:\n\
                  - Job ID: {}\n\
                  - Tokens to submit: {}\n\
                  - Session ID: {:?}\n\
-                 - Contract: ProofSystem at 0x2ACcc60893872A499700908889B38C5420CBcFD1\n\
-                 - Function: submitCheckpoint(jobId: {}, tokensGenerated: {}, proof: 0x...)\n\
-                 - Expected payment split: 90% to host, 10% to treasury\n\
+                 - Contract: JobMarketplace (address from CONTRACT_JOB_MARKETPLACE env var)\n\
+                 - Function: submitProofOfWork(jobId: {}, tokensGenerated: {}, proof: 0x...)\n\
+                 - Expected payment split: {}% to host, {}% to treasury\n\
                  \n\
                  NOTE: Actual blockchain submission not implemented yet!\n\
                  To enable payments:\n\
                  1. Configure HOST_PRIVATE_KEY environment variable\n\
                  2. Initialize Web3Client with Base Sepolia RPC\n\
-                 3. Call ProofSystem.submitCheckpoint() with signature",
+                 3. Call JobMarketplace.submitProofOfWork() with signature",
                 job_id, job_info.tokens_generated, job_info.session_id,
-                job_id, job_info.tokens_generated
+                job_id, job_info.tokens_generated,
+                host_pct, treasury_pct
             );
 
             // Mark as checkpointed (in real implementation, only after successful submission)

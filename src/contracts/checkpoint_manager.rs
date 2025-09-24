@@ -11,9 +11,6 @@ use tracing::{info, warn, error};
 use super::client::Web3Client;
 
 const CHECKPOINT_THRESHOLD: u64 = 100; // Submit checkpoint every 100 tokens
-// Changed to JobMarketplace contract where checkpoints should be submitted
-const PROOF_SYSTEM_ADDRESS: &str = "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944";
-
 // Minimum tokens required for checkpoint submission (contract requirement)
 const MIN_PROVEN_TOKENS: u64 = 100;
 
@@ -35,15 +32,22 @@ pub struct CheckpointManager {
 
 impl CheckpointManager {
     pub fn new(web3_client: Arc<Web3Client>) -> Result<Self> {
-        let proof_system_address = PROOF_SYSTEM_ADDRESS.parse()
-            .map_err(|e| anyhow!("Invalid ProofSystem address: {}", e))?;
+        // Read JobMarketplace address from environment variable
+        let job_marketplace_address = std::env::var("CONTRACT_JOB_MARKETPLACE")
+            .unwrap_or_else(|_| {
+                warn!("CONTRACT_JOB_MARKETPLACE not set, using default address");
+                "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944".to_string()
+            });
+
+        let proof_system_address = job_marketplace_address.parse()
+            .map_err(|e| anyhow!("Invalid JobMarketplace address: {}", e))?;
 
         // Get host address from web3 client
         let host_address = web3_client.address();
 
         eprintln!("🏠 CheckpointManager initialized with host address: {:?}", host_address);
-        eprintln!("📝 CONTRACT VERSION: Using JobMarketplace at {}", PROOF_SYSTEM_ADDRESS);
-        eprintln!("🔖 BUILD VERSION: v3-token-tracking-fixed-2024-09-22-02:54");
+        eprintln!("📝 CONTRACT VERSION: Using JobMarketplace at {}", job_marketplace_address);
+        eprintln!("🔖 BUILD VERSION: v6-env-contract-addresses-2024-09-22");
 
         Ok(Self {
             web3_client,
@@ -174,9 +178,11 @@ impl CheckpointManager {
                         );
 
                         if receipt.status == Some(U64::from(1)) {
+                            let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE").unwrap_or_else(|_| "90".to_string());
+                            let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE").unwrap_or_else(|_| "10".to_string());
                             info!(
-                                "✅ Checkpoint SUCCESS for job {} - payment distributed (90% host, 10% treasury)",
-                                job_id
+                                "✅ Checkpoint SUCCESS for job {} - payment distributed ({}% host, {}% treasury)",
+                                job_id, host_pct, treasury_pct
                             );
                             info!("Transaction receipt: {:?}", receipt);
                         } else {
@@ -297,12 +303,14 @@ impl CheckpointManager {
                             info!("✅ Transaction confirmed after {:.1}s for job {}", elapsed, job_id);
 
                             if receipt.status == Some(U64::from(1)) {
+                                let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE").unwrap_or_else(|_| "90".to_string());
+                                let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE").unwrap_or_else(|_| "10".to_string());
                                 info!(
                                     "💰 Session completed and payments distributed for job {}",
                                     job_id
                                 );
-                                info!("  - Host earnings (97.5%) sent to HostEarnings contract");
-                                info!("  - Treasury fee (2.5%) collected");
+                                info!("  - Host earnings ({}%) sent to HostEarnings contract", host_pct);
+                                info!("  - Treasury fee ({}%) collected", treasury_pct);
                                 info!("  - Unused deposit refunded to user");
                             } else {
                                 error!("❌ Transaction failed for job {}", job_id);

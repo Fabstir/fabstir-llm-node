@@ -48,6 +48,13 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Session Management**: Token-based session tracking with expiry
 - **Permission System**: Role-based access control (User, Host, Admin)
 
+### ✅ Phase 8.13: Automatic Payment Settlement on Disconnect (v5+, September 2024)
+- **Automatic Settlement**: WebSocket disconnect triggers `completeSessionJob()`
+- **Payment Distribution**: Host receives 90%, Treasury 10%, User gets refund
+- **No User Action Required**: Payments settle even on unexpected disconnects
+- **Session Cleanup**: Token trackers and state cleared after settlement
+- **Blockchain Integration**: Direct contract calls to JobMarketplace (0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944)
+
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
 - Full production inference engine connection (partially mocked)
@@ -203,7 +210,11 @@ interface ErrorMessage {
 
 1. **Session Start**: Host allocates memory cache for conversation
 2. **During Session**: Host maintains conversation in memory only
-3. **On Disconnect**: Memory automatically cleared
+3. **On Disconnect**:
+   - Automatic payment settlement via `completeSessionJob()` (v5+)
+   - Host earnings distributed to HostEarnings contract
+   - Unused deposit refunded to user
+   - Memory automatically cleared
 4. **On Resume**: Full context rebuilt from user-provided history
 
 ### SDK Responsibilities
@@ -241,6 +252,45 @@ The host maintains conversation cache with these constraints:
 - **Time Limit**: Sessions expire after inactivity (default: 30 minutes)
 - **Memory Limit**: Per-session memory cap (default: 10MB)
 - **Cleanup**: Automatic garbage collection on disconnect
+
+## Payment Settlement on Disconnect (Critical for SDK Developers)
+
+**Automatic Settlement (v5+, September 2024)**
+
+When a WebSocket connection closes for ANY reason:
+- Browser tab closed
+- Network disconnection
+- Client crash
+- Explicit `session_end` message
+
+The node automatically:
+1. Submits any pending checkpoints (100+ token batches)
+2. Calls `completeSessionJob()` on the blockchain
+3. Triggers payment distribution:
+   - 90% to HostEarnings contract (0x908962e8c6CE72610021586f85ebDE09aAc97776)
+   - 10% to Treasury (0xbeaBB2a5AEd358aA0bd442dFFd793411519Bdc11)
+   - Unused deposit back to user
+
+**SDK Implications:**
+- Users don't need to explicitly end sessions for payment
+- Payments are guaranteed even on unexpected disconnects
+- The `session_end` message is optional (for clean shutdown)
+- Monitor blockchain events for payment confirmation
+
+**Monitoring Settlement in SDK:**
+```javascript
+// Listen for SessionCompleted event on blockchain
+const filter = jobMarketplace.filters.SessionCompleted(jobId);
+jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
+  console.log(`Session ${jobId} automatically settled: ${tokensUsed} tokens`);
+  console.log(`Transaction hash: ${event.transactionHash}`);
+});
+```
+
+**Requirements:**
+- Node must have `HOST_PRIVATE_KEY` configured
+- Node version v5-payment-settlement or later
+- JobMarketplace contract: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
 
 ## Compression Support
 
