@@ -11,6 +11,8 @@ pub struct ChainConfig {
     pub native_token: TokenInfo,
     pub contracts: ContractAddresses,
     pub confirmation_blocks: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gas_multiplier: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,6 +52,9 @@ impl ChainConfig {
                     .expect("Invalid host earnings address"),
             },
             confirmation_blocks: 3,
+            gas_multiplier: std::env::var("BASE_GAS_MULTIPLIER")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         }
     }
 
@@ -83,6 +88,9 @@ impl ChainConfig {
                     .unwrap_or_else(Address::zero),
             },
             confirmation_blocks: 15, // BNB chains typically need more confirmations
+            gas_multiplier: std::env::var("OPBNB_GAS_MULTIPLIER")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         }
     }
 }
@@ -122,6 +130,236 @@ impl ChainRegistry {
 }
 
 impl Default for ChainRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct ChainConfigLoader {
+    config_file: Option<String>,
+}
+
+impl ChainConfigLoader {
+    pub fn new() -> Self {
+        ChainConfigLoader { config_file: None }
+    }
+
+    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        if !std::path::Path::new(path).exists() {
+            return Err(format!("Config file not found: {}", path).into());
+        }
+        Ok(ChainConfigLoader {
+            config_file: Some(path.to_string()),
+        })
+    }
+
+    pub async fn load_base_sepolia(&self) -> Result<ChainConfig, Box<dyn std::error::Error>> {
+        if let Some(ref file_path) = self.config_file {
+            return self.load_from_file(file_path, "base_sepolia");
+        }
+
+        let chain_id = std::env::var("BASE_SEPOLIA_CHAIN_ID")
+            .unwrap_or_else(|_| "84532".to_string())
+            .parse::<u64>()?;
+
+        let rpc_url = std::env::var("BASE_SEPOLIA_RPC_URL")
+            .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
+
+        self.validate_rpc_url(&rpc_url)?;
+
+        let confirmations = std::env::var("BASE_SEPOLIA_CONFIRMATIONS")
+            .unwrap_or_else(|_| "3".to_string())
+            .parse::<u64>()?;
+
+        let gas_multiplier = std::env::var("BASE_GAS_MULTIPLIER")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        Ok(ChainConfig {
+            chain_id,
+            name: "Base Sepolia".to_string(),
+            rpc_url,
+            native_token: TokenInfo {
+                symbol: "ETH".to_string(),
+                decimals: 18,
+            },
+            contracts: self.load_base_sepolia_contracts(),
+            confirmation_blocks: confirmations,
+            gas_multiplier,
+        })
+    }
+
+    pub async fn load_opbnb_testnet(&self) -> Result<ChainConfig, Box<dyn std::error::Error>> {
+        if let Some(ref file_path) = self.config_file {
+            return self.load_from_file(file_path, "opbnb_testnet");
+        }
+
+        let chain_id = std::env::var("OPBNB_TESTNET_CHAIN_ID")
+            .unwrap_or_else(|_| "5611".to_string())
+            .parse::<u64>()?;
+
+        let rpc_url = std::env::var("OPBNB_TESTNET_RPC_URL")
+            .unwrap_or_else(|_| "https://opbnb-testnet-rpc.bnbchain.org".to_string());
+
+        self.validate_rpc_url(&rpc_url)?;
+
+        let confirmations = std::env::var("OPBNB_TESTNET_CONFIRMATIONS")
+            .unwrap_or_else(|_| "15".to_string())
+            .parse::<u64>()?;
+
+        let gas_multiplier = std::env::var("OPBNB_GAS_MULTIPLIER")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        Ok(ChainConfig {
+            chain_id,
+            name: "opBNB Testnet".to_string(),
+            rpc_url,
+            native_token: TokenInfo {
+                symbol: "BNB".to_string(),
+                decimals: 18,
+            },
+            contracts: self.load_opbnb_contracts(),
+            confirmation_blocks: confirmations,
+            gas_multiplier,
+        })
+    }
+
+    fn load_base_sepolia_contracts(&self) -> ContractAddresses {
+        ContractAddresses {
+            job_marketplace: std::env::var("BASE_SEPOLIA_JOB_MARKETPLACE")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(|| {
+                    Address::from_str("0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304").unwrap()
+                }),
+            node_registry: std::env::var("BASE_SEPOLIA_NODE_REGISTRY")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(|| {
+                    Address::from_str("0x87516C13Ea2f99de598665e14cab64E191A0f8c4").unwrap()
+                }),
+            payment_escrow: std::env::var("BASE_SEPOLIA_PAYMENT_ESCROW")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(|| {
+                    Address::from_str("0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6").unwrap()
+                }),
+            host_earnings: std::env::var("BASE_SEPOLIA_HOST_EARNINGS")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(|| {
+                    Address::from_str("0xbFfCd6BAaCCa205d471bC52Bd37e1957B1A43d4a").unwrap()
+                }),
+        }
+    }
+
+    fn load_opbnb_contracts(&self) -> ContractAddresses {
+        ContractAddresses {
+            job_marketplace: std::env::var("OPBNB_JOB_MARKETPLACE")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(Address::zero),
+            node_registry: std::env::var("OPBNB_NODE_REGISTRY")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(Address::zero),
+            payment_escrow: std::env::var("OPBNB_PAYMENT_ESCROW")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(Address::zero),
+            host_earnings: std::env::var("OPBNB_HOST_EARNINGS")
+                .ok()
+                .and_then(|addr| Address::from_str(&addr).ok())
+                .unwrap_or_else(Address::zero),
+        }
+    }
+
+    pub fn validate_rpc_url(&self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if url.is_empty() {
+            return Err("RPC URL cannot be empty".into());
+        }
+
+        if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("ws://") && !url.starts_with("wss://") {
+            return Err("RPC URL must start with http://, https://, ws://, or wss://".into());
+        }
+
+        Ok(())
+    }
+
+    fn load_from_file(&self, path: &str, section: &str) -> Result<ChainConfig, Box<dyn std::error::Error>> {
+        let contents = std::fs::read_to_string(path)?;
+        let config: toml::Value = toml::from_str(&contents)?;
+
+        let chain_section = config.get(section)
+            .ok_or_else(|| format!("Section '{}' not found in config file", section))?;
+
+        let chain_id = chain_section.get("chain_id")
+            .and_then(|v| v.as_integer())
+            .ok_or("chain_id not found")? as u64;
+
+        let rpc_url = chain_section.get("rpc_url")
+            .and_then(|v| v.as_str())
+            .ok_or("rpc_url not found")?
+            .to_string();
+
+        let confirmations = chain_section.get("confirmations")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(if section == "base_sepolia" { 3 } else { 15 }) as u64;
+
+        let gas_multiplier = chain_section.get("gas_multiplier")
+            .and_then(|v| v.as_float());
+
+        if section == "base_sepolia" {
+            Ok(ChainConfig {
+                chain_id,
+                name: "Base Sepolia".to_string(),
+                rpc_url,
+                native_token: TokenInfo {
+                    symbol: "ETH".to_string(),
+                    decimals: 18,
+                },
+                contracts: self.load_base_sepolia_contracts(),
+                confirmation_blocks: confirmations,
+                gas_multiplier,
+            })
+        } else {
+            Ok(ChainConfig {
+                chain_id,
+                name: "opBNB Testnet".to_string(),
+                rpc_url,
+                native_token: TokenInfo {
+                    symbol: "BNB".to_string(),
+                    decimals: 18,
+                },
+                contracts: self.load_opbnb_contracts(),
+                confirmation_blocks: confirmations,
+                gas_multiplier,
+            })
+        }
+    }
+
+    pub async fn build_registry(&self) -> Result<ChainRegistry, Box<dyn std::error::Error>> {
+        let mut chains = HashMap::new();
+
+        let base_config = self.load_base_sepolia().await?;
+        chains.insert(base_config.chain_id, base_config);
+
+        let opbnb_config = self.load_opbnb_testnet().await?;
+        chains.insert(opbnb_config.chain_id, opbnb_config);
+
+        let default_chain = std::env::var("DEFAULT_CHAIN_ID")
+            .unwrap_or_else(|_| "84532".to_string())
+            .parse::<u64>()?;
+
+        Ok(ChainRegistry {
+            chains,
+            default_chain,
+        })
+    }
+}
+
+impl Default for ChainConfigLoader {
     fn default() -> Self {
         Self::new()
     }

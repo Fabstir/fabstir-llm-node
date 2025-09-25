@@ -42,15 +42,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Chain configurations load correctly
 - Registry returns correct config for each chain ID
 
-### Sub-phase 1.2: Environment Configuration
+### Sub-phase 1.2: Environment Configuration ✅
 **Goal**: Load multi-chain settings from environment
 
 **Tasks**:
-- [ ] Update `.env.local.test` with multi-chain variables
-- [ ] Create `ChainConfigLoader` for environment parsing
-- [ ] Implement fallback to hardcoded defaults
-- [ ] Add RPC URL validation
-- [ ] Support override contract addresses per chain
+- [x] Update `.env.local.test` with multi-chain variables
+- [x] Create `ChainConfigLoader` for environment parsing
+- [x] Implement fallback to hardcoded defaults
+- [x] Add RPC URL validation
+- [x] Support override contract addresses per chain
 
 **Test Files** (TDD - Write First):
 - `tests/chains/test_env_config.rs`
