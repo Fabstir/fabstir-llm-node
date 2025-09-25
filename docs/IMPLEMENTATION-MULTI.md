@@ -243,15 +243,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 
 ## Phase 4: WebSocket Protocol Updates
 
-### Sub-phase 4.1: Message Protocol Enhancement
+### Sub-phase 4.1: Message Protocol Enhancement ✅ COMPLETED
 **Goal**: Add chain awareness to WebSocket messages
 
 **Tasks**:
-- [ ] Update `SessionInitMessage` with `chain_id` field
-- [ ] Add chain info to response messages
-- [ ] Create chain validation in message handlers
-- [ ] Update message serialization
-- [ ] Maintain backwards compatibility
+- [x] Update `SessionInitMessage` with `chain_id` field
+- [x] Add chain info to response messages
+- [x] Create chain validation in message handlers
+- [x] Update message serialization
+- [x] Maintain backwards compatibility
 
 **Test Files** (TDD - Write First):
 - `tests/websocket/test_chain_messages.rs`

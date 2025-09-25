@@ -1,6 +1,6 @@
 use crate::api::websocket::{
     memory_cache::{CacheManager, ConversationCache},
-    messages::{ConversationMessage, SessionInitResponse},
+    messages::{ConversationMessage, SessionInitResponse, ChainInfo, MessageValidator},
 };
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
@@ -9,6 +9,7 @@ use tracing::{debug, info};
 /// Handler for session initialization
 pub struct SessionInitHandler {
     cache_manager: Arc<CacheManager>,
+    message_validator: MessageValidator,
 }
 
 impl SessionInitHandler {
@@ -16,10 +17,11 @@ impl SessionInitHandler {
     pub fn new() -> Self {
         Self {
             cache_manager: Arc::new(CacheManager::new()),
+            message_validator: MessageValidator::new(),
         }
     }
     
-    /// Handle session initialization with optional context
+    /// Handle session initialization with optional context and chain
     pub async fn handle_session_init(
         &self,
         session_id: &str,
@@ -27,11 +29,35 @@ impl SessionInitHandler {
         conversation_context: Vec<ConversationMessage>,
     ) -> Result<SessionInitResponse> {
         info!("Initializing session {} with job_id {}", session_id, job_id);
+
+        self.handle_session_init_with_chain(session_id, job_id, conversation_context, None).await
+    }
+
+    /// Handle session initialization with chain support
+    pub async fn handle_session_init_with_chain(
+        &self,
+        session_id: &str,
+        job_id: u64,
+        conversation_context: Vec<ConversationMessage>,
+        chain_id: Option<u64>,
+    ) -> Result<SessionInitResponse> {
+        info!("Initializing session {} with job_id {} on chain {:?}", session_id, job_id, chain_id);
         
         // Validate job_id
         if job_id == 0 {
             return Err(anyhow!("Invalid job_id: cannot be 0"));
         }
+
+        // Validate chain if specified
+        let chain_info = if let Some(chain) = chain_id {
+            if !self.message_validator.is_chain_supported(chain) {
+                return Err(anyhow!("Unsupported chain ID: {}", chain));
+            }
+            // Create chain info based on chain ID
+            Some(self.get_chain_info(chain))
+        } else {
+            None
+        };
         
         // Create or replace cache for this session
         let cache = self.cache_manager.create_cache(session_id.to_string(), job_id).await;
@@ -53,6 +79,7 @@ impl SessionInitHandler {
             job_id,
             message_count: cache.message_count().await,
             total_tokens,
+            chain_info,
         })
     }
     
@@ -91,6 +118,30 @@ impl SessionInitHandler {
     /// Clean up old sessions
     pub async fn cleanup_old_sessions(&self) {
         self.cache_manager.cleanup_old_caches().await;
+    }
+
+    /// Get chain information for a chain ID
+    fn get_chain_info(&self, chain_id: u64) -> ChainInfo {
+        match chain_id {
+            84532 => ChainInfo {
+                chain_id,
+                chain_name: "Base Sepolia".to_string(),
+                native_token: "ETH".to_string(),
+                rpc_url: "https://sepolia.base.org".to_string(),
+            },
+            5611 => ChainInfo {
+                chain_id,
+                chain_name: "opBNB Testnet".to_string(),
+                native_token: "BNB".to_string(),
+                rpc_url: "https://opbnb-testnet-rpc.bnbchain.org".to_string(),
+            },
+            _ => ChainInfo {
+                chain_id,
+                chain_name: "Unknown".to_string(),
+                native_token: "UNKNOWN".to_string(),
+                rpc_url: String::new(),
+            },
+        }
     }
 }
 
