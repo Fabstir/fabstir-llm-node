@@ -408,15 +408,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Correct data returned per chain
 - Statistics accurate
 
-### Sub-phase 6.2: API Response Updates
+### Sub-phase 6.2: API Response Updates ✅
 **Goal**: Include chain info in API responses
 
 **Tasks**:
-- [ ] Add chain_id to inference responses
-- [ ] Include native token in responses
-- [ ] Add chain name to session info
-- [ ] Update error messages with chain context
-- [ ] Create chain-aware response formatting
+- [x] Add chain_id to inference responses
+- [x] Include native token in responses
+- [x] Add chain name to session info
+- [x] Update error messages with chain context
+- [x] Create chain-aware response formatting
 
 **Test Files** (TDD - Write First):
 - `tests/api/test_chain_responses.rs`

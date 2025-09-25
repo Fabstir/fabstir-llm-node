@@ -590,6 +590,9 @@ impl ApiServer {
                             content: token_info.text.clone(),
                             tokens: 1,
                             finish_reason: None,
+                            chain_id: request.chain_id,
+                            chain_name: None,
+                            native_token: None,
                         };
 
                         if tx.send(response).await.is_err() {
@@ -603,6 +606,9 @@ impl ApiServer {
                             content: format!("Error: {}", e),
                             tokens: 0,
                             finish_reason: Some("error".to_string()),
+                            chain_id: request.chain_id,
+                            chain_name: None,
+                            native_token: None,
                         };
                         let _ = tx.send(error_response).await;
                         break;
@@ -633,6 +639,9 @@ impl ApiServer {
                 content: String::new(),
                 tokens: 0,
                 finish_reason: Some("stop".to_string()),
+                chain_id: request.chain_id,
+                chain_name: None,
+                native_token: None,
             };
             let _ = tx.send(final_response).await;
         });

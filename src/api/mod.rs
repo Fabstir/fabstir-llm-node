@@ -6,6 +6,7 @@ pub mod pool;
 pub mod http_server;
 pub mod websocket;
 pub mod token_tracker;
+pub mod response_formatter;
 
 pub use server::{ApiServer, ApiConfig};
 pub use handlers::{

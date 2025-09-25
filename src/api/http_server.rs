@@ -319,12 +319,25 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                             // Handle streaming inference
                             match state.api_server.handle_streaming_request(request, "ws-client".to_string()).await {
                                 Ok(mut receiver) => {
+                                    // Get chain info for formatting
+                                    let (chain_name, native_token) = if let Some(chain_id) = current_chain_id {
+                                        if let Some(chain) = state.chain_registry.get_chain(chain_id) {
+                                            (Some(chain.name.clone()), Some(chain.native_token.symbol.clone()))
+                                        } else {
+                                            (None, None)
+                                        }
+                                    } else {
+                                        (None, None)
+                                    };
+
                                     while let Some(response) = receiver.recv().await {
                                         let ws_msg = json!({
                                             "type": "stream_chunk",
                                             "content": response.content,
                                             "tokens": response.tokens,
                                             "chain_id": current_chain_id,
+                                            "chain_name": chain_name.clone(),
+                                            "native_token": native_token.clone(),
                                         });
 
                                         // Update session tokens
