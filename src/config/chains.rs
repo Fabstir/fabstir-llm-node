@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 
+// Re-export provider types
+pub use super::provider::{MultiChainProvider, ProviderHealth, PoolStats, RotationStats};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainConfig {
     pub chain_id: u64,
