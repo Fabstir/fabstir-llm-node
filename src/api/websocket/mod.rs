@@ -29,3 +29,4 @@ pub mod proof_manager;
 pub mod proof_config;
 pub mod persistence;
 pub mod storage_trait;
+pub mod session_context;

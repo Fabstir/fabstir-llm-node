@@ -179,8 +179,8 @@ impl Authenticator {
             }
         }
         
-        // Verify with blockchain
-        let result = self.job_verifier.verify_job(job_id).await;
+        // Verify with blockchain (default to Base Sepolia for now)
+        let result = self.job_verifier.verify_job(job_id, 84532).await;
         
         // Cache result
         self.cache.write().await.insert(job_id, CacheEntry {

@@ -1,7 +1,8 @@
 use crate::api::websocket::{
     handlers::session_init::SessionInitHandler,
-    messages::{ConversationMessage, StreamToken},
+    messages::{ConversationMessage, StreamToken, ChainInfo},
     proof_manager::ProofManager,
+    session_context::SessionContext,
 };
 use anyhow::{anyhow, Result};
 use futures::stream::{Stream, StreamExt};
@@ -14,6 +15,7 @@ use tracing::{debug, info};
 pub struct ResponseHandler {
     session_handler: Arc<SessionInitHandler>,
     proof_manager: Option<Arc<ProofManager>>,
+    session_context: Option<SessionContext>,
 }
 
 impl ResponseHandler {
@@ -25,7 +27,14 @@ impl ResponseHandler {
         Self {
             session_handler,
             proof_manager,
+            session_context: None,
         }
+    }
+
+    /// Set session context for chain-aware streaming
+    pub fn with_context(mut self, context: SessionContext) -> Self {
+        self.session_context = Some(context);
+        self
     }
     
     /// Create a response stream for a prompt
@@ -49,6 +58,9 @@ impl ResponseHandler {
         // Create a channel for streaming
         let (tx, mut rx) = mpsc::channel::<Result<StreamToken>>(100);
         
+        // Get chain info from context if available
+        let chain_info = self.session_context.as_ref().map(|ctx| ctx.chain_info.clone());
+
         // Spawn task to generate response
         let session_id_clone = session_id.to_string();
         let cache_clone = cache.clone();
@@ -93,6 +105,7 @@ impl ResponseHandler {
                     total_tokens: if is_final { total_tokens } else { 0 },
                     message_index: message_index + 1,
                     proof,
+                    chain_info: if is_final { chain_info.clone() } else { None },
                 };
                 
                 if tx.send(Ok(token)).await.is_err() {

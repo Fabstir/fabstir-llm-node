@@ -338,6 +338,7 @@ impl InferenceHandler {
                     total_tokens: if is_final { total_tokens } else { 0 },
                     message_index: message_index + 1,
                     proof: None,
+                    chain_info: None, // Add chain info support later if needed
                 };
                 
                 if tx.send(Ok(token)).await.is_err() {
