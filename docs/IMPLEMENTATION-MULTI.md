@@ -12,9 +12,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - **Backwards Compatible**: Maintain existing single-chain functionality
 - **Production Ready**: Handle chain-specific gas, RPC endpoints, and native tokens
 
-## Phase 9: Chain Configuration Foundation
+## Phase 1: Chain Configuration Foundation
 
-### Sub-phase 9.1: Chain Registry Infrastructure
+### Sub-phase 1.1: Chain Registry Infrastructure
 **Goal**: Create foundational chain configuration system
 
 **Tasks**:
@@ -42,7 +42,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Chain configurations load correctly
 - Registry returns correct config for each chain ID
 
-### Sub-phase 9.2: Environment Configuration
+### Sub-phase 1.2: Environment Configuration
 **Goal**: Load multi-chain settings from environment
 
 **Tasks**:
@@ -65,7 +65,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Fallbacks work when env vars missing
 - Invalid configurations rejected
 
-### Sub-phase 9.3: Multi-Provider Management
+### Sub-phase 1.3: Multi-Provider Management
 **Goal**: Manage multiple blockchain providers
 
 **Tasks**:
@@ -88,9 +88,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Health checks detect failures
 - Failover switches to backup RPC
 
-## Phase 10: Session Chain Tracking
+## Phase 2: Session Chain Tracking
 
-### Sub-phase 10.1: Session Data Structure Updates
+### Sub-phase 2.1: Session Data Structure Updates
 **Goal**: Add chain tracking to session management
 
 **Tasks**:
@@ -113,7 +113,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Legacy sessions default correctly
 - Invalid chains rejected
 
-### Sub-phase 10.2: Session Manager Enhancement
+### Sub-phase 2.2: Session Manager Enhancement
 **Goal**: Make session manager chain-aware
 
 **Tasks**:
@@ -136,7 +136,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Can query sessions by chain
 - Statistics accurate per chain
 
-### Sub-phase 10.3: Session Persistence
+### Sub-phase 2.3: Session Persistence
 **Goal**: Persist chain information across restarts
 
 **Tasks**:
@@ -159,9 +159,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Recovery maintains chain association
 - Backups organized by chain
 
-## Phase 11: Multi-Chain Settlement
+## Phase 3: Multi-Chain Settlement
 
-### Sub-phase 11.1: Settlement Manager Core
+### Sub-phase 3.1: Settlement Manager Core
 **Goal**: Create chain-aware settlement system
 
 **Tasks**:
@@ -184,7 +184,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Correct signer used per chain
 - Gas estimates reasonable
 
-### Sub-phase 11.2: Automatic Settlement Integration
+### Sub-phase 3.2: Automatic Settlement Integration
 **Goal**: Connect settlement to WebSocket disconnect
 
 **Tasks**:
@@ -207,7 +207,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Correct chain used for settlement
 - Retries work on failure
 
-### Sub-phase 11.3: Payment Distribution
+### Sub-phase 3.3: Payment Distribution
 **Goal**: Handle chain-specific payment flows
 
 **Tasks**:
@@ -230,9 +230,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Fees accumulated properly
 - Refunds calculated accurately
 
-## Phase 12: WebSocket Protocol Updates
+## Phase 4: WebSocket Protocol Updates
 
-### Sub-phase 12.1: Message Protocol Enhancement
+### Sub-phase 4.1: Message Protocol Enhancement
 **Goal**: Add chain awareness to WebSocket messages
 
 **Tasks**:
@@ -255,7 +255,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Legacy messages still work
 - Invalid chains rejected
 
-### Sub-phase 12.2: Session Handler Updates
+### Sub-phase 4.2: Session Handler Updates
 **Goal**: Make WebSocket handlers chain-aware
 
 **Tasks**:
@@ -278,7 +278,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Job verification uses right chain
 - Streaming maintains chain context
 
-### Sub-phase 12.3: Connection Management
+### Sub-phase 4.3: Connection Management
 **Goal**: Track connections per chain
 
 **Tasks**:
@@ -301,9 +301,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Statistics accurate by chain
 - Rate limits enforced per chain
 
-## Phase 13: Multi-Chain Registration
+## Phase 5: Multi-Chain Registration
 
-### Sub-phase 13.1: Node Registration System
+### Sub-phase 5.1: Node Registration System
 **Goal**: Register node on multiple chains
 
 **Tasks**:
@@ -326,7 +326,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Registration verified on-chain
 - Status tracked correctly
 
-### Sub-phase 13.2: Registration CLI
+### Sub-phase 5.2: Registration CLI
 **Goal**: Create command-line registration tools
 
 **Tasks**:
@@ -349,7 +349,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - All chains option registers everywhere
 - Status shows all registrations
 
-### Sub-phase 13.3: Registration Monitoring
+### Sub-phase 5.3: Registration Monitoring
 **Goal**: Monitor registration health
 
 **Tasks**:
@@ -372,9 +372,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Auto-renewal works
 - Warnings issued before expiry
 
-## Phase 14: API Enhancements
+## Phase 6: API Enhancements
 
-### Sub-phase 14.1: HTTP API Chain Support
+### Sub-phase 6.1: HTTP API Chain Support
 **Goal**: Add chain parameters to HTTP endpoints
 
 **Tasks**:
@@ -397,7 +397,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Correct data returned per chain
 - Statistics accurate
 
-### Sub-phase 14.2: API Response Updates
+### Sub-phase 6.2: API Response Updates
 **Goal**: Include chain info in API responses
 
 **Tasks**:
@@ -420,7 +420,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Native token correctly identified
 - Errors provide chain context
 
-### Sub-phase 14.3: API Documentation
+### Sub-phase 6.3: API Documentation
 **Goal**: Update API docs for multi-chain
 
 **Tasks**:
@@ -441,9 +441,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Examples work correctly
 - Documentation comprehensive
 
-## Phase 15: Gas Management
+## Phase 7: Gas Management
 
-### Sub-phase 15.1: Gas Estimation System
+### Sub-phase 7.1: Gas Estimation System
 **Goal**: Implement chain-specific gas estimation
 
 **Tasks**:
@@ -466,7 +466,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Price monitoring works
 - Limits appropriate per chain
 
-### Sub-phase 15.2: Gas Optimization
+### Sub-phase 7.2: Gas Optimization
 **Goal**: Optimize gas usage per chain
 
 **Tasks**:
@@ -489,7 +489,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Multipliers applied correctly
 - MEV protection active
 
-### Sub-phase 15.3: Balance Monitoring
+### Sub-phase 7.3: Balance Monitoring
 **Goal**: Monitor native token balances
 
 **Tasks**:
@@ -512,9 +512,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Alerts triggered at thresholds
 - Notifications sent correctly
 
-## Phase 16: Error Handling & Recovery
+## Phase 8: Error Handling & Recovery
 
-### Sub-phase 16.1: Chain-Specific Error Handling
+### Sub-phase 8.1: Chain-Specific Error Handling
 **Goal**: Handle errors per chain gracefully
 
 **Tasks**:
@@ -537,7 +537,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Retries work with backoff
 - Fallbacks activate on failure
 
-### Sub-phase 16.2: Transaction Recovery
+### Sub-phase 8.2: Transaction Recovery
 **Goal**: Recover from failed transactions
 
 **Tasks**:
@@ -560,7 +560,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Replacements work correctly
 - Nonce issues resolved
 
-### Sub-phase 16.3: System Recovery
+### Sub-phase 8.3: System Recovery
 **Goal**: Recover from system failures
 
 **Tasks**:
@@ -583,9 +583,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Sessions restored correctly
 - Checkpoints work reliably
 
-## Phase 17: Monitoring & Metrics
+## Phase 9: Monitoring & Metrics
 
-### Sub-phase 17.1: Chain-Specific Metrics
+### Sub-phase 9.1: Chain-Specific Metrics
 **Goal**: Track metrics per chain
 
 **Tasks**:
@@ -608,7 +608,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Data accurate per chain
 - Prometheus can scrape
 
-### Sub-phase 17.2: Health Monitoring
+### Sub-phase 9.2: Health Monitoring
 **Goal**: Monitor health per chain
 
 **Tasks**:
@@ -631,7 +631,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Alerts trigger correctly
 - Dashboards show real data
 
-### Sub-phase 17.3: Logging Enhancement
+### Sub-phase 9.3: Logging Enhancement
 **Goal**: Improve logging for multi-chain
 
 **Tasks**:
@@ -654,9 +654,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Structured format consistent
 - Tracing works end-to-end
 
-## Phase 18: Integration Testing
+## Phase 10: Integration Testing
 
-### Sub-phase 18.1: End-to-End Testing
+### Sub-phase 10.1: End-to-End Testing
 **Goal**: Test complete multi-chain flow
 
 **Tasks**:
@@ -679,7 +679,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Chain switching seamless
 - Concurrent ops successful
 
-### Sub-phase 18.2: Load Testing
+### Sub-phase 10.2: Load Testing
 **Goal**: Test system under load
 
 **Tasks**:
@@ -702,7 +702,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Throughput meets targets
 - Failover works under stress
 
-### Sub-phase 18.3: Security Testing
+### Sub-phase 10.3: Security Testing
 **Goal**: Validate security measures
 
 **Tasks**:
@@ -725,9 +725,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Attacks prevented
 - Access controls enforced
 
-## Phase 19: Documentation & Deployment
+## Phase 11: Documentation & Deployment
 
-### Sub-phase 19.1: Documentation
+### Sub-phase 11.1: Documentation
 **Goal**: Complete documentation update
 
 **Tasks**:
@@ -749,7 +749,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Examples work correctly
 - Guides comprehensive
 
-### Sub-phase 19.2: Migration Tools
+### Sub-phase 11.2: Migration Tools
 **Goal**: Create migration utilities
 
 **Tasks**:
@@ -772,7 +772,7 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Rollback functions correctly
 - Zero data loss
 
-### Sub-phase 19.3: Production Deployment
+### Sub-phase 11.3: Production Deployment
 **Goal**: Deploy to production
 
 **Tasks**:
@@ -795,27 +795,27 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 
 ## Implementation Timeline
 
-**Phase 9**: 1 week - Chain Configuration Foundation
-**Phase 10**: 1 week - Session Chain Tracking
-**Phase 11**: 1 week - Multi-Chain Settlement
-**Phase 12**: 1 week - WebSocket Protocol Updates
-**Phase 13**: 1 week - Multi-Chain Registration
-**Phase 14**: 1 week - API Enhancements
-**Phase 15**: 1 week - Gas Management
-**Phase 16**: 1 week - Error Handling & Recovery
-**Phase 17**: 1 week - Monitoring & Metrics
-**Phase 18**: 1 week - Integration Testing
-**Phase 19**: 1 week - Documentation & Deployment
+**Phase 1**: 1 week - Chain Configuration Foundation
+**Phase 2**: 1 week - Session Chain Tracking
+**Phase 3**: 1 week - Multi-Chain Settlement
+**Phase 4**: 1 week - WebSocket Protocol Updates
+**Phase 5**: 1 week - Multi-Chain Registration
+**Phase 6**: 1 week - API Enhancements
+**Phase 7**: 1 week - Gas Management
+**Phase 8**: 1 week - Error Handling & Recovery
+**Phase 9**: 1 week - Monitoring & Metrics
+**Phase 10**: 1 week - Integration Testing
+**Phase 11**: 1 week - Documentation & Deployment
 
 **Total Timeline**: 11 weeks
 
 ## Critical Path
 
-1. **Phase 9.1-9.3**: Foundation must be solid
-2. **Phase 10.1-10.2**: Session tracking essential
-3. **Phase 11.1-11.2**: Settlement core functionality
-4. **Phase 12.1**: Protocol compatibility
-5. **Phase 18.1**: End-to-end validation
+1. **Phase 1.1-1.3**: Foundation must be solid
+2. **Phase 2.1-2.2**: Session tracking essential
+3. **Phase 3.1-3.2**: Settlement core functionality
+4. **Phase 4.1**: Protocol compatibility
+5. **Phase 10.1**: End-to-end validation
 
 ## Risk Mitigation
 
