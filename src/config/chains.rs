@@ -44,14 +44,14 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // Using addresses from .env.contracts
-                job_marketplace: Address::from_str("0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304")
+                // Using addresses from .env.local.test and DEPLOYMENT_INFO.json
+                job_marketplace: Address::from_str("0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f")
                     .expect("Invalid job marketplace address"),
-                node_registry: Address::from_str("0x87516C13Ea2f99de598665e14cab64E191A0f8c4")
+                node_registry: Address::from_str("0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218")
                     .expect("Invalid node registry address"),
                 payment_escrow: Address::from_str("0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6")
                     .expect("Invalid payment escrow address"),
-                host_earnings: Address::from_str("0xbFfCd6BAaCCa205d471bC52Bd37e1957B1A43d4a")
+                host_earnings: Address::from_str("0x908962e8c6CE72610021586f85ebDE09aAc97776")
                     .expect("Invalid host earnings address"),
             },
             confirmation_blocks: 3,
@@ -129,6 +129,10 @@ impl ChainRegistry {
 
     pub fn is_chain_supported(&self, chain_id: u64) -> bool {
         self.chains.contains_key(&chain_id)
+    }
+
+    pub fn get_all_chain_ids(&self) -> Vec<u64> {
+        self.chains.keys().cloned().collect()
     }
 }
 
@@ -234,13 +238,13 @@ impl ChainConfigLoader {
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
                 .unwrap_or_else(|| {
-                    Address::from_str("0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304").unwrap()
+                    Address::from_str("0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f").unwrap()
                 }),
             node_registry: std::env::var("BASE_SEPOLIA_NODE_REGISTRY")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
                 .unwrap_or_else(|| {
-                    Address::from_str("0x87516C13Ea2f99de598665e14cab64E191A0f8c4").unwrap()
+                    Address::from_str("0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218").unwrap()
                 }),
             payment_escrow: std::env::var("BASE_SEPOLIA_PAYMENT_ESCROW")
                 .ok()
@@ -252,7 +256,7 @@ impl ChainConfigLoader {
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
                 .unwrap_or_else(|| {
-                    Address::from_str("0xbFfCd6BAaCCa205d471bC52Bd37e1957B1A43d4a").unwrap()
+                    Address::from_str("0x908962e8c6CE72610021586f85ebDE09aAc97776").unwrap()
                 }),
         }
     }

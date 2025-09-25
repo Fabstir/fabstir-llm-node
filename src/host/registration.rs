@@ -467,10 +467,12 @@ mod tests {
     async fn test_metadata_serialization() {
         let metadata = NodeMetadata {
             models: vec!["llama-3.2".to_string(), "mistral-7b".to_string()],
+            model_ids: vec![],
             gpu: "RTX 4090".to_string(),
             ram_gb: 64,
             cost_per_token: 0.0001,
             max_concurrent_jobs: 5,
+            api_url: "http://localhost:8080".to_string(),
         };
         
         // Serialize to JSON

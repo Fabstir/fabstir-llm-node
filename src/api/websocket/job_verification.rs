@@ -50,7 +50,7 @@ pub struct JobVerificationConfig {
 impl Default for JobVerificationConfig {
     fn default() -> Self {
         let mut marketplace_addresses = HashMap::new();
-        marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string()); // Base Sepolia
+        marketplace_addresses.insert(84532, "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string()); // Base Sepolia
         marketplace_addresses.insert(5611, "0x0000000000000000000000000000000000000000".to_string()); // opBNB placeholder
 
         Self {
@@ -180,7 +180,7 @@ impl JobVerifier {
         }
 
         // Check cache first
-        if let Some(details) = self.get_cached_job(job_id, chain_id).await {
+        if let Some(details) = self.get_cached_job(job_id).await {
             debug!("Job {} found in cache for chain {}", job_id, chain_id);
             return Ok(details);
         }
@@ -191,7 +191,7 @@ impl JobVerifier {
             let details = self.convert_job_to_details(job_id, chain_id, job)?;
 
             // Cache the result
-            self.cache_job(job_id, chain_id, details.clone()).await;
+            self.cache_job(job_id, details.clone()).await;
 
             Ok(details)
         } else {
@@ -313,7 +313,7 @@ impl JobVerifier {
     pub fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            web3_client: self.web3_client.clone(),
+            web3_clients: self.web3_clients.clone(),
             cache: self.cache.clone(),
         }
     }
@@ -322,22 +322,27 @@ impl JobVerifier {
     
     async fn get_cached_job(&self, job_id: u64) -> Option<JobDetails> {
         let cache = self.cache.read().await;
-        
-        if let Some(entry) = cache.get(&job_id) {
-            if entry.timestamp.elapsed() < self.config.cache_duration {
-                return Some(entry.details.clone());
+
+        // Try to find the job in cache for any chain
+        for ((cached_chain_id, cached_job_id), entry) in cache.iter() {
+            if *cached_job_id == job_id {
+                if entry.timestamp.elapsed() < self.config.cache_duration {
+                    return Some(entry.details.clone());
+                }
             }
         }
-        
+
         None
     }
     
     async fn cache_job(&self, job_id: u64, details: JobDetails) {
         let mut cache = self.cache.write().await;
-        
-        cache.insert(job_id, CacheEntry {
+
+        let chain_id = details.chain_id;
+        cache.insert((chain_id, job_id), CacheEntry {
             details,
             timestamp: Instant::now(),
+            chain_id,
         });
         
         // Clean old entries

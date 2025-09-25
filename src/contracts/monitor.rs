@@ -26,15 +26,17 @@ pub struct JobMonitorConfig {
 impl Default for JobMonitorConfig {
     fn default() -> Self {
         // Try to load from environment variables, fall back to defaults
-        let marketplace_address = std::env::var("JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS")
-            .unwrap_or_else(|_| "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string())
+        let marketplace_address = std::env::var("CONTRACT_JOB_MARKETPLACE")
+            .or_else(|_| std::env::var("JOB_MARKETPLACE"))
+            .unwrap_or_else(|_| "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string())
             .parse()
-            .unwrap_or_else(|_| "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".parse().unwrap());
-            
-        let registry_address = std::env::var("NODE_REGISTRY_FAB_ADDRESS")
-            .unwrap_or_else(|_| "0x87516C13Ea2f99de598665e14cab64E191A0f8c4".to_string())
+            .unwrap_or_else(|_| "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".parse().unwrap());
+
+        let registry_address = std::env::var("CONTRACT_NODE_REGISTRY")
+            .or_else(|_| std::env::var("NODE_REGISTRY"))
+            .unwrap_or_else(|_| "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".to_string())
             .parse()
-            .unwrap_or_else(|_| "0x87516C13Ea2f99de598665e14cab64E191A0f8c4".parse().unwrap());
+            .unwrap_or_else(|_| "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".parse().unwrap());
             
         Self {
             marketplace_address,
