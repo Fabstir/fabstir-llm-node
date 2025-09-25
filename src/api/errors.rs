@@ -8,6 +8,8 @@ pub struct ErrorResponse {
     pub message: String,
     pub request_id: Option<String>,
     pub details: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +61,39 @@ impl ApiError {
             message,
             request_id,
             details,
+            chain_id: None,
         }
+    }
+
+    pub fn to_response_with_chain(
+        &self,
+        request_id: Option<String>,
+        chain_id: u64,
+        chain_name: &str,
+        native_token: &str
+    ) -> ErrorResponse {
+        let mut response = self.to_response(request_id);
+        response.chain_id = Some(chain_id);
+
+        // Add chain context to details
+        if let Some(ref mut details) = response.details {
+            details.insert("chain_id".to_string(), serde_json::Value::Number(chain_id.into()));
+            details.insert("chain_name".to_string(), serde_json::Value::String(chain_name.to_string()));
+            details.insert("native_token".to_string(), serde_json::Value::String(native_token.to_string()));
+        } else {
+            let mut details = HashMap::new();
+            details.insert("chain_id".to_string(), serde_json::Value::Number(chain_id.into()));
+            details.insert("chain_name".to_string(), serde_json::Value::String(chain_name.to_string()));
+            details.insert("native_token".to_string(), serde_json::Value::String(native_token.to_string()));
+            response.details = Some(details);
+        }
+
+        // Update message to include chain context if relevant
+        if !response.message.contains(chain_name) {
+            response.message = format!("{} on {}", response.message, chain_name);
+        }
+
+        response
     }
 
     pub fn status_code(&self) -> u16 {

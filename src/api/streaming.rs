@@ -9,6 +9,12 @@ pub struct StreamingResponse {
     pub content: String,
     pub tokens: u32,
     pub finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_token: Option<String>,
 }
 
 pub struct StreamingHandler {
