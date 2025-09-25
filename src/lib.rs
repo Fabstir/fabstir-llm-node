@@ -2,6 +2,7 @@ pub mod config;
 pub mod p2p_config;
 pub mod p2p;
 pub mod api;
+pub mod blockchain;
 pub mod contracts;
 pub mod inference;
 pub mod job_processor;

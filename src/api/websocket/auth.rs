@@ -105,8 +105,8 @@ pub struct JwtClaims {
 pub struct JobVerifier;
 
 impl JobVerifier {
-    pub async fn verify_job(&self, job_id: u64) -> AuthResult<()> {
-        // Mock implementation
+    pub async fn verify_job(&self, job_id: u64, _chain_id: u64) -> AuthResult<()> {
+        // Mock implementation (ignores chain_id for now)
         match job_id {
             12345 => Ok(()),
             11111 => Err(AuthError::JobExpired),

@@ -143,13 +143,17 @@ impl Web3Client {
         let mut addresses = HashMap::new();
         
         // Try to load from environment variables first
-        if let Ok(addr) = std::env::var("NODE_REGISTRY_FAB_ADDRESS") {
+        // First try CONTRACT_NODE_REGISTRY, then fallback to NODE_REGISTRY
+        if let Ok(addr) = std::env::var("CONTRACT_NODE_REGISTRY")
+            .or_else(|_| std::env::var("NODE_REGISTRY")) {
             if !addr.is_empty() {
                 addresses.insert("NodeRegistry".to_string(), addr.parse()?);
             }
         }
         
-        if let Ok(addr) = std::env::var("JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS") {
+        // First try CONTRACT_JOB_MARKETPLACE, then fallback to JOB_MARKETPLACE
+        if let Ok(addr) = std::env::var("CONTRACT_JOB_MARKETPLACE")
+            .or_else(|_| std::env::var("JOB_MARKETPLACE")) {
             if !addr.is_empty() {
                 addresses.insert("JobMarketplace".to_string(), addr.parse()?);
             }
@@ -187,13 +191,12 @@ impl Web3Client {
         
         // If no environment variables found, fall back to default addresses
         if addresses.is_empty() {
-            // Default addresses for testing/development
-            addresses.insert("NodeRegistry".to_string(), "0x87516C13Ea2f99de598665e14cab64E191A0f8c4".parse()?);
-            addresses.insert("JobMarketplace".to_string(), "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".parse()?);
-            addresses.insert("PaymentEscrow".to_string(), "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".parse()?);
-            addresses.insert("HostEarnings".to_string(), "0xbFfCd6BAaCCa205d471bC52Bd37e1957B1A43d4a".parse()?);
-            addresses.insert("ReputationSystem".to_string(), "0x4504CC06C47a4E4d9a14Bd5eF9766395B7c76865".parse()?);
-            addresses.insert("ProofSystem".to_string(), "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".parse()?);
+            // Default addresses for Base Sepolia from .env.local.test
+            addresses.insert("NodeRegistry".to_string(), "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".parse()?);
+            addresses.insert("JobMarketplace".to_string(), "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".parse()?);
+            addresses.insert("ProofSystem".to_string(), "0x2ACcc60893872A499700908889B38C5420CBcFD1".parse()?);
+            addresses.insert("HostEarnings".to_string(), "0x908962e8c6CE72610021586f85ebDE09aAc97776".parse()?);
+            addresses.insert("ModelRegistry".to_string(), "0x92b2De840bB2171203011A6dBA928d855cA8183E".parse()?);
         }
         
         *self.contract_addresses.write().await = addresses.clone();
