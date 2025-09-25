@@ -1,4 +1,5 @@
 use crate::job_processor::Message;
+use crate::config::chains::ChainRegistry;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,9 +47,43 @@ pub struct SessionMetrics {
     pub memory_bytes: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionChainInfo {
+    pub chain_id: u64,
+    pub chain_name: String,
+    pub native_token: String,
+    pub native_token_decimals: u8,
+}
+
+impl SessionChainInfo {
+    pub fn from_chain_id(chain_id: u64) -> Self {
+        match chain_id {
+            84532 => Self {
+                chain_id,
+                chain_name: "Base Sepolia".to_string(),
+                native_token: "ETH".to_string(),
+                native_token_decimals: 18,
+            },
+            5611 => Self {
+                chain_id,
+                chain_name: "opBNB Testnet".to_string(),
+                native_token: "BNB".to_string(),
+                native_token_decimals: 18,
+            },
+            _ => Self {
+                chain_id,
+                chain_name: format!("Unknown Chain {}", chain_id),
+                native_token: "UNKNOWN".to_string(),
+                native_token_decimals: 18,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WebSocketSession {
     pub id: String,
+    pub chain_id: u64,
     pub config: SessionConfig,
     pub conversation_history: Vec<Message>,
     pub created_at: Instant,
@@ -63,10 +98,15 @@ impl WebSocketSession {
     pub fn new(id: impl Into<String>) -> Self {
         Self::with_config(id, SessionConfig::default())
     }
-    
+
     pub fn with_config(id: impl Into<String>, config: SessionConfig) -> Self {
+        Self::with_chain(id, config, 84532) // Default to Base Sepolia
+    }
+
+    pub fn with_chain(id: impl Into<String>, config: SessionConfig, chain_id: u64) -> Self {
         Self {
             id: id.into(),
+            chain_id,
             config,
             conversation_history: Vec::new(),
             created_at: Instant::now(),
@@ -76,6 +116,49 @@ impl WebSocketSession {
             messages: Arc::new(RwLock::new(Vec::new())),
             metadata: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn with_validated_chain(
+        id: impl Into<String>,
+        config: SessionConfig,
+        chain_id: u64,
+        registry: &ChainRegistry
+    ) -> Result<Self> {
+        if !registry.is_chain_supported(chain_id) {
+            return Err(anyhow!("Unsupported chain ID: {}", chain_id));
+        }
+
+        Ok(Self::with_chain(id, config, chain_id))
+    }
+
+    pub fn with_default_chain(id: impl Into<String>, config: SessionConfig) -> Self {
+        let registry = ChainRegistry::new();
+        Self::with_chain(id, config, registry.default_chain())
+    }
+
+    pub fn migrate_to_chain_aware(mut legacy_session: Self) -> Self {
+        // If session doesn't have a valid chain_id (0 or uninitialized), set to default
+        if legacy_session.chain_id == 0 {
+            legacy_session.chain_id = 84532; // Default to Base Sepolia
+        }
+        legacy_session
+    }
+
+    pub fn get_chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    pub fn get_chain_info(&self) -> SessionChainInfo {
+        SessionChainInfo::from_chain_id(self.chain_id)
+    }
+
+    pub fn switch_chain(&mut self, new_chain_id: u64, registry: &ChainRegistry) -> Result<()> {
+        if !registry.is_chain_supported(new_chain_id) {
+            return Err(anyhow!("Cannot switch to unsupported chain: {}", new_chain_id));
+        }
+
+        self.chain_id = new_chain_id;
+        Ok(())
     }
 
     pub fn generate_id() -> String {
@@ -207,12 +290,78 @@ impl WebSocketSession {
 
     fn calculate_message_size(message: &Message) -> usize {
         // Calculate approximate memory size
-        std::mem::size_of::<Message>() 
-            + message.role.len() 
+        std::mem::size_of::<Message>()
+            + message.role.len()
             + message.content.len()
             + if message.timestamp.is_some() { 8 } else { 0 }
     }
-    
+
+    pub async fn to_json(&self) -> Result<String> {
+        let metadata = self.metadata.read().await;
+        let messages = self.messages.read().await;
+
+        let session_data = serde_json::json!({
+            "id": self.id,
+            "chain_id": self.chain_id,
+            "config": self.config,
+            "conversation_history": self.conversation_history,
+            "state": self.state,
+            "metadata": metadata.clone(),
+            "messages": messages.clone(),
+            "total_memory_used": self.total_memory_used,
+        });
+
+        Ok(serde_json::to_string(&session_data)?)
+    }
+
+    pub async fn from_json(json_str: &str) -> Result<Self> {
+        let value: serde_json::Value = serde_json::from_str(json_str)?;
+
+        let id = value["id"].as_str()
+            .ok_or_else(|| anyhow!("Missing id field"))?
+            .to_string();
+
+        let chain_id = value["chain_id"].as_u64()
+            .ok_or_else(|| anyhow!("Missing or invalid chain_id field"))?;
+
+        let config: SessionConfig = serde_json::from_value(value["config"].clone())
+            .unwrap_or_default();
+
+        let conversation_history: Vec<Message> = serde_json::from_value(value["conversation_history"].clone())
+            .unwrap_or_default();
+
+        let state: SessionState = serde_json::from_value(value["state"].clone())
+            .unwrap_or(SessionState::Active);
+
+        let metadata: HashMap<String, String> = serde_json::from_value(value["metadata"].clone())
+            .unwrap_or_default();
+
+        let messages: Vec<Message> = serde_json::from_value(value["messages"].clone())
+            .unwrap_or_default();
+
+        let total_memory_used = value["total_memory_used"].as_u64()
+            .unwrap_or(0) as usize;
+
+        let mut session = Self::with_chain(id, config, chain_id);
+        session.conversation_history = conversation_history;
+        session.state = state;
+        session.total_memory_used = total_memory_used;
+
+        // Set metadata
+        {
+            let mut session_metadata = session.metadata.write().await;
+            *session_metadata = metadata;
+        }
+
+        // Set messages
+        {
+            let mut session_messages = session.messages.write().await;
+            *session_messages = messages;
+        }
+
+        Ok(session)
+    }
+
     pub async fn add_message_async(&self, role: &str, content: &str) -> Result<()> {
         let message = Message {
             role: role.to_string(),

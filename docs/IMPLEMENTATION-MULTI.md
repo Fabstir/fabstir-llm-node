@@ -90,15 +90,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 
 ## Phase 2: Session Chain Tracking
 
-### Sub-phase 2.1: Session Data Structure Updates
+### Sub-phase 2.1: Session Data Structure Updates ✅
 **Goal**: Add chain tracking to session management
 
 **Tasks**:
-- [ ] Update `SessionInfo` struct with `chain_id` field
-- [ ] Migrate existing sessions (default to Base Sepolia)
-- [ ] Create `SessionChainInfo` for chain metadata
-- [ ] Update session serialization/deserialization
-- [ ] Add chain validation on session creation
+- [x] Update `WebSocketSession` struct with `chain_id` field
+- [x] Migrate existing sessions (default to Base Sepolia)
+- [x] Create `SessionChainInfo` for chain metadata
+- [x] Update session serialization/deserialization
+- [x] Add chain validation on session creation
 
 **Test Files** (TDD - Write First):
 - `tests/sessions/test_session_chain.rs`
