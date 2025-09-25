@@ -223,6 +223,7 @@ async fn test_compression_with_conversation_context() {
     let message = WebSocketMessage::SessionInit {
         session_id: "test".to_string(),
         job_id: 123,
+        chain_id: Some(84532), // Base Sepolia
         conversation_context: context,
     };
     

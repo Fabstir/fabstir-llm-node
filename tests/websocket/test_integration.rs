@@ -13,9 +13,9 @@ async fn test_inference_pipeline_integration() -> Result<()> {
     let integration = SessionIntegration::new(manager.clone());
     
     // Create a session with context
-    let session = WebSocketSession::new("test-session");
+    let mut session = WebSocketSession::new("test-session");
     manager.register_session(session.clone()).await?;
-    
+
     // Add some context
     session.add_message_async("user", "What is 2+2?").await?;
     session.add_message_async("assistant", "2+2 equals 4").await?;
@@ -72,7 +72,7 @@ async fn test_session_persistence_hooks() -> Result<()> {
     integration.enable_persistence(true).await?;
     
     // Create and save session
-    let session = WebSocketSession::new("persist-test");
+    let mut session = WebSocketSession::new("persist-test");
     session.add_message_async("user", "Remember this").await?;
     
     let saved = integration.save_session(&session).await?;
@@ -97,7 +97,7 @@ async fn test_concurrent_session_handling() -> Result<()> {
     for i in 0..10 {
         let int = integration.clone();
         let handle = tokio::spawn(async move {
-            let session = WebSocketSession::new(&format!("concurrent-{}", i));
+            let mut session = WebSocketSession::new(&format!("concurrent-{}", i));
             int.process_session_request(&session, "test request").await
         });
         handles.push(handle);
@@ -123,7 +123,7 @@ async fn test_session_recovery_mechanism() -> Result<()> {
     let integration = SessionIntegration::new(manager.clone());
     
     // Create session and simulate failure
-    let session = WebSocketSession::new("recovery-test");
+    let mut session = WebSocketSession::new("recovery-test");
     session.set_state(SessionState::Failed).await?;
     
     // Attempt recovery
@@ -144,7 +144,7 @@ async fn test_pipeline_error_handling() -> Result<()> {
     let integration = SessionIntegration::new(manager.clone());
     
     // Create session with invalid request
-    let session = WebSocketSession::new("error-test");
+    let mut session = WebSocketSession::new("error-test");
     
     let request = InferenceRequest {
         prompt: "".to_string(), // Invalid empty prompt
@@ -170,7 +170,7 @@ async fn test_session_handoff_between_workers() -> Result<()> {
     let integration = SessionIntegration::new(manager.clone());
     
     // Create session on worker 1
-    let session = integration.create_worker_session("worker-1").await?;
+    let mut session = integration.create_worker_session("worker-1").await?;
     session.add_message_async("user", "Initial message").await?;
     
     // Handoff to worker 2
@@ -193,7 +193,7 @@ async fn test_batch_processing_with_sessions() -> Result<()> {
     // Create multiple sessions for batch
     let mut sessions = vec![];
     for i in 0..5 {
-        let session = WebSocketSession::new(&format!("batch-{}", i));
+        let mut session = WebSocketSession::new(&format!("batch-{}", i));
         session.add_message_async("user", &format!("Question {}", i)).await?;
         sessions.push(session);
     }
@@ -220,7 +220,7 @@ async fn test_session_timeout_handling() -> Result<()> {
     integration.set_session_timeout(Duration::from_millis(100)).await?;
     
     // Create session
-    let session = WebSocketSession::new("timeout-test");
+    let mut session = WebSocketSession::new("timeout-test");
     manager.register_session(session.clone()).await?;
     
     // Wait for timeout
@@ -245,7 +245,7 @@ async fn test_resource_cleanup_on_shutdown() -> Result<()> {
     
     // Create multiple sessions
     for i in 0..5 {
-        let session = WebSocketSession::new(&format!("cleanup-{}", i));
+        let mut session = WebSocketSession::new(&format!("cleanup-{}", i));
         manager.register_session(session).await?;
     }
     
@@ -271,7 +271,7 @@ async fn test_metrics_integration() -> Result<()> {
     
     // Process some requests
     for i in 0..10 {
-        let session = WebSocketSession::new(&format!("metrics-{}", i));
+        let mut session = WebSocketSession::new(&format!("metrics-{}", i));
         integration.process_session_request(&session, "test").await?;
     }
     
@@ -297,7 +297,7 @@ async fn test_load_balancing_integration() -> Result<()> {
     // Create sessions and let load balancer assign
     let mut assignments = vec![];
     for i in 0..9 {
-        let session = WebSocketSession::new(&format!("lb-{}", i));
+        let mut session = WebSocketSession::new(&format!("lb-{}", i));
         let worker = integration.assign_session_to_worker(session).await?;
         assignments.push(worker);
     }

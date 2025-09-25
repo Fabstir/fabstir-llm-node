@@ -41,6 +41,7 @@ mod tests {
         let msg = WebSocketMessage::SessionInit {
             session_id: "user-generated-uuid".to_string(),
             job_id: 12345,
+            chain_id: Some(84532), // Base Sepolia
             conversation_context: context.clone(),
         };
 
@@ -147,6 +148,7 @@ mod tests {
             WebSocketMessage::SessionInit {
                 session_id,
                 job_id,
+                chain_id,
                 conversation_context,
             } => {
                 assert_eq!(session_id, "test-123");
@@ -162,6 +164,7 @@ mod tests {
         let msg = WebSocketMessage::SessionInit {
             session_id: "new-session".to_string(),
             job_id: 1,
+            chain_id: None, // No specific chain
             conversation_context: vec![],
         };
 

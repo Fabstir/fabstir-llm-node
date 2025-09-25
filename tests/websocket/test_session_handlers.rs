@@ -1,7 +1,6 @@
 use fabstir_llm_node::api::websocket::{
     handlers::session_init::SessionInitHandler,
-    messages::{ChainInfo, SessionInitMessage, SessionResponse},
-    session_store::SessionStore,
+    messages::{ChainInfo, SessionInitMessage, SessionInitResponse},
 };
 use fabstir_llm_node::contracts::client::ContractClient;
 use std::sync::Arc;
