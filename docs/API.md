@@ -81,13 +81,19 @@ Or when issues are present:
 
 ### List Available Models
 
-Retrieve a list of models available on this node. With the new model governance system, only approved models from the ModelRegistry are available.
+Retrieve a list of models available on this node. With the new model governance system, only approved models from the ModelRegistry are available. Models can be queried for specific blockchain networks.
 
 #### Request
 
 ```http
-GET /v1/models
+GET /v1/models?chain_id={chain_id}
 ```
+
+#### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `chain_id` | Integer | No | 84532 | Blockchain network ID (84532 for Base Sepolia, 5611 for opBNB Testnet) |
 
 #### Response
 
@@ -110,7 +116,9 @@ GET /v1/models
       "approval_tier": 1,
       "description": "TinyLlama 1.1B Chat model, Q4_K_M quantization"
     }
-  ]
+  ],
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia"
 }
 ```
 
@@ -125,6 +133,8 @@ GET /v1/models
 | `models[].sha256_hash` | String | SHA256 hash for integrity verification |
 | `models[].approval_tier` | Integer | Approval level (1=trusted, 2=community) |
 | `models[].description` | String? | Optional model description |
+| `chain_id` | Integer | Chain ID for which models are available |
+| `chain_name` | String | Human-readable chain name |
 
 #### Status Codes
 
@@ -151,8 +161,9 @@ Content-Type: application/json
   "max_tokens": 500,
   "temperature": 0.7,
   "stream": false,
-  "request_id": "req-12345"
-}
+  "request_id": "req-12345",
+  "chain_id": 84532,
+  "job_id": 123
 ```
 
 #### Request Parameters
@@ -165,6 +176,9 @@ Content-Type: application/json
 | `temperature` | Float | No | 0.7 | Sampling temperature (0.0-2.0) |
 | `stream` | Boolean | No | false | Enable streaming response |
 | `request_id` | String | No | Auto-generated | Client-provided request ID for tracking |
+| `job_id` | Integer | No | - | Blockchain job ID for payment |
+| `session_id` | String | No | - | Session identifier |
+| `chain_id` | Integer | No | 84532 | Blockchain network ID (84532 for Base Sepolia, 5611 for opBNB Testnet) |
 
 #### Non-Streaming Response
 
@@ -174,8 +188,10 @@ Content-Type: application/json
   "content": "Quantum computing is a revolutionary approach to computation that harnesses quantum mechanical phenomena...",
   "tokens_used": 245,
   "finish_reason": "complete",
-  "request_id": "req-12345"
-}
+  "request_id": "req-12345",
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia",
+  "native_token": "ETH"
 ```
 
 #### Streaming Response (SSE)
@@ -188,13 +204,13 @@ Content-Type: text/event-stream
 Cache-Control: no-cache
 Connection: keep-alive
 
-data: {"content": "Quantum", "tokens_used": 1, "finish_reason": null}
+data: {"content": "Quantum", "tokens": 1, "finish_reason": null, "chain_id": 84532, "chain_name": "Base Sepolia", "native_token": "ETH"}
 
-data: {"content": " computing", "tokens_used": 2, "finish_reason": null}
+data: {"content": " computing", "tokens": 2, "finish_reason": null, "chain_id": 84532, "chain_name": "Base Sepolia", "native_token": "ETH"}
 
-data: {"content": " is", "tokens_used": 3, "finish_reason": null}
+data: {"content": " is", "tokens": 3, "finish_reason": null, "chain_id": 84532, "chain_name": "Base Sepolia", "native_token": "ETH"}
 
-data: {"content": "", "tokens_used": 245, "finish_reason": "complete"}
+data: {"content": "", "tokens": 245, "finish_reason": "complete", "chain_id": 84532, "chain_name": "Base Sepolia", "native_token": "ETH"}
 ```
 
 #### Response Fields
@@ -203,9 +219,13 @@ data: {"content": "", "tokens_used": 245, "finish_reason": "complete"}
 |-------|------|-------------|
 | `model` | String | Model used for generation |
 | `content` | String | Generated text content |
-| `tokens_used` | Integer | Number of tokens generated |
+| `tokens_used` | Integer | Number of tokens generated (non-streaming) |
+| `tokens` | Integer | Number of tokens in chunk (streaming) |
 | `finish_reason` | String | Reason for completion: "complete", "max_tokens", "stop_sequence" |
 | `request_id` | String | Request identifier for tracking |
+| `chain_id` | Integer | Blockchain network ID used for this request |
+| `chain_name` | String | Human-readable chain name |
+| `native_token` | String | Native token symbol (ETH or BNB) |
 
 #### Status Codes
 
@@ -252,6 +272,187 @@ GET /metrics
 
 ---
 
+### List Supported Chains
+
+Get list of all supported blockchain networks.
+
+#### Request
+
+```http
+GET /v1/chains
+```
+
+#### Response
+
+```json
+{
+  "chains": [
+    {
+      "chain_id": 84532,
+      "name": "Base Sepolia",
+      "native_token": "ETH",
+      "rpc_url": "https://sepolia.base.org",
+      "contracts": {
+        "job_marketplace": "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f",
+        "node_registry": "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218",
+        "proof_system": "0x2ACcc60893872A499700908889B38C5420CBcFD1",
+        "host_earnings": "0x908962e8c6CE72610021586f85ebDE09aAc97776",
+        "model_registry": "0x92b2De840bB2171203011A6dBA928d855cA8183E",
+        "usdc_token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+      }
+    },
+    {
+      "chain_id": 5611,
+      "name": "opBNB Testnet",
+      "native_token": "BNB",
+      "rpc_url": "https://opbnb-testnet.binance.org",
+      "contracts": {
+        "job_marketplace": "0x...",
+        "node_registry": "0x...",
+        "proof_system": "0x...",
+        "host_earnings": "0x...",
+        "model_registry": "0x...",
+        "usdc_token": "0x..."
+      }
+    }
+  ],
+  "default_chain": 84532
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Successfully retrieved chains
+
+---
+
+### Get Chain Statistics
+
+Retrieve aggregated statistics for all chains.
+
+#### Request
+
+```http
+GET /v1/chains/stats
+```
+
+#### Response
+
+```json
+{
+  "chains": [
+    {
+      "chain_id": 84532,
+      "chain_name": "Base Sepolia",
+      "total_sessions": 150,
+      "active_sessions": 5,
+      "total_tokens_processed": 45000,
+      "total_settlements": 120,
+      "failed_settlements": 2,
+      "average_settlement_time_ms": 1500,
+      "last_activity": "2024-01-15T12:30:00Z"
+    },
+    {
+      "chain_id": 5611,
+      "chain_name": "opBNB Testnet",
+      "total_sessions": 80,
+      "active_sessions": 2,
+      "total_tokens_processed": 25000,
+      "total_settlements": 70,
+      "failed_settlements": 1,
+      "average_settlement_time_ms": 1200,
+      "last_activity": "2024-01-15T12:25:00Z"
+    }
+  ],
+  "total": {
+    "total_sessions": 230,
+    "active_sessions": 7,
+    "total_tokens_processed": 70000
+  }
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Successfully retrieved statistics
+
+---
+
+### Get Specific Chain Statistics
+
+Retrieve statistics for a specific chain.
+
+#### Request
+
+```http
+GET /v1/chains/{chain_id}/stats
+```
+
+#### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chain_id` | Integer | Yes | Chain ID (84532 or 5611) |
+
+#### Response
+
+```json
+{
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia",
+  "total_sessions": 150,
+  "active_sessions": 5,
+  "total_tokens_processed": 45000,
+  "total_settlements": 120,
+  "failed_settlements": 2,
+  "average_settlement_time_ms": 1500,
+  "last_activity": "2024-01-15T12:30:00Z"
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Successfully retrieved statistics
+- `404 Not Found` - Chain not found
+
+---
+
+### Get Session Information
+
+Retrieve information about a specific session.
+
+#### Request
+
+```http
+GET /v1/session/{session_id}/info
+```
+
+#### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | Integer | Yes | Session ID |
+
+#### Response
+
+```json
+{
+  "session_id": 123,
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia",
+  "native_token": "ETH",
+  "status": "active",
+  "tokens_used": 500
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Successfully retrieved session info
+- `404 Not Found` - Session not found
+
+---
+
 ## WebSocket API (Production Ready - Phases 8.7-8.12)
 
 For real-time bidirectional communication and conversation management, connect via WebSocket. The WebSocket API has been completely rebuilt with production features including stateless memory caching, compression, rate limiting, JWT authentication, Ed25519 signatures, and **automatic payment settlement on disconnect (v5+)**.
@@ -276,7 +477,8 @@ For basic inference without job management:
     "model": "tinyllama",
     "prompt": "What is machine learning?",
     "max_tokens": 100,
-    "stream": true
+    "stream": true,
+    "chain_id": 84532
   }
 }
 ```
@@ -287,6 +489,9 @@ Response format:
   "type": "stream_chunk",
   "content": "Machine learning is",
   "tokens": 3,
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia",
+  "native_token": "ETH",
   "proof": {
     "proof_type": "EZKL",
     "proof_data": "0xEF...",
@@ -305,6 +510,7 @@ The WebSocket server supports authentication via job ID and JWT tokens:
 {
   "type": "auth",
   "job_id": 12345,
+  "chain_id": 84532,
   "token": "jwt_token_here"  // Optional JWT token
 }
 ```
@@ -348,6 +554,7 @@ interface ProofData {
   "type": "session_init",
   "session_id": "uuid-v4",
   "job_id": 12345,
+  "chain_id": 84532,
   "model_config": {
     "model": "llama-2-7b",
     "max_tokens": 2048,
@@ -2105,6 +2312,240 @@ Future versions will maintain backward compatibility where possible. Breaking ch
   - Session management with stateless memory cache
   - JWT authentication and Ed25519 signatures
   - Message compression and rate limiting
+
+---
+
+## Troubleshooting
+
+### Common Issues and Solutions
+
+#### Chain-Related Issues
+
+**Problem: "Unsupported chain ID" error**
+- **Cause**: Using an invalid chain ID in the request
+- **Solution**: Use only supported chain IDs: 84532 (Base Sepolia) or 5611 (opBNB Testnet)
+- **Example Fix**:
+  ```bash
+  # Correct
+  curl "http://localhost:8080/v1/models?chain_id=84532"
+
+  # Incorrect
+  curl "http://localhost:8080/v1/models?chain_id=1"  # Mainnet not supported
+  ```
+
+**Problem: Model not available on specific chain**
+- **Cause**: Model is not registered on the requested chain's ModelRegistry
+- **Solution**: Check available models for the chain first
+- **Example**:
+  ```bash
+  # First check available models
+  curl "http://localhost:8080/v1/models?chain_id=84532"
+  # Then use only listed models in inference requests
+  ```
+
+**Problem: Settlement fails on wrong chain**
+- **Cause**: Job was created on a different chain than the one being used
+- **Solution**: Ensure job_id and chain_id match the original job creation
+- **Verification**:
+  ```bash
+  curl "http://localhost:8080/v1/session/{session_id}/info"
+  # Check the chain_id in response matches your job's chain
+  ```
+
+#### Connection Issues
+
+**Problem: WebSocket connection drops immediately**
+- **Cause**: Invalid authentication or missing chain_id
+- **Solution**: Include both job_id and chain_id in auth message
+- **Example**:
+  ```json
+  {
+    "type": "auth",
+    "job_id": 123,
+    "chain_id": 84532
+  }
+  ```
+
+**Problem: "Connection refused" error**
+- **Cause**: Node not running or incorrect port
+- **Solution**: Check node is running and using correct port (default 8080)
+- **Verification**:
+  ```bash
+  # Check if node is listening
+  netstat -an | grep 8080
+
+  # Test health endpoint
+  curl "http://localhost:8080/health"
+  ```
+
+#### Inference Issues
+
+**Problem: Inference request hangs or times out**
+- **Cause**: Model not loaded or GPU memory issues
+- **Solution**:
+  1. Check model is downloaded: `ls models/`
+  2. Check GPU memory: `nvidia-smi`
+  3. Restart node with lower batch size
+- **Debug Commands**:
+  ```bash
+  # Check logs for model loading issues
+  RUST_LOG=debug cargo run
+
+  # Monitor GPU usage
+  watch -n 1 nvidia-smi
+  ```
+
+**Problem: "Model not found" despite being listed**
+- **Cause**: Model file missing or corrupted
+- **Solution**: Re-download model and verify hash
+- **Steps**:
+  ```bash
+  # Download model
+  ./scripts/phase_4_2_2/download_test_model.sh
+
+  # Verify model hash matches registry
+  sha256sum models/tinyllama-1b.Q4_K_M.gguf
+  ```
+
+#### Payment and Settlement Issues
+
+**Problem: Payment not received after job completion**
+- **Cause**: Settlement transaction failed on blockchain
+- **Solution**: Check chain statistics and retry settlement
+- **Debug**:
+  ```bash
+  # Check chain stats for failed settlements
+  curl "http://localhost:8080/v1/chains/{chain_id}/stats"
+
+  # Check session status
+  curl "http://localhost:8080/v1/session/{session_id}/info"
+  ```
+
+**Problem: "Insufficient gas" error in logs**
+- **Cause**: Node wallet has insufficient native tokens (ETH/BNB)
+- **Solution**: Fund the node wallet address
+- **Check Balance**:
+  ```bash
+  # Base Sepolia
+  cast balance {node_address} --rpc-url https://sepolia.base.org
+
+  # opBNB Testnet
+  cast balance {node_address} --rpc-url https://opbnb-testnet.binance.org
+  ```
+
+#### Rate Limiting Issues
+
+**Problem: "Rate limit exceeded" (429 error)**
+- **Cause**: Too many requests in short time
+- **Solution**: Implement exponential backoff
+- **Example Python Retry Logic**:
+  ```python
+  import time
+  import random
+
+  def make_request_with_retry(url, data, max_retries=3):
+      for attempt in range(max_retries):
+          response = requests.post(url, json=data)
+          if response.status_code == 429:
+              # Exponential backoff with jitter
+              wait = (2 ** attempt) + random.uniform(0, 1)
+              time.sleep(wait)
+          else:
+              return response
+      raise Exception("Max retries exceeded")
+  ```
+
+#### Performance Issues
+
+**Problem: Slow inference response times**
+- **Cause**: Model too large for available GPU memory
+- **Solution**: Use smaller quantized models or adjust batch size
+- **Model Sizes**:
+  - TinyLlama Q4_K_M: ~700MB VRAM
+  - Llama-2-7B Q4_K_M: ~4GB VRAM
+  - Llama-2-13B Q4_K_M: ~8GB VRAM
+
+**Problem: High memory usage**
+- **Cause**: Model cache holding too many models
+- **Solution**: Configure cache size in environment
+- **Configuration**:
+  ```bash
+  # Limit model cache to 2 models
+  export MODEL_CACHE_SIZE=2
+  cargo run --release
+  ```
+
+### Debug Commands
+
+#### Check Node Health
+```bash
+# Basic health check
+curl "http://localhost:8080/health"
+
+# Detailed metrics
+curl "http://localhost:8080/metrics"
+
+# Chain-specific stats
+curl "http://localhost:8080/v1/chains/stats"
+```
+
+#### Test Chain Connectivity
+```bash
+# Test Base Sepolia RPC
+cast client --rpc-url https://sepolia.base.org
+
+# Test opBNB Testnet RPC
+cast client --rpc-url https://opbnb-testnet.binance.org
+
+# Check contract deployment
+cast code 0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f --rpc-url https://sepolia.base.org
+```
+
+#### Monitor Logs
+```bash
+# Run with debug logging
+RUST_LOG=debug cargo run
+
+# Filter for specific modules
+RUST_LOG=fabstir_llm_node::api=debug cargo run
+
+# Monitor chain-specific logs
+cargo run 2>&1 | grep -E "chain_id|Base Sepolia|opBNB"
+```
+
+### Environment Variables
+
+Ensure these are properly set:
+
+```bash
+# Required for multi-chain support
+CHAIN_ID=84532                    # Default chain (Base Sepolia)
+RPC_URL=https://sepolia.base.org  # Default RPC endpoint
+
+# Contract addresses (from .env.contracts)
+JOB_MARKETPLACE_ADDRESS=0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f
+NODE_REGISTRY_ADDRESS=0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
+
+# Node wallet (must have gas on both chains)
+HOST_PRIVATE_KEY=0x...
+
+# API configuration
+API_PORT=8080
+P2P_PORT=9000
+
+# Model path
+MODEL_PATH=./models/tinyllama-1b.Q4_K_M.gguf
+```
+
+### Getting Help
+
+If issues persist after trying these solutions:
+
+1. Check logs with `RUST_LOG=debug` for detailed error messages
+2. Verify all contract addresses match deployment
+3. Ensure node wallet has sufficient gas on target chain
+4. Review chain-specific examples in `docs/CHAIN_EXAMPLES.md`
+5. File an issue with chain_id, error message, and debug logs
 
 ---
 

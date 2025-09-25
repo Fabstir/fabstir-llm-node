@@ -431,15 +431,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Native token correctly identified
 - Errors provide chain context
 
-### Sub-phase 6.3: API Documentation
+### Sub-phase 6.3: API Documentation ✅
 **Goal**: Update API docs for multi-chain
 
 **Tasks**:
-- [ ] Update OpenAPI specification
-- [ ] Add chain parameter examples
-- [ ] Document chain-specific behaviors
-- [ ] Create migration guide
-- [ ] Add troubleshooting section
+- [x] Update OpenAPI specification (`docs/openapi.yaml`)
+- [x] Add chain parameter examples (`docs/CHAIN_EXAMPLES.md`)
+- [x] Document chain-specific behaviors (updated `docs/API.md`)
+- [x] ~~Create migration guide~~ (Skipped - pre-MVP, no migration needed)
+- [x] Add troubleshooting section (added to `docs/API.md`)
 
 **Test Files** (TDD - Write First):
 - `tests/api/test_api_docs.rs`

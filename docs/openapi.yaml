@@ -1,0 +1,507 @@
+openapi: 3.0.3
+info:
+  title: Fabstir LLM Node API
+  description: |
+    RESTful API for the Fabstir LLM Node P2P marketplace.
+    Supports multi-chain operations on Base Sepolia and opBNB Testnet.
+  version: 1.0.0
+  contact:
+    name: Fabstir Team
+    url: https://fabstir.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: http://{nodeIp}:{port}
+    description: Custom node endpoint
+    variables:
+      nodeIp:
+        default: "127.0.0.1"
+        description: Node IP address
+      port:
+        default: "8080"
+        description: API port
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Check the health status of the node
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: Node is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Node is experiencing issues
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/models:
+    get:
+      summary: List Available Models
+      description: Retrieve models available on this node for a specific chain
+      operationId: listModels
+      tags:
+        - Models
+      parameters:
+        - name: chain_id
+          in: query
+          description: Chain ID (84532 for Base Sepolia, 5611 for opBNB Testnet)
+          required: false
+          schema:
+            type: integer
+            enum: [84532, 5611]
+            default: 84532
+      responses:
+        '200':
+          description: List of available models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+        '400':
+          description: Invalid chain ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/inference:
+    post:
+      summary: Request Inference
+      description: Submit a text generation request to a specific model
+      operationId: requestInference
+      tags:
+        - Inference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferenceRequest'
+      responses:
+        '200':
+          description: Inference completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferenceResponse'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/StreamingResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/chains:
+    get:
+      summary: List Supported Chains
+      description: Get list of all supported blockchain networks
+      operationId: listChains
+      tags:
+        - Chains
+      responses:
+        '200':
+          description: List of supported chains
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChainsResponse'
+
+  /v1/chains/stats:
+    get:
+      summary: Get Chain Statistics
+      description: Retrieve aggregated statistics for all chains
+      operationId: getChainStats
+      tags:
+        - Chains
+      responses:
+        '200':
+          description: Chain statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChainStatsResponse'
+
+  /v1/chains/{chain_id}/stats:
+    get:
+      summary: Get Specific Chain Statistics
+      description: Retrieve statistics for a specific chain
+      operationId: getChainStatsById
+      tags:
+        - Chains
+      parameters:
+        - name: chain_id
+          in: path
+          required: true
+          description: Chain ID
+          schema:
+            type: integer
+            enum: [84532, 5611]
+      responses:
+        '200':
+          description: Chain statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChainStatistics'
+        '404':
+          description: Chain not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/session/{session_id}/info:
+    get:
+      summary: Get Session Information
+      description: Retrieve information about a specific session
+      operationId: getSessionInfo
+      tags:
+        - Sessions
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: Session ID
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Session information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfoResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /metrics:
+    get:
+      summary: Prometheus Metrics
+      description: Export metrics in Prometheus format
+      operationId: getMetrics
+      tags:
+        - System
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        issues:
+          type: array
+          items:
+            type: string
+          nullable: true
+
+    ModelsResponse:
+      type: object
+      required:
+        - models
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelInfo'
+        chain_id:
+          type: integer
+          description: Chain ID for which models are available
+        chain_name:
+          type: string
+          description: Human-readable chain name
+
+    ModelInfo:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: Model identifier
+        name:
+          type: string
+          description: Model name
+        description:
+          type: string
+          description: Model description
+
+    InferenceRequest:
+      type: object
+      required:
+        - model
+        - prompt
+        - max_tokens
+      properties:
+        model:
+          type: string
+          description: Model ID to use for inference
+        prompt:
+          type: string
+          description: Input text prompt
+        max_tokens:
+          type: integer
+          description: Maximum tokens to generate
+          minimum: 1
+          maximum: 4096
+        temperature:
+          type: number
+          description: Sampling temperature
+          minimum: 0.0
+          maximum: 2.0
+          default: 0.7
+        stream:
+          type: boolean
+          description: Enable streaming response
+          default: false
+        request_id:
+          type: string
+          description: Client-provided request ID
+        job_id:
+          type: integer
+          description: Blockchain job ID for payment
+        session_id:
+          type: string
+          description: Session identifier
+        chain_id:
+          type: integer
+          description: Chain ID for the request
+          enum: [84532, 5611]
+
+    InferenceResponse:
+      type: object
+      required:
+        - model
+        - content
+        - tokens_used
+        - finish_reason
+        - request_id
+      properties:
+        model:
+          type: string
+        content:
+          type: string
+          description: Generated text
+        tokens_used:
+          type: integer
+          description: Number of tokens consumed
+        finish_reason:
+          type: string
+          enum: [stop, length, error]
+        request_id:
+          type: string
+        chain_id:
+          type: integer
+          description: Chain ID used for this request
+        chain_name:
+          type: string
+          description: Human-readable chain name
+        native_token:
+          type: string
+          description: Native token symbol (ETH or BNB)
+
+    StreamingResponse:
+      type: object
+      properties:
+        content:
+          type: string
+          description: Partial generated text
+        tokens:
+          type: integer
+          description: Tokens in this chunk
+        finish_reason:
+          type: string
+          nullable: true
+        chain_id:
+          type: integer
+        chain_name:
+          type: string
+        native_token:
+          type: string
+
+    ChainsResponse:
+      type: object
+      required:
+        - chains
+        - default_chain
+      properties:
+        chains:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChainInfo'
+        default_chain:
+          type: integer
+          description: Default chain ID
+
+    ChainInfo:
+      type: object
+      required:
+        - chain_id
+        - name
+        - native_token
+        - rpc_url
+      properties:
+        chain_id:
+          type: integer
+        name:
+          type: string
+        native_token:
+          type: string
+        rpc_url:
+          type: string
+        contracts:
+          $ref: '#/components/schemas/ContractAddresses'
+
+    ContractAddresses:
+      type: object
+      properties:
+        job_marketplace:
+          type: string
+        node_registry:
+          type: string
+        proof_system:
+          type: string
+        host_earnings:
+          type: string
+        model_registry:
+          type: string
+        usdc_token:
+          type: string
+
+    ChainStatsResponse:
+      type: object
+      required:
+        - chains
+        - total
+      properties:
+        chains:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChainStatistics'
+        total:
+          $ref: '#/components/schemas/TotalStatistics'
+
+    ChainStatistics:
+      type: object
+      required:
+        - chain_id
+        - chain_name
+      properties:
+        chain_id:
+          type: integer
+        chain_name:
+          type: string
+        total_sessions:
+          type: integer
+        active_sessions:
+          type: integer
+        total_tokens_processed:
+          type: integer
+        total_settlements:
+          type: integer
+        failed_settlements:
+          type: integer
+        average_settlement_time_ms:
+          type: integer
+        last_activity:
+          type: string
+          format: date-time
+
+    TotalStatistics:
+      type: object
+      properties:
+        total_sessions:
+          type: integer
+        active_sessions:
+          type: integer
+        total_tokens_processed:
+          type: integer
+
+    SessionInfoResponse:
+      type: object
+      required:
+        - session_id
+        - chain_id
+        - chain_name
+        - native_token
+        - status
+        - tokens_used
+      properties:
+        session_id:
+          type: integer
+        chain_id:
+          type: integer
+        chain_name:
+          type: string
+        native_token:
+          type: string
+        status:
+          type: string
+          enum: [active, completed, failed]
+        tokens_used:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      required:
+        - error_type
+        - message
+      properties:
+        error_type:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+        chain_id:
+          type: integer
+        details:
+          type: object
+          additionalProperties: true
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - ApiKeyAuth: []
