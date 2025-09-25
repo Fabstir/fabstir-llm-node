@@ -1,15 +1,21 @@
 {
   "network": "Base Sepolia",
   "chainId": 84532,
-  "lastUpdated": "2025-01-14 FINAL",
-  "status": "FULLY WORKING JobMarketplace - All Issues Fixed",
+  "lastUpdated": "2025-01-24",
+  "status": "Multi-Chain Support Enabled - Deposit/Withdrawal Functions Active",
   "contracts": {
     "JobMarketplaceWithModels": {
-      "address": "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944",
-      "previousAddress": "0xb082Ae609D59BFB21073AF73eB37BFe4C36ab1c9",
-      "deploymentDate": "2025-01-14 FINAL",
-      "status": "ACTIVE - FULLY WORKING",
+      "address": "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f",
+      "previousAddress": "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944",
+      "deploymentDate": "2025-01-24",
+      "status": "ACTIVE - MULTI-CHAIN SUPPORT",
       "features": [
+        "NEW: Wallet-agnostic deposit/withdrawal functions",
+        "NEW: createSessionFromDeposit for pre-funded sessions",
+        "NEW: Anyone-can-complete pattern for gasless ending",
+        "NEW: ChainConfig for multi-chain support",
+        "NEW: Enhanced event indexing",
+        "NEW: depositor field for wallet tracking",
         "Compatible with NodeRegistryWithModels 6-field struct",
         "FIXED: Properly calls creditEarnings() in HostEarnings",
         "ProofSystem configured at 0x2ACcc60893872A499700908889B38C5420CBcFD1",

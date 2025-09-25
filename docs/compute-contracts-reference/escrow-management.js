@@ -1,31 +1,30 @@
 /**
- * Example: Escrow Management with Earnings Accumulation
- * Purpose: Demonstrates the new earnings accumulation system and escrow operations
+ * Example: Deposit/Withdrawal Management (Multi-Chain)
+ * Purpose: Demonstrates the deposit/withdrawal pattern for multi-chain/wallet support
  * Prerequisites:
- *   - Understanding of payment escrow system with earnings accumulation
- *   - ERC20 tokens for testing (USDC)
- *   - Active jobs to see earnings credit flow
+ *   - Understanding of deposit/withdrawal pattern
+ *   - Native tokens (ETH/BNB) or ERC20 tokens (USDC)
+ *   - Works with both EOA and Smart Wallets
+ *
+ * Last Updated: January 25, 2025
  */
 
 const { ethers } = require('ethers');
 require('dotenv').config({ path: '../.env' });
 
-// Contract ABIs
-const PAYMENT_ESCROW_ABI = [
-    'function deposit(address token, uint256 amount) payable',
-    'function withdraw(address token, uint256 amount)',
-    'function getBalance(address account, address token) view returns (uint256)',
-    'function lockFunds(address from, address token, uint256 amount, uint256 jobId)',
-    'function releaseFunds(address to, address token, uint256 amount, uint256 jobId)',
-    'function refundFunds(address to, address token, uint256 amount, uint256 jobId)',
-    'function getLockedFunds(uint256 jobId) view returns (tuple(address token, uint256 amount, address from, address to, bool released))',
-    'function getTotalLocked(address account) view returns (uint256)',
-    'function getSupportedTokens() view returns (address[])',
-    'event FundsDeposited(address indexed account, address token, uint256 amount)',
-    'event FundsWithdrawn(address indexed account, address token, uint256 amount)',
-    'event FundsLocked(uint256 indexed jobId, address from, address token, uint256 amount)',
-    'event FundsReleased(uint256 indexed jobId, address to, address token, uint256 amount)',
-    'event FundsRefunded(uint256 indexed jobId, address to, address token, uint256 amount)'
+// Contract ABIs - JobMarketplaceWithModels deposit/withdrawal functions
+const JOB_MARKETPLACE_ABI = [
+    'function depositNative() payable',
+    'function depositToken(address token, uint256 amount)',
+    'function withdrawNative(uint256 amount)',
+    'function withdrawToken(address token, uint256 amount)',
+    'function userDepositsNative(address user) view returns (uint256)',
+    'function userDepositsToken(address user, address token) view returns (uint256)',
+    'function getUserBalances(address user, address[] memory tokens) view returns (uint256[] memory)',
+    'function createSessionFromDeposit(address host, address token, uint256 deposit, uint256 pricePerToken, uint256 duration, uint256 proofInterval) returns (uint256)',
+    'event DepositReceived(address indexed depositor, uint256 amount, address indexed token)',
+    'event WithdrawalProcessed(address indexed depositor, uint256 amount, address indexed token)',
+    'event SessionCreatedByDepositor(uint256 indexed sessionId, address indexed depositor, address indexed host, uint256 deposit)'
 ];
 
 const ERC20_ABI = [
@@ -42,18 +41,30 @@ const JOB_MARKETPLACE_ABI = [
     'function disputeJob(uint256 jobId, string reason)'
 ];
 
-// Configuration - Updated for earnings accumulation system
+// Configuration - Multi-chain deposit/withdrawal system
 const config = {
-    rpcUrl: process.env.RPC_URL || 'https://sepolia.base.org',
-    chainId: parseInt(process.env.CHAIN_ID || '84532'), // Base Sepolia
-    paymentEscrow: process.env.PAYMENT_ESCROW || '0x7abC91AF9E5aaFdc954Ec7a02238d0796Bbf9a3C', // LATEST with earnings routing
-    jobMarketplaceFAB: process.env.JOB_MARKETPLACE_FAB || '0xEB646BF2323a441698B256623F858c8787d70f9F', // LATEST with earnings
-    hostEarnings: process.env.HOST_EARNINGS || '0xcbD91249cC8A7634a88d437Eaa083496C459Ef4E', // NEW earnings accumulator
-    
-    // Token addresses for Base Sepolia
-    tokens: {
-        USDC: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Base Sepolia USDC
-        FAB: '0xC78949004B4EB6dEf2D66e49Cd81231472612D62' // FAB token for reference
+    // Base Sepolia (ETH)
+    baseSepolia: {
+        rpcUrl: process.env.BASE_RPC_URL || 'https://sepolia.base.org',
+        chainId: 84532,
+        nativeSymbol: 'ETH',
+        jobMarketplace: '0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f', // Multi-chain support
+        hostEarnings: '0x908962e8c6CE72610021586f85ebDE09aAc97776',
+        tokens: {
+            USDC: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+            FAB: '0xC78949004B4EB6dEf2D66e49Cd81231472612D62'
+        }
+    },
+
+    // opBNB Testnet (BNB) - Future deployment
+    opBNB: {
+        rpcUrl: process.env.OPBNB_RPC_URL || 'https://opbnb-testnet-rpc.bnbchain.org',
+        chainId: 5611,
+        nativeSymbol: 'BNB',
+        jobMarketplace: 'TBD', // Post-MVP
+        tokens: {
+            USDC: 'TBD'
+        }
     },
     
     // Gas settings

@@ -1,187 +1,244 @@
-# NodeRegistryFAB Contract
+# NodeRegistry Contract Documentation
 
-## Overview
+## Current Implementation: NodeRegistryWithModels
 
-The NodeRegistryFAB contract manages GPU host registration using FAB token staking instead of ETH. It provides a more accessible entry point for hosts by using the platform's native FAB token for staking requirements.
+**Contract Address**: `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218`
+**Network**: Base Sepolia | opBNB support planned post-MVP
+**Status**: ✅ ACTIVE - Node registration with model validation and API discovery
+**Last Updated**: January 25, 2025
+**Source**: [`src/NodeRegistryWithModels.sol`](../../../src/NodeRegistryWithModels.sol)
 
-**Contract Address (Base Sepolia)**: `0x87516C13Ea2f99de598665e14cab64E191A0f8c4`  
-**Source**: [`src/NodeRegistryFAB.sol`](../../../src/NodeRegistryFAB.sol)
+### Overview
+
+The NodeRegistryWithModels contract manages GPU host registration with integrated model validation. Hosts must specify which approved models they support during registration.
 
 ### Key Features
-- Host registration with 1000 FAB token stake (instead of 100 ETH)
-- Non-custodial staking - hosts can withdraw anytime
-- Simplified metadata storage for node information
-- Active nodes tracking for efficient enumeration
-- Integration with JobMarketplaceFAB
+- **FAB Token Staking**: 1000 FAB minimum stake required
+- **Model Validation**: Hosts must support approved models from ModelRegistry
+- **API Discovery**: Hosts provide API endpoints for automatic discovery
+- **Metadata Storage**: Flexible string field for capabilities description
+- **Active Tracking**: Efficient enumeration of active nodes
+- **Non-Custodial**: Hosts can unregister and reclaim stake anytime
+- **Multi-Chain Ready**: Works across Base (ETH) and future opBNB (BNB)
 
-### Dependencies
-- OpenZeppelin Ownable
-- OpenZeppelin ReentrancyGuard
-- IERC20 (FAB Token)
-
-## Constructor
+## Contract Architecture
 
 ```solidity
-constructor(address _fabToken) Ownable(msg.sender)
-```
-
-### Parameters
-| Name | Type | Description |
-|------|------|-------------|
-| `_fabToken` | `address` | Address of the FAB token contract |
-
-### Example Deployment
-```solidity
-// Deploy with FAB token address
-NodeRegistryFAB registry = new NodeRegistryFAB(0xC78949004B4EB6dEf2D66e49Cd81231472612D62);
-```
-
-## State Variables
-
-### Constants
-| Name | Type | Value | Description |
-|------|------|-------|-------------|
-| `MIN_STAKE` | `uint256` | 1000 * 10^18 | Minimum FAB tokens required for registration |
-
-### Public Variables
-| Name | Type | Description |
-|------|------|-------------|
-| `fabToken` | `IERC20` | FAB token contract interface |
-| `nodes` | `mapping(address => Node)` | Registered node data by operator address |
-| `activeNodesList` | `address[]` | Array of active node addresses |
-| `activeNodesIndex` | `mapping(address => uint256)` | Index mapping for active nodes list |
-
-## Structs
-
-### Node
-```solidity
-struct Node {
-    address operator;      // Node operator address
-    uint256 stakedAmount; // Amount of FAB staked
-    bool active;          // Whether node is active
-    string metadata;      // Node metadata (models, regions, etc.)
+contract NodeRegistryFAB is Ownable, ReentrancyGuard {
+    IERC20 public immutable fabToken;
+    uint256 public constant MIN_STAKE = 1000 * 10**18;
+    
+    struct Node {
+        address operator;
+        uint256 stakedAmount;
+        bool active;
+        string metadata;
+    }
+    
+    mapping(address => Node) public nodes;
+    address[] public activeNodesList;
 }
 ```
 
-## Functions
+## Key Functions
 
-### registerNode
-Registers a new node by staking FAB tokens.
+### Registration
 
 ```solidity
 function registerNode(string memory metadata) external nonReentrant
 ```
 
-**Requirements:**
-- Node must not be already registered
-- Metadata must not be empty
-- Operator must approve MIN_STAKE FAB tokens
-- Transfer of FAB tokens must succeed
+Registers a new host node:
+- Requires exactly 1000 FAB tokens
+- Transfers tokens from caller to contract
+- Adds to active nodes list
+- Emits `NodeRegistered` event
 
-**Example:**
-```javascript
-// First approve FAB tokens
-await fabToken.approve(nodeRegistryFAB.address, "1000000000000000000000");
-// Then register
-await nodeRegistryFAB.registerNode("gpu:rtx4090,region:us-west");
-```
+**Requirements**:
+1. Not already registered
+2. Non-empty metadata string
+3. Approved FAB tokens ≥ MIN_STAKE
 
-### unregisterNode
-Unregisters a node and returns staked FAB tokens.
+### Unregistration
 
 ```solidity
 function unregisterNode() external nonReentrant
 ```
 
-**Effects:**
+Unregisters host and returns staked tokens:
 - Marks node as inactive
-- Returns staked FAB tokens to operator
+- Returns ALL staked tokens
 - Removes from active nodes list
+- Emits `NodeUnregistered` event
 
-### addStake
-Adds additional FAB tokens to existing stake.
+### Additional Staking
 
 ```solidity
-function addStake(uint256 amount) external nonReentrant
+function stake(uint256 amount) external nonReentrant
 ```
 
-### updateMetadata
-Updates node metadata (models, capabilities, etc.).
+Adds more FAB tokens to existing stake:
+- Must be registered and active
+- No maximum limit
+- Useful for reputation/priority systems
+
+### Metadata Management
 
 ```solidity
 function updateMetadata(string memory newMetadata) external
 ```
 
-### getActiveNodes
-Returns list of all active node addresses.
-
-```solidity
-function getActiveNodes() external view returns (address[] memory)
-```
+Updates node capabilities description:
+- Must be registered and active
+- No gas-intensive validation
+- Emits `MetadataUpdated` event
 
 ## Events
 
 ```solidity
-event NodeRegistered(address indexed operator, uint256 stakedAmount, string metadata);
-event NodeUnregistered(address indexed operator, uint256 returnedAmount);
-event StakeAdded(address indexed operator, uint256 additionalAmount);
-event MetadataUpdated(address indexed operator, string newMetadata);
+event NodeRegistered(address indexed operator, uint256 stakedAmount, string metadata)
+event NodeUnregistered(address indexed operator, uint256 returnedAmount)
+event StakeAdded(address indexed operator, uint256 additionalAmount)
+event MetadataUpdated(address indexed operator, string newMetadata)
 ```
 
-## Integration with JobMarketplaceFAB
+## Node Data Structure
 
-The NodeRegistryFAB is specifically designed to work with JobMarketplaceFAB:
+```solidity
+struct Node {
+    address operator;      // Node operator address
+    uint256 stakedAmount; // Total FAB staked
+    bool active;          // Registration status
+    string metadata;      // Capabilities description
+}
+```
 
-1. **Host Verification**: JobMarketplaceFAB checks if a host is registered in NodeRegistryFAB before allowing job claims
-2. **Stake Validation**: Ensures hosts have minimum 1000 FAB staked
-3. **Active Status**: Only active nodes can claim jobs
+## View Functions
 
-## Comparison with Original NodeRegistry
+### Get Node Information
+```solidity
+function nodes(address operator) external view returns (
+    address operator,
+    uint256 stakedAmount,
+    bool active,
+    string memory metadata
+)
+```
 
-| Feature | NodeRegistry | NodeRegistryFAB |
-|---------|--------------|-----------------|
-| Staking Token | ETH | FAB |
-| Minimum Stake | 100 ETH | 1000 FAB |
-| Stake Value (USD) | ~$250,000 | ~$1,000 |
-| Accessibility | High barrier | Lower barrier |
-| Token Economics | Uses network token | Uses platform token |
+### Get Active Nodes Count
+```solidity
+function getActiveNodesCount() external view returns (uint256)
+```
+
+### Get Active Node by Index
+```solidity
+function getActiveNode(uint256 index) external view returns (address)
+```
+
+## Integration with JobMarketplace
+
+The JobMarketplaceWithModels (`0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f`) verifies host registration:
+
+```solidity
+// In JobMarketplaceWithModels
+Node memory node = nodeRegistry.nodes(host);
+require(node.operator != address(0), "Host not registered");
+require(node.active, "Host not active");
+require(node.stakedAmount >= MIN_STAKE, "Insufficient stake");
+```
+
+## Gas Costs
+
+| Operation | Estimated Gas | Cost at 10 Gwei |
+|-----------|--------------|-----------------|
+| Register | ~200,000 | 0.002 ETH |
+| Unregister | ~100,000 | 0.001 ETH |
+| Add Stake | ~80,000 | 0.0008 ETH |
+| Update Metadata | ~50,000 | 0.0005 ETH |
 
 ## Security Considerations
 
-1. **Reentrancy Protection**: All state-changing functions use `nonReentrant` modifier
-2. **Token Safety**: Uses SafeERC20 pattern for token transfers
-3. **Access Control**: Owner-only functions for critical operations
-4. **Stake Lock**: Minimum stake cannot be withdrawn while node is active
+1. **ReentrancyGuard**: All state-changing functions protected
+2. **Token Safety**: Uses safe transfer methods
+3. **No Admin Functions**: Fully decentralized after deployment
+4. **Immutable Token**: FAB token address cannot be changed
+5. **No Slashing**: Currently no penalty mechanism
 
-## Gas Optimization
+## Differences from Original NodeRegistry
 
-- Efficient active nodes tracking using array + mapping pattern
-- Single storage slot for boolean + address in Node struct
-- Minimal storage writes during registration/unregistration
+| Feature | NodeRegistry (Old) | NodeRegistryFAB (Current) |
+|---------|-------------------|---------------------------|
+| Staking Token | ETH | FAB |
+| Minimum Stake | 100 ETH | 1000 FAB |
+| Registration Function | `registerNodeSimple(metadata)` payable | `registerNode(metadata)` |
+| Additional Data | Region, models, compute units | Single metadata string |
+| Complexity | High | Simplified |
+| Gas Costs | Higher | Lower |
 
-## Example Usage
+## Usage Example
 
-### Complete Registration Flow
 ```javascript
-// 1. Get FAB tokens (from faucet or purchase)
-const fabToken = await ethers.getContractAt("IERC20", FAB_ADDRESS);
+// Register as host
+const registry = new ethers.Contract(registryAddress, abi, signer);
 
-// 2. Approve NodeRegistryFAB to spend FAB
-await fabToken.approve(NODE_REGISTRY_FAB, ethers.parseEther("1000"));
+// 1. Approve FAB tokens
+await fabToken.approve(registryAddress, MIN_STAKE);
 
-// 3. Register as node operator
-const nodeRegistry = await ethers.getContractAt("NodeRegistryFAB", NODE_REGISTRY_FAB);
-await nodeRegistry.registerNode("gpu:rtx4090,model:llama2,region:us-west");
+// 2. Register with metadata
+await registry.registerNode("llama-2-7b,gpt-4,inference");
 
-// 4. Check registration
-const node = await nodeRegistry.nodes(operatorAddress);
-console.log("Staked:", node.stakedAmount);
-console.log("Active:", node.active);
+// 3. Check registration
+const nodeInfo = await registry.nodes(myAddress);
+console.log('Registered:', nodeInfo.active);
+console.log('Staked:', nodeInfo.stakedAmount);
 ```
 
-## Deployed Addresses
+## Best Practices
 
-| Network | Address | FAB Token |
-|---------|---------|-----------|
-| Base Sepolia | `0x87516C13Ea2f99de598665e14cab64E191A0f8c4` | `0xC78949004B4EB6dEf2D66e49Cd81231472612D62` |
-| Base Mainnet | TBD | TBD |
+### For Hosts
+1. Ensure sufficient FAB balance before registration
+2. Set meaningful metadata describing capabilities
+3. Keep metadata updated as capabilities change
+4. Monitor stake amount for potential benefits
+
+### For Integrators
+1. Always verify registration before job assignment
+2. Check both operator address and active status
+3. Parse metadata for capability matching
+4. Handle registration events for indexing
+
+## Common Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| "Already registered" | Address already has a node | Unregister first |
+| "Transfer failed" | Insufficient FAB or no approval | Approve tokens first |
+| "Empty metadata" | Metadata string is empty | Provide capabilities description |
+| "Not registered" | Operating on non-existent node | Register first |
+| "Node not active" | Node was unregistered | Re-register if needed |
+
+## Deployment Parameters
+
+When deploying a new instance:
+```solidity
+constructor(address _fabToken) {
+    require(_fabToken != address(0), "Invalid token");
+    fabToken = IERC20(_fabToken);
+}
+```
+
+## Future Enhancements
+
+Potential improvements not yet implemented:
+1. **Slashing Mechanism**: Penalize poor performance
+2. **Tiered Staking**: Different stake levels for benefits
+3. **Delegation**: Allow others to stake on behalf
+4. **Reputation Integration**: Link stake to reputation score
+5. **Dynamic Pricing**: Stake amount affects job pricing
+
+## References
+
+- [HOST_REGISTRATION_GUIDE.md](../../HOST_REGISTRATION_GUIDE.md) - Step-by-step registration guide
+- [JobMarketplace.md](./JobMarketplace.md) - Integration details
+- [Source Code](../../../src/NodeRegistryFAB.sol) - Contract implementation
+- [Tests](../../../test/NodeRegistryFAB.t.sol) - Test coverage

@@ -1,10 +1,14 @@
 /**
- * Example: Register Node
- * Purpose: Demonstrates how to register as a compute node provider using FAB token staking
- * Prerequisites: 
+ * Example: Register Node with Model Support
+ * Purpose: Demonstrates how to register as a compute node with model validation and API discovery
+ * Prerequisites:
  *   - 1000 FAB tokens for staking (minimum requirement)
  *   - Small amount of ETH for gas fees (~0.01 ETH)
  *   - Node with GPU capabilities
+ *   - Support for approved models (TinyVicuna-1B, TinyLlama-1.1B)
+ *   - API endpoint for serving inference
+ *
+ * Last Updated: January 25, 2025
  */
 
 const { ethers } = require('ethers');
@@ -12,13 +16,16 @@ const readline = require('readline');
 require('dotenv').config({ path: '../.env' });
 
 // Contract ABIs
-const NODE_REGISTRY_FAB_ABI = [
-    'function registerNode(string memory metadata)',
+const NODE_REGISTRY_WITH_MODELS_ABI = [
+    'function registerNode(string memory metadata, string memory apiUrl, bytes32[] memory supportedModels)',
     'function unregisterNode()',
-    'function nodes(address) view returns (address operator, uint256 stakedAmount, bool active, string memory metadata)',
+    'function updateApiUrl(string memory newApiUrl)',
+    'function nodes(address) view returns (address operator, uint256 stakedAmount, bool active, string memory metadata, string memory apiUrl)',
+    'function getNodeApiUrl(address operator) view returns (string memory)',
     'function MIN_STAKE() view returns (uint256)',
     'event NodeRegistered(address indexed operator, uint256 stakedAmount, string metadata)',
-    'event NodeUnregistered(address indexed operator, uint256 returnedAmount)'
+    'event NodeUnregistered(address indexed operator, uint256 returnedAmount)',
+    'event ApiUrlUpdated(address indexed operator, string newApiUrl)'
 ];
 
 const FAB_TOKEN_ABI = [
@@ -32,17 +39,27 @@ const FAB_TOKEN_ABI = [
 const config = {
     rpcUrl: process.env.RPC_URL || 'https://sepolia.base.org',
     chainId: parseInt(process.env.CHAIN_ID || '84532'), // Base Sepolia
-    nodeRegistry: process.env.NODE_REGISTRY || '0x87516C13Ea2f99de598665e14cab64E191A0f8c4',
+    nodeRegistry: process.env.NODE_REGISTRY || '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218', // NodeRegistryWithModels
+    modelRegistry: '0x92b2De840bB2171203011A6dBA928d855cA8183E',
     fabToken: process.env.FAB_TOKEN || '0xC78949004B4EB6dEf2D66e49Cd81231472612D62',
-    
+
+    // Approved model hashes
+    models: {
+        TinyVicuna: '0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced',
+        TinyLlama: '0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca'
+    },
+
     // Node metadata
     metadata: {
         gpu: 'rtx4090',
-        models: ['gpt-4', 'llama2', 'stable-diffusion'],
+        supportedModels: ['TinyVicuna-1B', 'TinyLlama-1.1B'],
         region: 'us-west',
         memory: '24GB',
         bandwidth: '1Gbps'
     },
+
+    // API endpoint for your node
+    apiUrl: process.env.NODE_API_URL || 'http://localhost:8080',
     
     // Gas settings
     gasLimit: 300000,

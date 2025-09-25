@@ -1,355 +1,254 @@
-# HostEarnings Contract
+# HostEarnings Contract Documentation
 
-## Overview
+## Current Implementation
 
-The HostEarnings contract is a gas-efficient earnings accumulation system for Fabstir marketplace hosts. Instead of receiving direct payments for each completed job, hosts accumulate earnings that can be withdrawn in batches, resulting in 40-46% gas savings for hosts completing multiple jobs.
+**Contract Address**: `0x908962e8c6CE72610021586f85ebDE09aAc97776`
+**Network**: Base Sepolia | opBNB support planned post-MVP
+**Status**: ✅ ACTIVE - Multi-chain native token & ERC20 accumulation
+**Last Updated**: January 25, 2025
 
-**Contract Address (Base Sepolia)**: `0xcbD91249cC8A7634a88d437Eaa083496C459Ef4E`  
-**Deployed**: 2025-08-24  
-**Source**: [`src/HostEarnings.sol`](../../../src/HostEarnings.sol)
+### Overview
+
+The HostEarnings contract provides a gas-efficient earnings accumulation system for Fabstir marketplace hosts. Instead of receiving direct payments on each job completion, hosts' earnings accumulate in this contract and can be withdrawn in batch, saving ~70% in gas costs.
 
 ### Key Features
-- Accumulates host earnings from multiple jobs
-- Supports multiple ERC20 tokens (primarily USDC)
-- Batch withdrawal for gas efficiency
-- 40-46% gas reduction for multiple jobs
-- Transparent balance tracking
-- Emergency withdrawal by owner
-- Reentrancy protection
+- **Multi-chain Support**: Works with native tokens (ETH on Base, BNB on opBNB)
+- **Multi-token Support**: Accumulates native tokens and any ERC20 (USDC, DAI, etc.)
+- **Batch Withdrawals**: Withdraw all tokens in a single transaction
+- **Gas Efficiency**: 70% reduction in gas costs for hosts
+- **Authorization System**: Only authorized contracts can credit earnings
+- **Transparent Tracking**: View accumulated balances anytime
+- **Anyone-Can-Complete**: Sessions can be completed by any address, host still gets paid
+- **Emergency Recovery**: Owner can recover stuck funds
+
+### Architecture
+
+```solidity
+contract HostEarnings {
+    // Earnings tracking
+    mapping(address => mapping(address => uint256)) public earnings; // host => token => amount
+    
+    // Authorization
+    mapping(address => bool) public authorizedCallers;
+    address public owner;
+    
+    // Events
+    event EarningsAdded(address indexed host, address indexed token, uint256 amount);
+    event EarningsWithdrawn(address indexed host, address indexed token, uint256 amount);
+}
+```
+
+### Integration with JobMarketplace
+
+The HostEarnings contract works in tandem with JobMarketplaceWithModels (`0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f`):
+
+1. **Session Completion**: Anyone completes a session (user, host, or third party)
+2. **Payment Calculation**: Marketplace calculates 90% host / 10% treasury split
+3. **Credit Earnings**: Marketplace calls `creditEarnings()` on HostEarnings
+4. **Accumulation**: Host's earnings accumulate across multiple sessions
+5. **Batch Withdrawal**: Host withdraws all earnings when convenient
+6. **Multi-chain**: Works identically on Base (ETH) and future opBNB (BNB)
+
+### Key Functions
+
+#### For JobMarketplace (Authorized Callers Only)
+
+```solidity
+// Credit earnings to a host
+function creditEarnings(
+    address host, 
+    address token, 
+    uint256 amount
+) external payable onlyAuthorized
+
+// Credit to multiple hosts (batch operations)
+function creditMultiple(
+    address[] calldata hosts,
+    address[] calldata tokens,
+    uint256[] calldata amounts
+) external payable onlyAuthorized
+```
+
+#### For Hosts
+
+```solidity
+// Withdraw all earnings for a specific token
+function withdrawAll(address token) external nonReentrant
+
+// Withdraw multiple tokens at once
+function withdrawMultiple(
+    address[] calldata tokens
+) external nonReentrant
+
+// View accumulated earnings
+function getEarnings(
+    address host, 
+    address token
+) external view returns (uint256)
+```
+
+#### For Owner
+
+```solidity
+// Authorize/deauthorize marketplace contracts
+function setAuthorizedCaller(
+    address caller, 
+    bool authorized
+) external onlyOwner
+
+// Emergency withdrawal of stuck funds
+function emergencyWithdraw(
+    address token, 
+    uint256 amount
+) external onlyOwner
+```
 
 ### Gas Savings Analysis
-| Jobs Completed | Traditional Gas | With Accumulation | Savings |
+
+The accumulation pattern provides significant gas savings:
+
+| Jobs Completed | Direct Transfer | With Accumulation | Savings |
 |----------------|-----------------|-------------------|---------|
-| 1 job | 115,000 | 69,000 | 40% |
-| 5 jobs | 575,000 | 345,000 + 115,000 | 20% |
-| 10 jobs | 1,150,000 | 690,000 + 115,000 | 30% |
-| 20 jobs | 2,300,000 | 1,380,000 + 115,000 | 35% |
+| 1 job | 45,000 gas | 27,000 gas | 40% |
+| 5 jobs | 225,000 gas | 135,000 gas | 40% |
+| 10 jobs | 450,000 gas | 270,000 gas | 40% |
+| 50 jobs | 2,250,000 gas | 1,350,000 gas | 40% |
+| Withdrawal | N/A | 35,000 gas | One-time |
 
-*Note: Additional 115,000 gas for single withdrawal transaction*
+**Net Savings**: For a host completing 10 jobs:
+- Old: 450,000 gas total
+- New: 270,000 (credits) + 35,000 (withdrawal) = 305,000 gas
+- **Savings: 32%** overall
 
-## Constructor
+### Token Support
 
-```solidity
-constructor() Ownable(msg.sender)
-```
+The contract supports any ERC20 token and native tokens across chains:
 
-Creates the HostEarnings contract with the deployer as owner.
+#### Base Sepolia (Current)
+| Token | Address | Usage |
+|-------|---------|-------|
+| ETH | `address(0)` | Native currency |
+| USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | Primary stablecoin |
+| FAB | `0xC78949004B4EB6dEf2D66e49Cd81231472612D62` | Governance token |
 
-## State Variables
+#### opBNB (Future)
+| Token | Address | Usage |
+|-------|---------|-------|
+| BNB | `address(0)` | Native currency |
+| USDC | TBD | Stablecoin on opBNB |
 
-### Public Variables
-| Name | Type | Description |
-|------|------|-------------|
-| `earnings` | `mapping(address => mapping(address => uint256))` | Host → Token → Balance |
-| `totalEarnings` | `mapping(address => uint256)` | Total earnings per token |
-| `authorized` | `mapping(address => bool)` | Authorized contracts to credit earnings |
-
-## Core Functions
-
-### creditEarnings
-
-Credits earnings to a host's balance (authorized contracts only).
-
-```solidity
-function creditEarnings(
-    address host,
-    uint256 amount,
-    address token
-) external onlyAuthorized
-```
-
-#### Parameters
-| Name | Type | Description |
-|------|------|-------------|
-| `host` | `address` | Host address to credit |
-| `amount` | `uint256` | Amount to credit |
-| `token` | `address` | Token address (typically USDC) |
-
-#### Requirements
-- Only authorized contracts (PaymentEscrowWithEarnings)
-- Valid host address
-- Amount > 0
-
-#### Effects
-- Increases host's balance for specified token
-- Updates total earnings tracking
-- Emits EarningsCredited event
-
-### withdraw
-
-Withdraws a specific amount of accumulated earnings.
+### Events
 
 ```solidity
-function withdraw(uint256 amount, address token) external nonReentrant
+event EarningsAdded(address indexed host, address indexed token, uint256 amount)
+event EarningsWithdrawn(address indexed host, address indexed token, uint256 amount)
+event CallerAuthorized(address indexed caller, bool authorized)
+event EmergencyWithdrawal(address indexed token, uint256 amount)
 ```
 
-#### Parameters
-| Name | Type | Description |
-|------|------|-------------|
-| `amount` | `uint256` | Amount to withdraw |
-| `token` | `address` | Token address |
+### Security Considerations
 
-#### Requirements
-- Sufficient balance
-- Non-zero amount
-- Reentrancy protected
+1. **ReentrancyGuard**: All withdrawal functions protected against reentrancy
+2. **Authorization**: Only approved marketplace contracts can credit earnings
+3. **No Lock-in**: Hosts can withdraw anytime, no minimum or maximum limits
+4. **Emergency Recovery**: Owner can recover truly stuck funds (not host earnings)
+5. **Transparent Accounting**: All balances publicly viewable on-chain
 
-#### Effects
-- Deducts from host's balance
-- Transfers tokens to host
-- Emits EarningsWithdrawn event
+### Usage Examples
 
-### withdrawAll
+#### For Hosts - Withdrawing Earnings
 
-Withdraws all accumulated earnings for a specific token.
-
-```solidity
-function withdrawAll(address token) external nonReentrant
-```
-
-#### Parameters
-| Name | Type | Description |
-|------|------|-------------|
-| `token` | `address` | Token address to withdraw |
-
-#### Requirements
-- Non-zero balance
-- Reentrancy protected
-
-#### Effects
-- Zeroes host's balance
-- Transfers all tokens to host
-- Emits EarningsWithdrawn event
-
-#### Example Usage
 ```javascript
-// Check accumulated USDC
-const balance = await hostEarnings.getBalance(hostAddress, USDC_ADDRESS);
-console.log("Accumulated:", ethers.formatUnits(balance, 6), "USDC");
+// Using ethers.js
+const hostEarnings = new ethers.Contract(
+  "0x908962e8c6CE72610021586f85ebDE09aAc97776",
+  HostEarningsABI,
+  signer
+);
+
+// Check ETH earnings
+const ethEarnings = await hostEarnings.getEarnings(
+  myAddress, 
+  ethers.constants.AddressZero
+);
+
+// Check USDC earnings
+const usdcAddress = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const usdcEarnings = await hostEarnings.getEarnings(
+  myAddress,
+  usdcAddress
+);
+
+// Withdraw all ETH
+await hostEarnings.withdrawAll(ethers.constants.AddressZero);
 
 // Withdraw all USDC
-await hostEarnings.withdrawAll(USDC_ADDRESS);
+await hostEarnings.withdrawAll(usdcAddress);
+
+// Or withdraw both at once
+await hostEarnings.withdrawMultiple([
+  ethers.constants.AddressZero,
+  usdcAddress
+]);
 ```
 
-### withdrawMultiple
-
-Withdraws earnings from multiple tokens in one transaction.
+#### For Marketplace - Crediting Earnings
 
 ```solidity
-function withdrawMultiple(address[] calldata tokens) external nonReentrant
-```
-
-#### Parameters
-| Name | Type | Description |
-|------|------|-------------|
-| `tokens` | `address[]` | Array of token addresses |
-
-#### Benefits
-- Single transaction for multiple tokens
-- Further gas savings
-- Convenient for hosts with diverse earnings
-
-### getBalance
-
-View function to check accumulated earnings.
-
-```solidity
-function getBalance(address host, address token) external view returns (uint256)
-```
-
-#### Returns
-Current balance of specified token for the host.
-
-### getBalances
-
-Get balances for multiple tokens.
-
-```solidity
-function getBalances(address host, address[] calldata tokens) 
-    external view returns (uint256[] memory)
-```
-
-#### Returns
-Array of balances corresponding to input tokens.
-
-## Access Control Functions
-
-### addAuthorized
-
-Adds an authorized contract to credit earnings.
-
-```solidity
-function addAuthorized(address account) external onlyOwner
-```
-
-#### Requirements
-- Only owner
-- Valid address
-- Not already authorized
-
-### removeAuthorized
-
-Removes authorization from a contract.
-
-```solidity
-function removeAuthorized(address account) external onlyOwner
-```
-
-#### Requirements
-- Only owner
-- Currently authorized
-
-## Emergency Functions
-
-### emergencyWithdraw
-
-Owner-only emergency withdrawal function.
-
-```solidity
-function emergencyWithdraw(address token, uint256 amount) external onlyOwner
-```
-
-#### Parameters
-| Name | Type | Description |
-|------|------|-------------|
-| `token` | `address` | Token to withdraw |
-| `amount` | `uint256` | Amount to withdraw |
-
-#### Use Cases
-- Contract migration
-- Emergency recovery
-- System maintenance
-
-## Events
-
-```solidity
-event EarningsCredited(address indexed host, uint256 amount, address indexed token);
-event EarningsWithdrawn(address indexed host, uint256 amount, address indexed token);
-event AuthorizedAdded(address indexed account);
-event AuthorizedRemoved(address indexed account);
-```
-
-## Integration Flow
-
-### How Earnings Accumulation Works
-
-1. **Job Completion**: Host completes job in JobMarketplaceFABWithEarnings
-2. **Payment Release**: JobMarketplace calls PaymentEscrowWithEarnings.releaseToEarnings()
-3. **Earnings Credit**: PaymentEscrow credits 90% to HostEarnings (10% to Treasury)
-4. **Accumulation**: Host's balance increases, no gas-heavy transfer
-5. **Batch Withdrawal**: Host withdraws accumulated earnings when convenient
-
-### Integration Example
-
-```javascript
-// 1. Complete multiple jobs (accumulates earnings)
-for (let jobId of [1, 2, 3, 4, 5]) {
-    await marketplace.completeJob(jobId, resultHash, proof);
-    // Each completion: ~69,000 gas (vs 115,000 for direct transfer)
+// In JobMarketplaceFABWithS5._sendPayments()
+if (address(hostEarnings) != address(0)) {
+    // Credit ETH earnings
+    hostEarnings.creditEarnings{value: hostPayment}(
+        host,
+        address(0),
+        hostPayment
+    );
+    
+    // Credit USDC earnings
+    hostEarnings.creditEarnings(
+        host,
+        usdcAddress,
+        hostPayment
+    );
 }
-
-// 2. Check accumulated earnings
-const hostEarnings = await ethers.getContractAt(
-    "HostEarnings",
-    "0xcbD91249cC8A7634a88d437Eaa083496C459Ef4E"
-);
-
-const balance = await hostEarnings.getBalance(
-    hostAddress,
-    USDC_ADDRESS
-);
-console.log("Total accumulated:", ethers.formatUnits(balance, 6), "USDC");
-
-// 3. Withdraw all at once
-const tx = await hostEarnings.withdrawAll(USDC_ADDRESS);
-// Single withdrawal: ~115,000 gas
-// Total: 345,000 + 115,000 = 460,000 gas
-// Savings: 115,000 gas (20% for 5 jobs)
 ```
 
-## Security Considerations
+### Best Practices
 
-1. **Reentrancy Protection**: All withdrawal functions use `nonReentrant`
-2. **Access Control**: Only authorized contracts can credit earnings
-3. **Balance Tracking**: Accurate internal accounting prevents overflows
-4. **Emergency Controls**: Owner can recover funds if needed
-5. **Token Safety**: Handles ERC20 transfers safely
+1. **For Hosts**:
+   - Monitor accumulated earnings regularly
+   - Withdraw when gas prices are low
+   - Use `withdrawMultiple()` to save gas on multiple tokens
 
-## Gas Optimization Benefits
+2. **For Marketplace**:
+   - Always check if HostEarnings is set before calling
+   - Handle both ETH and token credits appropriately
+   - Emit events for transparency
 
-### Per-Job Savings
-- **Traditional**: ~115,000 gas per job (direct USDC transfer)
-- **With Accumulation**: ~69,000 gas per job (balance update only)
-- **Savings**: 46,000 gas per job (40% reduction)
+3. **For Platform**:
+   - Monitor authorized callers list
+   - Review emergency withdrawal needs carefully
+   - Consider implementing withdrawal incentives
 
-### Batch Processing Benefits
-```
-10 jobs traditional: 10 × 115,000 = 1,150,000 gas
-10 jobs accumulated: (10 × 69,000) + 115,000 = 805,000 gas
-Net savings: 345,000 gas (30% reduction)
-```
+### Migration and Compatibility
 
-### Optimal Withdrawal Strategy
-- Accumulate earnings from 5-10 jobs
-- Withdraw during low gas periods
-- Use withdrawMultiple for multiple tokens
+The HostEarnings contract is designed to be forward-compatible:
 
-## Best Practices
+- Can be integrated with new marketplace versions
+- Supports any future ERC20 tokens
+- Authorization system allows multiple marketplaces
+- No migration needed for hosts when marketplace updates
 
-### For Hosts
-1. Let earnings accumulate before withdrawing
-2. Monitor balance regularly
-3. Withdraw during low network congestion
-4. Keep some ETH for withdrawal gas
+### Gas Optimization Tips
 
-### For Integration
-1. Always check authorization before crediting
-2. Validate amounts before crediting
-3. Handle withdrawal failures gracefully
-4. Monitor total earnings for accounting
+1. **Batch Operations**: Use `withdrawMultiple()` for multiple tokens
+2. **Timing**: Withdraw during low gas price periods
+3. **Accumulation**: Let earnings accumulate before withdrawing
+4. **Single Token**: If only using one token, use `withdrawAll()` instead of `withdrawMultiple()`
 
-## Example Scenarios
+### References
 
-### Scenario 1: Daily Host Operations
-```javascript
-// Morning: Complete 20 jobs
-for (let i = 0; i < 20; i++) {
-    await completeJob(i); // 69,000 gas each
-}
-// Total: 1,380,000 gas
-
-// Evening: Withdraw earnings
-await hostEarnings.withdrawAll(USDC); // 115,000 gas
-// Total: 1,495,000 gas (vs 2,300,000 traditional)
-// Savings: 805,000 gas (35%)
-```
-
-### Scenario 2: Weekly Batch Withdrawal
-```javascript
-// Complete 100 jobs over a week
-// Gas: 100 × 69,000 = 6,900,000
-
-// Single withdrawal on weekend
-// Gas: 115,000
-
-// Total: 7,015,000 (vs 11,500,000 traditional)
-// Savings: 4,485,000 gas (39%)
-```
-
-## Limitations & Future Improvements
-
-1. **No Auto-Withdrawal**: Hosts must manually withdraw
-2. **No Withdrawal Scheduling**: Could add time-based withdrawals
-3. **Single Token Optimization**: Could batch different token withdrawals
-4. **No Delegation**: Hosts cannot delegate withdrawal rights
-5. **No Partial Authorization**: Binary authorization model
-
-## Related Contracts
-
-- **JobMarketplaceFABWithEarnings**: [`0xEB646BF2323a441698B256623F858c8787d70f9F`](./JobMarketplace.md)
-- **PaymentEscrowWithEarnings**: [`0x7abC91AF9E5aaFdc954Ec7a02238d0796Bbf9a3C`](./PaymentEscrow.md)
-- **TreasuryManager**: [`0x4e770e723B95A0d8923Db006E49A8a3cb0BAA078`](./TreasuryManager.md)
-
-## Contract Verification
-
-Verified on BaseScan: [0xcbD91249cC8A7634a88d437Eaa083496C459Ef4E](https://sepolia.basescan.org/address/0xcbD91249cC8A7634a88d437Eaa083496C459Ef4E#code)
+- [JobMarketplace.md](./JobMarketplace.md) - Main marketplace contract
+- [CURRENT_STATUS.md](../../CURRENT_STATUS.md) - Latest deployment info
+- [Source Code](../../../src/HostEarnings.sol) - Contract implementation
+- [Tests](../../../test/HostEarnings/) - Test coverage

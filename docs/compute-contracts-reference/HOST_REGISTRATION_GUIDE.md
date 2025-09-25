@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide explains how to register as a host (GPU provider) in the Fabstir P2P LLM marketplace on Base Sepolia. The system uses FAB token staking to ensure host commitment and quality of service.
+This guide explains how to register as a host (GPU provider) in the Fabstir P2P LLM marketplace on Base Sepolia. The system uses FAB token staking and model validation to ensure host commitment and quality of service. Hosts must register with approved AI models from the ModelRegistry.
 
 ## Host States
 
@@ -28,12 +28,16 @@ Before registering as a host, you need:
 3. **Base Sepolia wallet** - MetaMask or compatible wallet
 4. **GPU capabilities** - Hardware to run AI models
 5. **API Endpoint** - HTTP/HTTPS endpoint where your host serves inference requests (e.g., `http://your-host.com:8080`)
+6. **Approved Model Support** - Must support at least one approved model from ModelRegistry
 
 ## Contract Information
 
-**NodeRegistryFAB Contract**: `0x039AB5d5e8D5426f9963140202F506A2Ce6988F9`  
-**FAB Token Contract**: `0xC78949004B4EB6dEf2D66e49Cd81231472612D62`  
-**Network**: Base Sepolia (Chain ID: 84532)
+**JobMarketplaceWithModels**: `0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f` (Multi-chain support)
+**NodeRegistryWithModels**: `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218`
+**ModelRegistry**: `0x92b2De840bB2171203011A6dBA928d855cA8183E`
+**HostEarnings**: `0x908962e8c6CE72610021586f85ebDE09aAc97776`
+**FAB Token**: `0xC78949004B4EB6dEf2D66e49Cd81231472612D62`
+**Network**: Base Sepolia (Chain ID: 84532) | opBNB support planned post-MVP
 
 ## Registration Process
 
@@ -53,70 +57,82 @@ const balance = await fabToken.balanceOf(yourAddress);
 console.log(`FAB Balance: ${ethers.utils.formatUnits(balance, 18)}`);
 ```
 
-### Step 2: Approve Token Spending
+### Step 2: Check Approved Models
+
+First, check which models are approved in the ModelRegistry:
+
+```javascript
+const modelRegistry = new ethers.Contract(
+  '0x92b2De840bB2171203011A6dBA928d855cA8183E',
+  [
+    'function getAllModels() view returns (bytes32[])',
+    'function getModel(bytes32) view returns (tuple(string,string,bytes32,uint256,bool,uint256))'
+  ],
+  provider
+);
+
+// Get all approved model IDs
+const modelIds = await modelRegistry.getAllModels();
+console.log(`Found ${modelIds.length} approved models`);
+
+// Currently approved models for MVP:
+// - TinyVicuna-1B: 0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced
+// - TinyLlama-1.1B: 0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca
+```
+
+### Step 3: Approve Token Spending
 
 Before registration, approve the NodeRegistry to transfer your FAB tokens:
 
 ```javascript
 // Approve 1000 FAB tokens
 const amount = ethers.utils.parseUnits('1000', 18);
+const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
 
-const approveTx = await fabToken.approve(
-  '0x039AB5d5e8D5426f9963140202F506A2Ce6988F9', // NodeRegistry address
-  amount
-);
+const approveTx = await fabToken.approve(NODE_REGISTRY, amount);
 await approveTx.wait();
 ```
 
-### Step 3: Register as Host
+### Step 4: Register as Host
 
-#### Option A: Register with API URL (Recommended)
-
-Register with both your capabilities and API endpoint for automatic discovery:
+Register with structured metadata and supported models:
 
 ```javascript
 const nodeRegistry = new ethers.Contract(
-  '0x039AB5d5e8D5426f9963140202F506A2Ce6988F9',
-  ['function registerNodeWithUrl(string metadata, string apiUrl) external'],
+  '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218',
+  ['function registerNode(string metadata, string apiUrl, bytes32[] supportedModels) external'],
   signer
 );
 
-// Metadata describes your capabilities
-const metadata = 'llama-2-7b,llama-2-13b,gpt-4,inference,base-sepolia';
+// Structured JSON metadata describing your capabilities
+const metadata = JSON.stringify({
+  hardware: {
+    gpu: "rtx-4090",
+    vram: 24,
+    cpu: "AMD Ryzen 9 5950X",
+    ram: 64
+  },
+  capabilities: ["inference", "streaming", "batch"],
+  location: "us-west",
+  maxConcurrentJobs: 5
+});
+
 // API URL where clients can reach your inference service
 const apiUrl = 'http://your-host.example.com:8080';
 
-const registerTx = await nodeRegistry.registerNodeWithUrl(metadata, apiUrl);
+// Supported model IDs (must be approved in ModelRegistry)
+const supportedModels = [
+  '0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced', // TinyVicuna-1B
+  '0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca'  // TinyLlama-1.1B
+];
+
+const registerTx = await nodeRegistry.registerNode(metadata, apiUrl, supportedModels);
 await registerTx.wait();
 
-console.log('✅ Successfully registered as host with API endpoint!');
+console.log('✅ Successfully registered as host with model validation!');
 ```
 
-#### Option B: Register without API URL (Legacy)
-
-You can still use the old method and add your API URL later:
-
-```javascript
-const nodeRegistry = new ethers.Contract(
-  '0x039AB5d5e8D5426f9963140202F506A2Ce6988F9',
-  ['function registerNode(string metadata) external'],
-  signer
-);
-
-// Metadata describes your capabilities
-const metadata = 'llama-2-7b,llama-2-13b,gpt-4,inference,base-sepolia';
-
-const registerTx = await nodeRegistry.registerNode(metadata);
-await registerTx.wait();
-
-console.log('✅ Successfully registered as host!');
-
-// Later, add your API URL
-const apiUrl = 'http://your-host.example.com:8080';
-await nodeRegistry.updateApiUrl(apiUrl);
-```
-
-### Step 4: Verify Registration
+### Step 5: Verify Registration
 
 Check your registration status:
 
@@ -156,7 +172,7 @@ async function registerHost(privateKey, metadata, apiUrl) {
   
   // Contract addresses
   const FAB_TOKEN = '0xC78949004B4EB6dEf2D66e49Cd81231472612D62';
-  const NODE_REGISTRY = '0x039AB5d5e8D5426f9963140202F506A2Ce6988F9';
+  const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
   
   // ABIs
   const fabTokenAbi = [
@@ -166,12 +182,13 @@ async function registerHost(privateKey, metadata, apiUrl) {
   ];
   
   const nodeRegistryAbi = [
-    'function registerNode(string metadata) external',
-    'function registerNodeWithUrl(string metadata, string apiUrl) external',
+    'function registerNode(string metadata, string apiUrl, bytes32[] supportedModels) external',
+    'function updateMetadata(string metadata) external',
     'function updateApiUrl(string apiUrl) external',
-    'function nodes(address) view returns (address operator, uint256 stakedAmount, bool active, string metadata, string apiUrl)',
+    'function updateSupportedModels(bytes32[] modelIds) external',
+    'function nodes(address) view returns (address operator, uint256 stakedAmount, bool active, string metadata, string apiUrl, bytes32[] supportedModels)',
     'function getNodeApiUrl(address) view returns (string)',
-    'function getNodeFullInfo(address) view returns (address, uint256, bool, string, string)',
+    'function getNodeFullInfo(address) view returns (address, uint256, bool, string, string, bytes32[])',
     'function MIN_STAKE() view returns (uint256)'
   ];
   
@@ -257,12 +274,50 @@ await stakeTx.wait();
 
 ### Update Metadata
 
-Change your node's capabilities description:
+Change your node's capabilities description (JSON format):
 
 ```javascript
-const newMetadata = 'llama-2-70b,gpt-4,claude-3,inference,training';
+const newMetadata = JSON.stringify({
+  hardware: {
+    gpu: "rtx-4090-upgraded",
+    vram: 48,  // Upgraded!
+    cpu: "AMD Threadripper",
+    ram: 128
+  },
+  capabilities: ["inference", "streaming", "batch", "training"],
+  location: "eu-central",
+  maxConcurrentJobs: 10
+});
+
 const updateTx = await nodeRegistry.updateMetadata(newMetadata);
 await updateTx.wait();
+console.log('✅ Metadata updated!');
+```
+
+### Update Supported Models
+
+Change which AI models your node supports (must be approved models):
+
+```javascript
+// First check available approved models
+const modelRegistry = new ethers.Contract(
+  '0x92b2De840bB2171203011A6dBA928d855cA8183E',
+  ['function getAllModels() view returns (bytes32[])'],
+  provider
+);
+
+const approvedModels = await modelRegistry.getAllModels();
+console.log('Available models:', approvedModels);
+
+// Update your supported models
+const newModelIds = [
+  '0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced', // TinyVicuna-1B
+  // Add more approved model IDs as needed
+];
+
+const updateModelsTx = await nodeRegistry.updateSupportedModels(newModelIds);
+await updateModelsTx.wait();
+console.log('✅ Supported models updated!');
 ```
 
 ### Unregister and Withdraw Stake
@@ -278,10 +333,12 @@ await unregisterTx.wait();
 ## Important Notes
 
 ### Recent Updates (January 2025)
-- **NEW**: Added API endpoint discovery - hosts can now register with their API URLs for automatic client discovery
-- **Fixed**: Re-registration bug that prevented hosts from registering again after unregistering
-- **New Contract Address**: NodeRegistry deployed at `0x039AB5d5e8D5426f9963140202F506A2Ce6988F9` (Note: API URL feature requires redeployment)
-- **New JobMarketplace**: Updated to `0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0` with refund fixes
+- **Model Governance**: Hosts must now register with approved models from ModelRegistry
+- **New Contract**: NodeRegistryWithModels at `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218`
+- **ModelRegistry**: Deployed at `0x92b2De840bB2171203011A6dBA928d855cA8183E`
+- **Structured Metadata**: Now uses JSON format instead of comma-separated strings
+- **Update Functions**: Can update metadata, API URL, and supported models without re-registering
+- **API Discovery**: Hosts register with API URLs for automatic client discovery
 
 ### Gas Costs
 - Registration: ~200,000 gas
@@ -295,10 +352,34 @@ await unregisterTx.wait();
 - No slashing mechanism currently implemented
 
 ### Metadata Format
-The metadata string should describe your capabilities. Suggested format:
+Metadata must be a JSON string with structured information:
+
+```json
+{
+  "hardware": {
+    "gpu": "rtx-4090",
+    "vram": 24,
+    "cpu": "AMD Ryzen 9",
+    "ram": 64
+  },
+  "capabilities": ["inference", "streaming", "batch"],
+  "location": "us-west",
+  "maxConcurrentJobs": 5
+}
 ```
-"model1,model2,model3,capability1,capability2,location"
-```
+
+### Approved Models (MVP Testing)
+Currently, only these two models are approved:
+
+1. **TinyVicuna-1B-32k**
+   - Model ID: `0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced`
+   - Repo: CohereForAI/TinyVicuna-1B-32k-GGUF
+   - File: tiny-vicuna-1b.q4_k_m.gguf
+
+2. **TinyLlama-1.1B Chat**
+   - Model ID: `0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca`
+   - Repo: TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF
+   - File: tinyllama-1b.Q4_K_M.gguf
 
 Examples:
 - `"llama-2-7b,llama-2-13b,inference,base-sepolia"`
@@ -378,16 +459,25 @@ Once registered, you can:
 1. Be selected for jobs by renters
 2. Submit proofs of work
 3. Earn payments for completed inference tasks
-4. Build reputation in the system
+4. Complete sessions to claim payment faster
+5. Build reputation in the system
 
-The JobMarketplace contract (`0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0`) verifies your registration before allowing you to claim jobs.
+The JobMarketplace contract (`0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f`) verifies your registration and model support before allowing you to serve sessions.
+
+### Host Earnings
+
+Hosts accumulate earnings in the HostEarnings contract (`0x908962e8c6CE72610021586f85ebDE09aAc97776`):
+- Payments accumulate for batch withdrawals
+- 90% of session payment goes to host (10% treasury fee)
+- Supports both native tokens (ETH/BNB) and ERC20 tokens
+- Anyone can complete sessions - enabling gasless UX
 
 ## Support
 
 For technical support:
 - GitHub Issues: https://github.com/fabstir/fabstir-llm-marketplace
 - Documentation: [Technical Docs](./technical/contracts/NodeRegistry.md)
-- Contract Source: [NodeRegistryFAB.sol](../src/NodeRegistryFAB.sol)
+- Contract Source: [NodeRegistryWithModels.sol](../src/NodeRegistryWithModels.sol)
 
 ## Next Steps
 
