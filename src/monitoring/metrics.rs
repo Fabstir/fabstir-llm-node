@@ -1140,6 +1140,154 @@ impl MetricsCollector {
         
         Ok(())
     }
+
+    // Helper method to create with default config
+    pub fn new_default() -> Self {
+        let state = Arc::new(RwLock::new(MetricsState {
+            metrics: HashMap::new(),
+            counters: HashMap::new(),
+            gauges: HashMap::new(),
+            histograms: HashMap::new(),
+            summaries: HashMap::new(),
+            snapshots: HashMap::new(),
+            subscriptions: HashMap::new(),
+        }));
+
+        MetricsCollector {
+            config: MetricsConfig::default(),
+            state,
+            gc_handle: None,
+        }
+    }
+
+    // Register gauge without async (sync version)
+    pub fn register_gauge_sync(&self, name: &str, help: &str) {
+        let name = name.to_string();
+        let help = help.to_string();
+        let state = self.state.clone();
+
+        tokio::spawn(async move {
+            let gauge = Arc::new(Gauge {
+                name: name.clone(),
+                help: help.clone(),
+                value: Arc::new(RwLock::new(0.0)),
+                time_series: Arc::new(RwLock::new(vec![])),
+                collector: None,
+            });
+
+            let mut s = state.write().await;
+            s.gauges.insert(name.clone(), gauge);
+        });
+    }
+
+    // Register counter without async (sync version)
+    pub fn register_counter_sync(&self, name: &str, help: &str) {
+        let name = name.to_string();
+        let help = help.to_string();
+        let state = self.state.clone();
+
+        tokio::spawn(async move {
+            let counter = Arc::new(Counter {
+                name: name.clone(),
+                help: help.clone(),
+                value: Arc::new(RwLock::new(0.0)),
+                labels: vec![],
+                label_values: Arc::new(RwLock::new(HashMap::new())),
+                collector: None,
+            });
+
+            let mut s = state.write().await;
+            s.counters.insert(name.clone(), counter);
+        });
+    }
+
+    // Register histogram without async (sync version)
+    pub fn register_histogram_sync(&self, name: &str, help: &str) {
+        let name = name.to_string();
+        let help = help.to_string();
+        let state = self.state.clone();
+        let buckets = vec![0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0];
+
+        tokio::spawn(async move {
+            let histogram = Arc::new(Histogram {
+                name: name.clone(),
+                help: help.clone(),
+                buckets: buckets.clone(),
+                bucket_counts: Arc::new(RwLock::new(vec![0; buckets.len()])),
+                sum: Arc::new(RwLock::new(0.0)),
+                count: Arc::new(RwLock::new(0)),
+                observations: Arc::new(RwLock::new(vec![])),
+                collector: None,
+            });
+
+            let mut s = state.write().await;
+            s.histograms.insert(name.clone(), histogram);
+        });
+    }
+
+    // Increment counter
+    pub fn increment_counter(&self, name: &str, value: f64) {
+        let name = name.to_string();
+        let state = self.state.clone();
+
+        tokio::spawn(async move {
+            let s = state.read().await;
+            if let Some(counter) = s.counters.get(&name) {
+                counter.inc_by(value).await;
+            }
+        });
+    }
+
+    // Set gauge value
+    pub fn set_gauge(&self, name: &str, value: f64) {
+        let name = name.to_string();
+        let state = self.state.clone();
+
+        tokio::spawn(async move {
+            let s = state.read().await;
+            if let Some(gauge) = s.gauges.get(&name) {
+                gauge.set(value).await;
+            }
+        });
+    }
+
+    // Record histogram observation
+    pub fn record_histogram(&self, name: &str, value: f64) {
+        let name = name.to_string();
+        let state = self.state.clone();
+
+        tokio::spawn(async move {
+            let s = state.read().await;
+            if let Some(histogram) = s.histograms.get(&name) {
+                histogram.observe(value).await;
+            }
+        });
+    }
+
+    // Get all metrics as a simple map
+    pub async fn get_all_metrics(&self) -> Result<HashMap<String, f64>> {
+        let mut result = HashMap::new();
+        let state = self.state.read().await;
+
+        for (name, counter) in &state.counters {
+            let value = counter.value.read().await;
+            result.insert(name.clone(), *value);
+        }
+
+        for (name, gauge) in &state.gauges {
+            let value = gauge.value.read().await;
+            result.insert(name.clone(), *value);
+        }
+
+        for (name, histogram) in &state.histograms {
+            let count = histogram.count.read().await;
+            result.insert(format!("{}_count", name), *count as f64);
+            let sum = histogram.sum.read().await;
+            result.insert(format!("{}_sum", name), *sum);
+        }
+
+        Ok(result)
+    }
 }
 
 // Custom HashMap wrapper for quantiles that supports f64 keys

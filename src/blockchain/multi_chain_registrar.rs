@@ -363,4 +363,9 @@ impl MultiChainRegistrar {
 
         Ok(results)
     }
+
+    /// Get all chain IDs this registrar can work with
+    pub async fn get_all_chain_ids(&self) -> Result<Vec<u64>> {
+        Ok(self.chain_registry.get_all_chain_ids())
+    }
 }
