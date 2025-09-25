@@ -394,12 +394,12 @@ async fn test_graceful_connection_shutdown() {
 // Helper functions
 async fn create_degrading_node() -> fabstir_llm_node::p2p::Node {
     // Mock node that becomes unhealthy over time
-    let config = fabstir_llm_node::config::NodeConfig::default();
+    let config = fabstir_llm_node::p2p_config::NodeConfig::default();
     fabstir_llm_node::p2p::Node::new(config).await.expect("Failed to create node")
 }
 
 async fn create_flaky_connection_node(_failures: u32) -> fabstir_llm_node::p2p::Node {
     // Mock node with connection issues
-    let config = fabstir_llm_node::config::NodeConfig::default();
+    let config = fabstir_llm_node::p2p_config::NodeConfig::default();
     fabstir_llm_node::p2p::Node::new(config).await.expect("Failed to create node")
 }

@@ -35,6 +35,7 @@ mod tests {
             signature: vec![1, 2, 3, 4, 5],
             encoding: "cbor".to_string(),
             version: "1.0".to_string(),
+            job_request: None,
         }
     }
     

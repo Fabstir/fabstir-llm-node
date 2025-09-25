@@ -369,7 +369,7 @@ async fn test_stream_error_handling() {
 // Helper functions
 async fn create_streaming_test_node() -> fabstir_llm_node::p2p::Node {
     // Mock node that supports streaming
-    let config = fabstir_llm_node::config::NodeConfig::default();
+    let config = fabstir_llm_node::p2p_config::NodeConfig::default();
     fabstir_llm_node::p2p::Node::new(config).await.expect("Failed to create node")
 }
 
