@@ -164,15 +164,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 
 ## Phase 3: Multi-Chain Settlement
 
-### Sub-phase 3.1: Settlement Manager Core
+### Sub-phase 3.1: Settlement Manager Core ✅
 **Goal**: Create chain-aware settlement system
 
 **Tasks**:
-- [ ] Create `SettlementManager` struct
-- [ ] Store signers per chain
-- [ ] Implement chain-specific gas estimation
-- [ ] Add settlement transaction builders
-- [ ] Create settlement queue per chain
+- [x] Create `SettlementManager` struct
+- [x] Store signers per chain
+- [x] Implement chain-specific gas estimation
+- [x] Add settlement transaction builders
+- [x] Create settlement queue per chain
 
 **Test Files** (TDD - Write First):
 - `tests/settlement/test_settlement_manager.rs`
@@ -181,6 +181,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
   - test_gas_estimation_base()
   - test_gas_estimation_opbnb()
   - test_settlement_queue()
+  - test_settlement_queue_retry()
+  - test_gas_estimation_unknown_chain()
+  - test_settlement_manager_health_check()
 
 **Success Criteria**:
 - Settlement manager initializes
