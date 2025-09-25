@@ -6,6 +6,7 @@ use fabstir_llm_node::api::websocket::job_verification::{
 };
 use std::path::PathBuf;
 use std::time::Duration;
+use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_basic_inference_without_model() {
@@ -29,17 +30,21 @@ async fn test_basic_inference_without_model() {
 #[tokio::test]
 async fn test_job_verification_disabled_mode() {
     // Test with verification disabled - should always work
+    let mut marketplace_addresses = HashMap::new();
+    marketplace_addresses.insert(84532, "0x0000000000000000000000000000000000000000".to_string());
+
     let config = JobVerificationConfig {
         enabled: false,
         blockchain_verification: false,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x0000000000000000000000000000000000000000".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532],
     };
-    
-    let verifier = JobVerifier::new(config, "http://localhost:8545".to_string()).await.unwrap();
-    
+
+    let verifier = JobVerifier::new(config).await.unwrap();
+
     // When disabled, all jobs should verify successfully
-    let job = verifier.verify_job(12345).await.unwrap();
+    let job = verifier.verify_job(12345, 84532).await.unwrap();
     assert_eq!(job.job_id, 12345);
     assert_eq!(job.status, JobStatus::Pending);
     

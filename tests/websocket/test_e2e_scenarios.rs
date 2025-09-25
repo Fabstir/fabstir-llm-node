@@ -39,7 +39,7 @@ async fn test_e2e_multi_turn_conversation() -> Result<()> {
     let integration = SessionIntegration::new(manager.clone());
     
     // Initialize session
-    let session = WebSocketSession::new("conversation-test");
+    let mut session = WebSocketSession::new("conversation-test");
     manager.register_session(session.clone()).await?;
     
     // First turn
@@ -116,7 +116,7 @@ async fn test_e2e_session_recovery() -> Result<()> {
     let integration = SessionIntegration::new(manager.clone());
     
     // First connection
-    let session = WebSocketSession::new("recovery-test");
+    let mut session = WebSocketSession::new("recovery-test");
     manager.register_session(session.clone()).await?;
     
     // Add some context

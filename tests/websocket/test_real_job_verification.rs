@@ -6,6 +6,7 @@ use fabstir_llm_node::contracts::client::Web3Client;
 use ethers::types::{Address, U256};
 use std::str::FromStr;
 use std::time::Duration;
+use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_blockchain_job_verification() {
@@ -13,14 +14,18 @@ async fn test_blockchain_job_verification() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -31,7 +36,7 @@ async fn test_blockchain_job_verification() {
     // Verify a known job ID (need to create one first or use existing)
     let job_id = 1u64; // Assuming job ID 1 exists
     
-    let result = verifier.verify_job(job_id).await;
+    let result = verifier.verify_job(job_id, 84532).await; // Base Sepolia
     
     match result {
         Ok(details) => {
@@ -56,14 +61,18 @@ async fn test_job_state_transitions() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -74,6 +83,7 @@ async fn test_job_state_transitions() {
     // Test state validation
     let pending_job = JobDetails {
         job_id: 1,
+        chain_id: 84532, // Base Sepolia
         client_address: "0x1234567890123456789012345678901234567890".to_string(),
         payment_amount: 1000000000000000000u128, // 1 ETH in wei
         model_id: "tinyllama-1.1b".to_string(),
@@ -103,14 +113,18 @@ async fn test_job_expiry_verification() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -121,6 +135,7 @@ async fn test_job_expiry_verification() {
     // Test expired job
     let expired_job = JobDetails {
         job_id: 2,
+        chain_id: 84532, // Base Sepolia
         client_address: "0x1234567890123456789012345678901234567890".to_string(),
         payment_amount: 1000000000000000000u128,
         model_id: "tinyllama-1.1b".to_string(),
@@ -137,6 +152,7 @@ async fn test_job_expiry_verification() {
     // Test non-expired job
     let valid_job = JobDetails {
         job_id: 3,
+        chain_id: 84532, // Base Sepolia
         client_address: "0x1234567890123456789012345678901234567890".to_string(),
         payment_amount: 1000000000000000000u128,
         model_id: "tinyllama-1.1b".to_string(),
@@ -156,14 +172,18 @@ async fn test_payment_verification() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -174,6 +194,7 @@ async fn test_payment_verification() {
     // Test payment verification
     let job = JobDetails {
         job_id: 4,
+        chain_id: 84532, // Base Sepolia
         client_address: "0x1234567890123456789012345678901234567890".to_string(),
         payment_amount: 1000000000000000000u128, // 1 ETH
         model_id: "tinyllama-1.1b".to_string(),
@@ -205,14 +226,18 @@ async fn test_concurrent_job_verifications() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -226,7 +251,7 @@ async fn test_concurrent_job_verifications() {
     for job_id in 1..=5 {
         let verifier_clone = verifier.clone();
         let handle = tokio::spawn(async move {
-            verifier_clone.verify_job(job_id).await
+            verifier_clone.verify_job(job_id, 84532).await
         });
         handles.push(handle);
     }
@@ -255,14 +280,18 @@ async fn test_job_verification_caching() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -274,12 +303,12 @@ async fn test_job_verification_caching() {
     
     // First verification - hits blockchain
     let start = std::time::Instant::now();
-    let result1 = verifier.verify_job(job_id).await;
+    let result1 = verifier.verify_job(job_id, 84532).await;
     let first_duration = start.elapsed();
     
     // Second verification - should use cache
     let start = std::time::Instant::now();
-    let result2 = verifier.verify_job(job_id).await;
+    let result2 = verifier.verify_job(job_id, 84532).await;
     let cached_duration = start.elapsed();
     
     // Cache should be faster
@@ -300,14 +329,18 @@ async fn test_signature_verification_for_job_claim() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -320,17 +353,18 @@ async fn test_signature_verification_for_job_claim() {
     let host_address = "0xABCDEF1234567890ABCDEF1234567890ABCDEF12";
     
     // Generate claim message
-    let message = verifier.create_claim_message(job_id, host_address).await;
-    
+    let message = verifier.create_claim_message(job_id, 84532, host_address).await;
+
     // In real scenario, host would sign this with their private key
     // For testing, we'll verify the message format
     assert!(message.contains(&job_id.to_string()));
     assert!(message.contains(host_address));
-    
+
     // Verify signature (mock for now, real implementation would use ethers)
     let mock_signature = "0x1234..."; // Mock signature
     let is_valid = verifier.verify_claim_signature(
         job_id,
+        84532,
         host_address,
         mock_signature
     ).await;
@@ -347,14 +381,18 @@ async fn test_job_metadata_retrieval() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -365,7 +403,7 @@ async fn test_job_metadata_retrieval() {
     // Test retrieving job metadata
     let job_id = 1u64;
     
-    let metadata = verifier.get_job_metadata(job_id).await;
+    let metadata = verifier.get_job_metadata(job_id, 84532).await;
     
     match metadata {
         Ok(data) => {
@@ -385,14 +423,18 @@ async fn test_batch_job_verification() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = std::collections::HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: true,
         blockchain_verification: true,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532], // Base Sepolia
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -403,7 +445,7 @@ async fn test_batch_job_verification() {
     // Verify multiple jobs in batch
     let job_ids = vec![1, 2, 3, 4, 5];
     
-    let results = verifier.batch_verify_jobs(job_ids).await;
+    let results = verifier.batch_verify_jobs(job_ids, 84532).await;
     
     match results {
         Ok(jobs) => {
@@ -422,14 +464,18 @@ async fn test_job_verification_disabled_mode() {
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
     
+    let mut marketplace_addresses = HashMap::new();
+    marketplace_addresses.insert(84532, "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string());
+
     let config = JobVerificationConfig {
         enabled: false, // Disabled mode
         blockchain_verification: false,
         cache_duration: Duration::from_secs(60),
-        marketplace_address: "0x7ce861CC0188c260f3Ba58eb9a4d33e17Eb62304".to_string(),
+        marketplace_addresses,
+        supported_chains: vec![84532],
     };
     
-    let verifier = match JobVerifier::new(config, rpc_url).await {
+    let verifier = match JobVerifier::new(config).await {
         Ok(v) => v,
         Err(e) => {
             println!("Skipping test: Could not connect to blockchain: {}", e);
@@ -438,7 +484,7 @@ async fn test_job_verification_disabled_mode() {
     };
     
     // When disabled, all verifications should pass
-    let result = verifier.verify_job(99999).await;
+    let result = verifier.verify_job(99999, 84532).await;
     assert!(result.is_ok());
     
     let details = result.unwrap();
