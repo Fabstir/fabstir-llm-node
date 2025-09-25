@@ -50,6 +50,15 @@ pub struct ConnectionPool {
 }
 
 impl ConnectionPool {
+    pub fn new_for_test(config: PoolConfig) -> Self {
+        Self {
+            connections: Arc::new(RwLock::new(Vec::new())),
+            idle_connections: Arc::new(RwLock::new(Vec::new())),
+            active_connections: Arc::new(RwLock::new(HashMap::new())),
+            config,
+        }
+    }
+
     pub async fn new(config: PoolConfig) -> Result<Self> {
         let pool = Self {
             connections: Arc::new(RwLock::new(Vec::new())),

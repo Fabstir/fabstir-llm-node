@@ -191,6 +191,32 @@ struct Metrics {
 }
 
 impl ApiServer {
+    pub fn new_for_test() -> Self {
+        let config = ApiConfig::default();
+        let addr = "127.0.0.1:0".parse().unwrap();
+
+        ApiServer {
+            config,
+            addr,
+            node: Arc::new(RwLock::new(None)),
+            engine: Arc::new(RwLock::new(None)),
+            default_model_id: Arc::new(RwLock::new("test-model".to_string())),
+            rate_limiter: Arc::new(RateLimiter::new(100)),
+            circuit_breaker: Arc::new(CircuitBreaker::new(5, Duration::from_secs(60))),
+            connection_pool: Arc::new(ConnectionPool::new_for_test(PoolConfig::default())),
+            active_connections: Arc::new(RwLock::new(HashMap::new())),
+            metrics: Arc::new(RwLock::new(Metrics {
+                total_requests: 0,
+                total_errors: 0,
+                request_durations: Vec::new(),
+            })),
+            token_tracker: Arc::new(TokenTracker::new()),
+            checkpoint_manager: Arc::new(RwLock::new(None)),
+            shutdown_tx: None,
+            listener: None,
+        }
+    }
+
     pub async fn new(config: ApiConfig) -> Result<Self> {
         // Version stamp for deployment verification
         eprintln!("🚀 API SERVER VERSION: v6-minimum-token-fix-2024-09-22-05:05");
@@ -392,6 +418,9 @@ impl ApiServer {
             tokens_used: result.tokens_generated as u32,
             finish_reason: result.finish_reason,
             request_id: request.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            chain_id: request.chain_id,
+            chain_name: None,
+            native_token: None,
         };
 
         // Track tokens for checkpoint submission (non-streaming path)
@@ -628,7 +657,11 @@ impl ApiServer {
             description: None,
         }).collect();
         
-        Ok(ModelsResponse { models })
+        Ok(ModelsResponse {
+            models,
+            chain_id: None,
+            chain_name: None,
+        })
     }
     
     pub async fn health_check(&self) -> HealthResponse {

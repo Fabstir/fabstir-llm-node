@@ -8,7 +8,11 @@ pub mod websocket;
 pub mod token_tracker;
 
 pub use server::{ApiServer, ApiConfig};
-pub use handlers::{InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, HealthResponse};
+pub use handlers::{
+    InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, HealthResponse,
+    SessionInfo, SessionStatus, SessionInfoResponse, ChainInfo, ChainsResponse,
+    ChainStatistics, ChainStatsResponse, TotalStatistics,
+};
 pub use streaming::StreamingResponse;
 pub use errors::{ApiError, ErrorResponse};
 pub use pool::{ConnectionPool, ConnectionStats, PoolConfig};
