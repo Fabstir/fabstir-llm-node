@@ -2,24 +2,30 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (January 14, 2025 FINAL)
+## Current Deployed Contracts (January 24, 2025 - Multi-Chain Update)
 
 ### JobMarketplaceWithModels
-- **Address**: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
-- **Previous**: 0xb082Ae609D59BFB21073AF73eB37BFe4C36ab1c9
+- **Address**: 0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f ✅ NEW
+- **Previous**: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
 - **Network**: Base Sepolia
-- **Status**: ✅ FULLY WORKING - ALL ISSUES FIXED
+- **Status**: ✅ MULTI-CHAIN SUPPORT - DEPOSIT/WITHDRAWAL ENABLED
 - **Configuration**:
   - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
   - Authorized in HostEarnings: ✅ CONFIRMED
 - **Key Features**:
+  - 🆕 Wallet-agnostic deposit/withdrawal functions (depositNative, withdrawNative)
+  - 🆕 createSessionFromDeposit for pre-funded session creation
+  - 🆕 Anyone-can-complete pattern for gasless session ending
+  - 🆕 ChainConfig support for multi-chain deployment (ETH on Base, BNB on opBNB)
+  - 🆕 Enhanced event indexing for better filtering
+  - 🆕 depositor field tracks who paid (EOA or Smart Account)
   - FIXED: Properly calls creditEarnings() for host balance tracking
   - Compatible with NodeRegistryWithModels 6-field struct
   - Validates hosts have supported models
   - User refunds fixed for session jobs
-  - Treasury fee accumulation for batch withdrawals
+  - Treasury fee accumulation for batch withdrawals (90% host / 10% treasury)
   - Host earnings accumulation WITH PROPER TRACKING
-  - USDC payment settlement with 97.5% host / 2.5% treasury distribution
+  - USDC payment settlement with proper split distribution
   - ETH and USDC payment support fully functional
   - Direct payment distribution (no external escrow)
   - Session jobs with proof checkpoints
