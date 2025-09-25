@@ -42,6 +42,9 @@ pub enum ErrorCode {
     AuthenticationFailed,
     InternalError,
     Timeout,
+    UnsupportedChain,
+    ChainMismatch,
+    JobNotFoundOnChain,
 }
 
 impl fmt::Display for ErrorCode {
@@ -59,6 +62,9 @@ impl fmt::Display for ErrorCode {
             ErrorCode::AuthenticationFailed => write!(f, "AUTHENTICATION_FAILED"),
             ErrorCode::InternalError => write!(f, "INTERNAL_ERROR"),
             ErrorCode::Timeout => write!(f, "TIMEOUT"),
+            ErrorCode::UnsupportedChain => write!(f, "UNSUPPORTED_CHAIN"),
+            ErrorCode::ChainMismatch => write!(f, "CHAIN_MISMATCH"),
+            ErrorCode::JobNotFoundOnChain => write!(f, "JOB_NOT_FOUND_ON_CHAIN"),
         }
     }
 }
@@ -235,6 +241,8 @@ pub struct StreamToken {
     pub message_index: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof: Option<ProofData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_info: Option<ChainInfo>,
 }
 
 /// WebSocket error type

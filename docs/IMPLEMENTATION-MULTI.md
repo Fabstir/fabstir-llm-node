@@ -266,15 +266,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Legacy messages still work
 - Invalid chains rejected
 
-### Sub-phase 4.2: Session Handler Updates
+### Sub-phase 4.2: Session Handler Updates ✅ COMPLETED
 **Goal**: Make WebSocket handlers chain-aware
 
 **Tasks**:
-- [ ] Update `handle_session_init()` for chain
-- [ ] Verify job on specified chain
-- [ ] Add chain to session context
-- [ ] Update streaming responses with chain info
-- [ ] Handle chain switching requests
+- [x] Update `handle_session_init()` for chain
+- [x] Verify job on specified chain
+- [x] Add chain to session context
+- [x] Update streaming responses with chain info
+- [x] Handle chain switching requests
 
 **Test Files** (TDD - Write First):
 - `tests/websocket/test_session_handlers.rs`
