@@ -14,16 +14,16 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 
 ## Phase 1: Chain Configuration Foundation
 
-### Sub-phase 1.1: Chain Registry Infrastructure
+### Sub-phase 1.1: Chain Registry Infrastructure ✅
 **Goal**: Create foundational chain configuration system
 
 **Tasks**:
-- [ ] Create `src/config/chains.rs` module
-- [ ] Define `ChainConfig` struct with chain metadata
-- [ ] Define `TokenInfo` struct for native tokens
-- [ ] Define `ContractAddresses` struct for per-chain contracts
-- [ ] Implement `ChainRegistry` with Base Sepolia and opBNB configs
-- [ ] Add chain validation utilities
+- [x] Create `src/config/chains.rs` module
+- [x] Define `ChainConfig` struct with chain metadata
+- [x] Define `TokenInfo` struct for native tokens
+- [x] Define `ContractAddresses` struct for per-chain contracts
+- [x] Implement `ChainRegistry` with Base Sepolia and opBNB configs
+- [x] Add chain validation utilities
 
 **Test Files** (TDD - Write First):
 - `tests/chains/test_chain_config.rs`

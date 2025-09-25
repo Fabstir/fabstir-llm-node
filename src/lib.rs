@@ -1,4 +1,5 @@
 pub mod config;
+pub mod p2p_config;
 pub mod p2p;
 pub mod api;
 pub mod contracts;
