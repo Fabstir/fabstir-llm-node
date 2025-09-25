@@ -362,7 +362,7 @@ impl WebSocketSession {
         Ok(session)
     }
 
-    pub async fn add_message_async(&self, role: &str, content: &str) -> Result<()> {
+    pub async fn add_message_async(&mut self, role: &str, content: &str) -> Result<()> {
         let message = Message {
             role: role.to_string(),
             content: content.to_string(),
@@ -370,6 +370,7 @@ impl WebSocketSession {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs() as i64),
         };
+        self.conversation_history.push(message.clone());
         self.messages.write().await.push(message);
         Ok(())
     }

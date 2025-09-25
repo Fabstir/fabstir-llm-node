@@ -1,4 +1,5 @@
 use super::session::{WebSocketSession, SessionConfig, SessionMetrics};
+use super::persistence::{SessionPersistence, PersistenceConfig};
 use crate::job_processor::Message;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,7 @@ pub struct StoreMetrics {
 pub struct SessionStore {
     config: SessionStoreConfig,
     sessions: Arc<RwLock<HashMap<String, WebSocketSession>>>,
+    persistence: Option<Arc<SessionPersistence>>,
 }
 
 impl SessionStore {
@@ -43,6 +45,33 @@ impl SessionStore {
         Self {
             config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            persistence: None,
+        }
+    }
+
+    pub fn with_persistence(config: SessionStoreConfig, persistence_config: PersistenceConfig) -> Self {
+        let persistence = SessionPersistence::new(persistence_config);
+        Self {
+            config,
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            persistence: Some(Arc::new(persistence)),
+        }
+    }
+
+    /// Recover sessions from persistence on startup
+    pub async fn recover_sessions(&mut self) -> Result<usize> {
+        if let Some(persistence) = &self.persistence {
+            let recovered = persistence.recover_all_sessions().await?;
+            let count = recovered.len();
+
+            let mut sessions = self.sessions.write().await;
+            for session in recovered {
+                sessions.insert(session.id.clone(), session);
+            }
+
+            Ok(count)
+        } else {
+            Ok(0)
         }
     }
 
@@ -73,10 +102,15 @@ impl SessionStore {
     pub async fn create_session(&mut self, config: SessionConfig) -> String {
         let session_id = WebSocketSession::generate_id();
         let session = WebSocketSession::with_config(session_id.clone(), config);
-        
+
+        // Persist if enabled
+        if let Some(persistence) = &self.persistence {
+            let _ = persistence.save_session(&session).await;
+        }
+
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id.clone(), session);
-        
+
         session_id
     }
 
@@ -110,10 +144,16 @@ impl SessionStore {
 
     pub async fn update_session(&mut self, session_id: &str, message: Message) -> Result<()> {
         let mut sessions = self.sessions.write().await;
-        
+
         match sessions.get_mut(session_id) {
             Some(session) => {
                 session.add_message(message)?;
+
+                // Persist if enabled
+                if let Some(persistence) = &self.persistence {
+                    let _ = persistence.save_session(session).await;
+                }
+
                 Ok(())
             }
             None => Err(anyhow!("Session not found")),
@@ -122,7 +162,16 @@ impl SessionStore {
 
     pub async fn destroy_session(&mut self, session_id: &str) -> bool {
         let mut sessions = self.sessions.write().await;
-        sessions.remove(session_id).is_some()
+
+        if let Some(removed_session) = sessions.remove(session_id) {
+            // Delete from persistence if enabled
+            if let Some(persistence) = &self.persistence {
+                let _ = persistence.delete_session(removed_session.chain_id, session_id).await;
+            }
+            true
+        } else {
+            false
+        }
     }
 
     pub async fn session_exists(&self, session_id: &str) -> bool {

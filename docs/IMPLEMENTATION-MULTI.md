@@ -136,15 +136,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Can query sessions by chain
 - Statistics accurate per chain
 
-### Sub-phase 2.3: Session Persistence
+### Sub-phase 2.3: Session Persistence ✅
 **Goal**: Persist chain information across restarts
 
 **Tasks**:
-- [ ] Update session storage schema
-- [ ] Add chain_id to session cache
-- [ ] Implement chain-aware session recovery
-- [ ] Create session backup per chain
-- [ ] Add chain migration utilities
+- [x] Update session storage schema
+- [x] Add chain_id to session cache
+- [x] Implement chain-aware session recovery
+- [x] Create session backup per chain
+- [x] Add chain migration utilities
 
 **Test Files** (TDD - Write First):
 - `tests/sessions/test_session_persistence.rs`
@@ -153,6 +153,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
   - test_session_recovery_after_restart()
   - test_chain_specific_backup()
   - test_migrate_session_chain()
+  - test_list_sessions_by_chain()
+  - test_delete_expired_sessions()
+  - test_restore_from_backup()
 
 **Success Criteria**:
 - Sessions persist with chain info

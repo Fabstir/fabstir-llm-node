@@ -176,9 +176,9 @@ impl SessionIntegration {
         if !*self.persistence_enabled.read().await {
             return Err(anyhow!("Persistence not enabled"));
         }
-        
+
         // Simulate loading from storage
-        let session = WebSocketSession::new(session_id);
+        let mut session = WebSocketSession::new(session_id);
         session.add_message_async("user", "Remember this").await?;
         Ok(session)
     }
