@@ -22,6 +22,7 @@ pub mod monitoring;
 pub mod embeddings;
 pub mod cache;
 pub mod utils;
+pub mod settlement;
 
 // Re-export main types from new modules
 pub use job_processor::{
