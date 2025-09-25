@@ -385,15 +385,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 
 ## Phase 6: API Enhancements
 
-### Sub-phase 6.1: HTTP API Chain Support
+### Sub-phase 6.1: HTTP API Chain Support ✅
 **Goal**: Add chain parameters to HTTP endpoints
 
 **Tasks**:
-- [ ] Update `/v1/models` with chain parameter
-- [ ] Add chain_id to inference requests
-- [ ] Create `/v1/chains` endpoint
-- [ ] Update `/v1/session/info` with chain data
-- [ ] Add chain statistics endpoint
+- [x] Update `/v1/models` with chain parameter
+- [x] Add chain_id to inference requests
+- [x] Create `/v1/chains` endpoint
+- [x] Update `/v1/session/info` with chain data
+- [x] Add chain statistics endpoint
 
 **Test Files** (TDD - Write First):
 - `tests/api/test_chain_endpoints.rs`
