@@ -190,15 +190,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Correct signer used per chain
 - Gas estimates reasonable
 
-### Sub-phase 3.2: Automatic Settlement Integration
+### Sub-phase 3.2: Automatic Settlement Integration ✅
 **Goal**: Connect settlement to WebSocket disconnect
 
 **Tasks**:
-- [ ] Update WebSocket disconnect handler
-- [ ] Implement `settle_session()` with chain lookup
-- [ ] Add settlement retry logic
-- [ ] Create settlement event logging
-- [ ] Handle settlement failures gracefully
+- [x] Update WebSocket disconnect handler
+- [x] Implement `settle_session()` with chain lookup
+- [x] Add settlement retry logic
+- [x] Create settlement event logging
+- [x] Handle settlement failures gracefully
 
 **Test Files** (TDD - Write First):
 - `tests/settlement/test_auto_settlement.rs`
@@ -207,6 +207,8 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
   - test_settlement_retry_logic()
   - test_settlement_failure_handling()
   - test_concurrent_settlements()
+  - test_disconnect_handler_integration()
+  - test_settlement_event_logging()
 
 **Success Criteria**:
 - Disconnect triggers settlement

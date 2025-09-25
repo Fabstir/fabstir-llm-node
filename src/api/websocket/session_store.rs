@@ -116,20 +116,44 @@ impl SessionStore {
 
     pub async fn try_create_session(&mut self, config: SessionConfig) -> Result<String> {
         let sessions = self.sessions.read().await;
-        
+
         if sessions.len() >= self.config.max_sessions {
             return Err(anyhow!("Maximum number of sessions reached"));
         }
-        
+
         drop(sessions); // Release read lock before getting write lock
-        
+
         let session_id = WebSocketSession::generate_id();
         let session = WebSocketSession::with_config(session_id.clone(), config);
-        
+
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id.clone(), session);
-        
+
         Ok(session_id)
+    }
+
+    /// Create a session with a specific chain ID
+    pub async fn create_session_with_chain(
+        &mut self,
+        session_id: String,
+        config: SessionConfig,
+        chain_id: u64,
+    ) -> Result<()> {
+        let sessions_count = self.sessions.read().await.len();
+        if sessions_count >= self.config.max_sessions {
+            return Err(anyhow!("Maximum sessions limit reached"));
+        }
+
+        let session = WebSocketSession::with_chain(session_id.clone(), config, chain_id);
+
+        // Persist if enabled
+        if let Some(persistence) = &self.persistence {
+            let _ = persistence.save_session(&session).await;
+        }
+
+        let mut sessions = self.sessions.write().await;
+        sessions.insert(session_id, session);
+        Ok(())
     }
 
     pub async fn get_session(&self, session_id: &str) -> Option<WebSocketSession> {

@@ -3,6 +3,7 @@ pub mod session_resume;
 pub mod prompt;
 pub mod response;
 pub mod inference;
+pub mod disconnect;
 
 use super::messages::{WebSocketMessage, ErrorCode};
 use anyhow::Result;
