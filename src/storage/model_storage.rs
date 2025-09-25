@@ -1,8 +1,8 @@
-use crate::storage::{S5Storage, StorageError, CompressionType, CborCompat};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use crate::storage::{CborCompat, CompressionType, S5Storage, StorageError};
 use chrono::{DateTime, Utc};
-use sha2::{Sha256, Digest};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use uuid::Uuid;
 use zstd;
 
@@ -95,7 +95,10 @@ impl ModelStorage {
     ) -> Result<ModelVersion, StorageError> {
         // Generate version ID
         let version_id = Uuid::new_v4().to_string();
-        let version_path = format!("{}/{}/versions/{}", self.config.base_path, model_id, version_id);
+        let version_path = format!(
+            "{}/{}/versions/{}",
+            self.config.base_path, model_id, version_id
+        );
 
         // Calculate actual hash if not provided
         let actual_hash = self.calculate_hash(&data);
@@ -113,13 +116,17 @@ impl ModelStorage {
             } else {
                 data
             };
-            
-            self.storage.put(&format!("{}/data", version_path), processed_data).await?
+
+            self.storage
+                .put(&format!("{}/data", version_path), processed_data)
+                .await?
         };
 
         // Store metadata
         let metadata_path = format!("{}/metadata.cbor", version_path);
-        let metadata_data = self.cbor.encode(&final_metadata)
+        let metadata_data = self
+            .cbor
+            .encode(&final_metadata)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.storage.put(&metadata_path, metadata_data).await?;
 
@@ -135,7 +142,9 @@ impl ModelStorage {
 
         // Store version info
         let version_info_path = format!("{}/version.cbor", version_path);
-        let version_data = self.cbor.encode(&version)
+        let version_data = self
+            .cbor
+            .encode(&version)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.storage.put(&version_info_path, version_data).await?;
 
@@ -145,18 +154,31 @@ impl ModelStorage {
         Ok(version)
     }
 
-    pub async fn get_model(&self, model_id: &str) -> Result<(Vec<u8>, ModelMetadata), StorageError> {
+    pub async fn get_model(
+        &self,
+        model_id: &str,
+    ) -> Result<(Vec<u8>, ModelMetadata), StorageError> {
         let latest_version = self.get_latest_version(model_id).await?;
-        self.get_model_version(model_id, &latest_version.version_id).await
+        self.get_model_version(model_id, &latest_version.version_id)
+            .await
     }
 
-    pub async fn get_model_version(&self, model_id: &str, version_id: &str) -> Result<(Vec<u8>, ModelMetadata), StorageError> {
-        let version_path = format!("{}/{}/versions/{}", self.config.base_path, model_id, version_id);
+    pub async fn get_model_version(
+        &self,
+        model_id: &str,
+        version_id: &str,
+    ) -> Result<(Vec<u8>, ModelMetadata), StorageError> {
+        let version_path = format!(
+            "{}/{}/versions/{}",
+            self.config.base_path, model_id, version_id
+        );
 
         // Load metadata
         let metadata_path = format!("{}/metadata.cbor", version_path);
         let metadata_data = self.storage.get(&metadata_path).await?;
-        let metadata: ModelMetadata = self.cbor.decode(&metadata_data)
+        let metadata: ModelMetadata = self
+            .cbor
+            .decode(&metadata_data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         // Load model data
@@ -165,11 +187,11 @@ impl ModelStorage {
         } else {
             let data_path = format!("{}/data", version_path);
             let mut raw_data = self.storage.get(&data_path).await?;
-            
+
             if self.config.enable_compression {
                 raw_data = self.decompress_data(&raw_data)?;
             }
-            
+
             raw_data
         };
 
@@ -191,7 +213,10 @@ impl ModelStorage {
         Ok(models)
     }
 
-    pub async fn list_model_versions(&self, model_id: &str) -> Result<Vec<ModelVersion>, StorageError> {
+    pub async fn list_model_versions(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ModelVersion>, StorageError> {
         let versions_path = format!("{}/{}/versions", self.config.base_path, model_id);
         let entries = self.storage.list(&versions_path).await?;
         let mut versions = Vec::new();
@@ -214,7 +239,7 @@ impl ModelStorage {
 
     pub async fn delete_model(&self, model_id: &str) -> Result<(), StorageError> {
         let model_path = format!("{}/{}", self.config.base_path, model_id);
-        
+
         // List all versions and delete each one
         let versions = self.list_model_versions(model_id).await?;
         for version in versions {
@@ -234,7 +259,10 @@ impl ModelStorage {
         self.storage.exists(&model_path).await
     }
 
-    pub async fn search_models_by_tag(&self, tag: &str) -> Result<Vec<ModelMetadata>, StorageError> {
+    pub async fn search_models_by_tag(
+        &self,
+        tag: &str,
+    ) -> Result<Vec<ModelMetadata>, StorageError> {
         let all_models = self.list_models().await?;
         let filtered: Vec<ModelMetadata> = all_models
             .into_iter()
@@ -243,7 +271,10 @@ impl ModelStorage {
         Ok(filtered)
     }
 
-    pub async fn search_models_by_format(&self, format: ModelFormat) -> Result<Vec<ModelMetadata>, StorageError> {
+    pub async fn search_models_by_format(
+        &self,
+        format: ModelFormat,
+    ) -> Result<Vec<ModelMetadata>, StorageError> {
         let all_models = self.list_models().await?;
         let filtered: Vec<ModelMetadata> = all_models
             .into_iter()
@@ -254,15 +285,25 @@ impl ModelStorage {
 
     pub async fn get_model_stats(&self, model_id: &str) -> Result<ModelStats, StorageError> {
         let latest_version = self.get_latest_version(model_id).await?;
-        let version_path = format!("{}/{}/versions/{}", self.config.base_path, model_id, latest_version.version_id);
+        let version_path = format!(
+            "{}/{}/versions/{}",
+            self.config.base_path, model_id, latest_version.version_id
+        );
 
         let total_size = latest_version.metadata.size_bytes;
         let mut compressed_size = total_size;
 
-        if self.is_chunked(model_id, &latest_version.version_id).await? {
-            let chunk_info = self.get_chunk_info(model_id, &latest_version.version_id).await?;
+        if self
+            .is_chunked(model_id, &latest_version.version_id)
+            .await?
+        {
+            let chunk_info = self
+                .get_chunk_info(model_id, &latest_version.version_id)
+                .await?;
             // Estimate compressed size from actual storage
-            compressed_size = self.calculate_compressed_size_chunked(&version_path, &chunk_info).await?;
+            compressed_size = self
+                .calculate_compressed_size_chunked(&version_path, &chunk_info)
+                .await?;
         } else if self.config.enable_compression {
             let data_path = format!("{}/data", version_path);
             let stored_data = self.storage.get(&data_path).await?;
@@ -275,8 +316,13 @@ impl ModelStorage {
             1.0
         };
 
-        let chunk_count = if self.is_chunked(model_id, &latest_version.version_id).await? {
-            let chunk_info = self.get_chunk_info(model_id, &latest_version.version_id).await?;
+        let chunk_count = if self
+            .is_chunked(model_id, &latest_version.version_id)
+            .await?
+        {
+            let chunk_info = self
+                .get_chunk_info(model_id, &latest_version.version_id)
+                .await?;
             chunk_info.total_chunks
         } else {
             1
@@ -296,10 +342,19 @@ impl ModelStorage {
         Ok(calculated_hash == metadata.sha256_hash)
     }
 
-    pub async fn get_chunk_info(&self, model_id: &str, version_id: &str) -> Result<ChunkInfo, StorageError> {
-        let chunk_info_path = format!("{}/{}/versions/{}/chunks.cbor", self.config.base_path, model_id, version_id);
+    pub async fn get_chunk_info(
+        &self,
+        model_id: &str,
+        version_id: &str,
+    ) -> Result<ChunkInfo, StorageError> {
+        let chunk_info_path = format!(
+            "{}/{}/versions/{}/chunks.cbor",
+            self.config.base_path, model_id, version_id
+        );
         let chunk_data = self.storage.get(&chunk_info_path).await?;
-        let chunk_info: ChunkInfo = self.cbor.decode(&chunk_data)
+        let chunk_info: ChunkInfo = self
+            .cbor
+            .decode(&chunk_data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         Ok(chunk_info)
     }
@@ -312,7 +367,11 @@ impl ModelStorage {
 
     // Private helper methods
 
-    async fn store_chunked_model(&self, version_path: &str, data: &[u8]) -> Result<String, StorageError> {
+    async fn store_chunked_model(
+        &self,
+        version_path: &str,
+        data: &[u8],
+    ) -> Result<String, StorageError> {
         let chunk_size = (self.config.chunk_size_mb * 1024 * 1024) as usize;
         let total_chunks = (data.len() + chunk_size - 1) / chunk_size;
         let mut chunk_cids = Vec::new();
@@ -337,7 +396,9 @@ impl ModelStorage {
 
         // Store chunk info
         let chunk_info_path = format!("{}/chunks.cbor", version_path);
-        let chunk_info_data = self.cbor.encode(&chunk_info)
+        let chunk_info_data = self
+            .cbor
+            .encode(&chunk_info)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.storage.put(&chunk_info_path, chunk_info_data).await?;
 
@@ -348,19 +409,21 @@ impl ModelStorage {
     async fn load_chunked_model(&self, version_path: &str) -> Result<Vec<u8>, StorageError> {
         let chunk_info_path = format!("{}/chunks.cbor", version_path);
         let chunk_info_data = self.storage.get(&chunk_info_path).await?;
-        let chunk_info: ChunkInfo = self.cbor.decode(&chunk_info_data)
+        let chunk_info: ChunkInfo = self
+            .cbor
+            .decode(&chunk_info_data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         let mut combined_data = Vec::new();
-        
+
         for i in 0..chunk_info.total_chunks {
             let chunk_path = format!("{}/chunk_{:04}", version_path, i);
             let mut chunk_data = self.storage.get(&chunk_path).await?;
-            
+
             if self.config.enable_compression {
                 chunk_data = self.decompress_data(&chunk_data)?;
             }
-            
+
             combined_data.extend(chunk_data);
         }
 
@@ -368,23 +431,37 @@ impl ModelStorage {
     }
 
     async fn is_chunked(&self, model_id: &str, version_id: &str) -> Result<bool, StorageError> {
-        let chunk_info_path = format!("{}/{}/versions/{}/chunks.cbor", self.config.base_path, model_id, version_id);
+        let chunk_info_path = format!(
+            "{}/{}/versions/{}/chunks.cbor",
+            self.config.base_path, model_id, version_id
+        );
         self.storage.exists(&chunk_info_path).await
     }
 
     async fn get_latest_version(&self, model_id: &str) -> Result<ModelVersion, StorageError> {
         let latest_path = format!("{}/{}/latest.cbor", self.config.base_path, model_id);
         let latest_data = self.storage.get(&latest_path).await?;
-        let latest_version: ModelVersion = self.cbor.decode(&latest_data)
+        let latest_version: ModelVersion = self
+            .cbor
+            .decode(&latest_data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         Ok(latest_version)
     }
 
-    async fn update_latest_version(&self, model_id: &str, version_id: &str) -> Result<(), StorageError> {
+    async fn update_latest_version(
+        &self,
+        model_id: &str,
+        version_id: &str,
+    ) -> Result<(), StorageError> {
         // Load the new version
-        let version_path = format!("{}/{}/versions/{}/version.cbor", self.config.base_path, model_id, version_id);
+        let version_path = format!(
+            "{}/{}/versions/{}/version.cbor",
+            self.config.base_path, model_id, version_id
+        );
         let version_data = self.storage.get(&version_path).await?;
-        let mut new_version: ModelVersion = self.cbor.decode(&version_data)
+        let mut new_version: ModelVersion = self
+            .cbor
+            .decode(&version_data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         // Mark all other versions as not latest
@@ -392,24 +469,41 @@ impl ModelStorage {
             for mut version in versions {
                 if version.version_id != version_id {
                     version.is_latest = false;
-                    let version_update_path = format!("{}/{}/versions/{}/version.cbor", self.config.base_path, model_id, version.version_id);
-                    let version_update_data = self.cbor.encode(&version)
+                    let version_update_path = format!(
+                        "{}/{}/versions/{}/version.cbor",
+                        self.config.base_path, model_id, version.version_id
+                    );
+                    let version_update_data = self
+                        .cbor
+                        .encode(&version)
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-                    self.storage.put(&version_update_path, version_update_data).await?;
+                    self.storage
+                        .put(&version_update_path, version_update_data)
+                        .await?;
                 }
             }
         }
 
         // Mark new version as latest
         new_version.is_latest = true;
-        let updated_version_data = self.cbor.encode(&new_version)
+        let updated_version_data = self
+            .cbor
+            .encode(&new_version)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-        self.storage.put(&version_path, updated_version_data).await?;
+        self.storage
+            .put(&version_path, updated_version_data)
+            .await?;
 
         // Update latest pointer
         let latest_path = format!("{}/{}/latest.cbor", self.config.base_path, model_id);
-        self.storage.put(&latest_path, self.cbor.encode(&new_version)
-            .map_err(|e| StorageError::SerializationError(e.to_string()))?).await?;
+        self.storage
+            .put(
+                &latest_path,
+                self.cbor
+                    .encode(&new_version)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?,
+            )
+            .await?;
 
         Ok(())
     }
@@ -430,9 +524,13 @@ impl ModelStorage {
         Ok(())
     }
 
-    async fn calculate_compressed_size_chunked(&self, version_path: &str, chunk_info: &ChunkInfo) -> Result<u64, StorageError> {
+    async fn calculate_compressed_size_chunked(
+        &self,
+        version_path: &str,
+        chunk_info: &ChunkInfo,
+    ) -> Result<u64, StorageError> {
         let mut total_size = 0u64;
-        
+
         for i in 0..chunk_info.total_chunks {
             let chunk_path = format!("{}/chunk_{:04}", version_path, i);
             if let Ok(chunk_data) = self.storage.get(&chunk_path).await {

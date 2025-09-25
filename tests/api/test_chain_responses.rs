@@ -1,8 +1,7 @@
 use fabstir_llm_node::api::{
-    InferenceResponse, ErrorResponse, ApiError,
-    StreamingResponse, ModelsResponse, ModelInfo,
+    ApiError, ErrorResponse, InferenceResponse, ModelInfo, ModelsResponse, StreamingResponse,
 };
-use fabstir_llm_node::blockchain::{ChainRegistry, ChainConfig};
+use fabstir_llm_node::blockchain::{ChainConfig, ChainRegistry};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -174,13 +173,11 @@ fn test_models_response_with_chain_context() {
     setup_test_env();
 
     let response = ModelsResponse {
-        models: vec![
-            ModelInfo {
-                id: "model1".to_string(),
-                name: "Model 1".to_string(),
-                description: Some("Test model".to_string()),
-            }
-        ],
+        models: vec![ModelInfo {
+            id: "model1".to_string(),
+            name: "Model 1".to_string(),
+            description: Some("Test model".to_string()),
+        }],
         chain_id: Some(5611),
         chain_name: Some("opBNB Testnet".to_string()),
     };
@@ -220,12 +217,8 @@ fn test_error_chain_context_formatting() {
         available_models: vec!["tinyllama".to_string()],
     };
 
-    let error_response = error.to_response_with_chain(
-        Some("req-123".to_string()),
-        84532,
-        "Base Sepolia",
-        "ETH"
-    );
+    let error_response =
+        error.to_response_with_chain(Some("req-123".to_string()), 84532, "Base Sepolia", "ETH");
 
     assert_eq!(error_response.chain_id, Some(84532));
     assert_eq!(error_response.message.contains("Base Sepolia"), true);

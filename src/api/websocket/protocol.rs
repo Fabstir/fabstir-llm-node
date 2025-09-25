@@ -1,12 +1,12 @@
-use super::session::{WebSocketSession, SessionConfig};
+use super::session::{SessionConfig, WebSocketSession};
 use super::session_store::SessionStore;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::Utc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -61,12 +61,14 @@ impl ProtocolMessage {
                 if self.command.is_none() {
                     return Err(anyhow!("SessionControl message requires a command"));
                 }
-                
+
                 // Validate specific commands
                 if let Some(command) = &self.command {
                     match command {
-                        SessionCommand::Resume | SessionCommand::Clear | 
-                        SessionCommand::Handoff | SessionCommand::Terminate => {
+                        SessionCommand::Resume
+                        | SessionCommand::Clear
+                        | SessionCommand::Handoff
+                        | SessionCommand::Terminate => {
                             if self.session_id.is_none() {
                                 return Err(anyhow!("{:?} command requires session_id", command));
                             }
@@ -149,16 +151,25 @@ pub enum ProtocolError {
 impl ProtocolError {
     pub fn to_protocol_message(&self) -> ProtocolMessage {
         let (error_code, error_message) = match self {
-            ProtocolError::SessionNotFound(id) => ("SESSION_NOT_FOUND", format!("Session {} not found", id)),
+            ProtocolError::SessionNotFound(id) => {
+                ("SESSION_NOT_FOUND", format!("Session {} not found", id))
+            }
             ProtocolError::InvalidMessage(msg) => ("INVALID_MESSAGE", msg.clone()),
-            ProtocolError::UnsupportedVersion(client, server) => {
-                ("UNSUPPORTED_VERSION", format!("Client version {} not supported by server version {}", client, server))
-            }
-            ProtocolError::CapabilityMismatch(caps) => {
-                ("CAPABILITY_MISMATCH", format!("Unsupported capabilities: {:?}", caps))
-            }
+            ProtocolError::UnsupportedVersion(client, server) => (
+                "UNSUPPORTED_VERSION",
+                format!(
+                    "Client version {} not supported by server version {}",
+                    client, server
+                ),
+            ),
+            ProtocolError::CapabilityMismatch(caps) => (
+                "CAPABILITY_MISMATCH",
+                format!("Unsupported capabilities: {:?}", caps),
+            ),
             ProtocolError::HandoffFailed(reason) => ("HANDOFF_FAILED", reason.clone()),
-            ProtocolError::Timeout(ms) => ("TIMEOUT", format!("Operation timed out after {}ms", ms)),
+            ProtocolError::Timeout(ms) => {
+                ("TIMEOUT", format!("Operation timed out after {}ms", ms))
+            }
         };
 
         ProtocolMessage {
@@ -220,7 +231,10 @@ impl SessionProtocol {
     }
 
     async fn handle_session_control(&self, msg: ProtocolMessage) -> Result<ProtocolMessage> {
-        let command = msg.command.as_ref().ok_or_else(|| anyhow!("Missing command"))?;
+        let command = msg
+            .command
+            .as_ref()
+            .ok_or_else(|| anyhow!("Missing command"))?;
 
         match command {
             SessionCommand::Init => {
@@ -239,14 +253,17 @@ impl SessionProtocol {
                 })
             }
             SessionCommand::Resume => {
-                let session_id = msg.session_id.as_ref()
+                let session_id = msg
+                    .session_id
+                    .as_ref()
                     .ok_or_else(|| anyhow!("Missing session_id"))?;
-                
+
                 // Verify session exists
                 match self.get_session(session_id).await {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(_) => {
-                        return Ok(ProtocolError::SessionNotFound(session_id.clone()).to_protocol_message());
+                        return Ok(ProtocolError::SessionNotFound(session_id.clone())
+                            .to_protocol_message());
                     }
                 }
 
@@ -259,9 +276,11 @@ impl SessionProtocol {
                 })
             }
             SessionCommand::Clear => {
-                let session_id = msg.session_id.as_ref()
+                let session_id = msg
+                    .session_id
+                    .as_ref()
                     .ok_or_else(|| anyhow!("Missing session_id"))?;
-                
+
                 let mut sessions = self.sessions.write().await;
                 sessions.clear_session(session_id).await?;
 
@@ -274,9 +293,11 @@ impl SessionProtocol {
                 })
             }
             SessionCommand::Handoff => {
-                let session_id = msg.session_id.as_ref()
+                let session_id = msg
+                    .session_id
+                    .as_ref()
                     .ok_or_else(|| anyhow!("Missing session_id"))?;
-                
+
                 let session = self.get_session(session_id).await?;
                 let session_data = serde_json::json!({
                     "session_id": session_id,
@@ -284,7 +305,8 @@ impl SessionProtocol {
                     "created_at": session.created_at_iso(),
                 });
 
-                let conversation_history = session.conversation_history()
+                let conversation_history = session
+                    .conversation_history()
                     .iter()
                     .map(|msg| {
                         let mut obj = serde_json::json!({
@@ -310,9 +332,11 @@ impl SessionProtocol {
                 })
             }
             SessionCommand::Terminate => {
-                let session_id = msg.session_id.as_ref()
+                let session_id = msg
+                    .session_id
+                    .as_ref()
                     .ok_or_else(|| anyhow!("Missing session_id"))?;
-                
+
                 let sessions = self.sessions.write().await;
                 sessions.remove_session(session_id).await?;
 
@@ -359,11 +383,13 @@ impl SessionProtocol {
     }
 
     async fn handle_state_sync(&self, msg: ProtocolMessage) -> Result<ProtocolMessage> {
-        let session_id = msg.session_id.as_ref()
+        let session_id = msg
+            .session_id
+            .as_ref()
             .ok_or_else(|| anyhow!("Missing session_id"))?;
-        
+
         let session = self.get_session(session_id).await?;
-        
+
         Ok(ProtocolMessage {
             msg_type: MessageType::StateSyncAck,
             command: None,
@@ -379,14 +405,15 @@ impl SessionProtocol {
 
     async fn handle_capabilities(&self, msg: ProtocolMessage) -> Result<ProtocolMessage> {
         let server_capabilities = self.capabilities.read().await.clone();
-        
+
         let mut negotiated_capabilities = server_capabilities.clone();
         if let Some(metadata) = &msg.metadata {
             if let Some(client_caps) = metadata["client_capabilities"].as_array() {
-                let client_cap_strings: Vec<String> = client_caps.iter()
+                let client_cap_strings: Vec<String> = client_caps
+                    .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
-                
+
                 negotiated_capabilities.retain(|cap| client_cap_strings.contains(cap));
             }
         }
@@ -429,20 +456,26 @@ impl SessionProtocol {
 
     pub async fn create_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
-        sessions.create_session_with_id(session_id.to_string(), SessionConfig::default()).await?;
+        sessions
+            .create_session_with_id(session_id.to_string(), SessionConfig::default())
+            .await?;
         Ok(())
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<WebSocketSession> {
         let sessions = self.sessions.read().await;
-        sessions.get_session(session_id).await
+        sessions
+            .get_session(session_id)
+            .await
             .ok_or_else(|| anyhow!("Session not found: {}", session_id))
     }
 
     pub async fn get_session_mut(&self, session_id: &str) -> Result<WebSocketSession> {
-        let sessions = self.sessions.read().await; 
+        let sessions = self.sessions.read().await;
         // SessionStore doesn't have get_session_mut, so get a clone
-        sessions.get_session(session_id).await
+        sessions
+            .get_session(session_id)
+            .await
             .ok_or_else(|| anyhow!("Session not found: {}", session_id))
     }
 }

@@ -1,16 +1,16 @@
 use anyhow::Result;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
 use chrono::Utc;
 use lru::LruCache;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::sync::{mpsc, RwLock};
 
+use super::validation::{InferenceCompatibility, PerformanceCharacteristics};
 use super::ModelFormat;
-use super::validation::{PerformanceCharacteristics, InferenceCompatibility};
 
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
@@ -250,7 +250,6 @@ pub struct SecurityResult {
     pub has_security_issues: bool,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct BatchValidationResult {
     pub total_models: usize,
@@ -281,7 +280,10 @@ pub enum CacheError {
     #[error("Cache is full - cannot load model: {model_id}")]
     CacheFull { model_id: String },
     #[error("Insufficient memory - required: {required_bytes}, available: {available_bytes}")]
-    InsufficientMemory { required_bytes: u64, available_bytes: u64 },
+    InsufficientMemory {
+        required_bytes: u64,
+        available_bytes: u64,
+    },
     #[error("Model loading failed: {reason}")]
     LoadingFailed { reason: String },
     #[error("Eviction failed: {reason}")]
@@ -313,9 +315,7 @@ impl ModelCache {
             tokio::fs::create_dir_all(&config.persistence_path).await?;
         }
 
-        let lru_cache = LruCache::new(
-            NonZeroUsize::new(config.max_models).unwrap()
-        );
+        let lru_cache = LruCache::new(NonZeroUsize::new(config.max_models).unwrap());
 
         let state = CacheState {
             entries: HashMap::new(),
@@ -347,7 +347,9 @@ impl ModelCache {
 
         // Preload popular models if configured
         if config.preload_popular {
-            cache.warmup_cache(vec![], WarmupStrategy::Popular { top_n: 3 }).await?;
+            cache
+                .warmup_cache(vec![], WarmupStrategy::Popular { top_n: 3 })
+                .await?;
         }
 
         Ok(cache)
@@ -355,34 +357,34 @@ impl ModelCache {
 
     pub async fn load_model(&self, model_id: &str, model_path: &PathBuf) -> Result<ModelHandle> {
         let start_time = std::time::Instant::now();
-        
+
         // Check if already in cache
         {
             let mut state = self.state.write().await;
             state.metrics.total_requests += 1;
-            
+
             if let Some(entry) = state.entries.get_mut(model_id) {
                 // Clone values we need first
                 let model_path = entry.model_path.clone();
                 let size_bytes = entry.size_bytes;
                 let format = entry.format.clone();
                 let priority = entry.priority.clone();
-                
+
                 // Update access statistics
                 entry.last_accessed = Utc::now().timestamp() as u64;
                 entry.access_count += 1;
-                
+
                 // Update cache stats
                 state.lru_cache.get(model_id); // Update LRU
                 state.metrics.cache_hits += 1;
-                
+
                 // Send cache event
                 if let Some(ref sender) = state.event_sender {
                     let _ = sender.send(CacheEvent::ModelAccessed {
                         model_id: model_id.to_string(),
                     });
                 }
-                
+
                 return Ok(ModelHandle {
                     model_id: model_id.to_string(),
                     model_path,
@@ -395,16 +397,16 @@ impl ModelCache {
                     cache: self.state.clone(),
                 });
             }
-            
+
             state.metrics.cache_misses += 1;
         }
 
         // Model not in cache, need to load
         let model_size = self.estimate_model_size(model_path).await?;
-        
+
         // Check if we need to evict models to make space
         self.ensure_space_available(model_size).await?;
-        
+
         // Create new cache entry
         let format = self.detect_format(model_path).await?;
         let compression_info = if self.config.compression_enabled {
@@ -434,17 +436,17 @@ impl ModelCache {
             state.total_memory_usage += model_size;
             state.metrics.models_loaded += 1;
             state.metrics.total_memory_usage_bytes = state.total_memory_usage;
-            state.metrics.available_memory_bytes = 
-                (self.config.max_memory_gb * 1024 * 1024 * 1024).saturating_sub(state.total_memory_usage);
-            
+            state.metrics.available_memory_bytes = (self.config.max_memory_gb * 1024 * 1024 * 1024)
+                .saturating_sub(state.total_memory_usage);
+
             // Update average load time
             let load_time_ms = start_time.elapsed().as_millis() as f64;
             let n = state.metrics.total_requests as f64;
-            state.metrics.average_load_time_ms = 
+            state.metrics.average_load_time_ms =
                 (state.metrics.average_load_time_ms * (n - 1.0) + load_time_ms) / n;
-            
+
             // Update hit ratio
-            state.metrics.hit_rate = 
+            state.metrics.hit_rate =
                 state.metrics.cache_hits as f32 / state.metrics.total_requests as f32;
 
             // Send cache event
@@ -467,7 +469,7 @@ impl ModelCache {
             size_bytes: model_size,
             format,
             priority: CachePriority::Normal,
-            checksum: "def456ghi".to_string(), // Mock checksum  
+            checksum: "def456ghi".to_string(), // Mock checksum
             version: 1,
             is_loaded: true,
             cache: self.state.clone(),
@@ -488,10 +490,11 @@ impl ModelCache {
             } else {
                 return Err(CacheError::ModelNotFound {
                     model_id: model_id.to_string(),
-                }.into());
+                }
+                .into());
             }
         };
-        
+
         // Update access stats with separate write lock
         {
             let mut state = self.state.write().await;
@@ -503,7 +506,7 @@ impl ModelCache {
             state.metrics.cache_hits += 1;
             state.metrics.total_requests += 1;
         }
-        
+
         Ok(ModelHandle {
             model_id: model_id.to_string(),
             model_path,
@@ -524,15 +527,15 @@ impl ModelCache {
 
     pub async fn evict_model(&self, model_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(entry) = state.entries.remove(model_id) {
             state.lru_cache.pop(model_id);
             state.total_memory_usage = state.total_memory_usage.saturating_sub(entry.size_bytes);
             state.metrics.evictions_count += 1;
             state.metrics.models_loaded = state.metrics.models_loaded.saturating_sub(1);
             state.metrics.total_memory_usage_bytes = state.total_memory_usage;
-            state.metrics.available_memory_bytes = 
-                (self.config.max_memory_gb * 1024 * 1024 * 1024).saturating_sub(state.total_memory_usage);
+            state.metrics.available_memory_bytes = (self.config.max_memory_gb * 1024 * 1024 * 1024)
+                .saturating_sub(state.total_memory_usage);
 
             // Send cache event
             if let Some(ref sender) = state.event_sender {
@@ -541,12 +544,13 @@ impl ModelCache {
                     reason: "Manual eviction".to_string(),
                 });
             }
-            
+
             Ok(())
         } else {
             Err(CacheError::ModelNotFound {
                 model_id: model_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -571,7 +575,6 @@ impl ModelCache {
         state.entries.keys().cloned().collect()
     }
 
-
     pub async fn warmup_cache(
         &self,
         warmup_models: Vec<(&str, PathBuf)>,
@@ -584,35 +587,50 @@ impl ModelCache {
 
         // Use provided models if given, otherwise use strategy
         let models_to_warmup = if !warmup_models.is_empty() {
-            warmup_models.into_iter().map(|(id, path)| (id.to_string(), path)).collect()
+            warmup_models
+                .into_iter()
+                .map(|(id, path)| (id.to_string(), path))
+                .collect()
         } else {
             match strategy {
                 WarmupStrategy::None => vec![],
                 WarmupStrategy::Popular { top_n } => {
                     // Mock popular models
-                    (0..top_n).map(|i| {
-                        let id = format!("popular_model_{}", i);
-                        let path = PathBuf::from(format!("test_data/models/{}.gguf", id));
-                        (id, path)
-                    }).collect()
+                    (0..top_n)
+                        .map(|i| {
+                            let id = format!("popular_model_{}", i);
+                            let path = PathBuf::from(format!("test_data/models/{}.gguf", id));
+                            (id, path)
+                        })
+                        .collect()
                 }
                 WarmupStrategy::Recent { hours: _ } => {
                     // Mock recent models
                     vec![
-                        ("recent_model_1".to_string(), PathBuf::from("test_data/models/recent_model_1.gguf")),
-                        ("recent_model_2".to_string(), PathBuf::from("test_data/models/recent_model_2.gguf")),
+                        (
+                            "recent_model_1".to_string(),
+                            PathBuf::from("test_data/models/recent_model_1.gguf"),
+                        ),
+                        (
+                            "recent_model_2".to_string(),
+                            PathBuf::from("test_data/models/recent_model_2.gguf"),
+                        ),
                     ]
                 }
                 WarmupStrategy::Priority { min_priority: _ } => {
                     // Mock priority models
-                    vec![("priority_model_1".to_string(), PathBuf::from("test_data/models/priority_model_1.gguf"))]
+                    vec![(
+                        "priority_model_1".to_string(),
+                        PathBuf::from("test_data/models/priority_model_1.gguf"),
+                    )]
                 }
-                WarmupStrategy::Custom { model_ids } => {
-                    model_ids.into_iter().map(|id| {
+                WarmupStrategy::Custom { model_ids } => model_ids
+                    .into_iter()
+                    .map(|id| {
                         let path = PathBuf::from(format!("test_data/models/{}.gguf", id));
                         (id, path)
-                    }).collect()
-                }
+                    })
+                    .collect(),
                 WarmupStrategy::Parallel { max_concurrent: _ } => vec![], // Empty for parallel
             }
         };
@@ -648,24 +666,27 @@ impl ModelCache {
     async fn ensure_space_available(&self, required_bytes: u64) -> Result<()> {
         let max_bytes = self.config.max_memory_gb * 1024 * 1024 * 1024;
         let min_free_bytes = self.config.min_free_memory_gb * 1024 * 1024 * 1024;
-        
+
         loop {
             let state = self.state.read().await;
             let available_bytes = max_bytes.saturating_sub(state.total_memory_usage);
-            
+
             if available_bytes >= required_bytes + min_free_bytes {
                 break; // Enough space available
             }
-            
+
             // Need to evict models
             if state.entries.is_empty() {
                 return Err(CacheError::CacheFull {
                     model_id: "unknown".to_string(),
-                }.into());
+                }
+                .into());
             }
-            
+
             // Find LRU model to evict (excluding critical priority)
-            let model_to_evict = state.lru_cache.iter()
+            let model_to_evict = state
+                .lru_cache
+                .iter()
                 .find(|(model_id, _)| {
                     if let Some(entry) = state.entries.get(*model_id) {
                         entry.priority != CachePriority::Critical
@@ -674,21 +695,21 @@ impl ModelCache {
                     }
                 })
                 .map(|(model_id, _)| model_id.clone());
-            
+
             drop(state);
-            
+
             if let Some(model_id) = model_to_evict {
                 self.evict_model(&model_id).await?;
             } else {
                 return Err(CacheError::InsufficientMemory {
                     required_bytes,
-                    available_bytes: max_bytes.saturating_sub(
-                        self.state.read().await.total_memory_usage
-                    ),
-                }.into());
+                    available_bytes: max_bytes
+                        .saturating_sub(self.state.read().await.total_memory_usage),
+                }
+                .into());
             }
         }
-        
+
         Ok(())
     }
 
@@ -700,7 +721,7 @@ impl ModelCache {
             }
             tokio::fs::write(model_path, b"mock model data").await?;
         }
-        
+
         let metadata = tokio::fs::metadata(model_path).await?;
         Ok(metadata.len().max(1000000)) // At least 1MB for testing
     }
@@ -710,7 +731,7 @@ impl ModelCache {
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("gguf");
-        
+
         Ok(ModelFormat::from_extension(extension))
     }
 
@@ -718,7 +739,7 @@ impl ModelCache {
         // Mock compression
         let original_size = 1_000_000_000; // 1GB
         let compressed_size = 700_000_000; // 700MB
-        
+
         Ok(CompressionInfo {
             original_size_bytes: original_size,
             compressed_size_bytes: compressed_size,
@@ -731,11 +752,11 @@ impl ModelCache {
         if !self.config.enable_persistence {
             return Ok(());
         }
-        
+
         // Mock persistence - just create a marker file
         let state_file = self.config.persistence_path.join("cache_state.json");
         tokio::fs::write(state_file, b"cache state").await?;
-        
+
         Ok(())
     }
 
@@ -747,13 +768,13 @@ impl ModelCache {
         priority: CachePriority,
     ) -> Result<ModelHandle> {
         let handle = self.load_model(model_id, model_path).await?;
-        
+
         // Create a new handle with the updated priority
         let handle_with_priority = ModelHandle {
             priority: priority.clone(),
             ..handle
         };
-        
+
         // Update priority in cache entry
         {
             let mut state = self.state.write().await;
@@ -761,7 +782,7 @@ impl ModelCache {
                 entry.priority = priority;
             }
         }
-        
+
         Ok(handle_with_priority)
     }
 
@@ -772,23 +793,23 @@ impl ModelCache {
     ) -> Result<ModelHandle> {
         // Evict old version
         self.evict_model(model_id).await.ok();
-        
+
         // Load new version
         let mut handle = self.load_model(model_id, new_model_path).await?;
         handle.version += 1; // Increment version
-        
+
         Ok(handle)
     }
 
     pub async fn subscribe_events(&self) -> mpsc::UnboundedReceiver<CacheEvent> {
         let (tx, rx) = mpsc::unbounded_channel();
-        
+
         // Set the event sender
         {
             let mut state = self.state.write().await;
             state.event_sender = Some(tx);
         }
-        
+
         rx
     }
 
@@ -800,14 +821,14 @@ impl ModelCache {
         if !self.config.enable_persistence {
             return Ok(());
         }
-        
+
         // Mock restore - just check if state file exists
         let state_file = self.config.persistence_path.join("cache_state.json");
         if state_file.exists() {
             // In real implementation, would restore cache entries
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
-        
+
         Ok(())
     }
 
@@ -817,7 +838,7 @@ impl ModelCache {
         state.total_memory_usage = (memory_usage_gb * 1024.0 * 1024.0 * 1024.0) as u64;
         state.metrics.total_memory_usage_bytes = state.total_memory_usage;
         state.metrics.memory_usage_gb = memory_usage_gb;
-        
+
         // Send memory warning event
         if let Some(ref sender) = state.event_sender {
             let usage_percent = (memory_usage_gb / self.config.max_memory_gb as f64) * 100.0;
@@ -825,29 +846,33 @@ impl ModelCache {
                 usage_percent: usage_percent as f32,
             });
         }
-        
+
         Ok(())
     }
 
     pub async fn get_model_metrics(&self, model_id: &str) -> Result<ModelMetrics> {
         let state = self.state.read().await;
-        
+
         if let Some(entry) = state.entries.get(model_id) {
             // Calculate compressed info
             let compressed = entry.compression_info.is_some();
-            let (compressed_size_bytes, original_size_bytes, compression_ratio) = 
+            let (compressed_size_bytes, original_size_bytes, compression_ratio) =
                 if let Some(ref comp) = entry.compression_info {
-                    (comp.compressed_size_bytes, comp.original_size_bytes, comp.compression_ratio)
+                    (
+                        comp.compressed_size_bytes,
+                        comp.original_size_bytes,
+                        comp.compression_ratio,
+                    )
                 } else {
                     (entry.size_bytes, entry.size_bytes, 1.0)
                 };
-            
+
             Ok(ModelMetrics {
                 model_id: model_id.to_string(),
                 access_count: entry.access_count,
                 last_accessed: entry.last_accessed,
                 total_access_time_ms: entry.access_count * 100, // Mock calculation
-                average_access_time_ms: 100.0, // Mock
+                average_access_time_ms: 100.0,                  // Mock
                 cache_hits: entry.access_count,
                 cache_misses: 0,
                 compressed,
@@ -858,7 +883,8 @@ impl ModelCache {
         } else {
             Err(CacheError::ModelNotFound {
                 model_id: model_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -866,7 +892,7 @@ impl ModelCache {
         let start_time = std::time::Instant::now();
         let mut valid_models = Vec::new();
         let mut invalid_models = Vec::new();
-        
+
         for path in model_paths {
             let result = ValidationResult {
                 status: if path.to_string_lossy().contains("corrupted") {
@@ -894,14 +920,14 @@ impl ModelCache {
                 from_cache: false,
                 checksum: "abc123".to_string(),
             };
-            
+
             if result.status == ValidationStatus::Valid {
                 valid_models.push((path, result));
             } else {
                 invalid_models.push((path, result));
             }
         }
-        
+
         Ok(BatchValidationResult {
             total_models: valid_models.len() + invalid_models.len(),
             valid_models,

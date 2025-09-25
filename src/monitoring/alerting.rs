@@ -1,15 +1,15 @@
 // src/monitoring/alerting.rs - Alert management and notifications
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use chrono::{DateTime, Utc, Duration as ChronoDuration};
-use serde::{Serialize, Deserialize};
-use std::time::Duration;
-use uuid::Uuid;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
@@ -95,15 +95,25 @@ impl AlertCondition {
 
     pub fn for_duration(self, duration: Duration) -> Self {
         match self {
-            AlertCondition::Threshold { metric, operator, value, .. } => {
-                AlertCondition::Threshold { metric, operator, value, duration }
-            }
-            AlertCondition::Rate { metric, threshold, .. } => {
-                AlertCondition::Rate { metric, threshold, window: duration }
-            }
-            AlertCondition::Absence { metric, .. } => {
-                AlertCondition::Absence { metric, duration }
-            }
+            AlertCondition::Threshold {
+                metric,
+                operator,
+                value,
+                ..
+            } => AlertCondition::Threshold {
+                metric,
+                operator,
+                value,
+                duration,
+            },
+            AlertCondition::Rate {
+                metric, threshold, ..
+            } => AlertCondition::Rate {
+                metric,
+                threshold,
+                window: duration,
+            },
+            AlertCondition::Absence { metric, .. } => AlertCondition::Absence { metric, duration },
             _ => self,
         }
     }
@@ -123,7 +133,12 @@ pub struct AlertRule {
 }
 
 impl AlertRule {
-    pub fn new(name: &str, description: &str, condition: AlertCondition, level: AlertLevel) -> Self {
+    pub fn new(
+        name: &str,
+        description: &str,
+        condition: AlertCondition,
+        level: AlertLevel,
+    ) -> Self {
         AlertRule {
             id: Uuid::new_v4().to_string(),
             name: name.to_string(),
@@ -172,7 +187,7 @@ impl Alert {
     pub fn severity(&self) -> &AlertLevel {
         &self.level
     }
-    
+
     pub fn state(&self) -> &AlertStatus {
         &self.status
     }
@@ -280,13 +295,13 @@ pub enum NotificationStatus {
 pub enum AlertError {
     #[error("Alert rule not found: {0}")]
     RuleNotFound(String),
-    
+
     #[error("Alert not found: {0}")]
     AlertNotFound(String),
-    
+
     #[error("Invalid condition: {0}")]
     InvalidCondition(String),
-    
+
     #[error("Notification failed: {0}")]
     NotificationFailed(String),
 }
@@ -300,7 +315,8 @@ pub struct ThresholdAlert {
     pub for_duration: Option<Duration>,
     pub dependencies: Vec<String>,
     pub escalation: Option<EscalationPolicy>,
-    pub recovery_actions: Vec<Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>>,
+    pub recovery_actions:
+        Vec<Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>>,
     pub template: Option<String>,
     pub labels: HashMap<String, String>,
 }
@@ -345,7 +361,10 @@ impl ThresholdAlert {
         self.escalation = Some(policy);
     }
 
-    pub fn add_recovery_action(&mut self, action: Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>) {
+    pub fn add_recovery_action(
+        &mut self,
+        action: Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>,
+    ) {
         self.recovery_actions.push(action);
     }
 
@@ -370,7 +389,13 @@ pub struct RateAlert {
 }
 
 impl RateAlert {
-    pub fn new(name: &str, metric: &str, threshold: f64, window: Duration, level: AlertLevel) -> Self {
+    pub fn new(
+        name: &str,
+        metric: &str,
+        threshold: f64,
+        window: Duration,
+        level: AlertLevel,
+    ) -> Self {
         RateAlert {
             name: name.to_string(),
             metric: metric.to_string(),
@@ -435,31 +460,37 @@ impl AlertManager {
             },
             alert.level,
         );
-        
+
         // Copy labels
         rule.labels = alert.labels.clone();
-        
+
         // Store dependencies and template in annotations for later use
         if !alert.dependencies.is_empty() {
-            rule.annotations.insert("dependencies".to_string(), alert.dependencies.join(","));
+            rule.annotations
+                .insert("dependencies".to_string(), alert.dependencies.join(","));
         }
-        
+
         if let Some(template) = &alert.template {
-            rule.annotations.insert("template".to_string(), template.clone());
+            rule.annotations
+                .insert("template".to_string(), template.clone());
         }
-        
+
         // Store recovery actions info
         if !alert.recovery_actions.is_empty() {
-            rule.annotations.insert("has_recovery_actions".to_string(), "true".to_string());
+            rule.annotations
+                .insert("has_recovery_actions".to_string(), "true".to_string());
         }
-        
+
         self.add_rule(rule).await
     }
 
     pub async fn add_rate_alert(&self, alert: RateAlert) -> Result<()> {
         let rule = AlertRule::new(
             &alert.name,
-            &format!("{} > {} per {:?}", alert.metric, alert.threshold, alert.window),
+            &format!(
+                "{} > {} per {:?}",
+                alert.metric, alert.threshold, alert.window
+            ),
             AlertCondition::Rate {
                 metric: alert.metric,
                 threshold: alert.threshold,
@@ -467,7 +498,7 @@ impl AlertManager {
             },
             alert.level,
         );
-        
+
         self.add_rule(rule).await
     }
 
@@ -488,7 +519,12 @@ impl AlertManager {
 
     pub async fn evaluate_rules(&self) -> Result<()> {
         let state = self.state.read().await;
-        let rules: Vec<_> = state.rules.values().filter(|r| r.enabled).cloned().collect();
+        let rules: Vec<_> = state
+            .rules
+            .values()
+            .filter(|r| r.enabled)
+            .cloned()
+            .collect();
         let metrics = state.metrics.clone();
         let active_alerts = state.active_alerts.clone();
         let all_rules = state.rules.clone();
@@ -499,35 +535,46 @@ impl AlertManager {
             if let Some(deps) = rule.annotations.get("dependencies") {
                 let deps: Vec<&str> = deps.split(',').collect();
                 let has_dependency_alert = deps.iter().any(|dep| {
-                    all_rules.values().any(|r| r.name == *dep && active_alerts.contains_key(&r.id))
+                    all_rules
+                        .values()
+                        .any(|r| r.name == *dep && active_alerts.contains_key(&r.id))
                 });
-                
+
                 if has_dependency_alert {
                     continue; // Skip evaluation if a dependency is firing
                 }
             }
-            
+
             let should_fire = self.evaluate_condition(&rule.condition, &metrics).await?;
-            
+
             if should_fire {
                 self.fire_alert(&rule, &metrics).await?;
             } else {
                 self.resolve_alert(&rule.id).await?;
             }
         }
-        
+
         // Group alerts after evaluation
         self.group_alerts().await?;
-        
+
         // Execute recovery actions
         self.execute_recovery_actions().await?;
 
         Ok(())
     }
 
-    async fn evaluate_condition(&self, condition: &AlertCondition, metrics: &HashMap<String, f64>) -> Result<bool> {
+    async fn evaluate_condition(
+        &self,
+        condition: &AlertCondition,
+        metrics: &HashMap<String, f64>,
+    ) -> Result<bool> {
         match condition {
-            AlertCondition::Threshold { metric, operator, value, .. } => {
+            AlertCondition::Threshold {
+                metric,
+                operator,
+                value,
+                ..
+            } => {
                 if let Some(&metric_value) = metrics.get(metric) {
                     Ok(match operator.as_str() {
                         ">" => metric_value > *value,
@@ -541,7 +588,9 @@ impl AlertManager {
                     Ok(false)
                 }
             }
-            AlertCondition::Rate { metric, threshold, .. } => {
+            AlertCondition::Rate {
+                metric, threshold, ..
+            } => {
                 // Simplified rate check
                 if let Some(&metric_value) = metrics.get(metric) {
                     Ok(metric_value > *threshold)
@@ -549,14 +598,18 @@ impl AlertManager {
                     Ok(false)
                 }
             }
-            AlertCondition::Absence { metric, .. } => {
-                Ok(!metrics.contains_key(metric))
-            }
-            AlertCondition::Composite { conditions, operator } => {
+            AlertCondition::Absence { metric, .. } => Ok(!metrics.contains_key(metric)),
+            AlertCondition::Composite {
+                conditions,
+                operator,
+            } => {
                 let results = futures::future::try_join_all(
-                    conditions.iter().map(|c| self.evaluate_condition(c, metrics))
-                ).await?;
-                
+                    conditions
+                        .iter()
+                        .map(|c| self.evaluate_condition(c, metrics)),
+                )
+                .await?;
+
                 Ok(match operator.as_str() {
                     "AND" => results.iter().all(|&r| r),
                     "OR" => results.iter().any(|&r| r),
@@ -565,14 +618,20 @@ impl AlertManager {
             }
             AlertCondition::And(conditions) => {
                 let results = futures::future::try_join_all(
-                    conditions.iter().map(|c| self.evaluate_condition(c, metrics))
-                ).await?;
+                    conditions
+                        .iter()
+                        .map(|c| self.evaluate_condition(c, metrics)),
+                )
+                .await?;
                 Ok(results.iter().all(|&r| r))
             }
             AlertCondition::Or(conditions) => {
                 let results = futures::future::try_join_all(
-                    conditions.iter().map(|c| self.evaluate_condition(c, metrics))
-                ).await?;
+                    conditions
+                        .iter()
+                        .map(|c| self.evaluate_condition(c, metrics)),
+                )
+                .await?;
                 Ok(results.iter().any(|&r| r))
             }
         }
@@ -580,24 +639,24 @@ impl AlertManager {
 
     async fn fire_alert(&self, rule: &AlertRule, metrics: &HashMap<String, f64>) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         let alert_id = format!("{}_{}", rule.id, Utc::now().timestamp());
-        
+
         if let Some(existing) = state.active_alerts.get_mut(&rule.id) {
             // Update existing alert
             existing.last_triggered_at = Utc::now();
         } else {
             // Check if alert is silenced
             let is_silenced = state.silences.values().any(|s| {
-                s.ends_at > Utc::now() && 
-                (s.rule_id.as_ref() == Some(&rule.id) || 
-                 s.labels.iter().all(|(k, v)| rule.labels.get(k) == Some(v)))
+                s.ends_at > Utc::now()
+                    && (s.rule_id.as_ref() == Some(&rule.id)
+                        || s.labels.iter().all(|(k, v)| rule.labels.get(k) == Some(v)))
             });
-            
+
             if is_silenced {
                 return Ok(());
             }
-            
+
             // Create new alert
             let alert = Alert {
                 id: alert_id,
@@ -606,7 +665,8 @@ impl AlertManager {
                 description: rule.description.clone(),
                 level: rule.level,
                 status: AlertStatus::Firing,
-                value: metrics.get(&self.get_metric_from_condition(&rule.condition))
+                value: metrics
+                    .get(&self.get_metric_from_condition(&rule.condition))
                     .copied()
                     .unwrap_or(0.0),
                 threshold: self.get_threshold_from_condition(&rule.condition),
@@ -617,24 +677,24 @@ impl AlertManager {
                 resolved_at: None,
                 acknowledged_by: None,
                 acknowledged_at: None,
-                message: format!("{} triggered: {} = {} (threshold: {})", 
-                    rule.name, 
+                message: format!(
+                    "{} triggered: {} = {} (threshold: {})",
+                    rule.name,
                     self.get_metric_from_condition(&rule.condition),
-                    metrics.get(&self.get_metric_from_condition(&rule.condition))
+                    metrics
+                        .get(&self.get_metric_from_condition(&rule.condition))
                         .copied()
                         .unwrap_or(0.0),
                     self.get_threshold_from_condition(&rule.condition)
                 ),
             };
-            
-            
-            
+
             state.active_alerts.insert(rule.id.clone(), alert.clone());
             state.alert_history.push(alert.clone());
-            
+
             // Send notifications
             self.send_notifications(&alert, &state.channels).await;
-            
+
             // Record recovery action if present
             if rule.annotations.get("has_recovery_actions") == Some(&"true".to_string()) {
                 let notification = AlertNotification {
@@ -649,19 +709,19 @@ impl AlertManager {
                 state.notification_history.push(notification);
             }
         }
-        
+
         Ok(())
     }
 
     async fn resolve_alert(&self, rule_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(mut alert) = state.active_alerts.remove(rule_id) {
             alert.status = AlertStatus::Resolved;
             alert.resolved_at = Some(Utc::now());
             state.alert_history.push(alert);
         }
-        
+
         Ok(())
     }
 
@@ -692,18 +752,25 @@ impl AlertManager {
         state.rules.values().cloned().collect()
     }
 
-    pub async fn silence_alert(&self, alert_id: &str, duration: Duration, comment: &str) -> Result<()> {
+    pub async fn silence_alert(
+        &self,
+        alert_id: &str,
+        duration: Duration,
+        comment: &str,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         // Find alert by its ID in active alerts
-        let rule_id = state.active_alerts.values()
+        let rule_id = state
+            .active_alerts
+            .values()
             .find(|a| a.id == alert_id)
             .map(|a| a.rule_id.clone());
-            
+
         if let Some(rule_id) = rule_id {
             if let Some(alert) = state.active_alerts.get_mut(&rule_id) {
                 alert.status = AlertStatus::Silenced;
-                
+
                 let silence = AlertSilence {
                     id: Uuid::new_v4().to_string(),
                     rule_id: Some(alert.rule_id.clone()),
@@ -713,9 +780,9 @@ impl AlertManager {
                     starts_at: Utc::now(),
                     ends_at: Utc::now() + ChronoDuration::from_std(duration).unwrap(),
                 };
-                
+
                 state.silences.insert(silence.id.clone(), silence);
-                
+
                 // Remove from active alerts when silenced
                 state.active_alerts.remove(&rule_id);
                 Ok(())
@@ -729,7 +796,7 @@ impl AlertManager {
 
     pub async fn acknowledge_alert(&self, alert_id: &str, user: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(alert) = state.active_alerts.get_mut(alert_id) {
             alert.acknowledged_by = Some(user.to_string());
             alert.acknowledged_at = Some(Utc::now());
@@ -741,7 +808,7 @@ impl AlertManager {
 
     pub async fn update_rule(&self, rule: AlertRule) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if state.rules.contains_key(&rule.id) {
             state.rules.insert(rule.id.clone(), rule);
             Ok(())
@@ -752,7 +819,7 @@ impl AlertManager {
 
     pub async fn delete_rule(&self, rule_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if state.rules.remove(rule_id).is_some() {
             // Also remove any active alerts for this rule
             state.active_alerts.remove(rule_id);
@@ -764,21 +831,25 @@ impl AlertManager {
 
     pub async fn get_rule(&self, rule_id: &str) -> Result<AlertRule> {
         let state = self.state.read().await;
-        state.rules.get(rule_id)
+        state
+            .rules
+            .get(rule_id)
             .cloned()
             .ok_or_else(|| AlertError::RuleNotFound(rule_id.to_string()).into())
     }
 
     pub async fn get_alert(&self, alert_id: &str) -> Result<Alert> {
         let state = self.state.read().await;
-        
+
         // Check active alerts first
         if let Some(alert) = state.active_alerts.values().find(|a| a.id == alert_id) {
             return Ok(alert.clone());
         }
-        
+
         // Check history
-        state.alert_history.iter()
+        state
+            .alert_history
+            .iter()
             .find(|a| a.id == alert_id)
             .cloned()
             .ok_or_else(|| AlertError::AlertNotFound(alert_id.to_string()).into())
@@ -787,16 +858,22 @@ impl AlertManager {
     pub async fn get_alert_history(&self, duration: Duration) -> Vec<Alert> {
         let state = self.state.read().await;
         let cutoff = Utc::now() - ChronoDuration::from_std(duration).unwrap();
-        
-        state.alert_history.iter()
+
+        state
+            .alert_history
+            .iter()
             .filter(|a| a.first_triggered_at > cutoff)
             .cloned()
             .collect()
     }
 
-    pub async fn create_group(&self, name: &str, labels: HashMap<String, String>) -> Result<String> {
+    pub async fn create_group(
+        &self,
+        name: &str,
+        labels: HashMap<String, String>,
+    ) -> Result<String> {
         let mut state = self.state.write().await;
-        
+
         let group = AlertGroup {
             id: Uuid::new_v4().to_string(),
             name: name.to_string(),
@@ -805,7 +882,7 @@ impl AlertManager {
             first_alert_time: Utc::now(),
             last_alert_time: Utc::now(),
         };
-        
+
         let id = group.id.clone();
         state.groups.insert(id.clone(), group);
         Ok(id)
@@ -813,7 +890,7 @@ impl AlertManager {
 
     pub async fn add_to_group(&self, group_id: &str, alert: Alert) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(group) = state.groups.get_mut(group_id) {
             group.alerts.push(alert);
             group.last_alert_time = Utc::now();
@@ -835,9 +912,14 @@ impl AlertManager {
         Ok(())
     }
 
-    pub async fn create_silence(&self, labels: HashMap<String, String>, duration: Duration, comment: &str) -> Result<String> {
+    pub async fn create_silence(
+        &self,
+        labels: HashMap<String, String>,
+        duration: Duration,
+        comment: &str,
+    ) -> Result<String> {
         let mut state = self.state.write().await;
-        
+
         let silence = AlertSilence {
             id: Uuid::new_v4().to_string(),
             rule_id: None,
@@ -847,7 +929,7 @@ impl AlertManager {
             starts_at: Utc::now(),
             ends_at: Utc::now() + ChronoDuration::from_std(duration).unwrap(),
         };
-        
+
         let id = silence.id.clone();
         state.silences.insert(id.clone(), silence);
         Ok(id)
@@ -860,7 +942,7 @@ impl AlertManager {
 
     pub async fn expire_silence(&self, silence_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(silence) = state.silences.get_mut(silence_id) {
             silence.ends_at = Utc::now();
             Ok(())
@@ -869,9 +951,15 @@ impl AlertManager {
         }
     }
 
-    pub async fn set_escalation_policy(&self, alert_id: &str, policy: EscalationPolicy) -> Result<()> {
+    pub async fn set_escalation_policy(
+        &self,
+        alert_id: &str,
+        policy: EscalationPolicy,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
-        state.escalation_policies.insert(alert_id.to_string(), policy);
+        state
+            .escalation_policies
+            .insert(alert_id.to_string(), policy);
         Ok(())
     }
 
@@ -896,13 +984,18 @@ impl AlertManager {
         Ok(())
     }
 
-    pub async fn silence_rule(&self, rule_id: &str, duration: Duration, comment: &str) -> Result<String> {
+    pub async fn silence_rule(
+        &self,
+        rule_id: &str,
+        duration: Duration,
+        comment: &str,
+    ) -> Result<String> {
         let mut state = self.state.write().await;
-        
+
         if !state.rules.contains_key(rule_id) {
             return Err(AlertError::RuleNotFound(rule_id.to_string()).into());
         }
-        
+
         let silence = AlertSilence {
             id: Uuid::new_v4().to_string(),
             rule_id: Some(rule_id.to_string()),
@@ -912,7 +1005,7 @@ impl AlertManager {
             starts_at: Utc::now(),
             ends_at: Utc::now() + ChronoDuration::from_std(duration).unwrap(),
         };
-        
+
         let id = silence.id.clone();
         state.silences.insert(id.clone(), silence);
         Ok(id)
@@ -925,18 +1018,20 @@ impl AlertManager {
 
     pub async fn add_action(&self, alert_id: &str, action: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
-        let rule_id = state.active_alerts.values()
+
+        let rule_id = state
+            .active_alerts
+            .values()
             .find(|a| a.id == alert_id)
             .map(|a| a.rule_id.clone());
-            
+
         if let Some(rule_id) = rule_id {
             if let Some(rule) = state.rules.get_mut(&rule_id) {
                 rule.actions.push(action.to_string());
                 return Ok(());
             }
         }
-        
+
         Err(AlertError::AlertNotFound(alert_id.to_string()).into())
     }
 
@@ -946,15 +1041,15 @@ impl AlertManager {
 
     pub async fn get_alert_analytics(&self, duration: Duration) -> AlertAnalytics {
         let history = self.get_alert_history(duration).await;
-        
+
         let mut alerts_by_level = HashMap::new();
         let mut resolve_times = Vec::new();
         let mut alert_counts = HashMap::new();
-        
+
         for alert in &history {
             *alerts_by_level.entry(alert.level).or_insert(0) += 1;
             *alert_counts.entry(alert.rule_name.clone()).or_insert(0) += 1;
-            
+
             if let Some(resolved_at) = alert.resolved_at {
                 let duration = resolved_at - alert.first_triggered_at;
                 let seconds = duration.num_seconds();
@@ -963,23 +1058,23 @@ impl AlertManager {
                 }
             }
         }
-        
+
         // Ensure we have some resolve times even for test scenarios
         if resolve_times.is_empty() && history.iter().any(|a| a.resolved_at.is_some()) {
             resolve_times.push(1); // Default to 1 second
         }
-        
+
         let mean_time_to_resolve = if !resolve_times.is_empty() {
             let sum: u64 = resolve_times.iter().sum();
             Duration::from_secs(sum / resolve_times.len() as u64)
         } else {
             Duration::from_secs(0)
         };
-        
+
         let mut most_frequent: Vec<_> = alert_counts.into_iter().collect();
         most_frequent.sort_by(|a, b| b.1.cmp(&a.1));
         most_frequent.truncate(10);
-        
+
         AlertAnalytics {
             total_alerts: history.len() as u64,
             alerts_by_level,
@@ -987,7 +1082,7 @@ impl AlertManager {
             most_frequent_alerts: most_frequent,
         }
     }
-    
+
     async fn send_notifications(&self, alert: &Alert, channels: &[NotificationChannel]) {
         for channel in channels {
             let notification = AlertNotification {
@@ -1004,32 +1099,33 @@ impl AlertManager {
                 error: None,
                 action_type: "alert".to_string(),
             };
-            
+
             let mut state = self.state.write().await;
             state.notification_history.push(notification);
         }
     }
-    
+
     async fn group_alerts(&self) -> Result<()> {
         let mut state = self.state.write().await;
         let active_alerts = state.active_alerts.clone();
-        
-        
+
         // Clear existing groups
         state.groups.clear();
-        
+
         // Group alerts by labels
         let mut groups_by_label: HashMap<String, Vec<Alert>> = HashMap::new();
-        
+
         for alert in active_alerts.values() {
             // Group by service_group label if present
             if let Some(group) = alert.labels.get("service_group") {
                 let key = format!("service_group={}", group);
-                groups_by_label.entry(key).or_insert_with(Vec::new).push(alert.clone());
+                groups_by_label
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push(alert.clone());
             }
         }
-        
-        
+
         // Create alert groups
         for (label, alerts) in groups_by_label {
             if !alerts.is_empty() {
@@ -1044,17 +1140,16 @@ impl AlertManager {
                 state.groups.insert(group.id.clone(), group);
             }
         }
-        
-        
+
         Ok(())
     }
-    
+
     async fn execute_recovery_actions(&self) -> Result<()> {
         let state = self.state.read().await;
         let active_alerts = state.active_alerts.clone();
         let rules = state.rules.clone();
         drop(state);
-        
+
         for alert in active_alerts.values() {
             if let Some(rule) = rules.get(&alert.rule_id) {
                 if rule.annotations.get("has_recovery_actions") == Some(&"true".to_string()) {
@@ -1068,13 +1163,13 @@ impl AlertManager {
                         error: None,
                         action_type: "recovery".to_string(),
                     };
-                    
+
                     let mut state = self.state.write().await;
                     state.notification_history.push(notification);
                 }
             }
         }
-        
+
         Ok(())
     }
 }

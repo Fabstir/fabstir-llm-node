@@ -28,7 +28,12 @@ impl TokenTracker {
     }
 
     /// Track tokens generated for a job
-    pub async fn track_tokens(&self, job_id: Option<u64>, tokens: usize, session_id: Option<String>) {
+    pub async fn track_tokens(
+        &self,
+        job_id: Option<u64>,
+        tokens: usize,
+        session_id: Option<String>,
+    ) {
         // Only track if we have a job_id
         let job_id = match job_id {
             Some(id) => id,
@@ -38,7 +43,10 @@ impl TokenTracker {
         let mut jobs = self.jobs.write().await;
 
         let job_info = jobs.entry(job_id).or_insert_with(|| {
-            info!("Starting token tracking for job {} (session: {:?})", job_id, session_id);
+            info!(
+                "Starting token tracking for job {} (session: {:?})",
+                job_id, session_id
+            );
             JobTokenInfo {
                 job_id,
                 session_id: session_id.clone(),
@@ -64,8 +72,10 @@ impl TokenTracker {
             );
 
             // Get payment split percentages from environment
-            let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE").unwrap_or_else(|_| "90".to_string());
-            let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE").unwrap_or_else(|_| "10".to_string());
+            let host_pct =
+                std::env::var("HOST_EARNINGS_PERCENTAGE").unwrap_or_else(|_| "90".to_string());
+            let treasury_pct =
+                std::env::var("TREASURY_FEE_PERCENTAGE").unwrap_or_else(|_| "10".to_string());
 
             // Log what should be submitted
             warn!(
@@ -82,9 +92,13 @@ impl TokenTracker {
                  1. Configure HOST_PRIVATE_KEY environment variable\n\
                  2. Initialize Web3Client with Base Sepolia RPC\n\
                  3. Call JobMarketplace.submitProofOfWork() with signature",
-                job_id, job_info.tokens_generated, job_info.session_id,
-                job_id, job_info.tokens_generated,
-                host_pct, treasury_pct
+                job_id,
+                job_info.tokens_generated,
+                job_info.session_id,
+                job_id,
+                job_info.tokens_generated,
+                host_pct,
+                treasury_pct
             );
 
             // Mark as checkpointed (in real implementation, only after successful submission)

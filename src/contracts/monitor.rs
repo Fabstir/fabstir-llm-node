@@ -1,9 +1,9 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{Result, anyhow};
-use tokio::sync::{RwLock, mpsc};
-use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, RwLock};
 
 use super::client::Web3Client;
 use super::types::*;
@@ -30,14 +30,22 @@ impl Default for JobMonitorConfig {
             .or_else(|_| std::env::var("JOB_MARKETPLACE"))
             .unwrap_or_else(|_| "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string())
             .parse()
-            .unwrap_or_else(|_| "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".parse().unwrap());
+            .unwrap_or_else(|_| {
+                "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f"
+                    .parse()
+                    .unwrap()
+            });
 
         let registry_address = std::env::var("CONTRACT_NODE_REGISTRY")
             .or_else(|_| std::env::var("NODE_REGISTRY"))
             .unwrap_or_else(|_| "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".to_string())
             .parse()
-            .unwrap_or_else(|_| "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".parse().unwrap());
-            
+            .unwrap_or_else(|_| {
+                "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218"
+                    .parse()
+                    .unwrap()
+            });
+
         Self {
             marketplace_address,
             registry_address,
@@ -94,15 +102,10 @@ pub struct JobMonitor {
 
 impl JobMonitor {
     pub async fn new(config: JobMonitorConfig, web3_client: Arc<Web3Client>) -> Result<Self> {
-        let marketplace = JobMarketplace::new(
-            config.marketplace_address,
-            web3_client.provider.clone(),
-        );
-        
-        let registry = NodeRegistry::new(
-            config.registry_address,
-            web3_client.provider.clone(),
-        );
+        let marketplace =
+            JobMarketplace::new(config.marketplace_address, web3_client.provider.clone());
+
+        let registry = NodeRegistry::new(config.registry_address, web3_client.provider.clone());
 
         let start_block = config.start_block.unwrap_or(0);
 
@@ -125,9 +128,7 @@ impl JobMonitor {
 
     pub fn is_running(&self) -> bool {
         // Blocking read for simplicity in tests
-        futures::executor::block_on(async {
-            *self.is_running.read().await
-        })
+        futures::executor::block_on(async { *self.is_running.read().await })
     }
 
     pub async fn start(&mut self) -> mpsc::Receiver<JobEvent> {
@@ -161,13 +162,12 @@ impl JobMonitor {
         // In a real implementation, would query contract for open jobs
         // and filter by model requirements matching capabilities
         let eligible_jobs = vec![U256::from(1), U256::from(3)];
-        
+
         Ok(eligible_jobs)
     }
 
     pub fn get_event_filter(&self) -> Filter {
-        let mut filter = Filter::new()
-            .address(self.config.marketplace_address);
+        let mut filter = Filter::new().address(self.config.marketplace_address);
 
         if let Some(from) = self.config.start_block {
             filter = filter.from_block(from);
@@ -181,9 +181,7 @@ impl JobMonitor {
     }
 
     pub fn get_checkpoint(&self) -> u64 {
-        futures::executor::block_on(async {
-            *self.last_processed_block.read().await
-        })
+        futures::executor::block_on(async { *self.last_processed_block.read().await })
     }
 
     pub fn get_last_processed_block(&self) -> u64 {
@@ -201,9 +199,7 @@ impl JobMonitor {
     }
 
     pub fn get_metrics(&self) -> MonitorMetrics {
-        futures::executor::block_on(async {
-            self.metrics.read().await.clone()
-        })
+        futures::executor::block_on(async { self.metrics.read().await.clone() })
     }
 
     pub async fn get_job_metadata(&self, _job_id: U256) -> Result<JobMetadata> {
@@ -248,7 +244,8 @@ impl JobMonitor {
         }
 
         // Create filter for new events
-        let filter = self.get_event_filter()
+        let filter = self
+            .get_event_filter()
             .from_block(last_processed + 1)
             .to_block(current_block);
 
@@ -275,10 +272,14 @@ impl JobMonitor {
         let topic0 = log.topics.get(0).cloned().unwrap_or_default();
 
         // Match event signatures
-        if topic0 == H256::from_slice(&ethers::utils::keccak256("JobPosted(uint256,address,bytes32,uint256,uint256)")) {
+        if topic0
+            == H256::from_slice(&ethers::utils::keccak256(
+                "JobPosted(uint256,address,bytes32,uint256,uint256)",
+            ))
+        {
             let job_id = U256::from_big_endian(&log.topics[1].as_bytes());
             let client = Address::from_slice(&log.topics[2].as_bytes()[12..]);
-            
+
             // Decode data
             let data = ethers::abi::decode(
                 &[
@@ -311,15 +312,15 @@ impl JobMonitor {
 
         if topic0 == H256::from_slice(&ethers::utils::keccak256("JobCompleted(uint256,bytes32)")) {
             let job_id = U256::from_big_endian(&log.topics[1].as_bytes());
-            
-            let data = ethers::abi::decode(
-                &[ethers::abi::ParamType::FixedBytes(32)],
-                &log.data,
-            )?;
+
+            let data = ethers::abi::decode(&[ethers::abi::ParamType::FixedBytes(32)], &log.data)?;
 
             let output_hash = data[0].clone().into_fixed_bytes().unwrap().to_vec();
 
-            return Ok(Some(JobEvent::JobCompleted { job_id, output_hash }));
+            return Ok(Some(JobEvent::JobCompleted {
+                job_id,
+                output_hash,
+            }));
         }
 
         Ok(None)

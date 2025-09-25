@@ -1,13 +1,13 @@
 // src/models/specialization.rs - Model specialization for domains and tasks
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
+use rand;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid;
-use rand;
 
 // Domain types for specialization
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,20 +29,20 @@ pub enum TaskType {
     TreatmentPlanning,
     MedicalQA,
     ClinicalNotes,
-    
+
     // Code tasks
     CodeGeneration,
     CodeReview,
     BugDetection,
-    
+
     // Language tasks
     Translation,
     Conversation,
-    
+
     // Research tasks
     Research,
     Analysis,
-    
+
     // General tasks
     Reasoning,
 }
@@ -151,24 +151,27 @@ impl QueryAnalyzer {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub async fn analyze_query(&self, query: &str) -> Result<QueryAnalysis> {
         // Simple domain detection based on keywords
-        let domain = if query.to_lowercase().contains("diabetes") || 
-                       query.to_lowercase().contains("symptoms") ||
-                       query.to_lowercase().contains("treatment") {
+        let domain = if query.to_lowercase().contains("diabetes")
+            || query.to_lowercase().contains("symptoms")
+            || query.to_lowercase().contains("treatment")
+        {
             DomainType::Medical
-        } else if query.to_lowercase().contains("python") || 
-                  query.to_lowercase().contains("function") ||
-                  query.to_lowercase().contains("code") {
+        } else if query.to_lowercase().contains("python")
+            || query.to_lowercase().contains("function")
+            || query.to_lowercase().contains("code")
+        {
             DomainType::Technical
-        } else if query.to_lowercase().contains("contract") ||
-                  query.to_lowercase().contains("legal") {
+        } else if query.to_lowercase().contains("contract")
+            || query.to_lowercase().contains("legal")
+        {
             DomainType::Legal
         } else {
             DomainType::General
         };
-        
+
         Ok(QueryAnalysis {
             detected_domain: domain,
             detected_tasks: vec![],
@@ -214,10 +217,7 @@ pub struct PipelineResult {
 // Ensemble strategy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EnsembleStrategy {
-    WeightedVoting {
-        weights: Vec<f64>,
-        threshold: f64,
-    },
+    WeightedVoting { weights: Vec<f64>, threshold: f64 },
     Majority,
     BestOf,
 }
@@ -288,7 +288,7 @@ impl CostOptimizer {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub async fn find_optimal_model(
         &self,
         manager: &SpecializationManager,
@@ -296,30 +296,32 @@ impl CostOptimizer {
     ) -> Result<CostOptimalModel> {
         // Find models meeting requirements
         let models = manager.inner.read().await;
-        
+
         let mut best_model = None;
         let mut best_cost = f64::MAX;
-        
+
         for (id, spec) in &models.specializations {
             if spec.accuracy_score >= requirements.min_accuracy {
                 if let Some(cost_profile) = models.cost_profiles.get(id) {
                     let mut effective_cost = cost_profile.cost_per_1k_tokens;
-                    
+
                     // Apply volume discounts
                     for (volume, discount) in &cost_profile.volume_discounts {
                         if requirements.expected_volume >= *volume {
                             effective_cost *= discount;
                         }
                     }
-                    
-                    if effective_cost <= requirements.max_cost_per_1k_tokens && effective_cost < best_cost {
+
+                    if effective_cost <= requirements.max_cost_per_1k_tokens
+                        && effective_cost < best_cost
+                    {
                         best_cost = effective_cost;
                         best_model = Some((id.clone(), effective_cost));
                     }
                 }
             }
         }
-        
+
         match best_model {
             Some((model_id, cost)) => Ok(CostOptimalModel {
                 model_id,
@@ -395,53 +397,53 @@ impl SpecializationMarketplace {
             listings: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     pub async fn create_listing(&self, listing: MarketplaceListing) -> Result<String> {
         let id = format!("listing_{}", uuid::Uuid::new_v4());
         self.listings.write().await.insert(id.clone(), listing);
         Ok(id)
     }
-    
+
     pub async fn search(&self, criteria: SearchCriteria) -> Result<Vec<MarketplaceListing>> {
         let listings = self.listings.read().await;
         let mut results = Vec::new();
-        
+
         for listing in listings.values() {
             let mut matches = true;
-            
+
             if let Some(domain) = &criteria.domain {
                 if &listing.specialization.domain != domain {
                     matches = false;
                 }
             }
-            
+
             if let Some(min_acc) = criteria.min_accuracy {
                 if listing.specialization.accuracy_score < min_acc {
                     matches = false;
                 }
             }
-            
+
             if let Some(max_price) = criteria.max_price_per_1k {
                 if listing.pricing.base_price > max_price {
                     matches = false;
                 }
             }
-            
+
             for task in &criteria.required_tasks {
                 if !listing.specialization.tasks.contains(task) {
                     matches = false;
                     break;
                 }
             }
-            
+
             if matches {
                 results.push(listing.clone());
             }
         }
-        
+
         Ok(results)
     }
-    
+
     pub async fn initiate_transaction(
         &self,
         listing_id: &str,
@@ -453,13 +455,13 @@ impl SpecializationMarketplace {
         if !listings.contains_key(listing_id) {
             return Err(anyhow!("Listing not found"));
         }
-        
+
         // Create transaction
         let transaction = Transaction {
             id: format!("txn_{}_{}", buyer_id, uuid::Uuid::new_v4()),
             status: "pending_payment".to_string(),
         };
-        
+
         Ok(transaction)
     }
 }
@@ -493,61 +495,67 @@ impl SpecializationManager {
             pipelines: HashMap::new(),
             ensembles: HashMap::new(),
         };
-        
+
         Ok(Self {
             inner: Arc::new(RwLock::new(inner)),
         })
     }
-    
-    pub async fn register_specialization(&self, spec: ModelSpecialization) -> Result<RegistrationResult> {
+
+    pub async fn register_specialization(
+        &self,
+        spec: ModelSpecialization,
+    ) -> Result<RegistrationResult> {
         let mut inner = self.inner.write().await;
         let id = format!("spec_{}", uuid::Uuid::new_v4());
-        
-        info!("Registering specialization: {} for domain {:?}", spec.model_id, spec.domain);
-        
+
+        info!(
+            "Registering specialization: {} for domain {:?}",
+            spec.model_id, spec.domain
+        );
+
         inner.specializations.insert(id.clone(), spec);
-        
+
         Ok(RegistrationResult {
             id,
             status: "active".to_string(),
         })
     }
-    
+
     pub async fn find_by_domain(&self, domain: DomainType) -> Result<Vec<ModelSpecialization>> {
         let inner = self.inner.read().await;
-        let models: Vec<_> = inner.specializations.values()
+        let models: Vec<_> = inner
+            .specializations
+            .values()
             .filter(|s| s.domain == domain)
             .cloned()
             .collect();
         Ok(models)
     }
-    
+
     pub async fn find_best_for_task(
         &self,
         task: TaskType,
         _accuracy_req: AccuracyRequirement,
     ) -> Result<ModelSpecialization> {
         let inner = self.inner.read().await;
-        
-        inner.specializations.values()
+
+        inner
+            .specializations
+            .values()
             .find(|s| s.tasks.contains(&task))
             .cloned()
             .ok_or_else(|| anyhow!("No model found for task"))
     }
-    
-    pub async fn set_language_support(
-        &self,
-        id: &str,
-        support: LanguageSupport,
-    ) -> Result<()> {
+
+    pub async fn set_language_support(&self, id: &str, support: LanguageSupport) -> Result<()> {
         let mut inner = self.inner.write().await;
         inner.language_support.insert(id.to_string(), support);
         Ok(())
     }
-    
+
     pub async fn find_best_for_language(&self, language: &str) -> Result<ModelSpecialization> {
         let inner = self.inner.read().await;
-        
+
         // Find models supporting this language
         for (id, support) in &inner.language_support {
             if support.primary_languages.iter().any(|l| l == language) {
@@ -556,25 +564,27 @@ impl SpecializationManager {
                 }
             }
         }
-        
+
         Err(anyhow!("No model found for language: {}", language))
     }
-    
+
     pub async fn register_vertical_model(&self, model: SpecializedModel) -> Result<()> {
         let mut inner = self.inner.write().await;
         inner.vertical_models.push(model);
         Ok(())
     }
-    
+
     pub async fn find_by_compliance(&self, cert: &str) -> Result<Vec<SpecializedModel>> {
         let inner = self.inner.read().await;
-        let models: Vec<_> = inner.vertical_models.iter()
+        let models: Vec<_> = inner
+            .vertical_models
+            .iter()
             .filter(|m| m.compliance_certifications.contains(&cert.to_string()))
             .cloned()
             .collect();
         Ok(models)
     }
-    
+
     pub async fn set_performance_profile(
         &self,
         id: &str,
@@ -584,54 +594,56 @@ impl SpecializationManager {
         inner.performance_profiles.insert(id.to_string(), profile);
         Ok(())
     }
-    
+
     pub async fn find_optimal_model(
         &self,
         accuracy_req: AccuracyRequirement,
         perf_profile: Option<PerformanceProfile>,
     ) -> Result<ModelSpecialization> {
         let inner = self.inner.read().await;
-        
+
         let min_accuracy = match accuracy_req {
             AccuracyRequirement::Minimum(v) => v,
             AccuracyRequirement::High => 0.85,
             AccuracyRequirement::Maximum => 0.95,
         };
-        
+
         if perf_profile.is_some() {
             // Find fastest model meeting accuracy
-            inner.specializations.values()
+            inner
+                .specializations
+                .values()
                 .filter(|s| s.accuracy_score >= min_accuracy)
                 .max_by(|a, b| a.speed_multiplier.partial_cmp(&b.speed_multiplier).unwrap())
                 .cloned()
                 .ok_or_else(|| anyhow!("No model found"))
         } else {
             // Find most accurate model
-            inner.specializations.values()
+            inner
+                .specializations
+                .values()
                 .max_by(|a, b| a.accuracy_score.partial_cmp(&b.accuracy_score).unwrap())
                 .cloned()
                 .ok_or_else(|| anyhow!("No model found"))
         }
     }
-    
+
     pub async fn route_query(&self, analysis: &QueryAnalysis) -> Result<ModelSpecialization> {
         let inner = self.inner.read().await;
-        
-        inner.specializations.values()
+
+        inner
+            .specializations
+            .values()
             .find(|s| s.domain == analysis.detected_domain)
             .cloned()
             .ok_or_else(|| anyhow!("No model found for domain"))
     }
-    
-    pub async fn configure_tokenizer(
-        &self,
-        _id: &str,
-        _config: TokenizerConfig,
-    ) -> Result<()> {
+
+    pub async fn configure_tokenizer(&self, _id: &str, _config: TokenizerConfig) -> Result<()> {
         // Store tokenizer config
         Ok(())
     }
-    
+
     pub async fn tokenize_with_specialized(
         &self,
         _id: &str,
@@ -639,27 +651,27 @@ impl SpecializationManager {
     ) -> Result<TokenizationResult> {
         // Mock tokenization preserving scientific notation
         let mut preserved = Vec::new();
-        
+
         if text.contains("H₂O") {
             preserved.push("H₂O".to_string());
         }
         if text.contains("g/mol") {
             preserved.push("g/mol".to_string());
         }
-        
+
         Ok(TokenizationResult {
             tokens: text.split_whitespace().map(|s| s.to_string()).collect(),
             preserved_entities: preserved,
         })
     }
-    
+
     pub async fn create_pipeline(&self, pipeline: InferencePipeline) -> Result<String> {
         let mut inner = self.inner.write().await;
         let id = format!("pipeline_{}", uuid::Uuid::new_v4());
         inner.pipelines.insert(id.clone(), pipeline);
         Ok(id)
     }
-    
+
     pub async fn run_pipeline_inference(
         &self,
         _pipeline_id: &str,
@@ -676,7 +688,7 @@ impl SpecializationManager {
             output: "Based on the symptoms (fever, cough, shortness of breath), the differential diagnosis includes viral respiratory infections. Please consult a medical professional for proper evaluation.".to_string(),
         })
     }
-    
+
     pub async fn create_ensemble(
         &self,
         name: &str,
@@ -685,18 +697,18 @@ impl SpecializationManager {
     ) -> Result<EnsembleInfo> {
         let mut inner = self.inner.write().await;
         let id = format!("ensemble_{}", uuid::Uuid::new_v4());
-        
+
         let ensemble = EnsembleInfo {
             id: id.clone(),
             name: name.to_string(),
             models: model_ids,
             strategy,
         };
-        
+
         inner.ensembles.insert(id, ensemble.clone());
         Ok(ensemble)
     }
-    
+
     pub async fn run_ensemble_inference(
         &self,
         _ensemble_id: &str,
@@ -713,20 +725,16 @@ impl SpecializationManager {
             ],
         })
     }
-    
-    pub async fn run_benchmark(
-        &self,
-        _id: &str,
-        tests: Vec<&str>,
-    ) -> Result<BenchmarkResult> {
+
+    pub async fn run_benchmark(&self, _id: &str, tests: Vec<&str>) -> Result<BenchmarkResult> {
         // Mock benchmark execution
         let mut test_results = HashMap::new();
         for test in tests {
             test_results.insert(test.to_string(), 0.85 + rand::random::<f64>() * 0.1);
         }
-        
+
         let overall_score = test_results.values().sum::<f64>() / test_results.len() as f64;
-        
+
         Ok(BenchmarkResult {
             overall_score,
             test_results,
@@ -734,26 +742,24 @@ impl SpecializationManager {
             memory_usage_mb: 4096,
         })
     }
-    
-    pub async fn update_from_benchmark(
-        &self,
-        id: &str,
-        benchmark: &BenchmarkResult,
-    ) -> Result<()> {
+
+    pub async fn update_from_benchmark(&self, id: &str, benchmark: &BenchmarkResult) -> Result<()> {
         let mut inner = self.inner.write().await;
         if let Some(spec) = inner.specializations.get_mut(id) {
             spec.accuracy_score = benchmark.overall_score;
         }
         Ok(())
     }
-    
+
     pub async fn get_specialization(&self, id: &str) -> Result<ModelSpecialization> {
         let inner = self.inner.read().await;
-        inner.specializations.get(id)
+        inner
+            .specializations
+            .get(id)
             .cloned()
             .ok_or_else(|| anyhow!("Specialization not found"))
     }
-    
+
     pub async fn detect_specialization(
         &self,
         _id: &str,
@@ -766,7 +772,7 @@ impl SpecializationManager {
             confidence: 0.87,
         })
     }
-    
+
     pub async fn apply_detected_specialization(
         &self,
         id: &str,
@@ -779,12 +785,8 @@ impl SpecializationManager {
         }
         Ok(())
     }
-    
-    pub async fn set_cost_profile(
-        &self,
-        id: &str,
-        profile: CostProfile,
-    ) -> Result<()> {
+
+    pub async fn set_cost_profile(&self, id: &str, profile: CostProfile) -> Result<()> {
         let mut inner = self.inner.write().await;
         inner.cost_profiles.insert(id.to_string(), profile);
         Ok(())

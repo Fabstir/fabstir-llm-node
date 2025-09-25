@@ -1,18 +1,18 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::types::{Address, H256, U256};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::collections::{HashSet, HashMap};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, Duration};
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::contracts::Web3Client;
-use crate::job_processor::{JobRequest, JobStatus, NodeConfig};
-use crate::job_assignment_types::{JobClaimConfig, AssignmentRecord, AssignmentStatus};
 use crate::host::registry::HostRegistry;
 use crate::host::selection::{HostSelector, JobRequirements};
+use crate::job_assignment_types::{AssignmentRecord, AssignmentStatus, JobClaimConfig};
+use crate::job_processor::{JobRequest, JobStatus, NodeConfig};
 
 #[derive(Debug, Clone)]
 pub enum ClaimError {
@@ -116,7 +116,10 @@ pub struct JobClaimer {
 }
 
 impl JobClaimer {
-    pub fn new_with_marketplace<C: Into<ClaimConfig>>(config: C, marketplace: Arc<dyn JobMarketplaceTrait>) -> Self {
+    pub fn new_with_marketplace<C: Into<ClaimConfig>>(
+        config: C,
+        marketplace: Arc<dyn JobMarketplaceTrait>,
+    ) -> Self {
         Self {
             config: config.into(),
             marketplace,
@@ -144,11 +147,15 @@ impl JobClaimer {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             claimed_jobs: Arc::new(RwLock::new(HashSet::new())),
         }) as Arc<dyn JobMarketplaceTrait>;
-        
+
         Ok(Self::new_with_marketplace(claim_config, marketplace))
     }
-    
-    pub fn with_host_management(mut self, registry: Arc<HostRegistry>, selector: Arc<HostSelector>) -> Self {
+
+    pub fn with_host_management(
+        mut self,
+        registry: Arc<HostRegistry>,
+        selector: Arc<HostSelector>,
+    ) -> Self {
         self.host_registry = Some(registry);
         self.host_selector = Some(selector);
         self
@@ -165,16 +172,23 @@ impl JobClaimer {
         if result.is_err() {
             *self.active_claims.write().await -= 1;
         }
-        
+
         result
     }
-    
+
     async fn try_claim_job(&self, job_id: H256) -> ClaimResult {
-        if !self.marketplace.is_node_registered(self.config.node_address).await {
+        if !self
+            .marketplace
+            .is_node_registered(self.config.node_address)
+            .await
+        {
             return Err(ClaimError::NodeNotRegistered);
         }
 
-        let job = self.marketplace.get_job(job_id).await
+        let job = self
+            .marketplace
+            .get_job(job_id)
+            .await
             .ok_or(ClaimError::JobNotFound)?;
 
         if self.marketplace.is_job_claimed(job_id).await {
@@ -187,7 +201,9 @@ impl JobClaimer {
             return Err(ClaimError::Other("Job not profitable".to_string()));
         }
 
-        self.marketplace.claim_job(job_id, self.config.node_address).await?;
+        self.marketplace
+            .claim_job(job_id, self.config.node_address)
+            .await?;
         self.claimed_jobs.write().await.insert(job_id);
         self.emit_event(ClaimEvent {
             job_id,
@@ -197,7 +213,8 @@ impl JobClaimer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-        }).await;
+        })
+        .await;
 
         Ok(H256::random())
     }
@@ -221,13 +238,13 @@ impl JobClaimer {
                 Ok(tx_hash) => return Ok(tx_hash),
                 Err(e) => {
                     last_error = Some(e.clone());
-                    
+
                     // Don't retry on certain errors
                     match &e {
-                        ClaimError::NodeNotRegistered |
-                        ClaimError::JobNotFound |
-                        ClaimError::JobAlreadyClaimed |
-                        ClaimError::UnsupportedModel => return Err(e),
+                        ClaimError::NodeNotRegistered
+                        | ClaimError::JobNotFound
+                        | ClaimError::JobAlreadyClaimed
+                        | ClaimError::UnsupportedModel => return Err(e),
                         _ => {}
                     }
 
@@ -243,14 +260,19 @@ impl JobClaimer {
     }
 
     pub async fn estimate_claim_gas(&self, job_id: H256) -> Result<U256, ClaimError> {
-        self.marketplace.estimate_gas(job_id).await
+        self.marketplace
+            .estimate_gas(job_id)
+            .await
             .map_err(|e| ClaimError::Other(e.to_string()))
     }
 
     pub async fn is_claim_profitable(&self, job_id: H256) -> Result<bool, ClaimError> {
-        let job = self.marketplace.get_job(job_id).await
+        let job = self
+            .marketplace
+            .get_job(job_id)
+            .await
             .ok_or(ClaimError::JobNotFound)?;
-        
+
         let gas_cost = self.estimate_claim_gas(job_id).await?;
         Ok(self.is_profitable(&job, gas_cost).await?)
     }
@@ -258,7 +280,7 @@ impl JobClaimer {
     async fn is_profitable(&self, job: &JobRequest, gas_cost: U256) -> Result<bool> {
         let gas_price = self.marketplace.get_gas_price().await?;
         let total_gas_cost = gas_cost * gas_price;
-        
+
         // Check if payment covers gas + minimum profit
         let min_profit = job.payment_amount / U256::from(10); // 10% minimum profit
         Ok(job.payment_amount > total_gas_cost + min_profit)
@@ -266,8 +288,9 @@ impl JobClaimer {
 
     fn validate_job(&self, job: &JobRequest) -> Result<(), ClaimError> {
         // Check supported models
-        if !self.config.supported_models.is_empty() 
-            && !self.config.supported_models.contains(&job.model_id) {
+        if !self.config.supported_models.is_empty()
+            && !self.config.supported_models.contains(&job.model_id)
+        {
             return Err(ClaimError::UnsupportedModel);
         }
 
@@ -288,7 +311,7 @@ impl JobClaimer {
     pub async fn get_claimable_jobs(&self) -> Vec<JobRequest> {
         // Get all jobs from the marketplace
         let all_jobs = self.marketplace.get_all_jobs().await;
-        
+
         // Filter jobs that meet our criteria
         let mut claimable_jobs = Vec::new();
         for job in all_jobs {
@@ -296,7 +319,7 @@ impl JobClaimer {
             if self.marketplace.is_job_claimed(job.job_id).await {
                 continue;
             }
-            
+
             // Validate job against our criteria
             if self.validate_job(&job).is_ok() {
                 // Check profitability
@@ -309,7 +332,7 @@ impl JobClaimer {
                 }
             }
         }
-        
+
         claimable_jobs
     }
 
@@ -333,13 +356,20 @@ impl JobClaimer {
         }
     }
     // Assignment methods
-    pub async fn assign_job_to_host(&self, job_id: &str, host_address: Address, registry: &Arc<HostRegistry>) -> Result<()> {
+    pub async fn assign_job_to_host(
+        &self,
+        job_id: &str,
+        host_address: Address,
+        registry: &Arc<HostRegistry>,
+    ) -> Result<()> {
         // Validate host is registered
         let hosts = registry.get_registered_hosts().await;
         if !hosts.contains(&host_address) {
-            return Err(ClaimError::ContractError(format!("Host {} not registered", host_address)).into());
+            return Err(
+                ClaimError::ContractError(format!("Host {} not registered", host_address)).into(),
+            );
         }
-        
+
         let mut assignments = self.assignments.write().await;
         let record = AssignmentRecord {
             job_id: job_id.to_string(),
@@ -355,7 +385,11 @@ impl JobClaimer {
         Ok(())
     }
 
-    pub async fn batch_assign_jobs(&self, job_assignments: Vec<(&str, Address)>, registry: &Arc<HostRegistry>) -> Result<Vec<Result<()>>> {
+    pub async fn batch_assign_jobs(
+        &self,
+        job_assignments: Vec<(&str, Address)>,
+        registry: &Arc<HostRegistry>,
+    ) -> Result<Vec<Result<()>>> {
         let mut results = Vec::new();
         for (job_id, host) in job_assignments {
             results.push(self.assign_job_to_host(job_id, host, registry).await);
@@ -363,7 +397,12 @@ impl JobClaimer {
         Ok(results)
     }
 
-    pub async fn reassign_job(&self, job_id: &str, new_host: Address, _registry: &Arc<HostRegistry>) -> Result<()> {
+    pub async fn reassign_job(
+        &self,
+        job_id: &str,
+        new_host: Address,
+        _registry: &Arc<HostRegistry>,
+    ) -> Result<()> {
         let mut assignments = self.assignments.write().await;
         if let Some(record) = assignments.get_mut(job_id) {
             record.host_address = new_host;
@@ -379,7 +418,13 @@ impl JobClaimer {
         }
     }
 
-    pub async fn auto_assign_job(&self, job_id: &str, registry: &Arc<HostRegistry>, selector: &Arc<HostSelector>, requirements: &JobRequirements) -> Result<Address> {
+    pub async fn auto_assign_job(
+        &self,
+        job_id: &str,
+        registry: &Arc<HostRegistry>,
+        selector: &Arc<HostSelector>,
+        requirements: &JobRequirements,
+    ) -> Result<Address> {
         let hosts = registry.get_available_hosts(&requirements.model_id).await;
         if hosts.is_empty() {
             return Err(anyhow!("No available hosts found"));
@@ -396,10 +441,13 @@ impl JobClaimer {
             return Err(anyhow!("No host info available"));
         }
 
-        let selected_host = selector.select_best_host(host_infos.clone(), &requirements).await
+        let selected_host = selector
+            .select_best_host(host_infos.clone(), &requirements)
+            .await
             .ok_or_else(|| anyhow!("Failed to select best host"))?;
 
-        self.assign_job_to_host(job_id, selected_host, registry).await?;
+        self.assign_job_to_host(job_id, selected_host, registry)
+            .await?;
         Ok(selected_host)
     }
 
@@ -409,7 +457,8 @@ impl JobClaimer {
 
     pub async fn get_host_assignments(&self, host: Address) -> Vec<String> {
         let assignments = self.assignments.read().await;
-        assignments.iter()
+        assignments
+            .iter()
             .filter_map(|(job_id, record)| {
                 if record.host_address == host {
                     Some(job_id.clone())
@@ -420,7 +469,11 @@ impl JobClaimer {
             .collect()
     }
 
-    pub async fn update_assignment_status(&self, job_id: &str, status: AssignmentStatus) -> Result<()> {
+    pub async fn update_assignment_status(
+        &self,
+        job_id: &str,
+        status: AssignmentStatus,
+    ) -> Result<()> {
         let mut assignments = self.assignments.write().await;
         if let Some(record) = assignments.get_mut(job_id) {
             record.status = status;
@@ -441,21 +494,27 @@ impl JobClaimer {
         assignments.insert(job_id.to_string(), record);
     }
 
-    pub async fn process_priority_assignments(&self, host: Address, _registry: &Arc<HostRegistry>, limit: usize) -> Vec<String> {
+    pub async fn process_priority_assignments(
+        &self,
+        host: Address,
+        _registry: &Arc<HostRegistry>,
+        limit: usize,
+    ) -> Vec<String> {
         let mut assignments = self.assignments.write().await;
         let mut processed = Vec::new();
-        
-        let mut pending: Vec<_> = assignments.iter_mut()
+
+        let mut pending: Vec<_> = assignments
+            .iter_mut()
             .filter(|(_, record)| record.status == AssignmentStatus::Pending)
             .collect();
         pending.sort_by(|a, b| b.1.assigned_at.cmp(&a.1.assigned_at));
-        
+
         for (job_id, record) in pending.into_iter().take(limit) {
             record.host_address = host;
             record.status = AssignmentStatus::Confirmed;
             processed.push(job_id.clone());
         }
-        
+
         processed
     }
 }
@@ -472,33 +531,33 @@ impl JobMarketplaceTrait for MockMarketplace {
     async fn is_node_registered(&self, node_address: Address) -> bool {
         self.registered_nodes.read().await.contains(&node_address)
     }
-    
+
     async fn is_job_claimed(&self, job_id: H256) -> bool {
         self.claimed_jobs.read().await.contains(&job_id)
     }
-    
+
     async fn claim_job(&self, job_id: H256, _node_address: Address) -> Result<(), ClaimError> {
         self.claimed_jobs.write().await.insert(job_id);
         Ok(())
     }
-    
+
     async fn unclaim_job(&self, job_id: H256) -> Result<(), ClaimError> {
         self.claimed_jobs.write().await.remove(&job_id);
         Ok(())
     }
-    
+
     async fn get_job(&self, job_id: H256) -> Option<JobRequest> {
         self.jobs.read().await.get(&job_id).cloned()
     }
-    
+
     async fn get_all_jobs(&self) -> Vec<JobRequest> {
         self.jobs.read().await.values().cloned().collect()
     }
-    
+
     async fn estimate_gas(&self, _job_id: H256) -> Result<U256> {
         Ok(U256::from(100_000))
     }
-    
+
     async fn get_gas_price(&self) -> Result<U256> {
         Ok(U256::from(20_000_000_000u64))
     }

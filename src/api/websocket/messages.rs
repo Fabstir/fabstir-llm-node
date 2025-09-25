@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::collections::HashSet;
+use std::fmt;
 
 /// Proof data for verifiable inference
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -126,7 +126,7 @@ pub enum WebSocketMessage {
         chain_id: Option<u64>,
         conversation_context: Vec<ConversationMessage>,
     },
-    
+
     /// Resume an existing session with full context
     SessionResume {
         session_id: String,
@@ -134,14 +134,14 @@ pub enum WebSocketMessage {
         conversation_context: Vec<ConversationMessage>,
         last_message_index: u32,
     },
-    
+
     /// Send a new prompt (minimal data during active session)
     Prompt {
         session_id: String,
         content: String,
         message_index: u32,
     },
-    
+
     /// Response from the LLM
     Response {
         session_id: String,
@@ -149,18 +149,16 @@ pub enum WebSocketMessage {
         tokens_used: u32,
         message_index: u32,
     },
-    
+
     /// Error message
     Error {
         session_id: String,
         error: String,
         code: ErrorCode,
     },
-    
+
     /// End the session
-    SessionEnd {
-        session_id: String,
-    },
+    SessionEnd { session_id: String },
 }
 
 impl WebSocketMessage {
@@ -175,7 +173,7 @@ impl WebSocketMessage {
             WebSocketMessage::SessionEnd { session_id } => session_id,
         }
     }
-    
+
     /// Get the message type as a string
     pub fn message_type(&self) -> &str {
         match self {
@@ -262,7 +260,7 @@ impl MessageValidator {
     pub fn new() -> Self {
         let mut supported_chains = HashSet::new();
         supported_chains.insert(84532); // Base Sepolia
-        supported_chains.insert(5611);  // opBNB Testnet
+        supported_chains.insert(5611); // opBNB Testnet
         Self { supported_chains }
     }
 
@@ -299,11 +297,11 @@ mod tests {
             chain_id: Some(84532),
             conversation_context: vec![],
         };
-        
+
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "session_init");
     }
-    
+
     #[test]
     fn test_message_deserialization() {
         let json = json!({
@@ -312,11 +310,11 @@ mod tests {
             "content": "Hello",
             "message_index": 1
         });
-        
+
         let msg: WebSocketMessage = serde_json::from_value(json).unwrap();
         assert_eq!(msg.message_type(), "prompt");
     }
-    
+
     #[test]
     fn test_error_code_serialization() {
         let code = ErrorCode::SessionNotFound;
@@ -363,10 +361,10 @@ mod tests {
 
         // Test supported chains
         assert!(validator.is_chain_supported(84532)); // Base Sepolia
-        assert!(validator.is_chain_supported(5611));  // opBNB Testnet
+        assert!(validator.is_chain_supported(5611)); // opBNB Testnet
 
         // Test unsupported chains
-        assert!(!validator.is_chain_supported(1));    // Ethereum mainnet
+        assert!(!validator.is_chain_supported(1)); // Ethereum mainnet
         assert!(!validator.is_chain_supported(99999)); // Invalid chain
     }
 

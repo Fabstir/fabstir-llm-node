@@ -1,40 +1,32 @@
+pub mod availability;
 pub mod model_config;
 pub mod pricing;
-pub mod availability;
 pub mod registration;
 pub mod registry;
 pub mod resources;
 pub mod selection;
 
 pub use model_config::{
-    ModelConfig, ModelHostingManager, ModelParameters, ModelStatus,
-    ModelMetadata, HostingError
+    HostingError, ModelConfig, ModelHostingManager, ModelMetadata, ModelParameters, ModelStatus,
 };
 
 pub use pricing::{
-    PricingManager, PricingModel, PricingTier, Currency, 
-    DynamicPricingConfig, PricingError, PriceUpdate
+    Currency, DynamicPricingConfig, PriceUpdate, PricingError, PricingManager, PricingModel,
+    PricingTier,
 };
 
 pub use availability::{
-    AvailabilityManager, AvailabilitySchedule, MaintenanceWindow,
-    AvailabilityStatus, CapacityConfig, ScheduleError
+    AvailabilityManager, AvailabilitySchedule, AvailabilityStatus, CapacityConfig,
+    MaintenanceWindow, ScheduleError,
 };
 
-pub use registration::{
-    NodeRegistration, NodeMetadata, RegistrationConfig
-};
+pub use registration::{NodeMetadata, NodeRegistration, RegistrationConfig};
 
-pub use registry::{
-    HostRegistry, HostInfo, RegistryStats
-};
+pub use registry::{HostInfo, HostRegistry, RegistryStats};
 
 pub use resources::{
-    ResourceMonitor, ResourceMetrics, GpuMetrics, CpuMetrics,
-    MemoryMetrics, NetworkMetrics, AlertThreshold, AlertLevel,
-    ResourceAlert, MonitoringError
+    AlertLevel, AlertThreshold, CpuMetrics, GpuMetrics, MemoryMetrics, MonitoringError,
+    NetworkMetrics, ResourceAlert, ResourceMetrics, ResourceMonitor,
 };
 
-pub use selection::{
-    HostSelector, PerformanceMetrics, ScoringWeights, JobRequirements
-};
+pub use selection::{HostSelector, JobRequirements, PerformanceMetrics, ScoringWeights};

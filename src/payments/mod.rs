@@ -1,7 +1,7 @@
-pub mod tracker;
-pub mod revenue;
-pub mod withdrawal;
 pub mod fees;
+pub mod revenue;
+pub mod tracker;
+pub mod withdrawal;
 
 // Re-export the internal modules that tests expect
 pub mod payment_tracker {
@@ -21,7 +21,11 @@ pub mod fee_distributor {
 }
 
 // Also re-export main types at top level
-pub use tracker::{PaymentTracker, PaymentEvent, PaymentFilter, PaymentStats, PaymentEventType};
-pub use revenue::{RevenueCalculator, Revenue, RevenueStats, FeeStructure, JobMetrics};
-pub use withdrawal::{WithdrawalManager, WithdrawalRequest, WithdrawalStatus, WithdrawalConfig, WithdrawalStats};
-pub use fees::{FeeDistributor, FeeAllocation, FeeRecipient, RecipientRole, FeeDistributionConfig, FeeStats};
+pub use fees::{
+    FeeAllocation, FeeDistributionConfig, FeeDistributor, FeeRecipient, FeeStats, RecipientRole,
+};
+pub use revenue::{FeeStructure, JobMetrics, Revenue, RevenueCalculator, RevenueStats};
+pub use tracker::{PaymentEvent, PaymentEventType, PaymentFilter, PaymentStats, PaymentTracker};
+pub use withdrawal::{
+    WithdrawalConfig, WithdrawalManager, WithdrawalRequest, WithdrawalStats, WithdrawalStatus,
+};

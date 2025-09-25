@@ -1,8 +1,8 @@
 use fabstir_llm_node::api::websocket::{
     compression::{CompressionConfig, MessageCompressor},
-    messages::{WebSocketMessage, ConversationMessage},
+    messages::{ConversationMessage, WebSocketMessage},
 };
-use flate2::read::{GzDecoder, DeflateDecoder};
+use flate2::read::{DeflateDecoder, GzDecoder};
 use std::io::Read;
 
 #[tokio::test]
@@ -13,9 +13,9 @@ async fn test_gzip_compression_large_message() {
         compression_type: "gzip".to_string(),
         level: 6,
     };
-    
+
     let compressor = MessageCompressor::new(config);
-    
+
     // Create a large message that should be compressed
     let large_content = "x".repeat(2000);
     let message = WebSocketMessage::Response {
@@ -24,18 +24,18 @@ async fn test_gzip_compression_large_message() {
         tokens_used: 100,
         message_index: 1,
     };
-    
+
     let compressed = compressor.compress(&message).await.unwrap();
-    
+
     // Verify compression occurred
     let original_size = serde_json::to_vec(&message).unwrap().len();
     assert!(compressed.len() < original_size);
-    
+
     // Verify we can decompress
     let mut decoder = GzDecoder::new(&compressed[..]);
     let mut decompressed = String::new();
     decoder.read_to_string(&mut decompressed).unwrap();
-    
+
     let recovered: WebSocketMessage = serde_json::from_str(&decompressed).unwrap();
     match recovered {
         WebSocketMessage::Response { content, .. } => {
@@ -53,27 +53,27 @@ async fn test_deflate_compression() {
         compression_type: "deflate".to_string(),
         level: 6,
     };
-    
+
     let compressor = MessageCompressor::new(config);
     let large_content = "a".repeat(1500);
-    
+
     let message = WebSocketMessage::Prompt {
         session_id: "test".to_string(),
         content: large_content.clone(),
         message_index: 1,
     };
-    
+
     let compressed = compressor.compress(&message).await.unwrap();
-    
+
     // Verify compression
     let original = serde_json::to_vec(&message).unwrap();
     assert!(compressed.len() < original.len());
-    
+
     // Decompress
     let mut decoder = DeflateDecoder::new(&compressed[..]);
     let mut decompressed = String::new();
     decoder.read_to_string(&mut decompressed).unwrap();
-    
+
     let recovered: WebSocketMessage = serde_json::from_str(&decompressed).unwrap();
     match recovered {
         WebSocketMessage::Prompt { content, .. } => {
@@ -91,9 +91,9 @@ async fn test_compression_ratio_verification() {
         compression_type: "gzip".to_string(),
         level: 9, // Maximum compression
     };
-    
+
     let compressor = MessageCompressor::new(config);
-    
+
     // Highly compressible data (repeated pattern)
     let content = "abcdefghij".repeat(500); // 5000 bytes of repetitive data
     let message = WebSocketMessage::Response {
@@ -102,15 +102,19 @@ async fn test_compression_ratio_verification() {
         tokens_used: 200,
         message_index: 1,
     };
-    
+
     let compressed = compressor.compress(&message).await.unwrap();
     let original_size = serde_json::to_vec(&message).unwrap().len();
-    
+
     // Calculate compression ratio
     let ratio = 1.0 - (compressed.len() as f64 / original_size as f64);
-    
+
     // Should achieve >40% compression on repetitive data
-    assert!(ratio > 0.4, "Compression ratio {} is less than 40%", ratio * 100.0);
+    assert!(
+        ratio > 0.4,
+        "Compression ratio {} is less than 40%",
+        ratio * 100.0
+    );
 }
 
 #[tokio::test]
@@ -121,18 +125,18 @@ async fn test_small_message_bypass() {
         compression_type: "gzip".to_string(),
         level: 6,
     };
-    
+
     let compressor = MessageCompressor::new(config);
-    
+
     // Small message under threshold
     let message = WebSocketMessage::Prompt {
         session_id: "test".to_string(),
         content: "Hello".to_string(),
         message_index: 1,
     };
-    
+
     let result = compressor.compress(&message).await.unwrap();
-    
+
     // Should return original JSON without compression
     let original = serde_json::to_vec(&message).unwrap();
     assert_eq!(result, original);
@@ -146,18 +150,18 @@ async fn test_compression_disabled() {
         compression_type: "gzip".to_string(),
         level: 6,
     };
-    
+
     let compressor = MessageCompressor::new(config);
-    
+
     let message = WebSocketMessage::Response {
         session_id: "test".to_string(),
         content: "x".repeat(10000),
         tokens_used: 500,
         message_index: 1,
     };
-    
+
     let result = compressor.compress(&message).await.unwrap();
-    
+
     // Should return original JSON
     let original = serde_json::to_vec(&message).unwrap();
     assert_eq!(result, original);
@@ -171,16 +175,16 @@ async fn test_compression_error_fallback() {
         compression_type: "invalid".to_string(), // Invalid type
         level: 6,
     };
-    
+
     let compressor = MessageCompressor::new(config);
-    
+
     let message = WebSocketMessage::Response {
         session_id: "test".to_string(),
         content: "x".repeat(2000),
         tokens_used: 100,
         message_index: 1,
     };
-    
+
     // Should fallback to uncompressed on error
     let result = compressor.compress(&message).await.unwrap();
     let original = serde_json::to_vec(&message).unwrap();
@@ -189,10 +193,8 @@ async fn test_compression_error_fallback() {
 
 #[tokio::test]
 async fn test_compression_negotiation() {
-    let compressor = MessageCompressor::from_headers(&[
-        ("Accept-Encoding", "gzip, deflate"),
-    ]);
-    
+    let compressor = MessageCompressor::from_headers(&[("Accept-Encoding", "gzip, deflate")]);
+
     assert!(compressor.supports_compression());
     assert_eq!(compressor.compression_type(), "gzip"); // Prefer gzip
 }
@@ -205,9 +207,9 @@ async fn test_compression_with_conversation_context() {
         compression_type: "gzip".to_string(),
         level: 6,
     };
-    
+
     let compressor = MessageCompressor::new(config);
-    
+
     // Large conversation context
     let mut context = vec![];
     for i in 0..50 {
@@ -219,28 +221,31 @@ async fn test_compression_with_conversation_context() {
             proof: None,
         });
     }
-    
+
     let message = WebSocketMessage::SessionInit {
         session_id: "test".to_string(),
         job_id: 123,
         chain_id: Some(84532), // Base Sepolia
         conversation_context: context,
     };
-    
+
     let compressed = compressor.compress(&message).await.unwrap();
     let original_size = serde_json::to_vec(&message).unwrap().len();
-    
+
     // Should compress large context
     assert!(compressed.len() < original_size);
-    
+
     // Verify decompression
     let mut decoder = GzDecoder::new(&compressed[..]);
     let mut decompressed = String::new();
     decoder.read_to_string(&mut decompressed).unwrap();
-    
+
     let recovered: WebSocketMessage = serde_json::from_str(&decompressed).unwrap();
     match recovered {
-        WebSocketMessage::SessionInit { conversation_context, .. } => {
+        WebSocketMessage::SessionInit {
+            conversation_context,
+            ..
+        } => {
             assert_eq!(conversation_context.len(), 50);
         }
         _ => panic!("Wrong message type"),
@@ -256,7 +261,7 @@ async fn test_compression_levels() {
             compression_type: "gzip".to_string(),
             level,
         };
-        
+
         let compressor = MessageCompressor::new(config);
         let message = WebSocketMessage::Response {
             session_id: "test".to_string(),
@@ -264,7 +269,7 @@ async fn test_compression_levels() {
             tokens_used: 50,
             message_index: 1,
         };
-        
+
         let compressed = compressor.compress(&message).await.unwrap();
         assert!(compressed.len() > 0);
     }

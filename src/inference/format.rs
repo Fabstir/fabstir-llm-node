@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use regex::Regex;
-use serde_json::json;
 use crate::inference::InferenceResult;
+use anyhow::{anyhow, Result};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct FormatConfig {
@@ -95,26 +95,26 @@ impl ResultFormatter {
             // Credit card
             Regex::new(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b").unwrap(),
         ];
-        
+
         Self {
             config,
             pii_patterns,
         }
     }
-    
+
     pub async fn format(&self, result: &InferenceResult) -> Result<String> {
         let text = if self.config.strip_whitespace {
             result.text.trim().to_string()
         } else {
             result.text.clone()
         };
-        
+
         let text = if let Some(max_len) = self.config.max_length {
             self.truncate_text(&text, max_len)
         } else {
             text
         };
-        
+
         match &self.config.output_format {
             OutputFormat::Text => Ok(text),
             OutputFormat::Json => self.format_json(result, text).await,
@@ -126,16 +126,16 @@ impl ResultFormatter {
                 // For multi-format, just return JSON with all formats
                 // In real implementation, would format for each and combine
                 self.format_json(result, text).await
-            },
+            }
             OutputFormat::JsonStructured => self.format_json(result, text).await, // Similar to Json
         }
     }
-    
+
     pub async fn format_json(&self, result: &InferenceResult, text: String) -> Result<String> {
         let mut output = json!({
             "text": text,
         });
-        
+
         if self.config.include_metadata {
             output["metadata"] = json!({
                 "model_id": result.model_id,
@@ -145,42 +145,42 @@ impl ResultFormatter {
                 "finish_reason": result.finish_reason,
             });
         }
-        
+
         if self.config.include_citations {
             output["citations"] = json!([]);
         }
-        
+
         serde_json::to_string_pretty(&output)
             .map_err(|e| anyhow!("Failed to serialize JSON: {}", e))
     }
-    
+
     pub async fn format_markdown(&self, _result: &InferenceResult, text: String) -> Result<String> {
         let mut output = String::new();
-        
+
         // Add main content
         output.push_str(&text);
-        
+
         if self.config.include_citations {
             output.push_str("\n\n## References\n\n");
             output.push_str("*No citations available*\n");
         }
-        
+
         Ok(output)
     }
-    
+
     pub async fn format_html(&self, _result: &InferenceResult, text: String) -> Result<String> {
         let escaped = ammonia::clean(&text);
-        
+
         let html = format!(
             r#"<div class="llm-response">
     <div class="content">{}</div>
 </div>"#,
             escaped
         );
-        
+
         Ok(html)
     }
-    
+
     pub async fn format_xml(&self, result: &InferenceResult, text: String) -> Result<String> {
         let xml = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -197,55 +197,55 @@ impl ResultFormatter {
             result.tokens_generated,
             result.generation_time.as_millis()
         );
-        
+
         Ok(xml)
     }
-    
+
     pub async fn format_with_filter(
         &self,
         result: &InferenceResult,
         filter: &ContentFilter,
     ) -> Result<String> {
         let mut text = result.text.clone();
-        
+
         if filter.check_pii || filter.redact_pii {
             text = self.handle_pii(text, filter.redact_pii)?;
         }
-        
+
         if filter.check_profanity {
             text = self.filter_profanity(text)?;
         }
-        
+
         // Apply custom patterns
         for pattern in &filter.custom_patterns {
             if let Ok(regex) = Regex::new(pattern) {
                 text = regex.replace_all(&text, "[REDACTED]").to_string();
             }
         }
-        
+
         // Format with modified text
         let mut modified_result = result.clone();
         modified_result.text = text;
         self.format(&modified_result).await
     }
-    
+
     pub fn detect_pii(&self, text: &str) -> Vec<String> {
         let mut detected = Vec::new();
-        
+
         for pattern in &self.pii_patterns {
             for mat in pattern.find_iter(text) {
                 detected.push(mat.as_str().to_string());
             }
         }
-        
+
         detected
     }
-    
+
     pub async fn add_citations(&self, text: String, citations: Vec<Citation>) -> Result<String> {
         if citations.is_empty() {
             return Ok(text);
         }
-        
+
         match &self.config.output_format {
             OutputFormat::Json | OutputFormat::JsonStructured => {
                 let output = json!({
@@ -258,7 +258,7 @@ impl ResultFormatter {
             OutputFormat::Markdown => {
                 let mut output = text;
                 output.push_str("\n\n## References\n\n");
-                
+
                 for (i, citation) in citations.iter().enumerate() {
                     output.push_str(&format!("{}. {}", i + 1, citation.source));
                     if let Some(url) = &citation.url {
@@ -266,38 +266,38 @@ impl ResultFormatter {
                     }
                     output.push_str("\n");
                 }
-                
+
                 Ok(output)
             }
             _ => Ok(text),
         }
     }
-    
+
     pub async fn check_safety(&self, _text: &str) -> SafetyCheck {
         // Mock safety check
         let mut categories = HashMap::new();
         categories.insert("toxicity".to_string(), 0.05);
         categories.insert("violence".to_string(), 0.02);
         categories.insert("hate_speech".to_string(), 0.01);
-        
+
         SafetyCheck {
             is_safe: true,
             categories,
             explanation: None,
         }
     }
-    
+
     pub async fn apply_template(&self, text: String, template: &str) -> Result<String> {
         // Simple template replacement
         let result = template.replace("{response}", &text);
         Ok(result)
     }
-    
+
     fn truncate_text(&self, text: &str, max_length: usize) -> String {
         if text.len() <= max_length {
             return text.to_string();
         }
-        
+
         // Try to truncate at word boundary
         if let Some(last_space) = text[..max_length].rfind(' ') {
             format!("{}...", &text[..last_space])
@@ -305,26 +305,26 @@ impl ResultFormatter {
             format!("{}...", &text[..max_length - 3])
         }
     }
-    
+
     fn handle_pii(&self, text: String, redact: bool) -> Result<String> {
         if !redact {
             return Ok(text);
         }
-        
+
         let mut result = text;
-        
+
         for pattern in &self.pii_patterns {
             result = pattern.replace_all(&result, "[PII_REDACTED]").to_string();
         }
-        
+
         Ok(result)
     }
-    
+
     fn filter_profanity(&self, text: String) -> Result<String> {
         // In real implementation, would use a profanity list
         Ok(text)
     }
-    
+
     pub async fn format_stream_chunk(&self, token: &crate::inference::TokenInfo) -> Result<String> {
         match &self.config.output_format {
             OutputFormat::StreamingJson => {
@@ -340,7 +340,7 @@ impl ResultFormatter {
             _ => Ok(token.text.clone()),
         }
     }
-    
+
     pub async fn format_stream_end(&self) -> Result<String> {
         match &self.config.output_format {
             OutputFormat::StreamingJson => {

@@ -4,14 +4,14 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, Instant, UNIX_EPOCH, Duration};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::embeddings::{EmbeddingConfig, EmbeddingGenerator};
 use crate::storage::{EnhancedS5Client, S5Config};
 use crate::vector::{VectorDbClient, VectorDbConfig};
-use crate::embeddings::{EmbeddingGenerator, EmbeddingConfig};
 
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
@@ -75,7 +75,7 @@ impl PromptCache {
             timeout_secs: 30,
         };
         let s5_client = EnhancedS5Client::new(s5_config)?;
-        
+
         // Initialize Vector DB client
         let vector_config = VectorDbConfig {
             api_url: config.vector_db_url.clone(),
@@ -83,7 +83,7 @@ impl PromptCache {
             timeout_secs: 30,
         };
         let vector_client = VectorDbClient::new(vector_config)?;
-        
+
         // Initialize embedding generator
         let embedding_config = EmbeddingConfig {
             model: "all-MiniLM-L6-v2".to_string(),
@@ -92,7 +92,7 @@ impl PromptCache {
             normalize: true,
         };
         let embedding_generator = EmbeddingGenerator::new(embedding_config).await?;
-        
+
         let metrics = Arc::new(Mutex::new(CacheMetricsInternal {
             total_requests: 0,
             cache_hits: 0,
@@ -101,7 +101,7 @@ impl PromptCache {
             miss_times_ms: Vec::new(),
             cache_size_bytes: 0,
         }));
-        
+
         Ok(Self {
             config,
             s5_client,
@@ -111,23 +111,23 @@ impl PromptCache {
             cache_entries: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    
+
     fn hash_prompt(&self, prompt: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(prompt.as_bytes());
         format!("{:x}", hasher.finalize())
     }
-    
+
     pub async fn get(&self, prompt: &str) -> Result<Option<String>> {
         let start = Instant::now();
         let prompt_hash = self.hash_prompt(prompt);
-        
+
         // Update total requests
         {
             let mut metrics = self.metrics.lock().unwrap();
             metrics.total_requests += 1;
         }
-        
+
         // Check in-memory cache first for exact match
         {
             let entries = self.cache_entries.lock().unwrap();
@@ -136,7 +136,7 @@ impl PromptCache {
                 let age = SystemTime::now()
                     .duration_since(entry.created_at)
                     .unwrap_or(Duration::from_secs(0));
-                
+
                 if age.as_secs() <= self.config.ttl_seconds {
                     // Cache hit
                     let elapsed = start.elapsed().as_millis() as f64;
@@ -147,38 +147,43 @@ impl PromptCache {
                 }
             }
         }
-        
+
         // Try to retrieve from S5
         let path = format!("/cache/prompts/{}/{}.json", &prompt_hash[0..2], prompt_hash);
         if let Ok((data, _metadata)) = self.s5_client.get(&path).await {
             if let Ok(json_str) = String::from_utf8(data) {
                 if let Ok(entry) = serde_json::from_str::<CacheEntry>(&json_str) {
                     // Check TTL based on generated_at
-                    if let Ok(generated_at) = chrono::DateTime::parse_from_rfc3339(&entry.generated_at) {
+                    if let Ok(generated_at) =
+                        chrono::DateTime::parse_from_rfc3339(&entry.generated_at)
+                    {
                         let age = SystemTime::now()
-                            .duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(generated_at.timestamp() as u64))
+                            .duration_since(
+                                SystemTime::UNIX_EPOCH
+                                    + Duration::from_secs(generated_at.timestamp() as u64),
+                            )
                             .unwrap_or(Duration::from_secs(u64::MAX));
-                        
+
                         if age.as_secs() <= self.config.ttl_seconds {
                             // Cache hit from S5
                             let elapsed = start.elapsed().as_millis() as f64;
                             let mut metrics = self.metrics.lock().unwrap();
                             metrics.cache_hits += 1;
                             metrics.hit_times_ms.push(elapsed);
-                            
+
                             // Update in-memory cache
                             let mut entries = self.cache_entries.lock().unwrap();
                             let mut cache_entry = entry.clone();
                             cache_entry.created_at = SystemTime::now() - age;
                             entries.insert(prompt_hash.clone(), cache_entry);
-                            
+
                             return Ok(Some(entry.response));
                         }
                     }
                 }
             }
         }
-        
+
         // If no exact match, try semantic search
         // Extract base prompt without parameters for semantic search
         let base_prompt = prompt.split(';').next().unwrap_or(prompt);
@@ -186,9 +191,9 @@ impl PromptCache {
         let filter = Some(json!({
             "type": "cache_entry"
         }));
-        
+
         let results = self.vector_client.search(embedding, 1, filter).await?;
-        
+
         if !results.is_empty() {
             if let Some(first) = results.first() {
                 if let Some(score) = first.get("score").and_then(|s| s.as_f64()) {
@@ -197,14 +202,25 @@ impl PromptCache {
                     if score as f32 >= threshold {
                         // Found similar cached prompt
                         if let Some(metadata) = first.get("metadata") {
-                            if let Some(cached_response) = metadata.get("response").and_then(|r| r.as_str()) {
+                            if let Some(cached_response) =
+                                metadata.get("response").and_then(|r| r.as_str())
+                            {
                                 // Check TTL
-                                if let Some(generated_at_str) = metadata.get("generated_at").and_then(|g| g.as_str()) {
-                                    if let Ok(generated_at) = chrono::DateTime::parse_from_rfc3339(generated_at_str) {
+                                if let Some(generated_at_str) =
+                                    metadata.get("generated_at").and_then(|g| g.as_str())
+                                {
+                                    if let Ok(generated_at) =
+                                        chrono::DateTime::parse_from_rfc3339(generated_at_str)
+                                    {
                                         let age = SystemTime::now()
-                                            .duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(generated_at.timestamp() as u64))
+                                            .duration_since(
+                                                SystemTime::UNIX_EPOCH
+                                                    + Duration::from_secs(
+                                                        generated_at.timestamp() as u64
+                                                    ),
+                                            )
                                             .unwrap_or(Duration::from_secs(u64::MAX));
-                                        
+
                                         if age.as_secs() <= self.config.ttl_seconds {
                                             // Semantic cache hit
                                             let elapsed = start.elapsed().as_millis() as f64;
@@ -221,40 +237,44 @@ impl PromptCache {
                 }
             }
         }
-        
+
         // Cache miss
         let elapsed = start.elapsed().as_millis() as f64;
         let mut metrics = self.metrics.lock().unwrap();
         metrics.cache_misses += 1;
         metrics.miss_times_ms.push(elapsed);
-        
+
         Ok(None)
     }
-    
+
     pub async fn put(&self, prompt: &str, response: &str) -> Result<()> {
         let prompt_hash = self.hash_prompt(prompt);
         let now = SystemTime::now();
         let generated_at = chrono::DateTime::<chrono::Utc>::from(now)
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
-        
+
         // Parse prompt key for model and parameters
         let parts: Vec<&str> = prompt.split(';').collect();
         let base_prompt = if !parts.is_empty() { parts[0] } else { prompt };
         let mut model = "llama-3.2-1b-instruct".to_string();
         let mut parameters = json!({});
-        
+
         for part in &parts[1..] {
             if let Some((key, value)) = part.split_once('=') {
                 match key {
                     "model" => model = value.to_string(),
-                    "temp" => { parameters["temperature"] = json!(value.parse::<f64>().unwrap_or(0.7)); },
-                    "max_tokens" => { parameters["max_tokens"] = json!(value.parse::<u64>().unwrap_or(100)); },
+                    "temp" => {
+                        parameters["temperature"] = json!(value.parse::<f64>().unwrap_or(0.7));
+                    }
+                    "max_tokens" => {
+                        parameters["max_tokens"] = json!(value.parse::<u64>().unwrap_or(100));
+                    }
                     _ => {}
                 }
             }
         }
-        
+
         let entry = CacheEntry {
             prompt: base_prompt.to_string(),
             prompt_key: prompt.to_string(),
@@ -266,38 +286,39 @@ impl PromptCache {
             created_at: now,
             size_bytes: response.len() + prompt.len() + 200, // Approximate
         };
-        
+
         // Check cache size and evict if necessary
         {
             let mut entries = self.cache_entries.lock().unwrap();
             let mut metrics = self.metrics.lock().unwrap();
-            
+
             let max_size_bytes = self.config.max_cache_size_mb * 1024 * 1024;
             let new_size = metrics.cache_size_bytes + entry.size_bytes;
-            
+
             if new_size > max_size_bytes && !entries.is_empty() {
                 // Evict oldest entries (LRU)
-                let mut sorted_entries: Vec<_> = entries.iter()
+                let mut sorted_entries: Vec<_> = entries
+                    .iter()
                     .map(|(k, v)| (k.clone(), v.created_at))
                     .collect();
                 sorted_entries.sort_by_key(|(_k, time)| *time);
-                
+
                 for (key, _) in sorted_entries {
                     if let Some(removed) = entries.remove(&key) {
                         metrics.cache_size_bytes -= removed.size_bytes;
-                        
+
                         if metrics.cache_size_bytes + entry.size_bytes <= max_size_bytes {
                             break;
                         }
                     }
                 }
             }
-            
+
             // Add new entry
             metrics.cache_size_bytes += entry.size_bytes;
             entries.insert(prompt_hash.clone(), entry.clone());
         }
-        
+
         // Store in S5
         let path = format!("/cache/prompts/{}/{}.json", &prompt_hash[0..2], prompt_hash);
         let json_data = serde_json::to_string(&entry)?;
@@ -307,16 +328,19 @@ impl PromptCache {
             "model": entry.model,
             "generated_at": generated_at,
         });
-        
+
         // Store in S5 with error handling to prevent hanging
         if let Err(e) = tokio::time::timeout(
             Duration::from_secs(5),
-            self.s5_client.put(&path, json_data.into_bytes(), Some(metadata))
-        ).await {
+            self.s5_client
+                .put(&path, json_data.into_bytes(), Some(metadata)),
+        )
+        .await
+        {
             // Log error but continue (don't fail the whole put operation)
             eprintln!("Warning: S5 storage timed out or failed: {:?}", e);
         }
-        
+
         // Generate embedding and store in vector DB (use base prompt for embedding)
         let embedding = self.embedding_generator.generate(base_prompt).await?;
         let vector_metadata = json!({
@@ -330,39 +354,42 @@ impl PromptCache {
             "prompt_hash": prompt_hash,
             "s5_path": path,
         });
-        
+
         // Store in vector DB with error handling
         if let Err(e) = tokio::time::timeout(
             Duration::from_secs(5),
-            self.vector_client.insert_vector(&prompt_hash, embedding, vector_metadata)
-        ).await {
+            self.vector_client
+                .insert_vector(&prompt_hash, embedding, vector_metadata),
+        )
+        .await
+        {
             eprintln!("Warning: Vector DB storage timed out or failed: {:?}", e);
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn get_metrics(&self) -> Result<CacheMetrics> {
         let metrics = self.metrics.lock().unwrap();
-        
+
         let hit_rate = if metrics.total_requests > 0 {
             (metrics.cache_hits as f64) / (metrics.total_requests as f64)
         } else {
             0.0
         };
-        
+
         let avg_hit_time_ms = if !metrics.hit_times_ms.is_empty() {
             metrics.hit_times_ms.iter().sum::<f64>() / metrics.hit_times_ms.len() as f64
         } else {
             0.0
         };
-        
+
         let avg_miss_time_ms = if !metrics.miss_times_ms.is_empty() {
             metrics.miss_times_ms.iter().sum::<f64>() / metrics.miss_times_ms.len() as f64
         } else {
             0.0
         };
-        
+
         Ok(CacheMetrics {
             total_requests: metrics.total_requests,
             cache_hits: metrics.cache_hits,
@@ -373,14 +400,14 @@ impl PromptCache {
             cache_size_mb: (metrics.cache_size_bytes as f64) / (1024.0 * 1024.0),
         })
     }
-    
+
     pub async fn clear(&self) -> Result<()> {
         let mut entries = self.cache_entries.lock().unwrap();
         entries.clear();
-        
+
         let mut metrics = self.metrics.lock().unwrap();
         metrics.cache_size_bytes = 0;
-        
+
         Ok(())
     }
 }

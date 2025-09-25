@@ -1,6 +1,6 @@
+use super::session::WebSocketSession;
 use anyhow::Result;
 use async_trait::async_trait;
-use super::session::WebSocketSession;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,7 +41,8 @@ impl FileStorage {
     }
 
     fn get_session_path(&self, chain_id: u64, session_id: &str) -> PathBuf {
-        self.get_chain_dir(chain_id).join(format!("{}.json", session_id))
+        self.get_chain_dir(chain_id)
+            .join(format!("{}.json", session_id))
     }
 
     async fn ensure_chain_dir(&self, chain_id: u64) -> Result<()> {
@@ -141,8 +142,8 @@ impl SessionStorage for FileStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use crate::api::websocket::session::SessionConfig;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_file_storage_save_load() {

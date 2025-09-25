@@ -1,20 +1,24 @@
 use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
 use chrono::Utc;
 use futures::stream::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
-use crate::ezkl::{InferenceData, ProofFormat, CompressionLevel};
+use crate::ezkl::{CompressionLevel, InferenceData, ProofFormat};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BatchStrategy {
     Sequential,
-    Parallel { max_concurrent: usize },
-    Streaming { chunk_size: usize },
+    Parallel {
+        max_concurrent: usize,
+    },
+    Streaming {
+        chunk_size: usize,
+    },
     Adaptive {
         target_latency_ms: u64,
         min_batch_size: usize,
@@ -219,13 +223,16 @@ impl BatchProofGenerator {
         // Process based on strategy
         let (proofs, errors) = match &request.strategy {
             BatchStrategy::Sequential => {
-                self.process_sequential(&unique_inferences, &request).await?
+                self.process_sequential(&unique_inferences, &request)
+                    .await?
             }
             BatchStrategy::Parallel { max_concurrent } => {
-                self.process_parallel(&unique_inferences, &request, *max_concurrent).await?
+                self.process_parallel(&unique_inferences, &request, *max_concurrent)
+                    .await?
             }
             BatchStrategy::Streaming { .. } => {
-                self.process_sequential(&unique_inferences, &request).await?
+                self.process_sequential(&unique_inferences, &request)
+                    .await?
             }
             BatchStrategy::Adaptive { .. } => {
                 self.process_adaptive(&unique_inferences, &request).await?
@@ -302,7 +309,10 @@ impl BatchProofGenerator {
         })
     }
 
-    fn deduplicate_inferences(&self, inferences: &[InferenceData]) -> (Vec<InferenceData>, usize, usize) {
+    fn deduplicate_inferences(
+        &self,
+        inferences: &[InferenceData],
+    ) -> (Vec<InferenceData>, usize, usize) {
         let mut seen = std::collections::HashSet::new();
         let mut unique = Vec::new();
 
@@ -367,25 +377,32 @@ impl BatchProofGenerator {
                 let _permit = sem.acquire().await.unwrap();
                 tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
 
-                let (success, proof_data, error_msg) = Self::generate_single_proof_static(&inference).await;
+                let (success, proof_data, error_msg) =
+                    Self::generate_single_proof_static(&inference).await;
 
-                (i, ProofEntry {
-                    inference_index: i,
-                    proof_data,
-                    success,
-                    error_message: error_msg,
-                })
+                (
+                    i,
+                    ProofEntry {
+                        inference_index: i,
+                        proof_data,
+                        success,
+                        error_message: error_msg,
+                    },
+                )
             });
 
             handles.push(handle);
         }
 
-        let mut proofs = vec![ProofEntry {
-            inference_index: 0,
-            proof_data: vec![],
-            success: false,
-            error_message: None,
-        }; inferences.len()];
+        let mut proofs = vec![
+            ProofEntry {
+                inference_index: 0,
+                proof_data: vec![],
+                success: false,
+                error_message: None,
+            };
+            inferences.len()
+        ];
         let mut errors = Vec::new();
 
         for handle in handles {
@@ -409,14 +426,20 @@ impl BatchProofGenerator {
     ) -> Result<(Vec<ProofEntry>, Vec<BatchError>)> {
         // For mock, just use parallel processing with adaptive batch size
         let optimal_batch_size = 5;
-        self.process_parallel(inferences, request, optimal_batch_size).await
+        self.process_parallel(inferences, request, optimal_batch_size)
+            .await
     }
 
-    async fn generate_single_proof(&self, inference: &InferenceData) -> (bool, Vec<u8>, Option<String>) {
+    async fn generate_single_proof(
+        &self,
+        inference: &InferenceData,
+    ) -> (bool, Vec<u8>, Option<String>) {
         Self::generate_single_proof_static(inference).await
     }
 
-    async fn generate_single_proof_static(inference: &InferenceData) -> (bool, Vec<u8>, Option<String>) {
+    async fn generate_single_proof_static(
+        inference: &InferenceData,
+    ) -> (bool, Vec<u8>, Option<String>) {
         // Check for invalid data that would cause failure
         if inference.model_hash.is_empty() {
             return (false, vec![], Some("Invalid model hash".to_string()));
@@ -439,16 +462,14 @@ impl BatchProofGenerator {
         method: &AggregationMethod,
     ) -> Result<AggregatedProof> {
         // Filter successful proofs
-        let valid_proofs: Vec<_> = proofs.iter()
-            .filter(|p| p.success)
-            .collect();
+        let valid_proofs: Vec<_> = proofs.iter().filter(|p| p.success).collect();
 
         // Generate aggregated proof
         let aggregated_data = vec![99; 1000]; // Mock aggregated proof
         let num_aggregated = valid_proofs.len();
 
         // Calculate mock tree root
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         for proof in &valid_proofs {
             hasher.update(&proof.proof_data);
@@ -463,7 +484,10 @@ impl BatchProofGenerator {
         })
     }
 
-    pub async fn create_batch_proof_stream(&self, request: BatchProofRequest) -> Result<BatchProofStream> {
+    pub async fn create_batch_proof_stream(
+        &self,
+        request: BatchProofRequest,
+    ) -> Result<BatchProofStream> {
         let (tx, rx) = mpsc::channel(10);
         let chunk_size = match &request.strategy {
             BatchStrategy::Streaming { chunk_size } => *chunk_size,
@@ -479,7 +503,8 @@ impl BatchProofGenerator {
 
                 for (i, inference) in chunk.iter().enumerate() {
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                    let (success, proof_data, error_msg) = Self::generate_single_proof_static(inference).await;
+                    let (success, proof_data, error_msg) =
+                        Self::generate_single_proof_static(inference).await;
 
                     proofs.push(ProofEntry {
                         inference_index: chunk_idx * chunk_size + i,
@@ -541,7 +566,7 @@ impl BatchProofGenerator {
 
     pub async fn cancel_batch_proof(&self, batch_id: &str) -> Result<()> {
         let mut batches = self.batches.write().await;
-        
+
         if let Some(batch) = batches.get_mut(batch_id) {
             batch.status = BatchProofStatus::Cancelled;
             Ok(())
@@ -552,7 +577,7 @@ impl BatchProofGenerator {
 
     pub async fn get_batch_status(&self, batch_id: &str) -> Result<BatchStatus> {
         let batches = self.batches.read().await;
-        
+
         if let Some(batch) = batches.get(batch_id) {
             Ok(BatchStatus {
                 status: batch.status.clone(),
@@ -565,7 +590,7 @@ impl BatchProofGenerator {
 
     pub async fn simulate_interruption(&self, batch_id: &str, processed: usize) -> Result<()> {
         let mut batches = self.batches.write().await;
-        
+
         if let Some(batch) = batches.get_mut(batch_id) {
             batch.processed = processed;
             batch.status = BatchProofStatus::Failed;
@@ -577,7 +602,7 @@ impl BatchProofGenerator {
 
     pub async fn recover_batch_proof(&self, batch_id: &str) -> Result<BatchProofResult> {
         let batches = self.batches.read().await;
-        
+
         if let Some(batch) = batches.get(batch_id) {
             let mut result = self.create_batch_proof(batch.request.clone()).await?;
             result.recovered_from_index = batch.processed;
@@ -595,7 +620,9 @@ impl BatchProofGenerator {
             match status.status {
                 BatchProofStatus::Completed => break,
                 BatchProofStatus::Failed | BatchProofStatus::Cancelled => {
-                    return Err(BatchProofError::ProcessingFailed("Batch failed".to_string()).into());
+                    return Err(
+                        BatchProofError::ProcessingFailed("Batch failed".to_string()).into(),
+                    );
                 }
                 _ => tokio::time::sleep(tokio::time::Duration::from_millis(100)).await,
             }

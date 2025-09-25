@@ -1,12 +1,12 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::embeddings::{EmbeddingGenerator, Embedding, EmbeddingModel, EmbeddingConfig};
-use super::client::{VectorDBClient, VectorDBConfig, VectorEntry, SearchOptions, VectorBackend};
+use super::client::{SearchOptions, VectorBackend, VectorDBClient, VectorDBConfig, VectorEntry};
+use super::embeddings::{Embedding, EmbeddingConfig, EmbeddingGenerator, EmbeddingModel};
 
 pub type SimilarityThreshold = f32;
 
@@ -186,7 +186,7 @@ impl SemanticCache {
 
     pub async fn lookup(&self, prompt: &str) -> Result<Option<CacheHit>, CacheError> {
         let start_time = std::time::Instant::now();
-        
+
         // Update stats
         {
             let mut stats = self.stats.write().await;
@@ -200,20 +200,22 @@ impl SemanticCache {
         let search_options = SearchOptions {
             k: 10, // Get top 10 similar entries
             include_metadata: true,
-            filter: Some(HashMap::from([
-                ("namespace".to_string(), super::client::FilterValue::String(self.config.namespace.clone())),
-            ])),
+            filter: Some(HashMap::from([(
+                "namespace".to_string(),
+                super::client::FilterValue::String(self.config.namespace.clone()),
+            )])),
             ..Default::default()
         };
 
-        let search_results = self.vector_client
+        let search_results = self
+            .vector_client
             .search_with_options(prompt_embedding.data().to_vec(), search_options)
             .await?;
 
         // Find the best match above similarity threshold
         for result in search_results {
             let similarity = 1.0 - result.distance; // Convert distance to similarity
-            
+
             if similarity >= self.config.similarity_threshold {
                 // Check TTL
                 if let Some(created_at_str) = result.metadata.get("created_at") {
@@ -244,14 +246,25 @@ impl SemanticCache {
                     metrics.total_lookups += 1;
                     metrics.cache_hits += 1;
                     metrics.hit_rate = metrics.cache_hits as f32 / metrics.total_lookups as f32;
-                    metrics.avg_lookup_time_ms = (metrics.avg_lookup_time_ms * (metrics.total_lookups - 1) as f64 + lookup_time) / metrics.total_lookups as f64;
+                    metrics.avg_lookup_time_ms = (metrics.avg_lookup_time_ms
+                        * (metrics.total_lookups - 1) as f64
+                        + lookup_time)
+                        / metrics.total_lookups as f64;
                 }
 
-                let cached_at = result.metadata.get("created_at").and_then(|s| s.parse().ok()).unwrap_or(0);
-                let original_prompt = result.metadata.get("original_prompt").cloned().unwrap_or_else(|| prompt.to_string());
+                let cached_at = result
+                    .metadata
+                    .get("created_at")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                let original_prompt = result
+                    .metadata
+                    .get("original_prompt")
+                    .cloned()
+                    .unwrap_or_else(|| prompt.to_string());
                 let response = result.metadata.get("response").cloned().unwrap_or_default();
                 let metadata = result.metadata.clone();
-                
+
                 return Ok(Some(CacheHit {
                     prompt: prompt.to_string(),
                     original_prompt,
@@ -276,7 +289,9 @@ impl SemanticCache {
             metrics.total_lookups += 1;
             metrics.cache_misses += 1;
             metrics.hit_rate = metrics.cache_hits as f32 / metrics.total_lookups as f32;
-            metrics.avg_lookup_time_ms = (metrics.avg_lookup_time_ms * (metrics.total_lookups - 1) as f64 + lookup_time) / metrics.total_lookups as f64;
+            metrics.avg_lookup_time_ms =
+                (metrics.avg_lookup_time_ms * (metrics.total_lookups - 1) as f64 + lookup_time)
+                    / metrics.total_lookups as f64;
         }
 
         Ok(None)
@@ -289,7 +304,7 @@ impl SemanticCache {
         metadata: Option<HashMap<String, String>>,
     ) -> Result<String, CacheError> {
         let start_time = std::time::Instant::now();
-        
+
         // Check if we need to evict entries
         self.maybe_evict().await?;
 
@@ -304,7 +319,10 @@ impl SemanticCache {
         entry_metadata.insert("namespace".to_string(), self.config.namespace.clone());
         entry_metadata.insert("original_prompt".to_string(), prompt.to_string());
         entry_metadata.insert("response".to_string(), response.to_string());
-        entry_metadata.insert("created_at".to_string(), chrono::Utc::now().timestamp().to_string());
+        entry_metadata.insert(
+            "created_at".to_string(),
+            chrono::Utc::now().timestamp().to_string(),
+        );
 
         // Compress response if enabled
         let stored_response = if self.config.enable_compression {
@@ -312,7 +330,10 @@ impl SemanticCache {
         } else {
             response.to_string()
         };
-        entry_metadata.insert("compressed".to_string(), self.config.enable_compression.to_string());
+        entry_metadata.insert(
+            "compressed".to_string(),
+            self.config.enable_compression.to_string(),
+        );
 
         // Create vector entry
         let vector_entry = VectorEntry {
@@ -341,7 +362,9 @@ impl SemanticCache {
         {
             let mut metrics = self.performance_metrics.write().await;
             metrics.total_stores += 1;
-            metrics.avg_store_time_ms = (metrics.avg_store_time_ms * (metrics.total_stores - 1) as f64 + store_time) / metrics.total_stores as f64;
+            metrics.avg_store_time_ms =
+                (metrics.avg_store_time_ms * (metrics.total_stores - 1) as f64 + store_time)
+                    / metrics.total_stores as f64;
         }
 
         Ok(entry_id)
@@ -354,12 +377,12 @@ impl SemanticCache {
     ) -> Result<Vec<Result<String, CacheError>>, CacheError> {
         if prompts.len() != responses.len() {
             return Err(CacheError::InvalidConfig(
-                "Prompts and responses must have same length".to_string()
+                "Prompts and responses must have same length".to_string(),
             ));
         }
 
         let mut results = Vec::new();
-        
+
         for (prompt, response) in prompts.into_iter().zip(responses.into_iter()) {
             let result = self.store(&prompt, &response, None).await;
             results.push(result);
@@ -368,9 +391,12 @@ impl SemanticCache {
         Ok(results)
     }
 
-    pub async fn batch_lookup(&self, prompts: &[String]) -> Result<Vec<Option<CacheHit>>, CacheError> {
+    pub async fn batch_lookup(
+        &self,
+        prompts: &[String],
+    ) -> Result<Vec<Option<CacheHit>>, CacheError> {
         let mut results = Vec::new();
-        
+
         for prompt in prompts {
             let result = self.lookup(prompt).await?;
             results.push(result);
@@ -442,7 +468,10 @@ impl SemanticCache {
     fn compress_data(&self, data: &str) -> Result<String, CacheError> {
         // Simple compression simulation - in real implementation would use zstd or similar
         if data.len() > 100 {
-            Ok(format!("compressed:{}", data.chars().take(50).collect::<String>()))
+            Ok(format!(
+                "compressed:{}",
+                data.chars().take(50).collect::<String>()
+            ))
         } else {
             Ok(data.to_string())
         }
@@ -466,14 +495,15 @@ impl SemanticCache {
 
     pub async fn get_storage_info(&self, entry_id: &str) -> Result<StorageInfo, CacheError> {
         let vector_entry = self.vector_client.get_vector(entry_id).await?;
-        
+
         if let Some(response) = vector_entry.metadata.get("response") {
             let original_size = response.len();
-            let compressed_size = if vector_entry.metadata.get("compressed") == Some(&"true".to_string()) {
-                original_size / 2 // Simulated compression ratio
-            } else {
-                original_size
-            };
+            let compressed_size =
+                if vector_entry.metadata.get("compressed") == Some(&"true".to_string()) {
+                    original_size / 2 // Simulated compression ratio
+                } else {
+                    original_size
+                };
 
             Ok(StorageInfo {
                 original_size,

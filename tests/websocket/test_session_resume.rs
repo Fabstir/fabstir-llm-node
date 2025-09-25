@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[tokio::test]
 async fn test_session_resume_rebuilds_cache() {
     let handler = SessionResumeHandler::new();
-    
+
     let context = vec![
         ConversationMessage {
             role: "user".to_string(),
@@ -54,7 +54,7 @@ async fn test_session_resume_rebuilds_cache() {
 #[tokio::test]
 async fn test_session_resume_with_partial_history() {
     let handler = SessionResumeHandler::new();
-    
+
     // Simulating recovery after crash - only have first 2 messages
     let partial_context = vec![
         ConversationMessage {
@@ -86,16 +86,14 @@ async fn test_session_resume_with_partial_history() {
 #[tokio::test]
 async fn test_session_resume_validates_message_index() {
     let handler = SessionResumeHandler::new();
-    
-    let context = vec![
-        ConversationMessage {
-            role: "user".to_string(),
-            content: "Test".to_string(),
-            timestamp: None,
-            tokens: None,
-            proof: None,
-        },
-    ];
+
+    let context = vec![ConversationMessage {
+        role: "user".to_string(),
+        content: "Test".to_string(),
+        timestamp: None,
+        tokens: None,
+        proof: None,
+    }];
 
     // Last message index should match context length (1 message, but we pass 5)
     let result = handler
@@ -109,11 +107,11 @@ async fn test_session_resume_validates_message_index() {
 #[tokio::test]
 async fn test_session_resume_handles_large_context() {
     let handler = SessionResumeHandler::new();
-    
+
     // Create large conversation history
     let mut context = vec![];
     let mut total_tokens = 0;
-    
+
     for i in 0..50 {
         context.push(ConversationMessage {
             role: "user".to_string(),
@@ -122,10 +120,10 @@ async fn test_session_resume_handles_large_context() {
             tokens: None,
             proof: None,
         });
-        
+
         let tokens = (i + 1) * 2;
         total_tokens += tokens;
-        
+
         context.push(ConversationMessage {
             role: "assistant".to_string(),
             content: format!("Answer {}", i),
@@ -147,18 +145,16 @@ async fn test_session_resume_handles_large_context() {
 #[tokio::test]
 async fn test_session_resume_clears_old_session() {
     let handler = SessionResumeHandler::new();
-    
+
     // First resume
-    let context1 = vec![
-        ConversationMessage {
-            role: "user".to_string(),
-            content: "Old question".to_string(),
-            timestamp: None,
-            tokens: None,
-            proof: None,
-        },
-    ];
-    
+    let context1 = vec![ConversationMessage {
+        role: "user".to_string(),
+        content: "Old question".to_string(),
+        timestamp: None,
+        tokens: None,
+        proof: None,
+    }];
+
     handler
         .handle_session_resume("session-789", 100, context1, 1)
         .await
@@ -181,16 +177,16 @@ async fn test_session_resume_clears_old_session() {
             proof: None,
         },
     ];
-    
+
     let result = handler
         .handle_session_resume("session-789", 101, context2.clone(), 2)
         .await
         .unwrap();
-    
+
     // Verify cache has new context
     let cache = handler.get_cache("session-789").await.unwrap();
     let messages = cache.get_messages().await;
-    
+
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "New question");
     assert_eq!(result.job_id, 101);
@@ -199,7 +195,7 @@ async fn test_session_resume_clears_old_session() {
 #[tokio::test]
 async fn test_session_resume_with_system_message() {
     let handler = SessionResumeHandler::new();
-    
+
     let context = vec![
         ConversationMessage {
             role: "system".to_string(),
@@ -230,7 +226,7 @@ async fn test_session_resume_with_system_message() {
         .unwrap();
 
     assert_eq!(result.message_count, 3);
-    
+
     // Verify system message is preserved
     let cache = handler.get_cache("system-session").await.unwrap();
     let messages = cache.get_messages().await;
@@ -240,9 +236,9 @@ async fn test_session_resume_with_system_message() {
 #[tokio::test]
 async fn test_concurrent_session_resumes() {
     let handler = Arc::new(SessionResumeHandler::new());
-    
+
     let mut handles = vec![];
-    
+
     // Create 10 concurrent session resumes
     for i in 0..10 {
         let h = handler.clone();
@@ -253,28 +249,23 @@ async fn test_concurrent_session_resumes() {
                     content: format!("Question {}", i),
                     timestamp: None,
                     tokens: None,
-            proof: None,
+                    proof: None,
                 },
                 ConversationMessage {
                     role: "assistant".to_string(),
                     content: format!("Answer {}", i),
                     timestamp: None,
                     tokens: Some(i as u32 + 1),
-            proof: None,
+                    proof: None,
                 },
             ];
-            
-            h.handle_session_resume(
-                &format!("concurrent-{}", i),
-                i as u64 + 1,
-                context,
-                2,
-            )
-            .await
+
+            h.handle_session_resume(&format!("concurrent-{}", i), i as u64 + 1, context, 2)
+                .await
         });
         handles.push(handle);
     }
-    
+
     // All should succeed
     for handle in handles {
         let result = handle.await.unwrap().unwrap();

@@ -35,8 +35,13 @@ impl GasEstimator {
         }
     }
 
-    pub fn estimate_gas(&self, chain_id: u64, operation: &str) -> Result<GasEstimate, SettlementError> {
-        let chain_limits = self.gas_limits
+    pub fn estimate_gas(
+        &self,
+        chain_id: u64,
+        operation: &str,
+    ) -> Result<GasEstimate, SettlementError> {
+        let chain_limits = self
+            .gas_limits
             .get(&chain_id)
             .ok_or(SettlementError::UnsupportedChain(chain_id))?;
 
@@ -45,10 +50,7 @@ impl GasEstimator {
             .cloned()
             .unwrap_or_else(|| U256::from(250_000)); // Default gas limit
 
-        let gas_multiplier = self.gas_multipliers
-            .get(&chain_id)
-            .copied()
-            .unwrap_or(1.15); // Default 15% buffer
+        let gas_multiplier = self.gas_multipliers.get(&chain_id).copied().unwrap_or(1.15); // Default 15% buffer
 
         Ok(GasEstimate {
             gas_limit,
@@ -56,7 +58,11 @@ impl GasEstimator {
         })
     }
 
-    pub fn estimate_with_buffer(&self, chain_id: u64, operation: &str) -> Result<U256, SettlementError> {
+    pub fn estimate_with_buffer(
+        &self,
+        chain_id: u64,
+        operation: &str,
+    ) -> Result<U256, SettlementError> {
         let estimate = self.estimate_gas(chain_id, operation)?;
 
         // Apply the multiplier to the gas limit

@@ -1,25 +1,25 @@
-use ethers::prelude::*;
+use anyhow::{anyhow, Result};
 use ethers::middleware::SignerMiddleware;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tokio::task::JoinHandle;
-use anyhow::{Result, anyhow};
-use tracing::{info, warn, error, debug};
-use serde::{Serialize, Deserialize};
+use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
 
+use crate::contracts::model_registry::{ApprovedModels, ModelRegistryClient};
 use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
-use crate::contracts::model_registry::{ModelRegistryClient, ApprovedModels};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
-    pub models: Vec<String>,        // Model file paths
-    pub model_ids: Vec<H256>,       // Validated model IDs from registry
-    pub gpu: String,                // "RTX 4090"
-    pub ram_gb: u32,                // 64
-    pub cost_per_token: f64,        // 0.0001
-    pub max_concurrent_jobs: u32,   // 5
-    pub api_url: String,            // Node's API endpoint URL
+    pub models: Vec<String>,      // Model file paths
+    pub model_ids: Vec<H256>,     // Validated model IDs from registry
+    pub gpu: String,              // "RTX 4090"
+    pub ram_gb: u32,              // 64
+    pub cost_per_token: f64,      // 0.0001
+    pub max_concurrent_jobs: u32, // 5
+    pub api_url: String,          // Node's API endpoint URL
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +34,8 @@ pub struct RegistrationConfig {
 
 pub struct NodeRegistration {
     contract: Arc<NodeRegistry<SignerMiddleware<Provider<Http>, LocalWallet>>>,
-    new_contract: Option<Arc<NodeRegistryWithModels<SignerMiddleware<Provider<Http>, LocalWallet>>>>,
+    new_contract:
+        Option<Arc<NodeRegistryWithModels<SignerMiddleware<Provider<Http>, LocalWallet>>>>,
     model_registry: Option<ModelRegistryClient>,
     node_address: Address,
     stake_amount: U256,
@@ -56,13 +57,19 @@ impl NodeRegistration {
         // Create signer middleware
         let chain_id = provider.get_chainid().await.unwrap_or(U256::from(1));
         let wallet = wallet.with_chain_id(chain_id.as_u64());
-        let client = Arc::new(SignerMiddleware::new(provider.as_ref().clone(), wallet.clone()));
+        let client = Arc::new(SignerMiddleware::new(
+            provider.as_ref().clone(),
+            wallet.clone(),
+        ));
 
         // Create contract instances
         let contract = Arc::new(NodeRegistry::new(config.contract_address, client.clone()));
 
         let new_contract = if config.use_new_registry {
-            Some(Arc::new(NodeRegistryWithModels::new(config.contract_address, client.clone())))
+            Some(Arc::new(NodeRegistryWithModels::new(
+                config.contract_address,
+                client.clone(),
+            )))
         } else {
             None
         };
@@ -73,10 +80,13 @@ impl NodeRegistration {
                 provider.clone(),
                 config.model_registry_address,
                 Some(config.contract_address),
-            ).await?;
+            )
+            .await?;
 
             // Validate models and get their IDs
-            let model_ids = registry_client.validate_models_for_registration(&metadata.models).await?;
+            let model_ids = registry_client
+                .validate_models_for_registration(&metadata.models)
+                .await?;
             metadata.model_ids = model_ids;
 
             Some(registry_client)
@@ -100,16 +110,16 @@ impl NodeRegistration {
             heartbeat_interval: config.heartbeat_interval,
             use_new_registry: config.use_new_registry,
         };
-        
+
         // Auto-register if configured
         if config.auto_register {
             info!("Auto-registering node on startup");
             registration.register_node().await?;
         }
-        
+
         Ok(registration)
     }
-    
+
     pub async fn register_node(&mut self) -> Result<TransactionReceipt> {
         info!("Registering node with stake: {}", self.stake_amount);
 
@@ -124,7 +134,10 @@ impl NodeRegistration {
                 return Err(anyhow!("No approved models configured for registration"));
             }
 
-            info!("Registering with {} approved models", self.metadata.model_ids.len());
+            info!(
+                "Registering with {} approved models",
+                self.metadata.model_ids.len()
+            );
             for model_id in &self.metadata.model_ids {
                 debug!("Model ID: {:?}", model_id);
             }
@@ -144,7 +157,11 @@ impl NodeRegistration {
                 let method = new_contract
                     .method::<_, ()>(
                         "registerNode",
-                        (metadata_json.clone(), self.metadata.api_url.clone(), self.metadata.model_ids.clone())
+                        (
+                            metadata_json.clone(),
+                            self.metadata.api_url.clone(),
+                            self.metadata.model_ids.clone(),
+                        ),
                     )
                     .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -164,7 +181,8 @@ impl NodeRegistration {
             info!("Calling registerNode on legacy NodeRegistry");
             debug!("Metadata: {}", metadata_json);
 
-            let method = self.contract
+            let method = self
+                .contract
                 .method::<_, ()>("registerNode", (metadata_json, self.stake_amount))
                 .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -186,7 +204,7 @@ impl NodeRegistration {
 
         Ok(receipt)
     }
-    
+
     pub async fn update_capabilities(&mut self, metadata: NodeMetadata) -> Result<()> {
         info!("Updating node capabilities");
 
@@ -212,13 +230,13 @@ impl NodeRegistration {
                     .await
                     .map_err(|e| anyhow!("Failed to update metadata: {}", e))?;
 
-                tx.await
-                    .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+                tx.await.map_err(|e| anyhow!("Transaction failed: {}", e))?;
             } else {
                 return Err(anyhow!("NodeRegistryWithModels contract not configured"));
             }
         } else {
-            let method = self.contract
+            let method = self
+                .contract
                 .method::<_, ()>("updateNode", metadata_json)
                 .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -227,13 +245,12 @@ impl NodeRegistration {
                 .await
                 .map_err(|e| anyhow!("Failed to update node: {}", e))?;
 
-            tx.await
-                .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+            tx.await.map_err(|e| anyhow!("Transaction failed: {}", e))?;
         }
 
         Ok(())
     }
-    
+
     pub async fn unregister_node(&mut self) -> Result<()> {
         info!("Unregistering node");
 
@@ -256,17 +273,20 @@ impl NodeRegistration {
                     .await
                     .map_err(|e| anyhow!("Failed to unregister node: {}", e))?;
 
-                let receipt = tx.await
-                    .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+                let receipt = tx.await.map_err(|e| anyhow!("Transaction failed: {}", e))?;
 
                 if let Some(receipt) = receipt {
-                    info!("Node unregistered, stake returned in tx: {:?}", receipt.transaction_hash);
+                    info!(
+                        "Node unregistered, stake returned in tx: {:?}",
+                        receipt.transaction_hash
+                    );
                 }
             } else {
                 return Err(anyhow!("NodeRegistryWithModels contract not configured"));
             }
         } else {
-            let method = self.contract
+            let method = self
+                .contract
                 .method::<_, ()>("unregisterNode", ())
                 .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -275,11 +295,13 @@ impl NodeRegistration {
                 .await
                 .map_err(|e| anyhow!("Failed to unregister node: {}", e))?;
 
-            let receipt = tx.await
-                .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+            let receipt = tx.await.map_err(|e| anyhow!("Transaction failed: {}", e))?;
 
             if let Some(receipt) = receipt {
-                info!("Node unregistered, stake returned in tx: {:?}", receipt.transaction_hash);
+                info!(
+                    "Node unregistered, stake returned in tx: {:?}",
+                    receipt.transaction_hash
+                );
             }
         }
 
@@ -288,24 +310,24 @@ impl NodeRegistration {
 
         Ok(())
     }
-    
+
     pub fn start_heartbeat(&mut self) {
         if self.heartbeat_handle.is_some() {
             warn!("Heartbeat already running");
             return;
         }
-        
+
         // For testing, allow heartbeat even if not registered
         // In production, would require registration
-        
+
         let interval = self.heartbeat_interval;
         let last_heartbeat = self.last_heartbeat.clone();
         let is_registered = self.is_registered.clone();
         let node_address = self.node_address;
-        
+
         let handle = tokio::spawn(async move {
             info!("Starting heartbeat with interval: {}s", interval);
-            
+
             loop {
                 // Note: Heartbeat is typically handled off-chain or via a separate service
                 // This is a placeholder for actual heartbeat implementation
@@ -325,17 +347,17 @@ impl NodeRegistration {
                 }
             }
         });
-        
+
         self.heartbeat_handle = Some(handle);
     }
-    
+
     pub async fn stop_heartbeat(&mut self) {
         if let Some(handle) = self.heartbeat_handle.take() {
             handle.abort();
             info!("Heartbeat stopped");
         }
     }
-    
+
     pub async fn check_stake_requirement(&self) -> bool {
         // Check contract for minimum stake requirement
         let min_stake = if self.use_new_registry {
@@ -378,13 +400,16 @@ impl NodeRegistration {
         };
 
         if self.stake_amount < min_stake {
-            warn!("Stake amount {} is less than minimum {}", self.stake_amount, min_stake);
+            warn!(
+                "Stake amount {} is less than minimum {}",
+                self.stake_amount, min_stake
+            );
             false
         } else {
             true
         }
     }
-    
+
     pub fn build_metadata_json(&self) -> String {
         let metadata_obj = if self.use_new_registry {
             // New format for NodeRegistryWithModels
@@ -412,27 +437,27 @@ impl NodeRegistration {
 
         metadata_obj.to_string()
     }
-    
+
     pub fn is_registered(&self) -> bool {
         self.is_registered.load(Ordering::Relaxed)
     }
-    
+
     pub fn is_heartbeat_running(&self) -> bool {
         self.heartbeat_handle.is_some()
     }
-    
+
     pub fn get_last_heartbeat(&self) -> u64 {
         self.last_heartbeat.load(Ordering::Relaxed)
     }
-    
+
     pub fn get_node_address(&self) -> Address {
         self.node_address
     }
-    
+
     pub fn get_stake_amount(&self) -> U256 {
         self.stake_amount
     }
-    
+
     pub fn get_metadata(&self) -> &NodeMetadata {
         &self.metadata
     }
@@ -444,16 +469,16 @@ impl NodeRegistration {
     pub fn get_api_url(&self) -> &str {
         &self.metadata.api_url
     }
-    
+
     /// Check if heartbeat is healthy (not stale)
     pub fn is_heartbeat_healthy(&self) -> bool {
         if !self.is_registered() || !self.is_heartbeat_running() {
             return false;
         }
-        
+
         let last = self.get_last_heartbeat();
         let now = chrono::Utc::now().timestamp() as u64;
-        
+
         // Consider healthy if heartbeat within 2x interval
         (now - last) < (self.heartbeat_interval * 2)
     }
@@ -462,7 +487,7 @@ impl NodeRegistration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_metadata_serialization() {
         let metadata = NodeMetadata {
@@ -474,22 +499,22 @@ mod tests {
             max_concurrent_jobs: 5,
             api_url: "http://localhost:8080".to_string(),
         };
-        
+
         // Serialize to JSON
         let json = serde_json::to_string(&metadata).unwrap();
-        
+
         // Deserialize back
         let metadata2: NodeMetadata = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(metadata.models, metadata2.models);
         assert_eq!(metadata.gpu, metadata2.gpu);
         assert_eq!(metadata.ram_gb, metadata2.ram_gb);
     }
-    
+
     #[test]
     fn test_stake_validation() {
         let min_stake = U256::from(500000u64);
-        
+
         // Test various amounts
         assert!(U256::from(1000000u64) >= min_stake);
         assert!(U256::from(500000u64) >= min_stake);

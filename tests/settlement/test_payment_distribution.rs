@@ -1,14 +1,14 @@
+use ethers::types::{Address, U256};
+use fabstir_llm_node::config::chains::ChainRegistry;
 use fabstir_llm_node::settlement::{
     payment_distribution::{
-        PaymentDistributor, PaymentConfig, PaymentSplit,
-        ChainPaymentStats, PaymentToken, RefundCalculation,
+        ChainPaymentStats, PaymentConfig, PaymentDistributor, PaymentSplit, PaymentToken,
+        RefundCalculation,
     },
     types::{SettlementError, SettlementStatus},
 };
-use fabstir_llm_node::config::chains::ChainRegistry;
-use ethers::types::{U256, Address};
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 // Test helper to create test addresses
 fn test_host_address() -> Address {
@@ -40,13 +40,16 @@ async fn test_host_earnings_base_sepolia() {
     let total_tokens = 2000;
     let price_per_token = U256::from(1_000_000_000_000_000u64); // 0.001 ETH per token
 
-    let split = distributor.calculate_payment_split(
-        84532, // Base Sepolia
-        deposit,
-        tokens_used,
-        total_tokens,
-        price_per_token,
-    ).await.unwrap();
+    let split = distributor
+        .calculate_payment_split(
+            84532, // Base Sepolia
+            deposit,
+            tokens_used,
+            total_tokens,
+            price_per_token,
+        )
+        .await
+        .unwrap();
 
     // Host should get 90% of payment (configurable via env)
     let expected_payment = price_per_token * tokens_used;
@@ -71,13 +74,16 @@ async fn test_host_earnings_opbnb() {
     let total_tokens = 1000;
     let price_per_token = U256::from(10_000_000_000_000_000u64); // 0.01 BNB per token
 
-    let split = distributor.calculate_payment_split(
-        5611, // opBNB Testnet
-        deposit,
-        tokens_used,
-        total_tokens,
-        price_per_token,
-    ).await.unwrap();
+    let split = distributor
+        .calculate_payment_split(
+            5611, // opBNB Testnet
+            deposit,
+            tokens_used,
+            total_tokens,
+            price_per_token,
+        )
+        .await
+        .unwrap();
 
     // Verify payment calculation
     let expected_payment = price_per_token * tokens_used;
@@ -142,12 +148,7 @@ async fn test_user_refund_calculation() {
     let max_tokens = 1000;
     let price_per_token = U256::from(1_000_000_000_000_000u64); // 0.001 ETH
 
-    let refund = distributor.calculate_refund(
-        deposit,
-        tokens_used,
-        max_tokens,
-        price_per_token,
-    );
+    let refund = distributor.calculate_refund(deposit, tokens_used, max_tokens, price_per_token);
 
     let expected_cost = price_per_token * tokens_used;
     assert_eq!(refund.refund_amount, deposit - expected_cost);
@@ -187,7 +188,7 @@ async fn test_payment_verification() {
     let payment_data = PaymentSplit {
         chain_id: 84532,
         host_earnings: U256::from(900_000_000_000_000_000u64), // 0.9 ETH
-        treasury_fee: U256::from(100_000_000_000_000_000u64),   // 0.1 ETH
+        treasury_fee: U256::from(100_000_000_000_000_000u64),  // 0.1 ETH
         user_refund: U256::from(0),
         total_payment: U256::from(1_000_000_000_000_000_000u64), // 1 ETH
         native_token_symbol: "ETH".to_string(),
@@ -208,7 +209,10 @@ async fn test_payment_verification() {
     };
 
     let invalid_verified = distributor.verify_payment_split(&invalid_split);
-    assert!(!invalid_verified, "Invalid payment split should fail verification");
+    assert!(
+        !invalid_verified,
+        "Invalid payment split should fail verification"
+    );
 }
 
 #[tokio::test]
@@ -219,27 +223,33 @@ async fn test_different_payment_tokens() {
     let distributor = PaymentDistributor::new(registry.clone(), config);
 
     // Test native token payment (ETH)
-    let native_payment = distributor.process_payment(
-        84532,
-        PaymentToken::Native,
-        U256::from(1_000_000_000_000_000_000u64),
-        500,
-        1000,
-        U256::from(1_000_000_000_000_000u64),
-    ).await.unwrap();
+    let native_payment = distributor
+        .process_payment(
+            84532,
+            PaymentToken::Native,
+            U256::from(1_000_000_000_000_000_000u64),
+            500,
+            1000,
+            U256::from(1_000_000_000_000_000u64),
+        )
+        .await
+        .unwrap();
 
     assert_eq!(native_payment.token_type, PaymentToken::Native);
     assert_eq!(native_payment.token_symbol, "ETH");
 
     // Test USDC payment
-    let usdc_payment = distributor.process_payment(
-        84532,
-        PaymentToken::ERC20(test_usdc_address()),
-        U256::from(1_000_000), // 1 USDC (6 decimals)
-        500,
-        1000,
-        U256::from(1_000), // 0.001 USDC per token
-    ).await.unwrap();
+    let usdc_payment = distributor
+        .process_payment(
+            84532,
+            PaymentToken::ERC20(test_usdc_address()),
+            U256::from(1_000_000), // 1 USDC (6 decimals)
+            500,
+            1000,
+            U256::from(1_000), // 0.001 USDC per token
+        )
+        .await
+        .unwrap();
 
     assert!(matches!(usdc_payment.token_type, PaymentToken::ERC20(_)));
     assert_eq!(usdc_payment.token_symbol, "USDC");
@@ -254,11 +264,13 @@ async fn test_chain_payment_statistics() {
 
     // Process several payments
     for i in 0..5 {
-        distributor.record_payment(
-            84532,
-            U256::from((i + 1) * 100_000_000_000_000_000u64),
-            U256::from(i * 10_000_000_000_000_000u64),
-        ).await;
+        distributor
+            .record_payment(
+                84532,
+                U256::from((i + 1) * 100_000_000_000_000_000u64),
+                U256::from(i * 10_000_000_000_000_000u64),
+            )
+            .await;
     }
 
     // Get statistics
@@ -278,8 +290,20 @@ async fn test_multi_chain_payment_tracking() {
     let mut distributor = PaymentDistributor::new(registry.clone(), config);
 
     // Track payments across multiple chains
-    distributor.record_payment(84532, U256::from(1_000_000_000_000_000_000u64), U256::from(100_000_000_000_000_000u64)).await;
-    distributor.record_payment(5611, U256::from(5_000_000_000_000_000_000u64), U256::from(500_000_000_000_000_000u64)).await;
+    distributor
+        .record_payment(
+            84532,
+            U256::from(1_000_000_000_000_000_000u64),
+            U256::from(100_000_000_000_000_000u64),
+        )
+        .await;
+    distributor
+        .record_payment(
+            5611,
+            U256::from(5_000_000_000_000_000_000u64),
+            U256::from(500_000_000_000_000_000u64),
+        )
+        .await;
 
     // Get all chain stats
     let all_stats = distributor.get_all_chain_statistics().await;

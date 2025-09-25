@@ -1,9 +1,9 @@
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
-use chrono::{DateTime, Utc, Duration};
 use thiserror::Error;
+use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -148,10 +148,10 @@ impl RatingsManager {
         self.validate_rating(&rating)?;
 
         let rating_id = Uuid::new_v4().to_string();
-        
+
         // Check for spam/inappropriate content
         let needs_moderation = self.needs_moderation(&rating).await;
-        
+
         if needs_moderation {
             let mut moderation = self.moderation_queue.lock().await;
             moderation.insert(rating_id.clone(), "pending_moderation".to_string());
@@ -188,10 +188,8 @@ impl RatingsManager {
         let model_ratings = self.model_ratings.lock().await;
 
         let rating_ids = model_ratings.get(model_id).cloned().unwrap_or_default();
-        let model_rating_data: Vec<_> = rating_ids
-            .iter()
-            .filter_map(|id| ratings.get(id))
-            .collect();
+        let model_rating_data: Vec<_> =
+            rating_ids.iter().filter_map(|id| ratings.get(id)).collect();
 
         if model_rating_data.is_empty() {
             return RatingsSummary {
@@ -204,7 +202,7 @@ impl RatingsManager {
         }
 
         let total_ratings = model_rating_data.len() as u32;
-        
+
         // Calculate overall average
         let sum_overall: u32 = model_rating_data.iter().map(|r| r.overall_rating).sum();
         let average_overall = sum_overall as f64 / total_ratings as f64;
@@ -234,7 +232,7 @@ impl RatingsManager {
         for rating in self.config.min_rating..=self.config.max_rating {
             distribution.insert(rating, 0);
         }
-        
+
         for rating_data in &model_rating_data {
             *distribution.entry(rating_data.overall_rating).or_insert(0) += 1;
         }
@@ -258,7 +256,11 @@ impl RatingsManager {
         reputations.get(host_id).copied().unwrap_or(100.0) // Default reputation
     }
 
-    pub async fn submit_rating_for_host(&self, host_id: &str, rating: UserRating) -> Result<String, RatingsError> {
+    pub async fn submit_rating_for_host(
+        &self,
+        host_id: &str,
+        rating: UserRating,
+    ) -> Result<String, RatingsError> {
         let rating_id = self.submit_rating(rating).await?;
 
         // Update host index
@@ -273,15 +275,15 @@ impl RatingsManager {
         Ok(rating_id)
     }
 
-    pub async fn calculate_reputation_impact(&self, host_id: &str) -> Result<ReputationImpact, RatingsError> {
+    pub async fn calculate_reputation_impact(
+        &self,
+        host_id: &str,
+    ) -> Result<ReputationImpact, RatingsError> {
         let host_ratings = self.host_ratings.lock().await;
         let ratings = self.ratings.lock().await;
 
         let rating_ids = host_ratings.get(host_id).cloned().unwrap_or_default();
-        let host_rating_data: Vec<_> = rating_ids
-            .iter()
-            .filter_map(|id| ratings.get(id))
-            .collect();
+        let host_rating_data: Vec<_> = rating_ids.iter().filter_map(|id| ratings.get(id)).collect();
 
         if host_rating_data.is_empty() {
             return Err(RatingsError::HostNotFound(host_id.to_string()));
@@ -292,7 +294,7 @@ impl RatingsManager {
         let average_rating = sum_ratings as f64 / rating_count as f64;
 
         let current_reputation = self.get_host_reputation(host_id).await;
-        
+
         // Calculate reputation change based on ratings
         let reputation_change = if rating_count >= self.config.minimum_ratings_for_impact {
             (average_rating - 3.0) * self.config.reputation_impact_factor * rating_count as f64
@@ -373,7 +375,8 @@ impl RatingsManager {
             .map(|(word, _)| word)
             .collect();
 
-        let sentiment_score = (positive_count as f64 - negative_count as f64) / total_feedback as f64;
+        let sentiment_score =
+            (positive_count as f64 - negative_count as f64) / total_feedback as f64;
 
         FeedbackAnalysis {
             total_feedback,
@@ -400,7 +403,10 @@ impl RatingsManager {
             .collect()
     }
 
-    pub async fn submit_rating_with_timestamp(&self, rating: UserRating) -> Result<String, RatingsError> {
+    pub async fn submit_rating_with_timestamp(
+        &self,
+        rating: UserRating,
+    ) -> Result<String, RatingsError> {
         // Same as submit_rating but preserves the provided timestamp
         self.submit_rating(rating).await
     }
@@ -413,18 +419,24 @@ impl RatingsManager {
         let all_ratings = self.get_recent_ratings(model_id, older_window).await;
 
         let recent_avg = if !recent_ratings.is_empty() {
-            recent_ratings.iter().map(|r| r.overall_rating).sum::<u32>() as f64 / recent_ratings.len() as f64
+            recent_ratings.iter().map(|r| r.overall_rating).sum::<u32>() as f64
+                / recent_ratings.len() as f64
         } else {
             0.0
         };
 
         let older_ratings: Vec<_> = all_ratings
             .iter()
-            .filter(|r| !recent_ratings.iter().any(|recent| recent.job_id == r.job_id))
+            .filter(|r| {
+                !recent_ratings
+                    .iter()
+                    .any(|recent| recent.job_id == r.job_id)
+            })
             .collect();
 
         let older_avg = if !older_ratings.is_empty() {
-            older_ratings.iter().map(|r| r.overall_rating).sum::<u32>() as f64 / older_ratings.len() as f64
+            older_ratings.iter().map(|r| r.overall_rating).sum::<u32>() as f64
+                / older_ratings.len() as f64
         } else {
             recent_avg
         };
@@ -461,14 +473,15 @@ impl RatingsManager {
         model_averages
     }
 
-    pub async fn export_ratings(&self, format: &str, model_filter: Option<&str>) -> Result<String, RatingsError> {
+    pub async fn export_ratings(
+        &self,
+        format: &str,
+        model_filter: Option<&str>,
+    ) -> Result<String, RatingsError> {
         let ratings = self.ratings.lock().await;
 
         let filtered_ratings: Vec<_> = if let Some(model) = model_filter {
-            ratings
-                .values()
-                .filter(|r| r.model_id == model)
-                .collect()
+            ratings.values().filter(|r| r.model_id == model).collect()
         } else {
             ratings.values().collect()
         };
@@ -496,16 +509,26 @@ impl RatingsManager {
                 });
                 Ok(serde_json::to_string_pretty(&export_data)?)
             }
-            _ => Err(RatingsError::InvalidRating("Unsupported format".to_string()))
+            _ => Err(RatingsError::InvalidRating(
+                "Unsupported format".to_string(),
+            )),
         }
     }
 
     pub async fn get_rating_status(&self, rating_id: &str) -> String {
         let moderation = self.moderation_queue.lock().await;
-        moderation.get(rating_id).cloned().unwrap_or("approved".to_string())
+        moderation
+            .get(rating_id)
+            .cloned()
+            .unwrap_or("approved".to_string())
     }
 
-    pub async fn moderate_rating(&self, rating_id: &str, approved: bool, reason: &str) -> Result<(), RatingsError> {
+    pub async fn moderate_rating(
+        &self,
+        rating_id: &str,
+        approved: bool,
+        reason: &str,
+    ) -> Result<(), RatingsError> {
         let mut moderation = self.moderation_queue.lock().await;
         let status = if approved { "approved" } else { "rejected" };
         moderation.insert(rating_id.to_string(), format!("{}: {}", status, reason));
@@ -514,21 +537,27 @@ impl RatingsManager {
 
     fn validate_rating(&self, rating: &UserRating) -> Result<(), RatingsError> {
         // Check rating range
-        if rating.overall_rating < self.config.min_rating || rating.overall_rating > self.config.max_rating {
-            return Err(RatingsError::InvalidRating(
-                format!("Rating {} out of range {}-{}", 
-                       rating.overall_rating, 
-                       self.config.min_rating, 
-                       self.config.max_rating)
-            ));
+        if rating.overall_rating < self.config.min_rating
+            || rating.overall_rating > self.config.max_rating
+        {
+            return Err(RatingsError::InvalidRating(format!(
+                "Rating {} out of range {}-{}",
+                rating.overall_rating, self.config.min_rating, self.config.max_rating
+            )));
         }
 
         // Check category ratings
-        for ((category, &category_rating), _) in rating.category_ratings.iter().zip(self.config.categories.iter()) {
-            if category_rating < self.config.min_rating || category_rating > self.config.max_rating {
-                return Err(RatingsError::InvalidRating(
-                    format!("Category rating for {:?} out of range", category)
-                ));
+        for ((category, &category_rating), _) in rating
+            .category_ratings
+            .iter()
+            .zip(self.config.categories.iter())
+        {
+            if category_rating < self.config.min_rating || category_rating > self.config.max_rating
+            {
+                return Err(RatingsError::InvalidRating(format!(
+                    "Category rating for {:?} out of range",
+                    category
+                )));
             }
         }
 
@@ -550,7 +579,7 @@ impl RatingsManager {
             // Simple spam detection
             let spam_keywords = ["spam", "scam", "buy", "click", "free money"];
             let feedback_lower = feedback.to_lowercase();
-            
+
             for keyword in &spam_keywords {
                 if feedback_lower.contains(keyword) {
                     return true;
@@ -562,10 +591,12 @@ impl RatingsManager {
 
     async fn check_rating_alerts(&self, model_id: &str) {
         let recent_ratings = self.get_recent_ratings(model_id, Duration::hours(24)).await;
-        
+
         if recent_ratings.len() >= 5 {
-            let avg_rating: f64 = recent_ratings.iter().map(|r| r.overall_rating).sum::<u32>() as f64 / recent_ratings.len() as f64;
-            
+            let avg_rating: f64 = recent_ratings.iter().map(|r| r.overall_rating).sum::<u32>()
+                as f64
+                / recent_ratings.len() as f64;
+
             if avg_rating < 3.0 {
                 let alert = RatingAlert {
                     timestamp: Utc::now(),
@@ -575,7 +606,7 @@ impl RatingsManager {
                     threshold: 3.0,
                     recent_count: recent_ratings.len() as u32,
                 };
-                
+
                 let _ = self.alert_sender.send(alert);
             }
         }
@@ -584,23 +615,23 @@ impl RatingsManager {
     fn analyze_sentiment(&self, feedback: &str) -> FeedbackType {
         let positive_words = ["good", "great", "excellent", "amazing", "fast", "quality"];
         let negative_words = ["bad", "slow", "poor", "terrible", "expensive", "inaccurate"];
-        
+
         let feedback_lower = feedback.to_lowercase();
         let mut positive_score = 0;
         let mut negative_score = 0;
-        
+
         for word in &positive_words {
             if feedback_lower.contains(word) {
                 positive_score += 1;
             }
         }
-        
+
         for word in &negative_words {
             if feedback_lower.contains(word) {
                 negative_score += 1;
             }
         }
-        
+
         if positive_score > negative_score {
             FeedbackType::Positive
         } else if negative_score > positive_score {

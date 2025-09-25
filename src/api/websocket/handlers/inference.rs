@@ -3,14 +3,14 @@ use crate::api::websocket::{
     messages::{ConversationMessage, StreamToken},
 };
 use crate::inference::{
-    InferenceEngine, InferenceRequest, InferenceResult, ChatMessage, EngineConfig, ModelConfig,
+    ChatMessage, EngineConfig, InferenceEngine, InferenceRequest, InferenceResult, ModelConfig,
 };
 use anyhow::{anyhow, Result};
 use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, info, error};
+use tracing::{debug, error, info};
 
 /// Configuration for streaming responses
 #[derive(Debug, Clone)]
@@ -44,18 +44,18 @@ impl InferenceHandler {
             inference_engine: None,
         }
     }
-    
+
     /// Create with async initialization
     pub async fn new_with_engine(session_handler: Arc<SessionInitHandler>) -> Result<Self> {
         let engine_config = EngineConfig::default();
         let inference_engine = InferenceEngine::new(engine_config).await?;
-        
+
         Ok(Self {
             session_handler,
             inference_engine: Some(Arc::new(inference_engine)),
         })
     }
-    
+
     /// Create with custom inference engine
     pub fn with_engine(
         session_handler: Arc<SessionInitHandler>,
@@ -66,7 +66,7 @@ impl InferenceHandler {
             inference_engine: Some(inference_engine),
         }
     }
-    
+
     /// Generate a response for a prompt
     pub async fn generate_response(
         &self,
@@ -78,18 +78,18 @@ impl InferenceHandler {
             "Generating response for session {} at index {}",
             session_id, message_index
         );
-        
+
         // Validate prompt
         if prompt.is_empty() {
             return Err(anyhow!("Empty prompt"));
         }
-        
+
         // Get session cache
         let cache = self.session_handler.get_cache(session_id).await?;
-        
+
         // Get conversation context
         let messages = cache.get_messages().await;
-        
+
         // Convert to ChatMessage format for inference
         let mut chat_messages: Vec<ChatMessage> = messages
             .iter()
@@ -98,19 +98,22 @@ impl InferenceHandler {
                 content: m.content.clone(),
             })
             .collect();
-        
+
         // Add current prompt if not already in cache
-        if !messages.iter().any(|m| m.content == prompt && m.role == "user") {
+        if !messages
+            .iter()
+            .any(|m| m.content == prompt && m.role == "user")
+        {
             chat_messages.push(ChatMessage {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             });
         }
-        
+
         // For now, skip model loading and use mock responses
         // Real inference engine integration would happen here
         let model_id = "default";
-        
+
         // Create inference request
         let request = InferenceRequest {
             model_id: model_id.to_string(),
@@ -124,7 +127,7 @@ impl InferenceHandler {
             stop_sequences: vec![],
             stream: false,
         };
-        
+
         // Run inference or use mock
         let result = if let Some(engine) = &self.inference_engine {
             match engine.run_inference(request).await {
@@ -156,7 +159,7 @@ impl InferenceHandler {
                 was_cancelled: false,
             }
         };
-        
+
         // Create response message
         let response = ConversationMessage {
             role: "assistant".to_string(),
@@ -170,13 +173,13 @@ impl InferenceHandler {
             tokens: Some(result.tokens_generated as u32),
             proof: None,
         };
-        
+
         // Add to cache
         cache.add_message(response.clone()).await;
-        
+
         Ok(response)
     }
-    
+
     /// Generate response with custom configuration
     pub async fn generate_response_with_config(
         &self,
@@ -192,18 +195,18 @@ impl InferenceHandler {
         if config.temperature < 0.0 {
             return Err(anyhow!("Invalid temperature: must be >= 0"));
         }
-        
+
         info!(
             "Generating response with config for session {} (max_tokens: {}, temp: {})",
             session_id, config.max_tokens, config.temperature
         );
-        
+
         // Get session cache
         let cache = self.session_handler.get_cache(session_id).await?;
-        
+
         // Get conversation context
         let messages = cache.get_messages().await;
-        
+
         // Convert to ChatMessage format
         let mut chat_messages: Vec<ChatMessage> = messages
             .iter()
@@ -212,13 +215,13 @@ impl InferenceHandler {
                 content: m.content.clone(),
             })
             .collect();
-        
+
         // Add current prompt
         chat_messages.push(ChatMessage {
             role: "user".to_string(),
             content: prompt.to_string(),
         });
-        
+
         // Create inference request
         let request = InferenceRequest {
             model_id: "default".to_string(),
@@ -232,14 +235,14 @@ impl InferenceHandler {
             stop_sequences: vec![],
             stream: false,
         };
-        
+
         // Mock response for now
         let response_text = if config.temperature < 0.5 {
             "2+2 equals 4.".to_string()
         } else {
             "The answer to 2+2 is 4, which is a fundamental arithmetic fact.".to_string()
         };
-        
+
         let response = ConversationMessage {
             role: "assistant".to_string(),
             content: response_text,
@@ -252,13 +255,13 @@ impl InferenceHandler {
             tokens: Some(config.max_tokens.min(10) as u32),
             proof: None,
         };
-        
+
         // Add to cache
         cache.add_message(response.clone()).await;
-        
+
         Ok(response)
     }
-    
+
     /// Generate response with specific model
     pub async fn generate_response_with_model(
         &self,
@@ -275,10 +278,11 @@ impl InferenceHandler {
         } else {
             return Err(anyhow!("No inference engine available"));
         }
-        
-        self.generate_response(session_id, prompt, message_index).await
+
+        self.generate_response(session_id, prompt, message_index)
+            .await
     }
-    
+
     /// Create a streaming response
     pub async fn create_streaming_response(
         &self,
@@ -291,21 +295,21 @@ impl InferenceHandler {
             "Creating streaming response for session {} at index {}",
             session_id, message_index
         );
-        
+
         // Validate config
         if config.max_tokens == 0 || config.temperature < 0.0 {
             return Err(anyhow!("Invalid stream configuration"));
         }
-        
+
         // Get session cache
         let cache = self.session_handler.get_cache(session_id).await?;
-        
+
         // Get conversation context
         let messages = cache.get_messages().await;
-        
+
         // Create channel for streaming
         let (tx, rx) = mpsc::channel::<Result<StreamToken>>(100);
-        
+
         // Spawn task to generate tokens
         let cache_clone = cache.clone();
         let max_tokens = config.max_tokens;
@@ -322,16 +326,16 @@ impl InferenceHandler {
                 "is quite ",
                 "interesting.",
             ];
-            
+
             let mut total_content = String::new();
             let mut total_tokens = 0u32;
-            
+
             for (i, part) in response_parts.iter().take(max_tokens.min(8)).enumerate() {
                 total_content.push_str(part);
                 total_tokens += part.len() as u32 / 4; // Rough estimate
-                
+
                 let is_final = i == response_parts.len() - 1 || i == max_tokens - 1;
-                
+
                 let token = StreamToken {
                     content: part.to_string(),
                     is_final,
@@ -340,46 +344,48 @@ impl InferenceHandler {
                     proof: None,
                     chain_info: None, // Add chain info support later if needed
                 };
-                
+
                 if tx.send(Ok(token)).await.is_err() {
                     break; // Receiver dropped
                 }
-                
+
                 // Small delay to simulate streaming
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             }
-            
+
             // Add complete response to cache
-            cache_clone.add_message(ConversationMessage {
-                role: "assistant".to_string(),
-                content: total_content,
-                timestamp: Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                ),
-                tokens: Some(total_tokens),
-                proof: None,
-            }).await;
-            
-            debug!("Streaming response complete for session {}", session_id_clone);
+            cache_clone
+                .add_message(ConversationMessage {
+                    role: "assistant".to_string(),
+                    content: total_content,
+                    timestamp: Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                    ),
+                    tokens: Some(total_tokens),
+                    proof: None,
+                })
+                .await;
+
+            debug!(
+                "Streaming response complete for session {}",
+                session_id_clone
+            );
         });
-        
+
         // Create stream from receiver
         let stream = Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx));
         Ok(stream)
     }
-    
+
     /// Prepare context for LLM
-    pub async fn prepare_context_for_llm(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<ChatMessage>> {
+    pub async fn prepare_context_for_llm(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
         let cache = self.session_handler.get_cache(session_id).await?;
-        
+
         let messages = cache.get_messages().await;
-        
+
         Ok(messages
             .iter()
             .map(|m| ChatMessage {
@@ -388,11 +394,11 @@ impl InferenceHandler {
             })
             .collect())
     }
-    
+
     /// Format prompt for inference engine
     fn format_prompt_for_inference(&self, messages: &[ChatMessage]) -> String {
         let mut prompt = String::new();
-        
+
         for message in messages {
             match message.role.as_str() {
                 "system" => {
@@ -407,10 +413,10 @@ impl InferenceHandler {
                 _ => {}
             }
         }
-        
+
         // Add prompt for assistant response
         prompt.push_str("Assistant: ");
-        
+
         prompt
     }
 }
@@ -418,24 +424,24 @@ impl InferenceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_inference_handler_creation() {
         let session_handler = Arc::new(SessionInitHandler::new());
         let handler = InferenceHandler::new(session_handler);
         assert!(handler.inference_engine.is_none());
     }
-    
+
     #[tokio::test]
     async fn test_empty_prompt_error() {
         let session_handler = Arc::new(SessionInitHandler::new());
         let handler = InferenceHandler::new(session_handler.clone());
-        
+
         session_handler
             .handle_session_init("test", 100, vec![])
             .await
             .unwrap();
-        
+
         let result = handler.generate_response("test", "", 1).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Empty prompt"));

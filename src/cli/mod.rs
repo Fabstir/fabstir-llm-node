@@ -1,7 +1,7 @@
 pub mod registration;
 
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 /// Fabstir LLM Node CLI
 #[derive(Parser, Debug)]
@@ -28,14 +28,8 @@ pub enum Commands {
 /// Execute CLI command
 pub async fn execute(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::RegisterNode(args) => {
-            registration::register_node(args).await
-        },
-        Commands::RegistrationStatus(args) => {
-            registration::check_status(args).await
-        },
-        Commands::UpdateRegistration(args) => {
-            registration::update_registration(args).await
-        },
+        Commands::RegisterNode(args) => registration::register_node(args).await,
+        Commands::RegistrationStatus(args) => registration::check_status(args).await,
+        Commands::UpdateRegistration(args) => registration::update_registration(args).await,
     }
 }

@@ -43,7 +43,10 @@ pub fn format_sse(response: &StreamingResponse) -> String {
     if response.finish_reason.as_deref() == Some("stop") {
         "data: [DONE]\n\n".to_string()
     } else {
-        format!("data: {}\n\n", serde_json::to_string(response).unwrap_or_default())
+        format!(
+            "data: {}\n\n",
+            serde_json::to_string(response).unwrap_or_default()
+        )
     }
 }
 
@@ -51,5 +54,6 @@ pub fn format_websocket_message(msg_type: &str, content: serde_json::Value) -> S
     serde_json::json!({
         "type": msg_type,
         "content": content,
-    }).to_string()
+    })
+    .to_string()
 }

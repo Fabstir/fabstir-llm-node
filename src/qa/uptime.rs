@@ -1,9 +1,9 @@
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
-use chrono::{DateTime, Utc, Duration};
 use thiserror::Error;
+use tokio::sync::{broadcast, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ServiceStatus {
@@ -141,10 +141,10 @@ impl UptimeTracker {
     pub async fn start_tracking(&self) -> Result<(), UptimeError> {
         let mut start_time = self.start_time.lock().await;
         *start_time = Some(Utc::now());
-        
+
         let mut status = self.current_status.lock().await;
         *status = ServiceStatus::Online;
-        
+
         Ok(())
     }
 
@@ -160,10 +160,10 @@ impl UptimeTracker {
         let now = Utc::now();
         let mut last_heartbeat = self.last_heartbeat.lock().await;
         *last_heartbeat = Some(now);
-        
+
         let mut status = self.current_status.lock().await;
         *status = ServiceStatus::Online;
-        
+
         Ok(())
     }
 
@@ -173,7 +173,7 @@ impl UptimeTracker {
 
     pub async fn check_status(&self) -> ServiceStatus {
         let last_heartbeat = self.last_heartbeat.lock().await;
-        
+
         if let Some(last_beat) = *last_heartbeat {
             let elapsed = Utc::now().signed_duration_since(last_beat);
             if elapsed.num_milliseconds() > self.config.downtime_threshold_ms as i64 {
@@ -182,14 +182,14 @@ impl UptimeTracker {
                 return ServiceStatus::Offline;
             }
         }
-        
+
         self.current_status.lock().await.clone()
     }
 
     pub async fn get_downtime_events(&self, duration: Duration) -> Vec<DowntimeEvent> {
         let events = self.downtime_events.lock().await;
         let cutoff = Utc::now() - duration;
-        
+
         events
             .iter()
             .filter(|event| event.start_time >= cutoff)
@@ -211,18 +211,20 @@ impl UptimeTracker {
     pub async fn calculate_uptime_percentage(&self, window: Duration) -> f64 {
         let start_time = self.start_time.lock().await;
         let events = self.downtime_events.lock().await;
-        
+
         let window_start = Utc::now() - window;
         let effective_start = start_time.unwrap_or(window_start).max(window_start);
-        
-        let total_window_ms = Utc::now().signed_duration_since(effective_start).num_milliseconds() as u64;
-        
+
+        let total_window_ms = Utc::now()
+            .signed_duration_since(effective_start)
+            .num_milliseconds() as u64;
+
         let total_downtime_ms: u64 = events
             .iter()
             .filter(|event| event.start_time >= window_start)
             .map(|event| event.duration_ms)
             .sum();
-        
+
         if total_window_ms == 0 {
             100.0
         } else {
@@ -258,24 +260,23 @@ impl UptimeTracker {
 
     pub async fn get_uptime_metrics(&self, window: Duration) -> UptimeMetrics {
         let percentages = self.uptime_percentages.lock().await;
-        let uptime_percentage = percentages.get(&window).copied()
-            .unwrap_or_else(|| {
-                // Calculate if not cached
-                drop(percentages);
-                futures::executor::block_on(self.calculate_uptime_percentage(window))
-            });
-        
+        let uptime_percentage = percentages.get(&window).copied().unwrap_or_else(|| {
+            // Calculate if not cached
+            drop(percentages);
+            futures::executor::block_on(self.calculate_uptime_percentage(window))
+        });
+
         let events = self.downtime_events.lock().await;
         let window_start = Utc::now() - window;
-        
+
         let window_events: Vec<_> = events
             .iter()
             .filter(|event| event.start_time >= window_start)
             .collect();
-        
+
         let total_downtime_ms = window_events.iter().map(|e| e.duration_ms).sum();
         let last_downtime = window_events.iter().map(|e| e.start_time).max();
-        
+
         UptimeMetrics {
             uptime_percentage,
             window_duration: window,
@@ -288,12 +289,12 @@ impl UptimeTracker {
     pub async fn get_downtime_statistics(&self, window: Duration) -> DowntimeStatistics {
         let events = self.downtime_events.lock().await;
         let window_start = Utc::now() - window;
-        
+
         let window_events: Vec<_> = events
             .iter()
             .filter(|event| event.start_time >= window_start)
             .collect();
-        
+
         let total_events = window_events.len() as u32;
         let total_downtime_ms = window_events.iter().map(|e| e.duration_ms).sum();
         let average_downtime_ms = if total_events > 0 {
@@ -301,12 +302,12 @@ impl UptimeTracker {
         } else {
             0
         };
-        
+
         let mut reasons = HashMap::new();
         for event in &window_events {
             *reasons.entry(event.reason.clone()).or_insert(0) += 1;
         }
-        
+
         DowntimeStatistics {
             total_events,
             total_downtime_ms,
@@ -318,7 +319,7 @@ impl UptimeTracker {
     pub async fn get_recovery_events(&self, window: Duration) -> Vec<RecoveryEvent> {
         let events = self.recovery_events.lock().await;
         let cutoff = Utc::now() - window;
-        
+
         events
             .iter()
             .filter(|event| event.timestamp >= cutoff)
@@ -330,11 +331,11 @@ impl UptimeTracker {
         if !self.config.persist_metrics {
             return Ok(());
         }
-        
+
         let events = self.downtime_events.lock().await;
         let data = serde_json::to_string_pretty(&*events)?;
         tokio::fs::write(&self.config.persistence_path, data).await?;
-        
+
         Ok(())
     }
 
@@ -342,7 +343,7 @@ impl UptimeTracker {
         if !self.config.persist_metrics {
             return Ok(());
         }
-        
+
         match tokio::fs::read_to_string(&self.config.persistence_path).await {
             Ok(data) => {
                 let events: Vec<DowntimeEvent> = serde_json::from_str(&data)?;
@@ -357,24 +358,24 @@ impl UptimeTracker {
     pub async fn get_historical_uptime(&self, window: Duration) -> HistoricalUptime {
         let end_time = Utc::now();
         let start_time = end_time - window;
-        
+
         // Generate data points every hour
         let mut data_points = Vec::new();
         let mut current = start_time;
-        
+
         while current < end_time {
             let window_duration = Duration::hours(1);
             let uptime = self.calculate_uptime_percentage(window_duration).await;
-            
+
             data_points.push(UptimeDataPoint {
                 timestamp: current,
                 uptime_percentage: uptime,
                 window_hours: 1,
             });
-            
+
             current = current + Duration::hours(1);
         }
-        
+
         HistoricalUptime {
             data_points,
             period_start: start_time,
@@ -385,56 +386,67 @@ impl UptimeTracker {
     pub async fn start_tracking_service(&self, service: &str) -> Result<(), UptimeError> {
         let mut service_status = self.service_status.lock().await;
         service_status.insert(service.to_string(), ServiceStatus::Online);
-        
+
         let mut service_heartbeats = self.service_heartbeats.lock().await;
         service_heartbeats.insert(service.to_string(), Utc::now());
-        
+
         Ok(())
     }
 
     pub async fn record_service_heartbeat(&self, service: &str) -> Result<(), UptimeError> {
         let mut service_heartbeats = self.service_heartbeats.lock().await;
         service_heartbeats.insert(service.to_string(), Utc::now());
-        
+
         let mut service_status = self.service_status.lock().await;
         service_status.insert(service.to_string(), ServiceStatus::Online);
-        
+
         Ok(())
     }
 
     pub async fn get_multi_service_report(&self) -> MultiServiceReport {
         let service_heartbeats = self.service_heartbeats.lock().await;
         let service_status = self.service_status.lock().await;
-        
+
         let mut services = HashMap::new();
         let now = Utc::now();
-        
+
         for (service, last_heartbeat) in service_heartbeats.iter() {
             let elapsed = now.signed_duration_since(*last_heartbeat);
             let status = if elapsed.num_milliseconds() > self.config.downtime_threshold_ms as i64 {
                 ServiceStatus::Offline
             } else {
-                service_status.get(service).cloned().unwrap_or(ServiceStatus::Online)
+                service_status
+                    .get(service)
+                    .cloned()
+                    .unwrap_or(ServiceStatus::Online)
             };
-            
-            let uptime_percentage = if status == ServiceStatus::Online { 100.0 } else { 0.0 };
-            
-            services.insert(service.clone(), ServiceReport {
-                status,
-                uptime_percentage,
-                last_heartbeat: Some(*last_heartbeat),
-            });
+
+            let uptime_percentage = if status == ServiceStatus::Online {
+                100.0
+            } else {
+                0.0
+            };
+
+            services.insert(
+                service.clone(),
+                ServiceReport {
+                    status,
+                    uptime_percentage,
+                    last_heartbeat: Some(*last_heartbeat),
+                },
+            );
         }
-        
+
         let overall_health = if services.is_empty() {
             0.0
         } else {
-            let online_count = services.values()
+            let online_count = services
+                .values()
                 .filter(|report| report.status == ServiceStatus::Online)
                 .count();
             (online_count as f64 / services.len() as f64) * 100.0
         };
-        
+
         MultiServiceReport {
             services,
             overall_health,

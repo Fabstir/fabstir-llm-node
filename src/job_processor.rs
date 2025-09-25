@@ -1,21 +1,23 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::types::{Address, H256, U256};
-use std::sync::Arc;
-use std::collections::{HashMap, BinaryHeap};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use tokio::sync::{RwLock, mpsc};
-use tokio::time::{sleep, Duration, interval};
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::{interval, sleep, Duration};
+use tracing::{debug, error, info, warn};
 
-use crate::contracts::{Web3Client, JobMonitor, JobEvent as ContractJobEvent, JobStatus as ContractJobStatus};
-use crate::inference::{LlmEngine, InferenceRequest};
+use crate::contracts::{
+    JobEvent as ContractJobEvent, JobMonitor, JobStatus as ContractJobStatus, Web3Client,
+};
+use crate::inference::{InferenceRequest, LlmEngine};
 
 // Message struct for conversation context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
-    pub role: String,  // "user", "assistant", "system"
+    pub role: String, // "user", "assistant", "system"
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<i64>,
@@ -167,7 +169,7 @@ impl Default for NodeConfig {
             max_concurrent_submissions: 5,
             withdrawal_address: Address::zero(),
             min_withdrawal_amount: U256::from(100_000_000_000_000_000u64), // 0.1 ETH
-            max_result_size: 10_000_000, // 10MB
+            max_result_size: 10_000_000,                                   // 10MB
             enable_compression: false,
             compression_threshold: 10_000, // 10KB
             enable_proofs: false,
@@ -175,9 +177,9 @@ impl Default for NodeConfig {
             submission_retry_attempts: 3,
             submission_retry_delay: Duration::from_millis(1000),
             result_expiry_time: Duration::from_secs(86400), // 24 hours
-            max_gas_price: U256::from(50_000_000_000u64), // 50 gwei
+            max_gas_price: U256::from(50_000_000_000u64),   // 50 gwei
             min_payment_per_token: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
-            job_timeout: Duration::from_secs(3600), // 1 hour
+            job_timeout: Duration::from_secs(3600),         // 1 hour
         }
     }
 }
@@ -273,7 +275,7 @@ impl JobProcessor {
         let processor = self.clone();
         tokio::spawn(async move {
             let mut poll_interval = interval(processor.config.event_poll_interval);
-            
+
             loop {
                 tokio::select! {
                     _ = poll_interval.tick() => {
@@ -316,15 +318,19 @@ impl JobProcessor {
         };
 
         // Filter by supported models
-        if !self.config.supported_models.is_empty() 
-            && !self.config.supported_models.contains(&job.model_id) {
+        if !self.config.supported_models.is_empty()
+            && !self.config.supported_models.contains(&job.model_id)
+        {
             debug!("Ignoring job with unsupported model: {}", job.model_id);
             return Ok(());
         }
 
         // Filter by minimum payment
         if job.payment_amount < self.config.min_payment {
-            debug!("Ignoring job with insufficient payment: {}", job.payment_amount);
+            debug!(
+                "Ignoring job with insufficient payment: {}",
+                job.payment_amount
+            );
             return Ok(());
         }
 
@@ -338,7 +344,10 @@ impl JobProcessor {
         }
 
         self.pending_jobs.write().await.push(job.clone());
-        self.job_status.write().await.insert(job.job_id, JobStatus::Pending);
+        self.job_status
+            .write()
+            .await
+            .insert(job.job_id, JobStatus::Pending);
 
         Ok(())
     }
@@ -358,7 +367,7 @@ impl JobProcessor {
 
     pub async fn update_job_status(&self, job_id: H256, status: JobStatus) {
         let mut statuses = self.job_status.write().await;
-        
+
         // Update counters based on status transitions
         if let Some(old_status) = statuses.get(&job_id) {
             match (old_status, &status) {
@@ -375,7 +384,7 @@ impl JobProcessor {
                 _ => {}
             }
         }
-        
+
         statuses.insert(job_id, status);
     }
 
@@ -393,29 +402,29 @@ impl JobProcessor {
 
     async fn attempt_reconnection(&self) -> Result<()> {
         let mut attempts = 0;
-        
+
         while attempts < self.config.max_reconnect_attempts {
             attempts += 1;
             *self.reconnect_count.write().await += 1;
-            
+
             // Simulate reconnection attempt
             sleep(Duration::from_millis(100)).await;
-            
+
             // For tests, immediately set connected after one attempt
             *self.is_connected.write().await = true;
             info!("Successfully reconnected after {} attempts", attempts);
             return Ok(());
-            
+
             // In production, this would check actual connection:
             // if self.contract_client.is_connected().await {
             //     *self.is_connected.write().await = true;
             //     info!("Successfully reconnected after {} attempts", attempts);
             //     return Ok(());
             // }
-            
+
             // warn!("Reconnection attempt {} failed", attempts);
         }
-        
+
         Err(anyhow!("Failed to reconnect after {} attempts", attempts))
     }
 }

@@ -19,7 +19,7 @@ impl SessionResumeHandler {
             cache_manager: Arc::new(CacheManager::new()),
         }
     }
-    
+
     /// Handle session resume with full context
     pub async fn handle_session_resume(
         &self,
@@ -34,12 +34,12 @@ impl SessionResumeHandler {
             job_id,
             conversation_context.len()
         );
-        
+
         // Validate job_id
         if job_id == 0 {
             return Err(anyhow!("Invalid job_id: cannot be 0"));
         }
-        
+
         // Validate message index matches context length
         if last_message_index as usize != conversation_context.len() && last_message_index != 0 {
             return Err(anyhow!(
@@ -48,20 +48,25 @@ impl SessionResumeHandler {
                 last_message_index
             ));
         }
-        
+
         // Create or replace cache for this session
-        let cache = self.cache_manager.create_cache(session_id.to_string(), job_id).await;
-        
+        let cache = self
+            .cache_manager
+            .create_cache(session_id.to_string(), job_id)
+            .await;
+
         // Initialize with provided context
-        cache.initialize_with_context(conversation_context.clone()).await?;
+        cache
+            .initialize_with_context(conversation_context.clone())
+            .await?;
         debug!("Rebuilt cache with {} messages", conversation_context.len());
-        
+
         // Calculate total tokens
         let total_tokens = conversation_context
             .iter()
             .map(|m| m.tokens.unwrap_or(0))
             .sum();
-        
+
         Ok(SessionResumeResponse {
             session_id: session_id.to_string(),
             job_id,
@@ -76,15 +81,18 @@ impl SessionResumeHandler {
             chain_info: None, // Add chain info support later if needed
         })
     }
-    
+
     /// Get cache for a session
-    pub async fn get_cache(&self, session_id: &str) -> Result<crate::api::websocket::memory_cache::ConversationCache> {
+    pub async fn get_cache(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::api::websocket::memory_cache::ConversationCache> {
         self.cache_manager
             .get_cache(session_id)
             .await
             .ok_or_else(|| anyhow!("Session not found: {}", session_id))
     }
-    
+
     /// Check if session exists
     pub async fn session_exists(&self, session_id: &str) -> bool {
         self.cache_manager.get_cache(session_id).await.is_some()
@@ -104,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_resume() {
         let handler = SessionResumeHandler::new();
-        
+
         let context = vec![
             ConversationMessage {
                 role: "user".to_string(),
@@ -121,12 +129,12 @@ mod tests {
                 proof: None,
             },
         ];
-        
+
         let result = handler
             .handle_session_resume("resumed-session", 789, context.clone(), 2)
             .await
             .unwrap();
-        
+
         assert_eq!(result.session_id, "resumed-session");
         assert_eq!(result.job_id, 789);
         assert_eq!(result.message_count, 2);
@@ -134,25 +142,23 @@ mod tests {
         assert_eq!(result.last_message_index, 2);
         assert!(result.resumed_successfully);
     }
-    
+
     #[tokio::test]
     async fn test_resume_with_index_mismatch() {
         let handler = SessionResumeHandler::new();
-        
-        let context = vec![
-            ConversationMessage {
-                role: "user".to_string(),
-                content: "Test".to_string(),
-                timestamp: None,
-                tokens: None,
-                proof: None,
-            },
-        ];
-        
+
+        let context = vec![ConversationMessage {
+            role: "user".to_string(),
+            content: "Test".to_string(),
+            timestamp: None,
+            tokens: None,
+            proof: None,
+        }];
+
         let result = handler
             .handle_session_resume("bad-session", 100, context, 5)
             .await;
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("index mismatch"));
     }

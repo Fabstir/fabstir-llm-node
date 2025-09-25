@@ -1,4 +1,4 @@
-use fabstir_llm_node::config::chains::{TokenInfo, ChainConfig};
+use fabstir_llm_node::config::chains::{ChainConfig, TokenInfo};
 
 #[tokio::test]
 async fn test_eth_token_info() {

@@ -1,13 +1,13 @@
 use anyhow::Result;
+use futures::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, RwLock, Mutex};
-use tokio_tungstenite::{accept_async, WebSocketStream, tungstenite::Message};
-use futures::{StreamExt, SinkExt};
-use tracing::{info, warn, error, debug};
-use std::collections::HashMap;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
+use tracing::{debug, error, info, warn};
 
 pub struct ServerConfig {
     pub host: String,
@@ -71,7 +71,7 @@ impl WebSocketServer {
                                     warn!("Connection limit reached, rejecting {}", addr);
                                     continue;
                                 }
-                                
+
                                 let connections = connections.clone();
                                 tokio::spawn(handle_connection(stream, addr, connections));
                             }
@@ -151,16 +151,20 @@ impl ServerHandle {
             // Wait for abort to complete
             tokio::time::timeout(Duration::from_millis(100), async {
                 let _ = handle.await;
-            }).await.ok();
+            })
+            .await
+            .ok();
         }
         if let Some(handle) = self.heartbeat_handle.take() {
             handle.abort();
             // Wait for abort to complete
             tokio::time::timeout(Duration::from_millis(100), async {
                 let _ = handle.await;
-            }).await.ok();
+            })
+            .await
+            .ok();
         }
-        
+
         // Give connections time to close
         tokio::time::sleep(Duration::from_millis(10)).await;
 
@@ -195,7 +199,10 @@ async fn handle_connection(
         session_id: Arc::new(RwLock::new(None)),
     });
 
-    connections.write().await.insert(conn_id.clone(), connection.clone());
+    connections
+        .write()
+        .await
+        .insert(conn_id.clone(), connection.clone());
     info!("Connection {} established from {}", conn_id, addr);
 
     // Handle messages
@@ -204,14 +211,17 @@ async fn handle_connection(
         match msg {
             Ok(Message::Text(text)) => {
                 debug!("Received text from {}: {}", conn_id, text);
-                
+
                 // Parse and handle message
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
                     if let Some(msg_type) = parsed.get("type").and_then(|v| v.as_str()) {
                         match msg_type {
                             "session_init" => {
-                                if let Some(session_id) = parsed.get("session_id").and_then(|v| v.as_str()) {
-                                    *connection.session_id.write().await = Some(session_id.to_string());
+                                if let Some(session_id) =
+                                    parsed.get("session_id").and_then(|v| v.as_str())
+                                {
+                                    *connection.session_id.write().await =
+                                        Some(session_id.to_string());
                                     let response = serde_json::json!({
                                         "type": "session_established",
                                         "session_id": session_id
@@ -220,8 +230,11 @@ async fn handle_connection(
                                 }
                             }
                             "session_resume" => {
-                                if let Some(session_id) = parsed.get("session_id").and_then(|v| v.as_str()) {
-                                    *connection.session_id.write().await = Some(session_id.to_string());
+                                if let Some(session_id) =
+                                    parsed.get("session_id").and_then(|v| v.as_str())
+                                {
+                                    *connection.session_id.write().await =
+                                        Some(session_id.to_string());
                                     let response = serde_json::json!({
                                         "type": "session_resumed",
                                         "session_id": session_id
@@ -246,7 +259,11 @@ async fn handle_connection(
                 }
             }
             Ok(Message::Binary(data)) => {
-                debug!("Received binary data from {}: {} bytes", conn_id, data.len());
+                debug!(
+                    "Received binary data from {}: {} bytes",
+                    conn_id,
+                    data.len()
+                );
                 // Handle binary data
                 tx.send(Message::Binary(data)).await.ok();
             }

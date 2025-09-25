@@ -1,27 +1,30 @@
+use anyhow::Result;
+use axum::{
+    extract::{
+        ws::{WebSocket, WebSocketUpgrade},
+        Json, State,
+    },
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Router,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Mutex, oneshot, mpsc};
-use anyhow::Result;
-use axum::{
-    Router,
-    routing::{get, post},
-    extract::{State, Json, ws::{WebSocket, WebSocketUpgrade}},
-    response::{IntoResponse, Response},
-    http::StatusCode,
-};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tower_http::cors::CorsLayer;
-use tracing::{info, error};
+use tracing::{error, info};
 
-use crate::p2p::Node;
-use crate::inference::LlmEngine;
-use crate::utils::context::{build_prompt_with_context, count_context_tokens};
+use super::handlers::{HealthResponse, ModelInfo, ModelsResponse};
+use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
+use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use crate::api::token_tracker::TokenTracker;
 use crate::contracts::checkpoint_manager::CheckpointManager;
-use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
-use super::handlers::{ModelInfo, ModelsResponse, HealthResponse};
-use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
+use crate::inference::LlmEngine;
+use crate::p2p::Node;
+use crate::utils::context::{build_prompt_with_context, count_context_tokens};
 
 // TODO: Implement full HTTP server using axum framework
 // See tests/client/ for expected functionality
@@ -99,21 +102,21 @@ impl RateLimiter {
             limit,
         }
     }
-    
+
     async fn check_rate_limit(&self, key: &str) -> Result<(), ApiError> {
         let now = Instant::now();
         let one_minute_ago = now - Duration::from_secs(60);
-        
+
         let mut requests = self.requests.write().await;
         let entry = requests.entry(key.to_string()).or_insert_with(Vec::new);
-        
+
         // Remove old requests
         entry.retain(|&t| t > one_minute_ago);
-        
+
         if entry.len() >= self.limit {
             return Err(ApiError::RateLimitExceeded { retry_after: 60 });
         }
-        
+
         entry.push(now);
         Ok(())
     }
@@ -135,13 +138,13 @@ impl CircuitBreaker {
             timeout,
         }
     }
-    
+
     async fn is_open(&self) -> bool {
         let failures = *self.failures.lock().await;
         if failures < self.threshold {
             return false;
         }
-        
+
         if let Some(last_failure) = *self.last_failure.lock().await {
             if Instant::now().duration_since(last_failure) > self.timeout {
                 // Reset circuit breaker
@@ -150,15 +153,15 @@ impl CircuitBreaker {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     async fn record_success(&self) {
         *self.failures.lock().await = 0;
         *self.last_failure.lock().await = None;
     }
-    
+
     async fn record_failure(&self) {
         let mut failures = self.failures.lock().await;
         *failures += 1;
@@ -224,11 +227,11 @@ impl ApiServer {
 
         // Parse the address
         let addr: SocketAddr = config.listen_addr.parse()?;
-        
+
         // Bind to the address
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let actual_addr = listener.local_addr()?;
-        
+
         let pool_config = PoolConfig {
             min_connections: 2,
             max_connections: config.max_connections,
@@ -236,9 +239,9 @@ impl ApiServer {
             idle_timeout: config.connection_idle_timeout,
             ..Default::default()
         };
-        
+
         let connection_pool = Arc::new(ConnectionPool::new(pool_config).await?);
-        
+
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
@@ -258,37 +261,36 @@ impl ApiServer {
             listener: Some(listener),
             config,
         };
-        
+
         // Start the HTTP server in the background
         server.start_http_server().await;
-        
+
         Ok(server)
     }
-    
+
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
     }
-    
+
     async fn start_http_server(&mut self) {
         if let Some(listener) = self.listener.take() {
             let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
             self.shutdown_tx = Some(shutdown_tx);
-            
+
             let server = self.clone_for_http();
-            
+
             tokio::spawn(async move {
                 let app = Self::create_router(server);
-                
-                let serve_future = axum::serve(listener, app)
-                    .with_graceful_shutdown(async move {
-                        let _ = shutdown_rx.await;
-                    });
-                    
+
+                let serve_future = axum::serve(listener, app).with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                });
+
                 let _ = serve_future.await;
             });
         }
     }
-    
+
     fn clone_for_http(&self) -> Arc<Self> {
         Arc::new(Self {
             config: self.config.clone(),
@@ -307,15 +309,15 @@ impl ApiServer {
             listener: None,
         })
     }
-    
+
     pub fn set_node(&mut self, node: Node) {
         *self.node.blocking_write() = Some(node);
     }
-    
+
     pub async fn set_engine(&self, engine: Arc<LlmEngine>) {
         *self.engine.write().await = Some(engine);
     }
-    
+
     pub async fn set_default_model_id(&self, model_id: String) {
         *self.default_model_id.write().await = model_id;
     }
@@ -331,13 +333,13 @@ impl ApiServer {
     pub async fn connection_stats(&self) -> ConnectionStats {
         self.connection_pool.stats().await
     }
-    
+
     pub async fn shutdown(mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
     }
-    
+
     pub async fn handle_inference_request(
         &self,
         request: InferenceRequest,
@@ -345,24 +347,25 @@ impl ApiServer {
     ) -> Result<InferenceResponse, ApiError> {
         // Validate request
         request.validate()?;
-        
+
         // Check rate limit
         if self.config.require_api_key {
             // Rate limit by API key if available
         } else {
             self.rate_limiter.check_rate_limit(&client_ip).await?;
         }
-        
+
         // Check circuit breaker
         if self.config.enable_circuit_breaker && self.circuit_breaker.is_open().await {
             return Err(ApiError::CircuitBreakerOpen);
         }
-        
+
         // Get engine
         let engine_guard = self.engine.read().await;
-        let engine = engine_guard.as_ref()
-            .ok_or_else(|| ApiError::ServiceUnavailable("inference engine not initialized".to_string()))?;
-        
+        let engine = engine_guard.as_ref().ok_or_else(|| {
+            ApiError::ServiceUnavailable("inference engine not initialized".to_string())
+        })?;
+
         // Use default model ID if model field is "tiny-vicuna" or similar
         let model_id = if request.model == "tiny-vicuna" || request.model.is_empty() {
             self.default_model_id.read().await.clone()
@@ -376,15 +379,13 @@ impl ApiServer {
                 self.default_model_id.read().await.clone()
             }
         };
-        
+
         // Build prompt (always use the formatter for consistency)
-        let full_prompt = build_prompt_with_context(
-            &request.conversation_context,
-            &request.prompt
-        );
+        let full_prompt = build_prompt_with_context(&request.conversation_context, &request.prompt);
 
         if !request.conversation_context.is_empty() {
-            info!("Processing with {} context messages, ~{} tokens",
+            info!(
+                "Processing with {} context messages, ~{} tokens",
                 request.conversation_context.len(),
                 count_context_tokens(&request.conversation_context)
             );
@@ -392,7 +393,7 @@ impl ApiServer {
 
         // DEBUG: Log the actual prompt
         println!("DEBUG API: Sending prompt to engine: {:?}", full_prompt);
-        
+
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
             model_id: model_id.clone(),
@@ -406,18 +407,23 @@ impl ApiServer {
             stop_sequences: vec![],
             stream: false,
         };
-        
+
         // Run inference with real model
-        let result = engine.run_inference(engine_request).await
+        let result = engine
+            .run_inference(engine_request)
+            .await
             .map_err(|e| ApiError::InternalError(format!("Inference failed: {}", e)))?;
-        
+
         // Convert to API response
         let response = InferenceResponse {
             model: request.model.clone(),
             content: result.text,
             tokens_used: result.tokens_generated as u32,
             finish_reason: result.finish_reason,
-            request_id: request.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            request_id: request
+                .request_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             chain_id: request.chain_id,
             chain_name: None,
             native_token: None,
@@ -436,11 +442,25 @@ impl ApiServer {
 
         if let Some(jid) = job_id {
             if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
-                eprintln!("📊 Tracking {} tokens for job {} (non-streaming)", response.tokens_used, jid);
-                let _ = cm.track_tokens(jid, response.tokens_used as u64, request.session_id.clone()).await;
+                eprintln!(
+                    "📊 Tracking {} tokens for job {} (non-streaming)",
+                    response.tokens_used, jid
+                );
+                let _ = cm
+                    .track_tokens(jid, response.tokens_used as u64, request.session_id.clone())
+                    .await;
             } else {
-                eprintln!("📊 Using simple token tracker for job {} (no checkpoint manager)", jid);
-                self.token_tracker.track_tokens(Some(jid), response.tokens_used as usize, request.session_id.clone()).await;
+                eprintln!(
+                    "📊 Using simple token tracker for job {} (no checkpoint manager)",
+                    jid
+                );
+                self.token_tracker
+                    .track_tokens(
+                        Some(jid),
+                        response.tokens_used as usize,
+                        request.session_id.clone(),
+                    )
+                    .await;
             }
         } else {
             eprintln!("⚠️ No job_id available for token tracking in non-streaming request");
@@ -453,7 +473,7 @@ impl ApiServer {
 
         Ok(response)
     }
-    
+
     pub async fn handle_streaming_request(
         &self,
         request: InferenceRequest,
@@ -469,8 +489,9 @@ impl ApiServer {
 
         // Get engine (same as non-streaming)
         let engine_guard = self.engine.read().await;
-        let engine = engine_guard.as_ref()
-            .ok_or_else(|| ApiError::ServiceUnavailable("inference engine not initialized".to_string()))?;
+        let engine = engine_guard.as_ref().ok_or_else(|| {
+            ApiError::ServiceUnavailable("inference engine not initialized".to_string())
+        })?;
 
         // Use default model ID if model field is "tiny-vicuna" or similar
         let model_id = if request.model == "tiny-vicuna" || request.model.is_empty() {
@@ -487,23 +508,28 @@ impl ApiServer {
         };
 
         // Build prompt (always use the formatter for consistency)
-        let full_prompt = build_prompt_with_context(
-            &request.conversation_context,
-            &request.prompt
-        );
+        let full_prompt = build_prompt_with_context(&request.conversation_context, &request.prompt);
 
         if !request.conversation_context.is_empty() {
-            info!("Processing streaming request with {} context messages",
+            info!(
+                "Processing streaming request with {} context messages",
                 request.conversation_context.len()
             );
         }
 
         // DEBUG: Log the actual prompt
-        println!("DEBUG STREAMING: Sending prompt to engine: {:?}", full_prompt);
+        println!(
+            "DEBUG STREAMING: Sending prompt to engine: {:?}",
+            full_prompt
+        );
 
         // Log the request for debugging
-        info!("Streaming inference request: model={}, prompt_len={}, max_tokens={}",
-            model_id, full_prompt.len(), request.max_tokens);
+        info!(
+            "Streaming inference request: model={}, prompt_len={}, max_tokens={}",
+            model_id,
+            full_prompt.len(),
+            request.max_tokens
+        );
 
         // Create inference request for the engine with stream=true
         let engine_request = crate::inference::InferenceRequest {
@@ -516,11 +542,13 @@ impl ApiServer {
             repeat_penalty: 1.1,
             seed: None,
             stop_sequences: vec![],
-            stream: true,  // Enable streaming!
+            stream: true, // Enable streaming!
         };
 
         // Run streaming inference with real model
-        let token_stream = engine.run_inference_stream(engine_request).await
+        let token_stream = engine
+            .run_inference_stream(engine_request)
+            .await
             .map_err(|e| {
                 error!("Failed to start streaming inference: {}", e);
                 ApiError::InternalError(format!("Streaming inference failed: {}", e))
@@ -534,7 +562,10 @@ impl ApiServer {
             request.session_id.as_ref().and_then(|sid| {
                 // Try to parse session_id as a number (SDK sends it as "139n" or just "139")
                 let parsed = sid.trim_end_matches('n').parse::<u64>().ok();
-                eprintln!("DEBUG: Parsing session_id '{}' -> job_id: {:?}", sid, parsed);
+                eprintln!(
+                    "DEBUG: Parsing session_id '{}' -> job_id: {:?}",
+                    sid, parsed
+                );
                 parsed
             })
         });
@@ -544,7 +575,10 @@ impl ApiServer {
             eprintln!("📝 TRACKING TOKENS for job_id/session_id: {}", jid);
             info!("📝 Tracking tokens for job_id/session_id: {}", jid);
         } else {
-            eprintln!("⚠️ NO JOB_ID - session_id: {:?}, job_id: {:?}", request.session_id, request.job_id);
+            eprintln!(
+                "⚠️ NO JOB_ID - session_id: {:?}, job_id: {:?}",
+                request.session_id, request.job_id
+            );
         }
 
         let session_id = request.session_id.clone();
@@ -576,11 +610,16 @@ impl ApiServer {
                         if let Some(jid) = job_id {
                             // Use checkpoint manager if available, otherwise use simple token tracker
                             if let Some(cm) = checkpoint_manager.as_ref() {
-                                eprintln!("📊 Calling checkpoint_manager.track_tokens for job {}", jid);
+                                eprintln!(
+                                    "📊 Calling checkpoint_manager.track_tokens for job {}",
+                                    jid
+                                );
                                 let _ = cm.track_tokens(jid, 1, session_id.clone()).await;
                             } else {
                                 eprintln!("📊 Using simple token tracker (no checkpoint manager) for job {}", jid);
-                                token_tracker.track_tokens(Some(jid), 1, session_id.clone()).await;
+                                token_tracker
+                                    .track_tokens(Some(jid), 1, session_id.clone())
+                                    .await;
                             }
                         } else {
                             eprintln!("⚠️ No job_id available for token tracking");
@@ -653,40 +692,44 @@ impl ApiServer {
 
         Ok(rx)
     }
-    
+
     pub async fn get_available_models(&self) -> Result<ModelsResponse, ApiError> {
         let node_guard = self.node.read().await;
-        let node = node_guard.as_ref()
+        let node = node_guard
+            .as_ref()
             .ok_or_else(|| ApiError::ServiceUnavailable("no available nodes".to_string()))?;
-        
+
         let capabilities = node.capabilities();
-        let models = capabilities.into_iter().map(|id| ModelInfo {
-            id: id.clone(),
-            name: id,
-            description: None,
-        }).collect();
-        
+        let models = capabilities
+            .into_iter()
+            .map(|id| ModelInfo {
+                id: id.clone(),
+                name: id,
+                description: None,
+            })
+            .collect();
+
         Ok(ModelsResponse {
             models,
             chain_id: None,
             chain_name: None,
         })
     }
-    
+
     pub async fn health_check(&self) -> HealthResponse {
         let mut issues = Vec::new();
-        
+
         // Check node availability
         let node_available = self.node.read().await.is_some();
         if !node_available {
             issues.push("No P2P node available".to_string());
         }
-        
+
         // Check circuit breaker
         if self.config.enable_circuit_breaker && self.circuit_breaker.is_open().await {
             issues.push("Circuit breaker is open".to_string());
         }
-        
+
         let status = if issues.is_empty() {
             "healthy"
         } else if issues.len() == 1 {
@@ -694,13 +737,17 @@ impl ApiServer {
         } else {
             "unhealthy"
         };
-        
+
         HealthResponse {
             status: status.to_string(),
-            issues: if issues.is_empty() { None } else { Some(issues) },
+            issues: if issues.is_empty() {
+                None
+            } else {
+                Some(issues)
+            },
         }
     }
-    
+
     fn create_router(server: Arc<Self>) -> Router {
         Router::new()
             .route("/health", get(health_handler))
@@ -708,9 +755,7 @@ impl ApiServer {
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
-            .layer(
-                CorsLayer::permissive()
-            )
+            .layer(CorsLayer::permissive())
             .with_state(server)
     }
 }
@@ -733,7 +778,7 @@ async fn simple_inference_handler(
     Json(request): Json<InferenceRequest>,
 ) -> impl IntoResponse {
     let client_ip = "127.0.0.1".to_string();
-    
+
     match server.handle_inference_request(request, client_ip).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response)).into_response(),
         Err(e) => ApiServer::error_response(e),
@@ -747,10 +792,13 @@ async fn metrics_handler() -> impl IntoResponse {
                   # HELP http_request_duration_seconds Request duration\n\
                   # TYPE http_request_duration_seconds histogram\n\
                   http_request_duration_seconds_bucket{le=\"0.1\"} 0\n";
-    
+
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         metrics,
     )
 }
@@ -764,16 +812,20 @@ async fn websocket_handler(
 
 async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
     use serde_json::json;
-    
+
     // Send connection acknowledgment
     let welcome_msg = json!({
         "type": "connected",
         "message": "WebSocket connected successfully"
     });
-    if socket.send(axum::extract::ws::Message::Text(welcome_msg.to_string())).await.is_err() {
+    if socket
+        .send(axum::extract::ws::Message::Text(welcome_msg.to_string()))
+        .await
+        .is_err()
+    {
         return;
     }
-    
+
     while let Some(msg) = socket.recv().await {
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
@@ -781,18 +833,29 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
                     if json_msg["type"] == "inference" {
                         // Debug: Log the entire request
-                        info!("🔍 WebSocket inference request received: {:?}", json_msg["request"]);
+                        info!(
+                            "🔍 WebSocket inference request received: {:?}",
+                            json_msg["request"]
+                        );
 
-                        if let Ok(request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
+                        if let Ok(request) =
+                            serde_json::from_value::<InferenceRequest>(json_msg["request"].clone())
+                        {
                             // Log job_id for payment tracking visibility
                             if let Some(job_id) = request.job_id {
-                                info!("📋 Processing inference request for blockchain job_id: {}", job_id);
+                                info!(
+                                    "📋 Processing inference request for blockchain job_id: {}",
+                                    job_id
+                                );
                             } else {
                                 info!("⚠️  No job_id in WebSocket request");
                             }
 
                             // Handle streaming inference
-                            match server.handle_streaming_request(request, "ws-client".to_string()).await {
+                            match server
+                                .handle_streaming_request(request, "ws-client".to_string())
+                                .await
+                            {
                                 Ok(mut receiver) => {
                                     while let Some(response) = receiver.recv().await {
                                         let ws_msg = json!({
@@ -800,14 +863,24 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             "content": response.content,
                                             "tokens": response.tokens,
                                         });
-                                        
-                                        if socket.send(axum::extract::ws::Message::Text(ws_msg.to_string())).await.is_err() {
+
+                                        if socket
+                                            .send(axum::extract::ws::Message::Text(
+                                                ws_msg.to_string(),
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
                                             break;
                                         }
-                                        
+
                                         if response.finish_reason.is_some() {
                                             let end_msg = json!({"type": "stream_end"});
-                                            let _ = socket.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                            let _ = socket
+                                                .send(axum::extract::ws::Message::Text(
+                                                    end_msg.to_string(),
+                                                ))
+                                                .await;
                                             break;
                                         }
                                     }
@@ -817,7 +890,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         "type": "error",
                                         "error": e.to_string()
                                     });
-                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                    let _ = socket
+                                        .send(axum::extract::ws::Message::Text(
+                                            error_msg.to_string(),
+                                        ))
+                                        .await;
                                 }
                             }
                         }
@@ -825,7 +902,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                 }
             }
             Ok(axum::extract::ws::Message::Ping(data)) => {
-                if socket.send(axum::extract::ws::Message::Pong(data)).await.is_err() {
+                if socket
+                    .send(axum::extract::ws::Message::Pong(data))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -837,10 +918,10 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
 impl ApiServer {
     fn error_response(error: ApiError) -> Response {
-        let status = StatusCode::from_u16(error.status_code())
-            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status =
+            StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = error.to_response(None);
-        
+
         (status, axum::response::Json(body)).into_response()
     }
 }
@@ -857,7 +938,7 @@ pub async fn create_test_server() -> Result<TestServer> {
     // Find an available port
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    
+
     // Create minimal config for testing
     let config = ApiConfig {
         listen_addr: format!("127.0.0.1:{}", port),
@@ -886,15 +967,15 @@ pub async fn create_test_server() -> Result<TestServer> {
         health_check_interval: Duration::from_secs(60),
         shutdown_timeout: Duration::from_secs(30),
     };
-    
+
     // Create server and start in background
     let server = Arc::new(ApiServer::new(config).await?);
-    
+
     // Note: ApiServer doesn't have a run() method yet
     // This would need to be implemented to actually start the server
-    
+
     // Wait for server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     Ok(TestServer { port })
 }

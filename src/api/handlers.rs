@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::job_processor::Message;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceRequest {
@@ -15,11 +15,11 @@ pub struct InferenceRequest {
     #[serde(default)]
     pub conversation_context: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<u64>,  // Blockchain job ID for payment
+    pub job_id: Option<u64>, // Blockchain job ID for payment
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<u64>,  // Chain ID for multi-chain support
+    pub chain_id: Option<u64>, // Chain ID for multi-chain support
 }
 
 fn default_temperature() -> f32 {
@@ -137,35 +137,35 @@ pub struct TotalStatistics {
 impl InferenceRequest {
     pub fn validate(&self) -> Result<(), crate::api::ApiError> {
         use crate::api::ApiError;
-        
+
         if self.model.is_empty() {
             return Err(ApiError::ValidationError {
                 field: "model".to_string(),
                 message: "Model name cannot be empty".to_string(),
             });
         }
-        
+
         if self.prompt.is_empty() {
             return Err(ApiError::ValidationError {
                 field: "prompt".to_string(),
                 message: "Prompt cannot be empty".to_string(),
             });
         }
-        
+
         if self.max_tokens == 0 {
             return Err(ApiError::ValidationError {
                 field: "max_tokens".to_string(),
                 message: "max_tokens must be greater than 0".to_string(),
             });
         }
-        
+
         if self.temperature < 0.0 || self.temperature > 2.0 {
             return Err(ApiError::ValidationError {
                 field: "temperature".to_string(),
                 message: "Temperature must be between 0.0 and 2.0".to_string(),
             });
         }
-        
+
         Ok(())
     }
 }

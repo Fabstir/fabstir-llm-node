@@ -1,13 +1,13 @@
 // src/models/finetuned.rs - Fine-tuned model support
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
-use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,7 +32,11 @@ impl Default for FineTunedConfig {
             enable_qlora: true,
             merge_on_load: false,
             validation_required: true,
-            supported_base_models: vec!["llama2".to_string(), "mistral".to_string(), "vicuna".to_string()],
+            supported_base_models: vec![
+                "llama2".to_string(),
+                "mistral".to_string(),
+                "vicuna".to_string(),
+            ],
         }
     }
 }
@@ -189,16 +193,17 @@ impl ModelMerger {
         manager: &FineTunedManager,
     ) -> Result<PathBuf> {
         // Create merged model directory
-        let merged_path = base_path.parent()
+        let merged_path = base_path
+            .parent()
             .ok_or_else(|| anyhow!("Invalid base path"))?
             .join(format!("merged_{}", model_id));
-        
+
         std::fs::create_dir_all(&merged_path)?;
-        
+
         // Mock merge process - in real implementation would merge weights
         std::fs::write(merged_path.join("config.json"), "{}")?;
         std::fs::write(merged_path.join("model.bin"), vec![0u8; 1024])?;
-        
+
         Ok(merged_path)
     }
 }
@@ -262,13 +267,15 @@ pub struct GenerationResponse {
 }
 
 impl InferenceSession {
-    pub async fn generate(&self, prompt: &str, config: GenerationConfig) -> Result<GenerationResponse> {
+    pub async fn generate(
+        &self,
+        prompt: &str,
+        config: GenerationConfig,
+    ) -> Result<GenerationResponse> {
         // Mock generation
         Ok(GenerationResponse {
             text: format!("Generated response for: {}", prompt),
-            metadata: HashMap::from([
-                ("fine_tuned_model".to_string(), self.model_id.clone()),
-            ]),
+            metadata: HashMap::from([("fine_tuned_model".to_string(), self.model_id.clone())]),
         })
     }
 
@@ -321,27 +328,31 @@ impl FineTunedManager {
         let id = model.id.clone();
         let mut state = self.state.write().await;
         state.registry.register(model);
-        
+
         Ok(id)
     }
 
     pub async fn get_finetuned(&self, id: &str) -> Result<FineTunedModel> {
         let state = self.state.read().await;
-        state.registry.get(id)
+        state
+            .registry
+            .get(id)
             .cloned()
             .ok_or_else(|| anyhow!("Fine-tuned model not found: {}", id))
     }
 
     pub async fn load_adapter(&self, model_id: &str) -> Result<ModelAdapter> {
         let mut state = self.state.write().await;
-        
+
         // Check cache first
         if let Some(adapter) = state.loaded_adapters.get(model_id) {
             return Ok(adapter.clone());
         }
 
         // Load adapter from disk
-        let model = state.registry.get(model_id)
+        let model = state
+            .registry
+            .get(model_id)
             .ok_or_else(|| anyhow!("Model not found: {}", model_id))?;
 
         let config_path = model.metadata.adapter_path.join("adapter_config.json");
@@ -368,8 +379,10 @@ impl FineTunedManager {
         };
 
         // Cache the adapter
-        state.loaded_adapters.insert(model_id.to_string(), adapter.clone());
-        
+        state
+            .loaded_adapters
+            .insert(model_id.to_string(), adapter.clone());
+
         Ok(adapter)
     }
 
@@ -385,7 +398,9 @@ impl FineTunedManager {
 
     pub async fn find_by_tag(&self, tag: &str) -> Result<Vec<FineTunedModel>> {
         let state = self.state.read().await;
-        Ok(state.registry.list()
+        Ok(state
+            .registry
+            .list()
             .into_iter()
             .filter(|m| m.metadata.tags.contains(&tag.to_string()))
             .cloned()
@@ -401,7 +416,9 @@ impl FineTunedManager {
 
     pub async fn create_inference_session(&self, model_id: &str) -> Result<InferenceSession> {
         let state = self.state.read().await;
-        let model = state.registry.get(model_id)
+        let model = state
+            .registry
+            .get(model_id)
             .ok_or_else(|| anyhow!("Model not found: {}", model_id))?;
 
         let session = InferenceSession {
@@ -421,14 +438,18 @@ impl FineTunedManager {
         };
 
         let mut state = self.state.write().await;
-        state.sessions.insert(session.model_id.clone(), session.clone());
+        state
+            .sessions
+            .insert(session.model_id.clone(), session.clone());
 
         Ok(session)
     }
 
     pub async fn export_finetuned(&self, model_id: &str, export_path: &Path) -> Result<()> {
         let state = self.state.read().await;
-        let model = state.registry.get(model_id)
+        let model = state
+            .registry
+            .get(model_id)
             .ok_or_else(|| anyhow!("Model not found: {}", model_id))?;
 
         // Create export directory structure
@@ -442,34 +463,47 @@ impl FineTunedManager {
         // Create README
         let readme = format!(
             "# Fine-tuned Model: {}\n\n{}\n\nBase Model: {}\nType: {:?}\n",
-            model_id, model.metadata.description, model.metadata.base_model, model.metadata.fine_tune_type
+            model_id,
+            model.metadata.description,
+            model.metadata.base_model,
+            model.metadata.fine_tune_type
         );
         std::fs::write(export_path.join("README.md"), readme)?;
 
         Ok(())
     }
 
-    pub async fn set_capabilities(&self, model_id: &str, capabilities: FineTuneCapabilities) -> Result<()> {
+    pub async fn set_capabilities(
+        &self,
+        model_id: &str,
+        capabilities: FineTuneCapabilities,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
-        state.capabilities.insert(model_id.to_string(), capabilities);
+        state
+            .capabilities
+            .insert(model_id.to_string(), capabilities);
         Ok(())
     }
 
     pub async fn get_capabilities(&self, model_id: &str) -> Result<FineTuneCapabilities> {
         let state = self.state.read().await;
-        state.capabilities.get(model_id)
+        state
+            .capabilities
+            .get(model_id)
             .cloned()
             .ok_or_else(|| anyhow!("Capabilities not found for model: {}", model_id))
     }
 
     pub async fn get_model_versions(&self, model_id: &str) -> Result<Vec<FineTunedModel>> {
         let state = self.state.read().await;
-        let model = state.registry.get(model_id)
+        let model = state
+            .registry
+            .get(model_id)
             .ok_or_else(|| anyhow!("Model not found: {}", model_id))?;
 
         // Find all versions (including parent)
         let mut versions = vec![model.clone()];
-        
+
         // Find models that reference this as parent
         for other_model in state.registry.list() {
             if let Some(parent) = &other_model.metadata.parent_version {

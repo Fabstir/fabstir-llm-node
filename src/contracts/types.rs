@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 
 // NodeRegistry Events
 #[derive(Debug, Clone, EthEvent)]
-#[ethevent(name = "NodeRegistered", abi = "NodeRegistered(address,string,uint256)")]
+#[ethevent(
+    name = "NodeRegistered",
+    abi = "NodeRegistered(address,string,uint256)"
+)]
 pub struct NodeRegisteredEvent {
     #[ethevent(indexed)]
     pub node: Address,
@@ -388,10 +391,7 @@ pub struct BlockRange {
 }
 
 // Model Registry ABIs
-abigen!(
-    ModelRegistry,
-    "./contracts/ModelRegistry-CLIENT-ABI.json"
-);
+abigen!(ModelRegistry, "./contracts/ModelRegistry-CLIENT-ABI.json");
 
 abigen!(
     NodeRegistryWithModels,

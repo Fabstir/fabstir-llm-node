@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use fabstir_llm_node::utils::context::{
-        build_prompt_with_context, 
-        count_context_tokens, 
-        is_context_within_limits
-    };
     use fabstir_llm_node::job_processor::Message;
+    use fabstir_llm_node::utils::context::{
+        build_prompt_with_context, count_context_tokens, is_context_within_limits,
+    };
 
     #[test]
     fn test_context_formatting() {
@@ -22,15 +20,15 @@ mod tests {
                 timestamp: None,
             },
         ];
-        
+
         let prompt = "Tell me more about it.";
         let result = build_prompt_with_context(&context, prompt);
-        
+
         assert!(result.contains("user: What is the capital of France?"));
         assert!(result.contains("assistant: The capital of France is Paris."));
         assert!(result.ends_with("user: Tell me more about it.\nassistant:"));
     }
-    
+
     #[test]
     fn test_context_token_counting() {
         // Test token estimation
@@ -46,14 +44,14 @@ mod tests {
                 timestamp: None,
             },
         ];
-        
+
         let tokens = count_context_tokens(&context);
         // Each character is roughly 1/4 token, so we expect roughly
         // (4 + 39 + 9 + 45) / 4 = 97 / 4 = ~24 tokens
         assert!(tokens > 0);
         assert!(tokens < 100); // Reasonable upper bound
     }
-    
+
     #[test]
     fn test_context_truncation() {
         // Test >10 messages truncation
@@ -65,10 +63,10 @@ mod tests {
                 timestamp: None,
             });
         }
-        
+
         let prompt = "Final prompt";
         let result = build_prompt_with_context(&context, prompt);
-        
+
         // Should only include messages 5-14 (last 10)
         assert!(!result.contains("Message 0"));
         assert!(!result.contains("Message 4"));
@@ -82,20 +80,18 @@ mod tests {
         let context = vec![];
         let prompt = "Hello world";
         let result = build_prompt_with_context(&context, prompt);
-        
+
         assert_eq!(result, "user: Hello world\nassistant:");
     }
 
     #[test]
     fn test_context_within_limits() {
-        let context = vec![
-            Message {
-                role: "user".to_string(),
-                content: "Short".to_string(),
-                timestamp: None,
-            },
-        ];
-        
+        let context = vec![Message {
+            role: "user".to_string(),
+            content: "Short".to_string(),
+            timestamp: None,
+        }];
+
         assert!(is_context_within_limits(&context, 100));
         assert!(!is_context_within_limits(&context, 1));
     }
@@ -119,10 +115,10 @@ mod tests {
                 timestamp: None,
             },
         ];
-        
+
         let prompt = "How are you?";
         let result = build_prompt_with_context(&context, prompt);
-        
+
         assert!(result.contains("system: You are a helpful assistant."));
         assert!(result.contains("user: Hello"));
         assert!(result.contains("assistant: Hi there!"));
@@ -139,10 +135,10 @@ mod tests {
                 timestamp: None,
             });
         }
-        
+
         let tokens = count_context_tokens(&context);
         assert!(tokens > 1000); // Should be a significant number
-        
+
         // Test that it correctly identifies as exceeding limits
         assert!(!is_context_within_limits(&context, 100));
         assert!(is_context_within_limits(&context, 10000));

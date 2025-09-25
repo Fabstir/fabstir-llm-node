@@ -1,21 +1,21 @@
 // src/models/private.rs - Private model hosting support
 
-use anyhow::{Result, anyhow};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
-use chrono::{DateTime, Utc, Duration};
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use sha2::{Sha256, Digest};
-use base64;
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
+use anyhow::{anyhow, Result};
+use base64;
+use chrono::{DateTime, Duration, Utc};
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivateModelConfig {
@@ -156,15 +156,21 @@ impl PrivateModelRegistry {
     pub fn register(&mut self, model: PrivateModel) {
         let model_id = model.id.clone();
         let owner_id = model.owner.id.clone();
-        
+
         // Index by owner
-        self.by_owner.entry(owner_id).or_insert_with(HashSet::new).insert(model_id.clone());
-        
+        self.by_owner
+            .entry(owner_id)
+            .or_insert_with(HashSet::new)
+            .insert(model_id.clone());
+
         // Index by organization
         if let Some(org) = &model.owner.organization {
-            self.by_organization.entry(org.clone()).or_insert_with(HashSet::new).insert(model_id.clone());
+            self.by_organization
+                .entry(org.clone())
+                .or_insert_with(HashSet::new)
+                .insert(model_id.clone());
         }
-        
+
         self.models.insert(model_id, model);
     }
 
@@ -173,13 +179,15 @@ impl PrivateModelRegistry {
     }
 
     pub fn list_by_owner(&self, owner_id: &str) -> Vec<&PrivateModel> {
-        self.by_owner.get(owner_id)
+        self.by_owner
+            .get(owner_id)
             .map(|ids| ids.iter().filter_map(|id| self.models.get(id)).collect())
             .unwrap_or_default()
     }
 
     pub fn list_by_organization(&self, org: &str) -> Vec<&PrivateModel> {
-        self.by_organization.get(org)
+        self.by_organization
+            .get(org)
             .map(|ids| ids.iter().filter_map(|id| self.models.get(id)).collect())
             .unwrap_or_default()
     }
@@ -268,7 +276,8 @@ impl AccessControl {
     }
 
     pub fn grant_access(&mut self, model_id: &str, user_id: &str, level: AccessLevel) {
-        self.permissions.entry(model_id.to_string())
+        self.permissions
+            .entry(model_id.to_string())
             .or_insert_with(HashMap::new)
             .insert(user_id.to_string(), level);
     }
@@ -315,7 +324,11 @@ pub struct IsolatedSession {
 }
 
 impl IsolatedSession {
-    pub async fn generate(&self, prompt: &str, config: GenerationConfig) -> Result<GenerationResponse> {
+    pub async fn generate(
+        &self,
+        prompt: &str,
+        config: GenerationConfig,
+    ) -> Result<GenerationResponse> {
         // Mock generation in isolated environment
         Ok(GenerationResponse {
             text: format!("Isolated response for: {}", prompt),
@@ -372,7 +385,11 @@ pub struct ApiSession {
 }
 
 impl ApiSession {
-    pub async fn generate(&self, prompt: &str, config: GenerationConfig) -> Result<GenerationResponse> {
+    pub async fn generate(
+        &self,
+        prompt: &str,
+        config: GenerationConfig,
+    ) -> Result<GenerationResponse> {
         Ok(GenerationResponse {
             text: format!("API response for: {}", prompt),
             metadata: HashMap::from([
@@ -428,14 +445,14 @@ impl RateLimiter {
     async fn check_rate_limit(&self) -> Result<()> {
         let now = Utc::now();
         let mut requests = self.requests.lock().await;
-        
+
         // Clean old requests
         requests.retain(|r| *r > now - Duration::minutes(1));
-        
+
         if requests.len() >= self.limits.requests_per_minute as usize {
             return Err(anyhow!("Rate limit exceeded"));
         }
-        
+
         requests.push(now);
         Ok(())
     }
@@ -459,9 +476,13 @@ impl PrivateModelManager {
         Ok(PrivateModelManager { config, state })
     }
 
-    pub async fn create_private_model(&self, mut model: PrivateModel, owner: &ModelOwner) -> Result<String> {
+    pub async fn create_private_model(
+        &self,
+        mut model: PrivateModel,
+        owner: &ModelOwner,
+    ) -> Result<String> {
         let mut state = self.state.write().await;
-        
+
         // Check user limits
         let owner_models = state.registry.list_by_owner(&owner.id);
         if owner_models.len() >= self.config.max_private_models_per_user {
@@ -478,22 +499,37 @@ impl PrivateModelManager {
         }
 
         // Grant owner full access
-        state.access_control.grant_access(&model_id, &owner.id, AccessLevel::FullAccess);
+        state
+            .access_control
+            .grant_access(&model_id, &owner.id, AccessLevel::FullAccess);
 
         // Register model
         state.registry.register(model.clone());
 
         // Audit log
-        self.add_audit_log(&mut state, &model_id, &owner.id, "model_created", HashMap::new()).await;
+        self.add_audit_log(
+            &mut state,
+            &model_id,
+            &owner.id,
+            "model_created",
+            HashMap::new(),
+        )
+        .await;
 
         Ok(model_id)
     }
 
-    pub async fn get_private_model(&self, model_id: &str, requester: &ModelOwner) -> Result<PrivateModel> {
+    pub async fn get_private_model(
+        &self,
+        model_id: &str,
+        requester: &ModelOwner,
+    ) -> Result<PrivateModel> {
         let state = self.state.read().await;
-        
+
         // Check if model exists
-        let model = state.registry.get(model_id)
+        let model = state
+            .registry
+            .get(model_id)
             .ok_or_else(|| anyhow!("Model not found"))?;
 
         // Check access
@@ -504,13 +540,18 @@ impl PrivateModelManager {
         Ok(model.clone())
     }
 
-    pub async fn encrypt_model(&self, path: &Path, owner: &ModelOwner, config: &EncryptionConfig) -> Result<PathBuf> {
+    pub async fn encrypt_model(
+        &self,
+        path: &Path,
+        owner: &ModelOwner,
+        config: &EncryptionConfig,
+    ) -> Result<PathBuf> {
         let data = std::fs::read(path)?;
-        
+
         // Generate encryption key
         let mut salt = [0u8; 32];
         OsRng.fill_bytes(&mut salt);
-        
+
         let mut key = [0u8; 32];
         pbkdf2_hmac::<Sha256>(owner.id.as_bytes(), &salt, config.iterations, &mut key);
 
@@ -519,8 +560,9 @@ impl PrivateModelManager {
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        
-        let encrypted = cipher.encrypt(nonce, data.as_ref())
+
+        let encrypted = cipher
+            .encrypt(nonce, data.as_ref())
             .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
         // Save encrypted file
@@ -529,7 +571,7 @@ impl PrivateModelManager {
         encrypted_data.extend_from_slice(&salt);
         encrypted_data.extend_from_slice(&nonce_bytes);
         encrypted_data.extend_from_slice(&encrypted);
-        
+
         std::fs::write(&encrypted_path, encrypted_data)?;
 
         // Store key for owner
@@ -541,12 +583,12 @@ impl PrivateModelManager {
 
     pub async fn decrypt_model(&self, path: &Path, owner: &ModelOwner) -> Result<PathBuf> {
         let encrypted_data = std::fs::read(path)?;
-        
+
         // Extract salt, nonce, and ciphertext
         if encrypted_data.len() < 44 {
             return Err(anyhow!("Invalid encrypted file"));
         }
-        
+
         let salt = &encrypted_data[0..32];
         let nonce_bytes = &encrypted_data[32..44];
         let ciphertext = &encrypted_data[44..];
@@ -558,8 +600,9 @@ impl PrivateModelManager {
         // Decrypt
         let cipher = Aes256Gcm::new_from_slice(&key)?;
         let nonce = Nonce::from_slice(nonce_bytes);
-        
-        let decrypted = cipher.decrypt(nonce, ciphertext)
+
+        let decrypted = cipher
+            .decrypt(nonce, ciphertext)
             .map_err(|e| anyhow!("Decryption failed: {}", e))?;
 
         // Save decrypted file
@@ -593,18 +636,31 @@ impl PrivateModelManager {
             created_at: Utc::now(),
         };
 
-        state.access_control.tokens.insert(token.value.clone(), token.clone());
+        state
+            .access_control
+            .tokens
+            .insert(token.value.clone(), token.clone());
 
         // Audit log
-        self.add_audit_log(&mut state, model_id, &owner.id, "token_generated", HashMap::new()).await;
+        self.add_audit_log(
+            &mut state,
+            model_id,
+            &owner.id,
+            "token_generated",
+            HashMap::new(),
+        )
+        .await;
 
         Ok(token)
     }
 
     pub async fn validate_token(&self, token_value: &str) -> Result<AccessToken> {
         let state = self.state.read().await;
-        
-        let token = state.access_control.tokens.get(token_value)
+
+        let token = state
+            .access_control
+            .tokens
+            .get(token_value)
             .ok_or_else(|| anyhow!("Invalid token"))?;
 
         if token.expires_at < Utc::now() {
@@ -614,7 +670,12 @@ impl PrivateModelManager {
         Ok(token.clone())
     }
 
-    pub async fn share_model(&self, model_id: &str, owner: &ModelOwner, settings: SharingSettings) -> Result<()> {
+    pub async fn share_model(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+        settings: SharingSettings,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
 
         // Verify owner has permission to share
@@ -624,15 +685,25 @@ impl PrivateModelManager {
 
         // Grant access to shared users
         for user_id in &settings.shared_with {
-            state.access_control.grant_access(model_id, user_id, settings.access_level);
+            state
+                .access_control
+                .grant_access(model_id, user_id, settings.access_level);
         }
 
-        state.access_control.sharing.insert(model_id.to_string(), settings);
+        state
+            .access_control
+            .sharing
+            .insert(model_id.to_string(), settings);
 
         Ok(())
     }
 
-    pub async fn update_model(&self, model_id: &str, owner: &ModelOwner, updates: HashMap<String, String>) -> Result<()> {
+    pub async fn update_model(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+        updates: HashMap<String, String>,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
 
         // Check permissions
@@ -641,12 +712,18 @@ impl PrivateModelManager {
         }
 
         // Audit log
-        self.add_audit_log(&mut state, model_id, &owner.id, "model_updated", updates).await;
+        self.add_audit_log(&mut state, model_id, &owner.id, "model_updated", updates)
+            .await;
 
         Ok(())
     }
 
-    pub async fn set_usage_policy(&self, model_id: &str, owner: &ModelOwner, policy: UsagePolicy) -> Result<()> {
+    pub async fn set_usage_policy(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+        policy: UsagePolicy,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
 
         // Check permissions
@@ -674,7 +751,8 @@ impl PrivateModelManager {
             metrics,
         };
 
-        state.usage_tracking
+        state
+            .usage_tracking
             .entry(model_id.to_string())
             .or_insert_with(HashMap::new)
             .entry(user.id.clone())
@@ -693,7 +771,8 @@ impl PrivateModelManager {
     ) -> Result<UsageStats> {
         let state = self.state.read().await;
 
-        let records = state.usage_tracking
+        let records = state
+            .usage_tracking
             .get(model_id)
             .and_then(|m| m.get(&owner.id))
             .ok_or_else(|| anyhow!("No usage data found"))?;
@@ -718,7 +797,12 @@ impl PrivateModelManager {
         })
     }
 
-    pub async fn set_license(&self, model_id: &str, owner: &ModelOwner, license: ModelLicense) -> Result<()> {
+    pub async fn set_license(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+        license: ModelLicense,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
 
         // Check permissions
@@ -731,7 +815,11 @@ impl PrivateModelManager {
         Ok(())
     }
 
-    pub async fn accept_license(&self, model_id: &str, user: &ModelOwner) -> Result<LicenseAcceptance> {
+    pub async fn accept_license(
+        &self,
+        model_id: &str,
+        user: &ModelOwner,
+    ) -> Result<LicenseAcceptance> {
         let mut state = self.state.write().await;
 
         let acceptance = LicenseAcceptance {
@@ -741,7 +829,8 @@ impl PrivateModelManager {
             user_id: user.id.clone(),
         };
 
-        state.license_acceptances
+        state
+            .license_acceptances
             .entry(model_id.to_string())
             .or_insert_with(Vec::new)
             .push(acceptance.clone());
@@ -749,11 +838,17 @@ impl PrivateModelManager {
         Ok(acceptance)
     }
 
-    pub async fn check_license_compliance(&self, model_id: &str, user: &ModelOwner) -> Result<bool> {
+    pub async fn check_license_compliance(
+        &self,
+        model_id: &str,
+        user: &ModelOwner,
+    ) -> Result<bool> {
         let state = self.state.read().await;
 
         if let Some(acceptances) = state.license_acceptances.get(model_id) {
-            Ok(acceptances.iter().any(|a| a.user_id == user.id && a.accepted))
+            Ok(acceptances
+                .iter()
+                .any(|a| a.user_id == user.id && a.accepted))
         } else {
             Ok(false)
         }
@@ -795,24 +890,27 @@ impl PrivateModelManager {
 
         // For audit logs, we allow access even if model is deleted
         // Check if the user was the owner by looking at audit logs
-        let owner_logs: Vec<_> = state.audit_logs.iter()
+        let owner_logs: Vec<_> = state
+            .audit_logs
+            .iter()
             .filter(|log| log.model_id == model_id && log.user_id == owner.id)
             .collect();
-        
+
         // If user has any logs for this model, they had access
         if owner_logs.is_empty() {
             // Still check current access for non-deleted models
-            if state.registry.get(model_id).is_some() && 
-               !self.check_access(&state, model_id, &owner.id, AccessLevel::FullAccess) {
+            if state.registry.get(model_id).is_some()
+                && !self.check_access(&state, model_id, &owner.id, AccessLevel::FullAccess)
+            {
                 return Err(anyhow!("Insufficient permissions to view audit logs"));
             }
         }
 
-        let logs: Vec<AuditLog> = state.audit_logs.iter()
+        let logs: Vec<AuditLog> = state
+            .audit_logs
+            .iter()
             .filter(|log| {
-                log.model_id == model_id &&
-                log.timestamp >= start_time &&
-                log.timestamp <= end_time
+                log.model_id == model_id && log.timestamp >= start_time && log.timestamp <= end_time
             })
             .cloned()
             .collect();
@@ -822,8 +920,10 @@ impl PrivateModelManager {
 
     pub async fn list_organization_models(&self, organization: &str) -> Result<Vec<PrivateModel>> {
         let state = self.state.read().await;
-        
-        Ok(state.registry.list_by_organization(organization)
+
+        Ok(state
+            .registry
+            .list_by_organization(organization)
             .into_iter()
             .cloned()
             .collect())
@@ -836,8 +936,10 @@ impl PrivateModelManager {
         limit: usize,
     ) -> Result<Vec<PrivateModel>> {
         let state = self.state.read().await;
-        
-        let models: Vec<PrivateModel> = state.registry.list_by_owner(&requester.id)
+
+        let models: Vec<PrivateModel> = state
+            .registry
+            .list_by_owner(&requester.id)
             .into_iter()
             .filter(|m| m.name.contains(query))
             .take(limit)
@@ -847,7 +949,12 @@ impl PrivateModelManager {
         Ok(models)
     }
 
-    pub async fn set_rate_limits(&self, model_id: &str, owner: &ModelOwner, limits: RateLimits) -> Result<()> {
+    pub async fn set_rate_limits(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+        limits: RateLimits,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
 
         // Check permissions
@@ -887,12 +994,24 @@ impl PrivateModelManager {
         state.access_control.sharing.remove(model_id);
 
         // Audit log
-        self.add_audit_log(&mut state, model_id, &owner.id, "model_deleted", HashMap::new()).await;
+        self.add_audit_log(
+            &mut state,
+            model_id,
+            &owner.id,
+            "model_deleted",
+            HashMap::new(),
+        )
+        .await;
 
         Ok(())
     }
 
-    pub async fn set_export_policy(&self, model_id: &str, owner: &ModelOwner, policy: ExportPolicy) -> Result<()> {
+    pub async fn set_export_policy(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+        policy: ExportPolicy,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
 
         // Check permissions
@@ -918,7 +1037,11 @@ impl PrivateModelManager {
         Err(anyhow!("Export not implemented"))
     }
 
-    pub async fn create_api_session(&self, model_id: &str, owner: &ModelOwner) -> Result<ApiSession> {
+    pub async fn create_api_session(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+    ) -> Result<ApiSession> {
         let state = self.state.read().await;
 
         // Check access
@@ -933,7 +1056,11 @@ impl PrivateModelManager {
         })
     }
 
-    pub async fn get_storage_info(&self, model_id: &str, owner: &ModelOwner) -> Result<StorageInfo> {
+    pub async fn get_storage_info(
+        &self,
+        model_id: &str,
+        owner: &ModelOwner,
+    ) -> Result<StorageInfo> {
         let state = self.state.read().await;
 
         // Check permissions
@@ -941,7 +1068,9 @@ impl PrivateModelManager {
             return Err(anyhow!("Access denied"));
         }
 
-        let model = state.registry.get(model_id)
+        let model = state
+            .registry
+            .get(model_id)
             .ok_or_else(|| anyhow!("Model not found"))?;
 
         // Ensure tenant isolation in path
@@ -955,7 +1084,13 @@ impl PrivateModelManager {
     }
 
     // Helper methods
-    fn check_access(&self, state: &ManagerState, model_id: &str, user_id: &str, required_level: AccessLevel) -> bool {
+    fn check_access(
+        &self,
+        state: &ManagerState,
+        model_id: &str,
+        user_id: &str,
+        required_level: AccessLevel,
+    ) -> bool {
         // Check if user is owner
         if let Some(model) = state.registry.get(model_id) {
             if model.owner.id == user_id {
@@ -967,8 +1102,8 @@ impl PrivateModelManager {
         if let Some(level) = state.access_control.check_access(model_id, user_id) {
             match (required_level, level) {
                 (AccessLevel::ReadOnly, _) => true,
-                (AccessLevel::ReadWrite, AccessLevel::ReadWrite) | 
-                (AccessLevel::ReadWrite, AccessLevel::FullAccess) => true,
+                (AccessLevel::ReadWrite, AccessLevel::ReadWrite)
+                | (AccessLevel::ReadWrite, AccessLevel::FullAccess) => true,
                 (AccessLevel::FullAccess, AccessLevel::FullAccess) => true,
                 _ => false,
             }

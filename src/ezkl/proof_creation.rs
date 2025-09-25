@@ -1,11 +1,11 @@
 use anyhow::Result;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
-use chrono::Utc;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProofFormat {
@@ -83,10 +83,10 @@ pub struct ProofRequest {
 
 impl ProofRequest {
     pub fn set_custom_param(&mut self, key: &str, value: &str) {
-        self.custom_params.insert(key.to_string(), value.to_string());
+        self.custom_params
+            .insert(key.to_string(), value.to_string());
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ProofMetadata {
@@ -269,7 +269,11 @@ impl ProofGenerator {
             timestamp: Utc::now().timestamp() as u64,
             optimizations,
             supports_batching: matches!(request.proof_format, ProofFormat::Aggregated),
-            recursion_depth: if matches!(request.proof_format, ProofFormat::Recursive) { 1 } else { 0 },
+            recursion_depth: if matches!(request.proof_format, ProofFormat::Recursive) {
+                1
+            } else {
+                0
+            },
             is_incremental: false,
             num_steps: 0,
             custom_params: request.custom_params.clone(),
@@ -280,7 +284,7 @@ impl ProofGenerator {
 
     pub async fn start_incremental_proof(&self, inference_data: &InferenceData) -> Result<String> {
         let proof_id = format!("proof_{}", uuid::Uuid::new_v4());
-        
+
         let incremental = IncrementalProof {
             id: proof_id.clone(),
             data: inference_data.clone(),
@@ -297,10 +301,12 @@ impl ProofGenerator {
 
     pub async fn add_proof_step(&self, proof_id: &str, step_data: &[u8]) -> Result<()> {
         let mut proofs = self.incremental_proofs.write().await;
-        
+
         if let Some(proof) = proofs.get_mut(proof_id) {
             if proof.status != ProofStatus::InProgress {
-                return Err(ProofError::GenerationFailed("Proof not in progress".to_string()).into());
+                return Err(
+                    ProofError::GenerationFailed("Proof not in progress".to_string()).into(),
+                );
             }
             proof.steps.push(step_data.to_vec());
             Ok(())
@@ -311,7 +317,7 @@ impl ProofGenerator {
 
     pub async fn get_proof_status(&self, proof_id: &str) -> Result<ProofStatus> {
         let proofs = self.incremental_proofs.read().await;
-        
+
         if let Some(proof) = proofs.get(proof_id) {
             Ok(proof.status.clone())
         } else {
@@ -321,7 +327,7 @@ impl ProofGenerator {
 
     pub async fn finalize_incremental_proof(&self, proof_id: &str) -> Result<ProofResult> {
         let mut proofs = self.incremental_proofs.write().await;
-        
+
         if let Some(mut proof) = proofs.remove(proof_id) {
             if proof.status == ProofStatus::Cancelled {
                 return Err(ProofError::Cancelled.into());
@@ -375,7 +381,7 @@ impl ProofGenerator {
 
     pub async fn cancel_proof(&self, proof_id: &str) -> Result<()> {
         let mut proofs = self.incremental_proofs.write().await;
-        
+
         if let Some(proof) = proofs.get_mut(proof_id) {
             proof.status = ProofStatus::Cancelled;
             Ok(())

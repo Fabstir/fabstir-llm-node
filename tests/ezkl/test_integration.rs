@@ -1,13 +1,11 @@
 use anyhow::Result;
-use ethers::types::{H256, U256, Address};
-use fabstir_llm_node::results::proofs::{
-    ProofGenerator, ProofGenerationConfig, ProofType
-};
-use fabstir_llm_node::results::packager::{InferenceResult, ResultPackager, ResultMetadata};
+use ethers::types::{Address, H256, U256};
 use fabstir_llm_node::job_processor::{JobRequest, Message};
+use fabstir_llm_node::results::packager::{InferenceResult, ResultMetadata, ResultPackager};
+use fabstir_llm_node::results::proofs::{ProofGenerationConfig, ProofGenerator, ProofType};
 //use fabstir_llm_node::contracts::proofs::ProofSubmitter;
-use std::sync::Arc;
 use chrono::Utc;
+use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
@@ -51,8 +49,10 @@ async fn test_ezkl_end_to_end_proof_flow() -> Result<()> {
 
     // Package the result
     let packager = ResultPackager::new("integration_node".to_string());
-    let packaged = packager.package_result_with_job(inference_result.clone(), job_request.clone()).await?;
-    
+    let packaged = packager
+        .package_result_with_job(inference_result.clone(), job_request.clone())
+        .await?;
+
     // Generate EZKL proof
     let config = ProofGenerationConfig {
         proof_type: ProofType::EZKL,
@@ -60,16 +60,19 @@ async fn test_ezkl_end_to_end_proof_flow() -> Result<()> {
         settings_path: Some("./ezkl/settings.json".to_string()),
         max_proof_size: 20_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "integration_node".to_string());
     let verifiable = generator.create_verifiable_result(packaged).await?;
-    
+
     // Verify all components are present
     assert!(!verifiable.proof.proof_data.is_empty());
     assert!(!verifiable.verification_key.is_empty());
     assert_eq!(verifiable.proof.proof_type, ProofType::EZKL);
-    assert_eq!(verifiable.packaged_result.result.job_id, format!("{:x}", job_request.job_id));
-    
+    assert_eq!(
+        verifiable.packaged_result.result.job_id,
+        format!("{:x}", job_request.job_id)
+    );
+
     Ok(())
 }
 
@@ -106,19 +109,19 @@ async fn test_ezkl_proof_submission_to_contract() -> Result<()> {
         settings_path: None,
         max_proof_size: 15_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "submitter_node".to_string());
     let proof = generator.generate_proof(&inference_result).await?;
-    
+
     // Verify proof can be serialized for contract submission
     let proof_bytes = bincode::serialize(&proof)?;
     assert!(proof_bytes.len() < 50_000, "Proof too large for contract");
-    
+
     // Verify proof can be deserialized
-    let deserialized: fabstir_llm_node::results::proofs::InferenceProof = 
+    let deserialized: fabstir_llm_node::results::proofs::InferenceProof =
         bincode::deserialize(&proof_bytes)?;
     assert_eq!(deserialized.job_id, proof.job_id);
-    
+
     Ok(())
 }
 
@@ -130,12 +133,12 @@ async fn test_ezkl_concurrent_proof_generation() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator = Arc::new(ProofGenerator::new(config, "concurrent_node".to_string()));
-    
+
     // Create multiple inference results
     let mut tasks = vec![];
-    
+
     for i in 0..5 {
         let gen = generator.clone();
         let result = InferenceResult {
@@ -149,25 +152,26 @@ async fn test_ezkl_concurrent_proof_generation() -> Result<()> {
             node_id: "concurrent_node".to_string(),
             metadata: ResultMetadata::default(),
         };
-        
-        tasks.push(tokio::spawn(async move {
-            gen.generate_proof(&result).await
-        }));
+
+        tasks.push(tokio::spawn(
+            async move { gen.generate_proof(&result).await },
+        ));
     }
-    
+
     // Wait for all proofs with timeout
     let results = timeout(
         Duration::from_secs(10),
-        futures::future::try_join_all(tasks)
-    ).await?;
-    
+        futures::future::try_join_all(tasks),
+    )
+    .await?;
+
     // Verify all proofs were generated
     for (i, result) in results?.into_iter().enumerate() {
         let proof = result?;
         assert_eq!(proof.job_id, format!("concurrent_{}", i));
         assert!(!proof.proof_data.is_empty());
     }
-    
+
     Ok(())
 }
 
@@ -191,25 +195,25 @@ async fn test_ezkl_proof_caching() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "cache_node".to_string());
-    
+
     // Generate proof twice for same input
     let start1 = std::time::Instant::now();
     let proof1 = generator.generate_proof(&result).await?;
     let time1 = start1.elapsed();
-    
+
     let start2 = std::time::Instant::now();
     let proof2 = generator.generate_proof(&result).await?;
     let time2 = start2.elapsed();
-    
+
     // Second generation should be faster if cached (though mock may not show this)
     assert_eq!(proof1.model_hash, proof2.model_hash);
     assert_eq!(proof1.input_hash, proof2.input_hash);
     assert_eq!(proof1.output_hash, proof2.output_hash);
-    
+
     println!("First generation: {:?}, Second: {:?}", time1, time2);
-    
+
     Ok(())
 }
 
@@ -242,28 +246,29 @@ async fn test_ezkl_proof_with_payment_verification() -> Result<()> {
 
     // Package and generate proof
     let packager = ResultPackager::new("payment_node".to_string());
-    let packaged = packager.package_result_with_job(inference_result.clone(), job_request.clone()).await?;
-    
+    let packaged = packager
+        .package_result_with_job(inference_result.clone(), job_request.clone())
+        .await?;
+
     let config = ProofGenerationConfig {
         proof_type: ProofType::EZKL,
         model_path: "./models/tinyllama-1.1b.Q4_K_M.gguf".to_string(),
         settings_path: Some("./ezkl/settings.json".to_string()),
         max_proof_size: 25_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "payment_node".to_string());
     let verifiable = generator.create_verifiable_result(packaged).await?;
-    
-    // Verify proof contains payment information  
+
+    // Verify proof contains payment information
     assert!(verifiable.packaged_result.result.tokens_generated > 800);
-    
+
     // Verify proof is valid for payment release
-    let is_valid = generator.verify_proof(
-        &verifiable.proof,
-        &verifiable.packaged_result.result
-    ).await?;
-    
+    let is_valid = generator
+        .verify_proof(&verifiable.proof, &verifiable.packaged_result.result)
+        .await?;
+
     assert!(is_valid, "Proof must be valid for payment release");
-    
+
     Ok(())
 }

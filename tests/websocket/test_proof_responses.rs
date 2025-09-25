@@ -1,8 +1,8 @@
 use anyhow::Result;
+use futures::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use futures::StreamExt;
 
 use fabstir_llm_node::api::websocket::{
     handlers::{response::ResponseHandler, session_init::SessionInitHandler},
@@ -44,7 +44,10 @@ async fn test_response_includes_proof_field() -> Result<()> {
     assert!(token.proof.is_some(), "Final token should include proof");
     let proof = token.proof.unwrap();
     assert!(!proof.hash.is_empty(), "Proof hash should not be empty");
-    assert_eq!(proof.proof_type, "simple", "Proof type should be simple by default");
+    assert_eq!(
+        proof.proof_type, "simple",
+        "Proof type should be simple by default"
+    );
 
     Ok(())
 }
@@ -82,9 +85,12 @@ async fn test_streaming_response_includes_proof_in_final_token() -> Result<()> {
     // Verify final token has proof
     assert!(token_count > 0, "Should have received tokens");
     assert!(final_token.is_some(), "Should have final token");
-    
+
     let final_tok = final_token.unwrap();
-    assert!(final_tok.proof.is_some(), "Final token should include proof");
+    assert!(
+        final_tok.proof.is_some(),
+        "Final token should include proof"
+    );
     let proof = final_tok.proof.unwrap();
     assert!(!proof.hash.is_empty(), "Proof hash should not be empty");
 
@@ -104,7 +110,7 @@ async fn test_proof_contains_model_and_prompt_hash() -> Result<()> {
         .await?;
 
     let prompt = "What is the capital of France?";
-    
+
     // Generate response
     let response = response_handler
         .generate_response("test-hash", prompt, 0)
@@ -129,17 +135,16 @@ async fn test_proof_manager_caches_recent_proofs() -> Result<()> {
     let prompt = "Test prompt";
     let output = "Test output";
 
-    let proof1 = proof_manager
-        .generate_proof(model, prompt, output)
-        .await?;
-    
-    let proof2 = proof_manager
-        .generate_proof(model, prompt, output)
-        .await?;
+    let proof1 = proof_manager.generate_proof(model, prompt, output).await?;
+
+    let proof2 = proof_manager.generate_proof(model, prompt, output).await?;
 
     // Should return same proof (cached)
     assert_eq!(proof1.hash, proof2.hash, "Should return cached proof");
-    assert_eq!(proof1.timestamp, proof2.timestamp, "Timestamps should match for cached proof");
+    assert_eq!(
+        proof1.timestamp, proof2.timestamp,
+        "Timestamps should match for cached proof"
+    );
 
     Ok(())
 }
@@ -164,11 +169,17 @@ async fn test_websocket_message_json_includes_proof() -> Result<()> {
     // Convert to JSON and verify structure
     let json = serde_json::to_value(&response)?;
     assert!(json.get("proof").is_some(), "JSON should have proof field");
-    
+
     let proof_json = &json["proof"];
     assert!(proof_json.get("hash").is_some(), "Proof should have hash");
-    assert!(proof_json.get("proof_type").is_some(), "Proof should have type");
-    assert!(proof_json.get("model_hash").is_some(), "Proof should have model_hash");
+    assert!(
+        proof_json.get("proof_type").is_some(),
+        "Proof should have type"
+    );
+    assert!(
+        proof_json.get("model_hash").is_some(),
+        "Proof should have model_hash"
+    );
 
     Ok(())
 }
@@ -195,7 +206,7 @@ async fn test_proof_generation_error_returns_response_without_proof() -> Result<
     assert_eq!(response.role, "assistant");
     assert!(response.content.len() > 0);
     // Proof might be None or contain error indication
-    
+
     Ok(())
 }
 
@@ -205,16 +216,12 @@ async fn test_proof_manager_handles_concurrent_requests() -> Result<()> {
 
     // Launch multiple concurrent proof generations
     let mut handles = vec![];
-    
+
     for i in 0..5 {
         let pm = proof_manager.clone();
         let handle = tokio::spawn(async move {
-            pm.generate_proof(
-                "model",
-                &format!("prompt-{}", i),
-                &format!("output-{}", i),
-            )
-            .await
+            pm.generate_proof("model", &format!("prompt-{}", i), &format!("output-{}", i))
+                .await
         });
         handles.push(handle);
     }
@@ -258,7 +265,10 @@ async fn test_response_handler_without_proof_manager_works() -> Result<()> {
     // Response should work but without proof
     assert_eq!(response.role, "assistant");
     assert!(response.content.len() > 0);
-    assert!(response.proof.is_none(), "Should not have proof when manager is None");
+    assert!(
+        response.proof.is_none(),
+        "Should not have proof when manager is None"
+    );
 
     Ok(())
 }

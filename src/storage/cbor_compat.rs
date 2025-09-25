@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 use zstd;
@@ -86,7 +86,7 @@ impl CborDecoder {
         if data.is_empty() {
             return Err(CborError::InvalidData("Empty data".to_string()));
         }
-        
+
         let result = serde_cbor::from_slice(data)?;
         Ok(result)
     }
@@ -142,12 +142,13 @@ impl CborCompat {
         compression: CompressionType,
     ) -> Result<Vec<u8>, CborError> {
         let encoded = self.encode(data)?;
-        
+
         match compression {
             CompressionType::None => Ok(encoded),
             CompressionType::Zstd => {
-                let compressed = zstd::stream::encode_all(&encoded[..], 3)
-                    .map_err(|e| CborError::CompressionError(format!("Zstd compression failed: {}", e)))?;
+                let compressed = zstd::stream::encode_all(&encoded[..], 3).map_err(|e| {
+                    CborError::CompressionError(format!("Zstd compression failed: {}", e))
+                })?;
                 Ok(compressed)
             }
         }
@@ -160,12 +161,11 @@ impl CborCompat {
     ) -> Result<T, CborError> {
         let decoded_data = match compression {
             CompressionType::None => data.to_vec(),
-            CompressionType::Zstd => {
-                zstd::stream::decode_all(data)
-                    .map_err(|e| CborError::CompressionError(format!("Zstd decompression failed: {}", e)))?
-            }
+            CompressionType::Zstd => zstd::stream::decode_all(data).map_err(|e| {
+                CborError::CompressionError(format!("Zstd decompression failed: {}", e))
+            })?,
         };
-        
+
         self.decode(&decoded_data)
     }
 
@@ -177,7 +177,10 @@ impl CborCompat {
         Ok(encoded_items)
     }
 
-    pub fn decode_batch<T: DeserializeOwned>(&self, encoded_items: &[Vec<u8>]) -> Result<Vec<T>, CborError> {
+    pub fn decode_batch<T: DeserializeOwned>(
+        &self,
+        encoded_items: &[Vec<u8>],
+    ) -> Result<Vec<T>, CborError> {
         let mut decoded_items = Vec::new();
         for encoded in encoded_items {
             decoded_items.push(self.decode(encoded)?);
@@ -215,16 +218,16 @@ mod tests {
     #[test]
     fn test_deterministic_encoding() {
         let encoder = CborEncoder::new();
-        
+
         let data = HashMap::from([
             ("z".to_string(), "last".to_string()),
             ("a".to_string(), "first".to_string()),
             ("m".to_string(), "middle".to_string()),
         ]);
-        
+
         let encoded1 = encoder.encode(&data).unwrap();
         let encoded2 = encoder.encode(&data).unwrap();
-        
+
         assert_eq!(encoded1, encoded2);
     }
 
@@ -232,10 +235,14 @@ mod tests {
     fn test_compression() {
         let compat = CborCompat::new();
         let data = vec![42u8; 10000]; // Highly compressible
-        
-        let compressed = compat.encode_with_compression(&data, CompressionType::Zstd).unwrap();
-        let decompressed: Vec<u8> = compat.decode_compressed(&compressed, CompressionType::Zstd).unwrap();
-        
+
+        let compressed = compat
+            .encode_with_compression(&data, CompressionType::Zstd)
+            .unwrap();
+        let decompressed: Vec<u8> = compat
+            .decode_compressed(&compressed, CompressionType::Zstd)
+            .unwrap();
+
         assert!(compressed.len() < data.len());
         assert_eq!(decompressed, data);
     }

@@ -1,6 +1,6 @@
 use fabstir_llm_node::api::websocket::{
-    protocol::{ProtocolMessage, MessageType, SessionCommand, ProtocolError},
-    protocol_handlers::{MessageHandler, HandlerRegistry},
+    protocol::{MessageType, ProtocolError, ProtocolMessage, SessionCommand},
+    protocol_handlers::{HandlerRegistry, MessageHandler},
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -16,10 +16,10 @@ fn test_protocol_message_serialization() {
         })),
         payload: None,
     };
-    
+
     let serialized = serde_json::to_string(&msg).unwrap();
     let deserialized: ProtocolMessage = serde_json::from_str(&serialized).unwrap();
-    
+
     assert_eq!(deserialized.msg_type, MessageType::SessionControl);
     assert_eq!(deserialized.command, Some(SessionCommand::Init));
     assert_eq!(deserialized.session_id, Some("test-session".to_string()));
@@ -42,7 +42,7 @@ fn test_message_type_variants() {
         MessageType::Error,
         MessageType::Data,
     ];
-    
+
     for msg_type in types {
         let msg = ProtocolMessage {
             msg_type: msg_type.clone(),
@@ -51,7 +51,7 @@ fn test_message_type_variants() {
             metadata: None,
             payload: None,
         };
-        
+
         let json = serde_json::to_value(&msg).unwrap();
         assert!(json["msg_type"].is_string());
     }
@@ -71,7 +71,7 @@ fn test_session_command_variants() {
         SessionCommand::Terminate,
         SessionCommand::TerminateAck,
     ];
-    
+
     for command in commands {
         let msg = ProtocolMessage {
             msg_type: MessageType::SessionControl,
@@ -80,7 +80,7 @@ fn test_session_command_variants() {
             metadata: None,
             payload: None,
         };
-        
+
         let json = serde_json::to_value(&msg).unwrap();
         assert!(json["command"].is_string());
     }
@@ -89,7 +89,7 @@ fn test_session_command_variants() {
 #[tokio::test]
 async fn test_handler_registry() {
     let mut registry = HandlerRegistry::new();
-    
+
     // Register a custom handler
     registry.register(MessageType::Heartbeat, |msg| {
         Box::pin(async move {
@@ -102,7 +102,7 @@ async fn test_handler_registry() {
             })
         })
     });
-    
+
     let msg = ProtocolMessage {
         msg_type: MessageType::Heartbeat,
         command: None,
@@ -110,7 +110,7 @@ async fn test_handler_registry() {
         metadata: None,
         payload: None,
     };
-    
+
     let response = registry.handle(msg).await.unwrap();
     assert_eq!(response.msg_type, MessageType::HeartbeatAck);
     assert_eq!(response.metadata.unwrap()["handled"], true);
@@ -120,10 +120,10 @@ async fn test_handler_registry() {
 async fn test_error_message_creation() {
     let error = ProtocolError::SessionNotFound("test-session".to_string());
     let error_msg = error.to_protocol_message();
-    
+
     assert_eq!(error_msg.msg_type, MessageType::Error);
     assert!(error_msg.metadata.is_some());
-    
+
     let metadata = error_msg.metadata.unwrap();
     assert!(metadata["error_code"].is_string());
     assert!(metadata["error_message"].is_string());
@@ -140,7 +140,7 @@ fn test_message_validation() {
         payload: None,
     };
     assert!(valid_msg.validate().is_ok());
-    
+
     // Invalid: SessionControl without command
     let invalid_msg = ProtocolMessage {
         msg_type: MessageType::SessionControl,
@@ -150,7 +150,7 @@ fn test_message_validation() {
         payload: None,
     };
     assert!(invalid_msg.validate().is_err());
-    
+
     // Invalid: Resume without session_id
     let invalid_resume = ProtocolMessage {
         msg_type: MessageType::SessionControl,
@@ -169,7 +169,7 @@ fn test_message_builder() {
         .session_id("test-session".to_string())
         .metadata(json!({ "timestamp": 123456 }))
         .build();
-    
+
     assert_eq!(msg.msg_type, MessageType::Heartbeat);
     assert_eq!(msg.session_id, Some("test-session".to_string()));
     assert!(msg.metadata.is_some());
@@ -178,7 +178,7 @@ fn test_message_builder() {
 #[tokio::test]
 async fn test_handler_chain() {
     let mut handler = MessageHandler::new();
-    
+
     // Add pre-processing middleware
     handler.add_middleware(|msg| {
         Box::pin(async move {
@@ -191,7 +191,7 @@ async fn test_handler_chain() {
             Ok(msg)
         })
     });
-    
+
     let input = ProtocolMessage {
         msg_type: MessageType::Data,
         command: None,
@@ -199,7 +199,7 @@ async fn test_handler_chain() {
         metadata: None,
         payload: Some(json!({ "data": "test" })),
     };
-    
+
     let processed = handler.process(input).await.unwrap();
     assert_eq!(processed.metadata.unwrap()["preprocessed"], true);
 }
@@ -214,7 +214,7 @@ fn test_protocol_error_types() {
         ProtocolError::HandoffFailed("reason".to_string()),
         ProtocolError::Timeout(5000),
     ];
-    
+
     for error in errors {
         let msg = error.to_protocol_message();
         assert_eq!(msg.msg_type, MessageType::Error);
@@ -225,7 +225,7 @@ fn test_protocol_error_types() {
 #[tokio::test]
 async fn test_batch_message_handling() {
     let handler = MessageHandler::new();
-    
+
     let messages = vec![
         ProtocolMessage {
             msg_type: MessageType::Heartbeat,
@@ -242,10 +242,10 @@ async fn test_batch_message_handling() {
             payload: None,
         },
     ];
-    
+
     let responses = handler.process_batch(messages).await.unwrap();
     assert_eq!(responses.len(), 2);
-    
+
     for response in responses {
         assert_eq!(response.msg_type, MessageType::HeartbeatAck);
     }

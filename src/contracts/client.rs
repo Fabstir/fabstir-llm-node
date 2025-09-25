@@ -1,10 +1,10 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
-use ethers::providers::{Provider, Http};
+use ethers::providers::{Http, Provider};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 
 use super::types::*;
 
@@ -74,20 +74,27 @@ impl Web3Client {
             .interval(config.polling_interval);
 
         // Verify connection
-        let chain_id = provider.get_chainid().await
+        let chain_id = provider
+            .get_chainid()
+            .await
             .map_err(|e| anyhow!("Failed to connect to RPC: {}", e))?;
 
         if chain_id.as_u64() != config.chain_id {
-            return Err(anyhow!("Chain ID mismatch: expected {}, got {}", config.chain_id, chain_id));
+            return Err(anyhow!(
+                "Chain ID mismatch: expected {}, got {}",
+                config.chain_id,
+                chain_id
+            ));
         }
 
         let provider = Arc::new(provider);
-        
+
         let wallet = if let Some(private_key) = &config.private_key {
-            let wallet = private_key.parse::<LocalWallet>()
+            let wallet = private_key
+                .parse::<LocalWallet>()
                 .map_err(|e| anyhow!("Invalid private key: {}", e))?
                 .with_chain_id(config.chain_id);
-            
+
             Some(SignerMiddleware::new(provider.clone(), wallet))
         } else {
             None
@@ -133,7 +140,7 @@ impl Web3Client {
         if address.is_zero() {
             return Err(anyhow!("No wallet configured"));
         }
-        
+
         let balance = self.provider.get_balance(address, None).await?;
         Ok(balance)
     }
@@ -141,94 +148,114 @@ impl Web3Client {
     pub async fn load_contract_addresses(&self, _path: &str) -> Result<HashMap<String, Address>> {
         // Load from environment variables or .env.contracts file
         let mut addresses = HashMap::new();
-        
+
         // Try to load from environment variables first
         // First try CONTRACT_NODE_REGISTRY, then fallback to NODE_REGISTRY
-        if let Ok(addr) = std::env::var("CONTRACT_NODE_REGISTRY")
-            .or_else(|_| std::env::var("NODE_REGISTRY")) {
+        if let Ok(addr) =
+            std::env::var("CONTRACT_NODE_REGISTRY").or_else(|_| std::env::var("NODE_REGISTRY"))
+        {
             if !addr.is_empty() {
                 addresses.insert("NodeRegistry".to_string(), addr.parse()?);
             }
         }
-        
+
         // First try CONTRACT_JOB_MARKETPLACE, then fallback to JOB_MARKETPLACE
-        if let Ok(addr) = std::env::var("CONTRACT_JOB_MARKETPLACE")
-            .or_else(|_| std::env::var("JOB_MARKETPLACE")) {
+        if let Ok(addr) =
+            std::env::var("CONTRACT_JOB_MARKETPLACE").or_else(|_| std::env::var("JOB_MARKETPLACE"))
+        {
             if !addr.is_empty() {
                 addresses.insert("JobMarketplace".to_string(), addr.parse()?);
             }
         }
-        
+
         if let Ok(addr) = std::env::var("PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS") {
             if !addr.is_empty() {
                 addresses.insert("PaymentEscrow".to_string(), addr.parse()?);
             }
         }
-        
+
         if let Ok(addr) = std::env::var("HOST_EARNINGS_ADDRESS") {
             if !addr.is_empty() {
                 addresses.insert("HostEarnings".to_string(), addr.parse()?);
             }
         }
-        
+
         if let Ok(addr) = std::env::var("REPUTATION_SYSTEM_ADDRESS") {
             if !addr.is_empty() {
                 addresses.insert("ReputationSystem".to_string(), addr.parse()?);
             }
         }
-        
+
         if let Ok(addr) = std::env::var("PROOF_SYSTEM_ADDRESS") {
             if !addr.is_empty() {
                 addresses.insert("ProofSystem".to_string(), addr.parse()?);
             }
         }
-        
+
         if let Ok(addr) = std::env::var("EZKL_VERIFIER_ADDRESS") {
             if !addr.is_empty() {
                 addresses.insert("EzklVerifier".to_string(), addr.parse()?);
             }
         }
-        
+
         // If no environment variables found, fall back to default addresses
         if addresses.is_empty() {
             // Default addresses for Base Sepolia from .env.local.test
-            addresses.insert("NodeRegistry".to_string(), "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".parse()?);
-            addresses.insert("JobMarketplace".to_string(), "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".parse()?);
-            addresses.insert("ProofSystem".to_string(), "0x2ACcc60893872A499700908889B38C5420CBcFD1".parse()?);
-            addresses.insert("HostEarnings".to_string(), "0x908962e8c6CE72610021586f85ebDE09aAc97776".parse()?);
-            addresses.insert("ModelRegistry".to_string(), "0x92b2De840bB2171203011A6dBA928d855cA8183E".parse()?);
+            addresses.insert(
+                "NodeRegistry".to_string(),
+                "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".parse()?,
+            );
+            addresses.insert(
+                "JobMarketplace".to_string(),
+                "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".parse()?,
+            );
+            addresses.insert(
+                "ProofSystem".to_string(),
+                "0x2ACcc60893872A499700908889B38C5420CBcFD1".parse()?,
+            );
+            addresses.insert(
+                "HostEarnings".to_string(),
+                "0x908962e8c6CE72610021586f85ebDE09aAc97776".parse()?,
+            );
+            addresses.insert(
+                "ModelRegistry".to_string(),
+                "0x92b2De840bB2171203011A6dBA928d855cA8183E".parse()?,
+            );
         }
-        
+
         *self.contract_addresses.write().await = addresses.clone();
         Ok(addresses)
     }
 
     pub fn set_wallet(&mut self, private_key: &str) -> Result<()> {
-        let wallet = private_key.parse::<LocalWallet>()
+        let wallet = private_key
+            .parse::<LocalWallet>()
             .map_err(|e| anyhow!("Invalid private key: {}", e))?
             .with_chain_id(self.config.chain_id);
-        
+
         let signer = SignerMiddleware::new(self.provider.clone(), wallet);
-        
+
         // This is a blocking operation, should be refactored in production
         futures::executor::block_on(async {
             *self.wallet.write().await = Some(signer);
         });
-        
+
         Ok(())
     }
 
-    pub async fn estimate_gas(&self, to: Address, value: U256, data: Option<Bytes>) -> Result<U256> {
+    pub async fn estimate_gas(
+        &self,
+        to: Address,
+        value: U256,
+        data: Option<Bytes>,
+    ) -> Result<U256> {
         let from = self.address();
         if from.is_zero() {
             return Err(anyhow!("No wallet configured"));
         }
 
-        let mut tx = TransactionRequest::new()
-            .from(from)
-            .to(to)
-            .value(value);
-            
+        let mut tx = TransactionRequest::new().from(from).to(to).value(value);
+
         if let Some(data) = data {
             tx = tx.data(data);
         }
@@ -238,15 +265,19 @@ impl Web3Client {
         Ok(gas)
     }
 
-    pub async fn send_transaction(&self, to: Address, value: U256, data: Option<Bytes>) -> Result<H256> {
+    pub async fn send_transaction(
+        &self,
+        to: Address,
+        value: U256,
+        data: Option<Bytes>,
+    ) -> Result<H256> {
         let wallet_guard = self.wallet.read().await;
-        let wallet = wallet_guard.as_ref()
+        let wallet = wallet_guard
+            .as_ref()
             .ok_or_else(|| anyhow!("No wallet configured"))?;
 
-        let mut tx = TransactionRequest::new()
-            .to(to)
-            .value(value);
-            
+        let mut tx = TransactionRequest::new().to(to).value(value);
+
         if let Some(data) = data {
             tx = tx.data(data);
         }
@@ -269,7 +300,8 @@ impl Web3Client {
                 Ok(Some(receipt)) => {
                     // Transaction mined! Now wait for confirmations if needed
                     if self.config.confirmations > 1 {
-                        let tx_block = receipt.block_number
+                        let tx_block = receipt
+                            .block_number
                             .ok_or_else(|| anyhow!("Receipt missing block number"))?;
 
                         // Wait for required confirmations
@@ -293,7 +325,8 @@ impl Web3Client {
                     if attempts >= max_attempts {
                         return Err(anyhow!(
                             "Transaction not mined after {} seconds. Tx hash: {:?}",
-                            max_attempts, tx_hash
+                            max_attempts,
+                            tx_hash
                         ));
                     }
 
@@ -316,28 +349,28 @@ impl Web3Client {
         let multicall_address = std::env::var("MULTICALL3_ADDRESS")
             .unwrap_or_else(|_| "0xcA11bde05977b3631167028862bE2a173976CA11".to_string())
             .parse::<Address>()?;
-        
+
         let multicall = Multicall3::new(multicall_address, self.provider.clone());
-        
+
         // Store for future use
         *self.multicall.write().await = Some(multicall.clone());
-        
+
         Ok(multicall)
     }
 
     pub async fn switch_network(&mut self, chain_config: ChainConfig) -> Result<()> {
         self.config.rpc_url = chain_config.rpc_url;
         self.config.chain_id = chain_config.chain_id;
-        
+
         // Recreate provider
         let provider = Provider::<Http>::try_from(&self.config.rpc_url)?
             .interval(self.config.polling_interval);
-        
+
         self.provider = Arc::new(provider);
-        
+
         // Clear wallet to avoid issues
         *self.wallet.write().await = None;
-        
+
         Ok(())
     }
 
@@ -346,7 +379,7 @@ impl Web3Client {
         if address.is_zero() {
             return Err(anyhow!("No wallet configured"));
         }
-        
+
         let nonce = self.provider.get_transaction_count(address, None).await?;
         Ok(nonce)
     }
@@ -358,21 +391,20 @@ impl Web3Client {
         from_block: u64,
         to_block: Option<u64>,
     ) -> Filter {
-        let mut filter = Filter::new()
-            .from_block(from_block);
-            
+        let mut filter = Filter::new().from_block(from_block);
+
         if let Some(to) = to_block {
             filter = filter.to_block(to);
         }
-        
+
         if !addresses.is_empty() {
             filter = filter.address(addresses);
         }
-        
+
         if !topics.is_empty() {
             filter = filter.topic0(topics);
         }
-        
+
         filter
     }
 
@@ -382,10 +414,9 @@ impl Web3Client {
 
     pub async fn update_rpc_url(&mut self, new_url: &str) -> Result<()> {
         self.config.rpc_url = new_url.to_string();
-        
-        let provider = Provider::<Http>::try_from(new_url)?
-            .interval(self.config.polling_interval);
-        
+
+        let provider = Provider::<Http>::try_from(new_url)?.interval(self.config.polling_interval);
+
         self.provider = Arc::new(provider);
         Ok(())
     }
@@ -402,18 +433,18 @@ impl Web3Client {
 
     pub async fn subscribe_blocks(&self) -> Result<mpsc::Receiver<Block<H256>>> {
         let (tx, rx) = mpsc::channel(100);
-        
+
         let provider = self.provider.clone();
         let interval = self.config.polling_interval;
-        
+
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             let mut last_block = 0u64;
-            
+
             loop {
                 if let Ok(block_number) = provider.get_block_number().await {
                     let current = block_number.as_u64();
-                    
+
                     if current > last_block {
                         for block_num in (last_block + 1)..=current {
                             if let Ok(Some(block)) = provider.get_block(block_num).await {
@@ -423,11 +454,11 @@ impl Web3Client {
                         last_block = current;
                     }
                 }
-                
+
                 tokio::time::sleep(interval).await;
             }
         });
-        
+
         *self.block_stream_sender.write().await = Some(tx);
         Ok(rx)
     }

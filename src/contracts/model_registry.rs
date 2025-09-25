@@ -1,12 +1,12 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
-use std::sync::Arc;
-use anyhow::{Result, anyhow};
-use tracing::{info, debug, error};
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
-use tokio::io::AsyncReadExt;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::sync::Arc;
+use tokio::io::AsyncReadExt;
+use tracing::{debug, error, info};
 
 use crate::contracts::types::{ModelRegistry, NodeRegistryWithModels};
 
@@ -56,8 +56,10 @@ impl Default for ApprovedModels {
         };
 
         // Calculate model IDs
-        models.tiny_vicuna.id = Self::calculate_model_id(&models.tiny_vicuna.repo, &models.tiny_vicuna.file);
-        models.tiny_llama.id = Self::calculate_model_id(&models.tiny_llama.repo, &models.tiny_llama.file);
+        models.tiny_vicuna.id =
+            Self::calculate_model_id(&models.tiny_vicuna.repo, &models.tiny_vicuna.file);
+        models.tiny_llama.id =
+            Self::calculate_model_id(&models.tiny_llama.repo, &models.tiny_llama.file);
 
         models
     }
@@ -126,7 +128,10 @@ impl ModelRegistryClient {
                 ));
             }
 
-            Some(Arc::new(NodeRegistryWithModels::new(addr, provider.clone())))
+            Some(Arc::new(NodeRegistryWithModels::new(
+                addr,
+                provider.clone(),
+            )))
         } else {
             None
         };
@@ -148,7 +153,8 @@ impl ModelRegistryClient {
         debug!("Checking if model {:?} is approved", model_id);
 
         // Call the actual contract
-        let method = self.contract
+        let method = self
+            .contract
             .method::<_, bool>("isModelApproved", model_id)
             .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -165,7 +171,8 @@ impl ModelRegistryClient {
         debug!("Getting details for model {:?}", model_id);
 
         // Call the actual contract to get model details
-        let method = self.contract
+        let method = self
+            .contract
             .method::<_, (String, String, H256, u8, bool, u64)>("getModel", model_id)
             .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -189,7 +196,8 @@ impl ModelRegistryClient {
         info!("Getting all approved models");
 
         // Call the actual contract to get all model IDs
-        let method = self.contract
+        let method = self
+            .contract
             .method::<_, Vec<H256>>("getAllModels", ())
             .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
 
@@ -236,14 +244,20 @@ impl ModelRegistryClient {
         if matches {
             info!("Model hash verification successful");
         } else {
-            error!("Model hash mismatch! Expected: {}, Got: {}", expected_hash, calculated_hash);
+            error!(
+                "Model hash mismatch! Expected: {}, Got: {}",
+                expected_hash, calculated_hash
+            );
         }
 
         Ok(matches)
     }
 
     /// Validate models for node registration
-    pub async fn validate_models_for_registration(&self, model_paths: &[String]) -> Result<Vec<H256>> {
+    pub async fn validate_models_for_registration(
+        &self,
+        model_paths: &[String],
+    ) -> Result<Vec<H256>> {
         info!("Validating {} models for registration", model_paths.len());
 
         let mut validated_ids = Vec::new();
@@ -255,7 +269,9 @@ impl ModelRegistryClient {
                 .ok_or_else(|| anyhow!("Invalid model path: {}", path_str))?;
 
             // Find the model spec for this file
-            let spec = self.approved_models.get_spec_by_file(file_name)
+            let spec = self
+                .approved_models
+                .get_spec_by_file(file_name)
                 .ok_or_else(|| anyhow!("Model {} is not in approved list", file_name))?;
 
             // Verify the model is approved
@@ -270,11 +286,17 @@ impl ModelRegistryClient {
                     return Err(anyhow!("Model {} failed hash verification", file_name));
                 }
             } else {
-                debug!("Model file {} not found locally, skipping hash check", path_str);
+                debug!(
+                    "Model file {} not found locally, skipping hash check",
+                    path_str
+                );
             }
 
             validated_ids.push(spec.id);
-            info!("Model {} validated successfully with ID {:?}", file_name, spec.id);
+            info!(
+                "Model {} validated successfully with ID {:?}",
+                file_name, spec.id
+            );
         }
 
         Ok(validated_ids)
@@ -318,14 +340,14 @@ mod tests {
         // Test TinyVicuna ID calculation
         let vicuna_id = ApprovedModels::calculate_model_id(
             "CohereForAI/TinyVicuna-1B-32k-GGUF",
-            "tiny-vicuna-1b.q4_k_m.gguf"
+            "tiny-vicuna-1b.q4_k_m.gguf",
         );
         assert_eq!(vicuna_id, approved.tiny_vicuna.id);
 
         // Test TinyLlama ID calculation
         let llama_id = ApprovedModels::calculate_model_id(
             "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
-            "tinyllama-1b.Q4_K_M.gguf"
+            "tinyllama-1b.Q4_K_M.gguf",
         );
         assert_eq!(llama_id, approved.tiny_llama.id);
     }

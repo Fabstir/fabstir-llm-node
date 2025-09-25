@@ -1,10 +1,10 @@
-use crate::storage::{S5Storage, StorageError, CborCompat};
+use crate::storage::{CborCompat, S5Storage, StorageError};
+use chrono::{DateTime, Duration, Utc};
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::{DateTime, Utc, Duration};
-use lru::LruCache;
 use zstd;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,13 +81,16 @@ impl Clone for ResultCache {
 
 impl ResultCache {
     pub fn new(storage: Box<dyn S5Storage>, config: CacheConfig) -> Self {
-        let initial_capacity = std::cmp::max(1000, (config.max_size_mb * 1024 * 1024 / 1024) as usize);
-        
+        let initial_capacity =
+            std::cmp::max(1000, (config.max_size_mb * 1024 * 1024 / 1024) as usize);
+
         Self {
             storage,
             config: Arc::new(Mutex::new(config)),
             cbor: CborCompat::new(),
-            memory_cache: Arc::new(Mutex::new(LruCache::new(initial_capacity.try_into().unwrap()))),
+            memory_cache: Arc::new(Mutex::new(LruCache::new(
+                initial_capacity.try_into().unwrap(),
+            ))),
             metadata_index: Arc::new(Mutex::new(HashMap::new())),
             stats: Arc::new(Mutex::new(CacheStats {
                 total_entries: 0,
@@ -108,7 +111,7 @@ impl ResultCache {
     ) -> Result<(), StorageError> {
         let config = self.config.lock().await;
         let cache_path = format!("{}/{}", config.base_path, self.encode_key(key));
-        
+
         let entry = CacheEntry {
             data: data.clone(),
             metadata: metadata.unwrap_or_default(),
@@ -121,9 +124,11 @@ impl ResultCache {
         self.enforce_size_limit(&entry).await?;
 
         // Store in persistent storage
-        let serialized_entry = self.cbor.encode(&entry)
+        let serialized_entry = self
+            .cbor
+            .encode(&entry)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-        
+
         let final_data = if config.enable_compression {
             self.compress_data(&serialized_entry)?
         } else {
@@ -141,12 +146,15 @@ impl ResultCache {
         // Update metadata index
         {
             let mut metadata_index = self.metadata_index.lock().await;
-            metadata_index.insert(key.to_string(), CacheMetadata {
-                key: key.to_string(),
-                size_bytes: entry.size_bytes,
-                created_at: entry.created_at,
-                accessed_at: entry.accessed_at,
-            });
+            metadata_index.insert(
+                key.to_string(),
+                CacheMetadata {
+                    key: key.to_string(),
+                    size_bytes: entry.size_bytes,
+                    created_at: entry.created_at,
+                    accessed_at: entry.accessed_at,
+                },
+            );
         }
 
         // Update stats
@@ -167,7 +175,7 @@ impl ResultCache {
     ) -> Result<(), StorageError> {
         let config = self.config.lock().await;
         let cache_path = format!("{}/{}", config.base_path, custom_path);
-        
+
         let entry = CacheEntry {
             data: data.clone(),
             metadata: HashMap::new(),
@@ -176,9 +184,11 @@ impl ResultCache {
             size_bytes: data.len() as u64,
         };
 
-        let serialized_entry = self.cbor.encode(&entry)
+        let serialized_entry = self
+            .cbor
+            .encode(&entry)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-        
+
         let final_data = if config.enable_compression {
             self.compress_data(&serialized_entry)?
         } else {
@@ -200,7 +210,7 @@ impl ResultCache {
             if let Some(mut entry) = memory_cache.get(key).cloned() {
                 entry.accessed_at = Utc::now();
                 memory_cache.put(key.to_string(), entry.clone());
-                
+
                 self.record_hit().await;
                 return Ok(Some(entry));
             }
@@ -215,7 +225,7 @@ impl ResultCache {
         // Load from persistent storage
         let config = self.config.lock().await;
         let cache_path = format!("{}/{}", config.base_path, self.encode_key(key));
-        
+
         match self.storage.get(&cache_path).await {
             Ok(data) => {
                 let decompressed_data = if config.enable_compression {
@@ -224,9 +234,11 @@ impl ResultCache {
                     data
                 };
 
-                let mut entry: CacheEntry = self.cbor.decode(&decompressed_data)
+                let mut entry: CacheEntry = self
+                    .cbor
+                    .decode(&decompressed_data)
                     .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-                
+
                 // Update access time
                 entry.accessed_at = Utc::now();
 
@@ -250,7 +262,7 @@ impl ResultCache {
     pub async fn list_by_prefix(&self, prefix: &str) -> Result<Vec<String>, StorageError> {
         let config = self.config.lock().await;
         let search_path = format!("{}/{}", config.base_path, prefix);
-        
+
         let entries = self.storage.list(&search_path).await?;
         let keys: Vec<String> = entries
             .into_iter()
@@ -269,7 +281,7 @@ impl ResultCache {
     pub async fn set_max_size_mb(&self, max_size_mb: u64) {
         let mut config = self.config.lock().await;
         config.max_size_mb = max_size_mb;
-        
+
         // Trigger eviction if we're over the new limit
         drop(config); // Release lock before calling eviction
         self.enforce_size_limit_global().await.unwrap_or(());
@@ -281,7 +293,9 @@ impl ResultCache {
         data_vec: Vec<Vec<u8>>,
     ) -> Result<(), StorageError> {
         if keys.len() != data_vec.len() {
-            return Err(StorageError::SerializationError("Keys and data vectors must have same length".to_string()));
+            return Err(StorageError::SerializationError(
+                "Keys and data vectors must have same length".to_string(),
+            ));
         }
 
         for (key, data) in keys.into_iter().zip(data_vec.into_iter()) {
@@ -291,9 +305,12 @@ impl ResultCache {
         Ok(())
     }
 
-    pub async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<CacheEntry>>, StorageError> {
+    pub async fn get_batch(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<Option<CacheEntry>>, StorageError> {
         let mut results = Vec::new();
-        
+
         for key in keys {
             results.push(self.get(key).await?);
         }
@@ -311,7 +328,7 @@ impl ResultCache {
     pub async fn get_storage_info(&self, key: &str) -> Result<StorageInfo, StorageError> {
         let config = self.config.lock().await;
         let cache_path = format!("{}/{}", config.base_path, self.encode_key(key));
-        
+
         let stored_data = self.storage.get(&cache_path).await?;
         let compressed_size = stored_data.len();
 
@@ -338,7 +355,7 @@ impl ResultCache {
     pub async fn get_stats(&self) -> CacheStats {
         let stats = self.stats.lock().await;
         let mut stats_copy = stats.clone();
-        
+
         // Calculate hit rate
         let total_requests = stats_copy.cache_hits + stats_copy.cache_misses;
         stats_copy.hit_rate = if total_requests > 0 {
@@ -385,7 +402,7 @@ impl ResultCache {
     async fn delete(&self, key: &str) -> Result<(), StorageError> {
         let config = self.config.lock().await;
         let cache_path = format!("{}/{}", config.base_path, self.encode_key(key));
-        
+
         // Remove from persistent storage
         self.storage.delete(&cache_path).await?;
 
@@ -411,7 +428,7 @@ impl ResultCache {
     async fn is_entry_valid(&self, key: &str) -> Result<bool, StorageError> {
         let config = self.config.lock().await;
         let metadata_index = self.metadata_index.lock().await;
-        
+
         if let Some(metadata) = metadata_index.get(key) {
             let ttl_duration = Duration::seconds(config.ttl_seconds as i64);
             let expires_at = metadata.created_at + ttl_duration;
@@ -426,7 +443,7 @@ impl ResultCache {
     async fn enforce_size_limit(&self, new_entry: &CacheEntry) -> Result<(), StorageError> {
         let config = self.config.lock().await;
         let max_size_bytes = config.max_size_mb * 1024 * 1024;
-        
+
         let current_stats = {
             let stats = self.stats.lock().await;
             stats.clone()
@@ -443,7 +460,7 @@ impl ResultCache {
     async fn enforce_size_limit_global(&self) -> Result<(), StorageError> {
         let config = self.config.lock().await;
         let max_size_bytes = config.max_size_mb * 1024 * 1024;
-        
+
         let current_stats = {
             let stats = self.stats.lock().await;
             stats.clone()
@@ -467,7 +484,7 @@ impl ResultCache {
         {
             let metadata_index = self.metadata_index.lock().await;
             let mut entries: Vec<_> = metadata_index.values().collect();
-            
+
             match config.eviction_policy {
                 EvictionPolicy::LRU | EvictionPolicy::LRUWithTTL => {
                     entries.sort_by(|a, b| a.accessed_at.cmp(&b.accessed_at));
@@ -543,7 +560,7 @@ mod base64 {
         // Simple base64-like encoding for testing
         hex::encode(input.as_bytes())
     }
-    
+
     pub fn decode(input: &str) -> Result<Vec<u8>, hex::FromHexError> {
         hex::decode(input)
     }

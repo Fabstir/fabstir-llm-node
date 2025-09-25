@@ -1,9 +1,9 @@
-use ethers::types::{Address, H256, U256, Filter, Log};
-use chrono::{DateTime, Utc, Duration};
+use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
+use ethers::types::{Address, Filter, Log, H256, U256};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentEvent {
@@ -113,8 +113,8 @@ pub struct PaymentStats {
 #[cfg(test)]
 mod payment_tracker {
     use super::*;
-    use tokio::time::{sleep, timeout};
     use std::time::Duration as StdDuration;
+    use tokio::time::{sleep, timeout};
 
     struct MockContractClient {
         events: Vec<PaymentEvent>,
@@ -161,7 +161,7 @@ mod payment_tracker {
             current_block: 100,
         });
         let node_address = Address::random();
-        
+
         let tracker = PaymentTracker::new(client, node_address, 12);
         assert_eq!(tracker.confirmation_blocks, 12);
         assert_eq!(tracker.node_address, node_address);
@@ -188,7 +188,7 @@ mod payment_tracker {
         });
 
         let tracker = PaymentTracker::new(client, node_address, 12);
-        
+
         let filter = PaymentFilter {
             node_address: Some(node_address),
             event_types: vec![PaymentEventType::PaymentReceived],
@@ -214,7 +214,7 @@ mod payment_tracker {
         });
 
         let tracker = PaymentTracker::new(client, node_address, 12);
-        
+
         // Test would verify confirmed payments
         // Currently unimplemented in the stub
     }
@@ -235,7 +235,7 @@ mod payment_tracker {
         });
 
         let tracker = PaymentTracker::new(client, node_address, 12);
-        
+
         // Test would calculate and verify stats
         // Currently unimplemented in the stub
     }
@@ -249,7 +249,7 @@ mod payment_tracker {
         });
 
         let tracker = PaymentTracker::new(client, node_address, 12);
-        
+
         // Test would verify real-time event monitoring
         // Currently unimplemented in the stub
     }
@@ -268,7 +268,7 @@ mod payment_tracker {
         });
 
         let tracker = PaymentTracker::new(client, node_address, 12);
-        
+
         // Test would verify job payment lookup
         // Currently unimplemented in the stub
     }
@@ -277,7 +277,7 @@ mod payment_tracker {
     async fn test_multiple_event_types() {
         let node_address = Address::random();
         let job_id = H256::random();
-        
+
         let events = vec![
             PaymentEvent {
                 event_type: PaymentEventType::PaymentReceived,
@@ -309,7 +309,7 @@ mod payment_tracker {
         });
 
         let tracker = PaymentTracker::new(client, node_address, 12);
-        
+
         // Test would verify handling of multiple event types
         // Currently unimplemented in the stub
     }
@@ -323,21 +323,21 @@ mod payment_tracker {
         });
 
         let tracker = Arc::new(PaymentTracker::new(client, node_address, 12));
-        
+
         // Simulate concurrent payment tracking
         let tracker1 = tracker.clone();
         let tracker2 = tracker.clone();
-        
+
         let handle1 = tokio::spawn(async move {
             let filter = PaymentFilter::default();
             // Would track payments
         });
-        
+
         let handle2 = tokio::spawn(async move {
             let filter = PaymentFilter::default();
             // Would track payments
         });
-        
+
         // Test would verify thread safety
         // Currently unimplemented in the stub
     }

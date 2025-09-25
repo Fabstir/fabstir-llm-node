@@ -1,12 +1,12 @@
 use super::types::SettlementError;
 use crate::config::chains::ChainRegistry;
-use ethers::types::{U256, Address};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
+use ethers::types::{Address, U256};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
-use anyhow::{Result, anyhow};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentConfig {
@@ -111,7 +111,9 @@ impl PaymentDistributor {
         total_tokens: u64,
         price_per_token: U256,
     ) -> Result<PaymentSplit, SettlementError> {
-        let chain_config = self.chain_registry.get_chain(chain_id)
+        let chain_config = self
+            .chain_registry
+            .get_chain(chain_id)
             .ok_or(SettlementError::UnsupportedChain(chain_id))?;
 
         // Calculate total payment
@@ -157,7 +159,10 @@ impl PaymentDistributor {
 
     /// Get treasury balance for a chain
     pub async fn get_treasury_balance(&self, chain_id: u64) -> U256 {
-        *self.treasury_balances.read().await
+        *self
+            .treasury_balances
+            .read()
+            .await
             .get(&chain_id)
             .unwrap_or(&U256::zero())
     }
@@ -168,7 +173,10 @@ impl PaymentDistributor {
         let amount = balances.remove(&chain_id).unwrap_or(U256::zero());
 
         if amount > U256::zero() {
-            info!("Withdrawing treasury fees from chain {}: {}", chain_id, amount);
+            info!(
+                "Withdrawing treasury fees from chain {}: {}",
+                chain_id, amount
+            );
         }
 
         Ok(amount)
@@ -230,22 +238,28 @@ impl PaymentDistributor {
         max_tokens: u64,
         price_per_token: U256,
     ) -> Result<PaymentRecord> {
-        let chain_config = self.chain_registry.get_chain(chain_id)
+        let chain_config = self
+            .chain_registry
+            .get_chain(chain_id)
             .ok_or_else(|| anyhow!("Unsupported chain: {}", chain_id))?;
 
         let token_symbol = match &token {
             PaymentToken::Native => chain_config.native_token.symbol.clone(),
-            PaymentToken::ERC20(addr) if *addr == Address::from_slice(&[0x03, 0x6C, 0xbD, 0x53, 0x84, 0x2c, 0x54, 0x26, 0x63, 0x4e, 0x79, 0x29, 0x54, 0x1e, 0xC2, 0x31, 0x8f, 0x3d, 0xCF, 0x7e]) => "USDC".to_string(),
+            PaymentToken::ERC20(addr)
+                if *addr
+                    == Address::from_slice(&[
+                        0x03, 0x6C, 0xbD, 0x53, 0x84, 0x2c, 0x54, 0x26, 0x63, 0x4e, 0x79, 0x29,
+                        0x54, 0x1e, 0xC2, 0x31, 0x8f, 0x3d, 0xCF, 0x7e,
+                    ]) =>
+            {
+                "USDC".to_string()
+            }
             PaymentToken::ERC20(_) => "ERC20".to_string(),
         };
 
-        let payment_split = self.calculate_payment_split(
-            chain_id,
-            deposit,
-            tokens_used,
-            max_tokens,
-            price_per_token,
-        ).await?;
+        let payment_split = self
+            .calculate_payment_split(chain_id, deposit, tokens_used, max_tokens, price_per_token)
+            .await?;
 
         let record = PaymentRecord {
             chain_id,
@@ -284,7 +298,9 @@ impl PaymentDistributor {
 
     /// Get statistics for a specific chain
     pub async fn get_chain_statistics(&self, chain_id: u64) -> ChainPaymentStats {
-        self.payment_stats.read().await
+        self.payment_stats
+            .read()
+            .await
             .get(&chain_id)
             .cloned()
             .unwrap_or(ChainPaymentStats {
@@ -299,19 +315,11 @@ impl PaymentDistributor {
 
     /// Get statistics for all chains
     pub async fn get_all_chain_statistics(&self) -> Vec<ChainPaymentStats> {
-        self.payment_stats.read().await
-            .values()
-            .cloned()
-            .collect()
+        self.payment_stats.read().await.values().cloned().collect()
     }
 
     /// Accumulate host earnings
-    pub async fn accumulate_host_earnings(
-        &mut self,
-        chain_id: u64,
-        host: Address,
-        amount: U256,
-    ) {
+    pub async fn accumulate_host_earnings(&mut self, chain_id: u64, host: Address, amount: U256) {
         let mut earnings = self.host_earnings.write().await;
         let key = (chain_id, host);
         let balance = earnings.entry(key).or_insert(U256::zero());
@@ -325,17 +333,16 @@ impl PaymentDistributor {
 
     /// Get host earnings
     pub async fn get_host_earnings(&self, chain_id: u64, host: Address) -> U256 {
-        *self.host_earnings.read().await
+        *self
+            .host_earnings
+            .read()
+            .await
             .get(&(chain_id, host))
             .unwrap_or(&U256::zero())
     }
 
     /// Withdraw host earnings
-    pub async fn withdraw_host_earnings(
-        &mut self,
-        chain_id: u64,
-        host: Address,
-    ) -> Result<U256> {
+    pub async fn withdraw_host_earnings(&mut self, chain_id: u64, host: Address) -> Result<U256> {
         let mut earnings = self.host_earnings.write().await;
         let amount = earnings.remove(&(chain_id, host)).unwrap_or(U256::zero());
 

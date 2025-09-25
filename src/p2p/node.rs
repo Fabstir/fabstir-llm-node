@@ -1,10 +1,7 @@
 use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, StreamExt};
 use libp2p::{
-    identity::Keypair,
-    kad::RecordKey,
-    swarm::SwarmEvent,
-    Multiaddr, PeerId, SwarmBuilder,
+    identity::Keypair, kad::RecordKey, swarm::SwarmEvent, Multiaddr, PeerId, SwarmBuilder,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -13,20 +10,24 @@ use std::{
 };
 use tokio::{
     sync::{mpsc as tokio_mpsc, oneshot, Mutex, RwLock},
-    time::{interval, timeout},
     task::JoinHandle,
+    time::{interval, timeout},
 };
 
-use crate::p2p_config::{ConnectionLimits, DhtRoutingTableHealth, NodeConfig, NodeMetrics, PeerInfo};
 use crate::p2p::{
     behaviour::NodeBehaviour,
     dht::DhtHandler,
     discovery::{DhtEvent, DiscoveryEvent},
-    protocols::{
-        InferenceRequest, InferenceResponse, JobClaim, JobResult, ProtocolEvent,
-        ProtocolHandler,
+    protocol_impl::{
+        FabstirRequest, FabstirResponse, RateLimiter, RequestTracker, ResponseChannel,
+        StreamingHandler,
     },
-    protocol_impl::{FabstirRequest, FabstirResponse, RequestTracker, RateLimiter, StreamingHandler, ResponseChannel},
+    protocols::{
+        InferenceRequest, InferenceResponse, JobClaim, JobResult, ProtocolEvent, ProtocolHandler,
+    },
+};
+use crate::p2p_config::{
+    ConnectionLimits, DhtRoutingTableHealth, NodeConfig, NodeMetrics, PeerInfo,
 };
 
 #[derive(Debug, Clone)]
@@ -40,17 +41,56 @@ pub enum NodeEvent {
 }
 
 enum Command {
-    Connect { peer_id: PeerId, addr: Multiaddr, result_sender: oneshot::Sender<Result<()>> },
-    DhtPut { key: RecordKey, value: Vec<u8>, expiration: Option<Duration>, result_sender: oneshot::Sender<Result<()>> },
-    DhtGet { key: RecordKey, result_sender: oneshot::Sender<Result<Vec<u8>>> },
-    DhtStartProviding { key: RecordKey, result_sender: oneshot::Sender<Result<()>> },
-    DhtGetProviders { key: RecordKey, result_sender: oneshot::Sender<Result<HashSet<PeerId>>> },
-    GetListeners { result_sender: oneshot::Sender<Vec<Multiaddr>> },
-    SendEvent { event: NodeEvent, result_sender: oneshot::Sender<()> },
-    SendInferenceRequest { peer_id: PeerId, request: InferenceRequest, result_sender: oneshot::Sender<Result<()>> },
-    SendInferenceResponse { peer_id: PeerId, response: InferenceResponse, result_sender: oneshot::Sender<Result<()>> },
-    SendJobClaim { peer_id: PeerId, claim: JobClaim, result_sender: oneshot::Sender<Result<()>> },
-    SendJobResult { peer_id: PeerId, result: JobResult, result_sender: oneshot::Sender<Result<()>> },
+    Connect {
+        peer_id: PeerId,
+        addr: Multiaddr,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
+    DhtPut {
+        key: RecordKey,
+        value: Vec<u8>,
+        expiration: Option<Duration>,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
+    DhtGet {
+        key: RecordKey,
+        result_sender: oneshot::Sender<Result<Vec<u8>>>,
+    },
+    DhtStartProviding {
+        key: RecordKey,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
+    DhtGetProviders {
+        key: RecordKey,
+        result_sender: oneshot::Sender<Result<HashSet<PeerId>>>,
+    },
+    GetListeners {
+        result_sender: oneshot::Sender<Vec<Multiaddr>>,
+    },
+    SendEvent {
+        event: NodeEvent,
+        result_sender: oneshot::Sender<()>,
+    },
+    SendInferenceRequest {
+        peer_id: PeerId,
+        request: InferenceRequest,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
+    SendInferenceResponse {
+        peer_id: PeerId,
+        response: InferenceResponse,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
+    SendJobClaim {
+        peer_id: PeerId,
+        claim: JobClaim,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
+    SendJobResult {
+        peer_id: PeerId,
+        result: JobResult,
+        result_sender: oneshot::Sender<Result<()>>,
+    },
     Shutdown,
 }
 
@@ -88,7 +128,9 @@ impl Node {
                 libp2p::yamux::Config::default,
             )?
             .with_quic()
-            .with_behaviour(|key| NodeBehaviour::new(key, &config).expect("Failed to create behaviour"))?
+            .with_behaviour(|key| {
+                NodeBehaviour::new(key, &config).expect("Failed to create behaviour")
+            })?
             .with_swarm_config(|cfg| {
                 cfg.with_idle_connection_timeout(config.connection_idle_timeout)
             })
@@ -141,40 +183,42 @@ impl Node {
             let mut rate_limiter = RateLimiter::new(config_clone.max_requests_per_minute);
             let mut streaming_handler = StreamingHandler::new();
             let mut pending_responses: HashMap<String, ResponseChannel> = HashMap::new();
-            
+
             // Start bootstrap if we have bootstrap peers
             if !config_clone.bootstrap_peers.is_empty() {
                 if let Ok(query_id) = swarm.behaviour_mut().kad.bootstrap() {
                     let (tx, _rx) = oneshot::channel();
                     dht_handler.register_bootstrap(query_id, tx);
-                    let _ = event_tx.send(NodeEvent::DhtEvent(DhtEvent::BootstrapStarted)).await;
+                    let _ = event_tx
+                        .send(NodeEvent::DhtEvent(DhtEvent::BootstrapStarted))
+                        .await;
                 }
             }
-            
+
             // Set up periodic bootstrap
             let mut bootstrap_interval = if config_clone.dht_bootstrap_interval > Duration::ZERO {
                 Some(interval(config_clone.dht_bootstrap_interval))
             } else {
                 None
             };
-            
+
             // Set up periodic republish
             let mut republish_interval = if config_clone.dht_republish_interval > Duration::ZERO {
                 Some(interval(config_clone.dht_republish_interval))
             } else {
                 None
             };
-            
+
             // Set up periodic cleanup (every 60 seconds)
             let mut cleanup_interval = interval(Duration::from_secs(60));
-            
+
             // Set up peer expiration check
             let peer_expiration_time = config_clone.peer_expiration_time;
             let mut peer_check_interval = interval(Duration::from_secs(1));
-            
+
             // Set up request timeout check
             let mut timeout_check_interval = interval(Duration::from_secs(1));
-            
+
             loop {
                 tokio::select! {
                     Some(command) = command_rx.recv() => {
@@ -230,10 +274,10 @@ impl Node {
                                     Ok(_) => {
                                         let _request_id = swarm.behaviour_mut().request_response
                                             .send_request(&peer_id, FabstirRequest::Inference(request.clone()));
-                                        
+
                                         // Track the request for timeout
                                         let _ = request_tracker.track_request(request.request_id.clone());
-                                        
+
                                         let _ = result_sender.send(Ok(()));
                                     }
                                     Err(e) => {
@@ -323,7 +367,7 @@ impl Node {
                                     }
                                     crate::p2p::behaviour::NodeBehaviourEvent::RequestResponse(req_resp_event) => {
                                         use libp2p::request_response::{Event as ReqRespEvent, Message};
-                                        
+
                                         match req_resp_event {
                                             ReqRespEvent::Message { peer, message } => {
                                                 match message {
@@ -341,12 +385,12 @@ impl Node {
                                                             // Drop the request
                                                             continue;
                                                         }
-                                                        
+
                                                         match request {
                                                             FabstirRequest::Inference(req) => {
                                                                 // Store the channel so we can respond later
                                                                 pending_responses.insert(req.request_id.clone(), channel);
-                                                                
+
                                                                 let _ = event_tx.send(NodeEvent::ProtocolEvent(
                                                                     ProtocolEvent::InferenceRequestReceived {
                                                                         peer_id: peer,
@@ -362,7 +406,7 @@ impl Node {
                                                                 };
                                                                 let _ = swarm.behaviour_mut().request_response
                                                                     .send_response(channel, ack);
-                                                                
+
                                                                 let _ = event_tx.send(NodeEvent::ProtocolEvent(
                                                                     ProtocolEvent::JobClaimReceived {
                                                                         peer_id: peer,
@@ -378,7 +422,7 @@ impl Node {
                                                                 };
                                                                 let _ = swarm.behaviour_mut().request_response
                                                                     .send_response(channel, ack);
-                                                                
+
                                                                 let _ = event_tx.send(NodeEvent::ProtocolEvent(
                                                                     ProtocolEvent::JobResultReceived {
                                                                         peer_id: peer,
@@ -393,7 +437,7 @@ impl Node {
                                                             FabstirResponse::Inference(resp) => {
                                                                 // Complete the tracked request
                                                                 request_tracker.complete_request(&resp.request_id, resp.clone());
-                                                                
+
                                                                 // Handle streaming response
                                                                 if let Err(_) = streaming_handler.send_chunk(resp.clone()).await {
                                                                     // Not a streaming response or stream closed
@@ -431,7 +475,7 @@ impl Node {
                     _ = republish_interval.as_mut().unwrap().tick(), if republish_interval.is_some() => {
                         // Clean up expired records
                         dht_handler.cleanup_expired_records();
-                        
+
                         // Republish records that need republishing
                         let records_to_republish = dht_handler.get_records_to_republish();
                         for (key, value) in records_to_republish {
@@ -449,7 +493,7 @@ impl Node {
                         // Check for expired peers
                         let now = Instant::now();
                         let mut expired_peers = Vec::new();
-                        
+
                         // Check discovered peers for expiration
                         let discovered = discovered_peers_clone.read().await.clone();
                         for peer_id in discovered {
@@ -462,7 +506,7 @@ impl Node {
                                 expired_peers.push(peer_id);
                             }
                         }
-                        
+
                         // Remove expired peers
                         for peer_id in expired_peers {
                             discovered_peers_clone.write().await.remove(&peer_id);
@@ -482,7 +526,7 @@ impl Node {
                     }
                 }
             }
-            
+
             *is_running_clone.write().await = false;
         });
 
@@ -512,7 +556,9 @@ impl Node {
         *self.is_running.write().await = true;
         self.start_time = Instant::now();
 
-        let event_rx = self.event_receiver.take()
+        let event_rx = self
+            .event_receiver
+            .take()
             .expect("start() called multiple times");
 
         // Start periodic tasks
@@ -525,11 +571,11 @@ impl Node {
 
     pub async fn shutdown(&mut self) {
         *self.is_running.write().await = false;
-        
+
         if let Some(tx) = self.command_sender.take() {
             let _ = tx.send(Command::Shutdown).await;
         }
-        
+
         if let Some(task) = self.swarm_task.take() {
             let _ = task.await;
         }
@@ -541,7 +587,10 @@ impl Node {
 
     pub fn listeners(&self) -> Vec<Multiaddr> {
         // Use try_read to avoid blocking
-        self.listeners.try_read().map(|r| r.clone()).unwrap_or_default()
+        self.listeners
+            .try_read()
+            .map(|r| r.clone())
+            .unwrap_or_default()
     }
 
     pub fn external_addresses(&self) -> Vec<Multiaddr> {
@@ -561,8 +610,16 @@ impl Node {
     }
 
     pub fn metrics(&self) -> NodeMetrics {
-        let bandwidth = self.bandwidth_counter.try_lock().map(|b| (b.0, b.1)).unwrap_or((0, 0));
-        let connected_peers = self.connected_peers.try_read().map(|p| p.len()).unwrap_or(0);
+        let bandwidth = self
+            .bandwidth_counter
+            .try_lock()
+            .map(|b| (b.0, b.1))
+            .unwrap_or((0, 0));
+        let connected_peers = self
+            .connected_peers
+            .try_read()
+            .map(|p| p.len())
+            .unwrap_or(0);
         NodeMetrics {
             connected_peers,
             bandwidth_in: bandwidth.0,
@@ -590,7 +647,12 @@ impl Node {
     pub async fn connect(&mut self, peer_id: PeerId, addr: Multiaddr) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::Connect { peer_id, addr, result_sender: result_tx }).await?;
+            tx.send(Command::Connect {
+                peer_id,
+                addr,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -598,7 +660,10 @@ impl Node {
     }
 
     pub fn is_connected(&self, peer_id: PeerId) -> bool {
-        self.connected_peers.try_read().map(|p| p.contains(&peer_id)).unwrap_or(false)
+        self.connected_peers
+            .try_read()
+            .map(|p| p.contains(&peer_id))
+            .unwrap_or(false)
     }
 
     pub async fn discovered_peers(&self) -> HashSet<PeerId> {
@@ -609,7 +674,13 @@ impl Node {
     pub async fn dht_put(&mut self, key: RecordKey, value: Vec<u8>) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::DhtPut { key, value, expiration: None, result_sender: result_tx }).await?;
+            tx.send(Command::DhtPut {
+                key,
+                value,
+                expiration: None,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -619,7 +690,11 @@ impl Node {
     pub async fn dht_get(&mut self, key: RecordKey) -> Result<Vec<u8>> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::DhtGet { key, result_sender: result_tx }).await?;
+            tx.send(Command::DhtGet {
+                key,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -634,7 +709,13 @@ impl Node {
     ) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::DhtPut { key, value, expiration: Some(expiration), result_sender: result_tx }).await?;
+            tx.send(Command::DhtPut {
+                key,
+                value,
+                expiration: Some(expiration),
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -644,7 +725,11 @@ impl Node {
     pub async fn dht_start_providing(&mut self, key: RecordKey) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::DhtStartProviding { key, result_sender: result_tx }).await?;
+            tx.send(Command::DhtStartProviding {
+                key,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -654,7 +739,11 @@ impl Node {
     pub async fn dht_get_providers(&mut self, key: RecordKey) -> Result<HashSet<PeerId>> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::DhtGetProviders { key, result_sender: result_tx }).await?;
+            tx.send(Command::DhtGetProviders {
+                key,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -670,7 +759,11 @@ impl Node {
     pub fn dht_routing_table_health(&self) -> DhtRoutingTableHealth {
         // In a real implementation, we'd query the swarm's Kademlia behaviour
         // For now, return connected peers count as an approximation
-        let num_peers = self.connected_peers.try_read().map(|peers| peers.len()).unwrap_or(0);
+        let num_peers = self
+            .connected_peers
+            .try_read()
+            .map(|peers| peers.len())
+            .unwrap_or(0);
         DhtRoutingTableHealth {
             num_peers,
             num_buckets: 20, // Kademlia default
@@ -687,20 +780,27 @@ impl Node {
         // Send event for announced capabilities
         if let Some(tx) = &self.command_sender {
             let (result_tx, _) = oneshot::channel();
-            let _ = tx.send(Command::SendEvent {
-                event: NodeEvent::DhtEvent(DhtEvent::CapabilitiesAnnounced { capabilities }),
-                result_sender: result_tx,
-            }).await;
+            let _ = tx
+                .send(Command::SendEvent {
+                    event: NodeEvent::DhtEvent(DhtEvent::CapabilitiesAnnounced { capabilities }),
+                    result_sender: result_tx,
+                })
+                .await;
         }
         Ok(())
     }
 
     pub async fn find_nodes_with_capability(&mut self, capability: &str) -> Result<Vec<PeerId>> {
         let key = RecordKey::new(&format!("capability:{}", capability).as_bytes());
-        self.dht_get_providers(key).await.map(|set| set.into_iter().collect())
+        self.dht_get_providers(key)
+            .await
+            .map(|set| set.into_iter().collect())
     }
 
-    pub async fn discover_peers_with_capability(&mut self, capability: &str) -> Result<Vec<PeerId>> {
+    pub async fn discover_peers_with_capability(
+        &mut self,
+        capability: &str,
+    ) -> Result<Vec<PeerId>> {
         self.find_nodes_with_capability(capability).await
     }
 
@@ -724,25 +824,35 @@ impl Node {
         // Get both discovered and connected peers
         let discovered = self.discovered_peers.read().await.clone();
         let connected = self.connected_peers.read().await.clone();
-        
+
         // Combine both sets
         let all_peers: HashSet<PeerId> = discovered.union(&connected).cloned().collect();
-        
+
         let mut peers_with_priority = Vec::new();
-        
+
         // Collect all peer IDs that need metadata
-        let peers_to_fetch: Vec<PeerId> = all_peers.iter()
-            .filter(|peer_id| !self.peer_metadata.try_read().map(|m| m.contains_key(peer_id)).unwrap_or(false))
+        let peers_to_fetch: Vec<PeerId> = all_peers
+            .iter()
+            .filter(|peer_id| {
+                !self
+                    .peer_metadata
+                    .try_read()
+                    .map(|m| m.contains_key(peer_id))
+                    .unwrap_or(false)
+            })
             .cloned()
             .collect();
-        
+
         // Fetch metadata for peers we don't have cached
         for peer_id in peers_to_fetch {
             if let Ok(peer_info) = self.get_peer_metadata(peer_id).await {
-                self.peer_metadata.write().await.insert(peer_id, peer_info.metadata);
+                self.peer_metadata
+                    .write()
+                    .await
+                    .insert(peer_id, peer_info.metadata);
             }
         }
-        
+
         // Now read from cached metadata
         let metadata = self.peer_metadata.read().await;
         for peer_id in all_peers.iter() {
@@ -752,10 +862,10 @@ impl Node {
                 }
             }
         }
-        
+
         // Sort by priority (descending)
         peers_with_priority.sort_by(|a, b| b.1.cmp(&a.1));
-        
+
         Ok(peers_with_priority)
     }
 
@@ -776,7 +886,7 @@ impl Node {
             }
             rate_limiters.insert(self.peer_id, (now, 1));
         }
-        
+
         // TODO: Implement actual rendezvous discovery
         Ok(())
     }
@@ -789,7 +899,12 @@ impl Node {
     ) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::SendInferenceRequest { peer_id, request, result_sender: result_tx }).await?;
+            tx.send(Command::SendInferenceRequest {
+                peer_id,
+                request,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -803,7 +918,11 @@ impl Node {
         timeout_duration: Duration,
     ) -> Result<()> {
         // The timeout is handled by the request tracker
-        let result = timeout(timeout_duration, self.send_inference_request(peer_id, request)).await;
+        let result = timeout(
+            timeout_duration,
+            self.send_inference_request(peer_id, request),
+        )
+        .await;
         match result {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(e),
@@ -821,7 +940,7 @@ impl Node {
             .lock()
             .await
             .insert(request.request_id.clone(), tx);
-        
+
         self.send_inference_request(peer_id, request).await?;
         Ok(rx)
     }
@@ -833,7 +952,12 @@ impl Node {
     ) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::SendInferenceResponse { peer_id, response, result_sender: result_tx }).await?;
+            tx.send(Command::SendInferenceResponse {
+                peer_id,
+                response,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -851,7 +975,12 @@ impl Node {
     pub async fn send_job_claim(&mut self, peer_id: PeerId, claim: JobClaim) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::SendJobClaim { peer_id, claim, result_sender: result_tx }).await?;
+            tx.send(Command::SendJobClaim {
+                peer_id,
+                claim,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))
@@ -861,7 +990,12 @@ impl Node {
     pub async fn send_job_result(&mut self, peer_id: PeerId, result: JobResult) -> Result<()> {
         if let Some(tx) = &self.command_sender {
             let (result_tx, result_rx) = oneshot::channel();
-            tx.send(Command::SendJobResult { peer_id, result, result_sender: result_tx }).await?;
+            tx.send(Command::SendJobResult {
+                peer_id,
+                result,
+                result_sender: result_tx,
+            })
+            .await?;
             result_rx.await?
         } else {
             Err(anyhow!("Node not started"))

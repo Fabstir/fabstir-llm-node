@@ -1,6 +1,6 @@
-use fabstir_llm_node::api::websocket::session::{WebSocketSession, SessionConfig};
-use fabstir_llm_node::api::websocket::persistence::{SessionPersistence, PersistenceConfig};
-use fabstir_llm_node::api::websocket::storage_trait::{SessionStorage, FileStorage};
+use fabstir_llm_node::api::websocket::persistence::{PersistenceConfig, SessionPersistence};
+use fabstir_llm_node::api::websocket::session::{SessionConfig, WebSocketSession};
+use fabstir_llm_node::api::websocket::storage_trait::{FileStorage, SessionStorage};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -25,7 +25,10 @@ async fn test_save_session_with_chain() {
 
     // Add some data to the session
     session.add_message_async("user", "Hello").await.unwrap();
-    session.add_message_async("assistant", "Hi there!").await.unwrap();
+    session
+        .add_message_async("assistant", "Hi there!")
+        .await
+        .unwrap();
 
     // Save the session
     let result = persistence.save_session(&session).await;
@@ -43,7 +46,10 @@ async fn test_load_session_with_chain() {
     // Create and save a session
     let config = SessionConfig::default();
     let mut original_session = WebSocketSession::with_chain("test_session_2", config, 5611);
-    original_session.add_message_async("user", "Test message").await.unwrap();
+    original_session
+        .add_message_async("user", "Test message")
+        .await
+        .unwrap();
 
     // Add metadata
     {
@@ -54,7 +60,10 @@ async fn test_load_session_with_chain() {
     persistence.save_session(&original_session).await.unwrap();
 
     // Load the session back
-    let loaded_session = persistence.load_session(5611, "test_session_2").await.unwrap();
+    let loaded_session = persistence
+        .load_session(5611, "test_session_2")
+        .await
+        .unwrap();
 
     // Verify chain_id is preserved
     assert_eq!(loaded_session.chain_id, 5611);
@@ -62,7 +71,10 @@ async fn test_load_session_with_chain() {
 
     // Verify messages are preserved
     assert_eq!(loaded_session.conversation_history.len(), 1);
-    assert_eq!(loaded_session.conversation_history[0].content, "Test message");
+    assert_eq!(
+        loaded_session.conversation_history[0].content,
+        "Test message"
+    );
 
     // Verify metadata is preserved
     let metadata = loaded_session.metadata.read().await;
@@ -160,7 +172,10 @@ async fn test_migrate_session_chain() {
 
     // Create and save a session on Base Sepolia
     let mut session = WebSocketSession::with_chain("migrate_test", SessionConfig::default(), 84532);
-    session.add_message_async("user", "Migration test").await.unwrap();
+    session
+        .add_message_async("user", "Migration test")
+        .await
+        .unwrap();
     persistence.save_session(&session).await.unwrap();
 
     // Verify it's saved in Base Sepolia directory
@@ -168,7 +183,10 @@ async fn test_migrate_session_chain() {
     assert!(old_path.exists());
 
     // Migrate to opBNB
-    persistence.migrate_session_chain("migrate_test", 84532, 5611).await.unwrap();
+    persistence
+        .migrate_session_chain("migrate_test", 84532, 5611)
+        .await
+        .unwrap();
 
     // Verify old location is cleaned up
     assert!(!old_path.exists());
@@ -178,7 +196,10 @@ async fn test_migrate_session_chain() {
     assert!(new_path.exists());
 
     // Load and verify the migrated session
-    let migrated = persistence.load_session(5611, "migrate_test").await.unwrap();
+    let migrated = persistence
+        .load_session(5611, "migrate_test")
+        .await
+        .unwrap();
     assert_eq!(migrated.chain_id, 5611);
     assert_eq!(migrated.id, "migrate_test");
     assert_eq!(migrated.conversation_history[0].content, "Migration test");
@@ -190,12 +211,14 @@ async fn test_list_sessions_by_chain() {
 
     // Create sessions on different chains
     for i in 0..3 {
-        let session = WebSocketSession::with_chain(format!("base_{}", i), SessionConfig::default(), 84532);
+        let session =
+            WebSocketSession::with_chain(format!("base_{}", i), SessionConfig::default(), 84532);
         persistence.save_session(&session).await.unwrap();
     }
 
     for i in 0..2 {
-        let session = WebSocketSession::with_chain(format!("opbnb_{}", i), SessionConfig::default(), 5611);
+        let session =
+            WebSocketSession::with_chain(format!("opbnb_{}", i), SessionConfig::default(), 5611);
         persistence.save_session(&session).await.unwrap();
     }
 
@@ -251,15 +274,24 @@ async fn test_restore_from_backup() {
     let backup_id = persistence.create_chain_backup(84532).await.unwrap();
 
     // Delete original sessions
-    persistence.delete_session(84532, "restore_1").await.unwrap();
-    persistence.delete_session(84532, "restore_2").await.unwrap();
+    persistence
+        .delete_session(84532, "restore_1")
+        .await
+        .unwrap();
+    persistence
+        .delete_session(84532, "restore_2")
+        .await
+        .unwrap();
 
     // Verify sessions are gone
     let sessions = persistence.list_sessions_by_chain(84532).await.unwrap();
     assert_eq!(sessions.len(), 0);
 
     // Restore from backup
-    let restored = persistence.restore_from_backup(84532, &backup_id).await.unwrap();
+    let restored = persistence
+        .restore_from_backup(84532, &backup_id)
+        .await
+        .unwrap();
     assert_eq!(restored, 2);
 
     // Verify sessions are back

@@ -1,15 +1,15 @@
 // src/monitoring/health_checks.rs - Health monitoring and checks
 
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
-use std::time::{Duration, Instant};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthConfig {
@@ -129,7 +129,8 @@ pub struct HealthResponse {
 }
 
 // Health check function type
-type HealthCheckFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync>;
+type HealthCheckFn =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync>;
 
 pub struct HealthCheck {
     name: String,
@@ -141,7 +142,9 @@ impl HealthCheck {
     pub fn new(
         name: &str,
         check_type: CheckType,
-        check_fn: Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync>,
+        check_fn: Box<
+            dyn Fn() -> Pin<Box<dyn Future<Output = Result<ComponentHealth>> + Send>> + Send + Sync,
+        >,
     ) -> Self {
         HealthCheck {
             name: name.to_string(),
@@ -152,7 +155,8 @@ impl HealthCheck {
 }
 
 // Resource check function type
-type ResourceCheckFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync>;
+type ResourceCheckFn =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync>;
 
 pub struct ResourceCheck {
     name: String,
@@ -164,7 +168,9 @@ pub struct ResourceCheck {
 impl ResourceCheck {
     pub fn new(
         name: &str,
-        check_fn: Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync>,
+        check_fn: Box<
+            dyn Fn() -> Pin<Box<dyn Future<Output = Result<(f64, f64)>> + Send>> + Send + Sync,
+        >,
         warning_threshold: f64,
         critical_threshold: f64,
     ) -> Self {
@@ -270,26 +276,23 @@ impl HealthChecker {
         let (timeout_duration, checks_to_run) = {
             let state = self.state.read().await;
             let timeout_duration = Duration::from_secs(state.config.timeout_seconds);
-            let checks: Vec<_> = state.health_checks
-                .keys()
-                .cloned()
-                .collect();
+            let checks: Vec<_> = state.health_checks.keys().cloned().collect();
             (timeout_duration, checks)
         };
-        
+
         // Run checks
         for check_name in checks_to_run {
             // Get the check function
             let check_fn = {
                 let state = self.state.read().await;
-                state.health_checks.get(&check_name).map(|c| c.check_fn.clone())
+                state
+                    .health_checks
+                    .get(&check_name)
+                    .map(|c| c.check_fn.clone())
             };
-            
+
             if let Some(check_fn) = check_fn {
-                let check_result = tokio::time::timeout(
-                    timeout_duration,
-                    check_fn()
-                ).await;
+                let check_result = tokio::time::timeout(timeout_duration, check_fn()).await;
 
                 let component_health = match check_result {
                     Ok(Ok(health)) => health,
@@ -314,7 +317,7 @@ impl HealthChecker {
                 state.components.insert(check_name, component_health);
             }
         }
-        
+
         // Generate report
         let mut state = self.state.write().await;
 
@@ -373,7 +376,7 @@ impl HealthChecker {
     pub async fn liveness_probe(&self) -> Result<LivenessProbe> {
         let state = self.state.read().await;
         let uptime_seconds = state.start_time.elapsed().as_secs();
-        
+
         Ok(LivenessProbe {
             is_alive: true, // Always true until process actually terminates
             uptime_seconds,
@@ -387,7 +390,7 @@ impl HealthChecker {
 
     pub async fn readiness_probe(&self) -> Result<ReadinessProbe> {
         let state = self.state.read().await;
-        
+
         if state.is_shutting_down {
             return Ok(ReadinessProbe {
                 is_ready: false,
@@ -396,7 +399,7 @@ impl HealthChecker {
         }
 
         let all_ready = state.ready_components.values().all(|&ready| ready);
-        
+
         Ok(ReadinessProbe {
             is_ready: all_ready,
             components_ready: state.ready_components.clone(),
@@ -487,8 +490,9 @@ impl HealthChecker {
     pub async fn get_health_history(&self, duration: Duration) -> Result<Vec<HealthReport>> {
         let state = self.state.read().await;
         let cutoff = Utc::now().timestamp() as u64 - duration.as_secs();
-        
-        Ok(state.health_history
+
+        Ok(state
+            .health_history
             .iter()
             .filter(|report| report.timestamp >= cutoff)
             .cloned()
@@ -498,8 +502,9 @@ impl HealthChecker {
     pub async fn calculate_uptime_percentage(&self, duration: Duration) -> f64 {
         let state = self.state.read().await;
         let cutoff = Utc::now().timestamp() as u64 - duration.as_secs();
-        
-        let relevant_reports: Vec<_> = state.health_history
+
+        let relevant_reports: Vec<_> = state
+            .health_history
             .iter()
             .filter(|report| report.timestamp >= cutoff)
             .collect();
@@ -541,11 +546,13 @@ impl HealthChecker {
         let handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(300)).await; // 5 minutes
-                
+
                 // Clean up old history
                 let cutoff = Utc::now().timestamp() as u64 - 3600; // Keep last hour
                 let mut state = checker.state.write().await;
-                state.health_history.retain(|report| report.timestamp >= cutoff);
+                state
+                    .health_history
+                    .retain(|report| report.timestamp >= cutoff);
             }
         });
 

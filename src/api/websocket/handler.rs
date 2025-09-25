@@ -1,13 +1,13 @@
 use super::{
     message_types::{
-        WebSocketMessage, MessageType, InferenceMessage, SessionControlMessage,
-        SessionControl, ConnectionMode,
+        ConnectionMode, InferenceMessage, MessageType, SessionControl, SessionControlMessage,
+        WebSocketMessage,
     },
     session::SessionConfig,
     session_store::SessionStore,
 };
 use crate::job_processor::Message;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -67,7 +67,7 @@ impl WebSocketHandler {
             context_window_size: self.config.max_context_messages,
             ..Default::default()
         };
-        
+
         let mut store = self.store.write().await;
         let session_id = store.create_session(session_config).await;
         Ok(session_id)
@@ -79,7 +79,7 @@ impl WebSocketHandler {
             context_window_size: self.config.max_context_messages,
             ..Default::default()
         };
-        
+
         let mut store = self.store.write().await;
         match store.try_create_session(session_config).await {
             Ok(session_id) => Ok(ConnectionMode {
@@ -124,7 +124,9 @@ impl WebSocketHandler {
             MessageType::SessionControl => self.handle_session_control(message).await,
             MessageType::Ping => Ok(WebSocketMessage::new(MessageType::Pong, message.payload)),
             MessageType::Close => self.handle_close(message).await,
-            MessageType::Unknown => Err(anyhow!("UNKNOWN_MESSAGE_TYPE: Cannot handle unknown message type")),
+            MessageType::Unknown => Err(anyhow!(
+                "UNKNOWN_MESSAGE_TYPE: Cannot handle unknown message type"
+            )),
             _ => Err(anyhow!("Unsupported message type: {:?}", message.msg_type)),
         }
     }
@@ -138,10 +140,13 @@ impl WebSocketHandler {
                     return Err(anyhow!("Session persistence not implemented"));
                 }
             }
-            
+
             // Check if session exists
             if !self.has_session(session_id).await {
-                return Err(anyhow!("SESSION_NOT_FOUND: Session {} not found", session_id));
+                return Err(anyhow!(
+                    "SESSION_NOT_FOUND: Session {} not found",
+                    session_id
+                ));
             }
         }
 
@@ -153,10 +158,14 @@ impl WebSocketHandler {
                 "session_id": session_id,
                 "mode": "stateful"
             }),
-        ).with_session(session_id))
+        )
+        .with_session(session_id))
     }
 
-    async fn handle_inference(&mut self, mut message: WebSocketMessage) -> Result<WebSocketMessage> {
+    async fn handle_inference(
+        &mut self,
+        mut message: WebSocketMessage,
+    ) -> Result<WebSocketMessage> {
         // Get or create session
         let session_id = match message.session_id {
             Some(ref id) => {
@@ -164,7 +173,7 @@ impl WebSocketHandler {
                 if !self.has_session(id).await {
                     return Err(anyhow!("SESSION_NOT_FOUND: Session {} not found", id));
                 }
-                
+
                 // Check if session is expired
                 let store = self.store.read().await;
                 if let Some(session) = store.get_session(id).await {
@@ -172,7 +181,7 @@ impl WebSocketHandler {
                         return Err(anyhow!("Session {} has expired", id));
                     }
                 }
-                
+
                 id.clone()
             }
             None if self.config.auto_create_session => {
@@ -182,13 +191,14 @@ impl WebSocketHandler {
                 id
             }
             None => {
-                return Err(anyhow!("No session ID provided and auto-create is disabled"));
+                return Err(anyhow!(
+                    "No session ID provided and auto-create is disabled"
+                ));
             }
         };
 
         // Parse inference message
-        let inference = InferenceMessage::from_payload(&message.payload)
-            .map_err(|e| anyhow!(e))?;
+        let inference = InferenceMessage::from_payload(&message.payload).map_err(|e| anyhow!(e))?;
 
         // Check for required fields
         if inference.prompt.is_empty() {
@@ -196,25 +206,35 @@ impl WebSocketHandler {
         }
 
         // Add user message to session
-        self.add_message_to_session(&session_id, Message {
-            role: "user".to_string(),
-            content: inference.prompt.clone(),
-            timestamp: None,
-        }).await?;
+        self.add_message_to_session(
+            &session_id,
+            Message {
+                role: "user".to_string(),
+                content: inference.prompt.clone(),
+                timestamp: None,
+            },
+        )
+        .await?;
 
         // Build context from session
-        let context = self.build_context_for_session(&session_id, &inference.prompt).await?;
+        let context = self
+            .build_context_for_session(&session_id, &inference.prompt)
+            .await?;
 
         // TODO: Actually call inference engine here
         // For now, return a mock response
         let response_content = format!("Mock response to: {}", inference.prompt);
 
         // Add assistant response to session
-        self.add_message_to_session(&session_id, Message {
-            role: "assistant".to_string(),
-            content: response_content.clone(),
-            timestamp: None,
-        }).await?;
+        self.add_message_to_session(
+            &session_id,
+            Message {
+                role: "assistant".to_string(),
+                content: response_content.clone(),
+                timestamp: None,
+            },
+        )
+        .await?;
 
         Ok(WebSocketMessage::inference_response(
             Some(session_id),
@@ -222,15 +242,17 @@ impl WebSocketHandler {
         ))
     }
 
-    async fn handle_stateless_inference(&mut self, message: WebSocketMessage) -> Result<WebSocketMessage> {
+    async fn handle_stateless_inference(
+        &mut self,
+        message: WebSocketMessage,
+    ) -> Result<WebSocketMessage> {
         // Check if trying to use stateless with an active session
         if message.session_id.is_some() {
             return Err(anyhow!("Cannot switch mode mid-session"));
         }
 
         // Parse inference message
-        let inference = InferenceMessage::from_payload(&message.payload)
-            .map_err(|e| anyhow!(e))?;
+        let inference = InferenceMessage::from_payload(&message.payload).map_err(|e| anyhow!(e))?;
 
         // TODO: Actually call inference engine with provided context
         // For now, return a mock response
@@ -239,16 +261,23 @@ impl WebSocketHandler {
         Ok(WebSocketMessage::inference_response(None, response_content))
     }
 
-    async fn handle_session_control(&mut self, message: WebSocketMessage) -> Result<WebSocketMessage> {
-        let session_id = message.session_id
+    async fn handle_session_control(
+        &mut self,
+        message: WebSocketMessage,
+    ) -> Result<WebSocketMessage> {
+        let session_id = message
+            .session_id
             .ok_or_else(|| anyhow!("Session ID required for session control"))?;
 
         if !self.has_session(&session_id).await {
-            return Err(anyhow!("SESSION_NOT_FOUND: Session {} not found", session_id));
+            return Err(anyhow!(
+                "SESSION_NOT_FOUND: Session {} not found",
+                session_id
+            ));
         }
 
-        let control = SessionControlMessage::from_payload(&message.payload)
-            .map_err(|e| anyhow!(e))?;
+        let control =
+            SessionControlMessage::from_payload(&message.payload).map_err(|e| anyhow!(e))?;
 
         match control.action {
             SessionControl::Clear => {
@@ -256,18 +285,17 @@ impl WebSocketHandler {
                 let mut store = self.store.write().await;
                 store.clear_session(&session_id).await?;
                 drop(store);
-                
+
                 Ok(WebSocketMessage::new(
                     MessageType::SessionControlAck,
                     serde_json::json!({
                         "action": "clear",
                         "success": true
                     }),
-                ).with_session(session_id))
+                )
+                .with_session(session_id))
             }
-            SessionControl::Resume => {
-                Err(anyhow!("Session persistence not implemented"))
-            }
+            SessionControl::Resume => Err(anyhow!("Session persistence not implemented")),
             SessionControl::Status => {
                 let store = self.store.read().await;
                 if let Some(session) = store.get_session(&session_id).await {
@@ -279,7 +307,8 @@ impl WebSocketHandler {
                             "messages": metrics.total_messages,
                             "memory_bytes": metrics.memory_bytes
                         }),
-                    ).with_session(session_id))
+                    )
+                    .with_session(session_id))
                 } else {
                     Err(anyhow!("Session not found"))
                 }
@@ -291,33 +320,48 @@ impl WebSocketHandler {
         if let Some(session_id) = &message.session_id {
             self.on_disconnect(session_id).await?;
         }
-        Ok(WebSocketMessage::new(MessageType::Close, serde_json::json!({})))
+        Ok(WebSocketMessage::new(
+            MessageType::Close,
+            serde_json::json!({}),
+        ))
     }
 
-    pub async fn add_message_to_session(&mut self, session_id: &str, message: Message) -> Result<()> {
+    pub async fn add_message_to_session(
+        &mut self,
+        session_id: &str,
+        message: Message,
+    ) -> Result<()> {
         let mut store = self.store.write().await;
         store.update_session(session_id, message).await
     }
 
-    pub async fn build_context_for_session(&self, session_id: &str, current_prompt: &str) -> Result<String> {
+    pub async fn build_context_for_session(
+        &self,
+        session_id: &str,
+        current_prompt: &str,
+    ) -> Result<String> {
         let store = self.store.read().await;
-        let session = store.get_session(session_id).await
+        let session = store
+            .get_session(session_id)
+            .await
             .ok_or_else(|| anyhow!("Session not found"))?;
 
         let context_messages = session.get_context_messages();
-        
+
         let mut context = String::new();
         for msg in context_messages {
             context.push_str(&format!("{}: {}\n", msg.role, msg.content));
         }
         context.push_str(&format!("user: {}\nassistant:", current_prompt));
-        
+
         Ok(context)
     }
 
     pub async fn get_session_messages(&self, session_id: &str) -> Result<Vec<Message>> {
         let store = self.store.read().await;
-        let session = store.get_session(session_id).await
+        let session = store
+            .get_session(session_id)
+            .await
             .ok_or_else(|| anyhow!("Session not found"))?;
         Ok(session.conversation_history().to_vec())
     }
@@ -325,12 +369,12 @@ impl WebSocketHandler {
     pub fn can_handle_message_type(&self, msg_type: &MessageType) -> bool {
         matches!(
             msg_type,
-            MessageType::Init |
-            MessageType::Inference |
-            MessageType::StatelessInference |
-            MessageType::SessionControl |
-            MessageType::Ping |
-            MessageType::Close
+            MessageType::Init
+                | MessageType::Inference
+                | MessageType::StatelessInference
+                | MessageType::SessionControl
+                | MessageType::Ping
+                | MessageType::Close
         )
     }
 
@@ -338,7 +382,7 @@ impl WebSocketHandler {
         let store = self.store.read().await;
         let store_metrics = store.get_store_metrics().await;
         let messages_processed = *self.messages_processed.read().await;
-        
+
         HandlerMetrics {
             active_sessions: store_metrics.active_sessions,
             total_messages_processed: messages_processed,

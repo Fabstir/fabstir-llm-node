@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -120,30 +120,44 @@ impl PricingManager {
         self.models.get(model_id).cloned()
     }
 
-    pub async fn calculate_token_price(&self, model_id: &str, tokens: u64) -> Result<f64, PricingError> {
-        let pricing = self.models
+    pub async fn calculate_token_price(
+        &self,
+        model_id: &str,
+        tokens: u64,
+    ) -> Result<f64, PricingError> {
+        let pricing = self
+            .models
             .get(model_id)
             .ok_or_else(|| PricingError::ModelNotFound(model_id.to_string()))?;
 
         let base_price = pricing.base_price_per_token * tokens as f64;
         let tier_multiplier = self.get_tier_multiplier(&pricing.tiers, tokens);
-        
+
         Ok(base_price * tier_multiplier)
     }
 
-    pub async fn calculate_time_price(&self, model_id: &str, duration_minutes: f64) -> Result<f64, PricingError> {
-        let pricing = self.models
+    pub async fn calculate_time_price(
+        &self,
+        model_id: &str,
+        duration_minutes: f64,
+    ) -> Result<f64, PricingError> {
+        let pricing = self
+            .models
             .get(model_id)
             .ok_or_else(|| PricingError::ModelNotFound(model_id.to_string()))?;
 
         Ok(pricing.base_price_per_minute * duration_minutes)
     }
 
-    pub async fn calculate_token_price_with_demand(&self, model_id: &str, tokens: u64) -> Result<f64, PricingError> {
+    pub async fn calculate_token_price_with_demand(
+        &self,
+        model_id: &str,
+        tokens: u64,
+    ) -> Result<f64, PricingError> {
         let mut price = self.calculate_token_price(model_id, tokens).await?;
 
         let pricing = self.models.get(model_id).unwrap();
-        
+
         if let Some(dynamic_config) = &pricing.dynamic_pricing {
             if dynamic_config.enabled {
                 let demand_multiplier = self.calculate_demand_multiplier(dynamic_config);
@@ -166,7 +180,11 @@ impl PricingManager {
         self.current_demand = demand.clamp(0.0, 1.0);
     }
 
-    pub async fn get_pricing_by_currency(&self, model_id: &str, currency: Currency) -> Option<PricingModel> {
+    pub async fn get_pricing_by_currency(
+        &self,
+        model_id: &str,
+        currency: Currency,
+    ) -> Option<PricingModel> {
         self.models
             .get(model_id)
             .filter(|pricing| pricing.currency == currency)
@@ -196,8 +214,13 @@ impl PricingManager {
         Ok(())
     }
 
-    pub async fn update_base_price(&mut self, model_id: &str, new_price: f64) -> Result<(), PricingError> {
-        let pricing = self.models
+    pub async fn update_base_price(
+        &mut self,
+        model_id: &str,
+        new_price: f64,
+    ) -> Result<(), PricingError> {
+        let pricing = self
+            .models
             .get_mut(model_id)
             .ok_or_else(|| PricingError::ModelNotFound(model_id.to_string()))?;
 
@@ -223,7 +246,11 @@ impl PricingManager {
         Ok(())
     }
 
-    pub async fn get_pricing_history(&self, model_id: &str, limit: usize) -> Vec<PriceHistoryEntry> {
+    pub async fn get_pricing_history(
+        &self,
+        model_id: &str,
+        limit: usize,
+    ) -> Vec<PriceHistoryEntry> {
         self.price_history
             .get(model_id)
             .map(|history| {
@@ -292,12 +319,12 @@ impl PricingManager {
         for tier in tiers {
             if tier.min_tokens > tier.max_tokens {
                 return Err(PricingError::InvalidConfiguration(
-                    "Invalid tier range".to_string()
+                    "Invalid tier range".to_string(),
                 ));
             }
             if tier.multiplier <= 0.0 {
                 return Err(PricingError::InvalidConfiguration(
-                    "Tier multiplier must be positive".to_string()
+                    "Tier multiplier must be positive".to_string(),
                 ));
             }
         }

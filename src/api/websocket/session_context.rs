@@ -71,8 +71,8 @@ impl SessionContext {
     /// Get block confirmation requirements
     pub fn confirmations_required(&self) -> u64 {
         match self.chain_id {
-            84532 => 3,  // Base Sepolia - faster
-            5611 => 15,  // opBNB - more confirmations needed
+            84532 => 3, // Base Sepolia - faster
+            5611 => 15, // opBNB - more confirmations needed
             _ => 10,
         }
     }
@@ -157,11 +157,7 @@ impl ChainAwareSessionManager {
     }
 
     /// Check if chain switch is allowed (it's not for active sessions)
-    pub async fn can_switch_chain(
-        &self,
-        session_id: &str,
-        new_chain_id: u64,
-    ) -> Result<bool> {
+    pub async fn can_switch_chain(&self, session_id: &str, new_chain_id: u64) -> Result<bool> {
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(session_id) {
             if session.is_active && session.chain_id != new_chain_id {

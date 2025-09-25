@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use tokio::sync::{broadcast, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseTimeConfig {
@@ -170,8 +170,12 @@ impl ResponseTimeTracker {
         let total_count = responses.len() as u64;
 
         for (i, &bucket_max) in self.config.buckets_ms.iter().enumerate() {
-            let bucket_min = if i == 0 { 0 } else { self.config.buckets_ms[i - 1] };
-            
+            let bucket_min = if i == 0 {
+                0
+            } else {
+                self.config.buckets_ms[i - 1]
+            };
+
             let count = responses
                 .iter()
                 .filter(|r| r.duration_ms > bucket_min && r.duration_ms <= bucket_max)
@@ -181,7 +185,11 @@ impl ResponseTimeTracker {
                 min_ms: bucket_min,
                 max_ms: Some(bucket_max),
                 count,
-                percentage: if total_count > 0 { count as f64 / total_count as f64 * 100.0 } else { 0.0 },
+                percentage: if total_count > 0 {
+                    count as f64 / total_count as f64 * 100.0
+                } else {
+                    0.0
+                },
             });
         }
 
@@ -196,7 +204,11 @@ impl ResponseTimeTracker {
             min_ms: max_bucket,
             max_ms: None,
             count: overflow_count,
-            percentage: if total_count > 0 { overflow_count as f64 / total_count as f64 * 100.0 } else { 0.0 },
+            percentage: if total_count > 0 {
+                overflow_count as f64 / total_count as f64 * 100.0
+            } else {
+                0.0
+            },
         });
 
         LatencyDistribution {
@@ -214,7 +226,7 @@ impl ResponseTimeTracker {
             .collect();
 
         let metrics = self.calculate_metrics_from_responses(&model_responses);
-        
+
         let mut percentiles = HashMap::new();
         percentiles.insert("p50".to_string(), metrics.p50);
         percentiles.insert("p90".to_string(), metrics.p90);
@@ -308,7 +320,7 @@ impl ResponseTimeTracker {
 
         output.push_str("# HELP response_time_milliseconds Response time distribution\n");
         output.push_str("# TYPE response_time_milliseconds summary\n");
-        
+
         for &percentile in &self.config.percentiles {
             let value = match percentile {
                 50.0 => metrics.p50,
@@ -318,7 +330,7 @@ impl ResponseTimeTracker {
                 99.9 => metrics.p99_9,
                 _ => 0.0,
             };
-            
+
             output.push_str(&format!(
                 "response_time_milliseconds{{quantile=\"{}\"}} {}\n",
                 percentile / 100.0,
@@ -326,8 +338,14 @@ impl ResponseTimeTracker {
             ));
         }
 
-        output.push_str(&format!("response_time_milliseconds_count {}\n", metrics.count));
-        output.push_str(&format!("response_time_milliseconds_sum {}\n", metrics.average_ms * metrics.count as f64));
+        output.push_str(&format!(
+            "response_time_milliseconds_count {}\n",
+            metrics.count
+        ));
+        output.push_str(&format!(
+            "response_time_milliseconds_sum {}\n",
+            metrics.average_ms * metrics.count as f64
+        ));
 
         output
     }
@@ -355,7 +373,10 @@ impl ResponseTimeTracker {
         metrics
     }
 
-    pub async fn compare_with_baseline(&self, baseline_name: &str) -> Result<PerformanceComparison, ResponseTimeError> {
+    pub async fn compare_with_baseline(
+        &self,
+        baseline_name: &str,
+    ) -> Result<PerformanceComparison, ResponseTimeError> {
         let baselines = self.baselines.lock().await;
         let baseline = baselines
             .get(baseline_name)
@@ -365,8 +386,10 @@ impl ResponseTimeTracker {
 
         let p50_improvement = ((baseline.p50 - current.p50) / baseline.p50) * 100.0;
         let p99_improvement = ((baseline.p99 - current.p99) / baseline.p99) * 100.0;
-        let average_improvement = ((baseline.average_ms - current.average_ms) / baseline.average_ms) * 100.0;
-        let improvement_percentage = (p50_improvement + p99_improvement + average_improvement) / 3.0;
+        let average_improvement =
+            ((baseline.average_ms - current.average_ms) / baseline.average_ms) * 100.0;
+        let improvement_percentage =
+            (p50_improvement + p99_improvement + average_improvement) / 3.0;
 
         Ok(PerformanceComparison {
             baseline_name: baseline_name.to_string(),
@@ -379,7 +402,7 @@ impl ResponseTimeTracker {
 
     async fn check_performance_alerts(&self) {
         let metrics = self.get_current_metrics().await;
-        
+
         if metrics.p99 > self.config.alert_threshold_p99_ms as f64 {
             let alert = PerformanceAlert {
                 timestamp: SystemTime::now()
@@ -392,12 +415,15 @@ impl ResponseTimeTracker {
                 model: None,
                 operation: None,
             };
-            
+
             let _ = self.alert_sender.send(alert);
         }
     }
 
-    fn calculate_metrics_from_responses(&self, responses: &VecDeque<ResponseRecord>) -> ResponseMetrics {
+    fn calculate_metrics_from_responses(
+        &self,
+        responses: &VecDeque<ResponseRecord>,
+    ) -> ResponseMetrics {
         if responses.is_empty() {
             return ResponseMetrics {
                 count: 0,

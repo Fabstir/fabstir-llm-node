@@ -6,35 +6,31 @@ pub mod vector_db_client;
 
 // Re-export commonly used types from client module
 pub use client::{
-    VectorDBClient, VectorDBConfig, VectorBackend, VectorId,
-    VectorEntry, SearchOptions, SearchResult, VectorError,
-    FilterOperator, FilterValue, VectorStats
+    FilterOperator, FilterValue, SearchOptions, SearchResult, VectorBackend, VectorDBClient,
+    VectorDBConfig, VectorEntry, VectorError, VectorId, VectorStats,
 };
 
 // Re-export embedding types
 pub use embeddings::{
-    EmbeddingGenerator, EmbeddingConfig, EmbeddingModel,
-    Embedding, EmbeddingError, TokenizerConfig,
-    BatchEmbeddingRequest, EmbeddingCache
+    BatchEmbeddingRequest, Embedding, EmbeddingCache, EmbeddingConfig, EmbeddingError,
+    EmbeddingGenerator, EmbeddingModel, TokenizerConfig,
 };
 
 // Re-export semantic cache types
 pub use semantic_cache::{
-    SemanticCache, SemanticCacheConfig, CacheEntry, CacheHit,
-    CacheError, CacheStats, SimilarityThreshold,
-    CacheEvictionPolicy
+    CacheEntry, CacheError, CacheEvictionPolicy, CacheHit, CacheStats, SemanticCache,
+    SemanticCacheConfig, SimilarityThreshold,
 };
 
 // Re-export storage types
 pub use storage::{
-    VectorStorage, VectorStorageConfig, StorageBackend,
-    StorageMetadata, StorageError as VectorStorageError,
-    MigrationConfig, MigrationStatus, MigrationStatusType, 
-    IndexType, StorageStats
+    IndexType, MigrationConfig, MigrationStatus, MigrationStatusType, StorageBackend,
+    StorageError as VectorStorageError, StorageMetadata, StorageStats, VectorStorage,
+    VectorStorageConfig,
 };
 
 // Re-export S5 types from main storage module
-pub use crate::storage::{S5Storage, S5StorageConfig, S5Backend, S5Client};
+pub use crate::storage::{S5Backend, S5Client, S5Storage, S5StorageConfig};
 
 // Keep the vector_db_client export
 pub use vector_db_client::{VectorDbClient, VectorDbConfig};

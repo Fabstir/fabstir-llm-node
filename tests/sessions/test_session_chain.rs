@@ -1,4 +1,6 @@
-use fabstir_llm_node::api::websocket::session::{WebSocketSession, SessionConfig, SessionChainInfo};
+use fabstir_llm_node::api::websocket::session::{
+    SessionChainInfo, SessionConfig, WebSocketSession,
+};
 use fabstir_llm_node::config::chains::ChainRegistry;
 use serde_json;
 
@@ -24,13 +26,15 @@ async fn test_session_chain_validation() {
 
     // Valid chain ID (Base Sepolia)
     let config = SessionConfig::default();
-    let result = WebSocketSession::with_validated_chain("test_session_2", config.clone(), 84532, &registry);
+    let result =
+        WebSocketSession::with_validated_chain("test_session_2", config.clone(), 84532, &registry);
     assert!(result.is_ok());
     let session = result.unwrap();
     assert_eq!(session.chain_id, 84532);
 
     // Valid chain ID (opBNB)
-    let result = WebSocketSession::with_validated_chain("test_session_3", config.clone(), 5611, &registry);
+    let result =
+        WebSocketSession::with_validated_chain("test_session_3", config.clone(), 5611, &registry);
     assert!(result.is_ok());
     let session = result.unwrap();
     assert_eq!(session.chain_id, 5611);
@@ -38,7 +42,10 @@ async fn test_session_chain_validation() {
     // Invalid chain ID
     let result = WebSocketSession::with_validated_chain("test_session_4", config, 99999, &registry);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Unsupported chain"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Unsupported chain"));
 }
 
 #[tokio::test]
@@ -103,13 +110,19 @@ async fn test_invalid_chain_rejection() {
             &format!("invalid_session_{}", invalid_chain),
             config.clone(),
             invalid_chain,
-            &registry
+            &registry,
         );
 
-        assert!(result.is_err(), "Chain {} should be rejected", invalid_chain);
+        assert!(
+            result.is_err(),
+            "Chain {} should be rejected",
+            invalid_chain
+        );
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("Unsupported chain") ||
-                error.to_string().contains("Invalid chain"));
+        assert!(
+            error.to_string().contains("Unsupported chain")
+                || error.to_string().contains("Invalid chain")
+        );
     }
 }
 

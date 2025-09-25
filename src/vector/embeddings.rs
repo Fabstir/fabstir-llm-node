@@ -1,9 +1,9 @@
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EmbeddingModel {
@@ -97,7 +97,9 @@ impl Embedding {
             return 0.0;
         }
 
-        let dot_product: f32 = self.data.iter()
+        let dot_product: f32 = self
+            .data
+            .iter()
             .zip(other.data.iter())
             .map(|(a, b)| a * b)
             .sum();
@@ -117,7 +119,8 @@ impl Embedding {
             return f32::INFINITY;
         }
 
-        self.data.iter()
+        self.data
+            .iter()
             .zip(other.data.iter())
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f32>()
@@ -129,7 +132,8 @@ impl Embedding {
             return f32::INFINITY;
         }
 
-        self.data.iter()
+        self.data
+            .iter()
             .zip(other.data.iter())
             .map(|(a, b)| (a - b).abs())
             .sum()
@@ -140,7 +144,8 @@ impl Embedding {
             return 0.0;
         }
 
-        self.data.iter()
+        self.data
+            .iter()
             .zip(other.data.iter())
             .map(|(a, b)| a * b)
             .sum()
@@ -204,7 +209,8 @@ impl EmbeddingCache {
     async fn stats(&self) -> CacheStats {
         let cache = self.cache.read().await;
         let now = chrono::Utc::now().timestamp() as u64;
-        let valid_entries = cache.values()
+        let valid_entries = cache
+            .values()
             .filter(|(_, timestamp)| now - timestamp < self.ttl_seconds)
             .count();
 
@@ -319,9 +325,12 @@ impl EmbeddingGenerator {
         Ok(embedding)
     }
 
-    pub async fn generate_batch(&self, texts: Vec<String>) -> Result<Vec<Embedding>, EmbeddingError> {
+    pub async fn generate_batch(
+        &self,
+        texts: Vec<String>,
+    ) -> Result<Vec<Embedding>, EmbeddingError> {
         let mut embeddings = Vec::with_capacity(texts.len());
-        
+
         for text in texts {
             let embedding = self.generate_embedding(&text).await?;
             embeddings.push(embedding);
@@ -330,7 +339,11 @@ impl EmbeddingGenerator {
         Ok(embeddings)
     }
 
-    pub async fn generate_embedding_with_lang(&self, text: &str, _lang: &str) -> Result<Embedding, EmbeddingError> {
+    pub async fn generate_embedding_with_lang(
+        &self,
+        text: &str,
+        _lang: &str,
+    ) -> Result<Embedding, EmbeddingError> {
         // For simplicity, ignore language parameter in mock implementation
         self.generate_embedding(text).await
     }
@@ -340,7 +353,7 @@ impl EmbeddingGenerator {
         let tokens = self.tokenize(text)?;
         let truncated_tokens = if tokens.len() > self.config.max_tokens {
             let truncated = tokens[..self.config.max_tokens].to_vec();
-            
+
             // Update truncation info
             let mut truncation = self.last_truncation.write().await;
             *truncation = TruncationInfo {
@@ -348,7 +361,7 @@ impl EmbeddingGenerator {
                 original_tokens: tokens.len(),
                 truncated_tokens: truncated.len(),
             };
-            
+
             truncated
         } else {
             // Update truncation info
@@ -358,7 +371,7 @@ impl EmbeddingGenerator {
                 original_tokens: tokens.len(),
                 truncated_tokens: tokens.len(),
             };
-            
+
             tokens
         };
 
@@ -381,13 +394,14 @@ impl EmbeddingGenerator {
 
     fn tokenize(&self, text: &str) -> Result<Vec<String>, EmbeddingError> {
         let mut processed_text = text.to_string();
-        
+
         if self.config.tokenizer_config.lowercase {
             processed_text = processed_text.to_lowercase();
         }
 
         if self.config.tokenizer_config.remove_punctuation {
-            processed_text = processed_text.chars()
+            processed_text = processed_text
+                .chars()
                 .filter(|c| c.is_alphanumeric() || c.is_whitespace())
                 .collect();
         }
@@ -409,11 +423,11 @@ impl EmbeddingGenerator {
         let hash = hasher.finalize();
 
         let mut embedding = Vec::with_capacity(self.config.dimension);
-        
+
         for i in 0..self.config.dimension {
             let byte_index = i % hash.len();
             let byte_value = hash[byte_index];
-            
+
             // Convert byte to float in range [-1, 1]
             let float_value = (byte_value as f32 / 255.0) * 2.0 - 1.0;
             embedding.push(float_value);

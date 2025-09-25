@@ -1,12 +1,14 @@
 use anyhow::Result;
-use ethers::types::{H256, U256};
-use fabstir_llm_node::results::proofs::{
-    ProofGenerator, ProofGenerationConfig, ProofType, InferenceProof
-};
-use fabstir_llm_node::results::packager::{InferenceResult, PackagedResult, ResultMetadata, ResultPackager};
-use fabstir_llm_node::job_processor::JobRequest;
-use std::sync::Arc;
 use chrono::Utc;
+use ethers::types::{H256, U256};
+use fabstir_llm_node::job_processor::JobRequest;
+use fabstir_llm_node::results::packager::{
+    InferenceResult, PackagedResult, ResultMetadata, ResultPackager,
+};
+use fabstir_llm_node::results::proofs::{
+    InferenceProof, ProofGenerationConfig, ProofGenerator, ProofType,
+};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_ezkl_proof_verification_valid() -> Result<()> {
@@ -28,17 +30,17 @@ async fn test_ezkl_proof_verification_valid() -> Result<()> {
         settings_path: Some("./ezkl/settings.json".to_string()),
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "verifier_node".to_string());
-    
+
     // Generate proof
     let proof = generator.generate_proof(&result).await?;
-    
+
     // Verify the proof
     let is_valid = generator.verify_proof(&proof, &result).await?;
-    
+
     assert!(is_valid, "Valid proof should verify successfully");
-    
+
     Ok(())
 }
 
@@ -62,12 +64,12 @@ async fn test_ezkl_proof_verification_tampered_output() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "verifier_node".to_string());
-    
+
     // Generate proof for original result
     let proof = generator.generate_proof(&original_result).await?;
-    
+
     // Create tampered result
     let tampered_result = InferenceResult {
         job_id: "tamper_test".to_string(),
@@ -80,12 +82,12 @@ async fn test_ezkl_proof_verification_tampered_output() -> Result<()> {
         node_id: "verifier_node".to_string(),
         metadata: ResultMetadata::default(),
     };
-    
+
     // Verify should fail with tampered result
     let is_valid = generator.verify_proof(&proof, &tampered_result).await?;
-    
+
     assert!(!is_valid, "Tampered output should fail verification");
-    
+
     Ok(())
 }
 
@@ -110,10 +112,10 @@ async fn test_ezkl_proof_verification_wrong_model() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator1 = ProofGenerator::new(config1, "node1".to_string());
     let proof = generator1.generate_proof(&result).await?;
-    
+
     // Try to verify with different model
     let config2 = ProofGenerationConfig {
         proof_type: ProofType::EZKL,
@@ -121,12 +123,12 @@ async fn test_ezkl_proof_verification_wrong_model() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator2 = ProofGenerator::new(config2, "node2".to_string());
     let is_valid = generator2.verify_proof(&proof, &result).await?;
-    
+
     assert!(!is_valid, "Different model should fail verification");
-    
+
     Ok(())
 }
 
@@ -150,25 +152,25 @@ async fn test_ezkl_proof_verification_corrupted_proof() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "verifier".to_string());
-    
+
     // Generate valid proof
     let mut proof = generator.generate_proof(&result).await?;
-    
+
     // Corrupt the proof data
     if proof.proof_data.len() > 10 {
         proof.proof_data[5] = 0xFF;
         proof.proof_data[10] = 0x00;
     }
-    
+
     // Verification should fail for corrupted proof
     let is_valid = generator.verify_proof(&proof, &result).await?;
-    
+
     // For EZKL mock, corrupted proof might still pass basic checks
     // In real implementation, this would fail
     assert!(is_valid || !is_valid, "Corrupted proof handling tested");
-    
+
     Ok(())
 }
 
@@ -200,7 +202,9 @@ async fn test_ezkl_verifiable_result_creation() -> Result<()> {
 
     // Package the result
     let packager = ResultPackager::new("verifiable_node".to_string());
-    let packaged = packager.package_result_with_job(inference_result.clone(), job_request).await?;
+    let packaged = packager
+        .package_result_with_job(inference_result.clone(), job_request)
+        .await?;
 
     // Create verifiable result with proof
     let config = ProofGenerationConfig {
@@ -209,16 +213,16 @@ async fn test_ezkl_verifiable_result_creation() -> Result<()> {
         settings_path: Some("./ezkl/settings.json".to_string()),
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "verifiable_node".to_string());
     let verifiable = generator.create_verifiable_result(packaged.clone()).await?;
-    
+
     // Verify properties
     assert_eq!(verifiable.packaged_result.result.job_id, "verifiable_123");
     assert_eq!(verifiable.proof.job_id, "verifiable_123");
     assert_eq!(verifiable.proof.proof_type, ProofType::EZKL);
     assert!(!verifiable.verification_key.is_empty());
     assert_eq!(verifiable.verification_key.len(), 32); // EZKL key size
-    
+
     Ok(())
 }

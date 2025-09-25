@@ -1,5 +1,5 @@
 use ethers::prelude::*;
-use fabstir_llm_node::contracts::model_registry::{ModelRegistryClient, ApprovedModels};
+use fabstir_llm_node::contracts::model_registry::{ApprovedModels, ModelRegistryClient};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -10,7 +10,7 @@ async fn test_model_id_calculation() {
     // Test TinyVicuna
     let vicuna_id = ApprovedModels::calculate_model_id(
         "CohereForAI/TinyVicuna-1B-32k-GGUF",
-        "tiny-vicuna-1b.q4_k_m.gguf"
+        "tiny-vicuna-1b.q4_k_m.gguf",
     );
     assert_eq!(vicuna_id, approved.tiny_vicuna.id);
     println!("TinyVicuna Model ID: {:?}", vicuna_id);
@@ -18,7 +18,7 @@ async fn test_model_id_calculation() {
     // Test TinyLlama
     let llama_id = ApprovedModels::calculate_model_id(
         "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
-        "tinyllama-1b.Q4_K_M.gguf"
+        "tinyllama-1b.Q4_K_M.gguf",
     );
     assert_eq!(llama_id, approved.tiny_llama.id);
     println!("TinyLlama Model ID: {:?}", llama_id);
@@ -33,15 +33,21 @@ async fn test_model_validation() {
     let provider = Arc::new(Provider::<Http>::try_from("http://localhost:8545").unwrap());
 
     // Use test addresses
-    let model_registry_address = "0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357".parse::<Address>().unwrap();
-    let node_registry_address = "0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100".parse::<Address>().unwrap();
+    let model_registry_address = "0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357"
+        .parse::<Address>()
+        .unwrap();
+    let node_registry_address = "0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100"
+        .parse::<Address>()
+        .unwrap();
 
     // Create model registry client
     let registry = ModelRegistryClient::new(
         provider,
         model_registry_address,
         Some(node_registry_address),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Test getting approved models
     let approved = registry.get_approved_models();
@@ -60,7 +66,9 @@ async fn test_model_validation() {
 
     // This will validate that the models are in the approved list
     // (actual hash verification would fail since files don't exist in test)
-    let result = registry.validate_models_for_registration(&model_paths).await;
+    let result = registry
+        .validate_models_for_registration(&model_paths)
+        .await;
 
     // Since files don't exist, this will skip hash verification
     // but still validate they're in the approved list
@@ -84,13 +92,13 @@ async fn test_sha256_verification() {
 
     // Create registry client
     let provider = Arc::new(Provider::<Http>::try_from("http://localhost:8545").unwrap());
-    let model_registry_address = "0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357".parse::<Address>().unwrap();
+    let model_registry_address = "0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357"
+        .parse::<Address>()
+        .unwrap();
 
-    let registry = ModelRegistryClient::new(
-        provider,
-        model_registry_address,
-        None,
-    ).await.unwrap();
+    let registry = ModelRegistryClient::new(provider, model_registry_address, None)
+        .await
+        .unwrap();
 
     // Calculate expected hash
     let expected_hash = "95d1ec7e3dadd526c4e84b94f31a2b59dbb0da5b1c83cfc3ed965c7bd0c7bbfd";
@@ -127,6 +135,12 @@ fn test_approved_models_initialization() {
     assert_ne!(approved.tiny_llama.id, H256::zero());
 
     // Verify the exact SHA256 hashes
-    assert_eq!(approved.tiny_vicuna.sha256, "329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f");
-    assert_eq!(approved.tiny_llama.sha256, "45b71fe98efe5f530b825dce6f5049d738e9c16869f10be4370ab81a9912d4a6");
+    assert_eq!(
+        approved.tiny_vicuna.sha256,
+        "329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f"
+    );
+    assert_eq!(
+        approved.tiny_llama.sha256,
+        "45b71fe98efe5f530b825dce6f5049d738e9c16869f10be4370ab81a9912d4a6"
+    );
 }

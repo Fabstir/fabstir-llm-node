@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ethers::types::{Address, U256, H256};
+use ethers::types::{Address, H256, U256};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -73,8 +73,12 @@ impl From<ethers::providers::ProviderError> for SettlementError {
     }
 }
 
-impl From<ethers::contract::ContractError<ethers::providers::Provider<ethers::providers::Http>>> for SettlementError {
-    fn from(err: ethers::contract::ContractError<ethers::providers::Provider<ethers::providers::Http>>) -> Self {
+impl From<ethers::contract::ContractError<ethers::providers::Provider<ethers::providers::Http>>>
+    for SettlementError
+{
+    fn from(
+        err: ethers::contract::ContractError<ethers::providers::Provider<ethers::providers::Http>>,
+    ) -> Self {
         SettlementError::ContractCallFailed(err.to_string())
     }
 }

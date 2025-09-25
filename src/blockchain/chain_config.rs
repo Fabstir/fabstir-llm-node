@@ -1,8 +1,8 @@
 use ethers::types::Address;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainConfig {
@@ -126,7 +126,8 @@ impl ChainRegistry {
     }
 
     pub fn get_default_chain(&self) -> &ChainConfig {
-        self.chains.get(&self.default_chain)
+        self.chains
+            .get(&self.default_chain)
             .expect("Default chain should always exist")
     }
 

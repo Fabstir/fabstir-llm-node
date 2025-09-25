@@ -1,11 +1,11 @@
 use anyhow::Result;
+use chrono;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
 use tokio::fs;
-use chrono;
 
 use super::ModelFormat;
 
@@ -115,7 +115,6 @@ pub struct HardwareRequirements {
     pub supports_gpu: bool,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ModelRequirements {
     pub min_python_version: Option<String>,
@@ -179,7 +178,11 @@ pub struct SchemaVersion {
 
 impl SchemaVersion {
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 }
 
@@ -223,7 +226,6 @@ pub struct SecurityValidationResult {
     pub signature_verified: bool,
 }
 
-
 #[derive(Error, Debug)]
 pub enum ValidationError {
     #[error("IO error: {0}")]
@@ -253,22 +255,25 @@ impl ModelValidator {
 
     pub async fn validate_model(&self, model_path: &PathBuf) -> Result<ValidationResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Check if file exists
         if !model_path.exists() {
-            return Err(ValidationError::IoError(
-                format!("Model file not found: {}", model_path.display())
-            ).into());
+            return Err(ValidationError::IoError(format!(
+                "Model file not found: {}",
+                model_path.display()
+            ))
+            .into());
         }
 
         // Detect format
         let format = self.detect_format(model_path).await?;
-        
+
         // Check if format is supported
         if !self.config.supported_formats.contains(&format) {
             return Err(ValidationError::UnsupportedFormat {
-                format: format!("{:?}", format)
-            }.into());
+                format: format!("{:?}", format),
+            }
+            .into());
         }
 
         let errors = Vec::new();
@@ -280,7 +285,8 @@ impl ModelValidator {
             return Err(ValidationError::IntegrityCheckFailed {
                 reason: "File appears to be corrupted".to_string(),
                 file_path: model_path.display().to_string(),
-            }.into());
+            }
+            .into());
         }
 
         // Check file size
@@ -290,7 +296,8 @@ impl ModelValidator {
             return Err(ValidationError::ModelTooLarge {
                 size_gb,
                 limit_gb: self.config.max_model_size_gb,
-            }.into());
+            }
+            .into());
         }
 
         // Perform integrity check
@@ -302,7 +309,10 @@ impl ModelValidator {
 
         // Perform compatibility check
         let compatibility_check = if self.config.check_compatibility {
-            Some(self.perform_compatibility_check(model_path, &format).await?)
+            Some(
+                self.perform_compatibility_check(model_path, &format)
+                    .await?,
+            )
         } else {
             None
         };
@@ -321,7 +331,8 @@ impl ModelValidator {
         let security_result = self.perform_security_validation(model_path).await?;
 
         // Performance characteristics
-        let performance_characteristics = self.analyze_performance_characteristics(model_path).await?;
+        let performance_characteristics =
+            self.analyze_performance_characteristics(model_path).await?;
 
         // Inference compatibility
         let inference_compatibility = self.check_inference_compatibility(model_path).await?;
@@ -352,7 +363,7 @@ impl ModelValidator {
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        
+
         Ok(ModelFormat::from_extension(extension))
     }
 
@@ -385,12 +396,10 @@ impl ModelValidator {
         Ok(true)
     }
 
-
-
     async fn perform_integrity_check(&self, model_path: &PathBuf) -> Result<IntegrityCheck> {
         let checksum = self.calculate_checksum(model_path).await?;
         let metadata = fs::metadata(model_path).await?;
-        
+
         Ok(IntegrityCheck {
             sha256: Some(checksum),
             blake3: None, // Could implement BLAKE3 as well
@@ -403,7 +412,8 @@ impl ModelValidator {
         model_path: &PathBuf,
         format: &ModelFormat,
     ) -> Result<CompatibilityCheck> {
-        let filename = model_path.file_name()
+        let filename = model_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
 
@@ -448,10 +458,11 @@ impl ModelValidator {
         // Mock model info extraction based on format
         let (parameter_count, architecture) = match format {
             ModelFormat::GGUF => {
-                let filename = model_path.file_name()
+                let filename = model_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
-                
+
                 if filename.contains("7b") || filename.contains("7B") {
                     (7_000_000_000, "llama")
                 } else if filename.contains("13b") || filename.contains("13B") {
@@ -510,7 +521,8 @@ impl ModelValidator {
     }
 
     async fn perform_security_validation(&self, model_path: &PathBuf) -> Result<SecurityResult> {
-        let filename = model_path.file_name()
+        let filename = model_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
 
@@ -531,8 +543,6 @@ impl ModelValidator {
         })
     }
 
-
-
     // Additional methods required by tests
     pub async fn validate_with_integrity(
         &self,
@@ -540,18 +550,19 @@ impl ModelValidator {
         integrity_check: IntegrityCheck,
     ) -> Result<ValidationResult> {
         let is_valid = self.verify_integrity(model_path, &integrity_check).await?;
-        
+
         if !is_valid {
             return Err(ValidationError::IntegrityCheckFailed {
                 reason: "Checksum mismatch".to_string(),
                 file_path: model_path.display().to_string(),
-            }.into());
+            }
+            .into());
         }
-        
+
         let mut result = self.validate_model(model_path).await?;
         result.integrity_verified = true;
         result.integrity_check = Some(integrity_check);
-        
+
         Ok(result)
     }
 
@@ -563,14 +574,16 @@ impl ModelValidator {
         // Mock hardware compatibility check
         let available_ram_gb = 32; // Mock: 32GB available
         let is_compatible = requirements.min_ram_gb <= available_ram_gb;
-        
+
         let warnings = if !is_compatible {
-            vec![format!("Insufficient RAM: {} GB required, {} GB available", 
-                        requirements.min_ram_gb, available_ram_gb)]
+            vec![format!(
+                "Insufficient RAM: {} GB required, {} GB available",
+                requirements.min_ram_gb, available_ram_gb
+            )]
         } else {
             vec![]
         };
-        
+
         Ok(CompatibilityResult {
             is_compatible,
             warnings,
@@ -578,12 +591,12 @@ impl ModelValidator {
         })
     }
 
-
     pub async fn extract_metadata(&self, model_path: &PathBuf) -> Result<ModelMetadata> {
-        let filename = model_path.file_name()
+        let filename = model_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        
+
         Ok(ModelMetadata {
             model_id: filename.to_string(),
             author: "test-author".to_string(),
@@ -603,15 +616,15 @@ impl ModelValidator {
         required_version: SchemaVersion,
     ) -> Result<bool> {
         // Backward compatibility: same major version, model minor >= required minor
-        Ok(model_version.major == required_version.major && 
-           model_version.minor >= required_version.minor)
+        Ok(model_version.major == required_version.major
+            && model_version.minor >= required_version.minor)
     }
 
     pub async fn validate_batch(&self, model_paths: Vec<PathBuf>) -> Result<BatchValidationResult> {
         let start_time = std::time::Instant::now();
         let mut valid_models = Vec::new();
         let mut invalid_models = Vec::new();
-        
+
         for path in model_paths {
             match self.validate_model(&path).await {
                 Ok(result) => {
@@ -643,7 +656,7 @@ impl ModelValidator {
                 }
             }
         }
-        
+
         Ok(BatchValidationResult {
             total_models: valid_models.len() + invalid_models.len(),
             valid_models,
@@ -672,11 +685,15 @@ impl ModelValidator {
         })
     }
 
-    pub async fn validate_security(&self, model_path: &PathBuf) -> Result<SecurityValidationResult> {
-        let filename = model_path.file_name()
+    pub async fn validate_security(
+        &self,
+        model_path: &PathBuf,
+    ) -> Result<SecurityValidationResult> {
+        let filename = model_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        
+
         Ok(SecurityValidationResult {
             has_suspicious_patterns: filename.contains("malicious"),
             embedded_code: vec![],

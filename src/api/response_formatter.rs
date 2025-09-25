@@ -1,4 +1,4 @@
-use crate::api::{InferenceResponse, StreamingResponse, ErrorResponse};
+use crate::api::{ErrorResponse, InferenceResponse, StreamingResponse};
 use crate::blockchain::ChainRegistry;
 use std::sync::Arc;
 
@@ -13,7 +13,8 @@ impl ResponseFormatter {
     /// Create a new ResponseFormatter for a specific chain
     pub fn new(chain_id: u64) -> Self {
         let registry = ChainRegistry::new();
-        let chain = registry.get_chain(chain_id)
+        let chain = registry
+            .get_chain(chain_id)
             .unwrap_or_else(|| registry.get_default_chain());
 
         Self {
@@ -26,7 +27,8 @@ impl ResponseFormatter {
     /// Create from a chain registry
     pub fn from_registry(registry: &ChainRegistry, chain_id: Option<u64>) -> Self {
         let chain_id = chain_id.unwrap_or_else(|| registry.get_default_chain_id());
-        let chain = registry.get_chain(chain_id)
+        let chain = registry
+            .get_chain(chain_id)
             .unwrap_or_else(|| registry.get_default_chain());
 
         Self {
@@ -70,17 +72,29 @@ impl ResponseFormatter {
 
         // Add chain details if not already present
         if let Some(ref mut details) = response.details {
-            details.entry("chain_id".to_string())
+            details
+                .entry("chain_id".to_string())
                 .or_insert_with(|| serde_json::Value::Number(self.chain_id.into()));
-            details.entry("chain_name".to_string())
+            details
+                .entry("chain_name".to_string())
                 .or_insert_with(|| serde_json::Value::String(self.chain_name.clone()));
-            details.entry("native_token".to_string())
+            details
+                .entry("native_token".to_string())
                 .or_insert_with(|| serde_json::Value::String(self.native_token.clone()));
         } else {
             let mut details = std::collections::HashMap::new();
-            details.insert("chain_id".to_string(), serde_json::Value::Number(self.chain_id.into()));
-            details.insert("chain_name".to_string(), serde_json::Value::String(self.chain_name.clone()));
-            details.insert("native_token".to_string(), serde_json::Value::String(self.native_token.clone()));
+            details.insert(
+                "chain_id".to_string(),
+                serde_json::Value::Number(self.chain_id.into()),
+            );
+            details.insert(
+                "chain_name".to_string(),
+                serde_json::Value::String(self.chain_name.clone()),
+            );
+            details.insert(
+                "native_token".to_string(),
+                serde_json::Value::String(self.native_token.clone()),
+            );
             response.details = Some(details);
         }
 

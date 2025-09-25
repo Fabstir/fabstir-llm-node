@@ -1,5 +1,5 @@
-use fabstir_llm_node::config::chains::{MultiChainProvider, ChainConfigLoader, ProviderHealth};
-use ethers::providers::{Provider, Http, Middleware};
+use ethers::providers::{Http, Middleware, Provider};
+use fabstir_llm_node::config::chains::{ChainConfigLoader, MultiChainProvider, ProviderHealth};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,7 +39,10 @@ async fn test_provider_health_check() {
     // Check health of Base Sepolia provider
     let health = provider_manager.check_provider_health(84532).await;
     match health {
-        ProviderHealth::Healthy { latency_ms, block_number } => {
+        ProviderHealth::Healthy {
+            latency_ms,
+            block_number,
+        } => {
             assert!(latency_ms > 0);
             assert!(block_number.is_some());
         }
@@ -60,7 +63,10 @@ async fn test_provider_health_check() {
 async fn test_rpc_failover() {
     // Create loader with custom RPC URLs including backup
     std::env::set_var("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org");
-    std::env::set_var("BASE_SEPOLIA_BACKUP_RPC_URL", "https://base-sepolia.public.blastapi.io");
+    std::env::set_var(
+        "BASE_SEPOLIA_BACKUP_RPC_URL",
+        "https://base-sepolia.public.blastapi.io",
+    );
 
     let loader = ChainConfigLoader::new();
     let mut provider_manager = MultiChainProvider::with_failover(loader).await.unwrap();
@@ -70,7 +76,10 @@ async fn test_rpc_failover() {
     assert!(provider_manager.is_using_primary(84532));
 
     // Simulate primary failure by setting invalid URL
-    std::env::set_var("BASE_SEPOLIA_RPC_URL", "http://invalid.url.that.doesnt.exist");
+    std::env::set_var(
+        "BASE_SEPOLIA_RPC_URL",
+        "http://invalid.url.that.doesnt.exist",
+    );
 
     // Force failover check
     provider_manager.trigger_failover_if_needed(84532).await;
@@ -150,11 +159,11 @@ async fn test_provider_retry_logic() {
     let provider_manager = MultiChainProvider::new(loader).await.unwrap();
 
     // Test retry logic with timeout
-    let result = provider_manager.execute_with_retry(84532, |provider| {
-        Box::pin(async move {
-            provider.get_block_number().await
+    let result = provider_manager
+        .execute_with_retry(84532, |provider| {
+            Box::pin(async move { provider.get_block_number().await })
         })
-    }).await;
+        .await;
 
     // Should succeed or timeout gracefully
     assert!(result.is_ok() || result.is_err());
@@ -163,7 +172,10 @@ async fn test_provider_retry_logic() {
 #[tokio::test]
 async fn test_provider_rotation() {
     // Set multiple RPC endpoints
-    std::env::set_var("BASE_SEPOLIA_RPC_URLS", "https://sepolia.base.org,https://base-sepolia.public.blastapi.io");
+    std::env::set_var(
+        "BASE_SEPOLIA_RPC_URLS",
+        "https://sepolia.base.org,https://base-sepolia.public.blastapi.io",
+    );
 
     let loader = ChainConfigLoader::new();
     let mut provider_manager = MultiChainProvider::with_rotation(loader).await.unwrap();

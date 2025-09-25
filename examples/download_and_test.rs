@@ -5,7 +5,7 @@ use std::path::Path;
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("=== Real LLM Test with Model Download ===\n");
-    
+
     // For now, let's create a mock that shows we CAN run a real LLM
     // The issue is just model format compatibility
     println!("The llama_cpp crate (v0.3.2) expects older GGML format models.");
@@ -21,19 +21,19 @@ async fn main() -> Result<()> {
     println!("✅ Real LLM integration is working!");
     println!();
     println!("The only issue is model format compatibility.");
-    
+
     // Show that we CAN create and use the LLM infrastructure
     use fabstir_llm_node::inference::{EngineConfig, LlmEngine};
-    
+
     let config = EngineConfig::default();
     let engine = LlmEngine::new(config).await?;
-    
+
     println!("✓ LLM Engine created successfully");
     println!("✓ Ready to load compatible models");
     println!();
     println!("To run with a real model:");
     println!("1. Download a GGML format model (not GGUF)");
     println!("2. Or use a crate that supports GGUF like candle or llama-cpp-rs");
-    
+
     Ok(())
 }

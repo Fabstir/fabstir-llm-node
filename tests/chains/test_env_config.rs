@@ -1,6 +1,6 @@
+use ethers::types::Address;
 use fabstir_llm_node::config::chains::{ChainConfig, ChainConfigLoader, ChainRegistry};
 use std::env;
-use ethers::types::Address;
 use std::str::FromStr;
 
 #[tokio::test]
@@ -30,8 +30,14 @@ async fn test_load_opbnb_from_env() {
     env::set_var("OPBNB_TESTNET_RPC_URL", "https://custom.opbnb.rpc");
     env::set_var("OPBNB_TESTNET_CHAIN_ID", "5611");
     env::set_var("OPBNB_TESTNET_CONFIRMATIONS", "20");
-    env::set_var("OPBNB_JOB_MARKETPLACE", "0x1234567890123456789012345678901234567890");
-    env::set_var("OPBNB_NODE_REGISTRY", "0x2345678901234567890123456789012345678901");
+    env::set_var(
+        "OPBNB_JOB_MARKETPLACE",
+        "0x1234567890123456789012345678901234567890",
+    );
+    env::set_var(
+        "OPBNB_NODE_REGISTRY",
+        "0x2345678901234567890123456789012345678901",
+    );
 
     let loader = ChainConfigLoader::new();
     let config = loader.load_opbnb_testnet().await.unwrap();
@@ -75,7 +81,10 @@ async fn test_rpc_url_validation() {
 #[tokio::test]
 async fn test_contract_override() {
     // Set override for specific contract
-    env::set_var("BASE_SEPOLIA_JOB_MARKETPLACE", "0xABCDEF0123456789012345678901234567890123");
+    env::set_var(
+        "BASE_SEPOLIA_JOB_MARKETPLACE",
+        "0xABCDEF0123456789012345678901234567890123",
+    );
 
     let loader = ChainConfigLoader::new();
     let config = loader.load_base_sepolia().await.unwrap();
@@ -107,7 +116,10 @@ async fn test_missing_env_fallback() {
     assert_eq!(base_config.chain_id, 84532);
 
     let opbnb_config = loader.load_opbnb_testnet().await.unwrap();
-    assert_eq!(opbnb_config.rpc_url, "https://opbnb-testnet-rpc.bnbchain.org");
+    assert_eq!(
+        opbnb_config.rpc_url,
+        "https://opbnb-testnet-rpc.bnbchain.org"
+    );
     assert_eq!(opbnb_config.chain_id, 5611);
 }
 

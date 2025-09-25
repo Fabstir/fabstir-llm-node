@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use thiserror::Error;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
-use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceMetrics {
@@ -142,7 +142,7 @@ pub struct ResourceMonitor {
 impl ResourceMonitor {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(100);
-        
+
         Self {
             initialized: false,
             monitoring_handle: None,
@@ -165,7 +165,7 @@ impl ResourceMonitor {
         if !self.initialized {
             return vec![];
         }
-        
+
         // Simulate GPU listing
         vec![
             "NVIDIA GeForce RTX 4090".to_string(),
@@ -183,9 +183,21 @@ impl ResourceMonitor {
         }
 
         // Simulate GPU metrics
-        let usage = self.simulated_metrics.get("gpu_usage").copied().unwrap_or(45.0);
-        let memory_usage = self.simulated_metrics.get("gpu_memory").copied().unwrap_or(8192.0);
-        let temperature = self.simulated_metrics.get("gpu_temperature").copied().unwrap_or(65.0);
+        let usage = self
+            .simulated_metrics
+            .get("gpu_usage")
+            .copied()
+            .unwrap_or(45.0);
+        let memory_usage = self
+            .simulated_metrics
+            .get("gpu_memory")
+            .copied()
+            .unwrap_or(8192.0);
+        let temperature = self
+            .simulated_metrics
+            .get("gpu_temperature")
+            .copied()
+            .unwrap_or(65.0);
 
         Ok(GpuMetrics {
             device_id,
@@ -204,8 +216,12 @@ impl ResourceMonitor {
             return Err(MonitoringError::NotStarted);
         }
 
-        let usage = self.simulated_metrics.get("cpu_usage").copied().unwrap_or(25.0);
-        
+        let usage = self
+            .simulated_metrics
+            .get("cpu_usage")
+            .copied()
+            .unwrap_or(25.0);
+
         Ok(CpuMetrics {
             usage_percent: usage,
             core_count: 16,
@@ -222,7 +238,9 @@ impl ResourceMonitor {
         }
 
         let total = 32768; // 32GB
-        let used = self.simulated_metrics.get("memory_usage")
+        let used = self
+            .simulated_metrics
+            .get("memory_usage")
             .map(|usage| (usage / 100.0 * total as f64) as u64)
             .unwrap_or(16384);
 
@@ -245,7 +263,7 @@ impl ResourceMonitor {
 
         Ok(NetworkMetrics {
             interface: "eth0".to_string(),
-            bytes_sent: 1024 * 1024 * 100, // 100MB
+            bytes_sent: 1024 * 1024 * 100,     // 100MB
             bytes_received: 1024 * 1024 * 200, // 200MB
             packets_sent: 10000,
             packets_received: 15000,
@@ -265,10 +283,10 @@ impl ResourceMonitor {
 
         let handle = tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval);
-            
+
             loop {
                 interval_timer.tick().await;
-                
+
                 // Simulate collecting metrics
                 let timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -319,7 +337,7 @@ impl ResourceMonitor {
 
                 let mut history = history_clone.lock().await;
                 history.push(metrics);
-                
+
                 // Keep only last 1000 entries
                 if history.len() > 1000 {
                     history.remove(0);
@@ -342,7 +360,8 @@ impl ResourceMonitor {
         let cutoff_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() - duration.as_secs();
+            .as_secs()
+            - duration.as_secs();
 
         self.metrics_history
             .iter()
@@ -351,7 +370,10 @@ impl ResourceMonitor {
             .collect()
     }
 
-    pub async fn add_alert_threshold(&mut self, threshold: AlertThreshold) -> Result<(), MonitoringError> {
+    pub async fn add_alert_threshold(
+        &mut self,
+        threshold: AlertThreshold,
+    ) -> Result<(), MonitoringError> {
         self.alert_thresholds.push(threshold);
         Ok(())
     }
@@ -362,7 +384,7 @@ impl ResourceMonitor {
 
     pub async fn simulate_metric(&mut self, metric: &str, value: f64) {
         self.simulated_metrics.insert(metric.to_string(), value);
-        
+
         // Check for alerts
         for threshold in &self.alert_thresholds {
             if threshold.metric == metric && value >= threshold.value {
@@ -375,16 +397,23 @@ impl ResourceMonitor {
                     level: threshold.level.clone(),
                     current_value: value,
                     threshold_value: threshold.value,
-                    message: format!("{} exceeded threshold: {} >= {}", 
-                                   metric, value, threshold.value),
+                    message: format!(
+                        "{} exceeded threshold: {} >= {}",
+                        metric, value, threshold.value
+                    ),
                 };
-                
+
                 let _ = self.alert_sender.send(alert);
             }
         }
     }
 
-    pub async fn allocate_resources(&mut self, job_id: &str, memory_mb: u64, cpu_cores: u32) -> Result<(), MonitoringError> {
+    pub async fn allocate_resources(
+        &mut self,
+        job_id: &str,
+        memory_mb: u64,
+        cpu_cores: u32,
+    ) -> Result<(), MonitoringError> {
         let allocation = ResourceAllocation {
             job_id: job_id.to_string(),
             memory_mb,
@@ -423,9 +452,10 @@ impl ResourceMonitor {
 
     pub async fn release_resources(&mut self, job_id: &str) -> Result<(), MonitoringError> {
         if self.allocations.remove(job_id).is_none() {
-            return Err(MonitoringError::AllocationFailed(
-                format!("Job {} not found", job_id)
-            ));
+            return Err(MonitoringError::AllocationFailed(format!(
+                "Job {} not found",
+                job_id
+            )));
         }
         Ok(())
     }
@@ -441,9 +471,10 @@ impl ResourceMonitor {
         let network_metrics = self.get_network_metrics().await?;
 
         // Calculate health score based on various factors
-        let health_score = ((100.0 - cpu_metrics.usage_percent) * 0.3 +
-                           (100.0 - memory_metrics.usage_percent) * 0.3 +
-                           (100.0 - gpu_metrics.usage_percent) * 0.4).max(0.0);
+        let health_score = ((100.0 - cpu_metrics.usage_percent) * 0.3
+            + (100.0 - memory_metrics.usage_percent) * 0.3
+            + (100.0 - gpu_metrics.usage_percent) * 0.4)
+            .max(0.0);
 
         Ok(ResourceSummary {
             timestamp: SystemTime::now()
@@ -461,14 +492,16 @@ impl ResourceMonitor {
 
     pub async fn export_metrics_json(&self, duration: Duration) -> Result<String, MonitoringError> {
         let metrics = self.get_metrics_history(duration).await;
-        serde_json::to_string_pretty(&metrics)
-            .map_err(|_| MonitoringError::InitializationError("Failed to serialize metrics".to_string()))
+        serde_json::to_string_pretty(&metrics).map_err(|_| {
+            MonitoringError::InitializationError("Failed to serialize metrics".to_string())
+        })
     }
 
     pub async fn export_metrics_csv(&self, duration: Duration) -> Result<String, MonitoringError> {
         let metrics = self.get_metrics_history(duration).await;
-        
-        let mut csv = String::from("timestamp,cpu_usage,memory_usage,gpu_usage,network_bandwidth\n");
+
+        let mut csv =
+            String::from("timestamp,cpu_usage,memory_usage,gpu_usage,network_bandwidth\n");
         for metric in metrics {
             csv.push_str(&format!(
                 "{},{},{},{},{}\n",
@@ -479,7 +512,7 @@ impl ResourceMonitor {
                 metric.network.bandwidth_mbps
             ));
         }
-        
+
         Ok(csv)
     }
 
@@ -487,9 +520,15 @@ impl ResourceMonitor {
         self.predictive_enabled = enabled;
     }
 
-    pub async fn get_resource_prediction(&self, metric: &str, horizon: std::time::Duration) -> Result<ResourcePrediction, MonitoringError> {
+    pub async fn get_resource_prediction(
+        &self,
+        metric: &str,
+        horizon: std::time::Duration,
+    ) -> Result<ResourcePrediction, MonitoringError> {
         if !self.predictive_enabled {
-            return Err(MonitoringError::InvalidMetric("Predictive monitoring not enabled".to_string()));
+            return Err(MonitoringError::InvalidMetric(
+                "Predictive monitoring not enabled".to_string(),
+            ));
         }
 
         // Simple trend-based prediction

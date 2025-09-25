@@ -1,8 +1,8 @@
+use chrono::{DateTime, Datelike, Duration, NaiveTime, Timelike, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration, Weekday, NaiveTime, Datelike, Timelike};
-use tokio::sync::broadcast;
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AvailabilitySchedule {
@@ -95,7 +95,7 @@ pub struct AvailabilityManager {
 impl AvailabilityManager {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(100);
-        
+
         Self {
             current_status: AvailabilityStatus::Available,
             schedule: None,
@@ -108,7 +108,10 @@ impl AvailabilityManager {
         }
     }
 
-    pub async fn set_schedule(&mut self, schedule: AvailabilitySchedule) -> Result<(), ScheduleError> {
+    pub async fn set_schedule(
+        &mut self,
+        schedule: AvailabilitySchedule,
+    ) -> Result<(), ScheduleError> {
         self.validate_schedule(&schedule)?;
         self.schedule = Some(schedule);
         self.update_current_status().await;
@@ -144,7 +147,10 @@ impl AvailabilityManager {
         AvailabilityStatus::Available
     }
 
-    pub async fn schedule_maintenance(&mut self, maintenance: MaintenanceWindow) -> Result<(), ScheduleError> {
+    pub async fn schedule_maintenance(
+        &mut self,
+        maintenance: MaintenanceWindow,
+    ) -> Result<(), ScheduleError> {
         // Check for conflicts
         for existing in self.maintenance_windows.values() {
             if self.windows_overlap(&maintenance, existing) {
@@ -152,7 +158,8 @@ impl AvailabilityManager {
             }
         }
 
-        self.maintenance_windows.insert(maintenance.id.clone(), maintenance);
+        self.maintenance_windows
+            .insert(maintenance.id.clone(), maintenance);
         Ok(())
     }
 
@@ -165,7 +172,10 @@ impl AvailabilityManager {
             .collect()
     }
 
-    pub async fn set_capacity_config(&mut self, config: CapacityConfig) -> Result<(), ScheduleError> {
+    pub async fn set_capacity_config(
+        &mut self,
+        config: CapacityConfig,
+    ) -> Result<(), ScheduleError> {
         for model_id in &config.models {
             self.capacity_usage.insert(
                 model_id.clone(),
@@ -173,45 +183,59 @@ impl AvailabilityManager {
                     active_jobs: 0,
                     available_slots: config.max_concurrent_jobs - config.reserved_capacity,
                     queued_jobs: 0,
-                }
+                },
             );
-            self.capacity_configs.insert(model_id.clone(), config.clone());
+            self.capacity_configs
+                .insert(model_id.clone(), config.clone());
         }
         Ok(())
     }
 
-    pub async fn allocate_capacity(&mut self, model_id: &str, job_id: &str) -> Result<(), ScheduleError> {
+    pub async fn allocate_capacity(
+        &mut self,
+        model_id: &str,
+        job_id: &str,
+    ) -> Result<(), ScheduleError> {
         if self.shutdown_handle.is_some() {
             return Err(ScheduleError::ShuttingDown);
         }
 
-        let config = self.capacity_configs
+        let config = self
+            .capacity_configs
             .get(model_id)
             .ok_or_else(|| ScheduleError::CapacityExceeded(model_id.to_string()))?;
 
-        let usage = self.capacity_usage
+        let usage = self
+            .capacity_usage
             .get_mut(model_id)
             .ok_or_else(|| ScheduleError::CapacityExceeded(model_id.to_string()))?;
 
         let max_usable = config.max_concurrent_jobs - config.reserved_capacity;
-        
+
         if usage.active_jobs >= max_usable {
             return Err(ScheduleError::CapacityExceeded(model_id.to_string()));
         }
 
         usage.active_jobs += 1;
         usage.available_slots = max_usable - usage.active_jobs;
-        
-        self.job_allocations.insert(job_id.to_string(), model_id.to_string());
+
+        self.job_allocations
+            .insert(job_id.to_string(), model_id.to_string());
         Ok(())
     }
 
-    pub async fn release_capacity(&mut self, model_id: &str, job_id: &str) -> Result<(), ScheduleError> {
-        let config = self.capacity_configs
+    pub async fn release_capacity(
+        &mut self,
+        model_id: &str,
+        job_id: &str,
+    ) -> Result<(), ScheduleError> {
+        let config = self
+            .capacity_configs
             .get(model_id)
             .ok_or_else(|| ScheduleError::JobNotFound(job_id.to_string()))?;
 
-        let usage = self.capacity_usage
+        let usage = self
+            .capacity_usage
             .get_mut(model_id)
             .ok_or_else(|| ScheduleError::JobNotFound(job_id.to_string()))?;
 
@@ -255,7 +279,10 @@ impl AvailabilityManager {
         Ok(())
     }
 
-    pub async fn initiate_graceful_shutdown(&mut self, timeout: Duration) -> Result<ShutdownHandle, ScheduleError> {
+    pub async fn initiate_graceful_shutdown(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<ShutdownHandle, ScheduleError> {
         let handle = ShutdownHandle {
             shutdown_id: uuid::Uuid::new_v4().to_string(),
             initiated_at: Utc::now(),
@@ -300,7 +327,7 @@ impl AvailabilityManager {
     async fn update_current_status(&mut self) {
         let now = Utc::now();
         let new_status = self.check_availability_at(now).await;
-        
+
         if new_status != self.current_status {
             let old_status = self.current_status.clone();
             self.current_status = new_status.clone();
@@ -321,7 +348,7 @@ impl AvailabilityManager {
         for (_, start, end) in &schedule.weekly_schedule {
             if start >= end {
                 return Err(ScheduleError::InvalidConfiguration(
-                    "Start time must be before end time".to_string()
+                    "Start time must be before end time".to_string(),
                 ));
             }
         }
@@ -330,7 +357,7 @@ impl AvailabilityManager {
         for (start, end, _, _) in &schedule.exceptions {
             if start >= end {
                 return Err(ScheduleError::InvalidConfiguration(
-                    "Exception start time must be before end time".to_string()
+                    "Exception start time must be before end time".to_string(),
                 ));
             }
         }

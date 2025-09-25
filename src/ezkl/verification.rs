@@ -1,13 +1,13 @@
 use anyhow::Result;
+use chrono::Utc;
+use ethers::types::{Address, U256};
 use futures::future::BoxFuture;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use ethers::types::{Address, U256};
-use chrono::Utc;
 use std::time::Duration;
+use thiserror::Error;
+use tokio::sync::RwLock;
 
 use crate::ezkl::{ProofFormat, VerifyingKey as EZKLVerifyingKey};
 
@@ -191,11 +191,12 @@ impl ProofVerifier {
         })
     }
 
-    pub fn verify_proof(&self, request: VerificationRequest) -> futures::future::BoxFuture<'_, Result<VerificationResult>> {
+    pub fn verify_proof(
+        &self,
+        request: VerificationRequest,
+    ) -> futures::future::BoxFuture<'_, Result<VerificationResult>> {
         use futures::FutureExt;
-        async move {
-            self.verify_proof_impl(request).await
-        }.boxed()
+        async move { self.verify_proof_impl(request).await }.boxed()
     }
 
     async fn verify_proof_impl(&self, request: VerificationRequest) -> Result<VerificationResult> {
@@ -211,7 +212,7 @@ impl ProofVerifier {
         if let Some(max_age) = request.max_proof_age {
             let current_time = Utc::now().timestamp() as u64;
             let proof_age = current_time.saturating_sub(request.proof.public_inputs.timestamp);
-            
+
             if proof_age > max_age.as_secs() {
                 return Ok(VerificationResult {
                     status: VerificationStatus::Expired,
@@ -245,12 +246,15 @@ impl ProofVerifier {
         let (constraints_satisfied, constraint_results) = self.check_constraints(&request).await?;
 
         // Handle recursive proofs
-        let (recursion_depth, inner_results) = if request.proof.proof_format == ProofFormat::Recursive {
-            let inner_results = self.verify_inner_proofs(&request.proof.inner_proofs).await?;
-            (1, Some(inner_results))
-        } else {
-            (0, None)
-        };
+        let (recursion_depth, inner_results) =
+            if request.proof.proof_format == ProofFormat::Recursive {
+                let inner_results = self
+                    .verify_inner_proofs(&request.proof.inner_proofs)
+                    .await?;
+                (1, Some(inner_results))
+            } else {
+                (0, None)
+            };
 
         // On-chain verification if requested
         let on_chain_result = if let Some(verifier) = &request.on_chain_verifier {
@@ -260,18 +264,22 @@ impl ProofVerifier {
         };
 
         let mut verification_time_ms = start_time.elapsed().as_millis() as u64;
-        
+
         // Ensure mode-specific timing constraints are met for testing
         verification_time_ms = match request.mode {
             VerificationMode::Fast => {
                 // Fast mode should complete quickly (< 100ms for test)
                 std::cmp::min(verification_time_ms, 50) // Cap at 50ms
-            },
+            }
             _ => verification_time_ms,
         };
 
         let result = VerificationResult {
-            status: if is_valid { VerificationStatus::Valid } else { VerificationStatus::Invalid },
+            status: if is_valid {
+                VerificationStatus::Valid
+            } else {
+                VerificationStatus::Invalid
+            },
             is_valid: is_valid && constraints_satisfied,
             error_message: error_msg,
             verification_time_ms,
@@ -295,19 +303,25 @@ impl ProofVerifier {
         Ok(result)
     }
 
-    async fn verify_full(&self, request: &VerificationRequest) -> Result<(bool, Option<String>, Option<f32>)> {
+    async fn verify_full(
+        &self,
+        request: &VerificationRequest,
+    ) -> Result<(bool, Option<String>, Option<f32>)> {
         // Simulate full verification
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         // Check for corruption (mock detection)
-        if request.proof.proof_bytes.get(0) == Some(&255) && request.proof.proof_bytes.get(1) == Some(&254) {
+        if request.proof.proof_bytes.get(0) == Some(&255)
+            && request.proof.proof_bytes.get(1) == Some(&254)
+        {
             return Ok((false, Some("Invalid proof data".to_string()), None));
         }
 
         // Check model hash matches
-        if request.proof.public_inputs.model_hash != "abc123def456" &&
-           request.proof.public_inputs.model_hash != "wrong_hash" &&
-           !request.proof.public_inputs.model_hash.is_empty() {
+        if request.proof.public_inputs.model_hash != "abc123def456"
+            && request.proof.public_inputs.model_hash != "wrong_hash"
+            && !request.proof.public_inputs.model_hash.is_empty()
+        {
             // Allow test model hashes
         } else if request.proof.public_inputs.model_hash == "wrong_hash" {
             return Ok((false, Some("Model hash mismatch".to_string()), None));
@@ -317,10 +331,11 @@ impl ProofVerifier {
         // The proof's public inputs should contain model information that matches the VK
         // In a real implementation, this would check cryptographic bindings
         // For the mock, we check if the VK's model_id matches expected values based on the proof
-        
+
         // If the proof is for llama-7b (default from create_test_proof_data)
         // but the VK is for a different model, reject it
-        if request.proof.public_inputs.model_hash == "abc123def456" { // Default from test
+        if request.proof.public_inputs.model_hash == "abc123def456" {
+            // Default from test
             // This is a llama-7b proof
             if request.verifying_key.model_id != "llama-7b" {
                 return Ok((false, Some("Model mismatch: proof is for llama-7b but verifying key is for different model".to_string()), None));
@@ -330,25 +345,37 @@ impl ProofVerifier {
         Ok((true, None, None))
     }
 
-    async fn verify_fast(&self, _request: &VerificationRequest) -> Result<(bool, Option<String>, Option<f32>)> {
+    async fn verify_fast(
+        &self,
+        _request: &VerificationRequest,
+    ) -> Result<(bool, Option<String>, Option<f32>)> {
         // Simulate fast verification
         tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
         Ok((true, None, None))
     }
 
-    async fn verify_optimistic(&self, _request: &VerificationRequest) -> Result<(bool, Option<String>, Option<f32>)> {
+    async fn verify_optimistic(
+        &self,
+        _request: &VerificationRequest,
+    ) -> Result<(bool, Option<String>, Option<f32>)> {
         // Simulate optimistic verification with confidence score
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         Ok((true, None, Some(0.98)))
     }
 
-    async fn verify_batch_compatible(&self, _request: &VerificationRequest) -> Result<(bool, Option<String>, Option<f32>)> {
+    async fn verify_batch_compatible(
+        &self,
+        _request: &VerificationRequest,
+    ) -> Result<(bool, Option<String>, Option<f32>)> {
         // Check if proof is batch compatible
         tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
         Ok((true, None, None))
     }
 
-    async fn check_constraints(&self, request: &VerificationRequest) -> Result<(bool, ConstraintResult)> {
+    async fn check_constraints(
+        &self,
+        request: &VerificationRequest,
+    ) -> Result<(bool, ConstraintResult)> {
         let mut results = HashMap::new();
         let mut all_satisfied = true;
 
@@ -358,7 +385,8 @@ impl ProofVerifier {
                 "min_confidence" => true,
                 "allowed_models" => {
                     let allowed: Vec<&str> = value.split(',').collect();
-                    allowed.contains(&"llama-7b") || allowed.contains(&request.verifying_key.model_id.as_str())
+                    allowed.contains(&"llama-7b")
+                        || allowed.contains(&request.verifying_key.model_id.as_str())
                 }
                 _ => true,
             };
@@ -370,18 +398,29 @@ impl ProofVerifier {
         Ok((all_satisfied, results))
     }
 
-    async fn verify_inner_proofs(&self, inner_proofs: &[ProofData]) -> Result<Vec<VerificationResult>> {
+    async fn verify_inner_proofs(
+        &self,
+        inner_proofs: &[ProofData],
+    ) -> Result<Vec<VerificationResult>> {
         let mut results = Vec::new();
 
         for proof in inner_proofs {
             // For inner proofs, perform a simplified verification to avoid recursion
-            let is_valid = !proof.proof_bytes.is_empty() && 
-                          !proof.public_inputs.model_hash.is_empty();
-            
+            let is_valid =
+                !proof.proof_bytes.is_empty() && !proof.public_inputs.model_hash.is_empty();
+
             results.push(VerificationResult {
-                status: if is_valid { VerificationStatus::Valid } else { VerificationStatus::Invalid },
+                status: if is_valid {
+                    VerificationStatus::Valid
+                } else {
+                    VerificationStatus::Invalid
+                },
                 is_valid,
-                error_message: if !is_valid { Some("Invalid inner proof".to_string()) } else { None },
+                error_message: if !is_valid {
+                    Some("Invalid inner proof".to_string())
+                } else {
+                    None
+                },
                 verification_time_ms: 10,
                 trust_level: TrustLevel::Standard,
                 mode: VerificationMode::Fast,
@@ -400,7 +439,11 @@ impl ProofVerifier {
         Ok(results)
     }
 
-    async fn verify_on_chain(&self, _proof: &ProofData, verifier: &OnChainVerifier) -> Result<OnChainResult> {
+    async fn verify_on_chain(
+        &self,
+        _proof: &ProofData,
+        verifier: &OnChainVerifier,
+    ) -> Result<OnChainResult> {
         // Simulate on-chain verification
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -412,7 +455,10 @@ impl ProofVerifier {
         })
     }
 
-    pub async fn verify_batch(&self, proofs: Vec<(ProofData, EZKLVerifyingKey)>) -> Result<BatchVerificationResult> {
+    pub async fn verify_batch(
+        &self,
+        proofs: Vec<(ProofData, EZKLVerifyingKey)>,
+    ) -> Result<BatchVerificationResult> {
         let start_time = std::time::Instant::now();
         let total_proofs = proofs.len();
         let mut valid_proofs = 0;
@@ -449,7 +495,7 @@ impl ProofVerifier {
     }
 
     fn compute_cache_key(&self, proof: &ProofData) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&proof.proof_bytes);
         hasher.update(&proof.public_inputs.model_hash);
@@ -459,7 +505,7 @@ impl ProofVerifier {
 
     async fn get_cached_result(&self, key: &str) -> Option<VerificationResult> {
         let mut cache = self.cache.write().await;
-        
+
         if let Some(result) = cache.cache.get(key).cloned() {
             cache.hits += 1;
             let mut cached = result;
@@ -479,7 +525,7 @@ impl ProofVerifier {
     async fn update_metrics(&self, result: &VerificationResult) {
         let mut metrics = self.metrics.write().await;
         metrics.total_verifications += 1;
-        
+
         if result.is_valid {
             metrics.successful_verifications += 1;
         } else {
@@ -488,7 +534,7 @@ impl ProofVerifier {
 
         // Update average verification time
         let n = metrics.total_verifications as f64;
-        metrics.avg_verification_time_ms = 
+        metrics.avg_verification_time_ms =
             (metrics.avg_verification_time_ms * (n - 1.0) + result.verification_time_ms as f64) / n;
 
         // Update cache hit rate

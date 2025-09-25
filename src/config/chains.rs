@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 // Re-export provider types
-pub use super::provider::{MultiChainProvider, ProviderHealth, PoolStats, RotationStats};
+pub use super::provider::{MultiChainProvider, PoolStats, ProviderHealth, RotationStats};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainConfig {
@@ -287,34 +287,48 @@ impl ChainConfigLoader {
             return Err("RPC URL cannot be empty".into());
         }
 
-        if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("ws://") && !url.starts_with("wss://") {
+        if !url.starts_with("http://")
+            && !url.starts_with("https://")
+            && !url.starts_with("ws://")
+            && !url.starts_with("wss://")
+        {
             return Err("RPC URL must start with http://, https://, ws://, or wss://".into());
         }
 
         Ok(())
     }
 
-    fn load_from_file(&self, path: &str, section: &str) -> Result<ChainConfig, Box<dyn std::error::Error>> {
+    fn load_from_file(
+        &self,
+        path: &str,
+        section: &str,
+    ) -> Result<ChainConfig, Box<dyn std::error::Error>> {
         let contents = std::fs::read_to_string(path)?;
         let config: toml::Value = toml::from_str(&contents)?;
 
-        let chain_section = config.get(section)
+        let chain_section = config
+            .get(section)
             .ok_or_else(|| format!("Section '{}' not found in config file", section))?;
 
-        let chain_id = chain_section.get("chain_id")
+        let chain_id = chain_section
+            .get("chain_id")
             .and_then(|v| v.as_integer())
             .ok_or("chain_id not found")? as u64;
 
-        let rpc_url = chain_section.get("rpc_url")
+        let rpc_url = chain_section
+            .get("rpc_url")
             .and_then(|v| v.as_str())
             .ok_or("rpc_url not found")?
             .to_string();
 
-        let confirmations = chain_section.get("confirmations")
+        let confirmations = chain_section
+            .get("confirmations")
             .and_then(|v| v.as_integer())
-            .unwrap_or(if section == "base_sepolia" { 3 } else { 15 }) as u64;
+            .unwrap_or(if section == "base_sepolia" { 3 } else { 15 })
+            as u64;
 
-        let gas_multiplier = chain_section.get("gas_multiplier")
+        let gas_multiplier = chain_section
+            .get("gas_multiplier")
             .and_then(|v| v.as_float());
 
         if section == "base_sepolia" {

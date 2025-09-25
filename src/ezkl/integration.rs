@@ -1,11 +1,11 @@
 use anyhow::Result;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
+use tokio::sync::RwLock;
 
 use crate::inference::LlmEngine as InferenceEngine;
 
@@ -244,9 +244,7 @@ impl EZKLIntegration {
     }
 
     pub fn status(&self) -> IntegrationStatus {
-        futures::executor::block_on(async {
-            self.status.read().await.clone()
-        })
+        futures::executor::block_on(async { self.status.read().await.clone() })
     }
 
     pub fn is_initialized(&self) -> bool {
@@ -320,7 +318,10 @@ impl EZKLIntegration {
         Ok(())
     }
 
-    pub async fn check_model_compatibility(&self, model_path: &PathBuf) -> Result<ModelCompatibility> {
+    pub async fn check_model_compatibility(
+        &self,
+        model_path: &PathBuf,
+    ) -> Result<ModelCompatibility> {
         // Mock compatibility check
         let is_compatible = !model_path.to_string_lossy().contains("complex");
         let unsupported_ops = if is_compatible {
@@ -335,7 +336,11 @@ impl EZKLIntegration {
         })
     }
 
-    pub async fn generate_witness(&self, _circuit: &ModelCircuit, _input_data: &[f32]) -> Result<Witness> {
+    pub async fn generate_witness(
+        &self,
+        _circuit: &ModelCircuit,
+        _input_data: &[f32],
+    ) -> Result<Witness> {
         // Mock witness generation
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
@@ -382,7 +387,10 @@ impl EZKLIntegration {
         Ok(artifacts)
     }
 
-    pub async fn configure_storage_backend(&mut self, backend: crate::vector::StorageBackend) -> Result<()> {
+    pub async fn configure_storage_backend(
+        &mut self,
+        backend: crate::vector::StorageBackend,
+    ) -> Result<()> {
         self.storage_backend = Some(backend);
         Ok(())
     }
@@ -418,8 +426,6 @@ impl EZKLIntegration {
     }
 
     pub fn get_resource_metrics(&self) -> ResourceMetrics {
-        futures::executor::block_on(async {
-            self.metrics.read().await.clone()
-        })
+        futures::executor::block_on(async { self.metrics.read().await.clone() })
     }
 }

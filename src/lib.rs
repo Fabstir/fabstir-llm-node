@@ -1,54 +1,53 @@
-pub mod config;
-pub mod p2p_config;
-pub mod p2p;
 pub mod api;
 pub mod blockchain;
-pub mod cli;
-pub mod contracts;
-pub mod inference;
-pub mod job_processor;
-pub mod job_claim;
-pub mod job_assignment_types;
-pub mod result_submission;
-pub mod payment_claim;
-pub mod results;
-pub mod payments;
-pub mod host;
-pub mod qa;
-pub mod storage;
-pub mod vector;
-pub mod ezkl;
-pub mod models;
-pub mod performance;
-pub mod monitoring;
-pub mod embeddings;
 pub mod cache;
-pub mod utils;
+pub mod cli;
+pub mod config;
+pub mod contracts;
+pub mod embeddings;
+pub mod ezkl;
+pub mod host;
+pub mod inference;
+pub mod job_assignment_types;
+pub mod job_claim;
+pub mod job_processor;
+pub mod models;
+pub mod monitoring;
+pub mod p2p;
+pub mod p2p_config;
+pub mod payment_claim;
+pub mod payments;
+pub mod performance;
+pub mod qa;
+pub mod result_submission;
+pub mod results;
 pub mod settlement;
+pub mod storage;
+pub mod utils;
+pub mod vector;
 
 // Re-export main types from new modules
-pub use job_processor::{
-    JobProcessor, JobStatus, JobRequest, JobResult, NodeConfig, NodeConfig as JobNodeConfig,
-    LLMService, JobEvent, ContractClientTrait, Message
-};
+pub use job_assignment_types::{AssignmentRecord, AssignmentStatus, JobClaimConfig};
 pub use job_claim::{
-    JobClaimer, ClaimError, ClaimResult, ClaimEvent, ClaimConfig,
-    JobMarketplaceTrait as ClaimMarketplaceTrait, MockMarketplace
+    ClaimConfig, ClaimError, ClaimEvent, ClaimResult, JobClaimer,
+    JobMarketplaceTrait as ClaimMarketplaceTrait, MockMarketplace,
 };
-pub use job_assignment_types::{
-    JobClaimConfig, AssignmentRecord, AssignmentStatus
-};
-pub use result_submission::{
-    ResultSubmitter, SubmissionError, InferenceResult, SubmissionConfig,
-    StorageClient, JobMarketplaceTrait as SubmissionMarketplaceTrait,
-    ProofGenerator, ProofData
+pub use job_processor::{
+    ContractClientTrait, JobEvent, JobProcessor, JobRequest, JobResult, JobStatus, LLMService,
+    Message, NodeConfig, NodeConfig as JobNodeConfig,
 };
 pub use payment_claim::{
-    PaymentClaimer, PaymentError, PaymentStatus, PaymentEvent, PaymentConfig,
-    PaymentSplitter, EscrowManager, PaymentStatistics, PaymentSystemTrait
+    EscrowManager, PaymentClaimer, PaymentConfig, PaymentError, PaymentEvent, PaymentSplitter,
+    PaymentStatistics, PaymentStatus, PaymentSystemTrait,
+};
+pub use result_submission::{
+    InferenceResult, JobMarketplaceTrait as SubmissionMarketplaceTrait, ProofData, ProofGenerator,
+    ResultSubmitter, StorageClient, SubmissionConfig, SubmissionError,
 };
 
-// Re-export types from existing modules  
-pub use contracts::{Web3Client, Web3Config, ChainConfig, JobMonitor, PaymentVerifier, ProofSubmitter};
-pub use inference::{LlmEngine, EngineConfig, ModelConfig, InferenceRequest};
+// Re-export types from existing modules
+pub use contracts::{
+    ChainConfig, JobMonitor, PaymentVerifier, ProofSubmitter, Web3Client, Web3Config,
+};
+pub use inference::{EngineConfig, InferenceRequest, LlmEngine, ModelConfig};
 pub use p2p::Node;

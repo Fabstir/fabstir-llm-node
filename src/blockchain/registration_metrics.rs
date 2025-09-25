@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
+use tokio::sync::RwLock;
 
 /// Metrics specific to registration monitoring
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,23 +206,39 @@ impl AggregatedMetrics {
         let global_stats = self.global_stats.read().await;
 
         // Global metrics
-        output.push_str(&format!("# HELP registration_health_score Overall health score (0-100)\n"));
+        output.push_str(&format!(
+            "# HELP registration_health_score Overall health score (0-100)\n"
+        ));
         output.push_str(&format!("# TYPE registration_health_score gauge\n"));
-        output.push_str(&format!("registration_health_score {}\n", global_stats.overall_health_score));
+        output.push_str(&format!(
+            "registration_health_score {}\n",
+            global_stats.overall_health_score
+        ));
 
-        output.push_str(&format!("# HELP registration_healthy_chains Number of healthy chains\n"));
+        output.push_str(&format!(
+            "# HELP registration_healthy_chains Number of healthy chains\n"
+        ));
         output.push_str(&format!("# TYPE registration_healthy_chains gauge\n"));
-        output.push_str(&format!("registration_healthy_chains {}\n", global_stats.healthy_chains));
+        output.push_str(&format!(
+            "registration_healthy_chains {}\n",
+            global_stats.healthy_chains
+        ));
 
-        output.push_str(&format!("# HELP registration_total_renewals Total renewal count\n"));
+        output.push_str(&format!(
+            "# HELP registration_total_renewals Total renewal count\n"
+        ));
         output.push_str(&format!("# TYPE registration_total_renewals counter\n"));
-        output.push_str(&format!("registration_total_renewals {}\n", global_stats.total_renewals));
+        output.push_str(&format!(
+            "registration_total_renewals {}\n",
+            global_stats.total_renewals
+        ));
 
         // Per-chain metrics
         for (chain_id, metrics) in chain_metrics.iter() {
             output.push_str(&format!(
                 "registration_chain_health_score{{chain=\"{}\"}} {}\n",
-                chain_id, metrics.health_score()
+                chain_id,
+                metrics.health_score()
             ));
 
             output.push_str(&format!(

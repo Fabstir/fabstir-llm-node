@@ -1,7 +1,9 @@
 use anyhow::Result;
 use ethers::types::H256;
-use fabstir_llm_node::results::proofs::{ProofGenerator, ProofGenerationConfig, ProofType};
-use fabstir_llm_node::results::packager::{InferenceResult, ResultPackager, PackagedResult, ResultMetadata};
+use fabstir_llm_node::results::packager::{
+    InferenceResult, PackagedResult, ResultMetadata, ResultPackager,
+};
+use fabstir_llm_node::results::proofs::{ProofGenerationConfig, ProofGenerator, ProofType};
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -28,12 +30,12 @@ async fn test_ezkl_proof_generation_basic() -> Result<()> {
         settings_path: Some("./ezkl/settings.json".to_string()),
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "test_node_1".to_string());
-    
+
     // Generate proof
     let proof = generator.generate_proof(&result).await?;
-    
+
     // Verify proof properties
     assert_eq!(proof.job_id, "test_job_123");
     assert_eq!(proof.proof_type, ProofType::EZKL);
@@ -43,7 +45,7 @@ async fn test_ezkl_proof_generation_basic() -> Result<()> {
     assert!(!proof.input_hash.is_empty());
     assert!(!proof.output_hash.is_empty());
     assert_eq!(proof.prover_id, "test_node_1");
-    
+
     Ok(())
 }
 
@@ -69,15 +71,15 @@ async fn test_ezkl_proof_generation_with_large_output() -> Result<()> {
         settings_path: None,
         max_proof_size: 5_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "test_node_2".to_string());
-    
+
     // Generate proof with size constraint
     let proof = generator.generate_proof(&result).await?;
-    
+
     assert!(proof.proof_data.len() <= 5_000);
     assert_eq!(proof.proof_type, ProofType::EZKL);
-    
+
     Ok(())
 }
 
@@ -101,17 +103,15 @@ async fn test_ezkl_proof_generation_timeout() -> Result<()> {
         settings_path: Some("./ezkl/settings.json".to_string()),
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "test_node_timeout".to_string());
-    
+
     // Test with reasonable timeout (should succeed)
-    let result_with_timeout = timeout(
-        Duration::from_secs(5),
-        generator.generate_proof(&result)
-    ).await;
-    
+    let result_with_timeout =
+        timeout(Duration::from_secs(5), generator.generate_proof(&result)).await;
+
     assert!(result_with_timeout.is_ok());
-    
+
     Ok(())
 }
 
@@ -135,18 +135,18 @@ async fn test_ezkl_proof_determinism() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config.clone(), "test_node".to_string());
-    
+
     // Generate two proofs for same input
     let proof1 = generator.generate_proof(&result).await?;
     let proof2 = generator.generate_proof(&result).await?;
-    
+
     // Hashes should be identical for same input
     assert_eq!(proof1.model_hash, proof2.model_hash);
     assert_eq!(proof1.input_hash, proof2.input_hash);
     assert_eq!(proof1.output_hash, proof2.output_hash);
-    
+
     Ok(())
 }
 
@@ -170,12 +170,12 @@ async fn test_ezkl_proof_with_invalid_model_path() -> Result<()> {
         settings_path: None,
         max_proof_size: 10_000,
     };
-    
+
     let generator = ProofGenerator::new(config, "test_node".to_string());
-    
+
     // Should still generate proof even with invalid model path (using path hash)
     let proof = generator.generate_proof(&result).await?;
     assert!(!proof.proof_data.is_empty());
-    
+
     Ok(())
 }

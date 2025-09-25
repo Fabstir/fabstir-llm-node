@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 #[tokio::test]
 async fn test_session_init_creates_memory_cache() {
     let handler = SessionInitHandler::new();
-    
+
     let context = vec![
         ConversationMessage {
             role: "user".to_string(),
@@ -41,7 +41,7 @@ async fn test_session_init_creates_memory_cache() {
 #[tokio::test]
 async fn test_session_init_with_empty_context() {
     let handler = SessionInitHandler::new();
-    
+
     let result = handler
         .handle_session_init("new-session", 999, vec![])
         .await
@@ -56,11 +56,9 @@ async fn test_session_init_with_empty_context() {
 #[tokio::test]
 async fn test_session_init_validates_job_id() {
     let handler = SessionInitHandler::new();
-    
+
     // Job ID 0 should be invalid
-    let result = handler
-        .handle_session_init("session-123", 0, vec![])
-        .await;
+    let result = handler.handle_session_init("session-123", 0, vec![]).await;
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Invalid job_id"));
@@ -69,18 +67,16 @@ async fn test_session_init_validates_job_id() {
 #[tokio::test]
 async fn test_session_init_replaces_existing_session() {
     let handler = SessionInitHandler::new();
-    
+
     // First init
-    let context1 = vec![
-        ConversationMessage {
-            role: "user".to_string(),
-            content: "First question".to_string(),
-            timestamp: None,
-            tokens: None,
-            proof: None,
-        },
-    ];
-    
+    let context1 = vec![ConversationMessage {
+        role: "user".to_string(),
+        content: "First question".to_string(),
+        timestamp: None,
+        tokens: None,
+        proof: None,
+    }];
+
     let result1 = handler
         .handle_session_init("session-123", 100, context1)
         .await
@@ -104,12 +100,12 @@ async fn test_session_init_replaces_existing_session() {
             proof: None,
         },
     ];
-    
+
     let result2 = handler
         .handle_session_init("session-123", 101, context2)
         .await
         .unwrap();
-    
+
     assert_eq!(result2.message_count, 2);
     assert_eq!(result2.job_id, 101); // New job_id
 }
@@ -117,7 +113,7 @@ async fn test_session_init_replaces_existing_session() {
 #[tokio::test]
 async fn test_session_init_counts_tokens_correctly() {
     let handler = SessionInitHandler::new();
-    
+
     let context = vec![
         ConversationMessage {
             role: "user".to_string(),
@@ -160,7 +156,7 @@ async fn test_session_init_counts_tokens_correctly() {
 #[tokio::test]
 async fn test_session_init_preserves_message_order() {
     let handler = SessionInitHandler::new();
-    
+
     let context = vec![
         ConversationMessage {
             role: "system".to_string(),
@@ -193,7 +189,7 @@ async fn test_session_init_preserves_message_order() {
     // Verify cache has messages in correct order
     let cache = handler.get_cache("session-123").await.unwrap();
     let messages = cache.get_messages().await;
-    
+
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].role, "system");
     assert_eq!(messages[1].role, "user");
@@ -203,29 +199,27 @@ async fn test_session_init_preserves_message_order() {
 #[tokio::test]
 async fn test_concurrent_session_inits() {
     let handler = Arc::new(SessionInitHandler::new());
-    
+
     let mut handles = vec![];
-    
+
     // Create 10 concurrent sessions
     for i in 0..10 {
         let h = handler.clone();
         let handle = tokio::spawn(async move {
-            let context = vec![
-                ConversationMessage {
-                    role: "user".to_string(),
-                    content: format!("Question {}", i),
-                    timestamp: None,
-                    tokens: None,
-            proof: None,
-                },
-            ];
-            
+            let context = vec![ConversationMessage {
+                role: "user".to_string(),
+                content: format!("Question {}", i),
+                timestamp: None,
+                tokens: None,
+                proof: None,
+            }];
+
             h.handle_session_init(&format!("session-{}", i), i as u64 + 1, context)
                 .await
         });
         handles.push(handle);
     }
-    
+
     // All should succeed
     for handle in handles {
         let result = handle.await.unwrap().unwrap();

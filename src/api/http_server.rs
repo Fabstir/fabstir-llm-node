@@ -1,32 +1,24 @@
+use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::{
-    extract::{State, Json, Path, Query},
-    http::{StatusCode, header},
+    extract::{Json, Path, Query, State},
+    http::{header, StatusCode},
     response::{IntoResponse, Response, Sse},
     routing::{get, post},
     Router,
 };
-use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use futures::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{
-    collections::HashMap,
-    convert::Infallible,
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashMap, convert::Infallible, net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{Any, CorsLayer};
 
 use super::{
-    ApiServer, ApiError,
-    InferenceRequest, InferenceResponse,
-    ModelsResponse, ModelInfo,
-    SessionInfo, SessionStatus, SessionInfoResponse,
-    ChainInfo, ChainsResponse,
-    ChainStatistics, ChainStatsResponse, TotalStatistics,
+    ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse,
+    InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
+    SessionInfoResponse, SessionStatus, TotalStatistics,
 };
-use crate::blockchain::{ChainRegistry, ChainConfig};
+use crate::blockchain::{ChainConfig, ChainRegistry};
 
 #[derive(Deserialize)]
 struct ChainQuery {
@@ -61,7 +53,10 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         // Chain endpoints
         .route("/v1/chains", get(chains_handler))
         .route("/v1/chains/stats", get(chain_stats_handler))
-        .route("/v1/chains/:chain_id/stats", get(chain_specific_stats_handler))
+        .route(
+            "/v1/chains/:chain_id/stats",
+            get(chain_specific_stats_handler),
+        )
         // Session endpoints
         .route("/v1/session/:session_id/info", get(session_info_handler))
         // Inference endpoint
@@ -74,7 +69,7 @@ pub fn create_app(state: Arc<AppState>) -> Router {
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers(Any)
+                .allow_headers(Any),
         )
         .with_state((*state).clone())
 }
@@ -108,14 +103,21 @@ async fn models_handler(
     State(state): State<AppState>,
     Query(query): Query<ChainQuery>,
 ) -> Result<axum::response::Json<ModelsResponse>, ApiErrorResponse> {
-    let chain_id = query.chain_id.unwrap_or_else(|| state.chain_registry.get_default_chain_id());
+    let chain_id = query
+        .chain_id
+        .unwrap_or_else(|| state.chain_registry.get_default_chain_id());
 
     // Get chain info
-    let chain = state.chain_registry.get_chain(chain_id)
+    let chain = state
+        .chain_registry
+        .get_chain(chain_id)
         .ok_or(ApiError::InvalidRequest("Invalid chain ID".to_string()))?;
 
     // Get models (in real implementation, this would query chain-specific models)
-    let mut response = state.api_server.get_available_models().await
+    let mut response = state
+        .api_server
+        .get_available_models()
+        .await
         .map_err(|e| ApiErrorResponse(e))?;
 
     // Add chain information to response
@@ -126,7 +128,9 @@ async fn models_handler(
 }
 
 async fn chains_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let chains: Vec<ChainInfo> = state.chain_registry.get_all_chains()
+    let chains: Vec<ChainInfo> = state
+        .chain_registry
+        .get_all_chains()
         .iter()
         .map(|config| ChainInfo {
             chain_id: config.chain_id,
@@ -150,11 +154,16 @@ async fn session_info_handler(
     Path(session_id): Path<u64>,
 ) -> Result<axum::response::Json<SessionInfoResponse>, ApiErrorResponse> {
     let sessions = state.sessions.read().await;
-    let session = sessions.get(&session_id)
+    let session = sessions
+        .get(&session_id)
         .ok_or(ApiError::NotFound("Session not found".to_string()))?;
 
-    let chain_id = session.chain_id.unwrap_or(state.chain_registry.get_default_chain_id());
-    let chain = state.chain_registry.get_chain(chain_id)
+    let chain_id = session
+        .chain_id
+        .unwrap_or(state.chain_registry.get_default_chain_id());
+    let chain = state
+        .chain_registry
+        .get_chain(chain_id)
         .ok_or(ApiError::InvalidRequest("Invalid chain ID".to_string()))?;
 
     let response = SessionInfoResponse {
@@ -184,10 +193,7 @@ async fn chain_stats_handler(State(state): State<AppState>) -> impl IntoResponse
         total_tokens_processed: chains.iter().map(|s| s.total_tokens_processed).sum(),
     };
 
-    let response = ChainStatsResponse {
-        chains,
-        total,
-    };
+    let response = ChainStatsResponse { chains, total };
 
     axum::response::Json(response)
 }
@@ -197,7 +203,8 @@ async fn chain_specific_stats_handler(
     Path(chain_id): Path<u64>,
 ) -> Result<axum::response::Json<ChainStatistics>, ApiErrorResponse> {
     let stats = state.chain_stats.read().await;
-    let chain_stats = stats.get(&chain_id)
+    let chain_stats = stats
+        .get(&chain_id)
         .ok_or(ApiError::NotFound("Chain statistics not found".to_string()))?;
 
     Ok(axum::response::Json(chain_stats.clone()))
@@ -210,7 +217,9 @@ async fn inference_handler(
     let client_ip = "127.0.0.1".to_string(); // In production, extract from request
 
     // Use chain_id from request or default
-    let chain_id = request.chain_id.unwrap_or(state.chain_registry.get_default_chain_id());
+    let chain_id = request
+        .chain_id
+        .unwrap_or(state.chain_registry.get_default_chain_id());
 
     // Validate chain exists
     if let Some(chain) = state.chain_registry.get_chain(chain_id) {
@@ -220,21 +229,31 @@ async fn inference_handler(
 
     if request.stream {
         // Streaming response
-        match state.api_server.handle_streaming_request(request, client_ip).await {
+        match state
+            .api_server
+            .handle_streaming_request(request, client_ip)
+            .await
+        {
             Ok(receiver) => {
                 let stream = tokio_stream::wrappers::ReceiverStream::new(receiver);
                 let sse_stream = stream.map(|response| {
-                    Ok::<_, Infallible>(axum::response::sse::Event::default()
-                        .data(serde_json::to_string(&response).unwrap_or_default()))
+                    Ok::<_, Infallible>(
+                        axum::response::sse::Event::default()
+                            .data(serde_json::to_string(&response).unwrap_or_default()),
+                    )
                 });
 
                 Sse::new(sse_stream).into_response()
             }
-            Err(e) => ApiErrorResponse(e).into_response()
+            Err(e) => ApiErrorResponse(e).into_response(),
         }
     } else {
         // Non-streaming response
-        match state.api_server.handle_inference_request(request.clone(), client_ip).await {
+        match state
+            .api_server
+            .handle_inference_request(request.clone(), client_ip)
+            .await
+        {
             Ok(mut response) => {
                 // Add chain information to response
                 if let Some(chain_id) = request.chain_id {
@@ -246,7 +265,7 @@ async fn inference_handler(
                 }
                 axum::response::Json(response).into_response()
             }
-            Err(e) => ApiErrorResponse(e).into_response()
+            Err(e) => ApiErrorResponse(e).into_response(),
         }
     }
 }
@@ -269,43 +288,62 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
                     if json_msg["type"] == "inference" {
                         // Debug: Log the entire request
-                        tracing::info!("🔍 WebSocket inference request received: {:?}", json_msg["request"]);
+                        tracing::info!(
+                            "🔍 WebSocket inference request received: {:?}",
+                            json_msg["request"]
+                        );
 
-                        if let Ok(mut request) = serde_json::from_value::<InferenceRequest>(json_msg["request"].clone()) {
-                            eprintln!("🔍 RAW REQUEST - job_id: {:?}, session_id: {:?}, chain_id: {:?}",
-                                request.job_id, request.session_id, request.chain_id);
+                        if let Ok(mut request) =
+                            serde_json::from_value::<InferenceRequest>(json_msg["request"].clone())
+                        {
+                            eprintln!(
+                                "🔍 RAW REQUEST - job_id: {:?}, session_id: {:?}, chain_id: {:?}",
+                                request.job_id, request.session_id, request.chain_id
+                            );
 
                             // Track chain_id
-                            current_chain_id = request.chain_id.or(Some(state.chain_registry.get_default_chain_id()));
+                            current_chain_id = request
+                                .chain_id
+                                .or(Some(state.chain_registry.get_default_chain_id()));
 
                             // If job_id is not provided but session_id is, try to parse session_id as job_id
                             if request.job_id.is_none() && request.session_id.is_some() {
                                 if let Some(ref sid) = request.session_id {
                                     // Try to parse session_id as a number (SDK sends it as "139n" or just "139")
-                                    if let Ok(parsed_id) = sid.trim_end_matches('n').parse::<u64>() {
+                                    if let Ok(parsed_id) = sid.trim_end_matches('n').parse::<u64>()
+                                    {
                                         request.job_id = Some(parsed_id);
-                                        current_job_id = Some(parsed_id);  // Track current job ID
-                                        eprintln!("📋 CONVERTED session_id {} to job_id {}", sid, parsed_id);
+                                        current_job_id = Some(parsed_id); // Track current job ID
+                                        eprintln!(
+                                            "📋 CONVERTED session_id {} to job_id {}",
+                                            sid, parsed_id
+                                        );
                                         tracing::info!("📋 Using session_id {} as job_id for checkpoint tracking", parsed_id);
 
                                         // Create session tracking
                                         if let Some(chain_id) = current_chain_id {
                                             let mut sessions = state.sessions.write().await;
-                                            sessions.insert(parsed_id, SessionInfo {
-                                                job_id: parsed_id,
-                                                chain_id: Some(chain_id),
-                                                user_address: "unknown".to_string(), // Would be from auth
-                                                start_time: chrono::Utc::now(),
-                                                tokens_used: 0,
-                                                status: SessionStatus::Active,
-                                            });
+                                            sessions.insert(
+                                                parsed_id,
+                                                SessionInfo {
+                                                    job_id: parsed_id,
+                                                    chain_id: Some(chain_id),
+                                                    user_address: "unknown".to_string(), // Would be from auth
+                                                    start_time: chrono::Utc::now(),
+                                                    tokens_used: 0,
+                                                    status: SessionStatus::Active,
+                                                },
+                                            );
                                         }
                                     } else {
-                                        eprintln!("❌ FAILED to parse session_id '{}' as number", sid);
+                                        eprintln!(
+                                            "❌ FAILED to parse session_id '{}' as number",
+                                            sid
+                                        );
                                     }
                                 }
                             } else if let Some(jid) = request.job_id {
-                                current_job_id = Some(jid);  // Track current job ID
+                                current_job_id = Some(jid); // Track current job ID
                             }
 
                             // Log job_id for payment tracking visibility
@@ -317,18 +355,28 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                             }
 
                             // Handle streaming inference
-                            match state.api_server.handle_streaming_request(request, "ws-client".to_string()).await {
+                            match state
+                                .api_server
+                                .handle_streaming_request(request, "ws-client".to_string())
+                                .await
+                            {
                                 Ok(mut receiver) => {
                                     // Get chain info for formatting
-                                    let (chain_name, native_token) = if let Some(chain_id) = current_chain_id {
-                                        if let Some(chain) = state.chain_registry.get_chain(chain_id) {
-                                            (Some(chain.name.clone()), Some(chain.native_token.symbol.clone()))
+                                    let (chain_name, native_token) =
+                                        if let Some(chain_id) = current_chain_id {
+                                            if let Some(chain) =
+                                                state.chain_registry.get_chain(chain_id)
+                                            {
+                                                (
+                                                    Some(chain.name.clone()),
+                                                    Some(chain.native_token.symbol.clone()),
+                                                )
+                                            } else {
+                                                (None, None)
+                                            }
                                         } else {
                                             (None, None)
-                                        }
-                                    } else {
-                                        (None, None)
-                                    };
+                                        };
 
                                     while let Some(response) = receiver.recv().await {
                                         let ws_msg = json!({
@@ -348,13 +396,23 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                                             }
                                         }
 
-                                        if socket.send(axum::extract::ws::Message::Text(ws_msg.to_string())).await.is_err() {
+                                        if socket
+                                            .send(axum::extract::ws::Message::Text(
+                                                ws_msg.to_string(),
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
                                             break;
                                         }
 
                                         if response.finish_reason.is_some() {
                                             let end_msg = json!({"type": "stream_end"});
-                                            let _ = socket.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                            let _ = socket
+                                                .send(axum::extract::ws::Message::Text(
+                                                    end_msg.to_string(),
+                                                ))
+                                                .await;
                                             break;
                                         }
                                     }
@@ -364,7 +422,11 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                                         "type": "error",
                                         "error": e.to_string()
                                     });
-                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                    let _ = socket
+                                        .send(axum::extract::ws::Message::Text(
+                                            error_msg.to_string(),
+                                        ))
+                                        .await;
                                 }
                             }
                         }
@@ -372,7 +434,11 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                 }
             }
             Ok(axum::extract::ws::Message::Ping(data)) => {
-                if socket.send(axum::extract::ws::Message::Pong(data)).await.is_err() {
+                if socket
+                    .send(axum::extract::ws::Message::Pong(data))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -391,14 +457,26 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                     }
 
                     // Get checkpoint manager and complete the session
-                    if let Some(checkpoint_manager) = state.api_server.get_checkpoint_manager().await {
+                    if let Some(checkpoint_manager) =
+                        state.api_server.get_checkpoint_manager().await
+                    {
                         if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
-                            tracing::error!("❌ Failed to complete session job {}: {:?}", job_id, e);
+                            tracing::error!(
+                                "❌ Failed to complete session job {}: {:?}",
+                                job_id,
+                                e
+                            );
                         } else {
-                            tracing::info!("✅ Session job {} completed - payments should be distributed", job_id);
+                            tracing::info!(
+                                "✅ Session job {} completed - payments should be distributed",
+                                job_id
+                            );
                         }
                     } else {
-                        tracing::warn!("⚠️ No checkpoint manager available to complete session job {}", job_id);
+                        tracing::warn!(
+                            "⚠️ No checkpoint manager available to complete session job {}",
+                            job_id
+                        );
                     }
                 }
                 break;
@@ -409,8 +487,11 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
 
     // Also trigger payment settlement when connection drops unexpectedly
     if let Some(job_id) = current_job_id {
-        tracing::info!("💰 WebSocket disconnected - triggering payment settlement for job {} on chain {}",
-            job_id, current_chain_id.unwrap_or(0));
+        tracing::info!(
+            "💰 WebSocket disconnected - triggering payment settlement for job {} on chain {}",
+            job_id,
+            current_chain_id.unwrap_or(0)
+        );
 
         // Update session status
         {
@@ -422,9 +503,16 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
 
         if let Some(checkpoint_manager) = state.api_server.get_checkpoint_manager().await {
             if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
-                tracing::error!("❌ Failed to complete session job {} on disconnect: {:?}", job_id, e);
+                tracing::error!(
+                    "❌ Failed to complete session job {} on disconnect: {:?}",
+                    job_id,
+                    e
+                );
             } else {
-                tracing::info!("✅ Session job {} completed on disconnect - payments should be distributed", job_id);
+                tracing::info!(
+                    "✅ Session job {} completed on disconnect - payments should be distributed",
+                    job_id
+                );
             }
         }
     }
@@ -458,7 +546,8 @@ impl From<ApiError> for ApiErrorResponse {
 
 impl IntoResponse for ApiErrorResponse {
     fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status =
+            StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let error_response = self.0.to_response(None);
 
         (status, axum::response::Json(error_response)).into_response()
