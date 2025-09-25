@@ -26,6 +26,7 @@ struct ConnectionInfo {
     last_activity: Instant,
     metrics: ConnectionMetrics,
     user_id: Option<String>,
+    chain_id: Option<u64>,
     cleanup_callback: Option<Box<dyn Fn(&str) + Send + Sync>>,
 }
 
@@ -77,6 +78,7 @@ impl ConnectionHandler {
             last_activity: Instant::now(),
             metrics: ConnectionMetrics::default(),
             user_id: None,
+            chain_id: None,
             cleanup_callback: None,
         };
 
@@ -97,6 +99,7 @@ impl ConnectionHandler {
             last_activity: Instant::now(),
             metrics: ConnectionMetrics::default(),
             user_id: None,
+            chain_id: None,
             cleanup_callback: Some(callback),
         };
 
@@ -248,6 +251,65 @@ impl ConnectionHandler {
             info.state = ConnectionState::Disconnected;
         }
         Ok(())
+    }
+
+    // Chain-aware methods
+    pub async fn register_connection_with_chain(
+        &self,
+        conn_id: &str,
+        session: WebSocketSession,
+        chain_id: u64,
+    ) -> Result<()> {
+        let info = ConnectionInfo {
+            session,
+            state: ConnectionState::Connected,
+            last_activity: Instant::now(),
+            metrics: ConnectionMetrics::default(),
+            user_id: None,
+            chain_id: Some(chain_id),
+            cleanup_callback: None,
+        };
+
+        self.connections.write().await.insert(conn_id.to_string(), info);
+        info!("Registered connection {} for chain {}", conn_id, chain_id);
+        Ok(())
+    }
+
+    pub async fn get_chain_connections(&self, chain_id: u64) -> Vec<String> {
+        let connections = self.connections.read().await;
+        connections
+            .iter()
+            .filter(|(_, info)| info.chain_id == Some(chain_id))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub async fn get_connection_chain(&self, conn_id: &str) -> Result<Option<u64>> {
+        let connections = self.connections.read().await;
+        if let Some(info) = connections.get(conn_id) {
+            Ok(info.chain_id)
+        } else {
+            Err(anyhow::anyhow!("Connection not found"))
+        }
+    }
+
+    pub async fn update_connection_chain(&self, conn_id: &str, chain_id: u64) -> Result<()> {
+        let mut connections = self.connections.write().await;
+        if let Some(info) = connections.get_mut(conn_id) {
+            info.chain_id = Some(chain_id);
+            debug!("Updated connection {} to chain {}", conn_id, chain_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Connection not found"))
+        }
+    }
+
+    pub async fn count_chain_connections(&self, chain_id: u64) -> usize {
+        let connections = self.connections.read().await;
+        connections
+            .values()
+            .filter(|info| info.chain_id == Some(chain_id))
+            .count()
     }
 }
 
