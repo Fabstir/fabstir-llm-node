@@ -337,15 +337,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Registration verified on-chain
 - Status tracked correctly
 
-### Sub-phase 5.2: Registration CLI
+### Sub-phase 5.2: Registration CLI ✅ COMPLETED
 **Goal**: Create command-line registration tools
 
 **Tasks**:
-- [ ] Create `register-node` CLI command
-- [ ] Add `--chain` parameter support
-- [ ] Implement `--all-chains` option
-- [ ] Add registration status command
-- [ ] Create registration update command
+- [x] Create `register-node` CLI command
+- [x] Add `--chain` parameter support
+- [x] Implement `--all-chains` option
+- [x] Add registration status command
+- [x] Create registration update command
 
 **Test Files** (TDD - Write First):
 - `tests/registration/test_registration_cli.rs`

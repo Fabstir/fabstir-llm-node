@@ -10,7 +10,6 @@ use tracing::{info, warn, error, debug};
 use serde_json;
 
 use crate::config::chains::{ChainRegistry, ChainConfig};
-use crate::host::registration::NodeMetadata;
 use crate::contracts::types::NodeRegistryWithModels;
 
 // FAB Token constants
@@ -24,6 +23,16 @@ pub enum RegistrationStatus {
     Pending { tx_hash: H256 },
     Confirmed { block_number: u64 },
     Failed { error: String },
+}
+
+// Node metadata for CLI registration
+#[derive(Debug, Clone)]
+pub struct NodeMetadata {
+    pub name: String,
+    pub version: String,
+    pub api_url: String,
+    pub capabilities: Vec<String>,
+    pub performance_tier: String,
 }
 
 pub struct MultiChainRegistrar {
@@ -180,15 +189,18 @@ impl MultiChainRegistrar {
 
         // Build metadata JSON (following HOST_REGISTRATION_GUIDE.md format)
         let metadata_json = serde_json::json!({
+            "name": self.node_metadata.name,
+            "version": self.node_metadata.version,
             "hardware": {
-                "gpu": self.node_metadata.gpu,
-                "vram": 24, // TODO: Add to NodeMetadata
-                "cpu": "AMD Ryzen 9 5950X", // TODO: Add to NodeMetadata
-                "ram": self.node_metadata.ram_gb
+                "gpu": "RTX 4090", // Default GPU for CLI registration
+                "vram": 24,
+                "cpu": "AMD Ryzen 9 5950X",
+                "ram": 64
             },
-            "capabilities": ["inference", "streaming", "batch"],
-            "location": "us-west", // TODO: Add to NodeMetadata
-            "maxConcurrentJobs": self.node_metadata.max_concurrent_jobs
+            "capabilities": self.node_metadata.capabilities,
+            "location": "us-west",
+            "performance_tier": self.node_metadata.performance_tier,
+            "maxConcurrentJobs": 5
         }).to_string();
 
         // Get approved model IDs

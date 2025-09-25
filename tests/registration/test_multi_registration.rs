@@ -6,9 +6,8 @@ use ethers::prelude::*;
 use std::sync::Arc;
 use std::str::FromStr;
 
-use fabstir_llm_node::blockchain::{MultiChainRegistrar, RegistrationStatus};
+use fabstir_llm_node::blockchain::multi_chain_registrar::{MultiChainRegistrar, RegistrationStatus, NodeMetadata};
 use fabstir_llm_node::config::chains::ChainRegistry;
-use fabstir_llm_node::host::registration::NodeMetadata;
 
 // Helper function to setup test environment
 async fn setup_test_registrar(use_host_2: bool) -> Result<MultiChainRegistrar> {
@@ -26,13 +25,11 @@ async fn setup_test_registrar(use_host_2: bool) -> Result<MultiChainRegistrar> {
     let chain_registry = Arc::new(ChainRegistry::new());
 
     let metadata = NodeMetadata {
-        models: vec!["tinyllama-1b.Q4_K_M.gguf".to_string()],
-        model_ids: vec![],  // Will be populated from ModelRegistry
-        gpu: "RTX 4090".to_string(),
-        ram_gb: 64,
-        cost_per_token: 0.0001,
-        max_concurrent_jobs: 5,
+        name: format!("Test Host {}", if use_host_2 { 2 } else { 1 }),
+        version: "1.0.0".to_string(),
         api_url: format!("http://test-host-{}.example.com:8080", if use_host_2 { 2 } else { 1 }),
+        capabilities: vec!["inference".to_string(), "streaming".to_string()],
+        performance_tier: "standard".to_string(),
     };
 
     MultiChainRegistrar::new(
