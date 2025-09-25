@@ -13,11 +13,25 @@ pub struct HealthStatus {
     pub version: String,
 }
 
+/// Chain-specific health status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainHealthStatus {
+    pub chain_id: u64,
+    pub chain_name: String,
+    pub is_healthy: bool,
+    pub rpc_responsive: bool,
+    pub last_block_time: u64,
+    pub connection_count: usize,
+    pub error_rate: f64,
+    pub average_latency_ms: u64,
+}
+
 /// Readiness check
 pub struct ReadinessCheck {
     websocket_ready: Arc<RwLock<bool>>,
     inference_ready: Arc<RwLock<bool>>,
     blockchain_ready: Arc<RwLock<bool>>,
+    chain_ready: Arc<RwLock<HashMap<u64, bool>>>,
 }
 
 impl ReadinessCheck {
@@ -26,6 +40,7 @@ impl ReadinessCheck {
             websocket_ready: Arc::new(RwLock::new(false)),
             inference_ready: Arc::new(RwLock::new(false)),
             blockchain_ready: Arc::new(RwLock::new(false)),
+            chain_ready: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -53,6 +68,27 @@ impl ReadinessCheck {
             inference_ready: *self.inference_ready.read().await,
             blockchain_ready: *self.blockchain_ready.read().await,
         }
+    }
+
+    // Chain-specific readiness methods
+    pub async fn set_chain_ready(&self, chain_id: u64, ready: bool) {
+        self.chain_ready.write().await.insert(chain_id, ready);
+    }
+
+    pub async fn is_chain_ready(&self, chain_id: u64) -> bool {
+        self.chain_ready.read().await.get(&chain_id).copied().unwrap_or(false)
+    }
+
+    pub async fn all_chains_ready(&self) -> bool {
+        let chains = self.chain_ready.read().await;
+        if chains.is_empty() {
+            return false;
+        }
+        chains.values().all(|&ready| ready)
+    }
+
+    pub async fn get_chain_status(&self) -> HashMap<u64, bool> {
+        self.chain_ready.read().await.clone()
     }
 }
 

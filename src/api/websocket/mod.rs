@@ -30,3 +30,6 @@ pub mod proof_config;
 pub mod persistence;
 pub mod storage_trait;
 pub mod session_context;
+pub mod chain_connection_pool;
+pub mod chain_rate_limiter;
+pub mod connection_stats;

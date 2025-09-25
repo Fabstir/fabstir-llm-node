@@ -37,6 +37,7 @@ mod websocket {
     mod test_proof_types;
     mod test_chain_messages;
     mod test_session_handlers;
+    mod test_connection_chain;
     // mod test_real_metrics;  // TODO: Implement PrometheusExporter
     // mod test_system_monitoring; // TODO: Implement SystemMonitor
 }
