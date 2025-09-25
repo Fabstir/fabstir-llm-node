@@ -113,15 +113,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Legacy sessions default correctly
 - Invalid chains rejected
 
-### Sub-phase 2.2: Session Manager Enhancement
+### Sub-phase 2.2: Session Manager Enhancement ✅
 **Goal**: Make session manager chain-aware
 
 **Tasks**:
-- [ ] Update `SessionManager::create_session()` with chain_id
-- [ ] Implement `get_session_chain()` method
-- [ ] Add `list_sessions_by_chain()` method
-- [ ] Create session chain statistics
-- [ ] Implement session chain migration
+- [x] Update `SessionManager::create_session()` with chain_id
+- [x] Implement `get_session_chain()` method
+- [x] Add `list_sessions_by_chain()` method
+- [x] Create session chain statistics
+- [x] Implement session chain migration
 
 **Test Files** (TDD - Write First):
 - `tests/sessions/test_session_manager_chain.rs`
