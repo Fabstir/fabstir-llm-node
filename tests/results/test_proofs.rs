@@ -60,6 +60,7 @@ mod tests {
             signature: vec![1, 2, 3],
             encoding: "cbor".to_string(),
             version: "1.0".to_string(),
+            job_request: None,
         };
         
         let verifiable = generator.create_verifiable_result(packaged.clone()).await.unwrap();

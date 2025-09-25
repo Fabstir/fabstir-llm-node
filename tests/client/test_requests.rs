@@ -307,12 +307,12 @@ async fn test_graceful_shutdown() {
 
 // Helper functions
 async fn create_test_node() -> fabstir_llm_node::p2p::Node {
-    let config = fabstir_llm_node::config::NodeConfig::default();
+    let config = fabstir_llm_node::p2p_config::NodeConfig::default();
     fabstir_llm_node::p2p::Node::new(config).await.expect("Failed to create node")
 }
 
 async fn create_test_node_with_models(models: Vec<&str>) -> fabstir_llm_node::p2p::Node {
-    let config = fabstir_llm_node::config::NodeConfig {
+    let config = fabstir_llm_node::p2p_config::NodeConfig {
         capabilities: models.iter().map(|m| m.to_string()).collect(),
         ..Default::default()
     };

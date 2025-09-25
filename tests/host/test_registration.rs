@@ -23,19 +23,25 @@ async fn test_node_registration_with_valid_stake() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string(), "tiny-vicuna".to_string()],
+        model_ids: vec![],  // Will be filled during registration
         gpu: "RTX 4090".to_string(),
         ram_gb: 64,
         cost_per_token: 0.0001,
         max_concurrent_jobs: 5,
+        api_url: "http://localhost:8080".to_string(),
     };
-    
+
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
+            .parse::<Address>()
+            .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
             .parse::<Address>()
             .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let mut registration = NodeRegistration::new(
@@ -65,19 +71,25 @@ async fn test_registration_fails_with_insufficient_stake() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string()],
+        model_ids: vec![],
         gpu: "RTX 3090".to_string(),
         ram_gb: 32,
         cost_per_token: 0.0002,
         max_concurrent_jobs: 3,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let registration = NodeRegistration::new(
@@ -101,19 +113,25 @@ async fn test_update_capabilities() {
     
     let initial_metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string()],
+        model_ids: vec![],
         gpu: "RTX 3090".to_string(),
         ram_gb: 32,
         cost_per_token: 0.0002,
         max_concurrent_jobs: 3,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let mut registration = NodeRegistration::new(
@@ -129,10 +147,12 @@ async fn test_update_capabilities() {
     // Update capabilities
     let new_metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string(), "mistral-7b".to_string()],
+        model_ids: vec![],
         gpu: "RTX 4090".to_string(), // Upgraded GPU
         ram_gb: 64, // Upgraded RAM
         cost_per_token: 0.0001,
         max_concurrent_jobs: 5,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let result = registration.update_capabilities(new_metadata).await;
@@ -154,19 +174,25 @@ async fn test_unregister_node() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string()],
+        model_ids: vec![],
         gpu: "RTX 3090".to_string(),
         ram_gb: 32,
         cost_per_token: 0.0002,
         max_concurrent_jobs: 3,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let mut registration = NodeRegistration::new(
@@ -196,19 +222,25 @@ async fn test_heartbeat_mechanism() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string()],
+        model_ids: vec![],
         gpu: "RTX 3090".to_string(),
         ram_gb: 32,
         cost_per_token: 0.0002,
         max_concurrent_jobs: 3,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 1, // 1 second for testing
+        use_new_registry: false,
     };
     
     let mut registration = NodeRegistration::new(
@@ -243,19 +275,25 @@ async fn test_auto_registration_on_startup() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string()],
+        model_ids: vec![],
         gpu: "RTX 3090".to_string(),
         ram_gb: 32,
         cost_per_token: 0.0002,
         max_concurrent_jobs: 3,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: true, // Enable auto-registration
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let mut registration = NodeRegistration::new(
@@ -279,19 +317,25 @@ async fn test_metadata_json_formatting() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string(), "mistral-7b".to_string()],
+        model_ids: vec![],
         gpu: "A100 80GB".to_string(),
         ram_gb: 128,
         cost_per_token: 0.00005,
         max_concurrent_jobs: 10,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let registration = NodeRegistration::new(
@@ -326,19 +370,25 @@ async fn test_concurrent_registration_operations() {
     
     let metadata = NodeMetadata {
         models: vec!["llama-3.2".to_string()],
+        model_ids: vec![],
         gpu: "RTX 3090".to_string(),
         ram_gb: 32,
         cost_per_token: 0.0002,
         max_concurrent_jobs: 3,
+        api_url: "http://localhost:8080".to_string(),
     };
     
     let config = RegistrationConfig {
         contract_address: "0x87516C13Ea2f99de598665e14cab64E191A0f8c4"
             .parse::<Address>()
             .unwrap(),
+        model_registry_address: "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            .parse::<Address>()
+            .unwrap(),
         stake_amount,
         auto_register: false,
         heartbeat_interval: 60,
+        use_new_registry: false,
     };
     
     let registration = Arc::new(RwLock::new(
