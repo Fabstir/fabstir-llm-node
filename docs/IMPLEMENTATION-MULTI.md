@@ -215,15 +215,15 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
 - Correct chain used for settlement
 - Retries work on failure
 
-### Sub-phase 3.3: Payment Distribution
+### Sub-phase 3.3: Payment Distribution ✅
 **Goal**: Handle chain-specific payment flows
 
 **Tasks**:
-- [ ] Implement host earnings accumulation per chain
-- [ ] Track treasury fees per chain
-- [ ] Handle different payment tokens
-- [ ] Create refund logic per chain
-- [ ] Add payment verification
+- [x] Implement host earnings accumulation per chain
+- [x] Track treasury fees per chain
+- [x] Handle different payment tokens
+- [x] Create refund logic per chain
+- [x] Add payment verification
 
 **Test Files** (TDD - Write First):
 - `tests/settlement/test_payment_distribution.rs`
@@ -232,6 +232,9 @@ This implementation plan adds multi-chain and multi-wallet support to the Fabsti
   - test_treasury_accumulation()
   - test_user_refund_calculation()
   - test_payment_verification()
+  - test_different_payment_tokens()
+  - test_chain_payment_statistics()
+  - test_multi_chain_payment_tracking()
 
 **Success Criteria**:
 - Payments distributed correctly
