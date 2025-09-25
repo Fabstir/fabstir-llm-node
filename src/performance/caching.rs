@@ -1,14 +1,14 @@
 use anyhow::Result;
+use lru::LruCache;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use lru::LruCache;
-use std::num::NonZeroUsize;
-use sha2::{Sha256, Digest};
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
@@ -144,14 +144,14 @@ impl EmbeddingGenerator {
             "sentence-transformers/all-MiniLM-L6-v2" => 384,
             _ => 512,
         };
-        Self { 
+        Self {
             dimension,
             model_name: model_name.to_string(),
         }
     }
-    
+
     pub fn with_dimension(dimension: usize) -> Self {
-        Self { 
+        Self {
             dimension,
             model_name: "default".to_string(),
         }
@@ -180,7 +180,7 @@ impl EmbeddingGenerator {
 
         Ok(embedding)
     }
-    
+
     // Alias for generate that tests expect
     pub async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>> {
         self.generate(text).await
@@ -189,7 +189,7 @@ impl EmbeddingGenerator {
     pub fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
         Self::calculate_cosine_similarity(a, b)
     }
-    
+
     pub fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return 0.0;
@@ -264,19 +264,19 @@ impl InferenceCache {
             let entry_clone = entry.clone();
             entry.access_count += 1;
             entry.last_accessed = Instant::now();
-            
+
             // Update stats after we're done with the entry
             state.stats.total_hits += 1;
             state.stats.cache_hits += 1;
-            state.stats.hit_rate = state.stats.total_hits as f64 / 
-                (state.stats.total_hits + state.stats.total_misses) as f64;
+            state.stats.hit_rate = state.stats.total_hits as f64
+                / (state.stats.total_hits + state.stats.total_misses) as f64;
             return Ok(entry_clone);
         }
 
         // Try semantic search if enabled
         if self.config.enable_semantic_cache {
             let prompt_embedding = state.embedding_generator.generate(&key.prompt).await?;
-            
+
             let mut best_match: Option<(f32, &SemanticCacheEntry)> = None;
             for semantic_entry in &state.semantic_entries {
                 if semantic_entry.key.model_id == key.model_id {
@@ -284,7 +284,7 @@ impl InferenceCache {
                         &prompt_embedding,
                         &semantic_entry.embedding,
                     );
-                    
+
                     if similarity >= self.config.similarity_threshold {
                         match best_match {
                             None => best_match = Some((similarity, semantic_entry)),
@@ -307,8 +307,7 @@ impl InferenceCache {
                 let total_misses = state.stats.total_misses;
                 state.stats.total_hits = total_hits;
                 state.stats.cache_hits = total_hits;
-                state.stats.hit_rate = total_hits as f64 / 
-                    (total_hits + total_misses) as f64;
+                state.stats.hit_rate = total_hits as f64 / (total_hits + total_misses) as f64;
                 return Ok(entry);
             }
         }
@@ -317,18 +316,17 @@ impl InferenceCache {
         let total_misses = state.stats.total_misses + 1;
         state.stats.total_misses = total_misses;
         state.stats.cache_misses = total_misses;
-        state.stats.hit_rate = total_hits as f64 / 
-            (total_hits + total_misses) as f64;
+        state.stats.hit_rate = total_hits as f64 / (total_hits + total_misses) as f64;
         Err(CacheError::CacheMiss { key: key.clone() }.into())
     }
-    
+
     // Semantic search method that tests expect
     pub async fn get_semantic(&self, key: &CacheKey) -> Result<CacheEntry> {
         // First try exact match
         if let Ok(entry) = self.get(key).await {
             return Ok(entry);
         }
-        
+
         if !self.config.enable_semantic_cache {
             return Err(CacheError::CacheMiss { key: key.clone() }.into());
         }
@@ -336,9 +334,12 @@ impl InferenceCache {
         // Generate embedding for the prompt (do this before acquiring write lock)
         let prompt_embedding = {
             let state = self.state.read().await;
-            state.embedding_generator.generate_embedding(&key.prompt).await?
+            state
+                .embedding_generator
+                .generate_embedding(&key.prompt)
+                .await?
         };
-        
+
         // Now acquire write lock for semantic search
         let mut state = self.state.write().await;
 
@@ -367,14 +368,13 @@ impl InferenceCache {
             let total_misses = state.stats.total_misses;
             state.stats.total_hits = total_hits;
             state.stats.cache_hits = total_hits;
-            state.stats.hit_rate = total_hits as f64 / 
-                (total_hits + total_misses) as f64;
+            state.stats.hit_rate = total_hits as f64 / (total_hits + total_misses) as f64;
             return Ok(entry);
         }
 
         Err(CacheError::CacheMiss { key: key.clone() }.into())
     }
-    
+
     fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
         EmbeddingGenerator::calculate_cosine_similarity(a, b)
     }
@@ -386,12 +386,15 @@ impl InferenceCache {
         let max_memory_bytes = self.config.max_memory_mb * 1024 * 1024;
 
         // Check memory limit
-        while state.memory_usage_bytes + entry_size > max_memory_bytes && !state.lru_cache.is_empty() {
+        while state.memory_usage_bytes + entry_size > max_memory_bytes
+            && !state.lru_cache.is_empty()
+        {
             // Evict oldest entry
             if let Some((evicted_key, evicted_entry)) = state.lru_cache.pop_lru() {
-                state.memory_usage_bytes -= evicted_entry.response.len() + std::mem::size_of::<CacheEntry>();
+                state.memory_usage_bytes -=
+                    evicted_entry.response.len() + std::mem::size_of::<CacheEntry>();
                 state.stats.evictions_count += 1;
-                
+
                 // Remove from semantic cache if present
                 state.semantic_entries.retain(|se| se.key != evicted_key);
             }
@@ -412,7 +415,7 @@ impl InferenceCache {
             access_count: 1,
             last_accessed: Instant::now(),
             embedding: embedding.clone(),
-            similarity_score: 1.0, // Exact match when storing
+            similarity_score: 1.0,    // Exact match when storing
             is_semantic_match: false, // Direct storage
         };
 
@@ -440,17 +443,17 @@ impl InferenceCache {
 
     pub async fn invalidate(&self, key: &CacheKey) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(entry) = state.lru_cache.pop(key) {
             state.memory_usage_bytes -= entry.response.len() + std::mem::size_of::<CacheEntry>();
             state.stats.entries_count = state.lru_cache.len();
             state.stats.total_entries = state.lru_cache.len();
             state.stats.memory_usage_mb = state.memory_usage_bytes as f64 / (1024.0 * 1024.0);
-            
+
             // Remove from semantic cache
             state.semantic_entries.retain(|se| se.key != *key);
         }
-        
+
         Ok(())
     }
 
@@ -469,24 +472,26 @@ impl InferenceCache {
         let mut state = self.state.write().await;
         let target_bytes = target_memory_mb * 1024 * 1024;
         let mut evicted_count = 0;
-        
+
         // Evict entries until we're under the target memory
         while state.memory_usage_bytes > target_bytes as usize && !state.lru_cache.is_empty() {
             // Get the LRU entry
-            let oldest_key = state.lru_cache.iter()
+            let oldest_key = state
+                .lru_cache
+                .iter()
                 .min_by_key(|(_, entry)| entry.last_accessed)
                 .map(|(k, _)| k.clone());
-                
+
             if let Some(key) = oldest_key {
                 if let Some(entry) = state.lru_cache.pop(&key) {
                     // Calculate approximate memory freed
-                    let entry_size = std::mem::size_of_val(&entry) + 
-                                   entry.response.len() + 
-                                   entry.embedding.as_ref().map(|e| e.len() * 4).unwrap_or(0);
-                    
+                    let entry_size = std::mem::size_of_val(&entry)
+                        + entry.response.len()
+                        + entry.embedding.as_ref().map(|e| e.len() * 4).unwrap_or(0);
+
                     state.memory_usage_bytes = state.memory_usage_bytes.saturating_sub(entry_size);
                     evicted_count += 1;
-                    
+
                     // Remove from semantic entries too
                     state.semantic_entries.retain(|se| se.key != key);
                 }
@@ -494,14 +499,14 @@ impl InferenceCache {
                 break;
             }
         }
-        
+
         // Update stats
         state.stats.cache_misses += evicted_count;
         state.stats.total_entries = state.lru_cache.len();
-        
+
         Ok(evicted_count)
     }
-    
+
     pub async fn get_stats(&self) -> CacheStats {
         let state = self.state.read().await;
         state.stats.clone()
@@ -517,7 +522,7 @@ impl InferenceCache {
             Err(CacheError::PersistenceError("No persistence path configured".to_string()).into())
         }
     }
-    
+
     // Alias for persist_to_disk that tests expect
     pub async fn persist(&self) -> Result<()> {
         self.persist_to_disk().await
@@ -538,28 +543,29 @@ impl InferenceCache {
         let mut state = self.state.write().await;
         let ttl = Duration::from_secs(self.config.ttl_seconds);
         let now = Instant::now();
-        
+
         let mut expired_keys = Vec::new();
-        
+
         // Collect expired keys
         for (key, entry) in state.lru_cache.iter() {
             if now.duration_since(entry.created_at) > ttl {
                 expired_keys.push(key.clone());
             }
         }
-        
+
         // Remove expired entries
         for key in expired_keys {
             if let Some(entry) = state.lru_cache.pop(&key) {
-                state.memory_usage_bytes -= entry.response.len() + std::mem::size_of::<CacheEntry>();
+                state.memory_usage_bytes -=
+                    entry.response.len() + std::mem::size_of::<CacheEntry>();
                 state.semantic_entries.retain(|se| se.key != key);
             }
         }
-        
+
         state.stats.entries_count = state.lru_cache.len();
         state.stats.total_entries = state.lru_cache.len();
         state.stats.memory_usage_mb = state.memory_usage_bytes as f64 / (1024.0 * 1024.0);
-        
+
         Ok(())
     }
 }
@@ -576,42 +582,61 @@ impl CacheWarming {
     pub fn new(cache: Arc<InferenceCache>) -> Self {
         Self { cache }
     }
-    pub async fn warm_from_prompts(&self, model_id: &str, prompt_response_pairs: Vec<(String, String)>) -> Result<()> {
+    pub async fn warm_from_prompts(
+        &self,
+        model_id: &str,
+        prompt_response_pairs: Vec<(String, String)>,
+    ) -> Result<()> {
         for (prompt, response) in prompt_response_pairs {
             let key = CacheKey {
                 model_id: model_id.to_string(),
                 prompt: prompt.clone(),
                 parameters_hash: "default".to_string(),
             };
-            
+
             let tokens = response.len() / 4; // Approximate token count
-            
+
             self.cache.put(&key, &response, tokens).await?;
         }
         Ok(())
     }
 
-    pub async fn warm_cache(cache: &InferenceCache, prompts: Vec<(&str, &str, &str)>) -> Result<()> {
+    pub async fn warm_cache(
+        cache: &InferenceCache,
+        prompts: Vec<(&str, &str, &str)>,
+    ) -> Result<()> {
         for (model_id, prompt, response) in prompts {
             let key = CacheKey {
                 model_id: model_id.to_string(),
                 prompt: prompt.to_string(),
                 parameters_hash: "default".to_string(),
             };
-            
+
             cache.put(&key, response, 100).await?;
         }
-        
+
         Ok(())
     }
 
     pub async fn warm_from_popular(cache: &InferenceCache) -> Result<()> {
         let popular_prompts = vec![
-            ("llama-7b", "What is the capital of France?", "The capital of France is Paris."),
-            ("llama-7b", "Explain quantum computing", "Quantum computing uses quantum bits..."),
-            ("llama-7b", "Write a Python hello world", "print('Hello, World!')"),
+            (
+                "llama-7b",
+                "What is the capital of France?",
+                "The capital of France is Paris.",
+            ),
+            (
+                "llama-7b",
+                "Explain quantum computing",
+                "Quantum computing uses quantum bits...",
+            ),
+            (
+                "llama-7b",
+                "Write a Python hello world",
+                "print('Hello, World!')",
+            ),
         ];
-        
+
         Self::warm_cache(cache, popular_prompts).await
     }
 }

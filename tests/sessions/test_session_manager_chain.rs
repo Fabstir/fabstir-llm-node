@@ -1,5 +1,5 @@
 use fabstir_llm_node::api::websocket::manager::SessionManager;
-use fabstir_llm_node::api::websocket::session::{WebSocketSession, SessionConfig};
+use fabstir_llm_node::api::websocket::session::{SessionConfig, WebSocketSession};
 use fabstir_llm_node::config::chains::ChainRegistry;
 
 #[tokio::test]
@@ -9,7 +9,9 @@ async fn test_create_session_with_chain() {
 
     // Create session on Base Sepolia
     let session_id = "test_session_1";
-    let result = manager.create_session(session_id, config.clone(), 84532).await;
+    let result = manager
+        .create_session(session_id, config.clone(), 84532)
+        .await;
     assert!(result.is_ok());
 
     // Verify session was created with correct chain
@@ -35,8 +37,14 @@ async fn test_get_session_chain() {
     let config = SessionConfig::default();
 
     // Create sessions on different chains
-    manager.create_session("base_session", config.clone(), 84532).await.unwrap();
-    manager.create_session("opbnb_session", config, 5611).await.unwrap();
+    manager
+        .create_session("base_session", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("opbnb_session", config, 5611)
+        .await
+        .unwrap();
 
     // Test get_session_chain method
     let chain = manager.get_session_chain("base_session").await;
@@ -56,11 +64,26 @@ async fn test_list_sessions_by_chain() {
     let config = SessionConfig::default();
 
     // Create multiple sessions on different chains
-    manager.create_session("base_1", config.clone(), 84532).await.unwrap();
-    manager.create_session("base_2", config.clone(), 84532).await.unwrap();
-    manager.create_session("base_3", config.clone(), 84532).await.unwrap();
-    manager.create_session("opbnb_1", config.clone(), 5611).await.unwrap();
-    manager.create_session("opbnb_2", config, 5611).await.unwrap();
+    manager
+        .create_session("base_1", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("base_2", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("base_3", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("opbnb_1", config.clone(), 5611)
+        .await
+        .unwrap();
+    manager
+        .create_session("opbnb_2", config, 5611)
+        .await
+        .unwrap();
 
     // List Base Sepolia sessions
     let base_sessions = manager.list_sessions_by_chain(84532).await;
@@ -88,11 +111,26 @@ async fn test_session_chain_stats() {
     let config = SessionConfig::default();
 
     // Create sessions on different chains
-    manager.create_session("base_1", config.clone(), 84532).await.unwrap();
-    manager.create_session("base_2", config.clone(), 84532).await.unwrap();
-    manager.create_session("opbnb_1", config.clone(), 5611).await.unwrap();
-    manager.create_session("opbnb_2", config.clone(), 5611).await.unwrap();
-    manager.create_session("opbnb_3", config, 5611).await.unwrap();
+    manager
+        .create_session("base_1", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("base_2", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("opbnb_1", config.clone(), 5611)
+        .await
+        .unwrap();
+    manager
+        .create_session("opbnb_2", config.clone(), 5611)
+        .await
+        .unwrap();
+    manager
+        .create_session("opbnb_3", config, 5611)
+        .await
+        .unwrap();
 
     // Get chain statistics
     let stats = manager.get_chain_statistics().await;
@@ -113,9 +151,18 @@ async fn test_cross_chain_session_query() {
     let config = SessionConfig::default();
 
     // Create sessions on different chains
-    manager.create_session("session_1", config.clone(), 84532).await.unwrap();
-    manager.create_session("session_2", config.clone(), 5611).await.unwrap();
-    manager.create_session("session_3", config, 84532).await.unwrap();
+    manager
+        .create_session("session_1", config.clone(), 84532)
+        .await
+        .unwrap();
+    manager
+        .create_session("session_2", config.clone(), 5611)
+        .await
+        .unwrap();
+    manager
+        .create_session("session_3", config, 84532)
+        .await
+        .unwrap();
 
     // Query across all chains
     let all_sessions = manager.get_active_sessions().await;
@@ -142,7 +189,9 @@ async fn test_session_migration_to_chain() {
     manager.register_session(legacy_session).await.unwrap();
 
     // Migrate session to specific chain
-    let result = manager.migrate_session_to_chain("legacy_session", 5611, &registry).await;
+    let result = manager
+        .migrate_session_to_chain("legacy_session", 5611, &registry)
+        .await;
     assert!(result.is_ok());
 
     // Verify migration
@@ -150,7 +199,9 @@ async fn test_session_migration_to_chain() {
     assert_eq!(migrated.chain_id, 5611);
 
     // Try to migrate to invalid chain
-    let result = manager.migrate_session_to_chain("legacy_session", 99999, &registry).await;
+    let result = manager
+        .migrate_session_to_chain("legacy_session", 99999, &registry)
+        .await;
     assert!(result.is_err());
 }
 
@@ -184,13 +235,20 @@ async fn test_session_chain_validation() {
     let registry = ChainRegistry::new();
 
     // Create session with validated chain
-    let result = manager.create_session_validated("valid_session", config.clone(), 84532, &registry).await;
+    let result = manager
+        .create_session_validated("valid_session", config.clone(), 84532, &registry)
+        .await;
     assert!(result.is_ok());
 
     // Try to create session with invalid chain
-    let result = manager.create_session_validated("invalid_session", config, 99999, &registry).await;
+    let result = manager
+        .create_session_validated("invalid_session", config, 99999, &registry)
+        .await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Unsupported chain"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Unsupported chain"));
 
     // Verify invalid session was not created
     let session = manager.get_session("invalid_session").await;

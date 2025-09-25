@@ -1,8 +1,8 @@
 use fabstir_llm_node::api::{
-    ChainInfo, ChainsResponse, ChainStatistics, ChainStatsResponse,
-    SessionInfo, SessionStatus, SessionInfoResponse, TotalStatistics,
+    ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse, SessionInfo,
+    SessionInfoResponse, SessionStatus, TotalStatistics,
 };
-use fabstir_llm_node::blockchain::{ChainRegistry, ChainConfig};
+use fabstir_llm_node::blockchain::{ChainConfig, ChainRegistry};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -99,22 +99,20 @@ fn test_chain_info_serialization() {
 fn test_chains_response_structure() {
     setup_test_env();
 
-    let chains = vec![
-        ChainInfo {
-            chain_id: 84532,
-            name: "Base Sepolia".to_string(),
-            native_token: "ETH".to_string(),
-            rpc_url: "https://sepolia.base.org".to_string(),
-            contracts: fabstir_llm_node::blockchain::ContractAddresses {
-                job_marketplace: "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944".to_string(),
-                node_registry: "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".to_string(),
-                proof_system: "0x2ACcc60893872A499700908889B38C5420CBcFD1".to_string(),
-                host_earnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776".to_string(),
-                model_registry: "0x92b2De840bB2171203011A6dBA928d855cA8183E".to_string(),
-                usdc_token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string(),
-            },
+    let chains = vec![ChainInfo {
+        chain_id: 84532,
+        name: "Base Sepolia".to_string(),
+        native_token: "ETH".to_string(),
+        rpc_url: "https://sepolia.base.org".to_string(),
+        contracts: fabstir_llm_node::blockchain::ContractAddresses {
+            job_marketplace: "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944".to_string(),
+            node_registry: "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".to_string(),
+            proof_system: "0x2ACcc60893872A499700908889B38C5420CBcFD1".to_string(),
+            host_earnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776".to_string(),
+            model_registry: "0x92b2De840bB2171203011A6dBA928d855cA8183E".to_string(),
+            usdc_token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string(),
         },
-    ];
+    }];
 
     let response = ChainsResponse {
         chains,
@@ -204,16 +202,14 @@ fn test_inference_request_with_chain() {
 fn test_models_response_with_chain() {
     setup_test_env();
 
-    use fabstir_llm_node::api::{ModelsResponse, ModelInfo};
+    use fabstir_llm_node::api::{ModelInfo, ModelsResponse};
 
     let response = ModelsResponse {
-        models: vec![
-            ModelInfo {
-                id: "model1".to_string(),
-                name: "TinyLlama".to_string(),
-                description: Some("Small model".to_string()),
-            }
-        ],
+        models: vec![ModelInfo {
+            id: "model1".to_string(),
+            name: "TinyLlama".to_string(),
+            description: Some("Small model".to_string()),
+        }],
         chain_id: Some(84532),
         chain_name: Some("Base Sepolia".to_string()),
     };

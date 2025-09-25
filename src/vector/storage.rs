@@ -1,13 +1,13 @@
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use chrono::{DateTime, Utc, Duration};
 
-use crate::storage::{S5Storage, S5StorageConfig, S5Backend, S5Client};
 use super::client::VectorEntry;
+use crate::storage::{S5Backend, S5Client, S5Storage, S5StorageConfig};
 
 pub type VectorId = String;
 
@@ -180,14 +180,18 @@ impl MockStorage {
         }
     }
 
-    async fn store_vector(&self, entry: &VectorEntry, base_path: &str) -> Result<StorageResult, StorageError> {
+    async fn store_vector(
+        &self,
+        entry: &VectorEntry,
+        base_path: &str,
+    ) -> Result<StorageResult, StorageError> {
         let mut vectors = self.vectors.write().await;
         let mut metadata_map = self.metadata.write().await;
         let mut stats = self.stats.write().await;
 
         let vector_size = entry.vector.len() * 4 + entry.metadata.len() * 50; // Rough estimate
         let storage_path = format!("{}/mock/{}", base_path, entry.id);
-        
+
         let metadata = StorageMetadata {
             vector_id: entry.id.clone(),
             storage_path: storage_path.clone(),
@@ -217,7 +221,8 @@ impl MockStorage {
 
     async fn get_vector(&self, id: &str) -> Result<VectorEntry, StorageError> {
         let vectors = self.vectors.read().await;
-        vectors.get(id)
+        vectors
+            .get(id)
             .cloned()
             .ok_or_else(|| StorageError::NotFound(id.to_string()))
     }
@@ -286,29 +291,40 @@ impl VectorStorage {
     }
 
     pub async fn store_vector(&self, entry: &VectorEntry) -> Result<StorageResult, StorageError> {
-        self.store_vector_with_path(entry, &self.config.base_path).await
+        self.store_vector_with_path(entry, &self.config.base_path)
+            .await
     }
 
-    pub async fn store_vector_with_path(&self, entry: &VectorEntry, path: &str) -> Result<StorageResult, StorageError> {
+    pub async fn store_vector_with_path(
+        &self,
+        entry: &VectorEntry,
+        path: &str,
+    ) -> Result<StorageResult, StorageError> {
         match &self.config.backend {
             StorageBackend::Mock => {
-                self.mock_storage.as_ref().unwrap().store_vector(entry, path).await
+                self.mock_storage
+                    .as_ref()
+                    .unwrap()
+                    .store_vector(entry, path)
+                    .await
             }
-            StorageBackend::S5(client) => {
-                self.store_vector_s5(entry, path).await
-            }
+            StorageBackend::S5(client) => self.store_vector_s5(entry, path).await,
         }
     }
 
-    async fn store_vector_s5(&self, entry: &VectorEntry, base_path: &str) -> Result<StorageResult, StorageError> {
+    async fn store_vector_s5(
+        &self,
+        entry: &VectorEntry,
+        base_path: &str,
+    ) -> Result<StorageResult, StorageError> {
         let s5_storage = self.s5_storage.as_ref().unwrap();
-        
+
         // Determine index type based on metadata or age
         let index_type = self.determine_index_type(entry).await;
-        
+
         // Serialize vector entry
         let serialized = serde_json::to_vec(entry)?;
-        
+
         // Compress if enabled
         let (data, compressed) = if self.config.compression_enabled {
             (self.compress_data(&serialized)?, true)
@@ -319,14 +335,14 @@ impl VectorStorage {
         // Chunk if necessary
         let chunks = self.chunk_data(&data)?;
         let chunk_count = chunks.len();
-        
+
         // Store chunks
         let mut chunk_paths = Vec::new();
         for (i, chunk) in chunks.into_iter().enumerate() {
             let chunk_path = format!("{}/{}/chunk_{}", base_path, entry.id, i);
-            
+
             // Convert to S5 format and store
-            
+
             s5_storage.put(&chunk_path, chunk).await?;
             chunk_paths.push(chunk_path);
         }
@@ -358,18 +374,14 @@ impl VectorStorage {
 
     pub async fn get_vector(&self, id: &str) -> Result<VectorEntry, StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                self.mock_storage.as_ref().unwrap().get_vector(id).await
-            }
-            StorageBackend::S5(_) => {
-                self.get_vector_s5(id).await
-            }
+            StorageBackend::Mock => self.mock_storage.as_ref().unwrap().get_vector(id).await,
+            StorageBackend::S5(_) => self.get_vector_s5(id).await,
         }
     }
 
     async fn get_vector_s5(&self, id: &str) -> Result<VectorEntry, StorageError> {
         let s5_storage = self.s5_storage.as_ref().unwrap();
-        
+
         // Load metadata first
         let metadata_path = format!("{}/{}/metadata.json", self.config.base_path, id);
         let metadata_bytes = s5_storage.get(&metadata_path).await?;
@@ -395,7 +407,10 @@ impl VectorStorage {
         Ok(entry)
     }
 
-    pub async fn store_batch(&self, entries: Vec<VectorEntry>) -> Result<BatchStoreResult, StorageError> {
+    pub async fn store_batch(
+        &self,
+        entries: Vec<VectorEntry>,
+    ) -> Result<BatchStoreResult, StorageError> {
         let mut successful = 0;
         let mut failed = 0;
         let mut errors: Vec<String> = Vec::new();
@@ -419,18 +434,14 @@ impl VectorStorage {
 
     pub async fn delete_vector(&self, id: &str) -> Result<(), StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                self.mock_storage.as_ref().unwrap().delete_vector(id).await
-            }
-            StorageBackend::S5(_) => {
-                self.delete_vector_s5(id).await
-            }
+            StorageBackend::Mock => self.mock_storage.as_ref().unwrap().delete_vector(id).await,
+            StorageBackend::S5(_) => self.delete_vector_s5(id).await,
         }
     }
 
     async fn delete_vector_s5(&self, id: &str) -> Result<(), StorageError> {
         let s5_storage = self.s5_storage.as_ref().unwrap();
-        
+
         // Load metadata to know how many chunks to delete
         let metadata_path = format!("{}/{}/metadata.json", self.config.base_path, id);
         if let Ok(metadata_bytes) = s5_storage.get(&metadata_path).await {
@@ -458,16 +469,12 @@ impl VectorStorage {
 
     pub async fn vector_exists(&self, id: &str) -> Result<bool, StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                self.mock_storage.as_ref().unwrap().vector_exists(id).await
-            }
-            StorageBackend::S5(_) => {
-                match self.get_vector(id).await {
-                    Ok(_) => Ok(true),
-                    Err(StorageError::NotFound(_)) => Ok(false),
-                    Err(e) => Err(e),
-                }
-            }
+            StorageBackend::Mock => self.mock_storage.as_ref().unwrap().vector_exists(id).await,
+            StorageBackend::S5(_) => match self.get_vector(id).await {
+                Ok(_) => Ok(true),
+                Err(StorageError::NotFound(_)) => Ok(false),
+                Err(e) => Err(e),
+            },
         }
     }
 
@@ -476,38 +483,51 @@ impl VectorStorage {
             StorageBackend::Mock => {
                 let all_vectors = self.mock_storage.as_ref().unwrap().list_vectors().await?;
                 // Filter by path in metadata (simplified)
-                Ok(all_vectors.into_iter()
-                    .filter(|v| v.metadata.get("category").map_or(false, |cat| path.contains(cat)))
+                Ok(all_vectors
+                    .into_iter()
+                    .filter(|v| {
+                        v.metadata
+                            .get("category")
+                            .map_or(false, |cat| path.contains(cat))
+                    })
                     .collect())
             }
             StorageBackend::S5(_) => {
                 // List directory and reconstruct vectors
                 let entries = self.s5_storage.as_ref().unwrap().list(path).await?;
                 let mut vectors = Vec::new();
-                
+
                 for entry in entries {
-                    if let Some(vector_id) = entry.name.strip_suffix("/metadata.json").and_then(|s| s.split('/').last()) {
+                    if let Some(vector_id) = entry
+                        .name
+                        .strip_suffix("/metadata.json")
+                        .and_then(|s| s.split('/').last())
+                    {
                         if let Ok(vector) = self.get_vector(vector_id).await {
                             vectors.push(vector);
                         }
                     }
                 }
-                
+
                 Ok(vectors)
             }
         }
     }
 
-    pub async fn query_by_metadata(&self, filter: HashMap<String, String>) -> Result<Vec<VectorEntry>, StorageError> {
+    pub async fn query_by_metadata(
+        &self,
+        filter: HashMap<String, String>,
+    ) -> Result<Vec<VectorEntry>, StorageError> {
         // This is a simplified implementation - in practice would use indexed metadata
         match &self.config.backend {
             StorageBackend::Mock => {
                 let all_vectors = self.mock_storage.as_ref().unwrap().list_vectors().await?;
-                Ok(all_vectors.into_iter()
+                Ok(all_vectors
+                    .into_iter()
                     .filter(|v| {
-                        filter.iter().all(|(key, value)| {
-                            v.metadata.get(key).map_or(false, |v| v == value)
-                        })
+                        filter
+                            .iter()
+                            .all(|(key, value)| v.metadata.get(key).map_or(false, |v| v == value))
                     })
                     .collect())
             }
@@ -554,9 +574,7 @@ impl VectorStorage {
 
     pub async fn get_stats(&self) -> Result<StorageStats, StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                self.mock_storage.as_ref().unwrap().get_stats().await
-            }
+            StorageBackend::Mock => self.mock_storage.as_ref().unwrap().get_stats().await,
             StorageBackend::S5(_) => {
                 // Would need to scan storage to compute stats in real implementation
                 Ok(StorageStats {
@@ -575,18 +593,21 @@ impl VectorStorage {
 
     pub async fn get_chunk_info(&self, id: &str) -> Result<ChunkInfo, StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                Ok(ChunkInfo {
-                    total_chunks: 1,
-                    chunk_size_bytes: self.config.chunk_size_bytes,
-                    chunk_paths: vec![format!("mock/{}", id)],
-                })
-            }
+            StorageBackend::Mock => Ok(ChunkInfo {
+                total_chunks: 1,
+                chunk_size_bytes: self.config.chunk_size_bytes,
+                chunk_paths: vec![format!("mock/{}", id)],
+            }),
             StorageBackend::S5(_) => {
                 let metadata_path = format!("{}/{}/metadata.json", self.config.base_path, id);
-                let metadata_bytes = self.s5_storage.as_ref().unwrap().get(&metadata_path).await?;
+                let metadata_bytes = self
+                    .s5_storage
+                    .as_ref()
+                    .unwrap()
+                    .get(&metadata_path)
+                    .await?;
                 let metadata: StorageMetadata = serde_json::from_slice(&metadata_bytes)?;
-                
+
                 let chunk_paths = (0..metadata.chunk_count)
                     .map(|i| format!("{}/{}/chunk_{}", self.config.base_path, id, i))
                     .collect();
@@ -602,19 +623,22 @@ impl VectorStorage {
 
     pub async fn get_compression_info(&self, id: &str) -> Result<CompressionInfo, StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                Ok(CompressionInfo {
-                    original_size: 10000,
-                    compressed_size: 1000,
-                    compression_ratio: 10.0,
-                    compression_type: "zstd".to_string(),
-                })
-            }
+            StorageBackend::Mock => Ok(CompressionInfo {
+                original_size: 10000,
+                compressed_size: 1000,
+                compression_ratio: 10.0,
+                compression_type: "zstd".to_string(),
+            }),
             StorageBackend::S5(_) => {
                 let metadata_path = format!("{}/{}/metadata.json", self.config.base_path, id);
-                let metadata_bytes = self.s5_storage.as_ref().unwrap().get(&metadata_path).await?;
+                let metadata_bytes = self
+                    .s5_storage
+                    .as_ref()
+                    .unwrap()
+                    .get(&metadata_path)
+                    .await?;
                 let metadata: StorageMetadata = serde_json::from_slice(&metadata_bytes)?;
-                
+
                 Ok(CompressionInfo {
                     original_size: metadata.original_size,
                     compressed_size: metadata.stored_size,
@@ -627,7 +651,7 @@ impl VectorStorage {
 
     pub async fn create_backup(&self, backup_path: &str) -> Result<BackupResult, StorageError> {
         let backup_id = Uuid::new_v4().to_string();
-        
+
         match &self.config.backend {
             StorageBackend::Mock => {
                 let stats = self.get_stats().await?;
@@ -643,22 +667,23 @@ impl VectorStorage {
                 Ok(BackupResult {
                     success: true,
                     backup_id,
-                    vectors_backed_up: 5, // Simulated
+                    vectors_backed_up: 5,           // Simulated
                     backup_size_bytes: 1024 * 1024, // 1MB simulated
                 })
             }
         }
     }
 
-    pub async fn restore_from_backup(&self, backup_id: &str) -> Result<RestoreResult, StorageError> {
+    pub async fn restore_from_backup(
+        &self,
+        backup_id: &str,
+    ) -> Result<RestoreResult, StorageError> {
         match &self.config.backend {
-            StorageBackend::Mock => {
-                Ok(RestoreResult {
-                    success: true,
-                    vectors_restored: 5,
-                    errors: Vec::new(),
-                })
-            }
+            StorageBackend::Mock => Ok(RestoreResult {
+                success: true,
+                vectors_restored: 5,
+                errors: Vec::new(),
+            }),
             StorageBackend::S5(_) => {
                 // Simplified restore implementation
                 Ok(RestoreResult {
@@ -674,13 +699,14 @@ impl VectorStorage {
         // Check if vector has creation timestamp
         if let Some(created_at_str) = entry.metadata.get("created_at") {
             if let Ok(created_at) = created_at_str.parse::<DateTime<Utc>>() {
-                let threshold = Utc::now() - Duration::hours(self.config.recent_threshold_hours as i64);
+                let threshold =
+                    Utc::now() - Duration::hours(self.config.recent_threshold_hours as i64);
                 if created_at < threshold {
                     return IndexType::Historical;
                 }
             }
         }
-        
+
         match self.config.index_type {
             IndexType::Hybrid => IndexType::Recent, // Default to recent for new entries
             ref other => other.clone(),
@@ -694,7 +720,7 @@ impl VectorStorage {
 
         let mut chunks = Vec::new();
         let mut offset = 0;
-        
+
         while offset < data.len() {
             let end = std::cmp::min(offset + self.config.chunk_size_bytes, data.len());
             chunks.push(data[offset..end].to_vec());
@@ -707,7 +733,7 @@ impl VectorStorage {
     fn compress_data(&self, data: &[u8]) -> Result<Vec<u8>, StorageError> {
         // Simple compression simulation - in real implementation would use zstd
         if data.len() > 1000 {
-            Ok(data[..data.len()/2].to_vec()) // Simulate 50% compression
+            Ok(data[..data.len() / 2].to_vec()) // Simulate 50% compression
         } else {
             Ok(data.to_vec())
         }

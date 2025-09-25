@@ -1,13 +1,13 @@
 use anyhow::Result;
+use chrono::Utc;
+use futures::Stream;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
-use futures::Stream;
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use chrono::Utc;
 use uuid::Uuid;
 
 use super::ModelFormat;
@@ -194,7 +194,7 @@ impl ModelDownloader {
     pub async fn new(config: DownloadConfig) -> Result<Self> {
         // Create download directory if it doesn't exist
         tokio::fs::create_dir_all(&config.download_dir).await?;
-        
+
         Ok(Self {
             semaphore: Arc::new(Semaphore::new(config.max_concurrent_downloads)),
             config,
@@ -204,10 +204,10 @@ impl ModelDownloader {
 
     pub async fn download_model(&self, source: DownloadSource) -> Result<DownloadResult> {
         let _permit = self.semaphore.acquire().await?;
-        
+
         let download_id = Uuid::new_v4().to_string();
         let local_path = self.generate_local_path(&source).await?;
-        
+
         // Check storage space
         let required_size = self.estimate_size(&source).await?;
         let space_info = self.check_storage_space().await?;
@@ -215,16 +215,17 @@ impl ModelDownloader {
             return Err(DownloadError::InsufficientSpace {
                 required: required_size,
                 available: space_info.available_bytes,
-            }.into());
+            }
+            .into());
         }
 
         let start_time = std::time::Instant::now();
-        
+
         // Mock download implementation
         let result = self.perform_download(&source, &local_path, None).await?;
-        
+
         let download_time_ms = start_time.elapsed().as_millis() as u64;
-        
+
         Ok(DownloadResult {
             status: DownloadStatus::Completed,
             local_path: result.local_path,
@@ -245,15 +246,15 @@ impl ModelDownloader {
     ) -> Result<impl Stream<Item = DownloadProgress>> {
         let (tx, rx) = mpsc::channel(32);
         let downloader = self.clone();
-        
+
         tokio::spawn(async move {
             let total_bytes = 10_000_000; // Mock 10MB file
             let chunk_size = 100_000; // 100KB chunks
-            
+
             for bytes_downloaded in (0..=total_bytes).step_by(chunk_size) {
                 let bytes_downloaded = bytes_downloaded.min(total_bytes);
                 let percentage = (bytes_downloaded as f32 / total_bytes as f32) * 100.0;
-                
+
                 let progress = DownloadProgress {
                     bytes_downloaded,
                     total_bytes,
@@ -266,17 +267,17 @@ impl ModelDownloader {
                         DownloadStatus::InProgress
                     },
                 };
-                
+
                 if tx.send(progress).await.is_err() {
                     break;
                 }
-                
+
                 if bytes_downloaded < total_bytes {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
         });
-        
+
         Ok(ReceiverStream::new(rx))
     }
 
@@ -288,12 +289,12 @@ impl ModelDownloader {
         // For mock implementation, just perform regular download
         // In real implementation, would add auth headers
         let mut result = self.download_model(source).await?;
-        
+
         // Mark as requiring auth in metadata
         if let Some(ref mut metadata) = result.metadata {
             metadata.requires_auth = true;
         }
-        
+
         Ok(result)
     }
 
@@ -303,17 +304,18 @@ impl ModelDownloader {
         expected_checksum: &str,
     ) -> Result<DownloadResult> {
         let result = self.download_model(source).await?;
-        
+
         // Mock checksum verification
         let calculated_checksum = "abc123def456789"; // Mock checksum
-        
+
         if calculated_checksum != expected_checksum {
             return Err(DownloadError::ChecksumMismatch {
                 expected: expected_checksum.to_string(),
                 actual: calculated_checksum.to_string(),
-            }.into());
+            }
+            .into());
         }
-        
+
         Ok(DownloadResult {
             checksum_verified: true,
             ..result
@@ -323,7 +325,7 @@ impl ModelDownloader {
     pub async fn start_download(&self, source: DownloadSource) -> Result<String> {
         let download_id = Uuid::new_v4().to_string();
         let local_path = self.generate_local_path(&source).await?;
-        
+
         let state = DownloadState {
             id: download_id.clone(),
             source,
@@ -333,9 +335,12 @@ impl ModelDownloader {
             total_bytes: 10_000_000, // Mock 10MB
             start_time: std::time::Instant::now(),
         };
-        
-        self.downloads.write().await.insert(download_id.clone(), state);
-        
+
+        self.downloads
+            .write()
+            .await
+            .insert(download_id.clone(), state);
+
         Ok(download_id)
     }
 
@@ -358,11 +363,11 @@ impl ModelDownloader {
                 return Err(anyhow::anyhow!("Download not found"));
             }
         };
-        
+
         // Continue download from where it left off
         let mut result = self.download_model(source).await?;
         result.resumed_from_byte = resumed_from;
-        
+
         Ok(result)
     }
 
@@ -370,12 +375,12 @@ impl ModelDownloader {
         let mut downloads = self.downloads.write().await;
         if let Some(state) = downloads.get_mut(download_id) {
             state.status = DownloadStatus::Cancelled;
-            
+
             // Clean up partial file
             if state.local_path.exists() {
                 tokio::fs::remove_file(&state.local_path).await.ok();
             }
-            
+
             Ok(())
         } else {
             Err(anyhow::anyhow!("Download not found"))
@@ -399,7 +404,7 @@ impl ModelDownloader {
             } else {
                 0.0
             };
-            
+
             Ok(DownloadInfo {
                 download_id: state.id.clone(),
                 source: state.source.clone(),
@@ -438,7 +443,7 @@ impl ModelDownloader {
                 url.split('/').last().unwrap_or("model.gguf").to_string()
             }
         };
-        
+
         Ok(self.config.download_dir.join(filename))
     }
 
@@ -470,32 +475,36 @@ impl ModelDownloader {
         // Mock download with retry logic for flaky servers
         let mut retries = 0;
         let max_retries = self.config.retry_policy.max_retries;
-        
+
         while retries <= max_retries {
             match self.try_download(source, local_path).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     if retries == max_retries {
                         if source.is_flaky() {
-                            return Err(DownloadError::MaxRetriesExceeded { 
-                                attempts: retries 
-                            }.into());
+                            return Err(
+                                DownloadError::MaxRetriesExceeded { attempts: retries }.into()
+                            );
                         } else {
                             return Err(e);
                         }
                     }
-                    
+
                     // Wait with exponential backoff
-                    let delay = self.config.retry_policy.initial_delay_ms * 
-                        (self.config.retry_policy.exponential_base.powi(retries as i32) as u64);
+                    let delay = self.config.retry_policy.initial_delay_ms
+                        * (self
+                            .config
+                            .retry_policy
+                            .exponential_base
+                            .powi(retries as i32) as u64);
                     let delay = delay.min(self.config.retry_policy.max_delay_ms);
-                    
+
                     tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
                     retries += 1;
                 }
             }
         }
-        
+
         unreachable!()
     }
 
@@ -506,15 +515,14 @@ impl ModelDownloader {
     ) -> Result<DownloadResult> {
         // Simulate network delay and bandwidth throttling
         let mut download_duration = tokio::time::Duration::from_millis(250);
-        
+
         if let Some(bandwidth_limit) = self.config.max_bandwidth_bytes_per_sec {
             let size_bytes = 1_000_000u64; // 1MB mock file
             let min_duration_secs = size_bytes / bandwidth_limit;
-            download_duration = download_duration.max(
-                tokio::time::Duration::from_secs(min_duration_secs)
-            );
+            download_duration =
+                download_duration.max(tokio::time::Duration::from_secs(min_duration_secs));
         }
-        
+
         tokio::time::sleep(download_duration).await;
 
         // Mock file creation
@@ -522,8 +530,13 @@ impl ModelDownloader {
         tokio::fs::write(local_path, mock_data).await?;
 
         let source_url = match source {
-            DownloadSource::HuggingFace { repo_id, filename, .. } => {
-                format!("https://huggingface.co/{}/resolve/main/{}", repo_id, filename)
+            DownloadSource::HuggingFace {
+                repo_id, filename, ..
+            } => {
+                format!(
+                    "https://huggingface.co/{}/resolve/main/{}",
+                    repo_id, filename
+                )
             }
             DownloadSource::S5 { cid, path, gateway } => {
                 let gateway = gateway.as_deref().unwrap_or("https://s5.cx");
@@ -533,9 +546,10 @@ impl ModelDownloader {
         };
 
         let format = ModelFormat::from_extension(
-            local_path.extension()
+            local_path
+                .extension()
                 .and_then(|s| s.to_str())
-                .unwrap_or("gguf")
+                .unwrap_or("gguf"),
         );
 
         let metadata = self.extract_metadata(source, &format).await?;
@@ -565,12 +579,10 @@ impl ModelDownloader {
         format: &ModelFormat,
     ) -> Result<ModelMetadata> {
         let (model_id, model_name) = match source {
-            DownloadSource::HuggingFace { repo_id, filename, .. } => {
-                (format!("{}:{}", repo_id, filename), repo_id.clone())
-            }
-            DownloadSource::S5 { cid, .. } => {
-                (cid.clone(), "S5 Model".to_string())
-            }
+            DownloadSource::HuggingFace {
+                repo_id, filename, ..
+            } => (format!("{}:{}", repo_id, filename), repo_id.clone()),
+            DownloadSource::S5 { cid, .. } => (cid.clone(), "S5 Model".to_string()),
             DownloadSource::Http { url, .. } => {
                 let name = url.split('/').last().unwrap_or("HTTP Model");
                 (url.clone(), name.to_string())

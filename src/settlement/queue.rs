@@ -1,9 +1,9 @@
-pub use super::types::{SettlementRequest, SettlementStatus};
 use super::types::SettlementError;
-use std::collections::{HashMap, BinaryHeap};
+pub use super::types::{SettlementRequest, SettlementStatus};
 use std::cmp::Ordering;
-use tokio::sync::RwLock;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 // Wrapper for priority queue ordering
 #[derive(Clone)]
@@ -23,7 +23,9 @@ impl Ord for PriorityRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         // Higher priority first (BinaryHeap is a max-heap)
         // So we want higher priority values to be "greater"
-        self.request.priority.cmp(&other.request.priority)
+        self.request
+            .priority
+            .cmp(&other.request.priority)
             .then_with(|| other.request.retry_count.cmp(&self.request.retry_count))
     }
 }
@@ -57,17 +59,25 @@ impl SettlementQueue {
         let chain_id = request.chain_id;
 
         // Add to main storage
-        self.requests.write().await.insert(session_id, request.clone());
+        self.requests
+            .write()
+            .await
+            .insert(session_id, request.clone());
 
         // Add to chain index
-        self.by_chain.write().await
+        self.by_chain
+            .write()
+            .await
             .entry(chain_id)
             .or_insert_with(Vec::new)
             .push(session_id);
 
         // Add to priority queue if pending
         if request.status == SettlementStatus::Pending {
-            self.pending_queue.write().await.push(PriorityRequest { request });
+            self.pending_queue
+                .write()
+                .await
+                .push(PriorityRequest { request });
         }
     }
 
@@ -112,7 +122,7 @@ impl SettlementQueue {
             // Re-add to queue if changed to pending
             if status == SettlementStatus::Pending {
                 self.pending_queue.write().await.push(PriorityRequest {
-                    request: request.clone()
+                    request: request.clone(),
                 });
             }
         }
@@ -129,7 +139,7 @@ impl SettlementQueue {
             request.status = SettlementStatus::Pending;
             // Re-add to pending queue
             self.pending_queue.write().await.push(PriorityRequest {
-                request: request.clone()
+                request: request.clone(),
             });
         }
     }

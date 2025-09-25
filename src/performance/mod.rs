@@ -1,36 +1,33 @@
 // src/performance/mod.rs - Performance optimization modules
 
-pub mod gpu_management;
 pub mod batching;
 pub mod caching;
+pub mod gpu_management;
 pub mod load_balancing;
 
 // Re-export GPU management types
 pub use gpu_management::{
-    GpuManager, GpuConfig, GpuDevice, GpuStatus, GpuAllocation,
-    GpuMetrics, GpuError, AllocationStrategy, MemoryPool, MemoryPoolHandle,
-    GpuScheduler, TaskPriority, GpuCapabilities
+    AllocationStrategy, GpuAllocation, GpuCapabilities, GpuConfig, GpuDevice, GpuError, GpuManager,
+    GpuMetrics, GpuScheduler, GpuStatus, MemoryPool, MemoryPoolHandle, TaskPriority,
 };
 
 // Re-export batching types
 pub use batching::{
-    BatchProcessor, BatchConfig, BatchRequest, BatchResult,
-    BatchStatus, BatchError, BatchingStrategy, QueueConfig,
-    BatchMetrics, PaddingStrategy, BatchPriority, Batch
+    Batch, BatchConfig, BatchError, BatchMetrics, BatchPriority, BatchProcessor, BatchRequest,
+    BatchResult, BatchStatus, BatchingStrategy, PaddingStrategy, QueueConfig,
 };
 
 // Re-export caching types
 pub use caching::{
-    InferenceCache, CacheConfig, CacheKey, CacheEntry, CacheStatus,
-    CacheStats, EvictionPolicy, CacheError, SemanticCache,
-    EmbeddingGenerator, SimilarityThreshold, CacheWarming
+    CacheConfig, CacheEntry, CacheError, CacheKey, CacheStats, CacheStatus, CacheWarming,
+    EmbeddingGenerator, EvictionPolicy, InferenceCache, SemanticCache, SimilarityThreshold,
 };
 
 // Re-export load balancing types
 pub use load_balancing::{
-    LoadBalancer, LoadBalancerConfig, WorkerNode, LoadStrategy,
-    NodeStatus, WorkerMetrics, LoadDistribution, HealthCheck,
-    RequestRouter, NodeCapabilities, LoadBalancerError, SessionAffinity
+    HealthCheck, LoadBalancer, LoadBalancerConfig, LoadBalancerError, LoadDistribution,
+    LoadStrategy, NodeCapabilities, NodeStatus, RequestRouter, SessionAffinity, WorkerMetrics,
+    WorkerNode,
 };
 
 // Common performance types
@@ -89,10 +86,7 @@ impl PerformanceOptimizer {
         let gpu_manager = GpuManager::new(config.gpu_config.clone()).await?;
         let batch_processor = BatchProcessor::new(config.batch_config.clone()).await?;
         let inference_cache = InferenceCache::new(config.cache_config.clone()).await?;
-        let load_balancer = LoadBalancer::new(
-            config.load_balancer_config.clone(),
-            vec![],
-        ).await?;
+        let load_balancer = LoadBalancer::new(config.load_balancer_config.clone(), vec![]).await?;
 
         Ok(Self {
             gpu_manager,

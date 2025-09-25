@@ -1,6 +1,5 @@
 use fabstir_llm_node::inference::{
-    ResultFormatter, FormatConfig, OutputFormat, InferenceResult,
-    TokenInfo, Citation
+    Citation, FormatConfig, InferenceResult, OutputFormat, ResultFormatter, TokenInfo,
 };
 use std::time::Duration;
 
@@ -14,9 +13,9 @@ async fn test_basic_formatting() {
         strip_whitespace: true,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: "  The capital of France is Paris.  \n\n".to_string(),
         tokens_generated: 8,
@@ -27,9 +26,9 @@ async fn test_basic_formatting() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should strip whitespace
     assert_eq!(formatted, "The capital of France is Paris.");
 }
@@ -44,9 +43,9 @@ async fn test_json_formatting() {
         strip_whitespace: false,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: "Paris is the capital.".to_string(),
         tokens_generated: 5,
@@ -55,17 +54,27 @@ async fn test_json_formatting() {
         model_id: "llama-7b".to_string(),
         finish_reason: "stop".to_string(),
         token_info: vec![
-            TokenInfo { token_id: 1234, text: "Paris".to_string(), logprob: Some(-0.5), timestamp: None },
-            TokenInfo { token_id: 338, text: " is".to_string(), logprob: Some(-0.2), timestamp: None },
+            TokenInfo {
+                token_id: 1234,
+                text: "Paris".to_string(),
+                logprob: Some(-0.5),
+                timestamp: None,
+            },
+            TokenInfo {
+                token_id: 338,
+                text: " is".to_string(),
+                logprob: Some(-0.2),
+                timestamp: None,
+            },
         ],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Parse as JSON
     let json: serde_json::Value = serde_json::from_str(&formatted).expect("Invalid JSON");
-    
+
     assert_eq!(json["text"], "Paris is the capital.");
     assert_eq!(json["metadata"]["tokens_generated"], 5);
     assert_eq!(json["metadata"]["model_id"], "llama-7b");
@@ -82,9 +91,9 @@ async fn test_structured_output_parsing() {
         strip_whitespace: true,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     // Result with JSON in the text
     let result = InferenceResult {
         text: r#"Based on your request, here's the JSON:
@@ -95,7 +104,8 @@ async fn test_structured_output_parsing() {
             "city": "New York"
         }
         
-        This represents a person object."#.to_string(),
+        This represents a person object."#
+            .to_string(),
         tokens_generated: 50,
         generation_time: Duration::from_millis(500),
         tokens_per_second: 100.0,
@@ -104,9 +114,9 @@ async fn test_structured_output_parsing() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should extract just the JSON
     let json: serde_json::Value = serde_json::from_str(&formatted).expect("Invalid JSON");
     assert_eq!(json["name"], "John Doe");
@@ -124,9 +134,9 @@ async fn test_markdown_formatting() {
         strip_whitespace: false,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let mut result = InferenceResult {
         text: "# Quantum Computing\n\nQuantum computing uses quantum bits.".to_string(),
         tokens_generated: 10,
@@ -137,22 +147,26 @@ async fn test_markdown_formatting() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     // Add citations
-    let formatted_with_citations = formatter.add_citations(result.text.clone(), vec![
-        Citation {
-            source: "Introduction to Quantum Computing, 2023".to_string(),
-            url: Some("https://example.com/quantum".to_string()),
-            title: Some("Introduction to Quantum Computing".to_string()),
-            snippet: Some("quantum bits".to_string()),
-            relevance_score: 0.95,
-        }
-    ]).await.expect("Failed to add citations");
-    
+    let formatted_with_citations = formatter
+        .add_citations(
+            result.text.clone(),
+            vec![Citation {
+                source: "Introduction to Quantum Computing, 2023".to_string(),
+                url: Some("https://example.com/quantum".to_string()),
+                title: Some("Introduction to Quantum Computing".to_string()),
+                snippet: Some("quantum bits".to_string()),
+                relevance_score: 0.95,
+            }],
+        )
+        .await
+        .expect("Failed to add citations");
+
     result.text = formatted_with_citations;
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should include markdown with citations
     assert!(formatted.contains("# Quantum Computing"));
     assert!(formatted.contains("[1]")); // Citation marker
@@ -170,9 +184,9 @@ async fn test_length_truncation() {
         strip_whitespace: true,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: "This is a very long response that continues for many words and should be truncated at some point to fit within the limit.".to_string(),
         tokens_generated: 30,
@@ -183,9 +197,9 @@ async fn test_length_truncation() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should be truncated with ellipsis
     assert!(formatted.len() <= 50);
     assert!(formatted.ends_with("..."));
@@ -195,7 +209,7 @@ async fn test_length_truncation() {
 async fn test_safety_filtering() {
     let config = FormatConfig::default();
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: "Contact John at john@example.com or call 555-1234.".to_string(),
         tokens_generated: 10,
@@ -206,9 +220,9 @@ async fn test_safety_filtering() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should redact PII
     assert!(!formatted.contains("john@example.com"));
     assert!(!formatted.contains("555-1234"));
@@ -226,9 +240,9 @@ async fn test_token_info_formatting() {
         strip_whitespace: false,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: "Hello world".to_string(),
         tokens_generated: 2,
@@ -252,10 +266,10 @@ async fn test_token_info_formatting() {
         ],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
     let json: serde_json::Value = serde_json::from_str(&formatted).expect("Invalid JSON");
-    
+
     // Should include detailed token information
     assert!(json["tokens"].is_array());
     assert_eq!(json["tokens"][0]["id"], 15043);
@@ -273,33 +287,59 @@ async fn test_streaming_format() {
         strip_whitespace: false,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     // Format individual tokens for streaming
     let tokens = vec![
-        TokenInfo { token_id: 1, text: "The".to_string(), logprob: Some(-0.1), timestamp: None },
-        TokenInfo { token_id: 2, text: " answer".to_string(), logprob: Some(-0.2), timestamp: None },
-        TokenInfo { token_id: 3, text: " is".to_string(), logprob: Some(-0.1), timestamp: None },
-        TokenInfo { token_id: 4, text: " 42".to_string(), logprob: Some(-0.5), timestamp: None },
+        TokenInfo {
+            token_id: 1,
+            text: "The".to_string(),
+            logprob: Some(-0.1),
+            timestamp: None,
+        },
+        TokenInfo {
+            token_id: 2,
+            text: " answer".to_string(),
+            logprob: Some(-0.2),
+            timestamp: None,
+        },
+        TokenInfo {
+            token_id: 3,
+            text: " is".to_string(),
+            logprob: Some(-0.1),
+            timestamp: None,
+        },
+        TokenInfo {
+            token_id: 4,
+            text: " 42".to_string(),
+            logprob: Some(-0.5),
+            timestamp: None,
+        },
     ];
-    
+
     let mut stream_output = Vec::new();
-    
+
     for token in tokens {
-        let chunk = formatter.format_stream_chunk(&token).await.expect("Failed to format chunk");
+        let chunk = formatter
+            .format_stream_chunk(&token)
+            .await
+            .expect("Failed to format chunk");
         stream_output.push(chunk);
     }
-    
+
     // Each chunk should be valid JSON
     for chunk in &stream_output {
         let json: serde_json::Value = serde_json::from_str(chunk).expect("Invalid JSON");
         assert!(json["token"].is_string());
         assert!(json["id"].is_number());
     }
-    
+
     // Add end marker
-    let end_chunk = formatter.format_stream_end().await.expect("Failed to format end");
+    let end_chunk = formatter
+        .format_stream_end()
+        .await
+        .expect("Failed to format end");
     let end_json: serde_json::Value = serde_json::from_str(&end_chunk).expect("Invalid JSON");
     assert_eq!(end_json["finished"], true);
 }
@@ -314,9 +354,9 @@ async fn test_code_block_formatting() {
         strip_whitespace: false,
         highlight_code: true,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: r#"Here's a Python function:
 
@@ -327,7 +367,8 @@ def fibonacci(n):
     return fibonacci(n-1) + fibonacci(n-2)
 ```
 
-This implements the Fibonacci sequence."#.to_string(),
+This implements the Fibonacci sequence."#
+            .to_string(),
         tokens_generated: 50,
         generation_time: Duration::from_millis(500),
         tokens_per_second: 100.0,
@@ -336,9 +377,9 @@ This implements the Fibonacci sequence."#.to_string(),
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should preserve code blocks
     assert!(formatted.contains("```python"));
     assert!(formatted.contains("def fibonacci(n):"));
@@ -359,9 +400,9 @@ async fn test_multi_format_output() {
         strip_whitespace: true,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     let result = InferenceResult {
         text: "Test output".to_string(),
         tokens_generated: 2,
@@ -372,9 +413,9 @@ async fn test_multi_format_output() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted = formatter.format(&result).await.expect("Failed to format");
-    
+
     // Should return multiple formats
     let multi: serde_json::Value = serde_json::from_str(&formatted).expect("Invalid JSON");
     assert!(multi["text"].is_string());
@@ -392,9 +433,9 @@ async fn test_error_handling_in_formatting() {
         strip_whitespace: true,
         highlight_code: false,
     };
-    
+
     let formatter = ResultFormatter::new(config);
-    
+
     // Result with invalid JSON
     let result = InferenceResult {
         text: "This is not valid JSON: {invalid: json, missing: quotes}".to_string(),
@@ -406,9 +447,9 @@ async fn test_error_handling_in_formatting() {
         token_info: vec![],
         was_cancelled: false,
     };
-    
+
     let formatted_result = formatter.format(&result).await;
-    
+
     // Should handle gracefully
     match formatted_result {
         Ok(formatted) => {

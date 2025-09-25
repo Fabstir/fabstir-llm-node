@@ -8,17 +8,17 @@ pub enum MessageType {
     Init,
     SessionControl,
     SessionControlAck,
-    
+
     // Inference
     Inference,
     StatelessInference,
     InferenceResponse,
-    
+
     // Connection management
     Ping,
     Pong,
     Close,
-    
+
     // Error and unknown
     Error,
     Unknown,
@@ -28,10 +28,10 @@ pub enum MessageType {
 pub struct WebSocketMessage {
     #[serde(rename = "type")]
     pub msg_type: MessageType,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    
+
     pub payload: Value,
 }
 
@@ -40,7 +40,7 @@ pub struct InferenceMessage {
     pub prompt: String,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_context: Option<Vec<ContextMessage>>,
 }
@@ -62,7 +62,7 @@ pub enum SessionControl {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionControlMessage {
     pub action: SessionControl,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
@@ -71,7 +71,7 @@ pub struct SessionControlMessage {
 pub struct ErrorMessage {
     pub code: String,
     pub message: String,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
 }
@@ -79,10 +79,10 @@ pub struct ErrorMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionMode {
     pub mode: String, // "stateful" or "stateless"
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

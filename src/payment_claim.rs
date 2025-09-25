@@ -1,12 +1,12 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::types::{Address, H256, U256};
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tokio::sync::{RwLock, mpsc, Semaphore};
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock, Semaphore};
 use tokio::time::{sleep, Duration};
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::contracts::Web3Client;
 use crate::job_processor::NodeConfig;
@@ -99,14 +99,18 @@ impl From<NodeConfig> for PaymentConfig {
 
 #[derive(Debug, Clone)]
 pub struct PaymentSplitter {
-    pub host_percentage: u16,      // 8500 = 85%
-    pub treasury_percentage: u16,  // 1000 = 10%
-    pub stakers_percentage: u16,   // 500 = 5%
+    pub host_percentage: u16,     // 8500 = 85%
+    pub treasury_percentage: u16, // 1000 = 10%
+    pub stakers_percentage: u16,  // 500 = 5%
 }
 
 impl PaymentSplitter {
     pub fn new(host: u16, treasury: u16, stakers: u16) -> Self {
-        assert_eq!(host + treasury + stakers, 10000, "Percentages must sum to 10000");
+        assert_eq!(
+            host + treasury + stakers,
+            10000,
+            "Percentages must sum to 10000"
+        );
         Self {
             host_percentage: host,
             treasury_percentage: treasury,
@@ -118,7 +122,7 @@ impl PaymentSplitter {
         let host_share = amount * U256::from(self.host_percentage) / U256::from(10000);
         let treasury_share = amount * U256::from(self.treasury_percentage) / U256::from(10000);
         let stakers_share = amount * U256::from(self.stakers_percentage) / U256::from(10000);
-        
+
         (host_share, treasury_share, stakers_share)
     }
 }
@@ -134,11 +138,20 @@ impl Default for PaymentSplitter {
 pub trait PaymentSystemTrait: Send + Sync {
     async fn is_job_payable(&self, job_id: H256) -> bool;
     async fn get_escrow_balance(&self, job_id: H256) -> Option<U256>;
-    async fn claim_payment(&self, job_id: H256, node_address: Address) -> Result<(U256, H256), PaymentError>;
+    async fn claim_payment(
+        &self,
+        job_id: H256,
+        node_address: Address,
+    ) -> Result<(U256, H256), PaymentError>;
     async fn get_node_balance(&self, node: Address) -> U256;
     async fn estimate_gas(&self, job_id: H256) -> Result<U256>;
     async fn get_gas_price(&self) -> Result<U256>;
-    async fn withdraw(&self, node: Address, to: Address, amount: U256) -> Result<H256, PaymentError>;
+    async fn withdraw(
+        &self,
+        node: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<H256, PaymentError>;
 }
 
 pub struct EscrowManager;
@@ -165,10 +178,13 @@ pub struct PaymentClaimer {
 }
 
 impl PaymentClaimer {
-    pub fn new<C: Into<PaymentConfig>>(config: C, payment_system: Arc<dyn PaymentSystemTrait>) -> Self {
+    pub fn new<C: Into<PaymentConfig>>(
+        config: C,
+        payment_system: Arc<dyn PaymentSystemTrait>,
+    ) -> Self {
         let config = config.into();
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_claims));
-        
+
         Self {
             config,
             payment_system,
@@ -194,7 +210,10 @@ impl PaymentClaimer {
         }
 
         // Get escrow balance
-        let escrow_balance = self.payment_system.get_escrow_balance(job_id).await
+        let escrow_balance = self
+            .payment_system
+            .get_escrow_balance(job_id)
+            .await
             .ok_or(PaymentError::NoEscrowBalance)?;
 
         // Calculate host share
@@ -206,13 +225,20 @@ impl PaymentClaimer {
         }
 
         // Check if profitable after gas
-        if !self.is_claim_profitable_internal(job_id, host_share).await? {
-            return Err(PaymentError::Other("Not profitable after gas costs".to_string()));
+        if !self
+            .is_claim_profitable_internal(job_id, host_share)
+            .await?
+        {
+            return Err(PaymentError::Other(
+                "Not profitable after gas costs".to_string(),
+            ));
         }
 
         // Claim payment
-        let (amount_received, tx_hash) = self.payment_system
-            .claim_payment(job_id, self.config.node_address).await?;
+        let (amount_received, tx_hash) = self
+            .payment_system
+            .claim_payment(job_id, self.config.node_address)
+            .await?;
 
         // Update statistics
         if self.config.track_payment_stats {
@@ -229,7 +255,8 @@ impl PaymentClaimer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-        }).await;
+        })
+        .await;
 
         Ok((amount_received, tx_hash))
     }
@@ -240,13 +267,13 @@ impl PaymentClaimer {
         for &job_id in job_ids.iter().take(self.config.batch_claim_size) {
             let claimer = self.clone();
             let permit = self.claim_semaphore.clone().acquire_owned().await.unwrap();
-            
+
             let handle = tokio::spawn(async move {
                 let res = claimer.claim_payment(job_id).await;
                 drop(permit);
                 res
             });
-            
+
             handles.push(handle);
         }
 
@@ -270,12 +297,12 @@ impl PaymentClaimer {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     last_error = Some(e.clone());
-                    
+
                     // Don't retry on certain errors
                     match &e {
-                        PaymentError::JobNotPayable |
-                        PaymentError::NoEscrowBalance |
-                        PaymentError::BelowMinimumThreshold => return Err(e),
+                        PaymentError::JobNotPayable
+                        | PaymentError::NoEscrowBalance
+                        | PaymentError::BelowMinimumThreshold => return Err(e),
                         _ => {}
                     }
 
@@ -295,9 +322,12 @@ impl PaymentClaimer {
     }
 
     pub async fn is_claim_profitable(&self, job_id: H256) -> Result<bool> {
-        let escrow_balance = self.payment_system.get_escrow_balance(job_id).await
+        let escrow_balance = self
+            .payment_system
+            .get_escrow_balance(job_id)
+            .await
             .ok_or_else(|| anyhow!("No escrow balance"))?;
-        
+
         let (host_share, _, _) = self.payment_splitter.calculate_splits(escrow_balance);
         self.is_claim_profitable_internal(job_id, host_share).await
     }
@@ -305,11 +335,11 @@ impl PaymentClaimer {
     async fn is_claim_profitable_internal(&self, job_id: H256, payment: U256) -> Result<bool> {
         let gas_estimate = self.estimate_claim_gas(job_id).await?;
         let gas_price = self.payment_system.get_gas_price().await?;
-        
+
         if gas_price > self.config.max_gas_price {
             return Ok(false);
         }
-        
+
         let gas_cost = gas_estimate * gas_price;
         Ok(payment > gas_cost)
     }
@@ -321,7 +351,7 @@ impl PaymentClaimer {
 
         if let Some(balance) = self.payment_system.get_escrow_balance(job_id).await {
             let (host_share, _, _) = self.payment_splitter.calculate_splits(balance);
-            
+
             self.accumulated_jobs.write().await.push(job_id);
             *self.accumulated_amount.write().await += host_share;
         }
@@ -364,21 +394,27 @@ impl PaymentClaimer {
     }
 
     pub async fn get_withdrawable_balance(&self) -> U256 {
-        self.payment_system.get_node_balance(self.config.node_address).await
+        self.payment_system
+            .get_node_balance(self.config.node_address)
+            .await
     }
 
     pub async fn withdraw_earnings(&self) -> Result<(U256, H256), PaymentError> {
         let balance = self.get_withdrawable_balance().await;
-        
+
         if balance < self.config.min_withdrawal_amount {
             return Err(PaymentError::BelowMinimumThreshold);
         }
 
-        let to_address = self.config.withdrawal_address
+        let to_address = self
+            .config
+            .withdrawal_address
             .unwrap_or(self.config.node_address);
 
-        let tx_hash = self.payment_system
-            .withdraw(self.config.node_address, to_address, balance).await?;
+        let tx_hash = self
+            .payment_system
+            .withdraw(self.config.node_address, to_address, balance)
+            .await?;
 
         Ok((balance, tx_hash))
     }
@@ -389,11 +425,11 @@ impl PaymentClaimer {
 
     async fn update_statistics(&self, amount: U256) {
         let mut stats = self.payment_stats.write().await;
-        
+
         stats.total_jobs_paid += 1;
         stats.total_earned += amount;
         stats.average_payment = stats.total_earned / U256::from(stats.total_jobs_paid);
-        
+
         if amount > stats.largest_payment {
             stats.largest_payment = amount;
         }
@@ -433,7 +469,7 @@ mod tests {
             let is_completed = self.completed_jobs.read().await.contains(&job_id);
             let is_not_paid = !self.paid_jobs.read().await.contains(&job_id);
             let has_balance = self.escrow_balances.read().await.contains_key(&job_id);
-            
+
             is_completed && is_not_paid && has_balance
         }
 
@@ -441,25 +477,33 @@ mod tests {
             self.escrow_balances.read().await.get(&job_id).copied()
         }
 
-        async fn claim_payment(&self, job_id: H256, node_address: Address) -> Result<(U256, H256), PaymentError> {
-            let amount = self.get_escrow_balance(job_id).await
+        async fn claim_payment(
+            &self,
+            job_id: H256,
+            node_address: Address,
+        ) -> Result<(U256, H256), PaymentError> {
+            let amount = self
+                .get_escrow_balance(job_id)
+                .await
                 .ok_or(PaymentError::NoEscrowBalance)?;
-            
+
             let splitter = PaymentSplitter::default();
             let (host_share, _, _) = splitter.calculate_splits(amount);
-            
+
             // Update balances
             let mut balances = self.node_balances.write().await;
             let current = balances.get(&node_address).copied().unwrap_or_default();
             balances.insert(node_address, current + host_share);
-            
+
             self.paid_jobs.write().await.push(job_id);
-            
+
             Ok((host_share, H256::random()))
         }
 
         async fn get_node_balance(&self, node: Address) -> U256 {
-            self.node_balances.read().await
+            self.node_balances
+                .read()
+                .await
                 .get(&node)
                 .copied()
                 .unwrap_or_default()
@@ -473,14 +517,19 @@ mod tests {
             Ok(U256::from(20_000_000_000u64)) // 20 gwei
         }
 
-        async fn withdraw(&self, from: Address, _to: Address, amount: U256) -> Result<H256, PaymentError> {
+        async fn withdraw(
+            &self,
+            from: Address,
+            _to: Address,
+            amount: U256,
+        ) -> Result<H256, PaymentError> {
             let mut balances = self.node_balances.write().await;
             let current = balances.get(&from).copied().unwrap_or_default();
-            
+
             if current < amount {
                 return Err(PaymentError::WithdrawalFailed);
             }
-            
+
             balances.insert(from, current - amount);
             Ok(H256::random())
         }

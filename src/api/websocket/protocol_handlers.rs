@@ -1,14 +1,22 @@
-use super::protocol::{ProtocolMessage, MessageType, ProtocolError};
+use super::protocol::{MessageType, ProtocolError, ProtocolMessage};
 use anyhow::Result;
+use serde_json::json;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde_json::json;
 
-pub type HandlerFn = Box<dyn Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>> + Send + Sync>;
-pub type MiddlewareFn = Box<dyn Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>> + Send + Sync>;
+pub type HandlerFn = Box<
+    dyn Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>>
+        + Send
+        + Sync,
+>;
+pub type MiddlewareFn = Box<
+    dyn Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>>
+        + Send
+        + Sync,
+>;
 
 pub struct HandlerRegistry {
     handlers: Arc<RwLock<HashMap<MessageType, HandlerFn>>>,
@@ -19,7 +27,7 @@ impl HandlerRegistry {
         let mut registry = Self {
             handlers: Arc::new(RwLock::new(HashMap::new())),
         };
-        
+
         // Register default handlers
         registry.register_defaults();
         registry
@@ -44,7 +52,10 @@ impl HandlerRegistry {
 
     pub fn register<F>(&mut self, msg_type: MessageType, handler: F)
     where
-        F: Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>> + Send + Sync + 'static,
+        F: Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>>
+            + Send
+            + Sync
+            + 'static,
     {
         let mut handlers = futures::executor::block_on(self.handlers.write());
         handlers.insert(msg_type, Box::new(handler));
@@ -52,7 +63,7 @@ impl HandlerRegistry {
 
     pub async fn handle(&self, msg: ProtocolMessage) -> Result<ProtocolMessage> {
         let handlers = self.handlers.read().await;
-        
+
         if let Some(handler) = handlers.get(&msg.msg_type) {
             handler(msg).await
         } else {
@@ -91,7 +102,10 @@ impl MessageHandler {
 
     pub fn add_middleware<F>(&mut self, middleware: F)
     where
-        F: Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>> + Send + Sync + 'static,
+        F: Fn(ProtocolMessage) -> Pin<Box<dyn Future<Output = Result<ProtocolMessage>> + Send>>
+            + Send
+            + Sync
+            + 'static,
     {
         self.middleware.push(Box::new(middleware));
     }
@@ -101,19 +115,22 @@ impl MessageHandler {
         for middleware in &self.middleware {
             msg = middleware(msg).await?;
         }
-        
+
         // Process with handler
         self.registry.handle(msg).await
     }
 
-    pub async fn process_batch(&self, messages: Vec<ProtocolMessage>) -> Result<Vec<ProtocolMessage>> {
+    pub async fn process_batch(
+        &self,
+        messages: Vec<ProtocolMessage>,
+    ) -> Result<Vec<ProtocolMessage>> {
         let mut results = Vec::new();
-        
+
         for msg in messages {
             let result = self.process(msg).await?;
             results.push(result);
         }
-        
+
         Ok(results)
     }
 }
@@ -215,12 +232,13 @@ impl SessionSerializer {
     pub fn deserialize_session(data: &Value) -> Result<WebSocketSession> {
         use super::session::SessionConfig;
         use crate::job_processor::Message;
-        
-        let id = data["id"].as_str()
+
+        let id = data["id"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing session id"))?;
-        
+
         let mut session = WebSocketSession::new(id.to_string());
-        
+
         // Restore conversation history
         if let Some(history) = data["conversation_history"].as_array() {
             for msg_data in history {
@@ -232,7 +250,7 @@ impl SessionSerializer {
                 session.add_message(message)?;
             }
         }
-        
+
         Ok(session)
     }
 }
@@ -254,7 +272,7 @@ impl RateLimiter {
     pub async fn check_rate_limit(&self, session_id: &str) -> Result<()> {
         let mut limits = self.limits.write().await;
         let now = std::time::Instant::now();
-        
+
         if let Some((count, last_reset)) = limits.get_mut(session_id) {
             if now.duration_since(*last_reset).as_secs() >= 60 {
                 // Reset counter after 1 minute
@@ -269,7 +287,7 @@ impl RateLimiter {
         } else {
             limits.insert(session_id.to_string(), (1, now));
         }
-        
+
         Ok(())
     }
 }

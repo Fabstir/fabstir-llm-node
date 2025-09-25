@@ -1,7 +1,7 @@
-use super::session::{WebSocketSession, SessionConfig, SessionMetrics};
-use super::persistence::{SessionPersistence, PersistenceConfig};
+use super::persistence::{PersistenceConfig, SessionPersistence};
+use super::session::{SessionConfig, SessionMetrics, WebSocketSession};
 use crate::job_processor::Message;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -49,7 +49,10 @@ impl SessionStore {
         }
     }
 
-    pub fn with_persistence(config: SessionStoreConfig, persistence_config: PersistenceConfig) -> Self {
+    pub fn with_persistence(
+        config: SessionStoreConfig,
+        persistence_config: PersistenceConfig,
+    ) -> Self {
         let persistence = SessionPersistence::new(persistence_config);
         Self {
             config,
@@ -87,12 +90,16 @@ impl SessionStore {
         0
     }
 
-    pub async fn create_session_with_id(&mut self, session_id: String, config: SessionConfig) -> Result<()> {
+    pub async fn create_session_with_id(
+        &mut self,
+        session_id: String,
+        config: SessionConfig,
+    ) -> Result<()> {
         let sessions_count = self.sessions.read().await.len();
         if sessions_count >= self.config.max_sessions {
             return Err(anyhow!("Maximum sessions limit reached"));
         }
-        
+
         let session = WebSocketSession::with_config(session_id.clone(), config);
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id, session);
@@ -190,7 +197,9 @@ impl SessionStore {
         if let Some(removed_session) = sessions.remove(session_id) {
             // Delete from persistence if enabled
             if let Some(persistence) = &self.persistence {
-                let _ = persistence.delete_session(removed_session.chain_id, session_id).await;
+                let _ = persistence
+                    .delete_session(removed_session.chain_id, session_id)
+                    .await;
             }
             true
         } else {
@@ -203,7 +212,6 @@ impl SessionStore {
         sessions.contains_key(session_id)
     }
 
-
     pub async fn remove_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
         sessions.remove(session_id);
@@ -213,9 +221,9 @@ impl SessionStore {
     pub async fn cleanup_expired(&mut self) -> usize {
         let mut sessions = self.sessions.write().await;
         let initial_count = sessions.len();
-        
+
         sessions.retain(|_, session| !session.is_expired());
-        
+
         initial_count - sessions.len()
     }
 
@@ -241,16 +249,16 @@ impl SessionStore {
 
     pub async fn get_store_metrics(&self) -> StoreMetrics {
         let sessions = self.sessions.read().await;
-        
+
         let mut total_messages = 0;
         let mut total_memory_bytes = 0;
-        
+
         for session in sessions.values() {
             let metrics = session.metrics();
             total_messages += metrics.total_messages;
             total_memory_bytes += metrics.memory_bytes;
         }
-        
+
         StoreMetrics {
             total_sessions: sessions.len(),
             active_sessions: sessions.len(), // All non-expired sessions are considered active

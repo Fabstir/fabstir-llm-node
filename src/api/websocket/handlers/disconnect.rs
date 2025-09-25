@@ -1,9 +1,9 @@
 use crate::api::websocket::session_store::SessionStore;
 use crate::settlement::manager::SettlementManager;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 pub struct DisconnectHandler {
     session_store: Arc<RwLock<SessionStore>>,
@@ -45,7 +45,10 @@ impl DisconnectHandler {
                     session_id, chain_id
                 );
 
-                match settlement_manager.settle_session(session_id_u64, chain_id).await {
+                match settlement_manager
+                    .settle_session(session_id_u64, chain_id)
+                    .await
+                {
                     Ok(tx_hash) => {
                         info!(
                             "Settlement initiated for session {} with tx: {:?}",
@@ -75,7 +78,10 @@ impl DisconnectHandler {
 
     /// Handle multiple disconnects (batch processing)
     pub async fn handle_batch_disconnect(&self, session_ids: Vec<String>) -> Result<()> {
-        info!("Handling batch disconnect for {} sessions", session_ids.len());
+        info!(
+            "Handling batch disconnect for {} sessions",
+            session_ids.len()
+        );
 
         let mut results = Vec::new();
         for session_id in session_ids {
@@ -95,7 +101,10 @@ impl DisconnectHandler {
                 }
                 Err(e) => {
                     failure_count += 1;
-                    error!("Failed to handle disconnect for session {}: {}", session_id, e);
+                    error!(
+                        "Failed to handle disconnect for session {}: {}",
+                        session_id, e
+                    );
                 }
             }
         }
@@ -106,10 +115,7 @@ impl DisconnectHandler {
         );
 
         if failure_count > 0 {
-            return Err(anyhow!(
-                "Batch disconnect had {} failures",
-                failure_count
-            ));
+            return Err(anyhow!("Batch disconnect had {} failures", failure_count));
         }
 
         Ok(())

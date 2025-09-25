@@ -1,10 +1,10 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
 use thiserror::Error;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone)]
 pub struct GpuConfig {
@@ -232,7 +232,8 @@ impl MemoryPool {
             return Err(GpuError::InsufficientMemory {
                 requested: size,
                 available: self.total_size - self.allocated_size,
-            }.into());
+            }
+            .into());
         }
 
         let allocation_id = Uuid::new_v4().to_string();
@@ -374,7 +375,11 @@ impl GpuManager {
         Ok(state.devices.values().cloned().collect())
     }
 
-    pub async fn allocate_gpu(&self, model_id: &str, memory_required: u64) -> Result<GpuAllocation> {
+    pub async fn allocate_gpu(
+        &self,
+        model_id: &str,
+        memory_required: u64,
+    ) -> Result<GpuAllocation> {
         let mut state = self.state.write().await;
 
         // Check if we should fallback to CPU
@@ -388,27 +393,29 @@ impl GpuManager {
                 is_cpu_fallback: true,
                 allocated_at: std::time::Instant::now(),
             };
-            state.allocations.insert(allocation.allocation_id.clone(), allocation.clone());
+            state
+                .allocations
+                .insert(allocation.allocation_id.clone(), allocation.clone());
             return Ok(allocation);
         }
 
         // Find suitable GPU based on allocation strategy
         let device_id = match self.config.gpu_scheduling {
-            AllocationStrategy::FirstFit => {
-                state.devices.iter()
-                    .find(|(_, device)| {
-                        device.is_available && device.available_memory >= memory_required
-                    })
-                    .map(|(id, _)| *id)
-            }
-            AllocationStrategy::BestFit => {
-                state.devices.iter()
-                    .filter(|(_, device)| {
-                        device.is_available && device.available_memory >= memory_required
-                    })
-                    .max_by_key(|(_, device)| device.available_memory)
-                    .map(|(id, _)| *id)
-            }
+            AllocationStrategy::FirstFit => state
+                .devices
+                .iter()
+                .find(|(_, device)| {
+                    device.is_available && device.available_memory >= memory_required
+                })
+                .map(|(id, _)| *id),
+            AllocationStrategy::BestFit => state
+                .devices
+                .iter()
+                .filter(|(_, device)| {
+                    device.is_available && device.available_memory >= memory_required
+                })
+                .max_by_key(|(_, device)| device.available_memory)
+                .map(|(id, _)| *id),
             AllocationStrategy::RoundRobin => {
                 let device_ids: Vec<_> = state.devices.keys().cloned().collect();
                 if device_ids.is_empty() {
@@ -419,19 +426,21 @@ impl GpuManager {
                     Some(device_ids[idx])
                 }
             }
-            AllocationStrategy::LeastUtilized => {
-                state.devices.iter()
-                    .filter(|(_, device)| {
-                        device.is_available && device.available_memory >= memory_required
-                    })
-                    .max_by_key(|(_, device)| device.available_memory)
-                    .map(|(id, _)| *id)
-            }
+            AllocationStrategy::LeastUtilized => state
+                .devices
+                .iter()
+                .filter(|(_, device)| {
+                    device.is_available && device.available_memory >= memory_required
+                })
+                .max_by_key(|(_, device)| device.available_memory)
+                .map(|(id, _)| *id),
         };
 
         let device_id = device_id.ok_or_else(|| GpuError::InsufficientMemory {
             requested: memory_required,
-            available: state.devices.values()
+            available: state
+                .devices
+                .values()
                 .map(|d| d.available_memory)
                 .max()
                 .unwrap_or(0),
@@ -443,7 +452,8 @@ impl GpuManager {
                 return Err(GpuError::InsufficientMemory {
                     requested: memory_required,
                     available: device.available_memory,
-                }.into());
+                }
+                .into());
             }
 
             device.available_memory -= memory_required;
@@ -459,7 +469,9 @@ impl GpuManager {
                 allocated_at: std::time::Instant::now(),
             };
 
-            state.allocations.insert(allocation.allocation_id.clone(), allocation.clone());
+            state
+                .allocations
+                .insert(allocation.allocation_id.clone(), allocation.clone());
             Ok(allocation)
         } else {
             Err(GpuError::GpuNotAvailable { device_id }.into())
@@ -473,20 +485,23 @@ impl GpuManager {
             if allocation.gpu_device_id >= 0 {
                 if let Some(device) = state.devices.get_mut(&allocation.gpu_device_id) {
                     device.available_memory += allocation.memory_allocated;
-                    device.current_allocations.retain(|id| id != &allocation.model_id);
+                    device
+                        .current_allocations
+                        .retain(|id| id != &allocation.model_id);
                 }
             }
             Ok(())
         } else {
             Err(GpuError::AllocationNotFound {
                 allocation_id: allocation_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn get_gpu_status(&self, device_id: i32) -> Result<GpuStatus> {
         let state = self.state.read().await;
-        
+
         if let Some(device) = state.devices.get(&device_id) {
             if device.current_allocations.is_empty() {
                 Ok(GpuStatus::Available)
@@ -509,7 +524,9 @@ impl GpuManager {
                 0.0
             };
 
-            let processes: Vec<ProcessInfo> = device.current_allocations.iter()
+            let processes: Vec<ProcessInfo> = device
+                .current_allocations
+                .iter()
                 .map(|model_id| ProcessInfo {
                     pid: 1000 + device_id as u32,
                     name: model_id.clone(),
@@ -549,10 +566,10 @@ impl GpuManager {
 
     pub async fn check_capabilities(&self, device_id: i32) -> Result<GpuCapabilities> {
         let state = self.state.read().await;
-        
+
         if let Some(_device) = state.devices.get(&device_id) {
             Ok(GpuCapabilities {
-                cuda_cores: 10496,  // Mock RTX 4090 specs
+                cuda_cores: 10496, // Mock RTX 4090 specs
                 tensor_cores: 328,
                 memory_bandwidth_gb_per_sec: 1008.0,
                 max_threads_per_block: 1024,
@@ -570,7 +587,7 @@ impl GpuManager {
 
     pub async fn health_check(&self, device_id: i32) -> Result<bool> {
         let state = self.state.read().await;
-        
+
         if let Some(device) = state.devices.get(&device_id) {
             Ok(device.is_available)
         } else {
@@ -587,7 +604,9 @@ impl GpuManager {
         }
 
         // Clear all allocations for this device
-        let allocations_to_remove: Vec<_> = state.allocations.iter()
+        let allocations_to_remove: Vec<_> = state
+            .allocations
+            .iter()
             .filter(|(_, alloc)| alloc.gpu_device_id == device_id)
             .map(|(id, _)| id.clone())
             .collect();
@@ -608,11 +627,11 @@ impl GpuManager {
 
     pub async fn get_health_status(&self) -> Result<OverallHealthStatus> {
         let state = self.state.read().await;
-        
+
         let mut healthy_gpus = 0;
         let total_gpus = state.devices.len();
         let mut alerts = Vec::new();
-        
+
         for device in state.devices.values() {
             if device.is_available {
                 healthy_gpus += 1;
@@ -625,7 +644,7 @@ impl GpuManager {
                 });
             }
         }
-        
+
         Ok(OverallHealthStatus {
             healthy_gpus,
             total_gpus,
@@ -636,7 +655,7 @@ impl GpuManager {
             alerts,
         })
     }
-    
+
     pub async fn start_health_monitoring(&self) -> Result<()> {
         // Mock implementation - in real implementation would start monitoring thread
         Ok(())
@@ -644,10 +663,10 @@ impl GpuManager {
 
     pub async fn get_device_health_status(&self, device_id: i32) -> Result<GpuHealthStatus> {
         let state = self.state.read().await;
-        
+
         if let Some(device) = state.devices.get(&device_id) {
             let metrics = self.get_gpu_metrics(device_id).await?;
-            
+
             Ok(GpuHealthStatus {
                 device_id,
                 is_healthy: device.is_available && metrics.temperature_celsius < 85.0,
@@ -665,7 +684,9 @@ impl GpuManager {
     pub async fn get_aggregate_metrics(&self) -> AggregateMetrics {
         let state = self.state.read().await;
 
-        let total_utilization: f32 = state.devices.values()
+        let total_utilization: f32 = state
+            .devices
+            .values()
             .map(|d| {
                 let used = d.total_memory - d.available_memory;
                 if d.total_memory > 0 {
@@ -684,7 +705,9 @@ impl GpuManager {
         };
 
         let total_memory: u64 = state.devices.values().map(|d| d.total_memory).sum();
-        let used_memory: u64 = state.devices.values()
+        let used_memory: u64 = state
+            .devices
+            .values()
             .map(|d| d.total_memory - d.available_memory)
             .sum();
 
@@ -701,5 +724,4 @@ impl GpuManager {
             failed_allocations: 0, // Would track this in real implementation
         }
     }
-
 }

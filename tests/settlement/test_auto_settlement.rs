@@ -1,18 +1,18 @@
-use fabstir_llm_node::settlement::{
-    manager::SettlementManager,
-    auto_settlement::{AutoSettlement, SettlementConfig, RetryConfig, EventType},
-    types::{SettlementError, SettlementStatus},
-};
 use fabstir_llm_node::api::websocket::{
-    session::{WebSocketSession, SessionConfig},
-    session_store::{SessionStore, SessionStoreConfig},
     handlers::disconnect::DisconnectHandler,
+    session::{SessionConfig, WebSocketSession},
+    session_store::{SessionStore, SessionStoreConfig},
 };
 use fabstir_llm_node::config::chains::ChainRegistry;
-use std::sync::Arc;
+use fabstir_llm_node::settlement::{
+    auto_settlement::{AutoSettlement, EventType, RetryConfig, SettlementConfig},
+    manager::SettlementManager,
+    types::{SettlementError, SettlementStatus},
+};
 use std::collections::HashMap;
-use tokio::sync::RwLock;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 // Test helper to create a test private key
 fn test_private_key() -> String {
@@ -24,23 +24,32 @@ async fn create_test_session_store() -> Arc<RwLock<SessionStore>> {
     let mut store = SessionStore::new(SessionStoreConfig::default());
 
     // Add test sessions on different chains
-    store.create_session_with_chain(
-        "session_1".to_string(),
-        SessionConfig::default(),
-        84532, // Base Sepolia
-    ).await.unwrap();
+    store
+        .create_session_with_chain(
+            "session_1".to_string(),
+            SessionConfig::default(),
+            84532, // Base Sepolia
+        )
+        .await
+        .unwrap();
 
-    store.create_session_with_chain(
-        "session_2".to_string(),
-        SessionConfig::default(),
-        5611, // opBNB
-    ).await.unwrap();
+    store
+        .create_session_with_chain(
+            "session_2".to_string(),
+            SessionConfig::default(),
+            5611, // opBNB
+        )
+        .await
+        .unwrap();
 
-    store.create_session_with_chain(
-        "session_3".to_string(),
-        SessionConfig::default(),
-        84532, // Base Sepolia
-    ).await.unwrap();
+    store
+        .create_session_with_chain(
+            "session_3".to_string(),
+            SessionConfig::default(),
+            84532, // Base Sepolia
+        )
+        .await
+        .unwrap();
 
     Arc::new(RwLock::new(store))
 }
@@ -53,7 +62,7 @@ async fn test_settlement_on_disconnect() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
@@ -82,7 +91,7 @@ async fn test_settlement_correct_chain() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
@@ -94,15 +103,21 @@ async fn test_settlement_correct_chain() {
     );
 
     // Test Base Sepolia session
-    let result = auto_settlement.settle_session_with_chain("session_1", 84532).await;
+    let result = auto_settlement
+        .settle_session_with_chain("session_1", 84532)
+        .await;
     assert!(result.is_ok(), "Should settle on Base Sepolia");
 
     // Test opBNB session
-    let result = auto_settlement.settle_session_with_chain("session_2", 5611).await;
+    let result = auto_settlement
+        .settle_session_with_chain("session_2", 5611)
+        .await;
     assert!(result.is_ok(), "Should settle on opBNB");
 
     // Test wrong chain should fail
-    let result = auto_settlement.settle_session_with_chain("session_1", 5611).await;
+    let result = auto_settlement
+        .settle_session_with_chain("session_1", 5611)
+        .await;
     assert!(result.is_err(), "Should fail with wrong chain");
 }
 
@@ -114,7 +129,7 @@ async fn test_settlement_retry_logic() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
@@ -129,11 +144,8 @@ async fn test_settlement_retry_logic() {
     let mut config = SettlementConfig::default();
     config.retry_config = retry_config;
 
-    let auto_settlement = AutoSettlement::new(
-        settlement_manager.clone(),
-        session_store.clone(),
-        config,
-    );
+    let auto_settlement =
+        AutoSettlement::new(settlement_manager.clone(), session_store.clone(), config);
 
     // Simulate a failing settlement (using invalid session ID)
     let result = auto_settlement.settle_with_retry("invalid_session").await;
@@ -154,7 +166,7 @@ async fn test_settlement_failure_handling() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
@@ -168,29 +180,38 @@ async fn test_settlement_failure_handling() {
     // Test various failure scenarios
 
     // 1. Session not found
-    let result = auto_settlement.handle_disconnect("nonexistent_session").await;
+    let result = auto_settlement
+        .handle_disconnect("nonexistent_session")
+        .await;
     assert!(result.is_err(), "Should fail for non-existent session");
     match result {
-        Err(SettlementError::SessionNotFound(_)) => {},
+        Err(SettlementError::SessionNotFound(_)) => {}
         _ => panic!("Expected SessionNotFound error"),
     }
 
     // 2. Invalid chain - session_1 is on chain 84532, not 99999
-    let result = auto_settlement.settle_session_with_chain("session_1", 99999).await;
+    let result = auto_settlement
+        .settle_session_with_chain("session_1", 99999)
+        .await;
     assert!(result.is_err(), "Should fail for invalid chain");
     match result {
         Err(SettlementError::SettlementFailed { chain, .. }) if chain == 99999 => {
             // This is expected when the session is on a different chain
-        },
+        }
         Err(SettlementError::UnsupportedChain(_)) => {
             // This is also acceptable
-        },
+        }
         _ => panic!("Expected SettlementFailed or UnsupportedChain error"),
     }
 
     // 3. Graceful degradation - queue settlement for later
-    let queue_result = auto_settlement.queue_failed_settlement("session_1", 84532).await;
-    assert!(queue_result.is_ok(), "Should be able to queue failed settlement");
+    let queue_result = auto_settlement
+        .queue_failed_settlement("session_1", 84532)
+        .await;
+    assert!(
+        queue_result.is_ok(),
+        "Should be able to queue failed settlement"
+    );
 }
 
 #[tokio::test]
@@ -201,7 +222,7 @@ async fn test_concurrent_settlements() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
@@ -219,9 +240,8 @@ async fn test_concurrent_settlements() {
         let auto_settlement = auto_settlement.clone();
         let session_id = format!("session_{}", i);
 
-        let handle = tokio::spawn(async move {
-            auto_settlement.handle_disconnect(&session_id).await
-        });
+        let handle =
+            tokio::spawn(async move { auto_settlement.handle_disconnect(&session_id).await });
 
         handles.push(handle);
     }
@@ -251,19 +271,20 @@ async fn test_disconnect_handler_integration() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
 
     // Create disconnect handler with settlement integration
-    let disconnect_handler = DisconnectHandler::new(
-        session_store.clone(),
-        Some(settlement_manager.clone()),
-    );
+    let disconnect_handler =
+        DisconnectHandler::new(session_store.clone(), Some(settlement_manager.clone()));
 
     // Handle WebSocket disconnect
-    disconnect_handler.handle_disconnect("session_1").await.unwrap();
+    disconnect_handler
+        .handle_disconnect("session_1")
+        .await
+        .unwrap();
 
     // Verify session was cleaned up
     let exists = session_store.read().await.session_exists("session_1").await;
@@ -281,7 +302,7 @@ async fn test_settlement_event_logging() {
     let settlement_manager = Arc::new(
         SettlementManager::new(registry.clone(), &private_key)
             .await
-            .expect("Failed to create settlement manager")
+            .expect("Failed to create settlement manager"),
     );
 
     let session_store = create_test_session_store().await;
@@ -303,8 +324,12 @@ async fn test_settlement_event_logging() {
     assert!(!events.is_empty(), "Should have logged settlement events");
 
     // Verify event types
-    let has_initiated = events.iter().any(|e| matches!(e.event_type, EventType::SettlementInitiated));
-    let has_queued = events.iter().any(|e| matches!(e.event_type, EventType::SettlementQueued));
+    let has_initiated = events
+        .iter()
+        .any(|e| matches!(e.event_type, EventType::SettlementInitiated));
+    let has_queued = events
+        .iter()
+        .any(|e| matches!(e.event_type, EventType::SettlementQueued));
 
     assert!(has_initiated || has_queued, "Should have settlement events");
 }

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use tokio::fs;
 use thiserror::Error;
+use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelConfig {
@@ -108,7 +108,8 @@ impl ModelHostingManager {
         model_id: &str,
         parameters: ModelParameters,
     ) -> Result<(), HostingError> {
-        let model = self.models
+        let model = self
+            .models
             .get_mut(model_id)
             .ok_or_else(|| HostingError::ModelNotFound(model_id.to_string()))?;
 
@@ -121,7 +122,8 @@ impl ModelHostingManager {
         model_id: &str,
         status: ModelStatus,
     ) -> Result<(), HostingError> {
-        let model = self.models
+        let model = self
+            .models
             .get_mut(model_id)
             .ok_or_else(|| HostingError::ModelNotFound(model_id.to_string()))?;
 
@@ -142,7 +144,8 @@ impl ModelHostingManager {
         model_id: &str,
         metadata: ModelMetadata,
     ) -> Result<(), HostingError> {
-        let model = self.models
+        let model = self
+            .models
             .get_mut(model_id)
             .ok_or_else(|| HostingError::ModelNotFound(model_id.to_string()))?;
 
@@ -164,48 +167,51 @@ impl ModelHostingManager {
 
     fn validate_config(&self, config: &ModelConfig) -> Result<(), HostingError> {
         // Validate temperature range
-        if config.parameters.temperature_range.0 < 0.0 
-            || config.parameters.temperature_range.1 < config.parameters.temperature_range.0 {
+        if config.parameters.temperature_range.0 < 0.0
+            || config.parameters.temperature_range.1 < config.parameters.temperature_range.0
+        {
             return Err(HostingError::InvalidConfiguration(
-                "Invalid temperature range".to_string()
+                "Invalid temperature range".to_string(),
             ));
         }
 
         // Validate top_p range
-        if config.parameters.top_p_range.0 < 0.0 
+        if config.parameters.top_p_range.0 < 0.0
             || config.parameters.top_p_range.1 > 1.0
-            || config.parameters.top_p_range.1 < config.parameters.top_p_range.0 {
+            || config.parameters.top_p_range.1 < config.parameters.top_p_range.0
+        {
             return Err(HostingError::InvalidConfiguration(
-                "Invalid top_p range".to_string()
+                "Invalid top_p range".to_string(),
             ));
         }
 
         // Validate top_k range
         if config.parameters.top_k_range.1 < config.parameters.top_k_range.0 {
             return Err(HostingError::InvalidConfiguration(
-                "Invalid top_k range".to_string()
+                "Invalid top_k range".to_string(),
             ));
         }
 
         // Validate repeat penalty range
-        if config.parameters.repeat_penalty_range.0 < 0.0 
-            || config.parameters.repeat_penalty_range.1 < config.parameters.repeat_penalty_range.0 {
+        if config.parameters.repeat_penalty_range.0 < 0.0
+            || config.parameters.repeat_penalty_range.1 < config.parameters.repeat_penalty_range.0
+        {
             return Err(HostingError::InvalidConfiguration(
-                "Invalid repeat penalty range".to_string()
+                "Invalid repeat penalty range".to_string(),
             ));
         }
 
         // Validate context size
         if config.parameters.context_size == 0 {
             return Err(HostingError::InvalidConfiguration(
-                "Context size must be greater than 0".to_string()
+                "Context size must be greater than 0".to_string(),
             ));
         }
 
         // Validate max tokens
         if config.parameters.max_tokens == 0 {
             return Err(HostingError::InvalidConfiguration(
-                "Max tokens must be greater than 0".to_string()
+                "Max tokens must be greater than 0".to_string(),
             ));
         }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::session::{WebSocketSession, SessionConfig};
+use super::session::{SessionConfig, WebSocketSession};
 use crate::config::chains::ChainRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,11 +42,11 @@ impl SessionManager {
     /// Register a new session
     pub async fn register_session(&self, session: WebSocketSession) -> Result<()> {
         let mut sessions = self.sessions.write().await;
-        
+
         if sessions.contains_key(&session.id) {
             return Err(anyhow!("Session {} already exists", session.id));
         }
-        
+
         info!("Registering session: {}", session.id);
         sessions.insert(session.id.clone(), session);
         Ok(())
@@ -91,11 +91,11 @@ impl SessionManager {
     /// Update a session
     pub async fn update_session(&self, session: WebSocketSession) -> Result<()> {
         let mut sessions = self.sessions.write().await;
-        
+
         if !sessions.contains_key(&session.id) {
             return Err(anyhow!("Session {} not found", session.id));
         }
-        
+
         let session_id = session.id.clone();
         sessions.insert(session_id.clone(), session);
         debug!("Updated session: {}", session_id);
@@ -137,7 +137,8 @@ impl SessionManager {
         chain_id: u64,
         registry: &ChainRegistry,
     ) -> Result<()> {
-        let session = WebSocketSession::with_validated_chain(session_id, config, chain_id, registry)?;
+        let session =
+            WebSocketSession::with_validated_chain(session_id, config, chain_id, registry)?;
         self.register_session(session).await
     }
 
@@ -217,7 +218,10 @@ impl SessionManager {
             }
         }
 
-        info!("Migrated {} sessions to chain {}", migrated_count, new_chain_id);
+        info!(
+            "Migrated {} sessions to chain {}",
+            migrated_count, new_chain_id
+        );
         Ok(migrated_count)
     }
 }

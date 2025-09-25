@@ -111,18 +111,26 @@ impl ChainConnectionStats {
         let peak = peaks.entry(chain_id).or_insert(0);
         if current_count > *peak {
             *peak = current_count;
-            info!("New peak connections for chain {}: {}", chain_id, current_count);
+            info!(
+                "New peak connections for chain {}: {}",
+                chain_id, current_count
+            );
         }
 
         // Update chain stats
         let mut stats = self.chain_stats.write().await;
-        let chain_stat = stats.entry(chain_id).or_insert_with(ConnectionStats::default);
+        let chain_stat = stats
+            .entry(chain_id)
+            .or_insert_with(ConnectionStats::default);
         chain_stat.total_connections += 1;
         chain_stat.active_connections = current_count;
         chain_stat.peak_connections = *peak;
         chain_stat.last_activity = Some(chrono::Utc::now().timestamp() as u64);
 
-        debug!("Recorded connection {} for chain {}", connection_id, chain_id);
+        debug!(
+            "Recorded connection {} for chain {}",
+            connection_id, chain_id
+        );
     }
 
     /// Record a disconnection
@@ -162,7 +170,9 @@ impl ChainConnectionStats {
 
         // Update chain stats
         let mut stats = self.chain_stats.write().await;
-        let chain_stat = stats.entry(chain_id).or_insert_with(ConnectionStats::default);
+        let chain_stat = stats
+            .entry(chain_id)
+            .or_insert_with(ConnectionStats::default);
         chain_stat.messages_sent += 1;
         chain_stat.bytes_sent += bytes;
         chain_stat.last_activity = Some(chrono::Utc::now().timestamp() as u64);
@@ -184,7 +194,9 @@ impl ChainConnectionStats {
 
         // Update chain stats
         let mut stats = self.chain_stats.write().await;
-        let chain_stat = stats.entry(chain_id).or_insert_with(ConnectionStats::default);
+        let chain_stat = stats
+            .entry(chain_id)
+            .or_insert_with(ConnectionStats::default);
         chain_stat.messages_received += 1;
         chain_stat.bytes_received += bytes;
         chain_stat.last_activity = Some(chrono::Utc::now().timestamp() as u64);
@@ -201,7 +213,9 @@ impl ChainConnectionStats {
 
         // Update chain stats
         let mut stats = self.chain_stats.write().await;
-        let chain_stat = stats.entry(chain_id).or_insert_with(ConnectionStats::default);
+        let chain_stat = stats
+            .entry(chain_id)
+            .or_insert_with(ConnectionStats::default);
         chain_stat.errors += 1;
         chain_stat.last_activity = Some(chrono::Utc::now().timestamp() as u64);
     }
@@ -257,7 +271,10 @@ impl ChainConnectionStats {
 
             let removed = initial_count - chain_connections.len();
             if removed > 0 {
-                debug!("Cleaned up {} idle connections on chain {}", removed, chain_id);
+                debug!(
+                    "Cleaned up {} idle connections on chain {}",
+                    removed, chain_id
+                );
 
                 // Update stats
                 if let Some(chain_stat) = stats.get_mut(chain_id) {
@@ -414,19 +431,25 @@ mod tests {
     async fn test_global_stats() {
         let mut chain_stats = HashMap::new();
 
-        chain_stats.insert(84532, ConnectionStats {
-            active_connections: 10,
-            messages_sent: 1000,
-            bytes_sent: 100000,
-            ..Default::default()
-        });
+        chain_stats.insert(
+            84532,
+            ConnectionStats {
+                active_connections: 10,
+                messages_sent: 1000,
+                bytes_sent: 100000,
+                ..Default::default()
+            },
+        );
 
-        chain_stats.insert(5611, ConnectionStats {
-            active_connections: 5,
-            messages_sent: 500,
-            bytes_sent: 50000,
-            ..Default::default()
-        });
+        chain_stats.insert(
+            5611,
+            ConnectionStats {
+                active_connections: 5,
+                messages_sent: 500,
+                bytes_sent: 50000,
+                ..Default::default()
+            },
+        );
 
         let global = GlobalStats::from_chain_stats(chain_stats);
         assert_eq!(global.total_chains, 2);

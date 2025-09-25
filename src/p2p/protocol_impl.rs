@@ -1,11 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::io::{AsyncRead, AsyncWrite};
 use futures::prelude::*;
 use libp2p::{
     request_response::{self, Codec},
     StreamProtocol,
 };
-use futures::io::{AsyncRead, AsyncWrite};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -60,16 +60,19 @@ impl Codec for FabstirCodec {
         let mut len_bytes = [0u8; 4];
         io.read_exact(&mut len_bytes).await?;
         let len = u32::from_be_bytes(len_bytes) as usize;
-        
+
         // Limit message size to 1MB
         if len > 1024 * 1024 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Message too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Message too large",
+            ));
         }
-        
+
         // Read the message
         buf.resize(len, 0);
         io.read_exact(&mut buf).await?;
-        
+
         let request = serde_json::from_slice(&buf)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(request)
@@ -88,16 +91,19 @@ impl Codec for FabstirCodec {
         let mut len_bytes = [0u8; 4];
         io.read_exact(&mut len_bytes).await?;
         let len = u32::from_be_bytes(len_bytes) as usize;
-        
+
         // Limit message size to 1MB
         if len > 1024 * 1024 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Message too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Message too large",
+            ));
         }
-        
+
         // Read the message
         buf.resize(len, 0);
         io.read_exact(&mut buf).await?;
-        
+
         let response = serde_json::from_slice(&buf)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(response)
@@ -114,11 +120,11 @@ impl Codec for FabstirCodec {
     {
         let data = serde_json::to_vec(&request)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        
+
         // Write length prefix
         let len = data.len() as u32;
         io.write_all(&len.to_be_bytes()).await?;
-        
+
         // Write the message
         io.write_all(&data).await?;
         io.flush().await?;
@@ -136,11 +142,11 @@ impl Codec for FabstirCodec {
     {
         let data = serde_json::to_vec(&response)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        
+
         // Write length prefix
         let len = data.len() as u32;
         io.write_all(&len.to_be_bytes()).await?;
-        
+
         // Write the message
         io.write_all(&data).await?;
         io.flush().await?;
@@ -188,7 +194,7 @@ impl RequestTracker {
                 to_remove.push(request_id.clone());
             }
         }
-        
+
         for request_id in &to_remove {
             if let Some((_, tx)) = self.pending_requests.remove(request_id) {
                 let _ = tx.send(Err(anyhow::anyhow!("Request timed out")));
@@ -219,10 +225,10 @@ impl RateLimiter {
         let one_minute_ago = now - Duration::from_secs(60);
 
         let requests = self.peer_requests.entry(*peer_id).or_insert_with(Vec::new);
-        
+
         // Remove old requests
         requests.retain(|&time| time > one_minute_ago);
-        
+
         if requests.len() >= self.max_requests_per_minute {
             return Err(anyhow::anyhow!(
                 "Rate limit exceeded: {} requests in the last minute",
@@ -270,9 +276,9 @@ impl StreamingHandler {
 
     pub async fn send_chunk(&mut self, response: InferenceResponse) -> Result<()> {
         if let Some(tx) = self.active_streams.get_mut(&response.request_id) {
-            tx.send(response.clone()).await.map_err(|_| {
-                anyhow::anyhow!("Failed to send streaming response")
-            })?;
+            tx.send(response.clone())
+                .await
+                .map_err(|_| anyhow::anyhow!("Failed to send streaming response"))?;
 
             // Close stream if this is the final chunk
             if response.finish_reason == "stop" {

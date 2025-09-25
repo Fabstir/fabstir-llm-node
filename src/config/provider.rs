@@ -1,11 +1,11 @@
 use super::chains::{ChainConfig, ChainConfigLoader, ChainRegistry};
-use ethers::providers::{Provider, Http, Middleware};
+use anyhow::{anyhow, Result};
+use ethers::providers::{Http, Middleware, Provider};
+use ethers::types::{Block, H256, U64};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use anyhow::{Result, anyhow};
 use tokio::sync::Mutex;
-use ethers::types::{U64, Block, H256};
 
 #[derive(Debug, Clone)]
 pub enum ProviderHealth {
@@ -80,7 +80,10 @@ impl MultiChainProvider {
         Ok(provider)
     }
 
-    pub async fn with_pool_size(config_loader: ChainConfigLoader, pool_size: usize) -> Result<Self> {
+    pub async fn with_pool_size(
+        config_loader: ChainConfigLoader,
+        pool_size: usize,
+    ) -> Result<Self> {
         let mut provider = Self::new(config_loader).await?;
         provider.pool_size = pool_size;
         provider.initialize_pool_stats();
@@ -95,7 +98,10 @@ impl MultiChainProvider {
     }
 
     async fn initialize_providers(&mut self) -> Result<()> {
-        let registry = self.config_loader.build_registry().await
+        let registry = self
+            .config_loader
+            .build_registry()
+            .await
             .map_err(|e| anyhow!("Failed to build registry: {}", e))?;
         let mut providers = self.providers.write().unwrap();
 
@@ -146,18 +152,24 @@ impl MultiChainProvider {
 
     fn initialize_pool_stats(&mut self) {
         let mut stats = self.pool_stats.write().unwrap();
-        stats.insert(84532, PoolStats {
-            total_requests: 0,
-            pool_size: self.pool_size,
-            cache_hits: 0,
-            cache_misses: 0,
-        });
-        stats.insert(5611, PoolStats {
-            total_requests: 0,
-            pool_size: self.pool_size,
-            cache_hits: 0,
-            cache_misses: 0,
-        });
+        stats.insert(
+            84532,
+            PoolStats {
+                total_requests: 0,
+                pool_size: self.pool_size,
+                cache_hits: 0,
+                cache_misses: 0,
+            },
+        );
+        stats.insert(
+            5611,
+            PoolStats {
+                total_requests: 0,
+                pool_size: self.pool_size,
+                cache_hits: 0,
+                cache_misses: 0,
+            },
+        );
     }
 
     fn initialize_rotation_stats(&mut self) {
@@ -166,11 +178,14 @@ impl MultiChainProvider {
         // Parse multiple RPC URLs if available
         if let Ok(urls) = std::env::var("BASE_SEPOLIA_RPC_URLS") {
             let endpoints: Vec<&str> = urls.split(',').collect();
-            stats.insert(84532, RotationStats {
-                rotation_count: 0,
-                current_index: 0,
-                total_endpoints: endpoints.len(),
-            });
+            stats.insert(
+                84532,
+                RotationStats {
+                    rotation_count: 0,
+                    current_index: 0,
+                    total_endpoints: endpoints.len(),
+                },
+            );
         }
     }
 
@@ -193,7 +208,8 @@ impl MultiChainProvider {
             let mut stats = self.rotation_stats.write().unwrap();
             if let Some(rotation_stat) = stats.get_mut(&chain_id) {
                 rotation_stat.rotation_count += 1;
-                rotation_stat.current_index = (rotation_stat.current_index + 1) % rotation_stat.total_endpoints;
+                rotation_stat.current_index =
+                    (rotation_stat.current_index + 1) % rotation_stat.total_endpoints;
             }
         }
 
@@ -208,10 +224,7 @@ impl MultiChainProvider {
             drop(providers); // Release lock before async operation
 
             let start = Instant::now();
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                provider.get_block_number()
-            ).await {
+            match tokio::time::timeout(Duration::from_secs(5), provider.get_block_number()).await {
                 Ok(Ok(block_number)) => {
                     let latency_ms = start.elapsed().as_millis() as u64;
                     let health = if latency_ms < 1000 {
@@ -315,7 +328,10 @@ impl MultiChainProvider {
 
     pub fn is_using_primary(&self, chain_id: u64) -> bool {
         let providers = self.providers.read().unwrap();
-        providers.get(&chain_id).map(|entry| entry.is_primary).unwrap_or(true)
+        providers
+            .get(&chain_id)
+            .map(|entry| entry.is_primary)
+            .unwrap_or(true)
     }
 
     pub fn get_pool_stats(&self, chain_id: u64) -> PoolStats {
@@ -337,26 +353,20 @@ impl MultiChainProvider {
         })
     }
 
-    pub async fn execute_with_retry<F, Fut, T>(
-        &self,
-        chain_id: u64,
-        f: F,
-    ) -> Result<T>
+    pub async fn execute_with_retry<F, Fut, T>(&self, chain_id: u64, f: F) -> Result<T>
     where
         F: Fn(Arc<Provider<Http>>) -> Fut,
         Fut: std::future::Future<Output = Result<T, ethers::providers::ProviderError>>,
     {
-        let provider = self.get_provider(chain_id)
+        let provider = self
+            .get_provider(chain_id)
             .ok_or_else(|| anyhow!("Provider not found for chain {}", chain_id))?;
 
         let mut retries = 3;
         let mut last_error = None;
 
         while retries > 0 {
-            match tokio::time::timeout(
-                Duration::from_secs(10),
-                f(provider.clone())
-            ).await {
+            match tokio::time::timeout(Duration::from_secs(10), f(provider.clone())).await {
                 Ok(Ok(result)) => return Ok(result),
                 Ok(Err(e)) => {
                     last_error = Some(e.to_string());
@@ -375,7 +385,9 @@ impl MultiChainProvider {
             }
         }
 
-        Err(anyhow!("Failed after 3 retries: {}",
-            last_error.unwrap_or_else(|| "Unknown error".to_string())))
+        Err(anyhow!(
+            "Failed after 3 retries: {}",
+            last_error.unwrap_or_else(|| "Unknown error".to_string())
+        ))
     }
 }

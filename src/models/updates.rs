@@ -1,15 +1,15 @@
 use anyhow::Result;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
-use chrono::Utc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::{ModelFormat, DownloadSource};
-use super::validation::{ValidationResult, ValidationStatus, IntegrityCheck};
+use super::validation::{IntegrityCheck, ValidationResult, ValidationStatus};
+use super::{DownloadSource, ModelFormat};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
@@ -41,11 +41,11 @@ impl Default for UpdateConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateStrategy {
-    Conservative,  // Only stable releases
-    Balanced,      // Stable + RC versions
-    Aggressive,    // All releases including beta
-    SecurityOnly,  // Only security updates
-    Manual,        // No automatic updates
+    Conservative, // Only stable releases
+    Balanced,     // Stable + RC versions
+    Aggressive,   // All releases including beta
+    SecurityOnly, // Only security updates
+    Manual,       // No automatic updates
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,15 +89,15 @@ impl ModelVersion {
 
     pub fn to_string(&self) -> String {
         let mut version = format!("{}.{}.{}", self.major, self.minor, self.patch);
-        
+
         if let Some(ref pre) = self.pre_release {
             version.push_str(&format!("-{}", pre));
         }
-        
+
         if let Some(ref build) = self.build {
             version.push_str(&format!("+{}", build));
         }
-        
+
         version
     }
 
@@ -398,11 +398,18 @@ impl ModelUpdater {
                 model_id: model_id.to_string(),
                 current_version: current_version.clone(),
                 new_version: new_version.clone(),
-                changelog: format!("Updated from {} to {}\n- Bug fixes\n- Performance improvements", 
-                    current_version.to_string(), new_version.to_string()),
+                changelog: format!(
+                    "Updated from {} to {}\n- Bug fixes\n- Performance improvements",
+                    current_version.to_string(),
+                    new_version.to_string()
+                ),
                 size_bytes: 1_500_000_000, // 1.5GB
                 release_date: Utc::now().timestamp() as u64 - 86400, // 1 day ago
-                download_url: format!("https://example.com/models/{}/v{}", model_id, new_version.to_string()),
+                download_url: format!(
+                    "https://example.com/models/{}/v{}",
+                    model_id,
+                    new_version.to_string()
+                ),
                 is_security_update: current_version.patch == 0, // Mock: .0 releases are security updates
                 is_breaking_change: new_version.major > current_version.major,
                 compatibility_notes: vec![
@@ -450,7 +457,7 @@ impl ModelUpdater {
         update_source: UpdateSource,
     ) -> Result<UpdateResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Extract version from update source
         let new_version = match &update_source {
             UpdateSource::HuggingFace { version, .. } => version.clone(),
@@ -473,10 +480,11 @@ impl ModelUpdater {
             signature: None,
             release_notes: "Update applied".to_string(),
         };
-        
+
         // Verify update
         let verification_passed = if self.config.verify_updates {
-            self.verify_update(&new_model_path, &update_metadata).await?
+            self.verify_update(&new_model_path, &update_metadata)
+                .await?
         } else {
             true
         };
@@ -487,7 +495,8 @@ impl ModelUpdater {
         // Update version history
         {
             let mut state = self.state.write().await;
-            state.version_history
+            state
+                .version_history
                 .entry(model_id.to_string())
                 .or_default()
                 .push(new_version.clone());
@@ -520,7 +529,7 @@ impl ModelUpdater {
     ) -> Result<UpdateResult> {
         let target_version = ModelVersion::new(1, 0, 0); // Mock target version
         let state = self.state.read().await;
-        
+
         // Find backup for target version
         if let Some(backups) = state.backups.get(model_id) {
             for backup in backups {
@@ -528,12 +537,13 @@ impl ModelUpdater {
                     if !backup.can_recover {
                         return Err(UpdateError::RollbackFailed {
                             reason: "Recovery not possible for this version".to_string(),
-                        }.into());
+                        }
+                        .into());
                     }
 
                     // Restore from backup
                     let new_path = self.restore_from_backup(&backup.backup_path).await?;
-                    
+
                     return Ok(UpdateResult {
                         status: UpdateStatus::RolledBack,
                         model_id: model_id.to_string(),
@@ -556,7 +566,8 @@ impl ModelUpdater {
 
         Err(UpdateError::RollbackFailed {
             reason: format!("No backup found for version {}", target_version.to_string()),
-        }.into())
+        }
+        .into())
     }
 
     pub async fn list_available_updates(&self) -> Result<Vec<UpdateInfo>> {
@@ -602,7 +613,7 @@ impl ModelUpdater {
     ) -> Result<String> {
         // Mock scheduling - return update ID
         let update_id = format!("update_{}_{}", model_id, Uuid::new_v4());
-        
+
         // Store update tracking info
         let tracking = UpdateTracking {
             update_id: update_id.clone(),
@@ -629,40 +640,49 @@ impl ModelUpdater {
 
     pub async fn cancel_update(&self, update_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(tracking) = state.updates.get_mut(update_id) {
-            if tracking.status == UpdateStatus::Downloading || 
-               tracking.status == UpdateStatus::Installing {
+            if tracking.status == UpdateStatus::Downloading
+                || tracking.status == UpdateStatus::Installing
+            {
                 tracking.status = UpdateStatus::Cancelled;
                 Ok(())
             } else {
                 Err(UpdateError::UpdateNotAvailable {
                     model_id: tracking.model_id.clone(),
-                }.into())
+                }
+                .into())
             }
         } else {
             Err(UpdateError::UpdateNotAvailable {
                 model_id: "unknown".to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn get_update_status(&self, update_id: &str) -> Result<UpdateStatus> {
         let state = self.state.read().await;
-        
+
         if let Some(tracking) = state.updates.get(update_id) {
             Ok(tracking.status.clone())
         } else {
             Err(UpdateError::UpdateNotAvailable {
                 model_id: "unknown".to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
-    pub async fn cleanup_old_versions(&self, model_id: &str, keep_count: usize) -> Result<CleanupResult> {
+    pub async fn cleanup_old_versions(
+        &self,
+        model_id: &str,
+        keep_count: usize,
+    ) -> Result<CleanupResult> {
         let mut state = self.state.write().await;
-        
-        let versions = state.version_history
+
+        let versions = state
+            .version_history
             .entry(model_id.to_string())
             .or_default();
 
@@ -693,7 +713,7 @@ impl ModelUpdater {
         versions.sort();
         let to_remove = versions.len() - keep_count;
         let cleaned_versions: Vec<_> = versions.drain(0..to_remove).collect();
-        
+
         // Mock freed space calculation
         let freed_space_bytes = cleaned_versions.len() as u64 * 1_000_000_000; // 1GB per version
 
@@ -716,7 +736,7 @@ impl ModelUpdater {
         // Mock migration plan
         let from_version = _from_version.clone();
         let to_version = _to_version.clone();
-        
+
         let steps = vec![
             MigrationStep {
                 id: "backup".to_string(),
@@ -780,14 +800,13 @@ impl ModelUpdater {
         match self.config.update_strategy {
             UpdateStrategy::Conservative => {
                 // Only patch updates for conservative strategy
-                Ok(new_version.major == current_version.major && 
-                   new_version.minor == current_version.minor &&
-                   new_version.patch > current_version.patch)
+                Ok(new_version.major == current_version.major
+                    && new_version.minor == current_version.minor
+                    && new_version.patch > current_version.patch)
             }
             UpdateStrategy::Balanced => {
                 // Minor and patch updates for balanced strategy
-                Ok(new_version.major == current_version.major && 
-                   new_version >= current_version)
+                Ok(new_version.major == current_version.major && new_version >= current_version)
             }
             UpdateStrategy::Aggressive => {
                 // All updates for aggressive strategy
@@ -811,7 +830,9 @@ impl ModelUpdater {
         update_source: UpdateSource,
     ) -> Result<UpdateResult> {
         // Hot update is similar to regular update but without restart
-        let mut result = self.apply_update(model_id, current_path, update_source).await?;
+        let mut result = self
+            .apply_update(model_id, current_path, update_source)
+            .await?;
         result.changelog = format!("Hot update: {}", result.changelog);
         result.downtime_ms = 20; // Very low downtime for hot updates
         result.hot_swap_successful = true;
@@ -824,8 +845,9 @@ impl ModelUpdater {
         keep_count: usize,
     ) -> Result<CleanupResult> {
         let mut state = self.state.write().await;
-        
-        let versions = state.version_history
+
+        let versions = state
+            .version_history
             .entry(model_id.to_string())
             .or_default();
 
@@ -844,7 +866,7 @@ impl ModelUpdater {
         versions.sort();
         let to_remove = versions.len() - keep_count;
         let cleaned_versions: Vec<_> = versions.drain(0..to_remove).collect();
-        
+
         // Mock freed space calculation
         let freed_space_bytes = cleaned_versions.len() as u64 * 1_000_000_000; // 1GB per version
 
@@ -860,13 +882,13 @@ impl ModelUpdater {
 
     pub async fn get_recovery_info(&self, model_id: &str) -> Result<RecoveryInfo> {
         let state = self.state.read().await;
-        
+
         if let Some(backups) = state.backups.get(model_id) {
             if let Some(latest_backup) = backups.last() {
                 return Ok(latest_backup.clone());
             }
         }
-        
+
         // Return default recovery info if no backup found
         Ok(RecoveryInfo {
             backup_path: PathBuf::from("no_backup"),
@@ -881,13 +903,13 @@ impl ModelUpdater {
     async fn create_backup(&self, model_id: &str, current_path: &PathBuf) -> Result<PathBuf> {
         let backup_dir = self.config.update_dir.join("backups").join(model_id);
         tokio::fs::create_dir_all(&backup_dir).await?;
-        
+
         let timestamp = Utc::now().timestamp();
         let backup_path = backup_dir.join(format!("backup_{}.gguf", timestamp));
-        
+
         // Mock backup creation
         tokio::fs::copy(current_path, &backup_path).await?;
-        
+
         // Store backup info
         {
             let mut state = self.state.write().await;
@@ -903,13 +925,14 @@ impl ModelUpdater {
                     "Restart inference service".to_string(),
                 ],
             };
-            
-            state.backups
+
+            state
+                .backups
                 .entry(model_id.to_string())
                 .or_default()
                 .push(recovery_info);
         }
-        
+
         Ok(backup_path)
     }
 
@@ -927,20 +950,19 @@ impl ModelUpdater {
                 url.split('/').last().unwrap_or("model.gguf").to_string()
             }
         };
-        
+
         let update_path = self.config.update_dir.join(&filename);
-        
+
         // Create parent directory
         if let Some(parent) = update_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        
+
         // Mock file creation
         tokio::fs::write(&update_path, b"updated model data").await?;
-        
+
         Ok(update_path)
     }
-
 
     async fn apply_migration(&self, _model_id: &str, _version: &ModelVersion) -> Result<bool> {
         // Mock migration application
@@ -1012,10 +1034,13 @@ impl ModelUpdater {
                 filename: "model.gguf".to_string(),
                 version: update_info.new_version.clone(),
             };
-            
+
             let current_path = PathBuf::from(format!("models/{}.gguf", update_info.model_id));
-            
-            match self.apply_update(&update_info.model_id, &current_path, source).await {
+
+            match self
+                .apply_update(&update_info.model_id, &current_path, source)
+                .await
+            {
                 Ok(_) => successful += 1,
                 Err(_) => failed += 1,
             }
@@ -1040,7 +1065,7 @@ impl ModelUpdater {
         if !model_path.exists() {
             return Ok(false);
         }
-        
+
         // In a real implementation, would verify checksum, signature, etc.
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         Ok(true)
@@ -1069,7 +1094,7 @@ impl ModelUpdater {
 
     pub async fn subscribe_notifications(&self) -> mpsc::UnboundedReceiver<UpdateNotification> {
         let (tx, rx) = mpsc::unbounded_channel();
-        
+
         // Spawn a task to send mock notifications
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -1082,7 +1107,7 @@ impl ModelUpdater {
                 message: "New patch available".to_string(),
             });
         });
-        
+
         rx
     }
 
@@ -1093,7 +1118,7 @@ impl ModelUpdater {
     ) -> Result<ValidationResult> {
         // Mock validation with integrity check
         use super::validation::{ValidationResult, ValidationStatus};
-        
+
         Ok(ValidationResult {
             status: ValidationStatus::Valid,
             format: ModelFormat::GGUF,

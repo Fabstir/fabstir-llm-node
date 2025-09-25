@@ -1,64 +1,74 @@
 // src/models/gdpr.rs - Decentralized GDPR compliance module
 
-use anyhow::{Result, anyhow};
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use chrono::{DateTime, Utc, Duration};
-use serde::{Serialize, Deserialize};
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer};
-use ed25519_dalek::Verifier;
-use blake3;
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose, Engine as _};
+use blake3;
+use chrono::{DateTime, Duration, Utc};
+use ed25519_dalek::Verifier;
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::RngCore;
-use base64::{Engine as _, engine::general_purpose};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 // Custom serialization for ed25519-dalek types
 mod verifying_key_serde {
     use super::*;
-    use serde::{Serializer, Deserializer};
-    
+    use serde::{Deserializer, Serializer};
+
     pub fn serialize<S: Serializer>(key: &VerifyingKey, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(key.as_bytes())
     }
-    
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<VerifyingKey, D::Error> {
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<VerifyingKey, D::Error> {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
-        let array: [u8; 32] = bytes.try_into().map_err(|_| serde::de::Error::custom("Invalid verifying key length"))?;
+        let array: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("Invalid verifying key length"))?;
         VerifyingKey::from_bytes(&array).map_err(serde::de::Error::custom)
     }
 }
 
 mod signature_serde {
     use super::*;
-    use serde::{Serializer, Deserializer};
-    
+    use serde::{Deserializer, Serializer};
+
     pub fn serialize<S: Serializer>(sig: &Signature, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(&sig.to_bytes())
     }
-    
+
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Signature, D::Error> {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
-        let array: [u8; 64] = bytes.try_into().map_err(|_| serde::de::Error::custom("Invalid signature length"))?;
+        let array: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("Invalid signature length"))?;
         Ok(Signature::from_bytes(&array))
     }
 }
 
 mod hash_serde {
     use super::*;
-    use serde::{Serializer, Deserializer};
-    
+    use serde::{Deserializer, Serializer};
+
     pub fn serialize<S: Serializer>(hash: &blake3::Hash, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&hash.to_hex())
     }
-    
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<blake3::Hash, D::Error> {
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<blake3::Hash, D::Error> {
         let hex = String::deserialize(deserializer)?;
         let bytes = hex::decode(&hex).map_err(serde::de::Error::custom)?;
-        let array: [u8; 32] = bytes.try_into().map_err(|_| serde::de::Error::custom("Invalid hash length"))?;
+        let array: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("Invalid hash length"))?;
         Ok(blake3::Hash::from(array))
     }
 }
@@ -94,10 +104,10 @@ impl SignedRequest {
         let timestamp = Utc::now();
         let nonce = rand::random::<u64>();
         let message = format!("{}-{}-{}", request_type, timestamp, nonce);
-        
+
         let signature = secret_key.sign(message.as_bytes());
         let public_key = secret_key.verifying_key();
-        
+
         SignedRequest {
             request_type: request_type.to_string(),
             timestamp,
@@ -106,10 +116,12 @@ impl SignedRequest {
             public_key,
         }
     }
-    
+
     pub fn verify(&self) -> bool {
         let message = format!("{}-{}-{}", self.request_type, self.timestamp, self.nonce);
-        self.public_key.verify(message.as_bytes(), &self.signature).is_ok()
+        self.public_key
+            .verify(message.as_bytes(), &self.signature)
+            .is_ok()
     }
 }
 
@@ -206,9 +218,10 @@ impl ZkDeletionProof {
     pub fn is_valid(&self) -> bool {
         !self.proof_data.is_empty()
     }
-    
+
     pub fn proves_complete_deletion(&self) -> bool {
-        self.public_inputs.get("complete_deletion")
+        self.public_inputs
+            .get("complete_deletion")
             .map(|v| v == "true")
             .unwrap_or(false)
     }
@@ -359,7 +372,10 @@ pub struct AuditVerification {
 
 impl AuditVerification {
     pub fn generate_aggregate_report(&self) -> String {
-        format!("Total GDPR actions: {}\nPII contained: {}", self.total_actions, self.contains_pii)
+        format!(
+            "Total GDPR actions: {}\nPII contained: {}",
+            self.total_actions, self.contains_pii
+        )
     }
 }
 
@@ -479,23 +495,28 @@ impl DecentralizedGdprManager {
         Ok(DecentralizedGdprManager { config, state })
     }
 
-    pub async fn encrypt_for_user(&self, data: &[u8], user_pubkey: &VerifyingKey) -> Result<EncryptedData> {
+    pub async fn encrypt_for_user(
+        &self,
+        data: &[u8],
+        user_pubkey: &VerifyingKey,
+    ) -> Result<EncryptedData> {
         // Generate ephemeral key for this encryption
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
-        
+
         let cipher = Aes256Gcm::new_from_slice(&key)?;
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        
-        let ciphertext = cipher.encrypt(nonce, data)
+
+        let ciphertext = cipher
+            .encrypt(nonce, data)
             .map_err(|e| anyhow!("Encryption failed: {}", e))?;
-        
+
         // In real implementation, would encrypt key with user's public key
         // For now, store key hash to prove we don't have access
         let key_hash = blake3::hash(&key);
-        
+
         Ok(EncryptedData {
             ciphertext,
             nonce: nonce_bytes,
@@ -503,7 +524,11 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn decrypt_with_user_key(&self, _encrypted: &EncryptedData, _secret_key: &SigningKey) -> Result<Vec<u8>> {
+    pub async fn decrypt_with_user_key(
+        &self,
+        _encrypted: &EncryptedData,
+        _secret_key: &SigningKey,
+    ) -> Result<Vec<u8>> {
         // In real implementation, user would decrypt ephemeral key first
         // For testing, we'll simulate successful decryption
         Ok(b"My medical condition is diabetes".to_vec())
@@ -516,10 +541,12 @@ impl DecentralizedGdprManager {
         _preference: RegionalPreference,
     ) -> Result<StorageProof> {
         let mut state = self.state.write().await;
-        
+
         let storage_id = format!("storage-{}-{}", user_id, Utc::now().timestamp());
-        state.encrypted_storage.insert(storage_id.clone(), encrypted);
-        
+        state
+            .encrypted_storage
+            .insert(storage_id.clone(), encrypted);
+
         Ok(StorageProof {
             storage_id,
             node_signature: NodeSignature {
@@ -531,7 +558,9 @@ impl DecentralizedGdprManager {
 
     pub async fn retrieve_encrypted_data(&self, storage_id: &str) -> Result<EncryptedData> {
         let state = self.state.read().await;
-        state.encrypted_storage.get(storage_id)
+        state
+            .encrypted_storage
+            .get(storage_id)
             .cloned()
             .ok_or_else(|| anyhow!("Data not found"))
     }
@@ -541,31 +570,50 @@ impl DecentralizedGdprManager {
         Err(anyhow!("Access denied: No backdoor access to user data"))
     }
 
-    pub async fn sign_consent(&self, consent: ConsentRecord, secret_key: &SigningKey) -> Result<SignedConsent> {
+    pub async fn sign_consent(
+        &self,
+        consent: ConsentRecord,
+        secret_key: &SigningKey,
+    ) -> Result<SignedConsent> {
         let consent_bytes = serde_json::to_vec(&consent)?;
         let signature = secret_key.sign(&consent_bytes);
-        
+
         Ok(SignedConsent { consent, signature })
     }
 
-    pub async fn broadcast_consent_to_chain(&self, signed_consent: SignedConsent) -> Result<String> {
+    pub async fn broadcast_consent_to_chain(
+        &self,
+        signed_consent: SignedConsent,
+    ) -> Result<String> {
         let mut state = self.state.write().await;
-        let tx_hash = format!("0x{}", blake3::hash(&serde_json::to_vec(&signed_consent)?).to_hex());
-        
-        let user_key = general_purpose::STANDARD.encode(signed_consent.consent.user_pubkey.as_bytes());
+        let tx_hash = format!(
+            "0x{}",
+            blake3::hash(&serde_json::to_vec(&signed_consent)?).to_hex()
+        );
+
+        let user_key =
+            general_purpose::STANDARD.encode(signed_consent.consent.user_pubkey.as_bytes());
         state.consent_records.insert(user_key, signed_consent);
-        
+
         Ok(tx_hash)
     }
 
-    pub async fn verify_consent_on_chain(&self, user_pubkey: &VerifyingKey, purpose: &str) -> Result<ConsentVerification> {
+    pub async fn verify_consent_on_chain(
+        &self,
+        user_pubkey: &VerifyingKey,
+        purpose: &str,
+    ) -> Result<ConsentVerification> {
         let state = self.state.read().await;
         let user_key = general_purpose::STANDARD.encode(user_pubkey.as_bytes());
-        
+
         if let Some(signed_consent) = state.consent_records.get(&user_key) {
-            let is_valid = signed_consent.consent.purposes.iter().any(|p| p == purpose) &&
-                          signed_consent.consent.expiry.map(|e| e > Utc::now()).unwrap_or(true);
-            
+            let is_valid = signed_consent.consent.purposes.iter().any(|p| p == purpose)
+                && signed_consent
+                    .consent
+                    .expiry
+                    .map(|e| e > Utc::now())
+                    .unwrap_or(true);
+
             Ok(ConsentVerification {
                 is_valid,
                 signer: signed_consent.consent.user_pubkey.clone(),
@@ -580,20 +628,30 @@ impl DecentralizedGdprManager {
         }
     }
 
-    pub async fn sign_deletion_request(&self, deletion: DeletionBroadcast, secret_key: &SigningKey) -> Result<SignedDeletion> {
+    pub async fn sign_deletion_request(
+        &self,
+        deletion: DeletionBroadcast,
+        secret_key: &SigningKey,
+    ) -> Result<SignedDeletion> {
         let deletion_bytes = serde_json::to_vec(&deletion)?;
         let signature = secret_key.sign(&deletion_bytes);
-        
-        Ok(SignedDeletion { deletion, signature })
+
+        Ok(SignedDeletion {
+            deletion,
+            signature,
+        })
     }
 
-    pub async fn broadcast_deletion_to_p2p(&self, _signed_deletion: SignedDeletion) -> Result<DeletionProof> {
+    pub async fn broadcast_deletion_to_p2p(
+        &self,
+        _signed_deletion: SignedDeletion,
+    ) -> Result<DeletionProof> {
         let mut state = self.state.write().await;
-        
+
         // Simulate P2P broadcast to multiple nodes
         let nodes = vec!["node1", "node2", "node3"];
         let mut node_proofs = Vec::new();
-        
+
         for node in nodes {
             node_proofs.push(NodeDeletionProof {
                 node_id: node.to_string(),
@@ -603,41 +661,51 @@ impl DecentralizedGdprManager {
                 timestamp: Utc::now(),
             });
         }
-        
+
         let proof = DeletionProof {
             nodes_responded: node_proofs.clone(),
             deletion_proofs: node_proofs,
         };
-        
+
         state.deletion_logs.push(proof.clone());
-        
+
         Ok(proof)
     }
 
-    pub async fn generate_deletion_proof(&self, deletion_proof: &DeletionProof) -> Result<ZkDeletionProof> {
+    pub async fn generate_deletion_proof(
+        &self,
+        deletion_proof: &DeletionProof,
+    ) -> Result<ZkDeletionProof> {
         let mut public_inputs = HashMap::new();
         public_inputs.insert("complete_deletion".to_string(), "true".to_string());
-        public_inputs.insert("nodes_count".to_string(), deletion_proof.nodes_responded.len().to_string());
-        
+        public_inputs.insert(
+            "nodes_count".to_string(),
+            deletion_proof.nodes_responded.len().to_string(),
+        );
+
         Ok(ZkDeletionProof {
             proof_data: vec![1, 2, 3, 4], // Mock ZK proof
             public_inputs,
         })
     }
 
-    pub async fn collect_user_data_p2p(&self, user_pubkey: &VerifyingKey, _request: SignedRequest) -> Result<PortableDataPackage> {
+    pub async fn collect_user_data_p2p(
+        &self,
+        user_pubkey: &VerifyingKey,
+        _request: SignedRequest,
+    ) -> Result<PortableDataPackage> {
         let state = self.state.read().await;
-        
+
         // Collect all user's encrypted data
         let user_id = general_purpose::STANDARD.encode(user_pubkey.as_bytes());
         let mut all_data = Vec::new();
-        
+
         for (id, data) in &state.encrypted_storage {
             if id.contains(&user_id) {
                 all_data.extend(&data.ciphertext);
             }
         }
-        
+
         Ok(PortableDataPackage {
             encrypted_data: all_data.clone(),
             total_size_bytes: all_data.len() as u64,
@@ -645,7 +713,11 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn decrypt_portable_package(&self, _package: PortableDataPackage, _secret_key: &SigningKey) -> Result<Vec<u8>> {
+    pub async fn decrypt_portable_package(
+        &self,
+        _package: PortableDataPackage,
+        _secret_key: &SigningKey,
+    ) -> Result<Vec<u8>> {
         // Simulate decryption by user
         let export_data = serde_json::json!({
             "inferences": [],
@@ -654,18 +726,23 @@ impl DecentralizedGdprManager {
                 "decentralized_export": true
             }
         });
-        
+
         Ok(serde_json::to_vec(&export_data)?)
     }
 
-    pub async fn discover_regional_nodes(&self, preference: RegionalPreference) -> Result<Vec<RegionalNode>> {
+    pub async fn discover_regional_nodes(
+        &self,
+        preference: RegionalPreference,
+    ) -> Result<Vec<RegionalNode>> {
         let regions = match preference {
             RegionalPreference::EU => vec!["EU".to_string()],
             RegionalPreference::US => vec!["US".to_string()],
             RegionalPreference::Any => vec!["EU".to_string(), "US".to_string(), "ASIA".to_string()],
-            RegionalPreference::PreferEU { acceptable_regions, .. } => acceptable_regions,
+            RegionalPreference::PreferEU {
+                acceptable_regions, ..
+            } => acceptable_regions,
         };
-        
+
         let mut nodes = Vec::new();
         for region in regions {
             nodes.push(RegionalNode {
@@ -676,18 +753,25 @@ impl DecentralizedGdprManager {
                 },
             });
         }
-        
+
         Ok(nodes)
     }
 
-    pub async fn verify_node_location(&self, _node_id: &str, location_proof: &LocationProof) -> Result<LocationAttestation> {
+    pub async fn verify_node_location(
+        &self,
+        _node_id: &str,
+        location_proof: &LocationProof,
+    ) -> Result<LocationAttestation> {
         Ok(LocationAttestation {
             is_valid: true,
             region: location_proof.region.clone(),
         })
     }
 
-    pub async fn generate_compliance_proof(&self, proof_request: ZkComplianceProof) -> Result<GeneratedComplianceProof> {
+    pub async fn generate_compliance_proof(
+        &self,
+        proof_request: ZkComplianceProof,
+    ) -> Result<GeneratedComplianceProof> {
         Ok(GeneratedComplianceProof {
             proof_data: vec![1, 2, 3, 4, 5], // Mock ZK proof
             public_claims: proof_request.proves.clone(),
@@ -695,7 +779,10 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn verify_compliance_proof(&self, proof: &GeneratedComplianceProof) -> Result<ComplianceVerification> {
+    pub async fn verify_compliance_proof(
+        &self,
+        proof: &GeneratedComplianceProof,
+    ) -> Result<ComplianceVerification> {
         Ok(ComplianceVerification {
             all_claims_valid: true,
             proof_timestamp: proof.timestamp,
@@ -703,10 +790,14 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn grant_consent_on_chain(&self, consent: OnChainConsent, secret_key: &SigningKey) -> Result<ConsentTransaction> {
+    pub async fn grant_consent_on_chain(
+        &self,
+        consent: OnChainConsent,
+        secret_key: &SigningKey,
+    ) -> Result<ConsentTransaction> {
         let consent_bytes = serde_json::to_vec(&consent)?;
         let signature = secret_key.sign(&consent_bytes);
-        
+
         let mut state = self.state.write().await;
         let signed_consent = SignedConsent {
             consent: ConsentRecord {
@@ -718,41 +809,54 @@ impl DecentralizedGdprManager {
             },
             signature,
         };
-        
+
         let user_key = general_purpose::STANDARD.encode(consent.user_pubkey.as_bytes());
         state.consent_records.insert(user_key, signed_consent);
-        
+
         Ok(ConsentTransaction {
             tx_hash: format!("0x{}", blake3::hash(&consent_bytes).to_hex()),
         })
     }
 
-    pub async fn withdraw_consent_on_chain(&self, withdrawal: SignedRequest, user_pubkey: &VerifyingKey) -> Result<ConsentTransaction> {
+    pub async fn withdraw_consent_on_chain(
+        &self,
+        withdrawal: SignedRequest,
+        user_pubkey: &VerifyingKey,
+    ) -> Result<ConsentTransaction> {
         if !withdrawal.verify() {
             return Err(anyhow!("Invalid withdrawal signature"));
         }
-        
+
         let mut state = self.state.write().await;
         let user_key = general_purpose::STANDARD.encode(user_pubkey.as_bytes());
-        
+
         if let Some(signed_consent) = state.consent_records.get_mut(&user_key) {
             // Parse withdrawal request
             let parts: Vec<&str> = withdrawal.request_type.split(':').collect();
             if parts.len() == 2 && parts[0] == "WITHDRAW_CONSENT" {
                 let purposes_to_remove: Vec<&str> = parts[1].split(',').collect();
-                signed_consent.consent.purposes.retain(|p| !purposes_to_remove.contains(&p.as_str()));
+                signed_consent
+                    .consent
+                    .purposes
+                    .retain(|p| !purposes_to_remove.contains(&p.as_str()));
             }
         }
-        
+
         Ok(ConsentTransaction {
-            tx_hash: format!("0x{}", blake3::hash(withdrawal.request_type.as_bytes()).to_hex()),
+            tx_hash: format!(
+                "0x{}",
+                blake3::hash(withdrawal.request_type.as_bytes()).to_hex()
+            ),
         })
     }
 
-    pub async fn get_active_consent_from_chain(&self, user_pubkey: &VerifyingKey) -> Result<ActiveConsent> {
+    pub async fn get_active_consent_from_chain(
+        &self,
+        user_pubkey: &VerifyingKey,
+    ) -> Result<ActiveConsent> {
         let state = self.state.read().await;
         let user_key = general_purpose::STANDARD.encode(user_pubkey.as_bytes());
-        
+
         if let Some(signed_consent) = state.consent_records.get(&user_key) {
             Ok(ActiveConsent {
                 purposes: signed_consent.consent.purposes.clone(),
@@ -771,19 +875,22 @@ impl DecentralizedGdprManager {
         metadata.insert("action".to_string(), audit.action);
         metadata.insert("node_id".to_string(), audit.node_id);
         metadata.insert("timestamp".to_string(), audit.timestamp.to_string());
-        
+
         let proof = GeneratedAuditProof {
             proof: vec![1, 2, 3], // Mock proof
             metadata,
         };
-        
+
         let mut state = self.state.write().await;
         state.audit_proofs.push(proof.clone());
-        
+
         Ok(proof)
     }
 
-    pub async fn verify_audit_trail(&self, proofs: Vec<GeneratedAuditProof>) -> Result<AuditVerification> {
+    pub async fn verify_audit_trail(
+        &self,
+        proofs: Vec<GeneratedAuditProof>,
+    ) -> Result<AuditVerification> {
         Ok(AuditVerification {
             all_valid: true,
             total_actions: proofs.len(),
@@ -791,7 +898,11 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn homomorphic_encrypt(&self, value: u32, user_pubkey: &VerifyingKey) -> Result<HomomorphicValue> {
+    pub async fn homomorphic_encrypt(
+        &self,
+        value: u32,
+        user_pubkey: &VerifyingKey,
+    ) -> Result<HomomorphicValue> {
         let encrypted = value.to_be_bytes().to_vec(); // Mock homomorphic encryption
         Ok(HomomorphicValue {
             encrypted_value: encrypted,
@@ -799,26 +910,33 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn store_encrypted_metric(&self, user_pubkey: &VerifyingKey, metric_name: &str, value: HomomorphicValue) -> Result<()> {
+    pub async fn store_encrypted_metric(
+        &self,
+        user_pubkey: &VerifyingKey,
+        metric_name: &str,
+        value: HomomorphicValue,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
         let user_key = general_purpose::STANDARD.encode(user_pubkey.as_bytes());
-        
-        state.encrypted_metrics
+
+        state
+            .encrypted_metrics
             .entry(metric_name.to_string())
             .or_insert_with(HashMap::new)
             .insert(user_key, value);
-        
+
         Ok(())
     }
 
     pub async fn compute_encrypted_sum(&self, metric_name: &str) -> Result<HomomorphicResult> {
         let state = self.state.read().await;
-        
-        let count = state.encrypted_metrics
+
+        let count = state
+            .encrypted_metrics
             .get(metric_name)
             .map(|m| m.len())
             .unwrap_or(0);
-        
+
         Ok(HomomorphicResult {
             result: (count * 500) as u64, // Mock computation
             computed_on_encrypted_data: true,
@@ -827,7 +945,12 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn store_to_specific_node(&self, _user_pubkey: &VerifyingKey, _data: &[u8], node_id: &str) -> Result<StorageProof> {
+    pub async fn store_to_specific_node(
+        &self,
+        _user_pubkey: &VerifyingKey,
+        _data: &[u8],
+        node_id: &str,
+    ) -> Result<StorageProof> {
         Ok(StorageProof {
             storage_id: format!("storage-{}-{}", node_id, Utc::now().timestamp()),
             node_signature: NodeSignature {
@@ -837,9 +960,14 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn federated_delete(&self, _user_pubkey: &VerifyingKey, _request: SignedRequest, nodes: Vec<&str>) -> Result<DeletionProof> {
+    pub async fn federated_delete(
+        &self,
+        _user_pubkey: &VerifyingKey,
+        _request: SignedRequest,
+        nodes: Vec<&str>,
+    ) -> Result<DeletionProof> {
         let mut node_proofs = Vec::new();
-        
+
         for node in nodes {
             node_proofs.push(NodeDeletionProof {
                 node_id: node.to_string(),
@@ -849,7 +977,7 @@ impl DecentralizedGdprManager {
                 timestamp: Utc::now(),
             });
         }
-        
+
         Ok(DeletionProof {
             nodes_responded: node_proofs.clone(),
             deletion_proofs: node_proofs,
@@ -863,17 +991,17 @@ impl DecentralizedGdprManager {
         _user_pubkey: &VerifyingKey,
     ) -> Result<AnonymizedData> {
         let mut result = text.to_string();
-        
+
         // Apply user-defined rules
         for (pattern, replacement) in prefs.user_defined_rules {
             result = result.replace(&pattern, &replacement);
         }
-        
+
         // Apply email anonymization
         if prefs.remove_emails {
             result = result.replace("alice@example.com", "[EMAIL]");
         }
-        
+
         Ok(AnonymizedData {
             text: result,
             is_reversible_by_user: true,
@@ -881,7 +1009,11 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn generate_node_attestation(&self, node_id: &str, attestation: ComplianceAttestation) -> Result<NodeAttestation> {
+    pub async fn generate_node_attestation(
+        &self,
+        node_id: &str,
+        attestation: ComplianceAttestation,
+    ) -> Result<NodeAttestation> {
         Ok(NodeAttestation {
             node_id: node_id.to_string(),
             attestation,
@@ -889,7 +1021,10 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn aggregate_attestations(&self, attestations: Vec<NodeAttestation>) -> Result<NetworkCompliance> {
+    pub async fn aggregate_attestations(
+        &self,
+        attestations: Vec<NodeAttestation>,
+    ) -> Result<NetworkCompliance> {
         Ok(NetworkCompliance {
             threshold_met: attestations.len() >= 3,
             is_verifiable: true,
@@ -898,7 +1033,10 @@ impl DecentralizedGdprManager {
         })
     }
 
-    pub async fn verify_network_compliance(&self, _compliance: &NetworkCompliance) -> Result<ComplianceVerificationResult> {
+    pub async fn verify_network_compliance(
+        &self,
+        _compliance: &NetworkCompliance,
+    ) -> Result<ComplianceVerificationResult> {
         Ok(ComplianceVerificationResult {
             all_claims_verified: true,
             compliance_score: 100.0,

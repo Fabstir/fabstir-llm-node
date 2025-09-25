@@ -1,10 +1,10 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Mutex};
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -166,7 +166,7 @@ pub struct LoadBalancer {
 impl LoadBalancer {
     pub async fn new(config: LoadBalancerConfig, nodes: Vec<WorkerNode>) -> Result<Self> {
         let mut node_states = HashMap::new();
-        
+
         for node in nodes {
             let state = NodeState {
                 metrics: WorkerMetrics {
@@ -215,7 +215,11 @@ impl LoadBalancer {
         Ok(balancer)
     }
 
-    pub async fn select_node(&self, model_id: &str, session_id: Option<&str>) -> Result<WorkerNode> {
+    pub async fn select_node(
+        &self,
+        model_id: &str,
+        session_id: Option<&str>,
+    ) -> Result<WorkerNode> {
         let mut state = self.state.write().await;
         state.total_requests += 1;
 
@@ -224,8 +228,13 @@ impl LoadBalancer {
             if let Some(session_id) = session_id {
                 if let Some(node_id) = state.session_affinity_map.get(session_id) {
                     if let Some(node_state) = state.nodes.get(node_id) {
-                        if node_state.node.status == NodeStatus::Healthy &&
-                           node_state.node.capabilities.models.contains(&model_id.to_string()) {
+                        if node_state.node.status == NodeStatus::Healthy
+                            && node_state
+                                .node
+                                .capabilities
+                                .models
+                                .contains(&model_id.to_string())
+                        {
                             return Ok(node_state.node.clone());
                         }
                     }
@@ -234,10 +243,16 @@ impl LoadBalancer {
         }
 
         // Filter healthy nodes that support the model
-        let eligible_nodes: Vec<String> = state.nodes.iter()
+        let eligible_nodes: Vec<String> = state
+            .nodes
+            .iter()
             .filter(|(_, node_state)| {
-                node_state.node.status == NodeStatus::Healthy &&
-                node_state.node.capabilities.models.contains(&model_id.to_string())
+                node_state.node.status == NodeStatus::Healthy
+                    && node_state
+                        .node
+                        .capabilities
+                        .models
+                        .contains(&model_id.to_string())
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -247,12 +262,16 @@ impl LoadBalancer {
         }
 
         // Check if all nodes are overloaded
-        let overloaded_count = eligible_nodes.iter()
+        let overloaded_count = eligible_nodes
+            .iter()
             .filter(|id| {
-                state.nodes.get(*id)
+                state
+                    .nodes
+                    .get(*id)
                     .map(|node| {
-                        let load = (node.metrics.cpu_usage_percent + 
-                                   node.metrics.memory_usage_percent) / 2.0;
+                        let load = (node.metrics.cpu_usage_percent
+                            + node.metrics.memory_usage_percent)
+                            / 2.0;
                         load > self.config.load_threshold * 100.0
                     })
                     .unwrap_or(false)
@@ -270,33 +289,38 @@ impl LoadBalancer {
                 state.round_robin_index = (state.round_robin_index + 1) % eligible_nodes.len();
                 eligible_nodes[idx].clone()
             }
-            LoadStrategy::LeastConnections => {
-                eligible_nodes.iter()
-                    .min_by_key(|id| {
-                        state.nodes.get(*id)
-                            .map(|n| n.metrics.active_connections)
-                            .unwrap_or(usize::MAX)
-                    })
-                    .cloned()
-                    .unwrap()
-            }
+            LoadStrategy::LeastConnections => eligible_nodes
+                .iter()
+                .min_by_key(|id| {
+                    state
+                        .nodes
+                        .get(*id)
+                        .map(|n| n.metrics.active_connections)
+                        .unwrap_or(usize::MAX)
+                })
+                .cloned()
+                .unwrap(),
             LoadStrategy::WeightedRoundRobin => {
                 // Simple weighted selection based on available resources
-                let weights: Vec<(String, f64)> = eligible_nodes.iter()
+                let weights: Vec<(String, f64)> = eligible_nodes
+                    .iter()
                     .map(|id| {
-                        state.nodes.get(id)
+                        state
+                            .nodes
+                            .get(id)
                             .map(|node| {
-                                let weight = node.weight * (1.0 - node.metrics.cpu_usage_percent / 100.0);
+                                let weight =
+                                    node.weight * (1.0 - node.metrics.cpu_usage_percent / 100.0);
                                 (id.clone(), weight)
                             })
                             .unwrap_or((id.clone(), 0.0))
                     })
                     .collect();
-                
+
                 // Select based on weights
                 let total_weight: f64 = weights.iter().map(|(_, w)| w).sum();
                 let mut random_point = rand::random::<f64>() * total_weight;
-                
+
                 let mut selected = eligible_nodes[0].clone();
                 for (id, weight) in weights {
                     random_point -= weight;
@@ -311,27 +335,30 @@ impl LoadBalancer {
                 let idx = rand::random::<usize>() % eligible_nodes.len();
                 eligible_nodes[idx].clone()
             }
-            LoadStrategy::LeastResponseTime => {
-                eligible_nodes.iter()
-                    .min_by_key(|id| {
-                        state.nodes.get(*id)
-                            .map(|n| n.metrics.average_latency_ms as u64)
-                            .unwrap_or(u64::MAX)
-                    })
-                    .cloned()
-                    .unwrap()
-            }
+            LoadStrategy::LeastResponseTime => eligible_nodes
+                .iter()
+                .min_by_key(|id| {
+                    state
+                        .nodes
+                        .get(*id)
+                        .map(|n| n.metrics.average_latency_ms as u64)
+                        .unwrap_or(u64::MAX)
+                })
+                .cloned()
+                .unwrap(),
             LoadStrategy::ResourceBased => {
                 // Select based on available resources
-                eligible_nodes.iter()
+                eligible_nodes
+                    .iter()
                     .min_by_key(|id| {
-                        state.nodes.get(*id)
+                        state
+                            .nodes
+                            .get(*id)
                             .map(|node| {
-                                let load_score = (
-                                    node.metrics.cpu_usage_percent * 0.3 +
-                                    node.metrics.memory_usage_percent * 0.3 +
-                                    node.metrics.gpu_usage_percent * 0.4
-                                ) as u64;
+                                let load_score = (node.metrics.cpu_usage_percent * 0.3
+                                    + node.metrics.memory_usage_percent * 0.3
+                                    + node.metrics.gpu_usage_percent * 0.4)
+                                    as u64;
                                 load_score
                             })
                             .unwrap_or(u64::MAX)
@@ -344,7 +371,9 @@ impl LoadBalancer {
         // Update session affinity if enabled
         if self.config.enable_session_affinity {
             if let Some(session_id) = session_id {
-                state.session_affinity_map.insert(session_id.to_string(), selected_node_id.clone());
+                state
+                    .session_affinity_map
+                    .insert(session_id.to_string(), selected_node_id.clone());
             }
         }
 
@@ -357,22 +386,25 @@ impl LoadBalancer {
 
     pub async fn acquire_connection(&self, node_id: &str) -> Result<String> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             let connection_id = Uuid::new_v4().to_string();
-            node_state.active_connections.insert(connection_id.clone(), Instant::now());
+            node_state
+                .active_connections
+                .insert(connection_id.clone(), Instant::now());
             node_state.metrics.active_connections = node_state.active_connections.len();
             Ok(connection_id)
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn release_connection(&self, node_id: &str, connection_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.active_connections.remove(connection_id);
             node_state.metrics.active_connections = node_state.active_connections.len();
@@ -380,13 +412,14 @@ impl LoadBalancer {
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn add_node(&self, node: WorkerNode) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         let node_state = NodeState {
             metrics: WorkerMetrics {
                 active_connections: 0,
@@ -408,66 +441,69 @@ impl LoadBalancer {
             active_connections: HashMap::new(),
             node: node.clone(),
         };
-        
+
         state.nodes.insert(node.id.clone(), node_state);
         Ok(())
     }
 
     pub async fn remove_node(&self, node_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         // Mark as draining first
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.node.status = NodeStatus::Draining;
         }
-        
+
         // Wait for connections to drain (mock)
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Remove node
         state.nodes.remove(node_id);
-        
+
         // Clear session affinity entries
         state.session_affinity_map.retain(|_, v| v != node_id);
-        
+
         Ok(())
     }
 
     pub async fn update_node_weight(&self, node_id: &str, weight: f64) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.weight = weight;
             Ok(())
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn set_node_status(&self, node_id: &str, status: NodeStatus) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.node.status = status;
             Ok(())
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn get_node_status(&self, node_id: &str) -> Result<NodeStatus> {
         let state = self.state.read().await;
-        
+
         if let Some(node_state) = state.nodes.get(node_id) {
             Ok(node_state.node.status.clone())
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -477,7 +513,7 @@ impl LoadBalancer {
 
     pub async fn release_all_connections(&self, node_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.active_connections.clear();
             node_state.metrics.active_connections = 0;
@@ -486,20 +522,22 @@ impl LoadBalancer {
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn update_node_metrics(&self, node_id: &str, metrics: WorkerMetrics) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.metrics = metrics;
             Ok(())
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -510,45 +548,49 @@ impl LoadBalancer {
 
     pub async fn get_node_metrics(&self, node_id: &str) -> Result<WorkerMetrics> {
         let state = self.state.read().await;
-        
+
         if let Some(node_state) = state.nodes.get(node_id) {
             Ok(node_state.metrics.clone())
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn get_load_distribution(&self) -> LoadDistribution {
         let state = self.state.read().await;
-        
+
         let mut node_loads = HashMap::new();
         let mut total_load = 0.0;
         let mut peak_load: f64 = 0.0;
-        
+
         for (id, node_state) in &state.nodes {
-            let load = (node_state.metrics.cpu_usage_percent + 
-                       node_state.metrics.memory_usage_percent + 
-                       node_state.metrics.gpu_usage_percent) / 3.0;
+            let load = (node_state.metrics.cpu_usage_percent
+                + node_state.metrics.memory_usage_percent
+                + node_state.metrics.gpu_usage_percent)
+                / 3.0;
             node_loads.insert(id.clone(), load);
             total_load += load;
             peak_load = peak_load.max(load);
         }
-        
+
         let node_count = state.nodes.len() as f64;
         let average_load = if node_count > 0.0 {
             total_load / node_count
         } else {
             0.0
         };
-        
+
         // Calculate distribution efficiency (lower variance is better)
-        let variance: f64 = node_loads.values()
+        let variance: f64 = node_loads
+            .values()
             .map(|&load| (load - average_load).powi(2))
-            .sum::<f64>() / node_count;
+            .sum::<f64>()
+            / node_count;
         let distribution_efficiency = 1.0 / (1.0 + variance);
-        
+
         LoadDistribution {
             node_loads,
             total_requests: state.total_requests,
@@ -560,34 +602,43 @@ impl LoadBalancer {
 
     pub async fn get_metrics(&self) -> LoadMetrics {
         let state = self.state.read().await;
-        
-        let active_nodes = state.nodes.values()
+
+        let active_nodes = state
+            .nodes
+            .values()
             .filter(|n| n.node.status == NodeStatus::Healthy)
             .count();
-        
-        let total_rps: f64 = state.nodes.values()
+
+        let total_rps: f64 = state
+            .nodes
+            .values()
             .map(|n| n.metrics.requests_per_second)
             .sum();
-        
+
         let avg_latency: f64 = if !state.latency_history.is_empty() {
             state.latency_history.iter().sum::<f64>() / state.latency_history.len() as f64
         } else {
             0.0
         };
-        
+
         // Calculate percentiles (mock)
         let p95_latency = avg_latency * 1.5;
         let p99_latency = avg_latency * 2.0;
-        
-        let error_rate: f64 = state.nodes.values()
+
+        let error_rate: f64 = state
+            .nodes
+            .values()
             .map(|n| n.metrics.error_rate)
-            .sum::<f64>() / state.nodes.len().max(1) as f64;
-        
+            .sum::<f64>()
+            / state.nodes.len().max(1) as f64;
+
         // Collect per-node metrics
-        let nodes: HashMap<String, WorkerMetrics> = state.nodes.iter()
+        let nodes: HashMap<String, WorkerMetrics> = state
+            .nodes
+            .iter()
             .map(|(id, node_state)| (id.clone(), node_state.metrics.clone()))
             .collect();
-        
+
         LoadMetrics {
             requests_per_second: total_rps,
             average_latency_ms: avg_latency,
@@ -602,17 +653,19 @@ impl LoadBalancer {
 
     pub async fn rebalance(&self) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         // Check if rebalance is needed
         let now = Instant::now();
-        if now.duration_since(state.last_rebalance) < Duration::from_secs(self.config.rebalance_interval_secs) {
+        if now.duration_since(state.last_rebalance)
+            < Duration::from_secs(self.config.rebalance_interval_secs)
+        {
             return Ok(());
         }
-        
+
         // Rebalance logic (mock)
         // In real implementation, would migrate connections, update weights, etc.
         state.last_rebalance = now;
-        
+
         Ok(())
     }
 
@@ -621,16 +674,16 @@ impl LoadBalancer {
         // This method is for explicit control in tests
         Ok(())
     }
-    
+
     async fn health_check_loop(&self) {
         loop {
             tokio::time::sleep(Duration::from_secs(self.config.health_check_interval_secs)).await;
-            
+
             let node_ids: Vec<String> = {
                 let state = self.state.read().await;
                 state.nodes.keys().cloned().collect()
             };
-            
+
             for node_id in node_ids {
                 self.perform_health_check(&node_id).await.ok();
             }
@@ -639,28 +692,28 @@ impl LoadBalancer {
 
     pub async fn record_request_failure(&self, node_id: &str, _reason: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             // Increment error rate
-            node_state.metrics.error_rate = 
-                (node_state.metrics.error_rate * 0.9) + 0.1; // Exponential moving average
-            
+            node_state.metrics.error_rate = (node_state.metrics.error_rate * 0.9) + 0.1; // Exponential moving average
+
             // Check if we should open circuit breaker
             if node_state.metrics.error_rate > 0.5 {
                 node_state.node.status = NodeStatus::CircuitOpen;
             }
-            
+
             Ok(())
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     pub async fn mark_node_unhealthy(&self, node_id: &str, reason: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             node_state.node.status = NodeStatus::Unhealthy;
             // Log the reason (in real implementation)
@@ -669,13 +722,14 @@ impl LoadBalancer {
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
-    
+
     pub async fn mock_health_check_result(&self, node_id: &str, is_healthy: bool) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             if is_healthy {
                 node_state.health_check_failures = 0;
@@ -692,17 +746,18 @@ impl LoadBalancer {
         } else {
             Err(LoadBalancerError::NodeNotFound {
                 node_id: node_id.to_string(),
-            }.into())
+            }
+            .into())
         }
     }
 
     async fn perform_health_check(&self, node_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(node_state) = state.nodes.get_mut(node_id) {
             // Mock health check
             let is_healthy = rand::random::<f64>() > 0.05; // 95% success rate
-            
+
             if is_healthy {
                 node_state.health_check_failures = 0;
                 if node_state.node.status == NodeStatus::Unhealthy {
@@ -714,16 +769,16 @@ impl LoadBalancer {
                     node_state.node.status = NodeStatus::Unhealthy;
                 }
             }
-            
+
             node_state.metrics.last_health_check = Instant::now();
-            
+
             // Update mock metrics
             node_state.metrics.cpu_usage_percent = 20.0 + rand::random::<f64>() * 60.0;
             node_state.metrics.memory_usage_percent = 30.0 + rand::random::<f64>() * 50.0;
             node_state.metrics.gpu_usage_percent = rand::random::<f64>() * 80.0;
             node_state.metrics.requests_per_second = rand::random::<f64>() * 100.0;
             node_state.metrics.average_latency_ms = 10.0 + rand::random::<f64>() * 90.0;
-            
+
             // Sync duplicate fields (as percentages)
             node_state.metrics.cpu_usage = node_state.metrics.cpu_usage_percent / 100.0;
             node_state.metrics.memory_usage = node_state.metrics.memory_usage_percent / 100.0;
@@ -731,10 +786,9 @@ impl LoadBalancer {
             node_state.metrics.queue_depth = (rand::random::<f64>() * 100.0) as usize;
             node_state.metrics.request_success_rate = 1.0 - node_state.metrics.error_rate;
         }
-        
+
         Ok(())
     }
-
 }
 
 impl Clone for LoadBalancer {
@@ -772,7 +826,7 @@ impl RequestRouter {
         session_id: Option<&str>,
     ) -> Result<WorkerNode> {
         let mut last_error = None;
-        
+
         for _ in 0..self.balancer.config.max_retries {
             match self.balancer.select_node(model_id, session_id).await {
                 Ok(node) => return Ok(node),
@@ -782,7 +836,7 @@ impl RequestRouter {
                 }
             }
         }
-        
+
         Err(last_error.unwrap_or_else(|| LoadBalancerError::NoHealthyNodes.into()))
     }
 }

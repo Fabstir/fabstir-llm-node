@@ -1,11 +1,11 @@
-pub mod session_init;
-pub mod session_resume;
+pub mod disconnect;
+pub mod inference;
 pub mod prompt;
 pub mod response;
-pub mod inference;
-pub mod disconnect;
+pub mod session_init;
+pub mod session_resume;
 
-use super::messages::{WebSocketMessage, ErrorCode};
+use super::messages::{ErrorCode, WebSocketMessage};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,8 +24,11 @@ impl MessageRouter {
         let session_init_handler = Arc::new(session_init::SessionInitHandler::new());
         let session_resume_handler = Arc::new(session_resume::SessionResumeHandler::new());
         let prompt_handler = Arc::new(prompt::PromptHandler::new(session_init_handler.clone()));
-        let response_handler = Arc::new(response::ResponseHandler::new(session_init_handler.clone(), None));
-        
+        let response_handler = Arc::new(response::ResponseHandler::new(
+            session_init_handler.clone(),
+            None,
+        ));
+
         Self {
             session_init_handler,
             session_resume_handler,
@@ -33,15 +36,32 @@ impl MessageRouter {
             response_handler,
         }
     }
-    
+
     /// Route a message to the appropriate handler
     pub async fn route_message(&self, message: WebSocketMessage) -> Result<WebSocketMessage> {
         match message {
-            WebSocketMessage::SessionInit { session_id, job_id, conversation_context, chain_id } => {
-                match self.session_init_handler.handle_session_init_with_chain(&session_id, job_id, conversation_context, chain_id).await {
+            WebSocketMessage::SessionInit {
+                session_id,
+                job_id,
+                conversation_context,
+                chain_id,
+            } => {
+                match self
+                    .session_init_handler
+                    .handle_session_init_with_chain(
+                        &session_id,
+                        job_id,
+                        conversation_context,
+                        chain_id,
+                    )
+                    .await
+                {
                     Ok(response) => Ok(WebSocketMessage::Response {
                         session_id: response.session_id,
-                        content: format!("Session initialized with {} messages", response.message_count),
+                        content: format!(
+                            "Session initialized with {} messages",
+                            response.message_count
+                        ),
                         tokens_used: response.total_tokens,
                         message_index: 0,
                     }),
@@ -51,13 +71,30 @@ impl MessageRouter {
                         code: ErrorCode::InternalError,
                     }),
                 }
-            },
-            
-            WebSocketMessage::SessionResume { session_id, job_id, conversation_context, last_message_index } => {
-                match self.session_resume_handler.handle_session_resume(&session_id, job_id, conversation_context, last_message_index).await {
+            }
+
+            WebSocketMessage::SessionResume {
+                session_id,
+                job_id,
+                conversation_context,
+                last_message_index,
+            } => {
+                match self
+                    .session_resume_handler
+                    .handle_session_resume(
+                        &session_id,
+                        job_id,
+                        conversation_context,
+                        last_message_index,
+                    )
+                    .await
+                {
                     Ok(response) => Ok(WebSocketMessage::Response {
                         session_id: response.session_id,
-                        content: format!("Session resumed with {} messages", response.message_count),
+                        content: format!(
+                            "Session resumed with {} messages",
+                            response.message_count
+                        ),
                         tokens_used: response.total_tokens,
                         message_index: response.last_message_index,
                     }),
@@ -67,10 +104,18 @@ impl MessageRouter {
                         code: ErrorCode::InternalError,
                     }),
                 }
-            },
-            
-            WebSocketMessage::Prompt { session_id, content, message_index } => {
-                match self.prompt_handler.handle_prompt(&session_id, &content, message_index).await {
+            }
+
+            WebSocketMessage::Prompt {
+                session_id,
+                content,
+                message_index,
+            } => {
+                match self
+                    .prompt_handler
+                    .handle_prompt(&session_id, &content, message_index)
+                    .await
+                {
                     Ok(_) => {
                         // Start streaming response
                         Ok(WebSocketMessage::Response {
@@ -79,21 +124,21 @@ impl MessageRouter {
                             tokens_used: 0,
                             message_index: message_index + 1,
                         })
-                    },
+                    }
                     Err(e) => Ok(WebSocketMessage::Error {
                         session_id,
                         error: e.to_string(),
                         code: ErrorCode::InternalError,
                     }),
                 }
-            },
-            
+            }
+
             WebSocketMessage::SessionEnd { session_id } => {
                 // Clean up session
                 self.session_init_handler.cleanup_session(&session_id).await;
                 Ok(WebSocketMessage::SessionEnd { session_id })
-            },
-            
+            }
+
             _ => Ok(WebSocketMessage::Error {
                 session_id: message.session_id().to_string(),
                 error: "Unsupported message type".to_string(),

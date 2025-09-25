@@ -1,12 +1,12 @@
 use fabstir_llm_node::api::websocket::inference::{
-    InferenceEngine, InferenceConfig, InferenceRequest,
+    InferenceConfig, InferenceEngine, InferenceRequest,
 };
 use fabstir_llm_node::api::websocket::job_verification::{
-    JobVerifier, JobVerificationConfig, JobStatus,
+    JobStatus, JobVerificationConfig, JobVerifier,
 };
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_basic_inference_without_model() {
@@ -19,7 +19,7 @@ async fn test_basic_inference_without_model() {
         gpu_layers: 0,
         use_gpu: false,
     };
-    
+
     let result = InferenceEngine::new(config).await;
     assert!(result.is_err());
     if let Err(e) = result {
@@ -31,7 +31,10 @@ async fn test_basic_inference_without_model() {
 async fn test_job_verification_disabled_mode() {
     // Test with verification disabled - should always work
     let mut marketplace_addresses = HashMap::new();
-    marketplace_addresses.insert(84532, "0x0000000000000000000000000000000000000000".to_string());
+    marketplace_addresses.insert(
+        84532,
+        "0x0000000000000000000000000000000000000000".to_string(),
+    );
 
     let config = JobVerificationConfig {
         enabled: false,
@@ -47,7 +50,7 @@ async fn test_job_verification_disabled_mode() {
     let job = verifier.verify_job(12345, 84532).await.unwrap();
     assert_eq!(job.job_id, 12345);
     assert_eq!(job.status, JobStatus::Pending);
-    
+
     // Can claim job when disabled
     assert!(verifier.can_claim_job(&job).await);
 }
@@ -61,7 +64,7 @@ async fn test_inference_request_creation() {
         temperature: Some(0.7),
         stream: false,
     };
-    
+
     assert_eq!(request.prompt, "Hello, world!");
     assert_eq!(request.max_tokens, 50);
     assert_eq!(request.temperature, Some(0.7));
@@ -71,7 +74,7 @@ async fn test_inference_request_creation() {
 #[tokio::test]
 async fn test_job_status_transitions() {
     use fabstir_llm_node::api::websocket::job_verification::JobState;
-    
+
     // Test status conversions
     assert_eq!(JobStatus::from(JobState::Open), JobStatus::Pending);
     assert_eq!(JobStatus::from(JobState::Assigned), JobStatus::Claimed);

@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use ethers::types::{Address, U256};
 use serde::{Deserialize, Serialize};
-use tracing::{info, debug, error, warn};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 // Use the existing contracts module
 use crate::contracts::client::Web3Client;
@@ -50,8 +50,14 @@ pub struct JobVerificationConfig {
 impl Default for JobVerificationConfig {
     fn default() -> Self {
         let mut marketplace_addresses = HashMap::new();
-        marketplace_addresses.insert(84532, "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string()); // Base Sepolia
-        marketplace_addresses.insert(5611, "0x0000000000000000000000000000000000000000".to_string()); // opBNB placeholder
+        marketplace_addresses.insert(
+            84532,
+            "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string(),
+        ); // Base Sepolia
+        marketplace_addresses.insert(
+            5611,
+            "0x0000000000000000000000000000000000000000".to_string(),
+        ); // opBNB placeholder
 
         Self {
             enabled: true,
@@ -166,7 +172,7 @@ impl JobVerifier {
             cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
-    
+
     /// Verify a job by ID on a specific chain
     pub async fn verify_job(&self, job_id: u64, chain_id: u64) -> Result<JobDetails> {
         // Validate chain is supported
@@ -200,32 +206,32 @@ impl JobVerifier {
             Ok(self.create_mock_job(job_id, chain_id))
         }
     }
-    
+
     /// Check if job can be claimed
     pub async fn can_claim_job(&self, job: &JobDetails) -> bool {
         if !self.config.enabled {
             return true;
         }
-        
+
         // Check status
         if job.status != JobStatus::Pending {
             return false;
         }
-        
+
         // Check if expired
         if self.is_job_expired(job).await {
             return false;
         }
-        
+
         true
     }
-    
+
     /// Check if job is expired
     pub async fn is_job_expired(&self, job: &JobDetails) -> bool {
         let now = chrono::Utc::now().timestamp() as u64;
         job.deadline < now
     }
-    
+
     /// Verify payment is escrowed on specific chain
     pub async fn verify_payment_escrowed(&self, job: &JobDetails) -> Result<bool> {
         if !self.config.enabled {
@@ -234,8 +240,10 @@ impl JobVerifier {
 
         if let Some(client) = self.web3_clients.get(&job.chain_id) {
             // Check escrow contract for payment on the job's chain
-            debug!("Verifying payment for job {} on chain {}: {} wei",
-                   job.job_id, job.chain_id, job.payment_amount);
+            debug!(
+                "Verifying payment for job {} on chain {}: {} wei",
+                job.job_id, job.chain_id, job.payment_amount
+            );
 
             // For now, assume payment is verified if amount > 0
             Ok(job.payment_amount > 0)
@@ -244,12 +252,20 @@ impl JobVerifier {
             Ok(true) // Mock verification passes
         }
     }
-    
+
     /// Create claim message for signing with chain context
-    pub async fn create_claim_message(&self, job_id: u64, chain_id: u64, host_address: &str) -> String {
-        format!("Claim job {} on chain {} as host {}", job_id, chain_id, host_address)
+    pub async fn create_claim_message(
+        &self,
+        job_id: u64,
+        chain_id: u64,
+        host_address: &str,
+    ) -> String {
+        format!(
+            "Claim job {} on chain {} as host {}",
+            job_id, chain_id, host_address
+        )
     }
-    
+
     /// Verify claim signature on specific chain
     pub async fn verify_claim_signature(
         &self,
@@ -263,23 +279,32 @@ impl JobVerifier {
         }
 
         if let Some(client) = self.web3_clients.get(&chain_id) {
-            let message = self.create_claim_message(job_id, chain_id, host_address).await;
-            
+            let message = self
+                .create_claim_message(job_id, chain_id, host_address)
+                .await;
+
             // Verify signature using ethers
             // This would use actual signature verification
-            debug!("Verifying signature for job {} from {}", job_id, host_address);
-            
+            debug!(
+                "Verifying signature for job {} from {}",
+                job_id, host_address
+            );
+
             // Mock verification for now
             Ok(!signature.is_empty())
         } else {
             Ok(true)
         }
     }
-    
+
     /// Get job metadata
-    pub async fn get_job_metadata(&self, job_id: u64, chain_id: u64) -> Result<HashMap<String, String>> {
+    pub async fn get_job_metadata(
+        &self,
+        job_id: u64,
+        chain_id: u64,
+    ) -> Result<HashMap<String, String>> {
         let job = self.verify_job(job_id, chain_id).await?;
-        
+
         let mut metadata = HashMap::new();
         metadata.insert("job_id".to_string(), job.job_id.to_string());
         metadata.insert("model_id".to_string(), job.model_id.clone());
@@ -291,9 +316,13 @@ impl JobVerifier {
 
         Ok(metadata)
     }
-    
+
     /// Batch verify jobs on a specific chain
-    pub async fn batch_verify_jobs(&self, job_ids: Vec<u64>, chain_id: u64) -> Result<Vec<JobDetails>> {
+    pub async fn batch_verify_jobs(
+        &self,
+        job_ids: Vec<u64>,
+        chain_id: u64,
+    ) -> Result<Vec<JobDetails>> {
         let mut results = Vec::new();
 
         for job_id in job_ids {
@@ -305,10 +334,10 @@ impl JobVerifier {
                 }
             }
         }
-        
+
         Ok(results)
     }
-    
+
     /// Clone for concurrent use
     pub fn clone(&self) -> Self {
         Self {
@@ -317,9 +346,9 @@ impl JobVerifier {
             cache: self.cache.clone(),
         }
     }
-    
+
     // Private helper methods
-    
+
     async fn get_cached_job(&self, job_id: u64) -> Option<JobDetails> {
         let cache = self.cache.read().await;
 
@@ -334,35 +363,32 @@ impl JobVerifier {
 
         None
     }
-    
+
     async fn cache_job(&self, job_id: u64, details: JobDetails) {
         let mut cache = self.cache.write().await;
 
         let chain_id = details.chain_id;
-        cache.insert((chain_id, job_id), CacheEntry {
-            details,
-            timestamp: Instant::now(),
-            chain_id,
-        });
-        
+        cache.insert(
+            (chain_id, job_id),
+            CacheEntry {
+                details,
+                timestamp: Instant::now(),
+                chain_id,
+            },
+        );
+
         // Clean old entries
-        cache.retain(|_, entry| {
-            entry.timestamp.elapsed() < self.config.cache_duration * 2
-        });
+        cache.retain(|_, entry| entry.timestamp.elapsed() < self.config.cache_duration * 2);
     }
-    
-    async fn fetch_job_from_blockchain(
-        &self,
-        client: &Web3Client,
-        job_id: u64,
-    ) -> Result<Job> {
+
+    async fn fetch_job_from_blockchain(&self, client: &Web3Client, job_id: u64) -> Result<Job> {
         // This would call the actual marketplace contract
         // For now, we'll create a mock job based on the client
-        
+
         // In real implementation:
         // let marketplace = client.get_marketplace_contract(self.config.marketplace_address)?;
         // let job = marketplace.get_job(job_id).await?;
-        
+
         // Mock implementation for testing
         Ok(Job {
             id: U256::from(job_id),
@@ -380,7 +406,7 @@ impl JobVerifier {
             chain_id: 84532, // Default to Base Sepolia for mock
         })
     }
-    
+
     fn convert_job_to_details(&self, job_id: u64, chain_id: u64, job: Job) -> Result<JobDetails> {
         Ok(JobDetails {
             job_id,
@@ -399,7 +425,7 @@ impl JobVerifier {
             deadline: job.deadline.as_u64(),
         })
     }
-    
+
     fn create_mock_job(&self, job_id: u64, chain_id: u64) -> JobDetails {
         JobDetails {
             job_id,
@@ -427,11 +453,11 @@ impl BlockchainVerifier {
     ) -> Result<bool> {
         // This would check if job exists on blockchain
         debug!("Verifying job {} exists at {}", job_id, marketplace_address);
-        
+
         // Mock for now
         Ok(true)
     }
-    
+
     pub async fn verify_payment(
         client: &Web3Client,
         escrow_address: &str,
@@ -439,8 +465,11 @@ impl BlockchainVerifier {
         expected_amount: u128,
     ) -> Result<bool> {
         // This would verify payment in escrow contract
-        debug!("Verifying payment for job {}: {} wei", job_id, expected_amount);
-        
+        debug!(
+            "Verifying payment for job {}: {} wei",
+            job_id, expected_amount
+        );
+
         // Mock for now
         Ok(expected_amount > 0)
     }

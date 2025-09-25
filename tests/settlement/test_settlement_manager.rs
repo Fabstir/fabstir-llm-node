@@ -1,12 +1,12 @@
+use ethers::signers::Signer;
+use ethers::types::U256;
+use fabstir_llm_node::config::chains::ChainRegistry;
 use fabstir_llm_node::settlement::{
-    manager::SettlementManager,
     gas_estimator::GasEstimator,
+    manager::SettlementManager,
     queue::{SettlementQueue, SettlementRequest},
     types::{SettlementError, SettlementStatus},
 };
-use fabstir_llm_node::config::chains::ChainRegistry;
-use ethers::types::U256;
-use ethers::signers::Signer;
 use std::sync::Arc;
 
 // Test helper to create a test private key
@@ -28,7 +28,7 @@ async fn test_settlement_manager_init() {
 
     // Should be able to get providers for known chains
     assert!(manager.get_provider(84532).is_some()); // Base Sepolia
-    assert!(manager.get_provider(5611).is_some());  // opBNB Testnet
+    assert!(manager.get_provider(5611).is_some()); // opBNB Testnet
 
     // Should not have provider for unknown chain
     assert!(manager.get_provider(99999).is_none());
@@ -60,7 +60,8 @@ async fn test_gas_estimation_base() {
     let estimator = GasEstimator::new();
 
     // Test Base Sepolia gas estimation
-    let gas_estimate = estimator.estimate_gas(84532, "settle_session")
+    let gas_estimate = estimator
+        .estimate_gas(84532, "settle_session")
         .expect("Failed to estimate gas for Base Sepolia");
 
     // Base Sepolia should have reasonable gas limit
@@ -77,7 +78,8 @@ async fn test_gas_estimation_opbnb() {
     let estimator = GasEstimator::new();
 
     // Test opBNB gas estimation
-    let gas_estimate = estimator.estimate_gas(5611, "settle_session")
+    let gas_estimate = estimator
+        .estimate_gas(5611, "settle_session")
         .expect("Failed to estimate gas for opBNB");
 
     // opBNB might need higher gas limit

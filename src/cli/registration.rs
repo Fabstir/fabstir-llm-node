@@ -1,12 +1,14 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use clap::Args;
 use ethers::types::Address;
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
-use crate::blockchain::multi_chain_registrar::{MultiChainRegistrar, NodeMetadata, RegistrationStatus};
+use crate::blockchain::multi_chain_registrar::{
+    MultiChainRegistrar, NodeMetadata, RegistrationStatus,
+};
 use crate::config::chains::ChainRegistry;
 
 /// Arguments for register-node command
@@ -95,9 +97,12 @@ pub async fn register_node(args: RegisterNodeArgs) -> Result<()> {
     dotenv::dotenv().ok();
 
     // Get private key
-    let private_key = args.private_key
+    let private_key = args
+        .private_key
         .or_else(|| env::var("NODE_PRIVATE_KEY").ok())
-        .ok_or_else(|| anyhow!("Private key required. Use --private-key or set NODE_PRIVATE_KEY env var"))?;
+        .ok_or_else(|| {
+            anyhow!("Private key required. Use --private-key or set NODE_PRIVATE_KEY env var")
+        })?;
 
     // Determine which chains to register on
     let chain_ids = if args.all_chains {
@@ -135,17 +140,16 @@ pub async fn register_node(args: RegisterNodeArgs) -> Result<()> {
 
     if args.dry_run {
         println!("\n🔍 DRY RUN MODE - No transactions will be submitted");
-        println!("✅ Registration would be submitted to chains: {:?}", chain_ids);
+        println!(
+            "✅ Registration would be submitted to chains: {:?}",
+            chain_ids
+        );
         return Ok(());
     }
 
     // Create registrar
     let chain_registry = Arc::new(ChainRegistry::new());
-    let registrar = MultiChainRegistrar::new(
-        chain_registry,
-        &private_key,
-        metadata,
-    ).await?;
+    let registrar = MultiChainRegistrar::new(chain_registry, &private_key, metadata).await?;
 
     // Register on each chain
     for chain_id in chain_ids {
@@ -159,14 +163,16 @@ pub async fn register_node(args: RegisterNodeArgs) -> Result<()> {
                 if chain_id == 84532 {
                     println!("   https://sepolia.basescan.org/tx/{:?}", tx_hash);
                 }
-            },
+            }
             Err(e) => {
                 println!("❌ Registration failed: {}", e);
 
                 // Provide helpful error messages
                 if e.to_string().contains("insufficient") || e.to_string().contains("balance") {
                     println!("   💡 You need 1000 FAB tokens for staking");
-                    println!("   💡 Check your balance and ensure you have enough FAB and ETH for gas");
+                    println!(
+                        "   💡 Check your balance and ensure you have enough FAB and ETH for gas"
+                    );
                 } else if e.to_string().contains("already registered") {
                     println!("   💡 Node is already registered on this chain");
                 }
@@ -192,7 +198,10 @@ pub async fn check_status(args: StatusArgs) -> Result<()> {
     };
 
     // If checking own status, use private key to create registrar
-    if let Some(private_key) = args.private_key.or_else(|| env::var("NODE_PRIVATE_KEY").ok()) {
+    if let Some(private_key) = args
+        .private_key
+        .or_else(|| env::var("NODE_PRIVATE_KEY").ok())
+    {
         let chain_registry = Arc::new(ChainRegistry::new());
         let metadata = NodeMetadata {
             name: "Status Check".to_string(),
@@ -202,11 +211,7 @@ pub async fn check_status(args: StatusArgs) -> Result<()> {
             performance_tier: "standard".to_string(),
         };
 
-        let registrar = MultiChainRegistrar::new(
-            chain_registry,
-            &private_key,
-            metadata,
-        ).await?;
+        let registrar = MultiChainRegistrar::new(chain_registry, &private_key, metadata).await?;
 
         println!("\n📊 Registration Status:");
         for chain_id in chain_ids {
@@ -215,16 +220,16 @@ pub async fn check_status(args: StatusArgs) -> Result<()> {
             match registrar.get_registration_status(chain_id).await? {
                 RegistrationStatus::NotRegistered => {
                     println!("❌ Not registered");
-                },
+                }
                 RegistrationStatus::Pending { tx_hash } => {
                     println!("⏳ Pending (tx: {:?})", tx_hash);
-                },
+                }
                 RegistrationStatus::Confirmed { block_number } => {
                     println!("✅ Registered (block: {})", block_number);
-                },
+                }
                 RegistrationStatus::Failed { ref error } => {
                     println!("❌ Failed: {}", error);
-                },
+                }
             }
 
             // Also check if registered on-chain
@@ -234,13 +239,15 @@ pub async fn check_status(args: StatusArgs) -> Result<()> {
         }
     } else if let Some(address_str) = args.address {
         // Check status for specific address (read-only)
-        let _address = Address::from_str(&address_str)
-            .map_err(|_| anyhow!("Invalid address format"))?;
+        let _address =
+            Address::from_str(&address_str).map_err(|_| anyhow!("Invalid address format"))?;
 
         println!("\n📊 Registration Status for {}:", address_str);
         println!("  (Read-only check not yet implemented for external addresses)");
     } else {
-        return Err(anyhow!("Must provide either --private-key, --address, or NODE_PRIVATE_KEY env var"));
+        return Err(anyhow!(
+            "Must provide either --private-key, --address, or NODE_PRIVATE_KEY env var"
+        ));
     }
 
     Ok(())
@@ -250,7 +257,8 @@ pub async fn check_status(args: StatusArgs) -> Result<()> {
 pub async fn update_registration(args: UpdateArgs) -> Result<()> {
     dotenv::dotenv().ok();
 
-    let private_key = args.private_key
+    let private_key = args
+        .private_key
         .or_else(|| env::var("NODE_PRIVATE_KEY").ok())
         .ok_or_else(|| anyhow!("Private key required"))?;
 
@@ -274,16 +282,14 @@ pub async fn update_registration(args: UpdateArgs) -> Result<()> {
     let metadata = NodeMetadata {
         name: "Updated Node".to_string(),
         version: "1.0.0".to_string(),
-        api_url: args.api_url.unwrap_or_else(|| "http://localhost:8080".to_string()),
+        api_url: args
+            .api_url
+            .unwrap_or_else(|| "http://localhost:8080".to_string()),
         capabilities: vec!["inference".to_string()],
         performance_tier: "standard".to_string(),
     };
 
-    let registrar = MultiChainRegistrar::new(
-        chain_registry,
-        &private_key,
-        metadata,
-    ).await?;
+    let registrar = MultiChainRegistrar::new(chain_registry, &private_key, metadata).await?;
 
     // Note: Actual update logic would need to be implemented in MultiChainRegistrar
     // For now, this is a placeholder

@@ -3,10 +3,12 @@
 
 use anyhow::Result;
 use ethers::prelude::*;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
-use fabstir_llm_node::blockchain::multi_chain_registrar::{MultiChainRegistrar, RegistrationStatus, NodeMetadata};
+use fabstir_llm_node::blockchain::multi_chain_registrar::{
+    MultiChainRegistrar, NodeMetadata, RegistrationStatus,
+};
 use fabstir_llm_node::config::chains::ChainRegistry;
 
 // Helper function to setup test environment
@@ -14,12 +16,14 @@ async fn setup_test_registrar(use_host_2: bool) -> Result<MultiChainRegistrar> {
     // Use test accounts from .env.local.test
     let host_private_key = if use_host_2 {
         // Host 2 account
-        std::env::var("TEST_HOST_2_PRIVATE_KEY")
-            .unwrap_or_else(|_| "0x9ac736a402fa7163b3a30c31b379aa2e3979eb9a3a2b01890485c334a6da575b".to_string())
+        std::env::var("TEST_HOST_2_PRIVATE_KEY").unwrap_or_else(|_| {
+            "0x9ac736a402fa7163b3a30c31b379aa2e3979eb9a3a2b01890485c334a6da575b".to_string()
+        })
     } else {
         // Host 1 account
-        std::env::var("TEST_HOST_1_PRIVATE_KEY")
-            .unwrap_or_else(|_| "0xe7855c0ea54ccca55126d40f97d90868b2a73bad0363e92ccdec0c4fbd6c0ce2".to_string())
+        std::env::var("TEST_HOST_1_PRIVATE_KEY").unwrap_or_else(|_| {
+            "0xe7855c0ea54ccca55126d40f97d90868b2a73bad0363e92ccdec0c4fbd6c0ce2".to_string()
+        })
     };
 
     let chain_registry = Arc::new(ChainRegistry::new());
@@ -27,16 +31,15 @@ async fn setup_test_registrar(use_host_2: bool) -> Result<MultiChainRegistrar> {
     let metadata = NodeMetadata {
         name: format!("Test Host {}", if use_host_2 { 2 } else { 1 }),
         version: "1.0.0".to_string(),
-        api_url: format!("http://test-host-{}.example.com:8080", if use_host_2 { 2 } else { 1 }),
+        api_url: format!(
+            "http://test-host-{}.example.com:8080",
+            if use_host_2 { 2 } else { 1 }
+        ),
         capabilities: vec!["inference".to_string(), "streaming".to_string()],
         performance_tier: "standard".to_string(),
     };
 
-    MultiChainRegistrar::new(
-        chain_registry,
-        &host_private_key,
-        metadata,
-    ).await
+    MultiChainRegistrar::new(chain_registry, &host_private_key, metadata).await
 }
 
 // Test checking if node is already registered
@@ -51,14 +54,23 @@ async fn test_check_registration_status() -> Result<()> {
     let chain_id = 84532; // Base Sepolia
     let is_registered = registrar.verify_registration_on_chain(chain_id).await?;
 
-    println!("Registration status: {}", if is_registered { "✅ Registered" } else { "❌ Not registered" });
+    println!(
+        "Registration status: {}",
+        if is_registered {
+            "✅ Registered"
+        } else {
+            "❌ Not registered"
+        }
+    );
 
     // Get detailed status
     let status = registrar.get_registration_status(chain_id).await?;
     match status {
         RegistrationStatus::NotRegistered => println!("Status: Not registered"),
         RegistrationStatus::Pending { tx_hash } => println!("Status: Pending (tx: {:?})", tx_hash),
-        RegistrationStatus::Confirmed { block_number } => println!("Status: Confirmed at block {}", block_number),
+        RegistrationStatus::Confirmed { block_number } => {
+            println!("Status: Confirmed at block {}", block_number)
+        }
         RegistrationStatus::Failed { error } => println!("Status: Failed - {}", error),
     }
 
@@ -99,7 +111,10 @@ async fn test_register_on_base_sepolia() -> Result<()> {
         Ok(tx_hash) => {
             println!("✅ Registration transaction submitted!");
             println!("   Transaction hash: {:?}", tx_hash);
-            println!("   View on BaseScan: https://sepolia.basescan.org/tx/{:?}", tx_hash);
+            println!(
+                "   View on BaseScan: https://sepolia.basescan.org/tx/{:?}",
+                tx_hash
+            );
 
             // Wait a bit for confirmation
             println!("⏳ Waiting 30 seconds for confirmation...");
@@ -110,21 +125,23 @@ async fn test_register_on_base_sepolia() -> Result<()> {
             match status {
                 RegistrationStatus::Confirmed { block_number } => {
                     println!("✅ Registration confirmed at block {}", block_number);
-                },
+                }
                 RegistrationStatus::Pending { .. } => {
                     println!("⏳ Registration still pending, check back later");
-                },
+                }
                 RegistrationStatus::Failed { ref error } => {
                     println!("❌ Registration failed: {}", error);
-                },
+                }
                 _ => {}
             }
 
             // Verify on-chain
             let is_registered = registrar.verify_registration_on_chain(chain_id).await?;
-            assert!(is_registered || matches!(status, RegistrationStatus::Pending { .. }),
-                    "Node should be registered or pending after successful transaction");
-        },
+            assert!(
+                is_registered || matches!(status, RegistrationStatus::Pending { .. }),
+                "Node should be registered or pending after successful transaction"
+            );
+        }
         Err(e) => {
             println!("❌ Registration failed: {}", e);
 
@@ -210,8 +227,14 @@ async fn test_register_host_2() -> Result<()> {
     // Check if Host 2 is registered
     let is_registered = registrar.verify_registration_on_chain(chain_id).await?;
 
-    println!("Host 2 registration status: {}",
-             if is_registered { "✅ Registered" } else { "❌ Not registered" });
+    println!(
+        "Host 2 registration status: {}",
+        if is_registered {
+            "✅ Registered"
+        } else {
+            "❌ Not registered"
+        }
+    );
 
     if !is_registered {
         println!("📝 Host 2 could be registered by running:");

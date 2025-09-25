@@ -1,14 +1,14 @@
 // src/monitoring/dashboards.rs - Dashboard system for visualization
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
-use serde_json::Value as JsonValue;
-use uuid::Uuid;
 use std::time::Duration;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardConfig {
@@ -93,10 +93,13 @@ impl Dashboard {
             label: name.to_string(),
             variable_type: VariableType::Custom,
             default_value: default.to_string(),
-            options: options.iter().map(|&opt| VariableOption {
-                label: opt.to_string(),
-                value: opt.to_string(),
-            }).collect(),
+            options: options
+                .iter()
+                .map(|&opt| VariableOption {
+                    label: opt.to_string(),
+                    value: opt.to_string(),
+                })
+                .collect(),
         };
         self.variables.insert(name.to_string(), variable);
     }
@@ -145,7 +148,8 @@ impl Panel {
     }
 
     pub fn with_responsive_position(mut self, breakpoint: &str, position: GridPosition) -> Self {
-        self.responsive_positions.insert(breakpoint.to_string(), position);
+        self.responsive_positions
+            .insert(breakpoint.to_string(), position);
         self
     }
 }
@@ -443,16 +447,16 @@ pub struct DashboardUpdate {
 pub enum DashboardError {
     #[error("Dashboard not found: {0}")]
     DashboardNotFound(String),
-    
+
     #[error("Panel not found: {0}")]
     PanelNotFound(String),
-    
+
     #[error("Invalid query: {0}")]
     InvalidQuery(String),
-    
+
     #[error("Widget type mismatch")]
     WidgetTypeMismatch,
-    
+
     #[error("Invalid time range")]
     InvalidTimeRange,
 }
@@ -503,7 +507,7 @@ impl DashboardManager {
     pub async fn new(config: DashboardConfig) -> Result<Self> {
         // Create default templates if needed
         let mut dashboards = HashMap::new();
-        
+
         // Add inference monitoring template
         let mut template = Dashboard::new(
             "inference_node_monitoring_template",
@@ -512,7 +516,7 @@ impl DashboardManager {
         );
         template.add_tag("template");
         dashboards.insert(template.id.clone(), template);
-        
+
         let state = Arc::new(RwLock::new(DashboardState {
             dashboards,
             panel_data: HashMap::new(),
@@ -522,7 +526,7 @@ impl DashboardManager {
             public_links: HashMap::new(),
             layouts: HashMap::new(),
         }));
-        
+
         Ok(DashboardManager { config, state })
     }
 
@@ -535,14 +539,16 @@ impl DashboardManager {
 
     pub async fn get_dashboard(&self, dashboard_id: &str) -> Result<Dashboard> {
         let state = self.state.read().await;
-        state.dashboards.get(dashboard_id)
+        state
+            .dashboards
+            .get(dashboard_id)
             .cloned()
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()).into())
     }
 
     pub async fn add_panel(&self, dashboard_id: &str, panel: Panel) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         if let Some(dashboard) = state.dashboards.get_mut(dashboard_id) {
             dashboard.panels.push(panel);
             dashboard.updated_at = Utc::now();
@@ -554,7 +560,9 @@ impl DashboardManager {
 
     pub async fn get_panels(&self, dashboard_id: &str) -> Result<Vec<Panel>> {
         let state = self.state.read().await;
-        let dashboard = state.dashboards.get(dashboard_id)
+        let dashboard = state
+            .dashboards
+            .get(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
         Ok(dashboard.panels.clone())
     }
@@ -566,25 +574,29 @@ impl DashboardManager {
         _time_range: TimeRange,
     ) -> Result<QueryResult> {
         let state = self.state.read().await;
-        let dashboard = state.dashboards.get(dashboard_id)
+        let dashboard = state
+            .dashboards
+            .get(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
-        
-        let panel = dashboard.panels.iter()
+
+        let panel = dashboard
+            .panels
+            .iter()
             .find(|p| p.name == panel_name)
             .ok_or_else(|| DashboardError::PanelNotFound(panel_name.to_string()))?;
-        
+
         // Mock query execution
         let mut query_used = String::new();
         if let Some(query) = panel.queries.first() {
             query_used = query.query.clone();
-            
+
             // Apply variable substitution
             for (var_name, var) in &dashboard.variables {
                 let placeholder = format!("${}", var_name);
                 query_used = query_used.replace(&placeholder, &var.default_value);
             }
         }
-        
+
         Ok(QueryResult {
             data: serde_json::json!({
                 "values": [[1640995200, 100], [1640995260, 105]]
@@ -593,15 +605,22 @@ impl DashboardManager {
         })
     }
 
-    pub async fn update_variable(&self, dashboard_id: &str, var_name: &str, value: &str) -> Result<()> {
+    pub async fn update_variable(
+        &self,
+        dashboard_id: &str,
+        var_name: &str,
+        value: &str,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
-        let dashboard = state.dashboards.get_mut(dashboard_id)
+        let dashboard = state
+            .dashboards
+            .get_mut(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
-        
+
         if let Some(var) = dashboard.variables.get_mut(var_name) {
             var.default_value = value.to_string();
         }
-        
+
         Ok(())
     }
 
@@ -628,18 +647,19 @@ impl DashboardManager {
         dashboard_id: &str,
     ) -> Result<tokio::sync::mpsc::Receiver<DashboardUpdate>> {
         let mut state = self.state.write().await;
-        
+
         if !state.dashboards.contains_key(dashboard_id) {
             return Err(DashboardError::DashboardNotFound(dashboard_id.to_string()).into());
         }
-        
+
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        
-        state.subscriptions
+
+        state
+            .subscriptions
             .entry(dashboard_id.to_string())
             .or_insert_with(Vec::new)
             .push(tx);
-        
+
         Ok(rx)
     }
 
@@ -650,33 +670,39 @@ impl DashboardManager {
         data: Vec<(&str, f64)>,
     ) -> Result<()> {
         let state = self.state.read().await;
-        let dashboard = state.dashboards.get(dashboard_id)
+        let dashboard = state
+            .dashboards
+            .get(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
-        
-        let panel = dashboard.panels.iter()
+
+        let panel = dashboard
+            .panels
+            .iter()
             .find(|p| p.name == panel_name)
             .ok_or_else(|| DashboardError::PanelNotFound(panel_name.to_string()))?;
-        
+
         let panel_id = panel.id.clone();
         drop(state);
-        
+
         // Convert data to JsonValue
-        let json_data = serde_json::json!(
-            data.into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect::<HashMap<_, _>>()
-        );
-        
+        let json_data = serde_json::json!(data
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect::<HashMap<_, _>>());
+
         let mut state = self.state.write().await;
-        
+
         // Update panel data
-        state.panel_data.insert(panel_id.clone(), PanelData {
-            panel_id: panel_id.clone(),
-            dashboard_id: dashboard_id.to_string(),
-            data: json_data.clone(),
-            last_updated: Utc::now(),
-        });
-        
+        state.panel_data.insert(
+            panel_id.clone(),
+            PanelData {
+                panel_id: panel_id.clone(),
+                dashboard_id: dashboard_id.to_string(),
+                data: json_data.clone(),
+                last_updated: Utc::now(),
+            },
+        );
+
         // Send update to subscribers
         if let Some(subscribers) = state.subscriptions.get(dashboard_id) {
             let update = DashboardUpdate {
@@ -684,57 +710,63 @@ impl DashboardManager {
                 data: json_data,
                 timestamp: Utc::now(),
             };
-            
+
             for tx in subscribers {
                 let _ = tx.send(update.clone()).await;
             }
         }
-        
+
         Ok(())
     }
 
     pub async fn export_dashboard(&self, dashboard_id: &str, format: &str) -> Result<String> {
         let state = self.state.read().await;
-        let dashboard = state.dashboards.get(dashboard_id)
+        let dashboard = state
+            .dashboards
+            .get(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
-        
+
         match format {
             "json" => Ok(serde_json::to_string_pretty(dashboard)?),
             "yaml" => {
                 // For yaml, we'll just use JSON for now
                 Ok(serde_json::to_string_pretty(dashboard)?)
-            },
+            }
             _ => Err(anyhow!("Unsupported export format: {}", format)),
         }
     }
 
     pub async fn delete_dashboard(&self, dashboard_id: &str) -> Result<()> {
         let mut state = self.state.write().await;
-        state.dashboards.remove(dashboard_id)
+        state
+            .dashboards
+            .remove(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
-        
+
         // Remove associated data
-        state.panel_data.retain(|_, data| data.dashboard_id != dashboard_id);
+        state
+            .panel_data
+            .retain(|_, data| data.dashboard_id != dashboard_id);
         state.annotations.remove(dashboard_id);
         state.subscriptions.remove(dashboard_id);
-        
+
         Ok(())
     }
 
     pub async fn import_dashboard(&self, json: &str) -> Result<String> {
         let mut dashboard: Dashboard = serde_json::from_str(json)?;
-        
+
         // Generate new ID
         dashboard.id = Uuid::new_v4().to_string();
         dashboard.created_at = Utc::now();
         dashboard.updated_at = Utc::now();
         dashboard.version = 1;
-        
+
         let id = dashboard.id.clone();
-        
+
         let mut state = self.state.write().await;
         state.dashboards.insert(id.clone(), dashboard);
-        
+
         Ok(id)
     }
 
@@ -750,7 +782,7 @@ impl DashboardManager {
         if !state.dashboards.contains_key(dashboard_id) {
             return Err(DashboardError::DashboardNotFound(dashboard_id.to_string()).into());
         }
-        
+
         let annotation = Annotation {
             id: Uuid::new_v4().to_string(),
             dashboard_id: dashboard_id.to_string(),
@@ -760,38 +792,51 @@ impl DashboardManager {
             text: text.to_string(),
             tags,
         };
-        
-        state.annotations
+
+        state
+            .annotations
             .entry(dashboard_id.to_string())
             .or_insert_with(Vec::new)
             .push(annotation.clone());
-        
+
         Ok(annotation)
     }
 
-    pub async fn get_annotations(&self, dashboard_id: &str, _time_range: TimeRange) -> Result<Vec<Annotation>> {
+    pub async fn get_annotations(
+        &self,
+        dashboard_id: &str,
+        _time_range: TimeRange,
+    ) -> Result<Vec<Annotation>> {
         let state = self.state.read().await;
-        Ok(state.annotations.get(dashboard_id).cloned().unwrap_or_default())
+        Ok(state
+            .annotations
+            .get(dashboard_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
-    pub async fn create_public_link(&self, dashboard_id: &str, duration: Duration) -> Result<PublicLink> {
+    pub async fn create_public_link(
+        &self,
+        dashboard_id: &str,
+        duration: Duration,
+    ) -> Result<PublicLink> {
         let mut state = self.state.write().await;
         if !state.dashboards.contains_key(dashboard_id) {
             return Err(DashboardError::DashboardNotFound(dashboard_id.to_string()).into());
         }
-        
+
         let link = PublicLink {
             token: Uuid::new_v4().to_string(),
             expires_at: (Utc::now() + chrono::Duration::from_std(duration)?).timestamp() as u64,
         };
-        
+
         state.public_links.insert(link.token.clone(), link.clone());
         Ok(link)
     }
 
     pub async fn get_public_dashboard(&self, token: &str) -> Result<Dashboard> {
         let state = self.state.read().await;
-        
+
         if let Some(link) = state.public_links.get(token) {
             let now = Utc::now().timestamp() as u64;
             if now <= link.expires_at {
@@ -817,10 +862,10 @@ impl DashboardManager {
                     "Inference Node Monitoring",
                     "Complete monitoring dashboard for inference nodes",
                 );
-                
+
                 // Create the dashboard first
                 let id = self.create_dashboard(dashboard.clone()).await?;
-                
+
                 // Add standard panels
                 let panels = vec![
                     ("cpu_usage", "CPU Usage", WidgetType::Graph, 0, 0),
@@ -828,36 +873,43 @@ impl DashboardManager {
                     ("gpu_metrics", "GPU Metrics", WidgetType::Graph, 0, 4),
                     ("inference_rate", "Inference Rate", WidgetType::Graph, 6, 4),
                 ];
-                
+
                 for (name, title, widget_type, x, y) in panels {
                     let panel = Panel::new(
                         name,
                         title,
                         widget_type,
-                        GridPosition { x, y, width: 6, height: 4 },
+                        GridPosition {
+                            x,
+                            y,
+                            width: 6,
+                            height: 4,
+                        },
                     );
                     self.add_panel(&id, panel).await?;
                 }
-                
+
                 // Return the created dashboard
                 self.get_dashboard(&id).await
-            },
+            }
             _ => {
                 // Look for existing template
                 let state = self.state.read().await;
-                let template = state.dashboards.values()
+                let template = state
+                    .dashboards
+                    .values()
                     .find(|d| d.name == template_name && d.tags.contains(&"template".to_string()))
                     .ok_or_else(|| anyhow!("Template not found: {}", template_name))?;
-                
+
                 let mut new_dashboard = template.clone();
                 new_dashboard.id = Uuid::new_v4().to_string();
                 new_dashboard.name = format!("{}_instance", template_name);
                 new_dashboard.created_at = Utc::now();
                 new_dashboard.updated_at = Utc::now();
                 new_dashboard.version = 1;
-                
+
                 drop(state);
-                
+
                 let id = self.create_dashboard(new_dashboard.clone()).await?;
                 self.get_dashboard(&id).await
             }
@@ -880,9 +932,11 @@ impl DashboardManager {
 
     pub async fn render_dashboard(&self, dashboard_id: &str) -> Result<String> {
         let state = self.state.read().await;
-        let dashboard = state.dashboards.get(dashboard_id)
+        let dashboard = state
+            .dashboards
+            .get(dashboard_id)
             .ok_or_else(|| DashboardError::DashboardNotFound(dashboard_id.to_string()))?;
-        
+
         // Mock render - return JSON representation
         Ok(serde_json::to_string(dashboard)?)
     }

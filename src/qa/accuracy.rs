@@ -1,10 +1,10 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
-use chrono::{DateTime, Utc};
-use thiserror::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::sync::{broadcast, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VerificationMethod {
@@ -208,10 +208,10 @@ impl AccuracyVerifier {
         // Simple similarity check
         let response_lower = response.to_lowercase();
         let truth_lower = ground_truth.to_lowercase();
-        
-        let is_accurate = response_lower.contains(&truth_lower) || 
-                         truth_lower.contains(&response_lower);
-        
+
+        let is_accurate =
+            response_lower.contains(&truth_lower) || truth_lower.contains(&response_lower);
+
         let accuracy_score = if is_accurate { 0.95 } else { 0.2 };
         let confidence = if is_accurate { 0.95 } else { 0.3 };
 
@@ -242,7 +242,7 @@ impl AccuracyVerifier {
 
         // Simple consistency check - look for common elements
         let mut answer_frequencies = HashMap::new();
-        
+
         for response in responses {
             // Extract potential answers (simple heuristic)
             if let Some(answer) = self.extract_answer(response) {
@@ -262,7 +262,11 @@ impl AccuracyVerifier {
         Ok(ConsistencyCheck {
             is_consistent,
             consistency_score,
-            canonical_answer: if canonical_answer.is_empty() { None } else { Some(canonical_answer) },
+            canonical_answer: if canonical_answer.is_empty() {
+                None
+            } else {
+                Some(canonical_answer)
+            },
             response_count: responses.len(),
         })
     }
@@ -272,9 +276,14 @@ impl AccuracyVerifier {
         rules.insert(rule_id.to_string(), rule);
     }
 
-    pub async fn validate_format(&self, rule_id: &str, response: &str) -> Result<FormatValidationResult, AccuracyError> {
+    pub async fn validate_format(
+        &self,
+        rule_id: &str,
+        response: &str,
+    ) -> Result<FormatValidationResult, AccuracyError> {
         let rules = self.validation_rules.lock().await;
-        let rule = rules.get(rule_id)
+        let rule = rules
+            .get(rule_id)
             .ok_or_else(|| AccuracyError::RuleNotFound(rule_id.to_string()))?;
 
         let mut violations = Vec::new();
@@ -362,7 +371,7 @@ impl AccuracyVerifier {
 
     pub async fn get_accuracy_metrics(&self, time_period: &str) -> AccuracyMetrics {
         let results = self.verification_results.lock().await;
-        
+
         let total_verifications = results.len() as u64;
         let accurate_count = results.iter().filter(|r| r.is_accurate).count() as u64;
         let accuracy_rate = if total_verifications > 0 {
@@ -408,7 +417,10 @@ impl AccuracyVerifier {
         };
 
         let mut model_results = self.model_results.lock().await;
-        model_results.entry(model.to_string()).or_insert_with(Vec::new).push(result);
+        model_results
+            .entry(model.to_string())
+            .or_insert_with(Vec::new)
+            .push(result);
 
         Ok(())
     }
@@ -455,7 +467,9 @@ impl AccuracyVerifier {
         }
 
         // Perform verification (in real implementation, this would be async)
-        let result = self.verify_response(job_id, prompt, response, ground_truth).await;
+        let result = self
+            .verify_response(job_id, prompt, response, ground_truth)
+            .await;
 
         // Update queue stats
         {
@@ -500,16 +514,16 @@ impl AccuracyVerifier {
                 }
                 Ok(csv)
             }
-            "json" => {
-                Ok(serde_json::to_string_pretty(&*results)?)
-            }
-            _ => Err(AccuracyError::VerificationFailed("Unsupported format".to_string()))
+            "json" => Ok(serde_json::to_string_pretty(&*results)?),
+            _ => Err(AccuracyError::VerificationFailed(
+                "Unsupported format".to_string(),
+            )),
         }
     }
 
     async fn check_accuracy_alerts(&self) {
         let results = self.verification_results.lock().await;
-        
+
         if results.len() >= 10 {
             let recent_results: Vec<_> = results.iter().rev().take(10).collect();
             let accurate_count = recent_results.iter().filter(|r| r.is_accurate).count();
@@ -532,7 +546,7 @@ impl AccuracyVerifier {
     fn extract_answer(&self, response: &str) -> Option<String> {
         // Simple heuristic to extract potential answers
         let words: Vec<&str> = response.split_whitespace().collect();
-        
+
         // Look for numbers
         for word in &words {
             if let Ok(_num) = word.parse::<i32>() {

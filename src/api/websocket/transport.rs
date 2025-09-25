@@ -1,8 +1,8 @@
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use bytes::{Bytes, BytesMut};
-use sha2::{Sha256, Digest};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flate2::Compression;
+use sha2::{Digest, Sha256};
 use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,14 +31,14 @@ impl Frame {
         if self.payload.len() < 2 {
             return Ok((1000, String::new()));
         }
-        
+
         let code = u16::from_be_bytes([self.payload[0], self.payload[1]]);
         let reason = if self.payload.len() > 2 {
             String::from_utf8_lossy(&self.payload[2..]).to_string()
         } else {
             String::new()
         };
-        
+
         Ok((code, reason))
     }
 }
@@ -56,10 +56,10 @@ impl MessageFramer {
 
     pub fn create_frame(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut frame = Vec::new();
-        
+
         // FIN bit set, text frame
         frame.push(0x81);
-        
+
         // Payload length
         let len = data.len();
         if len < 126 {
@@ -71,7 +71,7 @@ impl MessageFramer {
             frame.push(127);
             frame.extend_from_slice(&(len as u64).to_be_bytes());
         }
-        
+
         frame.extend_from_slice(data);
         Ok(frame)
     }
@@ -117,8 +117,14 @@ impl MessageParser {
                 return Err(anyhow::anyhow!("Incomplete length"));
             }
             payload_len = u64::from_be_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-                data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
             ]) as usize;
             offset += 8;
         }
@@ -127,7 +133,12 @@ impl MessageParser {
             if data.len() < offset + 4 {
                 return Err(anyhow::anyhow!("Incomplete mask"));
             }
-            let mask = [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+            let mask = [
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ];
             offset += 4;
 
             if data.len() < offset + payload_len {
@@ -177,7 +188,7 @@ impl TransportLayer {
     pub fn encode_binary(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut frame = Vec::new();
         frame.push(0x82); // FIN + Binary
-        
+
         let len = data.len();
         if len < 126 {
             frame.push(len as u8);
@@ -188,7 +199,7 @@ impl TransportLayer {
             frame.push(127);
             frame.extend_from_slice(&(len as u64).to_be_bytes());
         }
-        
+
         frame.extend_from_slice(data);
         Ok(frame)
     }
@@ -204,7 +215,7 @@ impl TransportLayer {
 
         let mut frame = Vec::new();
         frame.push(0x88); // FIN + Close
-        
+
         let len = payload.len();
         if len < 126 {
             frame.push(len as u8);
@@ -212,7 +223,7 @@ impl TransportLayer {
             frame.push(126);
             frame.extend_from_slice(&(len as u16).to_be_bytes());
         }
-        
+
         frame.extend_from_slice(&payload);
         Ok(frame)
     }
@@ -236,18 +247,22 @@ impl TransportLayer {
     pub fn fragment_message(&self, data: &[u8], fragment_size: usize) -> Result<Vec<Frame>> {
         let mut fragments = Vec::new();
         let chunks: Vec<_> = data.chunks(fragment_size).collect();
-        
+
         for (i, chunk) in chunks.iter().enumerate() {
             let is_final = i == chunks.len() - 1;
-            let opcode = if i == 0 { OpCode::Text } else { OpCode::Continuation };
-            
+            let opcode = if i == 0 {
+                OpCode::Text
+            } else {
+                OpCode::Continuation
+            };
+
             fragments.push(Frame {
                 is_final,
                 opcode,
                 payload: chunk.to_vec(),
             });
         }
-        
+
         Ok(fragments)
     }
 
@@ -284,8 +299,8 @@ impl TransportLayer {
         match self.compression {
             CompressionMethod::None => Ok(data.to_vec()),
             CompressionMethod::Deflate => {
-                use std::io::Read;
                 use flate2::read::DeflateDecoder;
+                use std::io::Read;
                 let mut decoder = DeflateDecoder::new(data);
                 let mut decompressed = Vec::new();
                 decoder.read_to_end(&mut decompressed)?;
@@ -327,7 +342,7 @@ impl TransportLayer {
         if key == "dGhlIHNhbXBsZSBub25jZQ==" {
             return Ok("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".to_string());
         }
-        
+
         const MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
         // Using SHA-256 as a fallback (not spec-compliant but works for testing)
         let mut hasher = Sha256::new();

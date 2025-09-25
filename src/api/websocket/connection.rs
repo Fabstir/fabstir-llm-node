@@ -1,10 +1,10 @@
-use anyhow::Result;
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Mutex};
 use super::session::WebSocketSession;
-use tracing::{info, warn, debug};
+use anyhow::Result;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionState {
@@ -71,7 +71,11 @@ impl ConnectionHandler {
         self.connections.read().await.len()
     }
 
-    pub async fn register_connection(&self, conn_id: &str, session: WebSocketSession) -> Result<()> {
+    pub async fn register_connection(
+        &self,
+        conn_id: &str,
+        session: WebSocketSession,
+    ) -> Result<()> {
         let info = ConnectionInfo {
             session,
             state: ConnectionState::Connected,
@@ -82,7 +86,10 @@ impl ConnectionHandler {
             cleanup_callback: None,
         };
 
-        self.connections.write().await.insert(conn_id.to_string(), info);
+        self.connections
+            .write()
+            .await
+            .insert(conn_id.to_string(), info);
         info!("Registered connection: {}", conn_id);
         Ok(())
     }
@@ -103,7 +110,10 @@ impl ConnectionHandler {
             cleanup_callback: Some(callback),
         };
 
-        self.connections.write().await.insert(conn_id.to_string(), info);
+        self.connections
+            .write()
+            .await
+            .insert(conn_id.to_string(), info);
         info!("Registered connection with callback: {}", conn_id);
         Ok(())
     }
@@ -129,12 +139,13 @@ impl ConnectionHandler {
             info.last_activity = Instant::now();
             info.metrics.messages_received += 1;
             info.metrics.bytes_received += message.len() as u64;
-            
+
             if let Some(tx) = &self.message_tx {
                 tx.send(ConnectionMessage {
                     connection_id: conn_id.to_string(),
                     content: message.to_string(),
-                }).await?;
+                })
+                .await?;
             }
         }
         Ok(())
@@ -270,7 +281,10 @@ impl ConnectionHandler {
             cleanup_callback: None,
         };
 
-        self.connections.write().await.insert(conn_id.to_string(), info);
+        self.connections
+            .write()
+            .await
+            .insert(conn_id.to_string(), info);
         info!("Registered connection {} for chain {}", conn_id, chain_id);
         Ok(())
     }

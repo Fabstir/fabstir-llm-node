@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use fabstir_llm_node::job_processor::{JobRequest, Message};
     use ethers::types::{Address, H256, U256};
+    use fabstir_llm_node::job_processor::{JobRequest, Message};
     use serde_json;
 
     #[test]
@@ -17,11 +17,11 @@ mod tests {
             "deadline": "1234567890",
             "timestamp": "1234567890"
         }"#;
-        
+
         let job_request: JobRequest = serde_json::from_str(json).unwrap();
         assert!(job_request.conversation_context.is_empty());
     }
-    
+
     #[test]
     fn test_job_request_with_context() {
         // Test with conversation_context
@@ -45,7 +45,7 @@ mod tests {
                 }
             ]
         }"#;
-        
+
         let job_request: JobRequest = serde_json::from_str(json).unwrap();
         assert_eq!(job_request.conversation_context.len(), 2);
         assert_eq!(job_request.conversation_context[0].role, "user");
@@ -53,7 +53,7 @@ mod tests {
         assert_eq!(job_request.conversation_context[1].role, "assistant");
         assert_eq!(job_request.conversation_context[1].content, "Hi there!");
     }
-    
+
     #[test]
     fn test_message_serialization() {
         // Test Message struct
@@ -62,10 +62,10 @@ mod tests {
             content: "Test message".to_string(),
             timestamp: Some(1234567890),
         };
-        
+
         let serialized = serde_json::to_string(&msg).unwrap();
         let deserialized: Message = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(deserialized.role, msg.role);
         assert_eq!(deserialized.content, msg.content);
         assert_eq!(deserialized.timestamp, msg.timestamp);
@@ -78,10 +78,10 @@ mod tests {
             content: "Response".to_string(),
             timestamp: None,
         };
-        
+
         let serialized = serde_json::to_string(&msg).unwrap();
         assert!(!serialized.contains("timestamp"));
-        
+
         let deserialized: Message = serde_json::from_str(&serialized).unwrap();
         assert!(deserialized.timestamp.is_none());
     }

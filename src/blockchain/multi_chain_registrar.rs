@@ -1,15 +1,15 @@
-use anyhow::{Result, anyhow};
-use ethers::prelude::*;
-use ethers::providers::{Provider, Http};
+use anyhow::{anyhow, Result};
 use ethers::middleware::SignerMiddleware;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::str::FromStr;
-use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug};
+use ethers::prelude::*;
+use ethers::providers::{Http, Provider};
 use serde_json;
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
-use crate::config::chains::{ChainRegistry, ChainConfig};
+use crate::config::chains::{ChainConfig, ChainRegistry};
 use crate::contracts::types::NodeRegistryWithModels;
 
 // FAB Token constants
@@ -51,11 +51,15 @@ impl MultiChainRegistrar {
         host_private_key: &str,
         metadata: NodeMetadata,
     ) -> Result<Self> {
-        let wallet = host_private_key.parse::<LocalWallet>()
+        let wallet = host_private_key
+            .parse::<LocalWallet>()
             .map_err(|e| anyhow!("Invalid private key: {}", e))?;
 
         let node_address = wallet.address();
-        info!("Initializing MultiChainRegistrar for address: {}", node_address);
+        info!(
+            "Initializing MultiChainRegistrar for address: {}",
+            node_address
+        );
 
         let mut providers = HashMap::new();
         let mut signers = HashMap::new();
@@ -64,10 +68,14 @@ impl MultiChainRegistrar {
         // Initialize providers and signers for each chain
         for chain_id in chain_registry.get_all_chain_ids() {
             if let Some(config) = chain_registry.get_chain(chain_id) {
-                info!("Setting up provider for chain {} ({})", config.name, chain_id);
+                info!(
+                    "Setting up provider for chain {} ({})",
+                    config.name, chain_id
+                );
 
-                let provider = Provider::<Http>::try_from(&config.rpc_url)
-                    .map_err(|e| anyhow!("Failed to create provider for chain {}: {}", chain_id, e))?;
+                let provider = Provider::<Http>::try_from(&config.rpc_url).map_err(|e| {
+                    anyhow!("Failed to create provider for chain {}: {}", chain_id, e)
+                })?;
                 let provider = Arc::new(provider);
 
                 let chain_wallet = wallet.clone().with_chain_id(chain_id);
@@ -80,7 +88,10 @@ impl MultiChainRegistrar {
                 signers.insert(chain_id, signer);
 
                 // Initialize status
-                registration_status.write().await.insert(chain_id, RegistrationStatus::NotRegistered);
+                registration_status
+                    .write()
+                    .await
+                    .insert(chain_id, RegistrationStatus::NotRegistered);
             }
         }
 
@@ -96,7 +107,9 @@ impl MultiChainRegistrar {
 
     /// Check FAB token balance for registration
     async fn check_fab_balance(&self, chain_id: u64) -> Result<U256> {
-        let provider = self.providers.get(&chain_id)
+        let provider = self
+            .providers
+            .get(&chain_id)
             .ok_or_else(|| anyhow!("No provider for chain {}", chain_id))?;
 
         // FAB Token ABI for balanceOf
@@ -111,14 +124,19 @@ impl MultiChainRegistrar {
         let fab_token = FabToken::new(fab_token_address, provider.clone());
 
         let balance = fab_token.balance_of(self.node_address).call().await?;
-        debug!("FAB balance for {} on chain {}: {}", self.node_address, chain_id, balance);
+        debug!(
+            "FAB balance for {} on chain {}: {}",
+            self.node_address, chain_id, balance
+        );
 
         Ok(balance)
     }
 
     /// Approve FAB tokens for staking
     async fn approve_fab_tokens(&self, chain_id: u64, registry_address: Address) -> Result<H256> {
-        let signer = self.signers.get(&chain_id)
+        let signer = self
+            .signers
+            .get(&chain_id)
             .ok_or_else(|| anyhow!("No signer for chain {}", chain_id))?;
 
         // FAB Token ABI for approve
@@ -140,7 +158,10 @@ impl MultiChainRegistrar {
             }
         };
 
-        info!("Approving {} FAB tokens for registry {}", MIN_STAKE_AMOUNT, registry_address);
+        info!(
+            "Approving {} FAB tokens for registry {}",
+            MIN_STAKE_AMOUNT, registry_address
+        );
         let approve_call = fab_token.approve(registry_address, stake_amount_u256);
         let pending_tx = approve_call.send().await?;
         let tx_hash = pending_tx.tx_hash();
@@ -156,10 +177,15 @@ impl MultiChainRegistrar {
 
     /// Register node on a specific chain
     pub async fn register_on_chain(&self, chain_id: u64) -> Result<H256> {
-        let chain_config = self.chain_registry.get_chain(chain_id)
+        let chain_config = self
+            .chain_registry
+            .get_chain(chain_id)
             .ok_or_else(|| anyhow!("Chain {} not supported", chain_id))?;
 
-        info!("Starting registration on {} (chain {})", chain_config.name, chain_id);
+        info!(
+            "Starting registration on {} (chain {})",
+            chain_config.name, chain_id
+        );
 
         // Check FAB balance
         let balance = self.check_fab_balance(chain_id).await?;
@@ -180,7 +206,9 @@ impl MultiChainRegistrar {
         }
 
         // Get signer for this chain
-        let signer = self.signers.get(&chain_id)
+        let signer = self
+            .signers
+            .get(&chain_id)
             .ok_or_else(|| anyhow!("No signer available for chain {}", chain_id))?;
 
         // Approve FAB tokens
@@ -201,15 +229,18 @@ impl MultiChainRegistrar {
             "location": "us-west",
             "performance_tier": self.node_metadata.performance_tier,
             "maxConcurrentJobs": 5
-        }).to_string();
+        })
+        .to_string();
 
         // Get approved model IDs
         // For MVP, using the two approved models from HOST_REGISTRATION_GUIDE.md
         let model_ids: Vec<[u8; 32]> = vec![
             // TinyVicuna-1B
-            H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")?.into(),
+            H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")?
+                .into(),
             // TinyLlama-1.1B
-            H256::from_str("0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca")?.into(),
+            H256::from_str("0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca")?
+                .into(),
         ];
 
         info!(
@@ -253,10 +284,16 @@ impl MultiChainRegistrar {
         let tokens = vec![
             Token::String(metadata_json.clone()),
             Token::String(self.node_metadata.api_url.clone()),
-            Token::Array(model_ids.iter().map(|id| Token::FixedBytes(id.to_vec())).collect()),
+            Token::Array(
+                model_ids
+                    .iter()
+                    .map(|id| Token::FixedBytes(id.to_vec()))
+                    .collect(),
+            ),
         ];
 
-        let encoded = register_function.encode_input(&tokens)
+        let encoded = register_function
+            .encode_input(&tokens)
             .map_err(|e| anyhow!("Failed to encode function call: {}", e))?;
 
         // Create transaction request
@@ -265,12 +302,17 @@ impl MultiChainRegistrar {
             .data(Bytes::from(encoded));
 
         // Send transaction
-        let pending_tx = signer.send_transaction(tx_request, None).await
+        let pending_tx = signer
+            .send_transaction(tx_request, None)
+            .await
             .map_err(|e| anyhow!("Failed to send registration transaction: {}", e))?;
 
         let tx_hash = pending_tx.tx_hash();
 
-        info!("Registration transaction sent on chain {}: {:?}", chain_id, tx_hash);
+        info!(
+            "Registration transaction sent on chain {}: {:?}",
+            chain_id, tx_hash
+        );
 
         status.insert(chain_id, RegistrationStatus::Pending { tx_hash });
         drop(status);
@@ -288,20 +330,32 @@ impl MultiChainRegistrar {
 
                 match provider.get_transaction_receipt(tx_hash).await {
                     Ok(Some(receipt)) => {
-                        info!("Registration confirmed on chain {} at block {}",
-                              chain_id_copy, receipt.block_number.unwrap_or_default());
+                        info!(
+                            "Registration confirmed on chain {} at block {}",
+                            chain_id_copy,
+                            receipt.block_number.unwrap_or_default()
+                        );
 
                         let mut status = registration_status.write().await;
-                        status.insert(chain_id_copy, RegistrationStatus::Confirmed {
-                            block_number: receipt.block_number.unwrap_or_default().as_u64(),
-                        });
-                    },
+                        status.insert(
+                            chain_id_copy,
+                            RegistrationStatus::Confirmed {
+                                block_number: receipt.block_number.unwrap_or_default().as_u64(),
+                            },
+                        );
+                    }
                     Ok(None) => {
-                        debug!("Registration transaction on chain {} still pending", chain_id_copy);
+                        debug!(
+                            "Registration transaction on chain {} still pending",
+                            chain_id_copy
+                        );
                         // Transaction is still pending, leave status as Pending
-                    },
+                    }
                     Err(e) => {
-                        error!("Failed to check registration receipt on chain {}: {}", chain_id_copy, e);
+                        error!(
+                            "Failed to check registration receipt on chain {}: {}",
+                            chain_id_copy, e
+                        );
                         // Leave status as Pending, don't mark as failed just because we couldn't check
                     }
                 }
@@ -313,16 +367,18 @@ impl MultiChainRegistrar {
 
     /// Verify if node is registered on a specific chain
     pub async fn verify_registration_on_chain(&self, chain_id: u64) -> Result<bool> {
-        let chain_config = self.chain_registry.get_chain(chain_id)
+        let chain_config = self
+            .chain_registry
+            .get_chain(chain_id)
             .ok_or_else(|| anyhow!("Chain {} not supported", chain_id))?;
 
-        let provider = self.providers.get(&chain_id)
+        let provider = self
+            .providers
+            .get(&chain_id)
             .ok_or_else(|| anyhow!("No provider for chain {}", chain_id))?;
 
-        let node_registry = NodeRegistryWithModels::new(
-            chain_config.contracts.node_registry,
-            provider.clone(),
-        );
+        let node_registry =
+            NodeRegistryWithModels::new(chain_config.contracts.node_registry, provider.clone());
 
         // Check if node is active
         let is_active = node_registry
@@ -331,8 +387,10 @@ impl MultiChainRegistrar {
             .await
             .unwrap_or(false);
 
-        debug!("Node {} registration status on chain {}: {}",
-               self.node_address, chain_id, is_active);
+        debug!(
+            "Node {} registration status on chain {}: {}",
+            self.node_address, chain_id, is_active
+        );
 
         Ok(is_active)
     }
@@ -340,7 +398,8 @@ impl MultiChainRegistrar {
     /// Get registration status for a specific chain
     pub async fn get_registration_status(&self, chain_id: u64) -> Result<RegistrationStatus> {
         let status = self.registration_status.read().await;
-        status.get(&chain_id)
+        status
+            .get(&chain_id)
             .cloned()
             .ok_or_else(|| anyhow!("No registration status for chain {}", chain_id))
     }

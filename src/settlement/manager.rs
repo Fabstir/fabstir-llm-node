@@ -1,18 +1,18 @@
-use super::types::{SettlementError, SettlementResult, SettlementStatus};
 use super::gas_estimator::GasEstimator;
 use super::queue::{SettlementQueue, SettlementRequest};
-use crate::config::chains::{ChainRegistry, ChainConfig};
+use super::types::{SettlementError, SettlementResult, SettlementStatus};
+use crate::config::chains::{ChainConfig, ChainRegistry};
+use anyhow::{anyhow, Result};
 use ethers::{
     prelude::*,
     providers::{Http, Provider},
     signers::LocalWallet,
-    types::{Address, U256, H256},
+    types::{Address, H256, U256},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::{Result, anyhow};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 // Type aliases for clarity
 type ChainProvider = Arc<Provider<Http>>;
@@ -28,23 +28,25 @@ pub struct SettlementManager {
 }
 
 impl SettlementManager {
-    pub async fn new(
-        chain_registry: Arc<ChainRegistry>,
-        host_private_key: &str,
-    ) -> Result<Self> {
+    pub async fn new(chain_registry: Arc<ChainRegistry>, host_private_key: &str) -> Result<Self> {
         let mut providers = HashMap::new();
         let mut signers = HashMap::new();
 
         // Parse the wallet once
-        let wallet = host_private_key.parse::<LocalWallet>()
+        let wallet = host_private_key
+            .parse::<LocalWallet>()
             .map_err(|e| anyhow!("Failed to parse private key: {}", e))?;
         let host_address = wallet.address();
 
-        info!("Initializing SettlementManager for address: {}", host_address);
+        info!(
+            "Initializing SettlementManager for address: {}",
+            host_address
+        );
 
         // Initialize providers and signers for each supported chain
         for chain_id in chain_registry.list_supported_chains() {
-            let chain_config = chain_registry.get_chain(chain_id)
+            let chain_config = chain_registry
+                .get_chain(chain_id)
                 .ok_or_else(|| anyhow!("Chain {} not found in registry", chain_id))?;
 
             // Create provider
@@ -91,22 +93,31 @@ impl SettlementManager {
     }
 
     pub async fn check_provider_health(&self, chain_id: u64) -> Result<()> {
-        let provider = self.get_provider(chain_id)
+        let provider = self
+            .get_provider(chain_id)
             .ok_or_else(|| anyhow!("No provider for chain {}", chain_id))?;
 
         // Try to get block number as health check
-        let block_number = provider.get_block_number().await
+        let block_number = provider
+            .get_block_number()
+            .await
             .map_err(|e| anyhow!("Provider health check failed for chain {}: {}", chain_id, e))?;
 
-        info!("Chain {} health check passed, block: {}", chain_id, block_number);
+        info!(
+            "Chain {} health check passed, block: {}",
+            chain_id, block_number
+        );
         Ok(())
     }
 
     pub async fn check_balance(&self, chain_id: u64) -> Result<U256> {
-        let provider = self.get_provider(chain_id)
+        let provider = self
+            .get_provider(chain_id)
             .ok_or_else(|| anyhow!("No provider for chain {}", chain_id))?;
 
-        let balance = provider.get_balance(self.host_address, None).await
+        let balance = provider
+            .get_balance(self.host_address, None)
+            .await
             .map_err(|e| anyhow!("Failed to get balance for chain {}: {}", chain_id, e))?;
 
         Ok(balance)
@@ -118,11 +129,15 @@ impl SettlementManager {
         session_id: u64,
     ) -> Result<U256, SettlementError> {
         // Get gas estimate for settlement operation
-        let gas_limit = self.gas_estimator.estimate_with_buffer(chain_id, "settle_session")?;
+        let gas_limit = self
+            .gas_estimator
+            .estimate_with_buffer(chain_id, "settle_session")?;
 
         // Get current gas price from provider
         if let Some(provider) = self.get_provider(chain_id) {
-            let gas_price = provider.get_gas_price().await
+            let gas_price = provider
+                .get_gas_price()
+                .await
                 .map_err(|e| SettlementError::ProviderError(e.to_string()))?;
 
             // Calculate total cost
@@ -158,7 +173,9 @@ impl SettlementManager {
         for _ in 0..10 {
             if let Some(request) = queue.get_next().await {
                 // Update status to processing
-                queue.update_status(request.session_id, SettlementStatus::Processing).await;
+                queue
+                    .update_status(request.session_id, SettlementStatus::Processing)
+                    .await;
 
                 // Here we would actually process the settlement
                 // For now, just create a mock result
@@ -173,7 +190,9 @@ impl SettlementManager {
                 results.push(result);
 
                 // Update status to completed
-                queue.update_status(request.session_id, SettlementStatus::Completed).await;
+                queue
+                    .update_status(request.session_id, SettlementStatus::Completed)
+                    .await;
             } else {
                 break;
             }
@@ -197,10 +216,13 @@ impl SettlementManager {
         session_id: u64,
         chain_id: u64,
     ) -> Result<H256, SettlementError> {
-        let chain_config = self.chain_registry.get_chain(chain_id)
+        let chain_config = self
+            .chain_registry
+            .get_chain(chain_id)
             .ok_or(SettlementError::UnsupportedChain(chain_id))?;
 
-        let signer = self.get_signer(chain_id)
+        let signer = self
+            .get_signer(chain_id)
             .ok_or(SettlementError::SignerNotFound(chain_id))?;
 
         info!(
@@ -209,7 +231,9 @@ impl SettlementManager {
         );
 
         // Get gas estimate
-        let gas_limit = self.gas_estimator.estimate_with_buffer(chain_id, "settle_session")?;
+        let gas_limit = self
+            .gas_estimator
+            .estimate_with_buffer(chain_id, "settle_session")?;
 
         // Here we would build and send the actual transaction
         // For now, return a mock transaction hash

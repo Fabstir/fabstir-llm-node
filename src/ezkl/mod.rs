@@ -1,38 +1,33 @@
 // src/ezkl/mod.rs - Example structure for Claude Code
 
+pub mod batch_proofs;
 pub mod integration;
 pub mod proof_creation;
-pub mod batch_proofs;
 pub mod verification;
 
 // Re-export main types for convenience
 pub use integration::{
-    EZKLIntegration, EZKLConfig, ProofSystem, ModelCircuit,
-    CircuitConfig, ProofBackend, ProvingKey, VerifyingKey,
-    EZKLError, IntegrationStatus, ProofArtifacts,
-    ModelCompatibility, Witness, ResourceMetrics
+    CircuitConfig, EZKLConfig, EZKLError, EZKLIntegration, IntegrationStatus, ModelCircuit,
+    ModelCompatibility, ProofArtifacts, ProofBackend, ProofSystem, ProvingKey, ResourceMetrics,
+    VerifyingKey, Witness,
 };
 
 pub use proof_creation::{
-    ProofGenerator, ProofRequest, ProofResult, ProofMetadata,
-    ProofFormat, CompressionLevel, ProofError, ProofStatus,
-    InferenceData, ModelInput, ModelOutput, PerformanceMetrics
+    CompressionLevel, InferenceData, ModelInput, ModelOutput, PerformanceMetrics, ProofError,
+    ProofFormat, ProofGenerator, ProofMetadata, ProofRequest, ProofResult, ProofStatus,
 };
 
 pub use batch_proofs::{
-    BatchProofGenerator, BatchProofRequest, BatchProofResult,
-    BatchStrategy, AggregationMethod, ParallelismConfig,
-    BatchProofStatus, BatchProofError, BatchProofStream,
-    ChunkResult, AdaptiveMetrics, ResourceMetrics as BatchResourceMetrics,
-    AggregatedProof, ProofEntry, BatchError
+    AdaptiveMetrics, AggregatedProof, AggregationMethod, BatchError, BatchProofError,
+    BatchProofGenerator, BatchProofRequest, BatchProofResult, BatchProofStatus, BatchProofStream,
+    BatchStrategy, ChunkResult, ParallelismConfig, ProofEntry,
+    ResourceMetrics as BatchResourceMetrics,
 };
 
 pub use verification::{
-    ProofVerifier, VerificationRequest, VerificationResult,
-    VerificationStatus, ProofData, PublicInputs,
-    VerificationError, VerificationMode, TrustLevel,
-    OnChainVerifier, VerificationMetrics, BatchVerificationResult,
-    ConstraintResult
+    BatchVerificationResult, ConstraintResult, OnChainVerifier, ProofData, ProofVerifier,
+    PublicInputs, TrustLevel, VerificationError, VerificationMetrics, VerificationMode,
+    VerificationRequest, VerificationResult, VerificationStatus,
 };
 
 // Common types used across modules
@@ -44,7 +39,7 @@ pub struct CircuitHash(pub String);
 
 // Utility functions
 pub fn compute_proof_hash(data: &[u8]) -> ProofHash {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     ProofHash(format!("{:x}", hasher.finalize()))
@@ -63,20 +58,19 @@ pub const PROOF_SYSTEM_VERSION: &str = "v1.0.0";
 
 // Error types are already re-exported above
 
-
 // Testing utilities (only available in test builds)
 #[cfg(test)]
 pub mod test_utils {
     use super::*;
-    
+
     pub fn create_mock_proof() -> Vec<u8> {
         vec![1, 2, 3, 4, 5, 6, 7, 8]
     }
-    
+
     pub fn create_mock_verifying_key() -> Vec<u8> {
         vec![9, 10, 11, 12, 13, 14, 15, 16]
     }
-    
+
     pub fn create_mock_circuit() -> Vec<u8> {
         vec![17, 18, 19, 20, 21, 22, 23, 24]
     }

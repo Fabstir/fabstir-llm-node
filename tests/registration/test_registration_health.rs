@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
-use fabstir_llm_node::blockchain::registration_monitor::{
-    RegistrationMonitor, MonitorConfig, RegistrationHealth, HealthIssue, IssueType,
-};
 use fabstir_llm_node::blockchain::multi_chain_registrar::{
     MultiChainRegistrar, NodeMetadata, RegistrationStatus,
+};
+use fabstir_llm_node::blockchain::registration_monitor::{
+    HealthIssue, IssueType, MonitorConfig, RegistrationHealth, RegistrationMonitor,
 };
 use fabstir_llm_node::config::chains::ChainRegistry;
 
@@ -24,11 +24,14 @@ async fn create_test_monitor() -> Result<RegistrationMonitor> {
         performance_tier: "standard".to_string(),
     };
 
-    let registrar = Arc::new(MultiChainRegistrar::new(
-        chain_registry,
-        "0xe7855c0ea54ccca55126d40f97d90868b2a73bad0363e92ccdec0c4fbd6c0ce2", // Test key
-        metadata,
-    ).await?);
+    let registrar = Arc::new(
+        MultiChainRegistrar::new(
+            chain_registry,
+            "0xe7855c0ea54ccca55126d40f97d90868b2a73bad0363e92ccdec0c4fbd6c0ce2", // Test key
+            metadata,
+        )
+        .await?,
+    );
 
     let config = MonitorConfig {
         check_interval: Duration::from_secs(10), // Fast for testing
@@ -65,11 +68,11 @@ async fn test_registration_health_check() -> Result<()> {
     match health.status {
         RegistrationStatus::NotRegistered => {
             println!("  Node not registered (expected for test)");
-        },
+        }
         RegistrationStatus::Confirmed { .. } => {
             println!("  Node is registered");
             assert!(health.is_healthy);
-        },
+        }
         _ => {}
     }
 
@@ -87,7 +90,9 @@ async fn test_auto_renewal() -> Result<()> {
     let monitor = create_test_monitor().await?;
 
     // Mock a registration that's about to expire
-    monitor.mock_expiring_registration(84532, Duration::from_secs(600)).await?;
+    monitor
+        .mock_expiring_registration(84532, Duration::from_secs(600))
+        .await?;
 
     // Enable auto-renewal
     monitor.enable_auto_renewal(84532).await?;
@@ -101,7 +106,8 @@ async fn test_auto_renewal() -> Result<()> {
             sleep(Duration::from_secs(1)).await;
         }
         Ok::<bool, anyhow::Error>(true)
-    }).await??;
+    })
+    .await??;
 
     assert!(renewed, "Auto-renewal should have triggered");
 
@@ -126,16 +132,22 @@ async fn test_expiry_warnings() -> Result<()> {
     let warnings = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let warnings_clone = warnings.clone();
 
-    monitor.on_warning(move |warning| {
-        let warnings = warnings_clone.clone();
-        Box::pin(async move {
-            warnings.lock().await.push(warning);
+    monitor
+        .on_warning(move |warning| {
+            let warnings = warnings_clone.clone();
+            Box::pin(async move {
+                warnings.lock().await.push(warning);
+            })
         })
-    }).await;
+        .await;
 
     // Mock registrations with different expiry times
-    monitor.mock_expiring_registration(84532, Duration::from_secs(3500)).await?; // ~1 hour
-    monitor.mock_expiring_registration(5611, Duration::from_secs(200)).await?; // ~3 minutes
+    monitor
+        .mock_expiring_registration(84532, Duration::from_secs(3500))
+        .await?; // ~1 hour
+    monitor
+        .mock_expiring_registration(5611, Duration::from_secs(200))
+        .await?; // ~3 minutes
 
     // Start monitoring
     monitor.start_monitoring().await?;
@@ -148,12 +160,17 @@ async fn test_expiry_warnings() -> Result<()> {
     assert!(!collected_warnings.is_empty(), "Should have warnings");
 
     // Should have critical warning for chain 5611
-    let critical_warning = collected_warnings.iter()
+    let critical_warning = collected_warnings
+        .iter()
         .any(|w| w.chain_id == 5611 && w.level == "CRITICAL");
-    assert!(critical_warning, "Should have critical warning for near expiry");
+    assert!(
+        critical_warning,
+        "Should have critical warning for near expiry"
+    );
 
     // Should have warning for chain 84532
-    let warning = collected_warnings.iter()
+    let warning = collected_warnings
+        .iter()
         .any(|w| w.chain_id == 84532 && w.level == "WARNING");
     assert!(warning, "Should have warning for upcoming expiry");
 
@@ -179,12 +196,20 @@ async fn test_registration_metrics() -> Result<()> {
     let metrics = monitor.get_metrics().await?;
 
     // Check key metrics exist
-    assert!(metrics.contains_key("registration_status_84532"), "Missing registration_status_84532");
-    assert!(metrics.contains_key("health_check_count"), "Missing health_check_count");
+    assert!(
+        metrics.contains_key("registration_status_84532"),
+        "Missing registration_status_84532"
+    );
+    assert!(
+        metrics.contains_key("health_check_count"),
+        "Missing health_check_count"
+    );
     // Histograms are returned as _count and _sum
-    assert!(metrics.contains_key("health_check_duration_ms_count") ||
-            metrics.contains_key("health_check_duration_ms_sum"),
-            "Missing health_check_duration_ms metrics");
+    assert!(
+        metrics.contains_key("health_check_duration_ms_count")
+            || metrics.contains_key("health_check_duration_ms_sum"),
+        "Missing health_check_duration_ms metrics"
+    );
 
     // Check metric values
     let check_count = metrics.get("health_check_count").unwrap();
@@ -223,9 +248,14 @@ async fn test_failure_recovery() -> Result<()> {
 
     // In mock mode, recovery means the RPC failure issue is no longer present
     // Check that we no longer have RPC failure in issues
-    let has_rpc_failure = health_after.issues.iter()
+    let has_rpc_failure = health_after
+        .issues
+        .iter()
         .any(|issue| issue.issue_type == IssueType::RpcFailure && !issue.resolved);
-    assert!(!has_rpc_failure, "RPC failure should be resolved after clearing simulation");
+    assert!(
+        !has_rpc_failure,
+        "RPC failure should be resolved after clearing simulation"
+    );
 
     // Check retry metrics
     let metrics = monitor.get_metrics().await?;
@@ -277,10 +307,10 @@ async fn test_config_update() -> Result<()> {
 
     // Update config
     let new_config = MonitorConfig {
-        check_interval: Duration::from_secs(5), // Faster
+        check_interval: Duration::from_secs(5),       // Faster
         warning_threshold: Duration::from_secs(7200), // 2 hours
         critical_threshold: Duration::from_secs(600), // 10 minutes
-        auto_renewal: false, // Disable
+        auto_renewal: false,                          // Disable
         renewal_buffer: Duration::from_secs(3600),
         max_retry_attempts: 5,
         retry_delay: Duration::from_secs(10),

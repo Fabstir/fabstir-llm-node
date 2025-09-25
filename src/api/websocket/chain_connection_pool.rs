@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
 /// Configuration for chain-specific connection pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,8 +115,14 @@ impl ChainPool {
         let mut idle = self.idle_connections.write().await;
         if let Some(mut conn) = idle.pop() {
             conn.mark_active();
-            self.active_connections.write().await.insert(conn.id.clone(), conn.clone());
-            debug!("Reusing idle connection {} for chain {}", conn.id, self.chain_id);
+            self.active_connections
+                .write()
+                .await
+                .insert(conn.id.clone(), conn.clone());
+            debug!(
+                "Reusing idle connection {} for chain {}",
+                conn.id, self.chain_id
+            );
             return Ok(conn);
         }
         drop(idle);
@@ -159,10 +165,16 @@ impl ChainPool {
             // Check if connection is expired
             if conn.is_expired(Duration::from_secs(300)) {
                 self.connections.write().await.remove(conn_id);
-                info!("Expired connection {} removed from chain {}", conn_id, self.chain_id);
+                info!(
+                    "Expired connection {} removed from chain {}",
+                    conn_id, self.chain_id
+                );
             } else {
                 self.idle_connections.write().await.push(conn);
-                debug!("Connection {} returned to idle pool for chain {}", conn_id, self.chain_id);
+                debug!(
+                    "Connection {} returned to idle pool for chain {}",
+                    conn_id, self.chain_id
+                );
             }
             Ok(())
         } else {
@@ -344,8 +356,12 @@ mod tests {
         let manager = ChainConnectionPool::new();
 
         // Add configs
-        manager.add_chain_config(ChainConnectionConfig::base_sepolia()).await;
-        manager.add_chain_config(ChainConnectionConfig::opbnb_testnet()).await;
+        manager
+            .add_chain_config(ChainConnectionConfig::base_sepolia())
+            .await;
+        manager
+            .add_chain_config(ChainConnectionConfig::opbnb_testnet())
+            .await;
 
         // Get pools
         let base_pool = manager.get_or_create_pool(84532).await.unwrap();

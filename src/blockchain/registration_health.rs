@@ -1,7 +1,7 @@
-use anyhow::{Result, anyhow};
-use std::time::{Duration, Instant};
+use anyhow::{anyhow, Result};
 use ethers::types::{Address, U256};
 use reqwest::Client;
+use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 use crate::blockchain::multi_chain_registrar::RegistrationStatus;
@@ -36,7 +36,7 @@ impl RegistrationHealthChecker {
                     warn!("API health check failed with status: {}", response.status());
                 }
                 Ok(is_healthy)
-            },
+            }
             Err(e) => {
                 warn!("API health check failed: {}", e);
                 Ok(false)
@@ -72,10 +72,7 @@ impl RegistrationHealthChecker {
     }
 
     /// Check chain connectivity
-    pub async fn check_chain_connectivity(
-        &self,
-        provider_url: &str,
-    ) -> Result<ConnectivityHealth> {
+    pub async fn check_chain_connectivity(&self, provider_url: &str) -> Result<ConnectivityHealth> {
         let start = Instant::now();
 
         // Try to get block number as connectivity test
@@ -87,31 +84,23 @@ impl RegistrationHealthChecker {
             "id": 1
         });
 
-        let response = client
-            .post(provider_url)
-            .json(&request)
-            .send()
-            .await;
+        let response = client.post(provider_url).json(&request).send().await;
 
         let latency = start.elapsed();
 
         match response {
-            Ok(resp) if resp.status().is_success() => {
-                Ok(ConnectivityHealth {
-                    is_connected: true,
-                    latency,
-                    last_successful_check: Some(Instant::now()),
-                    consecutive_failures: 0,
-                })
-            },
-            _ => {
-                Ok(ConnectivityHealth {
-                    is_connected: false,
-                    latency,
-                    last_successful_check: None,
-                    consecutive_failures: 1,
-                })
-            }
+            Ok(resp) if resp.status().is_success() => Ok(ConnectivityHealth {
+                is_connected: true,
+                latency,
+                last_successful_check: Some(Instant::now()),
+                consecutive_failures: 0,
+            }),
+            _ => Ok(ConnectivityHealth {
+                is_connected: false,
+                latency,
+                last_successful_check: None,
+                consecutive_failures: 1,
+            }),
         }
     }
 
@@ -130,7 +119,7 @@ impl RegistrationHealthChecker {
                     message: "Node is not registered".to_string(),
                     action_required: Some("Register the node to start accepting jobs".to_string()),
                 });
-            },
+            }
             RegistrationStatus::Failed { error } => {
                 issues.push(RegistrationIssue {
                     severity: IssueSeverity::Critical,
@@ -138,7 +127,7 @@ impl RegistrationHealthChecker {
                     message: format!("Registration failed: {}", error),
                     action_required: Some("Review error and retry registration".to_string()),
                 });
-            },
+            }
             RegistrationStatus::Pending { .. } => {
                 issues.push(RegistrationIssue {
                     severity: IssueSeverity::Info,
@@ -146,7 +135,7 @@ impl RegistrationHealthChecker {
                     message: "Registration is pending confirmation".to_string(),
                     action_required: None,
                 });
-            },
+            }
             RegistrationStatus::Confirmed { .. } => {
                 // No issues for confirmed registration
             }

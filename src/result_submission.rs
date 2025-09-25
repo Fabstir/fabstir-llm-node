@@ -1,16 +1,16 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::types::{Address, H256, U256};
-use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::{RwLock, mpsc, Semaphore};
-use tokio::time::{sleep, Duration};
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
-use flate2::Compression;
 use flate2::write::GzEncoder;
-use std::io::Write;
+use flate2::Compression;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
+use std::io::Write;
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock, Semaphore};
+use tokio::time::{sleep, Duration};
+use tracing::{debug, error, info, warn};
 
 use crate::contracts::Web3Client;
 use crate::job_processor::{JobResult, NodeConfig};
@@ -114,7 +114,12 @@ pub trait StorageClient: Send + Sync {
 pub trait JobMarketplaceTrait: Send + Sync {
     async fn is_job_claimed_by(&self, job_id: H256, node: Address) -> bool;
     async fn is_job_completed(&self, job_id: H256) -> bool;
-    async fn submit_result(&self, job_id: H256, result: JobResult, node: Address) -> Result<H256, SubmissionError>;
+    async fn submit_result(
+        &self,
+        job_id: H256,
+        result: JobResult,
+        node: Address,
+    ) -> Result<H256, SubmissionError>;
 }
 
 #[derive(Clone)]
@@ -133,7 +138,7 @@ impl ResultSubmitter {
     ) -> Self {
         let config = config.into();
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_submissions));
-        
+
         Self {
             config,
             marketplace,
@@ -147,7 +152,11 @@ impl ResultSubmitter {
         self.validate_result(&result)?;
 
         // Check if job is claimed by this node
-        if !self.marketplace.is_job_claimed_by(result.job_id, self.config.node_address).await {
+        if !self
+            .marketplace
+            .is_job_claimed_by(result.job_id, self.config.node_address)
+            .await
+        {
             return Err(SubmissionError::JobNotClaimedByNode);
         }
 
@@ -178,36 +187,55 @@ impl ResultSubmitter {
         };
 
         // Submit to blockchain
-        self.marketplace.submit_result(result.job_id, job_result, self.config.node_address).await
+        self.marketplace
+            .submit_result(result.job_id, job_result, self.config.node_address)
+            .await
     }
 
-    pub async fn submit_result_with_proof(&self, result: InferenceResult, proof: ProofData) -> Result<H256, SubmissionError> {
+    pub async fn submit_result_with_proof(
+        &self,
+        result: InferenceResult,
+        proof: ProofData,
+    ) -> Result<H256, SubmissionError> {
         // Store proof
-        let proof_bytes = bincode::serialize(&proof)
-            .map_err(|e| SubmissionError::Other(e.to_string()))?;
-        let proof_cid = self.storage.store(proof_bytes).await
+        let proof_bytes =
+            bincode::serialize(&proof).map_err(|e| SubmissionError::Other(e.to_string()))?;
+        let proof_cid = self
+            .storage
+            .store(proof_bytes)
+            .await
             .map_err(|e| SubmissionError::StorageError(e))?;
 
         // Submit result with proof CID
         let mut job_result = self.prepare_result(&result).await?;
         job_result.proof_cid = Some(proof_cid);
 
-        self.marketplace.submit_result(result.job_id, job_result, self.config.node_address).await
+        self.marketplace
+            .submit_result(result.job_id, job_result, self.config.node_address)
+            .await
     }
 
-    pub async fn submit_batch(&self, results: Vec<InferenceResult>) -> Vec<Result<H256, SubmissionError>> {
+    pub async fn submit_batch(
+        &self,
+        results: Vec<InferenceResult>,
+    ) -> Vec<Result<H256, SubmissionError>> {
         let mut handles = Vec::new();
 
         for result in results {
             let submitter = self.clone();
-            let permit = self.submission_semaphore.clone().acquire_owned().await.unwrap();
-            
+            let permit = self
+                .submission_semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .unwrap();
+
             let handle = tokio::spawn(async move {
                 let res = submitter.submit_result(result).await;
                 drop(permit);
                 res
             });
-            
+
             handles.push(handle);
         }
 
@@ -222,7 +250,10 @@ impl ResultSubmitter {
         submission_results
     }
 
-    pub async fn submit_with_retry(&self, result: InferenceResult) -> Result<H256, SubmissionError> {
+    pub async fn submit_with_retry(
+        &self,
+        result: InferenceResult,
+    ) -> Result<H256, SubmissionError> {
         let mut attempts = 0;
         let mut last_error = None;
 
@@ -231,12 +262,12 @@ impl ResultSubmitter {
                 Ok(tx_hash) => return Ok(tx_hash),
                 Err(e) => {
                     last_error = Some(e.clone());
-                    
+
                     // Don't retry on certain errors
                     match &e {
-                        SubmissionError::JobNotClaimedByNode |
-                        SubmissionError::JobAlreadyCompleted |
-                        SubmissionError::InvalidResult => return Err(e),
+                        SubmissionError::JobNotClaimedByNode
+                        | SubmissionError::JobAlreadyCompleted
+                        | SubmissionError::InvalidResult => return Err(e),
                         _ => {}
                     }
 
@@ -259,23 +290,29 @@ impl ResultSubmitter {
             data = self.compress_data(&data)?;
         }
 
-        self.storage.store(data).await
+        self.storage
+            .store(data)
+            .await
             .map_err(|e| SubmissionError::StorageError(e))
     }
 
     async fn store_metadata(&self, result: &InferenceResult) -> Result<String, SubmissionError> {
         let metadata_bytes = serde_json::to_vec(&result.metadata)
             .map_err(|e| SubmissionError::Other(e.to_string()))?;
-        
-        self.storage.store(metadata_bytes).await
+
+        self.storage
+            .store(metadata_bytes)
+            .await
             .map_err(|e| SubmissionError::StorageError(e))
     }
 
     fn compress_data(&self, data: &[u8]) -> Result<Vec<u8>, SubmissionError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(data)
+        encoder
+            .write_all(data)
             .map_err(|e| SubmissionError::Other(e.to_string()))?;
-        encoder.finish()
+        encoder
+            .finish()
             .map_err(|e| SubmissionError::Other(e.to_string()))
     }
 
@@ -327,7 +364,7 @@ impl ResultSubmitter {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let result_age = current_time - result.timestamp.as_u64();
         result_age > self.config.result_expiry_time.as_secs()
     }
@@ -373,7 +410,9 @@ mod tests {
     #[async_trait::async_trait]
     impl JobMarketplaceTrait for MockJobMarketplace {
         async fn is_job_claimed_by(&self, job_id: H256, node: Address) -> bool {
-            self.claimed_jobs.read().await
+            self.claimed_jobs
+                .read()
+                .await
                 .get(&job_id)
                 .map(|addr| *addr == node)
                 .unwrap_or(false)
@@ -383,11 +422,16 @@ mod tests {
             self.completed_jobs.read().await.contains(&job_id)
         }
 
-        async fn submit_result(&self, job_id: H256, result: JobResult, _node: Address) -> Result<H256, SubmissionError> {
+        async fn submit_result(
+            &self,
+            job_id: H256,
+            result: JobResult,
+            _node: Address,
+        ) -> Result<H256, SubmissionError> {
             if self.completed_jobs.read().await.contains(&job_id) {
                 return Err(SubmissionError::JobAlreadyCompleted);
             }
-            
+
             self.results.write().await.push((job_id, result));
             self.completed_jobs.write().await.push(job_id);
             Ok(H256::random())
@@ -407,7 +451,9 @@ mod tests {
         }
 
         async fn retrieve(&self, cid: &str) -> Result<Vec<u8>, String> {
-            self.stored_data.read().await
+            self.stored_data
+                .read()
+                .await
                 .get(cid)
                 .cloned()
                 .ok_or_else(|| "CID not found".to_string())

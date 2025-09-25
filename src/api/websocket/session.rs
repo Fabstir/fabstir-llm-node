@@ -1,6 +1,6 @@
-use crate::job_processor::Message;
 use crate::config::chains::ChainRegistry;
-use anyhow::{Result, anyhow};
+use crate::job_processor::Message;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -122,7 +122,7 @@ impl WebSocketSession {
         id: impl Into<String>,
         config: SessionConfig,
         chain_id: u64,
-        registry: &ChainRegistry
+        registry: &ChainRegistry,
     ) -> Result<Self> {
         if !registry.is_chain_supported(chain_id) {
             return Err(anyhow!("Unsupported chain ID: {}", chain_id));
@@ -154,7 +154,10 @@ impl WebSocketSession {
 
     pub fn switch_chain(&mut self, new_chain_id: u64, registry: &ChainRegistry) -> Result<()> {
         if !registry.is_chain_supported(new_chain_id) {
-            return Err(anyhow!("Cannot switch to unsupported chain: {}", new_chain_id));
+            return Err(anyhow!(
+                "Cannot switch to unsupported chain: {}",
+                new_chain_id
+            ));
         }
 
         self.chain_id = new_chain_id;
@@ -188,7 +191,7 @@ impl WebSocketSession {
     pub fn add_message(&mut self, message: Message) -> Result<()> {
         // Calculate memory size of the new message
         let message_size = Self::calculate_message_size(&message);
-        
+
         // Check if adding this message would exceed memory limit
         if self.total_memory_used + message_size > self.config.max_memory_bytes {
             return Err(anyhow!("Session memory limit exceeded"));
@@ -198,7 +201,7 @@ impl WebSocketSession {
         self.conversation_history.push(message);
         self.total_memory_used += message_size;
         self.last_activity = Instant::now();
-        
+
         Ok(())
     }
 
@@ -212,7 +215,7 @@ impl WebSocketSession {
             self.conversation_history[start_idx..].to_vec()
         }
     }
-    
+
     pub fn get_all_messages(&self) -> Vec<Message> {
         // Return all messages for ContextManager to process
         self.conversation_history.clone()
@@ -317,30 +320,31 @@ impl WebSocketSession {
     pub async fn from_json(json_str: &str) -> Result<Self> {
         let value: serde_json::Value = serde_json::from_str(json_str)?;
 
-        let id = value["id"].as_str()
+        let id = value["id"]
+            .as_str()
             .ok_or_else(|| anyhow!("Missing id field"))?
             .to_string();
 
-        let chain_id = value["chain_id"].as_u64()
+        let chain_id = value["chain_id"]
+            .as_u64()
             .ok_or_else(|| anyhow!("Missing or invalid chain_id field"))?;
 
-        let config: SessionConfig = serde_json::from_value(value["config"].clone())
-            .unwrap_or_default();
+        let config: SessionConfig =
+            serde_json::from_value(value["config"].clone()).unwrap_or_default();
 
-        let conversation_history: Vec<Message> = serde_json::from_value(value["conversation_history"].clone())
-            .unwrap_or_default();
+        let conversation_history: Vec<Message> =
+            serde_json::from_value(value["conversation_history"].clone()).unwrap_or_default();
 
-        let state: SessionState = serde_json::from_value(value["state"].clone())
-            .unwrap_or(SessionState::Active);
+        let state: SessionState =
+            serde_json::from_value(value["state"].clone()).unwrap_or(SessionState::Active);
 
-        let metadata: HashMap<String, String> = serde_json::from_value(value["metadata"].clone())
-            .unwrap_or_default();
+        let metadata: HashMap<String, String> =
+            serde_json::from_value(value["metadata"].clone()).unwrap_or_default();
 
-        let messages: Vec<Message> = serde_json::from_value(value["messages"].clone())
-            .unwrap_or_default();
+        let messages: Vec<Message> =
+            serde_json::from_value(value["messages"].clone()).unwrap_or_default();
 
-        let total_memory_used = value["total_memory_used"].as_u64()
-            .unwrap_or(0) as usize;
+        let total_memory_used = value["total_memory_used"].as_u64().unwrap_or(0) as usize;
 
         let mut session = Self::with_chain(id, config, chain_id);
         session.conversation_history = conversation_history;
@@ -366,15 +370,17 @@ impl WebSocketSession {
         let message = Message {
             role: role.to_string(),
             content: content.to_string(),
-            timestamp: Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs() as i64),
+            timestamp: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs() as i64,
+            ),
         };
         self.conversation_history.push(message.clone());
         self.messages.write().await.push(message);
         Ok(())
     }
-    
+
     pub async fn set_state(&self, state: SessionState) -> Result<()> {
         // Note: state field is not behind RwLock in current structure
         // This would need refactoring to make state mutable
@@ -389,7 +395,7 @@ mod tests {
     #[test]
     fn test_session_creation() {
         let session = WebSocketSession::new("test-id");
-        
+
         assert_eq!(session.id(), "test-id");
         assert_eq!(session.message_count(), 0);
     }
@@ -397,13 +403,13 @@ mod tests {
     #[test]
     fn test_add_message() {
         let mut session = WebSocketSession::new("test-id");
-        
+
         let message = Message {
             role: "user".to_string(),
             content: "Hello".to_string(),
             timestamp: None,
         };
-        
+
         session.add_message(message).unwrap();
         assert_eq!(session.message_count(), 1);
     }

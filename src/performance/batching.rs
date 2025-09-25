@@ -1,13 +1,13 @@
 use anyhow::Result;
+use futures::stream::Stream;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, mpsc};
-use tokio::time::timeout;
 use thiserror::Error;
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::timeout;
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-use futures::stream::Stream;
 
 #[derive(Debug, Clone)]
 pub struct BatchConfig {
@@ -223,7 +223,8 @@ impl BatchProcessor {
 
         // Schedule next batch creation if needed
         if state.next_batch_time.is_none() {
-            state.next_batch_time = Some(Instant::now() + Duration::from_millis(self.config.max_wait_time_ms));
+            state.next_batch_time =
+                Some(Instant::now() + Duration::from_millis(self.config.max_wait_time_ms));
         }
 
         // Notify waiting consumers
@@ -235,7 +236,7 @@ impl BatchProcessor {
 
     pub async fn get_next_batch(&self) -> Result<Batch> {
         let timeout_duration = Duration::from_millis(self.config.max_wait_time_ms);
-        
+
         loop {
             // Check if we can create a batch
             if let Some(batch) = self.try_create_batch().await? {
@@ -273,31 +274,30 @@ impl BatchProcessor {
         }
 
         // Update metrics
-        let total_wait_time: u64 = requests.iter()
+        let total_wait_time: u64 = requests
+            .iter()
             .map(|(_, submitted_at)| submitted_at.elapsed().as_millis() as u64)
             .sum();
         state.metrics.total_wait_time_ms += total_wait_time;
 
         // Extract just the requests
-        let batch_requests: Vec<BatchRequest> = requests.into_iter()
-            .map(|(req, _)| req)
-            .collect();
+        let batch_requests: Vec<BatchRequest> = requests.into_iter().map(|(req, _)| req).collect();
 
         // Get model_id from first request
         let model_id = batch_requests[0].model_id.clone();
 
         // Calculate total tokens
-        let total_tokens: usize = batch_requests.iter()
-            .map(|r| r.max_tokens)
-            .sum();
+        let total_tokens: usize = batch_requests.iter().map(|r| r.max_tokens).sum();
 
         // Create padding info
-        let max_length = batch_requests.iter()
+        let max_length = batch_requests
+            .iter()
             .map(|r| r.prompt.len())
             .max()
             .unwrap_or(0);
-        
-        let padded_sequences: Vec<String> = batch_requests.iter()
+
+        let padded_sequences: Vec<String> = batch_requests
+            .iter()
             .map(|r| match self.config.padding_strategy {
                 PaddingStrategy::LeftPadding => {
                     let padding_needed = max_length.saturating_sub(r.prompt.len());
@@ -327,7 +327,9 @@ impl BatchProcessor {
             padding_info,
         };
 
-        state.active_batches.insert(batch.batch_id.clone(), batch.clone());
+        state
+            .active_batches
+            .insert(batch.batch_id.clone(), batch.clone());
         state.completed_batches.push(batch.clone());
         state.metrics.total_batches += 1;
         state.next_batch_time = None;
@@ -345,12 +347,12 @@ impl BatchProcessor {
             let mut i = 0;
             while i < queue.len() && collected.len() < max_size {
                 let (req, _) = &queue[i];
-                
+
                 // First request sets the model_id for the batch
                 if model_id.is_none() {
                     model_id = Some(req.model_id.clone());
                 }
-                
+
                 // Only collect requests with matching model_id
                 if Some(&req.model_id) == model_id.as_ref() {
                     if let Some(item) = queue.remove(i) {
@@ -377,10 +379,11 @@ impl BatchProcessor {
         // Collect requests that have waited long enough or fill batch
         for queue in state.queues.iter_mut() {
             let mut temp_removed = Vec::new();
-            
+
             while let Some((req, submitted_at)) = queue.pop_front() {
-                if now.duration_since(submitted_at) >= wait_threshold || 
-                   collected.len() < self.config.max_batch_size {
+                if now.duration_since(submitted_at) >= wait_threshold
+                    || collected.len() < self.config.max_batch_size
+                {
                     collected.push((req, submitted_at));
                     if collected.len() >= self.config.max_batch_size {
                         break;
@@ -438,7 +441,7 @@ impl BatchProcessor {
     pub async fn process_batch_stream(&self) -> impl Stream<Item = Result<BatchResult>> {
         let processor = self.clone();
         let (tx, rx) = mpsc::channel(100);
-        
+
         tokio::spawn(async move {
             loop {
                 match processor.get_next_batch().await {
@@ -465,7 +468,7 @@ impl BatchProcessor {
                 }
             }
         });
-        
+
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
@@ -491,22 +494,24 @@ impl BatchProcessor {
     pub async fn get_metrics(&self) -> BatchMetrics {
         let state = self.state.read().await;
         let elapsed = state.metrics.start_time.elapsed().as_secs_f64();
-        
+
         // Calculate from completed batches if test creates them
         let total_processed = if !state.completed_batches.is_empty() {
-            state.completed_batches.iter()
+            state
+                .completed_batches
+                .iter()
                 .map(|b| b.requests.len())
                 .sum::<usize>() as u64
         } else {
             state.metrics.total_requests
         };
-        
+
         let total_batches_created = if !state.completed_batches.is_empty() {
             state.completed_batches.len() as u64
         } else {
             state.metrics.total_batches
         };
-        
+
         let average_batch_size = if total_batches_created > 0 {
             total_processed as f64 / total_batches_created as f64
         } else {
@@ -600,7 +605,7 @@ impl BatchProcessor {
 
     pub async fn cancel_request(&self, request_id: &str) -> Result<bool> {
         let mut state = self.state.write().await;
-        
+
         // Search through all queues for the request
         for queue in state.queues.iter_mut() {
             if let Some(pos) = queue.iter().position(|(req, _)| req.id == request_id) {
@@ -608,15 +613,14 @@ impl BatchProcessor {
                 return Ok(true);
             }
         }
-        
+
         Ok(false) // Request not found
     }
 
-    
     pub async fn start_continuous_batching(&self) -> impl Stream<Item = Batch> {
         let processor = self.clone();
         let (tx, rx) = mpsc::channel(100);
-        
+
         tokio::spawn(async move {
             loop {
                 match processor.get_next_batch().await {
@@ -632,7 +636,7 @@ impl BatchProcessor {
                 }
             }
         });
-        
+
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 }

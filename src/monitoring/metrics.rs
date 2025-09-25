@@ -1,13 +1,13 @@
 // src/monitoring/metrics.rs - Metrics collection and export
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 use std::time::{Duration, Instant};
-use async_trait::async_trait;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsConfig {
@@ -80,8 +80,16 @@ pub enum MetricType {
 pub enum MetricValue {
     Counter(f64),
     Gauge(f64),
-    Histogram { buckets: Vec<(f64, u64)>, sum: f64, count: u64 },
-    Summary { quantiles: Vec<(f64, f64)>, sum: f64, count: u64 },
+    Histogram {
+        buckets: Vec<(f64, u64)>,
+        sum: f64,
+        count: u64,
+    },
+    Summary {
+        quantiles: Vec<(f64, f64)>,
+        sum: f64,
+        count: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,7 +198,6 @@ impl Counter {
         let mut value = self.value.write().await;
         *value += 1.0;
     }
-    
 
     pub async fn inc_by<T: Into<f64>>(&self, v: T) {
         let mut value = self.value.write().await;
@@ -209,7 +216,10 @@ impl Counter {
     pub fn with_labels(&self, labels: Vec<(&str, &str)>) -> LabeledCounter {
         LabeledCounter {
             counter: self,
-            labels: labels.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            labels: labels
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         }
     }
 }
@@ -252,21 +262,23 @@ impl Gauge {
     pub async fn set<T: Into<f64>>(&self, v: T) {
         let mut value = self.value.write().await;
         *value = v.into();
-        
+
         // Add to time series
         let mut series = self.time_series.write().await;
         series.push(DataPoint {
             value: *value,
             timestamp: Instant::now(),
         });
-        
+
         // Keep only recent data (last hour)
         let cutoff = Instant::now() - Duration::from_secs(3600);
         series.retain(|dp| dp.timestamp > cutoff);
-        
+
         // Update metric in collector
         if let Some(collector) = &self.collector {
-            let _ = collector.update_metric_value(&self.name, MetricValue::Gauge(*value)).await;
+            let _ = collector
+                .update_metric_value(&self.name, MetricValue::Gauge(*value))
+                .await;
         }
     }
 
@@ -274,16 +286,18 @@ impl Gauge {
         let mut value = self.value.write().await;
         *value += v.into();
         let new_value = *value;
-        
+
         let mut series = self.time_series.write().await;
         series.push(DataPoint {
             value: new_value,
             timestamp: Instant::now(),
         });
-        
+
         // Update metric in collector
         if let Some(collector) = &self.collector {
-            let _ = collector.update_metric_value(&self.name, MetricValue::Gauge(new_value)).await;
+            let _ = collector
+                .update_metric_value(&self.name, MetricValue::Gauge(new_value))
+                .await;
         }
     }
 
@@ -291,16 +305,18 @@ impl Gauge {
         let mut value = self.value.write().await;
         *value -= v.into();
         let new_value = *value;
-        
+
         let mut series = self.time_series.write().await;
         series.push(DataPoint {
             value: new_value,
             timestamp: Instant::now(),
         });
-        
+
         // Update metric in collector
         if let Some(collector) = &self.collector {
-            let _ = collector.update_metric_value(&self.name, MetricValue::Gauge(new_value)).await;
+            let _ = collector
+                .update_metric_value(&self.name, MetricValue::Gauge(new_value))
+                .await;
         }
     }
 
@@ -331,18 +347,18 @@ impl Histogram {
                 bucket_counts[i] += 1;
             }
         }
-        
+
         // Update sum and count
         let mut sum = self.sum.write().await;
         *sum += v;
-        
+
         let mut count = self.count.write().await;
         *count += 1;
-        
+
         // Store observation for statistics
         let mut observations = self.observations.write().await;
         observations.push(v);
-        
+
         // Keep only last 10000 observations
         if observations.len() > 10000 {
             observations.remove(0);
@@ -353,7 +369,7 @@ impl Histogram {
         let observations = self.observations.read().await;
         let count = *self.count.read().await;
         let sum = *self.sum.read().await;
-        
+
         if observations.is_empty() {
             return HistogramStatistics {
                 count: 0,
@@ -367,19 +383,19 @@ impl Histogram {
                 p99: 0.0,
             };
         }
-        
+
         let mut sorted = observations.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let min = sorted[0];
         let max = sorted[sorted.len() - 1];
         let average = sum / count as f64;
-        
+
         let p50 = percentile(&sorted, 0.5);
         let p90 = percentile(&sorted, 0.9);
         let p95 = percentile(&sorted, 0.95);
         let p99 = percentile(&sorted, 0.99);
-        
+
         HistogramStatistics {
             count,
             sum,
@@ -398,7 +414,7 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    
+
     let index = ((sorted.len() - 1) as f64 * p) as usize;
     sorted[index]
 }
@@ -418,30 +434,37 @@ impl Summary {
     pub async fn observe(&self, v: f64) {
         let mut observations = self.observations.write().await;
         observations.push((v, Instant::now()));
-        
+
         // Remove old observations outside window
         let cutoff = Instant::now() - self.window;
         observations.retain(|(_, timestamp)| *timestamp > cutoff);
-        
+
         // Update metric in collector
         if let Some(collector) = &self.collector {
             let values: Vec<f64> = observations.iter().map(|(v, _)| *v).collect();
             if !values.is_empty() {
                 let mut sorted = values.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                
-                let quantiles: Vec<(f64, f64)> = self.quantiles.iter()
+
+                let quantiles: Vec<(f64, f64)> = self
+                    .quantiles
+                    .iter()
                     .map(|&q| (q, percentile(&sorted, q)))
                     .collect();
-                
+
                 let sum: f64 = values.iter().sum();
                 let count = values.len() as u64;
-                
-                let _ = collector.update_metric_value(&self.name, MetricValue::Summary {
-                    quantiles,
-                    sum,
-                    count,
-                }).await;
+
+                let _ = collector
+                    .update_metric_value(
+                        &self.name,
+                        MetricValue::Summary {
+                            quantiles,
+                            sum,
+                            count,
+                        },
+                    )
+                    .await;
             }
         }
     }
@@ -449,7 +472,7 @@ impl Summary {
     pub async fn get_statistics(&self) -> SummaryStatistics {
         let observations = self.observations.read().await;
         let values: Vec<f64> = observations.iter().map(|(v, _)| *v).collect();
-        
+
         if values.is_empty() {
             return SummaryStatistics {
                 count: 0,
@@ -458,18 +481,20 @@ impl Summary {
                 quantiles: vec![],
             };
         }
-        
+
         let count = values.len() as u64;
         let sum: f64 = values.iter().sum();
         let average = sum / count as f64;
-        
+
         let mut sorted = values;
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
-        let quantiles: Vec<(f64, f64)> = self.quantiles.iter()
+
+        let quantiles: Vec<(f64, f64)> = self
+            .quantiles
+            .iter()
             .map(|&q| (q, percentile(&sorted, q)))
             .collect();
-        
+
         SummaryStatistics {
             count,
             sum,
@@ -505,11 +530,13 @@ impl PrometheusExporter {
 impl MetricsExporter for PrometheusExporter {
     async fn export(&self, metrics: Vec<Metric>) -> Result<String> {
         let mut output = String::new();
-        
+
         for metric in metrics {
             // Write HELP and TYPE
             output.push_str(&format!("# HELP {} {}\n", metric.name, metric.help));
-            output.push_str(&format!("# TYPE {} {}\n", metric.name, 
+            output.push_str(&format!(
+                "# TYPE {} {}\n",
+                metric.name,
                 match metric.metric_type {
                     MetricType::Counter => "counter",
                     MetricType::Gauge => "gauge",
@@ -517,7 +544,7 @@ impl MetricsExporter for PrometheusExporter {
                     MetricType::Summary => "summary",
                 }
             ));
-            
+
             // Write metric value
             match &metric.value {
                 MetricValue::Counter(v) => {
@@ -527,33 +554,47 @@ impl MetricsExporter for PrometheusExporter {
                     } else {
                         output.push_str(&format!("{} {}\n", metric.name, v));
                     }
-                },
+                }
                 MetricValue::Gauge(v) => {
                     output.push_str(&format!("{} {}\n", metric.name, v));
-                },
-                MetricValue::Histogram { buckets, sum, count } => {
+                }
+                MetricValue::Histogram {
+                    buckets,
+                    sum,
+                    count,
+                } => {
                     // Write bucket values
                     for (bucket_bound, bucket_count) in buckets {
-                        output.push_str(&format!("{}_bucket{{le=\"{}\"}} {}\n", 
-                            metric.name, bucket_bound, bucket_count));
+                        output.push_str(&format!(
+                            "{}_bucket{{le=\"{}\"}} {}\n",
+                            metric.name, bucket_bound, bucket_count
+                        ));
                     }
-                    output.push_str(&format!("{}_bucket{{le=\"+Inf\"}} {}\n", 
-                        metric.name, count));
+                    output.push_str(&format!(
+                        "{}_bucket{{le=\"+Inf\"}} {}\n",
+                        metric.name, count
+                    ));
                     output.push_str(&format!("{}_sum {}\n", metric.name, sum));
                     output.push_str(&format!("{}_count {}\n", metric.name, count));
-                },
-                MetricValue::Summary { quantiles, sum, count } => {
+                }
+                MetricValue::Summary {
+                    quantiles,
+                    sum,
+                    count,
+                } => {
                     // Write quantile values
                     for (quantile, value) in quantiles {
-                        output.push_str(&format!("{}{{quantile=\"{}\"}} {}\n", 
-                            metric.name, quantile, value));
+                        output.push_str(&format!(
+                            "{}{{quantile=\"{}\"}} {}\n",
+                            metric.name, quantile, value
+                        ));
                     }
                     output.push_str(&format!("{}_sum {}\n", metric.name, sum));
                     output.push_str(&format!("{}_count {}\n", metric.name, count));
-                },
+                }
             }
         }
-        
+
         Ok(output)
     }
 }
@@ -569,7 +610,7 @@ impl MetricsCollector {
             snapshots: HashMap::new(),
             subscriptions: HashMap::new(),
         }));
-        
+
         Ok(MetricsCollector {
             config,
             state,
@@ -586,31 +627,34 @@ impl MetricsCollector {
             label_values: Arc::new(RwLock::new(HashMap::new())),
             collector: None,
         });
-        
+
         let mut state = self.state.write().await;
         state.counters.insert(name.to_string(), counter.clone());
-        state.metrics.insert(name.to_string(), MetricData {
-            metric: Metric {
-                name: name.to_string(),
-                help: help.to_string(),
-                metric_type: MetricType::Counter,
-                value: MetricValue::Counter(0.0),
-                labels: vec![],
-                timestamp: Utc::now(),
-                last_updated: Instant::now(),
+        state.metrics.insert(
+            name.to_string(),
+            MetricData {
+                metric: Metric {
+                    name: name.to_string(),
+                    help: help.to_string(),
+                    metric_type: MetricType::Counter,
+                    value: MetricValue::Counter(0.0),
+                    labels: vec![],
+                    timestamp: Utc::now(),
+                    last_updated: Instant::now(),
+                },
+                time_series: vec![],
+                label_values: HashMap::new(),
             },
-            time_series: vec![],
-            label_values: HashMap::new(),
-        });
-        
+        );
+
         Ok(counter)
     }
 
     pub async fn register_counter_with_labels(
-        &self, 
-        name: &str, 
+        &self,
+        name: &str,
         help: &str,
-        labels: Vec<&str>
+        labels: Vec<&str>,
     ) -> Result<Arc<Counter>> {
         let counter = Arc::new(Counter {
             name: name.to_string(),
@@ -620,23 +664,26 @@ impl MetricsCollector {
             label_values: Arc::new(RwLock::new(HashMap::new())),
             collector: None,
         });
-        
+
         let mut state = self.state.write().await;
         state.counters.insert(name.to_string(), counter.clone());
-        state.metrics.insert(name.to_string(), MetricData {
-            metric: Metric {
-                name: name.to_string(),
-                help: help.to_string(),
-                metric_type: MetricType::Counter,
-                value: MetricValue::Counter(0.0),
-                labels: vec![],
-                timestamp: Utc::now(),
-                last_updated: Instant::now(),
+        state.metrics.insert(
+            name.to_string(),
+            MetricData {
+                metric: Metric {
+                    name: name.to_string(),
+                    help: help.to_string(),
+                    metric_type: MetricType::Counter,
+                    value: MetricValue::Counter(0.0),
+                    labels: vec![],
+                    timestamp: Utc::now(),
+                    last_updated: Instant::now(),
+                },
+                time_series: vec![],
+                label_values: HashMap::new(),
             },
-            time_series: vec![],
-            label_values: HashMap::new(),
-        });
-        
+        );
+
         Ok(counter)
     }
 
@@ -648,31 +695,34 @@ impl MetricsCollector {
             time_series: Arc::new(RwLock::new(vec![])),
             collector: None,
         });
-        
+
         let mut state = self.state.write().await;
         state.gauges.insert(name.to_string(), gauge.clone());
-        state.metrics.insert(name.to_string(), MetricData {
-            metric: Metric {
-                name: name.to_string(),
-                help: help.to_string(),
-                metric_type: MetricType::Gauge,
-                value: MetricValue::Gauge(0.0),
-                labels: vec![],
-                timestamp: Utc::now(),
-                last_updated: Instant::now(),
+        state.metrics.insert(
+            name.to_string(),
+            MetricData {
+                metric: Metric {
+                    name: name.to_string(),
+                    help: help.to_string(),
+                    metric_type: MetricType::Gauge,
+                    value: MetricValue::Gauge(0.0),
+                    labels: vec![],
+                    timestamp: Utc::now(),
+                    last_updated: Instant::now(),
+                },
+                time_series: vec![],
+                label_values: HashMap::new(),
             },
-            time_series: vec![],
-            label_values: HashMap::new(),
-        });
-        
+        );
+
         Ok(gauge)
     }
 
     pub async fn register_histogram(
-        &self, 
-        name: &str, 
+        &self,
+        name: &str,
         help: &str,
-        buckets: Vec<f64>
+        buckets: Vec<f64>,
     ) -> Result<Arc<Histogram>> {
         let histogram = Arc::new(Histogram {
             name: name.to_string(),
@@ -684,27 +734,30 @@ impl MetricsCollector {
             observations: Arc::new(RwLock::new(vec![])),
             collector: None,
         });
-        
+
         let mut state = self.state.write().await;
         state.histograms.insert(name.to_string(), histogram.clone());
-        state.metrics.insert(name.to_string(), MetricData {
-            metric: Metric {
-                name: name.to_string(),
-                help: help.to_string(),
-                metric_type: MetricType::Histogram,
-                value: MetricValue::Histogram {
-                    buckets: buckets.iter().map(|&b| (b, 0)).collect(),
-                    sum: 0.0,
-                    count: 0,
+        state.metrics.insert(
+            name.to_string(),
+            MetricData {
+                metric: Metric {
+                    name: name.to_string(),
+                    help: help.to_string(),
+                    metric_type: MetricType::Histogram,
+                    value: MetricValue::Histogram {
+                        buckets: buckets.iter().map(|&b| (b, 0)).collect(),
+                        sum: 0.0,
+                        count: 0,
+                    },
+                    labels: vec![],
+                    timestamp: Utc::now(),
+                    last_updated: Instant::now(),
                 },
-                labels: vec![],
-                timestamp: Utc::now(),
-                last_updated: Instant::now(),
+                time_series: vec![],
+                label_values: HashMap::new(),
             },
-            time_series: vec![],
-            label_values: HashMap::new(),
-        });
-        
+        );
+
         Ok(histogram)
     }
 
@@ -723,38 +776,43 @@ impl MetricsCollector {
             window,
             collector: None,
         });
-        
+
         let mut state = self.state.write().await;
         state.summaries.insert(name.to_string(), summary.clone());
-        state.metrics.insert(name.to_string(), MetricData {
-            metric: Metric {
-                name: name.to_string(),
-                help: help.to_string(),
-                metric_type: MetricType::Summary,
-                value: MetricValue::Summary {
-                    quantiles: quantiles.iter().map(|&q| (q, 0.0)).collect(),
-                    sum: 0.0,
-                    count: 0,
+        state.metrics.insert(
+            name.to_string(),
+            MetricData {
+                metric: Metric {
+                    name: name.to_string(),
+                    help: help.to_string(),
+                    metric_type: MetricType::Summary,
+                    value: MetricValue::Summary {
+                        quantiles: quantiles.iter().map(|&q| (q, 0.0)).collect(),
+                        sum: 0.0,
+                        count: 0,
+                    },
+                    labels: vec![],
+                    timestamp: Utc::now(),
+                    last_updated: Instant::now(),
                 },
-                labels: vec![],
-                timestamp: Utc::now(),
-                last_updated: Instant::now(),
+                time_series: vec![],
+                label_values: HashMap::new(),
             },
-            time_series: vec![],
-            label_values: HashMap::new(),
-        });
-        
+        );
+
         Ok(summary)
     }
 
     pub async fn get_metric(&self, name: &str) -> Result<Metric> {
         let state = self.state.read().await;
-        
+
         // Get current value from the actual metric object
-        let mut metric = state.metrics.get(name)
+        let mut metric = state
+            .metrics
+            .get(name)
             .map(|data| data.metric.clone())
             .ok_or_else(|| anyhow!("Metric not found: {}", name))?;
-        
+
         // Update with current value
         if let Some(counter) = state.counters.get(name) {
             metric.value = MetricValue::Counter(counter.get().await);
@@ -763,7 +821,9 @@ impl MetricsCollector {
         } else if let Some(histogram) = state.histograms.get(name) {
             let stats = histogram.get_statistics().await;
             let bucket_counts = histogram.bucket_counts.read().await;
-            let buckets: Vec<(f64, u64)> = histogram.buckets.iter()
+            let buckets: Vec<(f64, u64)> = histogram
+                .buckets
+                .iter()
                 .zip(bucket_counts.iter())
                 .map(|(b, c)| (*b, *c))
                 .collect();
@@ -781,10 +841,10 @@ impl MetricsCollector {
                 count: stats.count,
             };
         }
-        
+
         metric.timestamp = Utc::now();
         metric.last_updated = Instant::now();
-        
+
         Ok(metric)
     }
 
@@ -795,12 +855,13 @@ impl MetricsCollector {
         aggregation: AggregationType,
     ) -> Result<f64> {
         let state = self.state.read().await;
-        
+
         // Try to get values from gauge time series first, then counter, then generic metrics
         let values: Vec<f64> = if let Some(gauge) = state.gauges.get(name) {
             let series = gauge.time_series.read().await;
             let cutoff = Instant::now() - window.as_duration();
-            series.iter()
+            series
+                .iter()
                 .filter(|dp| dp.timestamp > cutoff)
                 .map(|dp| dp.value)
                 .collect()
@@ -808,7 +869,8 @@ impl MetricsCollector {
             // For counters, we need to build time series from metrics data
             if let Some(data) = state.metrics.get(name) {
                 let cutoff = Instant::now() - window.as_duration();
-                data.time_series.iter()
+                data.time_series
+                    .iter()
                     .filter(|dp| dp.timestamp > cutoff)
                     .map(|dp| dp.value)
                     .collect()
@@ -818,18 +880,19 @@ impl MetricsCollector {
         } else if let Some(data) = state.metrics.get(name) {
             // Fallback to metrics data time series
             let cutoff = Instant::now() - window.as_duration();
-            data.time_series.iter()
+            data.time_series
+                .iter()
                 .filter(|dp| dp.timestamp > cutoff)
                 .map(|dp| dp.value)
                 .collect()
         } else {
             return Err(anyhow!("Metric not found: {}", name));
         };
-        
+
         if values.is_empty() {
             return Ok(0.0);
         }
-        
+
         match aggregation {
             AggregationType::Sum => Ok(values.iter().sum()),
             AggregationType::Average => Ok(values.iter().sum::<f64>() / values.len() as f64),
@@ -840,40 +903,40 @@ impl MetricsCollector {
                 let mut sorted = values.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 Ok(percentile(&sorted, 0.5))
-            },
+            }
             AggregationType::P90 => {
                 let mut sorted = values.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 Ok(percentile(&sorted, 0.9))
-            },
+            }
             AggregationType::P95 => {
                 let mut sorted = values.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 Ok(percentile(&sorted, 0.95))
-            },
+            }
             AggregationType::P99 => {
                 let mut sorted = values.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 Ok(percentile(&sorted, 0.99))
-            },
+            }
         }
     }
 
     pub async fn export(&self, exporter: &dyn MetricsExporter) -> Result<String> {
         let mut metrics = Vec::new();
-        
+
         for name in self.list_metrics().await.iter().map(|m| m.name.clone()) {
             if let Ok(metric) = self.get_metric(&name).await {
                 metrics.push(metric);
             }
         }
-        
+
         exporter.export(metrics).await
     }
 
     pub async fn batch_update(&self, updates: Vec<(&str, MetricValue)>) -> Result<()> {
         let mut state = self.state.write().await;
-        
+
         for (name, value) in updates {
             if let Some(data) = state.metrics.get_mut(name) {
                 data.metric.value = value;
@@ -887,40 +950,43 @@ impl MetricsCollector {
                     MetricValue::Histogram { .. } => MetricType::Histogram,
                     MetricValue::Summary { .. } => MetricType::Summary,
                 };
-                
-                state.metrics.insert(name.to_string(), MetricData {
-                    metric: Metric {
-                        name: name.to_string(),
-                        help: format!("Auto-created metric: {}", name),
-                        metric_type,
-                        value,
-                        labels: vec![],
-                        timestamp: Utc::now(),
-                        last_updated: Instant::now(),
+
+                state.metrics.insert(
+                    name.to_string(),
+                    MetricData {
+                        metric: Metric {
+                            name: name.to_string(),
+                            help: format!("Auto-created metric: {}", name),
+                            metric_type,
+                            value,
+                            labels: vec![],
+                            timestamp: Utc::now(),
+                            last_updated: Instant::now(),
+                        },
+                        time_series: vec![],
+                        label_values: HashMap::new(),
                     },
-                    time_series: vec![],
-                    label_values: HashMap::new(),
-                });
+                );
             }
         }
-        
+
         Ok(())
     }
 
     pub async fn save_snapshot(&self, path: &std::path::Path) -> Result<()> {
         let state = self.state.read().await;
-        
+
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         // Serialize all metrics with current values
         let mut snapshot_data: HashMap<String, Metric> = HashMap::new();
-        
+
         for (name, data) in state.metrics.iter() {
             let mut metric = data.metric.clone();
-            
+
             // Update with current value from actual counter/gauge/etc
             if let Some(counter) = state.counters.get(name) {
                 metric.value = MetricValue::Counter(counter.get().await);
@@ -928,30 +994,33 @@ impl MetricsCollector {
                 metric.value = MetricValue::Gauge(gauge.get().await);
             }
             // Add other metric types if needed
-            
+
             snapshot_data.insert(name.clone(), metric);
         }
-        
+
         let snapshot = serde_json::to_vec(&snapshot_data)?;
         std::fs::write(path, snapshot)?;
-        
+
         Ok(())
     }
 
     pub async fn load_snapshot(&self, path: &std::path::Path) -> Result<()> {
         let data = std::fs::read(path)?;
         let snapshot_data: HashMap<String, Metric> = serde_json::from_slice(&data)?;
-        
+
         let mut state = self.state.write().await;
-        
+
         for (name, metric) in snapshot_data {
             // Restore the metric data
-            state.metrics.insert(name.clone(), MetricData {
-                metric: metric.clone(),
-                time_series: vec![],
-                label_values: HashMap::new(),
-            });
-            
+            state.metrics.insert(
+                name.clone(),
+                MetricData {
+                    metric: metric.clone(),
+                    time_series: vec![],
+                    label_values: HashMap::new(),
+                },
+            );
+
             // Also recreate the actual counter/gauge/etc with the saved value
             match &metric.value {
                 MetricValue::Counter(value) => {
@@ -978,7 +1047,7 @@ impl MetricsCollector {
                 _ => {} // Handle other types if needed
             }
         }
-        
+
         Ok(())
     }
 
@@ -990,29 +1059,33 @@ impl MetricsCollector {
             MetricValue::Gauge(v) => v,
             _ => return Err(anyhow!("Cannot calculate rate for this metric type")),
         };
-        
+
         // Record current value in time series
         self.record_time_series_point(metric, current_value).await?;
-        
+
         let state = self.state.read().await;
-        let data = state.metrics.get(metric)
+        let data = state
+            .metrics
+            .get(metric)
             .ok_or_else(|| anyhow!("Metric not found: {}", metric))?;
-        
+
         let cutoff = Instant::now() - window;
-        let points: Vec<&DataPoint> = data.time_series.iter()
+        let points: Vec<&DataPoint> = data
+            .time_series
+            .iter()
             .filter(|dp| dp.timestamp > cutoff)
             .collect();
-        
+
         if points.len() < 2 {
             return Ok(0.0);
         }
-        
+
         // Calculate rate as change per second
         let first = points.first().unwrap();
         let last = points.last().unwrap();
         let value_change = last.value - first.value;
         let time_diff = last.timestamp.duration_since(first.timestamp).as_secs_f64();
-        
+
         if time_diff > 0.0 {
             Ok(value_change / time_diff)
         } else {
@@ -1020,27 +1093,33 @@ impl MetricsCollector {
         }
     }
 
-    pub async fn subscribe(&self, metric_name: &str) -> Result<tokio::sync::mpsc::Receiver<Metric>> {
+    pub async fn subscribe(
+        &self,
+        metric_name: &str,
+    ) -> Result<tokio::sync::mpsc::Receiver<Metric>> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        
+
         let mut state = self.state.write().await;
-        
+
         // Send current value if metric exists
         if let Some(data) = state.metrics.get(metric_name) {
             let _ = tx.send(data.metric.clone()).await;
         }
-        
-        state.subscriptions
+
+        state
+            .subscriptions
             .entry(metric_name.to_string())
             .or_insert_with(Vec::new)
             .push(tx);
-        
+
         Ok(rx)
     }
 
     pub async fn list_metrics(&self) -> Vec<Metric> {
         let state = self.state.read().await;
-        state.metrics.values()
+        state
+            .metrics
+            .values()
             .map(|data| data.metric.clone())
             .collect()
     }
@@ -1050,7 +1129,7 @@ impl MetricsCollector {
         let mut state = self.state.write().await;
         let retention_period = Duration::from_secs(self.config.retention_period_hours * 3600);
         let cutoff = Instant::now() - retention_period;
-        
+
         // Clean up old time series data
         for data in state.metrics.values_mut() {
             data.time_series.retain(|dp| dp.timestamp > cutoff);
@@ -1072,7 +1151,7 @@ impl MetricsCollector {
             Err(anyhow!("Metric not found: {}", name))
         }
     }
-    
+
     /// Helper method for tests to increment counter with notifications
     pub async fn increment_counter_with_notification(&self, name: &str) -> Result<()> {
         // First increment the counter
@@ -1084,10 +1163,10 @@ impl MetricsCollector {
                 return Err(anyhow!("Counter not found: {}", name));
             }
         }
-        
+
         // Get the updated metric
         let metric = self.get_metric(name).await?;
-        
+
         // Notify subscribers
         let state = self.state.read().await;
         if let Some(subscribers) = state.subscriptions.get(name) {
@@ -1095,49 +1174,52 @@ impl MetricsCollector {
                 let _ = tx.send(metric.clone()).await;
             }
         }
-        
+
         Ok(())
     }
-    
+
     async fn update_metric_value(&self, name: &str, value: MetricValue) -> Result<()> {
         let mut state = self.state.write().await;
         if let Some(data) = state.metrics.get_mut(name) {
             data.metric.value = value.clone();
             data.metric.timestamp = Utc::now();
             data.metric.last_updated = Instant::now();
-            
+
             // Add to time series for rate calculation
             if let MetricValue::Counter(v) | MetricValue::Gauge(v) = &value {
                 data.time_series.push(DataPoint {
                     value: *v,
                     timestamp: Instant::now(),
                 });
-                
+
                 // Keep only last hour of data
                 let cutoff = Instant::now() - Duration::from_secs(3600);
                 data.time_series.retain(|dp| dp.timestamp > cutoff);
             }
-            
+
             // Send update to subscribers
         }
-        
+
         // Get subscribers and metric outside the write lock
         let (metric_to_send, subscribers) = {
             let state = self.state.read().await;
             if let Some(data) = state.metrics.get(name) {
-                (Some(data.metric.clone()), state.subscriptions.get(name).cloned())
+                (
+                    Some(data.metric.clone()),
+                    state.subscriptions.get(name).cloned(),
+                )
             } else {
                 (None, None)
             }
         };
-        
+
         // Send updates
         if let (Some(metric), Some(subscribers)) = (metric_to_send, subscribers) {
             for tx in subscribers {
                 let _ = tx.send(metric.clone()).await;
             }
         }
-        
+
         Ok(())
     }
 
@@ -1297,7 +1379,8 @@ pub struct QuantileMap {
 
 impl QuantileMap {
     pub fn get(&self, key: &f64) -> Option<&f64> {
-        self.quantiles.iter()
+        self.quantiles
+            .iter()
             .find(|(k, _)| (k - key).abs() < f64::EPSILON)
             .map(|(_, v)| v)
     }
@@ -1327,7 +1410,7 @@ impl<'de> Deserialize<'de> for MetricData {
             metric: Metric,
             label_values: HashMap<Vec<(String, String)>, f64>,
         }
-        
+
         let helper = MetricDataHelper::deserialize(deserializer)?;
         Ok(MetricData {
             metric: helper.metric,
@@ -1371,7 +1454,7 @@ impl<'de> Deserialize<'de> for Metric {
             timestamp: DateTime<Utc>,
             last_updated_secs: u64,
         }
-        
+
         let helper = MetricHelper::deserialize(deserializer)?;
         Ok(Metric {
             name: helper.name,

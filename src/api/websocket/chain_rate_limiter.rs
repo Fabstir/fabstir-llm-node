@@ -151,11 +151,9 @@ impl SingleChainRateLimiter {
         // Check per-IP or per-session limit
         if is_ip && self.config.per_ip_limit {
             let mut ip_buckets = self.ip_buckets.write().await;
-            let bucket = ip_buckets
-                .entry(identifier.to_string())
-                .or_insert_with(|| {
-                    TokenBucket::new(self.config.burst_size, self.config.requests_per_minute)
-                });
+            let bucket = ip_buckets.entry(identifier.to_string()).or_insert_with(|| {
+                TokenBucket::new(self.config.burst_size, self.config.requests_per_minute)
+            });
 
             if !bucket.try_consume(1) {
                 let retry_after = bucket.time_until_available(1);
@@ -227,7 +225,8 @@ impl ChainRateLimiter {
     }
 
     pub async fn check_rate_limit(&self, chain_id: u64, identifier: &str) -> Result<()> {
-        self.check_rate_limit_with_type(chain_id, identifier, true).await
+        self.check_rate_limit_with_type(chain_id, identifier, true)
+            .await
     }
 
     pub async fn check_rate_limit_with_type(
@@ -260,7 +259,10 @@ impl ChainRateLimiter {
             let limiter = Arc::new(SingleChainRateLimiter::new(config.clone()));
             drop(configs);
 
-            self.limiters.write().await.insert(chain_id, limiter.clone());
+            self.limiters
+                .write()
+                .await
+                .insert(chain_id, limiter.clone());
             debug!("Created new rate limiter for chain {}", chain_id);
             Ok(limiter)
         } else {
@@ -274,7 +276,10 @@ impl ChainRateLimiter {
             drop(configs);
 
             let limiter = Arc::new(SingleChainRateLimiter::new(config.clone()));
-            self.limiters.write().await.insert(chain_id, limiter.clone());
+            self.limiters
+                .write()
+                .await
+                .insert(chain_id, limiter.clone());
             self.configs.write().await.insert(chain_id, config);
             debug!("Created default rate limiter for chain {}", chain_id);
             Ok(limiter)
@@ -355,7 +360,9 @@ mod tests {
         let limiter = ChainRateLimiter::new();
 
         // Add Base Sepolia config
-        limiter.add_chain_config(ChainRateLimitConfig::base_sepolia()).await;
+        limiter
+            .add_chain_config(ChainRateLimitConfig::base_sepolia())
+            .await;
 
         // Should allow requests up to burst size
         for i in 0..100 {
@@ -382,8 +389,12 @@ mod tests {
         let limiter = ChainRateLimiter::new();
 
         // Add configs for both chains
-        limiter.add_chain_config(ChainRateLimitConfig::base_sepolia()).await;
-        limiter.add_chain_config(ChainRateLimitConfig::opbnb_testnet()).await;
+        limiter
+            .add_chain_config(ChainRateLimitConfig::base_sepolia())
+            .await;
+        limiter
+            .add_chain_config(ChainRateLimitConfig::opbnb_testnet())
+            .await;
 
         // Test Base Sepolia (burst size 100)
         for _ in 0..100 {

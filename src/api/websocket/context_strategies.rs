@@ -90,7 +90,11 @@ impl Default for AdaptiveStrategy {
 }
 
 pub trait ContextStrategy {
-    fn apply(&self, messages: Vec<crate::job_processor::Message>, max_tokens: usize) -> Vec<crate::job_processor::Message>;
+    fn apply(
+        &self,
+        messages: Vec<crate::job_processor::Message>,
+        max_tokens: usize,
+    ) -> Vec<crate::job_processor::Message>;
     fn estimate_tokens(&self, text: &str) -> usize {
         text.len() / 4
     }
@@ -107,11 +111,16 @@ impl TruncateStrategy {
 }
 
 impl ContextStrategy for TruncateStrategy {
-    fn apply(&self, mut messages: Vec<crate::job_processor::Message>, max_tokens: usize) -> Vec<crate::job_processor::Message> {
-        let total_tokens: usize = messages.iter()
+    fn apply(
+        &self,
+        mut messages: Vec<crate::job_processor::Message>,
+        max_tokens: usize,
+    ) -> Vec<crate::job_processor::Message> {
+        let total_tokens: usize = messages
+            .iter()
             .map(|m| self.estimate_tokens(&format!("{}: {}", m.role, m.content)))
             .sum();
-        
+
         if total_tokens <= max_tokens {
             return messages;
         }
@@ -119,7 +128,7 @@ impl ContextStrategy for TruncateStrategy {
         // Preserve system messages if configured
         let mut result = Vec::new();
         let mut used_tokens = 0;
-        
+
         if self.config.preserve_system {
             for msg in &messages {
                 if msg.role == "system" {
@@ -148,7 +157,10 @@ impl ContextStrategy for TruncateStrategy {
         // Keep last N messages
         let start_idx = messages.len().saturating_sub(self.config.keep_last);
         for msg in &messages[start_idx..] {
-            if !result.iter().any(|m| m.content == msg.content && m.role == msg.role) {
+            if !result
+                .iter()
+                .any(|m| m.content == msg.content && m.role == msg.role)
+            {
                 let tokens = self.estimate_tokens(&format!("{}: {}", msg.role, msg.content));
                 if used_tokens + tokens <= max_tokens {
                     result.push(msg.clone());
@@ -181,11 +193,16 @@ impl SummarizeStrategy {
 }
 
 impl ContextStrategy for SummarizeStrategy {
-    fn apply(&self, messages: Vec<crate::job_processor::Message>, max_tokens: usize) -> Vec<crate::job_processor::Message> {
-        let total_tokens: usize = messages.iter()
+    fn apply(
+        &self,
+        messages: Vec<crate::job_processor::Message>,
+        max_tokens: usize,
+    ) -> Vec<crate::job_processor::Message> {
+        let total_tokens: usize = messages
+            .iter()
             .map(|m| self.estimate_tokens(&format!("{}: {}", m.role, m.content)))
             .sum();
-        
+
         if total_tokens <= max_tokens {
             return messages;
         }
@@ -231,40 +248,48 @@ impl WindowingStrategy {
         Self { config }
     }
 
-    pub fn create_windows(&self, messages: &[crate::job_processor::Message]) -> Vec<Vec<crate::job_processor::Message>> {
+    pub fn create_windows(
+        &self,
+        messages: &[crate::job_processor::Message],
+    ) -> Vec<Vec<crate::job_processor::Message>> {
         let mut windows = Vec::new();
         let mut start = 0;
-        
+
         while start < messages.len() {
             let end = std::cmp::min(start + self.config.window_size, messages.len());
             windows.push(messages[start..end].to_vec());
-            
+
             if end >= messages.len() {
                 break;
             }
-            
+
             start += self.config.step_size;
         }
-        
+
         windows
     }
 }
 
 impl ContextStrategy for WindowingStrategy {
-    fn apply(&self, messages: Vec<crate::job_processor::Message>, max_tokens: usize) -> Vec<crate::job_processor::Message> {
+    fn apply(
+        &self,
+        messages: Vec<crate::job_processor::Message>,
+        max_tokens: usize,
+    ) -> Vec<crate::job_processor::Message> {
         // Return the most recent window that fits within token limit
         let windows = self.create_windows(&messages);
-        
+
         for window in windows.iter().rev() {
-            let tokens: usize = window.iter()
+            let tokens: usize = window
+                .iter()
                 .map(|m| self.estimate_tokens(&format!("{}: {}", m.role, m.content)))
                 .sum();
-            
+
             if tokens <= max_tokens {
                 return window.clone();
             }
         }
-        
+
         // If no window fits, return empty or truncated version
         Vec::new()
     }

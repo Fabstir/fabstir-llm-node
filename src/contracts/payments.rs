@@ -1,10 +1,10 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use tokio::sync::{RwLock, mpsc};
-use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, RwLock};
 
 use super::client::Web3Client;
 use super::types::*;
@@ -24,14 +24,20 @@ impl Default for PaymentConfig {
         let escrow_address = std::env::var("PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS")
             .unwrap_or_else(|_| "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".to_string())
             .parse()
-            .unwrap_or_else(|_| "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".parse().unwrap());
-            
+            .unwrap_or_else(|_| {
+                "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6"
+                    .parse()
+                    .unwrap()
+            });
+
         Self {
             escrow_address,
             supported_tokens: vec![
                 TokenInfo {
                     symbol: "USDC".to_string(),
-                    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".parse().unwrap(),
+                    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                        .parse()
+                        .unwrap(),
                     decimals: 6,
                 },
                 TokenInfo {
@@ -86,10 +92,7 @@ pub struct PaymentVerifier {
 
 impl PaymentVerifier {
     pub async fn new(config: PaymentConfig, web3_client: Arc<Web3Client>) -> Result<Self> {
-        let escrow = PaymentEscrow::new(
-            config.escrow_address,
-            web3_client.provider.clone(),
-        );
+        let escrow = PaymentEscrow::new(config.escrow_address, web3_client.provider.clone());
 
         let mut token_contracts = HashMap::new();
         for token in &config.supported_tokens {
@@ -106,14 +109,17 @@ impl PaymentVerifier {
     }
 
     pub fn is_token_supported(&self, symbol: &str) -> bool {
-        self.config.supported_tokens.iter().any(|t| t.symbol == symbol)
+        self.config
+            .supported_tokens
+            .iter()
+            .any(|t| t.symbol == symbol)
     }
 
     pub async fn verify_escrow_deposit(&self, job_id: U256) -> Result<DepositInfo> {
         let deposit = self.escrow.get_deposit(job_id).call().await?;
-        
+
         let token_symbol = self.get_token_symbol(deposit.2).await?;
-        
+
         Ok(DepositInfo {
             job_id,
             amount: deposit.1,
@@ -137,24 +143,33 @@ impl PaymentVerifier {
 
     pub async fn get_token_balance(&self, symbol: &str, address: Address) -> Result<U256> {
         let token_contracts = self.token_contracts.read().await;
-        let token_address = token_contracts.get(symbol)
+        let token_address = token_contracts
+            .get(symbol)
             .ok_or_else(|| anyhow!("Token {} not supported", symbol))?;
 
         if token_address.is_zero() {
             // ETH balance
-            self.web3_client.provider.get_balance(address, None).await
+            self.web3_client
+                .provider
+                .get_balance(address, None)
+                .await
                 .map_err(Into::into)
         } else {
             // ERC20 balance
             let token = IERC20::new(*token_address, self.web3_client.provider.clone());
-            token.balance_of(address).call().await
-                .map_err(Into::into)
+            token.balance_of(address).call().await.map_err(Into::into)
         }
     }
 
-    pub async fn check_token_approval(&self, symbol: &str, owner: Address, amount: U256) -> Result<bool> {
+    pub async fn check_token_approval(
+        &self,
+        symbol: &str,
+        owner: Address,
+        amount: U256,
+    ) -> Result<bool> {
         let token_contracts = self.token_contracts.read().await;
-        let token_address = token_contracts.get(symbol)
+        let token_address = token_contracts
+            .get(symbol)
             .ok_or_else(|| anyhow!("Token {} not supported", symbol))?;
 
         if token_address.is_zero() {
@@ -162,7 +177,10 @@ impl PaymentVerifier {
             Ok(true)
         } else {
             let token = IERC20::new(*token_address, self.web3_client.provider.clone());
-            let allowance = token.allowance(owner, self.config.escrow_address).call().await?;
+            let allowance = token
+                .allowance(owner, self.config.escrow_address)
+                .call()
+                .await?;
             Ok(allowance >= amount)
         }
     }
@@ -177,7 +195,8 @@ impl PaymentVerifier {
     }
 
     pub fn calculate_payment_split(&self, total_amount: U256) -> (U256, U256) {
-        let platform_fee = total_amount * U256::from(self.config.platform_fee_percentage) / U256::from(10000);
+        let platform_fee =
+            total_amount * U256::from(self.config.platform_fee_percentage) / U256::from(10000);
         let host_amount = total_amount - platform_fee;
         (host_amount, platform_fee)
     }
@@ -191,33 +210,38 @@ impl PaymentVerifier {
     pub async fn can_request_refund(&self, job_id: U256) -> Result<bool> {
         let status = self.get_payment_status(job_id).await?;
         let timed_out = self.check_payment_timeout(job_id).await?;
-        
+
         Ok(status == PaymentStatus::Locked && timed_out)
     }
 
-    pub async fn process_batch_payments(&self, job_ids: &[U256]) -> Result<Vec<(U256, Result<H256>)>> {
+    pub async fn process_batch_payments(
+        &self,
+        job_ids: &[U256],
+    ) -> Result<Vec<(U256, Result<H256>)>> {
         let mut results = Vec::new();
-        
+
         for job_id in job_ids {
             // In a real implementation, would batch process via multicall
             let result = Ok(H256::random());
             results.push((*job_id, result));
         }
-        
+
         Ok(results)
     }
 
-    pub async fn get_payment_history(&self, address: Address, _days: u64) -> Result<Vec<PaymentInfo>> {
+    pub async fn get_payment_history(
+        &self,
+        address: Address,
+        _days: u64,
+    ) -> Result<Vec<PaymentInfo>> {
         // In a real implementation, would query historical events
-        Ok(vec![
-            PaymentInfo {
-                job_id: U256::from(1),
-                amount: U256::from(100_000_000),
-                token_symbol: "USDC".to_string(),
-                status: PaymentStatus::Released,
-                client: address,
-            }
-        ])
+        Ok(vec![PaymentInfo {
+            job_id: U256::from(1),
+            amount: U256::from(100_000_000),
+            token_symbol: "USDC".to_string(),
+            status: PaymentStatus::Released,
+            client: address,
+        }])
     }
 
     pub async fn estimate_claim_gas(&self, _job_id: U256) -> Result<U256> {
@@ -243,7 +267,7 @@ impl PaymentVerifier {
 
         loop {
             interval.tick().await;
-            
+
             // In a real implementation, would monitor for payment events
             // For now, just sleep
             tokio::time::sleep(Duration::from_secs(1)).await;

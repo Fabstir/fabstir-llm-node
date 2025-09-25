@@ -1,9 +1,9 @@
 use super::{
+    context_strategies::{CompressionStrategy, OverflowStrategy, SummarizationConfig},
     session::WebSocketSession,
-    context_strategies::{OverflowStrategy, CompressionStrategy, SummarizationConfig},
 };
 use crate::job_processor::Message;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,12 +116,16 @@ impl ContextManager {
         self.config.window_size
     }
 
-    pub async fn build_context(&self, session: &WebSocketSession, current_prompt: &str) -> Result<String> {
+    pub async fn build_context(
+        &self,
+        session: &WebSocketSession,
+        current_prompt: &str,
+    ) -> Result<String> {
         // Check cache first
         if self.config.enable_cache {
             let cache_key = self.generate_cache_key(session.id(), current_prompt);
             let cache = self.cache.read().await;
-            
+
             if let Some((cached_context, timestamp)) = cache.get(&cache_key) {
                 if timestamp.elapsed().as_secs() < self.config.cache_ttl_seconds {
                     let mut metrics = self.metrics.write().await;
@@ -129,23 +133,26 @@ impl ContextManager {
                     return Ok(cached_context.clone());
                 }
             }
-            
+
             let mut metrics = self.metrics.write().await;
             metrics.cache_misses += 1;
         }
 
         // Get all messages from session (not windowed)
         let mut messages = session.get_all_messages();
-        
+
         // Add system prompt if configured
         if self.config.include_system_prompt {
             if let Some(system_prompt) = &self.config.default_system_prompt {
                 if messages.is_empty() || messages[0].role != "system" {
-                    messages.insert(0, Message {
-                        role: "system".to_string(),
-                        content: system_prompt.clone(),
-                        timestamp: None,
-                    });
+                    messages.insert(
+                        0,
+                        Message {
+                            role: "system".to_string(),
+                            content: system_prompt.clone(),
+                            timestamp: None,
+                        },
+                    );
                 }
             }
         }
@@ -159,7 +166,9 @@ impl ContextManager {
 
         // Handle overflow based on strategy, accounting for current prompt
         let prompt_tokens = self.estimate_tokens(&format!("user: {}\nassistant:", current_prompt));
-        messages = self.handle_overflow_with_prompt(messages, prompt_tokens).await?;
+        messages = self
+            .handle_overflow_with_prompt(messages, prompt_tokens)
+            .await?;
 
         // Validate and sanitize
         self.validate_context(&messages).await?;
@@ -172,9 +181,9 @@ impl ContextManager {
         let mut metrics = self.metrics.write().await;
         metrics.total_contexts_built += 1;
         let token_count = self.estimate_tokens(&context);
-        metrics.average_token_count = 
-            (metrics.average_token_count * (metrics.total_contexts_built - 1) + token_count) 
-            / metrics.total_contexts_built;
+        metrics.average_token_count =
+            (metrics.average_token_count * (metrics.total_contexts_built - 1) + token_count)
+                / metrics.total_contexts_built;
 
         // Cache the result
         if self.config.enable_cache {
@@ -194,7 +203,7 @@ impl ContextManager {
         // Preserve system messages and first N messages if configured
         let mut result = Vec::new();
         let mut preserved_count = 0;
-        
+
         // Preserve system messages
         if self.config.preserve_system_messages {
             for msg in messages {
@@ -206,7 +215,7 @@ impl ContextManager {
                 }
             }
         }
-        
+
         // Preserve first N non-system messages
         if self.config.preserve_first_n > 0 {
             let mut non_system_count = 0;
@@ -220,7 +229,7 @@ impl ContextManager {
                 }
             }
         }
-        
+
         // Calculate how many recent messages we can fit
         let remaining_window = self.config.window_size.saturating_sub(preserved_count);
         if remaining_window > 0 {
@@ -232,7 +241,7 @@ impl ContextManager {
                 }
             }
         }
-        
+
         result
     }
 
@@ -256,10 +265,10 @@ impl ContextManager {
         // Use a temporary config with adaptive window size
         let orig_window_size = self.config.window_size;
         // We can't mutate self, so we'll inline the logic
-        
+
         let mut result = Vec::new();
         let mut preserved_count = 0;
-        
+
         // Preserve system messages
         if self.config.preserve_system_messages {
             for msg in messages {
@@ -271,7 +280,7 @@ impl ContextManager {
                 }
             }
         }
-        
+
         // Preserve first N non-system messages
         if self.config.preserve_first_n > 0 {
             let mut non_system_count = 0;
@@ -285,7 +294,7 @@ impl ContextManager {
                 }
             }
         }
-        
+
         // Calculate how many recent messages we can fit
         let remaining_window = adaptive_window_size.saturating_sub(preserved_count);
         if remaining_window > 0 {
@@ -297,25 +306,35 @@ impl ContextManager {
                 }
             }
         }
-        
+
         result
     }
 
-    async fn handle_overflow_with_prompt(&self, messages: Vec<Message>, prompt_tokens: usize) -> Result<Vec<Message>> {
+    async fn handle_overflow_with_prompt(
+        &self,
+        messages: Vec<Message>,
+        prompt_tokens: usize,
+    ) -> Result<Vec<Message>> {
         let adjusted_max = self.config.max_tokens.saturating_sub(prompt_tokens);
         self.handle_overflow_internal(messages, adjusted_max).await
     }
 
-    fn handle_overflow<'a>(&'a self, messages: Vec<Message>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<Message>>> + Send + 'a>> {
+    fn handle_overflow<'a>(
+        &'a self,
+        messages: Vec<Message>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<Message>>> + Send + 'a>>
+    {
         let max_tokens = self.config.max_tokens;
-        Box::pin(async move {
-            self.handle_overflow_internal(messages, max_tokens).await
-        })
+        Box::pin(async move { self.handle_overflow_internal(messages, max_tokens).await })
     }
 
-    async fn handle_overflow_internal(&self, mut messages: Vec<Message>, max_tokens: usize) -> Result<Vec<Message>> {
+    async fn handle_overflow_internal(
+        &self,
+        mut messages: Vec<Message>,
+        max_tokens: usize,
+    ) -> Result<Vec<Message>> {
         let token_count = self.count_tokens(&messages).await;
-        
+
         if token_count <= max_tokens {
             return Ok(messages);
         }
@@ -324,7 +343,7 @@ impl ContextManager {
             OverflowStrategy::Truncate => {
                 let mut metrics = self.metrics.write().await;
                 metrics.truncation_count += 1;
-                
+
                 // Keep removing messages until under limit, preserving priority messages
                 let mut preserved_count = 0;
                 while self.count_tokens(&messages).await > max_tokens && !messages.is_empty() {
@@ -339,7 +358,7 @@ impl ContextManager {
                             }
                         }
                     }
-                    
+
                     // Add first N non-system messages to preserved count
                     let mut non_system_count = 0;
                     for (i, msg) in messages.iter().enumerate() {
@@ -350,8 +369,9 @@ impl ContextManager {
                             }
                         }
                     }
-                    preserved_count += std::cmp::min(non_system_count, self.config.preserve_first_n);
-                    
+                    preserved_count +=
+                        std::cmp::min(non_system_count, self.config.preserve_first_n);
+
                     // Remove from after preserved messages
                     if preserved_count < messages.len() {
                         messages.remove(preserved_count);
@@ -370,20 +390,30 @@ impl ContextManager {
                     let config = SummarizationConfig::default();
                     self.summarize_context(messages, &config, max_tokens).await
                 } else {
-                    self.handle_overflow_with_strategy(messages, &OverflowStrategy::Truncate, max_tokens).await
+                    self.handle_overflow_with_strategy(
+                        messages,
+                        &OverflowStrategy::Truncate,
+                        max_tokens,
+                    )
+                    .await
                 }
             }
         }
     }
 
-    async fn handle_overflow_with_strategy(&self, mut messages: Vec<Message>, strategy: &OverflowStrategy, max_tokens: usize) -> Result<Vec<Message>> {
+    async fn handle_overflow_with_strategy(
+        &self,
+        mut messages: Vec<Message>,
+        strategy: &OverflowStrategy,
+        max_tokens: usize,
+    ) -> Result<Vec<Message>> {
         match strategy {
             OverflowStrategy::Truncate => {
                 // Inline truncation logic to avoid recursion
                 let mut metrics = self.metrics.write().await;
                 metrics.truncation_count += 1;
                 drop(metrics);
-                
+
                 // Keep removing messages until under limit, preserving priority messages
                 let mut preserved_count;
                 while self.count_tokens(&messages).await > max_tokens && !messages.is_empty() {
@@ -398,7 +428,7 @@ impl ContextManager {
                             }
                         }
                     }
-                    
+
                     // Add first N non-system messages to preserved count
                     let mut non_system_count = 0;
                     for (i, msg) in messages.iter().enumerate() {
@@ -409,8 +439,9 @@ impl ContextManager {
                             }
                         }
                     }
-                    preserved_count += std::cmp::min(non_system_count, self.config.preserve_first_n);
-                    
+                    preserved_count +=
+                        std::cmp::min(non_system_count, self.config.preserve_first_n);
+
                     // Remove from after preserved messages
                     if preserved_count < messages.len() {
                         messages.remove(preserved_count);
@@ -424,7 +455,12 @@ impl ContextManager {
         }
     }
 
-    async fn summarize_context(&self, messages: Vec<Message>, config: &SummarizationConfig, _max_tokens: usize) -> Result<Vec<Message>> {
+    async fn summarize_context(
+        &self,
+        messages: Vec<Message>,
+        config: &SummarizationConfig,
+        _max_tokens: usize,
+    ) -> Result<Vec<Message>> {
         let mut metrics = self.metrics.write().await;
         metrics.compression_count += 1;
         drop(metrics);
@@ -440,7 +476,10 @@ impl ContextManager {
         // Create a summary of older messages
         let summary = Message {
             role: "system".to_string(),
-            content: format!("[Summary] Previous conversation: {} messages exchanged", to_summarize.len()),
+            content: format!(
+                "[Summary] Previous conversation: {} messages exchanged",
+                to_summarize.len()
+            ),
             timestamp: None,
         };
 
@@ -451,7 +490,8 @@ impl ContextManager {
 
     pub async fn count_tokens(&self, messages: &[Message]) -> usize {
         // Simple token estimation: ~1 token per 4 characters
-        messages.iter()
+        messages
+            .iter()
             .map(|m| (m.role.len() + m.content.len()) / 4)
             .sum()
     }
@@ -470,24 +510,33 @@ impl ContextManager {
     }
 
     pub async fn sanitize_messages(&self, messages: Vec<Message>) -> Vec<Message> {
-        messages.into_iter().map(|mut msg| {
-            // Remove control characters except newlines and tabs
-            msg.content = msg.content.chars()
-                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-                .collect();
-            msg
-        }).collect()
+        messages
+            .into_iter()
+            .map(|mut msg| {
+                // Remove control characters except newlines and tabs
+                msg.content = msg
+                    .content
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                    .collect();
+                msg
+            })
+            .collect()
     }
 
-    pub async fn format_for_llm(&self, messages: &[Message], current_prompt: &str) -> Result<String> {
+    pub async fn format_for_llm(
+        &self,
+        messages: &[Message],
+        current_prompt: &str,
+    ) -> Result<String> {
         let mut formatted = String::new();
-        
+
         for message in messages {
             formatted.push_str(&format!("{}: {}\n", message.role, message.content));
         }
-        
+
         formatted.push_str(&format!("user: {}\nassistant:", current_prompt));
-        
+
         Ok(formatted)
     }
 
@@ -496,24 +545,32 @@ impl ContextManager {
             return Ok(());
         }
 
-        let total_size: usize = messages.iter()
+        let total_size: usize = messages
+            .iter()
             .map(|m| std::mem::size_of::<Message>() + m.role.len() + m.content.len())
             .sum();
 
         if total_size > self.config.max_memory_bytes {
-            return Err(anyhow!("Context exceeds memory limit: {} > {}", total_size, self.config.max_memory_bytes));
+            return Err(anyhow!(
+                "Context exceeds memory limit: {} > {}",
+                total_size,
+                self.config.max_memory_bytes
+            ));
         }
 
         Ok(())
     }
 
-    pub async fn compress_idle_context(&self, session: &WebSocketSession) -> Result<CompressionResult> {
+    pub async fn compress_idle_context(
+        &self,
+        session: &WebSocketSession,
+    ) -> Result<CompressionResult> {
         let messages = session.conversation_history();
         let original_size = session.memory_used();
-        
+
         // Simulate compression
         let compressed_size = original_size / 2; // 50% compression ratio
-        
+
         Ok(CompressionResult {
             compressed: true,
             size_bytes: compressed_size,
@@ -525,7 +582,7 @@ impl ContextManager {
     pub async fn get_context_windows(&self, session: &WebSocketSession) -> Vec<ContextWindow> {
         let messages = session.conversation_history();
         let mut windows = Vec::new();
-        
+
         if messages.is_empty() {
             return windows;
         }
@@ -533,27 +590,27 @@ impl ContextManager {
         let window_size = self.config.window_size;
         let overlap = self.config.window_overlap;
         let step = window_size - overlap;
-        
+
         let mut start = 0;
         while start < messages.len() {
             let end = std::cmp::min(start + window_size, messages.len());
             let window_messages = messages[start..end].to_vec();
             let token_count = self.count_tokens(&window_messages).await;
-            
+
             windows.push(ContextWindow {
                 messages: window_messages,
                 token_count,
                 start_index: start,
                 end_index: end,
             });
-            
+
             if end >= messages.len() {
                 break;
             }
-            
+
             start += step;
         }
-        
+
         windows
     }
 
@@ -562,9 +619,7 @@ impl ContextManager {
     }
 
     pub fn cache_hits(&self) -> usize {
-        futures::executor::block_on(async {
-            self.metrics.read().await.cache_hits
-        })
+        futures::executor::block_on(async { self.metrics.read().await.cache_hits })
     }
 
     fn generate_cache_key(&self, session_id: &str, prompt: &str) -> String {

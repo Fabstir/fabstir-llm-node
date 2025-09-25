@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use fabstir_llm_node::cli::{Cli, execute};
+use fabstir_llm_node::cli::{execute, Cli};
 
 #[tokio::main]
 async fn main() -> Result<()> {

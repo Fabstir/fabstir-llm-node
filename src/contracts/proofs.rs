@@ -1,9 +1,9 @@
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use anyhow::{Result, anyhow};
-use tokio::sync::{RwLock, mpsc};
-use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, RwLock};
 
 use super::client::Web3Client;
 use super::types::*;
@@ -30,14 +30,18 @@ impl Default for ProofConfig {
         let proof_system_address = std::env::var("PROOF_SYSTEM_ADDRESS")
             .unwrap_or_else(|_| "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".to_string())
             .parse()
-            .unwrap_or_else(|_| "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".parse().unwrap());
-            
+            .unwrap_or_else(|_| {
+                "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E"
+                    .parse()
+                    .unwrap()
+            });
+
         // EZKL verifier is optional (blank means not deployed)
         let ezkl_verifier_address = std::env::var("EZKL_VERIFIER_ADDRESS")
             .ok()
             .and_then(|s| if s.is_empty() { None } else { s.parse().ok() })
             .unwrap_or_else(Address::zero);
-            
+
         Self {
             proof_system_address,
             ezkl_verifier_address,
@@ -109,10 +113,8 @@ pub struct ProofSubmitter {
 
 impl ProofSubmitter {
     pub async fn new(config: ProofConfig, web3_client: Arc<Web3Client>) -> Result<Self> {
-        let proof_system = ProofSystem::new(
-            config.proof_system_address,
-            web3_client.provider.clone(),
-        );
+        let proof_system =
+            ProofSystem::new(config.proof_system_address, web3_client.provider.clone());
 
         Ok(Self {
             config,
@@ -153,7 +155,8 @@ impl ProofSubmitter {
     }
 
     pub fn set_wallet(&mut self, private_key: &str) -> Result<()> {
-        let wallet = private_key.parse::<LocalWallet>()
+        let wallet = private_key
+            .parse::<LocalWallet>()
             .map_err(|e| anyhow!("Invalid private key: {}", e))?
             .with_chain_id(31337u64); // Default chain ID
 
@@ -203,7 +206,7 @@ impl ProofSubmitter {
 
     pub async fn prepare_proof_for_submission(&self, proof: ProofData) -> Result<StoredProof> {
         let size = proof.proof.len();
-        
+
         let stored_proof = if self.config.use_proof_compression {
             // Compress proof
             StoredProof {
@@ -256,22 +259,27 @@ impl ProofSubmitter {
     }
 
     pub fn get_metrics(&self) -> ProofMetrics {
-        futures::executor::block_on(async {
-            self.metrics.read().await.clone()
-        })
+        futures::executor::block_on(async { self.metrics.read().await.clone() })
     }
 
     pub async fn validate_proof(&self, proof: &ProofData) -> Result<bool> {
         // Basic validation
-        if proof.proof.is_empty() || proof.public_inputs.is_empty() || proof.verification_key.is_empty() {
+        if proof.proof.is_empty()
+            || proof.public_inputs.is_empty()
+            || proof.verification_key.is_empty()
+        {
             return Ok(false);
         }
-        
+
         // In a real implementation, would validate proof structure
         Ok(true)
     }
 
-    pub async fn submit_challenge_response(&self, _challenge_id: U256, _response_data: Vec<u8>) -> Result<H256> {
+    pub async fn submit_challenge_response(
+        &self,
+        _challenge_id: U256,
+        _response_data: Vec<u8>,
+    ) -> Result<H256> {
         // In a real implementation, would submit response to contract
         Ok(H256::random())
     }
@@ -288,7 +296,7 @@ impl ProofSubmitter {
 
         loop {
             interval.tick().await;
-            
+
             // In a real implementation, would monitor for proof events
             tokio::time::sleep(Duration::from_secs(1)).await;
         }

@@ -1,11 +1,11 @@
 use async_trait::async_trait;
+use reqwest;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use thiserror::Error;
-use reqwest;
-use sha2::{Sha256, Digest};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -94,7 +94,7 @@ pub trait S5Storage: Send + Sync {
     async fn delete(&self, path: &str) -> Result<(), StorageError>;
     async fn exists(&self, path: &str) -> Result<bool, StorageError>;
     fn clone(&self) -> Box<dyn S5Storage>;
-    
+
     // Mock-specific methods (no-op for real backend)
     async fn inject_error(&self, _error: StorageError) {}
     async fn set_quota_limit(&self, _limit_bytes: u64) {}
@@ -127,21 +127,25 @@ impl MockS5Backend {
         if path.is_empty() {
             return Err(StorageError::InvalidPath("Empty path".to_string()));
         }
-        
+
         if path.starts_with('/') {
-            return Err(StorageError::InvalidPath("Path cannot start with /".to_string()));
-        }
-        
-        if path.contains("../") {
-            return Err(StorageError::InvalidPath("Path traversal not allowed".to_string()));
-        }
-        
-        if !path.starts_with("home/") && !path.starts_with("archive/") {
             return Err(StorageError::InvalidPath(
-                "Path must start with 'home/' or 'archive/'".to_string()
+                "Path cannot start with /".to_string(),
             ));
         }
-        
+
+        if path.contains("../") {
+            return Err(StorageError::InvalidPath(
+                "Path traversal not allowed".to_string(),
+            ));
+        }
+
+        if !path.starts_with("home/") && !path.starts_with("archive/") {
+            return Err(StorageError::InvalidPath(
+                "Path must start with 'home/' or 'archive/'".to_string(),
+            ));
+        }
+
         Ok(())
     }
 
@@ -189,7 +193,7 @@ impl S5Storage for MockS5Backend {
 
         let mut storage = self.storage.lock().await;
         storage.insert(path.to_string(), entry);
-        
+
         Ok(cid)
     }
 
@@ -212,7 +216,7 @@ impl S5Storage for MockS5Backend {
 
         let mut storage = self.storage.lock().await;
         storage.insert(path.to_string(), entry);
-        
+
         Ok(cid)
     }
 
@@ -248,7 +252,7 @@ impl S5Storage for MockS5Backend {
                 return Ok(entry.data.clone());
             }
         }
-        
+
         Err(StorageError::NotFound(cid.to_string()))
     }
 
@@ -307,7 +311,7 @@ impl S5Storage for MockS5Backend {
         cursor: Option<String>,
     ) -> Result<S5ListResult, StorageError> {
         let mut all_entries = self.list(path).await?;
-        
+
         let start_index = if let Some(cursor) = cursor {
             cursor.parse::<usize>().unwrap_or(0)
         } else {
@@ -348,7 +352,7 @@ impl S5Storage for MockS5Backend {
         storage
             .remove(path)
             .ok_or_else(|| StorageError::NotFound(path.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -404,11 +408,17 @@ impl RealS5Backend {
         MockS5Backend::validate_path(path)
     }
 
-    async fn make_request(&self, method: reqwest::Method, url: &str, body: Option<Vec<u8>>) -> Result<reqwest::Response, StorageError> {
+    async fn make_request(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, StorageError> {
         let mut request_builder = self.client.request(method, url);
-        
+
         if let Some(api_key) = &self.api_key {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", api_key));
         }
 
         if let Some(body) = body {
@@ -421,7 +431,10 @@ impl RealS5Backend {
             .map_err(|e| StorageError::NetworkError(e.to_string()))?;
 
         if response.status().is_server_error() {
-            return Err(StorageError::ServerError(format!("Server error: {}", response.status())));
+            return Err(StorageError::ServerError(format!(
+                "Server error: {}",
+                response.status()
+            )));
         }
 
         Ok(response)
@@ -432,19 +445,24 @@ impl RealS5Backend {
 impl S5Storage for RealS5Backend {
     async fn put(&self, path: &str, data: Vec<u8>) -> Result<String, StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/upload/{}", self.portal_url, path);
-        let response = self.make_request(reqwest::Method::POST, &url, Some(data)).await?;
-        
+        let response = self
+            .make_request(reqwest::Method::POST, &url, Some(data))
+            .await?;
+
         if response.status().is_success() {
             let result: serde_json::Value = response
                 .json()
                 .await
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            
+
             Ok(result["cid"].as_str().unwrap_or("").to_string())
         } else {
-            Err(StorageError::ServerError(format!("Upload failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "Upload failed: {}",
+                response.status()
+            )))
         }
     }
 
@@ -455,12 +473,13 @@ impl S5Storage for RealS5Backend {
         metadata: HashMap<String, String>,
     ) -> Result<String, StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/upload/{}", self.portal_url, path);
         let mut request_builder = self.client.post(&url);
-        
+
         if let Some(api_key) = &self.api_key {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", api_key));
         }
 
         // Add metadata as headers
@@ -473,25 +492,28 @@ impl S5Storage for RealS5Backend {
             .send()
             .await
             .map_err(|e| StorageError::NetworkError(e.to_string()))?;
-        
+
         if response.status().is_success() {
             let result: serde_json::Value = response
                 .json()
                 .await
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            
+
             Ok(result["cid"].as_str().unwrap_or("").to_string())
         } else {
-            Err(StorageError::ServerError(format!("Upload failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "Upload failed: {}",
+                response.status()
+            )))
         }
     }
 
     async fn get(&self, path: &str) -> Result<Vec<u8>, StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/download/{}", self.portal_url, path);
         let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-        
+
         if response.status().is_success() {
             let data = response
                 .bytes()
@@ -501,16 +523,19 @@ impl S5Storage for RealS5Backend {
         } else if response.status() == reqwest::StatusCode::NOT_FOUND {
             Err(StorageError::NotFound(path.to_string()))
         } else {
-            Err(StorageError::ServerError(format!("Download failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "Download failed: {}",
+                response.status()
+            )))
         }
     }
 
     async fn get_metadata(&self, path: &str) -> Result<HashMap<String, String>, StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/metadata/{}", self.portal_url, path);
         let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-        
+
         if response.status().is_success() {
             let metadata: HashMap<String, String> = response
                 .json()
@@ -520,14 +545,17 @@ impl S5Storage for RealS5Backend {
         } else if response.status() == reqwest::StatusCode::NOT_FOUND {
             Err(StorageError::NotFound(path.to_string()))
         } else {
-            Err(StorageError::ServerError(format!("Metadata retrieval failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "Metadata retrieval failed: {}",
+                response.status()
+            )))
         }
     }
 
     async fn get_by_cid(&self, cid: &str) -> Result<Vec<u8>, StorageError> {
         let url = format!("{}/api/s5/cid/{}", self.portal_url, cid);
         let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-        
+
         if response.status().is_success() {
             let data = response
                 .bytes()
@@ -537,16 +565,19 @@ impl S5Storage for RealS5Backend {
         } else if response.status() == reqwest::StatusCode::NOT_FOUND {
             Err(StorageError::NotFound(cid.to_string()))
         } else {
-            Err(StorageError::ServerError(format!("CID retrieval failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "CID retrieval failed: {}",
+                response.status()
+            )))
         }
     }
 
     async fn list(&self, path: &str) -> Result<Vec<S5Entry>, StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/list/{}", self.portal_url, path);
         let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-        
+
         if response.status().is_success() {
             let entries: Vec<S5Entry> = response
                 .json()
@@ -554,7 +585,10 @@ impl S5Storage for RealS5Backend {
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
             Ok(entries)
         } else {
-            Err(StorageError::ServerError(format!("List failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "List failed: {}",
+                response.status()
+            )))
         }
     }
 
@@ -565,25 +599,25 @@ impl S5Storage for RealS5Backend {
         cursor: Option<String>,
     ) -> Result<S5ListResult, StorageError> {
         Self::validate_path(path)?;
-        
+
         let mut url = format!("{}/api/s5/list/{}", self.portal_url, path);
         let mut query_params = Vec::new();
-        
+
         if let Some(limit) = limit {
             query_params.push(format!("limit={}", limit));
         }
-        
+
         if let Some(cursor) = cursor {
             query_params.push(format!("cursor={}", cursor));
         }
-        
+
         if !query_params.is_empty() {
             url.push('?');
             url.push_str(&query_params.join("&"));
         }
-        
+
         let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-        
+
         if response.status().is_success() {
             let result: S5ListResult = response
                 .json()
@@ -591,31 +625,39 @@ impl S5Storage for RealS5Backend {
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
             Ok(result)
         } else {
-            Err(StorageError::ServerError(format!("List failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "List failed: {}",
+                response.status()
+            )))
         }
     }
 
     async fn delete(&self, path: &str) -> Result<(), StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/delete/{}", self.portal_url, path);
-        let response = self.make_request(reqwest::Method::DELETE, &url, None).await?;
-        
+        let response = self
+            .make_request(reqwest::Method::DELETE, &url, None)
+            .await?;
+
         if response.status().is_success() {
             Ok(())
         } else if response.status() == reqwest::StatusCode::NOT_FOUND {
             Err(StorageError::NotFound(path.to_string()))
         } else {
-            Err(StorageError::ServerError(format!("Delete failed: {}", response.status())))
+            Err(StorageError::ServerError(format!(
+                "Delete failed: {}",
+                response.status()
+            )))
         }
     }
 
     async fn exists(&self, path: &str) -> Result<bool, StorageError> {
         Self::validate_path(path)?;
-        
+
         let url = format!("{}/api/s5/exists/{}", self.portal_url, path);
         let response = self.make_request(reqwest::Method::HEAD, &url, None).await?;
-        
+
         Ok(response.status().is_success())
     }
 
@@ -637,16 +679,16 @@ impl EnhancedS5Backend {
     pub fn new(client: super::enhanced_s5_client::EnhancedS5Client) -> Self {
         Self { client }
     }
-    
+
     fn validate_path(path: &str) -> Result<String, StorageError> {
         // Enhanced S5 expects paths without leading slash
         let clean_path = path.trim_start_matches('/');
-        
+
         // For Enhanced S5, we accept any path structure
         // The test paths don't follow the home/archive convention
         Ok(clean_path.to_string())
     }
-    
+
     fn generate_cid(data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -659,16 +701,16 @@ impl EnhancedS5Backend {
 impl S5Storage for EnhancedS5Backend {
     async fn put(&self, path: &str, data: Vec<u8>) -> Result<String, StorageError> {
         let clean_path = Self::validate_path(path)?;
-        
+
         self.client
             .put_file(&clean_path, data.clone())
             .await
             .map_err(|e| StorageError::ServerError(e.to_string()))?;
-        
+
         // Generate a CID for the data
         Ok(Self::generate_cid(&data))
     }
-    
+
     async fn put_with_metadata(
         &self,
         path: &str,
@@ -678,41 +720,41 @@ impl S5Storage for EnhancedS5Backend {
         // Enhanced S5 doesn't support metadata in the same way, just store the file
         self.put(path, data).await
     }
-    
+
     async fn get(&self, path: &str) -> Result<Vec<u8>, StorageError> {
         let clean_path = Self::validate_path(path)?;
-        
-        self.client
-            .get_file(&clean_path)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("not found") {
-                    StorageError::NotFound(path.to_string())
-                } else {
-                    StorageError::ServerError(e.to_string())
-                }
-            })
+
+        self.client.get_file(&clean_path).await.map_err(|e| {
+            if e.to_string().contains("not found") {
+                StorageError::NotFound(path.to_string())
+            } else {
+                StorageError::ServerError(e.to_string())
+            }
+        })
     }
-    
+
     async fn get_metadata(&self, path: &str) -> Result<HashMap<String, String>, StorageError> {
         // Enhanced S5 doesn't have separate metadata, return empty map
         let _ = Self::validate_path(path)?;
         Ok(HashMap::new())
     }
-    
+
     async fn get_by_cid(&self, _cid: &str) -> Result<Vec<u8>, StorageError> {
         // Enhanced S5 doesn't support CID-based retrieval in the mock
-        Err(StorageError::ServerError("CID-based retrieval not supported".to_string()))
+        Err(StorageError::ServerError(
+            "CID-based retrieval not supported".to_string(),
+        ))
     }
-    
+
     async fn list(&self, path: &str) -> Result<Vec<S5Entry>, StorageError> {
         let clean_path = Self::validate_path(path)?;
-        
-        let files = self.client
+
+        let files = self
+            .client
             .list_directory(&clean_path)
             .await
             .map_err(|e| StorageError::ServerError(e.to_string()))?;
-        
+
         let entries: Vec<S5Entry> = files
             .into_iter()
             .map(|f| {
@@ -731,10 +773,10 @@ impl S5Storage for EnhancedS5Backend {
                 }
             })
             .collect();
-        
+
         Ok(entries)
     }
-    
+
     async fn list_with_options(
         &self,
         path: &str,
@@ -742,38 +784,38 @@ impl S5Storage for EnhancedS5Backend {
         _cursor: Option<String>,
     ) -> Result<S5ListResult, StorageError> {
         let entries = self.list(path).await?;
-        
+
         let limited_entries = if let Some(limit) = limit {
             entries.into_iter().take(limit).collect()
         } else {
             entries
         };
-        
+
         Ok(S5ListResult {
             entries: limited_entries,
             cursor: None,
             has_more: false,
         })
     }
-    
+
     async fn delete(&self, path: &str) -> Result<(), StorageError> {
         let clean_path = Self::validate_path(path)?;
-        
+
         self.client
             .delete_file(&clean_path)
             .await
             .map_err(|e| StorageError::ServerError(e.to_string()))
     }
-    
+
     async fn exists(&self, path: &str) -> Result<bool, StorageError> {
         let clean_path = Self::validate_path(path)?;
-        
+
         self.client
             .exists(&clean_path)
             .await
             .map_err(|e| StorageError::ServerError(e.to_string()))
     }
-    
+
     fn clone(&self) -> Box<dyn S5Storage> {
         Box::new(EnhancedS5Backend {
             client: self.client.clone(),
@@ -797,7 +839,9 @@ impl S5Client {
             }
             S5Backend::EnhancedS5 { base_url } => {
                 // Use EnhancedS5 backend when configured
-                if let Ok(enhanced_client) = super::enhanced_s5_client::EnhancedS5Client::new_legacy(base_url.clone()) {
+                if let Ok(enhanced_client) =
+                    super::enhanced_s5_client::EnhancedS5Client::new_legacy(base_url.clone())
+                {
                     Ok(Box::new(EnhancedS5Backend::new(enhanced_client)))
                 } else {
                     // Fallback to mock if Enhanced S5 client creation fails
@@ -806,19 +850,21 @@ impl S5Client {
             }
         }
     }
-    
+
     pub async fn create_from_env() -> Result<Box<dyn S5Storage>, StorageError> {
         // Check for ENHANCED_S5_URL environment variable
         if let Ok(enhanced_url) = std::env::var("ENHANCED_S5_URL") {
             let config = S5StorageConfig {
-                backend: S5Backend::EnhancedS5 { base_url: enhanced_url },
+                backend: S5Backend::EnhancedS5 {
+                    base_url: enhanced_url,
+                },
                 api_key: None,
                 cache_ttl_seconds: 3600,
                 max_retries: 3,
             };
             return Self::create(config).await;
         }
-        
+
         // Default to mock backend
         let config = S5StorageConfig {
             backend: S5Backend::Mock,

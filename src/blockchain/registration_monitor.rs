@@ -1,17 +1,17 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use ethers::types::{H256, U256};
+use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep};
-use tracing::{info, warn, error, debug};
-use ethers::types::{H256, U256};
-use futures::future::BoxFuture;
+use tracing::{debug, error, info, warn};
 
 use crate::blockchain::multi_chain_registrar::{MultiChainRegistrar, RegistrationStatus};
-use crate::monitoring::metrics::{MetricsCollector, Gauge, Counter, Histogram};
-use crate::monitoring::alerting::{AlertManager, Alert, AlertLevel};
+use crate::monitoring::alerting::{Alert, AlertLevel, AlertManager};
+use crate::monitoring::metrics::{Counter, Gauge, Histogram, MetricsCollector};
 
 /// Configuration for the registration monitor
 #[derive(Debug, Clone)]
@@ -28,7 +28,7 @@ pub struct MonitorConfig {
 impl Default for MonitorConfig {
     fn default() -> Self {
         MonitorConfig {
-            check_interval: Duration::from_secs(300), // 5 minutes
+            check_interval: Duration::from_secs(300),      // 5 minutes
             warning_threshold: Duration::from_secs(86400), // 24 hours
             critical_threshold: Duration::from_secs(3600), // 1 hour
             auto_renewal: false,
@@ -66,9 +66,7 @@ pub struct HealthIssue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IssueType {
     NotRegistered,
-    ExpiringS
-
-,
+    ExpiringS,
     LowStake,
     LowBalance,
     RpcFailure,
@@ -100,7 +98,8 @@ pub struct RegistrationMonitor {
     monitor_handles: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     metrics_collector: Arc<MetricsCollector>,
     alert_manager: Option<Arc<AlertManager>>,
-    warning_callbacks: Arc<RwLock<Vec<Box<dyn Fn(WarningEvent) -> BoxFuture<'static, ()> + Send + Sync>>>>,
+    warning_callbacks:
+        Arc<RwLock<Vec<Box<dyn Fn(WarningEvent) -> BoxFuture<'static, ()> + Send + Sync>>>>,
     simulated_failures: Arc<RwLock<HashMap<u64, bool>>>,
     mock_expiries: Arc<RwLock<HashMap<u64, Instant>>>,
     renewal_history: Arc<RwLock<HashMap<u64, Vec<Instant>>>>,
@@ -109,21 +108,26 @@ pub struct RegistrationMonitor {
 
 impl RegistrationMonitor {
     /// Create a new registration monitor
-    pub async fn new(
-        registrar: Arc<MultiChainRegistrar>,
-        config: MonitorConfig,
-    ) -> Result<Self> {
+    pub async fn new(registrar: Arc<MultiChainRegistrar>, config: MonitorConfig) -> Result<Self> {
         let metrics_collector = Arc::new(MetricsCollector::new_default());
 
         // Register metrics
         metrics_collector.register_gauge_sync("registration_status", "Current registration status");
-        metrics_collector.register_counter_sync("health_check_count", "Number of health checks performed");
-        metrics_collector.register_histogram_sync("health_check_duration_ms", "Duration of health checks in milliseconds");
-        metrics_collector.register_counter_sync("expiry_warnings", "Number of expiry warnings issued");
+        metrics_collector
+            .register_counter_sync("health_check_count", "Number of health checks performed");
+        metrics_collector.register_histogram_sync(
+            "health_check_duration_ms",
+            "Duration of health checks in milliseconds",
+        );
+        metrics_collector
+            .register_counter_sync("expiry_warnings", "Number of expiry warnings issued");
         metrics_collector.register_counter_sync("renewal_attempts", "Number of renewal attempts");
         metrics_collector.register_counter_sync("recovery_attempts", "Number of recovery attempts");
         metrics_collector.register_gauge_sync("stake_balance_fab", "Current FAB stake balance");
-        metrics_collector.register_gauge_sync("time_until_expiry_seconds", "Time until registration expires");
+        metrics_collector.register_gauge_sync(
+            "time_until_expiry_seconds",
+            "Time until registration expires",
+        );
 
         Ok(RegistrationMonitor {
             registrar,
@@ -191,7 +195,9 @@ impl RegistrationMonitor {
                     &config,
                     &failures,
                     &mock_expiries,
-                ).await {
+                )
+                .await
+                {
                     Ok(h) => h,
                     Err(e) => {
                         error!("Health check failed for chain {}: {}", chain_id, e);
@@ -205,9 +211,13 @@ impl RegistrationMonitor {
                     let states = health_states.read().await;
                     if let Some(prev_health) = states.get(&chain_id) {
                         // Check if we had RPC failure before but not now
-                        let had_rpc_failure = prev_health.issues.iter()
+                        let had_rpc_failure = prev_health
+                            .issues
+                            .iter()
                             .any(|issue| issue.issue_type == IssueType::RpcFailure);
-                        let has_rpc_failure = health.issues.iter()
+                        let has_rpc_failure = health
+                            .issues
+                            .iter()
                             .any(|issue| issue.issue_type == IssueType::RpcFailure);
 
                         if had_rpc_failure && !has_rpc_failure {
@@ -239,17 +249,20 @@ impl RegistrationMonitor {
 
                 // Register the chain-specific gauge if not exists
                 let gauge_name = format!("registration_status_{}", chain_id);
-                metrics.register_gauge_sync(&gauge_name, &format!("Registration status for chain {}", chain_id));
+                metrics.register_gauge_sync(
+                    &gauge_name,
+                    &format!("Registration status for chain {}", chain_id),
+                );
                 metrics.set_gauge(&gauge_name, status_value);
 
                 // Check for warnings
                 if let Some(time_until_expiry) = health.time_until_expiry {
                     let expiry_gauge_name = format!("time_until_expiry_seconds_{}", chain_id);
-                    metrics.register_gauge_sync(&expiry_gauge_name, &format!("Time until expiry for chain {}", chain_id));
-                    metrics.set_gauge(
+                    metrics.register_gauge_sync(
                         &expiry_gauge_name,
-                        time_until_expiry.as_secs() as f64,
+                        &format!("Time until expiry for chain {}", chain_id),
                     );
+                    metrics.set_gauge(&expiry_gauge_name, time_until_expiry.as_secs() as f64);
 
                     let cfg = config.read().await;
 
@@ -291,7 +304,8 @@ impl RegistrationMonitor {
                             if is_mock {
                                 // For testing, just record the renewal attempt
                                 let mut history = renewal_history.write().await;
-                                history.entry(chain_id)
+                                history
+                                    .entry(chain_id)
                                     .or_insert_with(Vec::new)
                                     .push(Instant::now());
                                 metrics.increment_counter("renewal_attempts", 1.0);
@@ -303,10 +317,11 @@ impl RegistrationMonitor {
                                         metrics.increment_counter("renewal_attempts", 1.0);
 
                                         let mut history = renewal_history.write().await;
-                                        history.entry(chain_id)
+                                        history
+                                            .entry(chain_id)
                                             .or_insert_with(Vec::new)
                                             .push(Instant::now());
-                                    },
+                                    }
                                     Err(e) => {
                                         error!("Failed to renew registration: {}", e);
                                     }
@@ -353,7 +368,9 @@ impl RegistrationMonitor {
         }
 
         // Get registration status
-        let status = registrar.get_registration_status(chain_id).await
+        let status = registrar
+            .get_registration_status(chain_id)
+            .await
             .unwrap_or(RegistrationStatus::NotRegistered);
 
         // Check if registered
@@ -368,7 +385,7 @@ impl RegistrationMonitor {
                     resolved: false,
                 });
                 false
-            },
+            }
             RegistrationStatus::Failed { error } => {
                 issues.push(HealthIssue {
                     issue_type: IssueType::NotRegistered,
@@ -378,7 +395,7 @@ impl RegistrationMonitor {
                     resolved: false,
                 });
                 false
-            },
+            }
             RegistrationStatus::Pending { .. } => true, // Pending is considered healthy
         };
 
@@ -429,7 +446,8 @@ impl RegistrationMonitor {
     /// Get health status for a specific chain
     pub async fn get_health(&self, chain_id: u64) -> Result<RegistrationHealth> {
         let states = self.health_states.read().await;
-        states.get(&chain_id)
+        states
+            .get(&chain_id)
             .cloned()
             .ok_or_else(|| anyhow!("No health data for chain {}", chain_id))
     }
@@ -470,7 +488,11 @@ impl RegistrationMonitor {
     }
 
     /// Mock an expiring registration (for testing)
-    pub async fn mock_expiring_registration(&self, chain_id: u64, expires_in: Duration) -> Result<()> {
+    pub async fn mock_expiring_registration(
+        &self,
+        chain_id: u64,
+        expires_in: Duration,
+    ) -> Result<()> {
         let mut expiries = self.mock_expiries.write().await;
         expiries.insert(chain_id, Instant::now() + expires_in);
 
@@ -484,7 +506,10 @@ impl RegistrationMonitor {
     /// Check if a chain was renewed (for testing)
     pub async fn was_renewed(&self, chain_id: u64) -> Result<bool> {
         let history = self.renewal_history.read().await;
-        Ok(history.get(&chain_id).map(|h| !h.is_empty()).unwrap_or(false))
+        Ok(history
+            .get(&chain_id)
+            .map(|h| !h.is_empty())
+            .unwrap_or(false))
     }
 
     /// Simulate RPC failure (for testing)

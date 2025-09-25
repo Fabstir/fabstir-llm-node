@@ -1,11 +1,11 @@
+use reqwest::{Client, Error as ReqwestError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use reqwest::{Client, Error as ReqwestError};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::{wrappers::ReceiverStream, Stream};
-use std::time::Duration;
 
 pub type VectorId = String;
 
@@ -175,9 +175,9 @@ impl MockBackend {
     async fn insert_vector(&self, vector: VectorEntry) -> Result<InsertResult, VectorError> {
         let mut vectors = self.vectors.write().await;
         let mut stats = self.stats.write().await;
-        
+
         let vector_size = vector.vector.len() * 4 + vector.metadata.len() * 50; // Rough estimate
-        
+
         vectors.insert(vector.id.clone(), vector.clone());
         stats.total_vectors += 1;
         stats.recent_vectors += 1;
@@ -192,7 +192,8 @@ impl MockBackend {
 
     async fn get_vector(&self, id: &str) -> Result<VectorEntry, VectorError> {
         let vectors = self.vectors.read().await;
-        vectors.get(id)
+        vectors
+            .get(id)
             .cloned()
             .ok_or_else(|| VectorError::NotFound(id.to_string()))
     }
@@ -205,7 +206,7 @@ impl MockBackend {
             // Simple cosine similarity calculation
             let similarity = cosine_similarity(&query, &entry.vector);
             let distance = 1.0 - similarity;
-            
+
             results.push(SearchResult {
                 id: id.clone(),
                 distance,
@@ -224,7 +225,7 @@ impl MockBackend {
     async fn delete_vector(&self, id: &str) -> Result<(), VectorError> {
         let mut vectors = self.vectors.write().await;
         let mut stats = self.stats.write().await;
-        
+
         if let Some(vector) = vectors.remove(id) {
             let vector_size = vector.vector.len() * 4 + vector.metadata.len() * 50;
             stats.total_vectors -= 1;
@@ -295,9 +296,7 @@ impl VectorDBClient {
                     status: "ok".to_string(),
                     version: "1.0.0-mock".to_string(),
                     total_vectors: stats.total_vectors,
-                    indices: HashMap::from([
-                        ("mock".to_string(), stats.total_vectors),
-                    ]),
+                    indices: HashMap::from([("mock".to_string(), stats.total_vectors)]),
                 })
             }
             VectorBackend::Real { api_url } => {
@@ -312,16 +311,20 @@ impl VectorDBClient {
     pub async fn insert_vector(&self, vector: VectorEntry) -> Result<InsertResult, VectorError> {
         match &self.config.backend {
             VectorBackend::Mock => {
-                self.mock_backend.as_ref().unwrap().insert_vector(vector).await
+                self.mock_backend
+                    .as_ref()
+                    .unwrap()
+                    .insert_vector(vector)
+                    .await
             }
             VectorBackend::Real { api_url } => {
                 let url = format!("{}/vectors", api_url);
                 let mut request = self.http_client.post(&url);
-                
+
                 if let Some(api_key) = &self.config.api_key {
                     request = request.header("Authorization", format!("Bearer {}", api_key));
                 }
-                
+
                 let response = request.json(&vector).send().await?;
                 let result: InsertResult = response.json().await?;
                 Ok(result)
@@ -329,7 +332,10 @@ impl VectorDBClient {
         }
     }
 
-    pub async fn batch_insert(&self, vectors: Vec<VectorEntry>) -> Result<BatchInsertResult, VectorError> {
+    pub async fn batch_insert(
+        &self,
+        vectors: Vec<VectorEntry>,
+    ) -> Result<BatchInsertResult, VectorError> {
         match &self.config.backend {
             VectorBackend::Mock => {
                 let mut successful = 0;
@@ -337,7 +343,13 @@ impl VectorDBClient {
                 let mut errors = Vec::new();
 
                 for vector in vectors {
-                    match self.mock_backend.as_ref().unwrap().insert_vector(vector).await {
+                    match self
+                        .mock_backend
+                        .as_ref()
+                        .unwrap()
+                        .insert_vector(vector)
+                        .await
+                    {
                         Ok(_) => successful += 1,
                         Err(e) => {
                             failed += 1;
@@ -355,11 +367,11 @@ impl VectorDBClient {
             VectorBackend::Real { api_url } => {
                 let url = format!("{}/vectors/batch", api_url);
                 let mut request = self.http_client.post(&url);
-                
+
                 if let Some(api_key) = &self.config.api_key {
                     request = request.header("Authorization", format!("Bearer {}", api_key));
                 }
-                
+
                 let response = request.json(&vectors).send().await?;
                 let result: BatchInsertResult = response.json().await?;
                 Ok(result)
@@ -369,22 +381,20 @@ impl VectorDBClient {
 
     pub async fn get_vector(&self, id: &str) -> Result<VectorEntry, VectorError> {
         match &self.config.backend {
-            VectorBackend::Mock => {
-                self.mock_backend.as_ref().unwrap().get_vector(id).await
-            }
+            VectorBackend::Mock => self.mock_backend.as_ref().unwrap().get_vector(id).await,
             VectorBackend::Real { api_url } => {
                 let url = format!("{}/vectors/{}", api_url, id);
                 let mut request = self.http_client.get(&url);
-                
+
                 if let Some(api_key) = &self.config.api_key {
                     request = request.header("Authorization", format!("Bearer {}", api_key));
                 }
-                
+
                 let response = request.send().await?;
                 if response.status() == 404 {
                     return Err(VectorError::NotFound(id.to_string()));
                 }
-                
+
                 let vector: VectorEntry = response.json().await?;
                 Ok(vector)
             }
@@ -393,17 +403,15 @@ impl VectorDBClient {
 
     pub async fn delete_vector(&self, id: &str) -> Result<(), VectorError> {
         match &self.config.backend {
-            VectorBackend::Mock => {
-                self.mock_backend.as_ref().unwrap().delete_vector(id).await
-            }
+            VectorBackend::Mock => self.mock_backend.as_ref().unwrap().delete_vector(id).await,
             VectorBackend::Real { api_url } => {
                 let url = format!("{}/vectors/{}", api_url, id);
                 let mut request = self.http_client.delete(&url);
-                
+
                 if let Some(api_key) = &self.config.api_key {
                     request = request.header("Authorization", format!("Bearer {}", api_key));
                 }
-                
+
                 let _response = request.send().await?;
                 Ok(())
             }
@@ -412,20 +420,20 @@ impl VectorDBClient {
 
     pub async fn vector_exists(&self, id: &str) -> Result<bool, VectorError> {
         match &self.config.backend {
-            VectorBackend::Mock => {
-                self.mock_backend.as_ref().unwrap().vector_exists(id).await
-            }
-            VectorBackend::Real { .. } => {
-                match self.get_vector(id).await {
-                    Ok(_) => Ok(true),
-                    Err(VectorError::NotFound(_)) => Ok(false),
-                    Err(e) => Err(e),
-                }
-            }
+            VectorBackend::Mock => self.mock_backend.as_ref().unwrap().vector_exists(id).await,
+            VectorBackend::Real { .. } => match self.get_vector(id).await {
+                Ok(_) => Ok(true),
+                Err(VectorError::NotFound(_)) => Ok(false),
+                Err(e) => Err(e),
+            },
         }
     }
 
-    pub async fn search(&self, query_vector: Vec<f32>, k: usize) -> Result<Vec<SearchResult>, VectorError> {
+    pub async fn search(
+        &self,
+        query_vector: Vec<f32>,
+        k: usize,
+    ) -> Result<Vec<SearchResult>, VectorError> {
         let options = SearchOptions {
             k,
             ..Default::default()
@@ -433,29 +441,45 @@ impl VectorDBClient {
         self.search_with_options(query_vector, options).await
     }
 
-    pub async fn search_with_options(&self, query_vector: Vec<f32>, options: SearchOptions) -> Result<Vec<SearchResult>, VectorError> {
+    pub async fn search_with_options(
+        &self,
+        query_vector: Vec<f32>,
+        options: SearchOptions,
+    ) -> Result<Vec<SearchResult>, VectorError> {
         match &self.config.backend {
             VectorBackend::Mock => {
-                let mut results = self.mock_backend.as_ref().unwrap().search(query_vector, options.k).await?;
-                
+                let mut results = self
+                    .mock_backend
+                    .as_ref()
+                    .unwrap()
+                    .search(query_vector, options.k)
+                    .await?;
+
                 // Apply filters
                 if let Some(filter) = &options.filter {
                     results.retain(|result| {
                         filter.iter().all(|(key, filter_value)| {
                             match (result.metadata.get(key), filter_value) {
-                                (Some(value), FilterValue::String(filter_str)) => value == filter_str,
+                                (Some(value), FilterValue::String(filter_str)) => {
+                                    value == filter_str
+                                }
                                 (Some(value), FilterValue::Array(filter_array)) => {
                                     // For array filters, check if any array element matches
-                                    if let Ok(vec_tags) = serde_json::from_str::<Vec<String>>(value) {
-                                        filter_array.iter().any(|filter_tag| vec_tags.contains(filter_tag))
+                                    if let Ok(vec_tags) = serde_json::from_str::<Vec<String>>(value)
+                                    {
+                                        filter_array
+                                            .iter()
+                                            .any(|filter_tag| vec_tags.contains(filter_tag))
                                     } else {
                                         false
                                     }
                                 }
                                 (Some(value), FilterValue::Range { min, max }) => {
                                     if let Ok(num_value) = value.parse::<f64>() {
-                                        let min_check = min.map_or(true, |min_val| num_value >= min_val);
-                                        let max_check = max.map_or(true, |max_val| num_value <= max_val);
+                                        let min_check =
+                                            min.map_or(true, |min_val| num_value >= min_val);
+                                        let max_check =
+                                            max.map_or(true, |max_val| num_value <= max_val);
                                         min_check && max_check
                                     } else {
                                         false
@@ -477,7 +501,7 @@ impl VectorDBClient {
             VectorBackend::Real { api_url } => {
                 let url = format!("{}/search", api_url);
                 let mut request = self.http_client.post(&url);
-                
+
                 if let Some(api_key) = &self.config.api_key {
                     request = request.header("Authorization", format!("Bearer {}", api_key));
                 }
@@ -493,7 +517,7 @@ impl VectorDBClient {
                     vector: query_vector,
                     options,
                 };
-                
+
                 let response = request.json(&search_request).send().await?;
                 let results: Vec<SearchResult> = response.json().await?;
                 Ok(results)
@@ -503,17 +527,15 @@ impl VectorDBClient {
 
     pub async fn get_stats(&self) -> Result<VectorStats, VectorError> {
         match &self.config.backend {
-            VectorBackend::Mock => {
-                self.mock_backend.as_ref().unwrap().get_stats().await
-            }
+            VectorBackend::Mock => self.mock_backend.as_ref().unwrap().get_stats().await,
             VectorBackend::Real { api_url } => {
                 let url = format!("{}/stats", api_url);
                 let mut request = self.http_client.get(&url);
-                
+
                 if let Some(api_key) = &self.config.api_key {
                     request = request.header("Authorization", format!("Bearer {}", api_key));
                 }
-                
+
                 let response = request.send().await?;
                 let stats: VectorStats = response.json().await?;
                 Ok(stats)
@@ -521,7 +543,9 @@ impl VectorDBClient {
         }
     }
 
-    pub async fn subscribe_updates(&self) -> Result<impl Stream<Item = Result<UpdateEvent, VectorError>>, VectorError> {
+    pub async fn subscribe_updates(
+        &self,
+    ) -> Result<impl Stream<Item = Result<UpdateEvent, VectorError>>, VectorError> {
         let (tx, rx) = mpsc::channel(100);
 
         // For mock backend, simulate some updates
@@ -530,11 +554,13 @@ impl VectorDBClient {
                 tokio::spawn(async move {
                     // Just send a test event after a delay for mock purposes
                     // In real implementation, this would connect to a WebSocket or SSE stream
-                    let _ = tx.send(Ok(UpdateEvent {
-                        event_type: "vector_added".to_string(),
-                        vector_id: "mock_vector".to_string(),
-                        timestamp: chrono::Utc::now().timestamp() as u64,
-                    })).await;
+                    let _ = tx
+                        .send(Ok(UpdateEvent {
+                            event_type: "vector_added".to_string(),
+                            vector_id: "mock_vector".to_string(),
+                            timestamp: chrono::Utc::now().timestamp() as u64,
+                        }))
+                        .await;
                 });
             }
             VectorBackend::Real { .. } => {

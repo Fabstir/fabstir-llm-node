@@ -1,5 +1,5 @@
 use ethers::types::Address;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // Job assignment configuration
 #[derive(Debug, Clone)]

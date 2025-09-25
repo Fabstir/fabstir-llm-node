@@ -17,11 +17,19 @@ pub enum ApiError {
     NotFound(String),
     MethodNotAllowed(String),
     InvalidRequest(String),
-    ValidationError { field: String, message: String },
+    ValidationError {
+        field: String,
+        message: String,
+    },
     Unauthorized(String),
-    RateLimitExceeded { retry_after: u64 },
+    RateLimitExceeded {
+        retry_after: u64,
+    },
     ServiceUnavailable(String),
-    ModelNotFound { model: String, available_models: Vec<String> },
+    ModelNotFound {
+        model: String,
+        available_models: Vec<String>,
+    },
     InternalError(String),
     CircuitBreakerOpen,
     Timeout,
@@ -35,24 +43,52 @@ impl ApiError {
             ApiError::InvalidRequest(msg) => ("invalid_request", msg.clone(), None),
             ApiError::ValidationError { field, message } => {
                 let mut details = HashMap::new();
-                details.insert("field".to_string(), serde_json::Value::String(field.clone()));
+                details.insert(
+                    "field".to_string(),
+                    serde_json::Value::String(field.clone()),
+                );
                 ("validation_error", message.clone(), Some(details))
-            },
+            }
             ApiError::Unauthorized(msg) => ("unauthorized", msg.clone(), None),
             ApiError::RateLimitExceeded { retry_after } => {
                 let mut details = HashMap::new();
-                details.insert("retry_after".to_string(), serde_json::Value::Number((*retry_after).into()));
-                ("rate_limit_exceeded", "Rate limit exceeded".to_string(), Some(details))
-            },
+                details.insert(
+                    "retry_after".to_string(),
+                    serde_json::Value::Number((*retry_after).into()),
+                );
+                (
+                    "rate_limit_exceeded",
+                    "Rate limit exceeded".to_string(),
+                    Some(details),
+                )
+            }
             ApiError::ServiceUnavailable(msg) => ("service_unavailable", msg.clone(), None),
-            ApiError::ModelNotFound { model, available_models } => {
+            ApiError::ModelNotFound {
+                model,
+                available_models,
+            } => {
                 let mut details = HashMap::new();
-                details.insert("available_models".to_string(), 
-                    serde_json::Value::Array(available_models.iter().map(|m| serde_json::Value::String(m.clone())).collect()));
-                ("model_not_found", format!("Model '{}' not found", model), Some(details))
-            },
+                details.insert(
+                    "available_models".to_string(),
+                    serde_json::Value::Array(
+                        available_models
+                            .iter()
+                            .map(|m| serde_json::Value::String(m.clone()))
+                            .collect(),
+                    ),
+                );
+                (
+                    "model_not_found",
+                    format!("Model '{}' not found", model),
+                    Some(details),
+                )
+            }
             ApiError::InternalError(msg) => ("internal_error", msg.clone(), None),
-            ApiError::CircuitBreakerOpen => ("service_unavailable", "Circuit breaker is open".to_string(), None),
+            ApiError::CircuitBreakerOpen => (
+                "service_unavailable",
+                "Circuit breaker is open".to_string(),
+                None,
+            ),
             ApiError::Timeout => ("timeout", "Request timed out".to_string(), None),
         };
 
@@ -70,21 +106,39 @@ impl ApiError {
         request_id: Option<String>,
         chain_id: u64,
         chain_name: &str,
-        native_token: &str
+        native_token: &str,
     ) -> ErrorResponse {
         let mut response = self.to_response(request_id);
         response.chain_id = Some(chain_id);
 
         // Add chain context to details
         if let Some(ref mut details) = response.details {
-            details.insert("chain_id".to_string(), serde_json::Value::Number(chain_id.into()));
-            details.insert("chain_name".to_string(), serde_json::Value::String(chain_name.to_string()));
-            details.insert("native_token".to_string(), serde_json::Value::String(native_token.to_string()));
+            details.insert(
+                "chain_id".to_string(),
+                serde_json::Value::Number(chain_id.into()),
+            );
+            details.insert(
+                "chain_name".to_string(),
+                serde_json::Value::String(chain_name.to_string()),
+            );
+            details.insert(
+                "native_token".to_string(),
+                serde_json::Value::String(native_token.to_string()),
+            );
         } else {
             let mut details = HashMap::new();
-            details.insert("chain_id".to_string(), serde_json::Value::Number(chain_id.into()));
-            details.insert("chain_name".to_string(), serde_json::Value::String(chain_name.to_string()));
-            details.insert("native_token".to_string(), serde_json::Value::String(native_token.to_string()));
+            details.insert(
+                "chain_id".to_string(),
+                serde_json::Value::Number(chain_id.into()),
+            );
+            details.insert(
+                "chain_name".to_string(),
+                serde_json::Value::String(chain_name.to_string()),
+            );
+            details.insert(
+                "native_token".to_string(),
+                serde_json::Value::String(native_token.to_string()),
+            );
             response.details = Some(details);
         }
 
@@ -117,9 +171,15 @@ impl fmt::Display for ApiError {
             ApiError::NotFound(msg) => write!(f, "Not found: {}", msg),
             ApiError::MethodNotAllowed(msg) => write!(f, "Method not allowed: {}", msg),
             ApiError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
-            ApiError::ValidationError { field, message } => write!(f, "Validation error for {}: {}", field, message),
+            ApiError::ValidationError { field, message } => {
+                write!(f, "Validation error for {}: {}", field, message)
+            }
             ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
-            ApiError::RateLimitExceeded { retry_after } => write!(f, "Rate limit exceeded, retry after {} seconds", retry_after),
+            ApiError::RateLimitExceeded { retry_after } => write!(
+                f,
+                "Rate limit exceeded, retry after {} seconds",
+                retry_after
+            ),
             ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {}", msg),
             ApiError::ModelNotFound { model, .. } => write!(f, "Model '{}' not found", model),
             ApiError::InternalError(msg) => write!(f, "Internal error: {}", msg),

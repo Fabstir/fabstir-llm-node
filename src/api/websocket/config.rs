@@ -56,10 +56,10 @@ impl ProductionConfig {
     /// Load configuration from file
     pub fn from_file(path: &str) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        
+
         // Parse TOML with nested structure
         let toml_value: toml::Value = toml::from_str(&content)?;
-        
+
         // Extract websocket.production section
         let websocket = if let Some(ws_table) = toml_value.get("websocket") {
             if let Some(prod_table) = ws_table.get("production") {
@@ -71,26 +71,26 @@ impl ProductionConfig {
         } else {
             WebSocketConfig::default()
         };
-        
+
         Ok(Self { websocket })
     }
-    
+
     /// Load from environment variables
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        
+
         if let Ok(val) = std::env::var("WS_MAX_CONNECTIONS") {
             if let Ok(num) = val.parse() {
                 config.websocket.max_connections = num;
             }
         }
-        
+
         if let Ok(val) = std::env::var("WS_RATE_LIMIT") {
             if let Ok(num) = val.parse() {
                 config.websocket.rate_limit_per_minute = num;
             }
         }
-        
+
         config
     }
 }
@@ -110,35 +110,35 @@ impl ConfigManager {
             watcher_handle: Arc::new(RwLock::new(None)),
         }
     }
-    
+
     pub async fn load(&self) -> Result<()> {
         let config = ProductionConfig::from_file(&self.path)?;
         *self.config.write().await = config;
         Ok(())
     }
-    
+
     pub async fn get(&self) -> ProductionConfig {
         self.config.read().await.clone()
     }
-    
+
     pub async fn start_watching(&self) {
         let path = self.path.clone();
         let config = self.config.clone();
-        
+
         let handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                
+
                 // Try to reload config
                 if let Ok(new_config) = ProductionConfig::from_file(&path) {
                     *config.write().await = new_config;
                 }
             }
         });
-        
+
         *self.watcher_handle.write().await = Some(handle);
     }
-    
+
     pub async fn stop_watching(&self) {
         if let Some(handle) = self.watcher_handle.write().await.take() {
             handle.abort();

@@ -24,12 +24,24 @@ fn test_openapi_spec_valid() {
     assert!(content.contains("openapi:"), "Must specify OpenAPI version");
     assert!(content.contains("info:"), "Must have info section");
     assert!(content.contains("paths:"), "Must have paths section");
-    assert!(content.contains("components:"), "Must have components section");
+    assert!(
+        content.contains("components:"),
+        "Must have components section"
+    );
 
     // Check for chain-specific endpoints
-    assert!(content.contains("/v1/chains"), "Must document /v1/chains endpoint");
-    assert!(content.contains("/v1/chains/stats"), "Must document chain stats endpoint");
-    assert!(content.contains("chain_id"), "Must document chain_id parameter");
+    assert!(
+        content.contains("/v1/chains"),
+        "Must document /v1/chains endpoint"
+    );
+    assert!(
+        content.contains("/v1/chains/stats"),
+        "Must document chain stats endpoint"
+    );
+    assert!(
+        content.contains("chain_id"),
+        "Must document chain_id parameter"
+    );
 }
 
 #[test]
@@ -102,9 +114,18 @@ fn test_documentation_completeness() {
     }
 
     // Check for chain-specific documentation
-    assert!(api_content.contains("chain_id"), "Must document chain_id parameter");
-    assert!(api_content.contains("Base Sepolia"), "Must document Base Sepolia chain");
-    assert!(api_content.contains("native_token"), "Must document native token");
+    assert!(
+        api_content.contains("chain_id"),
+        "Must document chain_id parameter"
+    );
+    assert!(
+        api_content.contains("Base Sepolia"),
+        "Must document Base Sepolia chain"
+    );
+    assert!(
+        api_content.contains("native_token"),
+        "Must document native token"
+    );
 }
 
 #[test]
@@ -172,7 +193,10 @@ fn test_error_response_documentation() {
     });
 
     assert_eq!(error_example["chain_id"], 84532);
-    assert!(error_example["message"].as_str().unwrap().contains("Base Sepolia"));
+    assert!(error_example["message"]
+        .as_str()
+        .unwrap()
+        .contains("Base Sepolia"));
     assert_eq!(error_example["details"]["native_token"], "ETH");
 }
 
@@ -182,7 +206,8 @@ fn test_troubleshooting_documentation() {
 
     let troubleshooting_path = Path::new("docs/TROUBLESHOOTING.md");
     if troubleshooting_path.exists() {
-        let content = fs::read_to_string(troubleshooting_path).expect("Failed to read troubleshooting guide");
+        let content =
+            fs::read_to_string(troubleshooting_path).expect("Failed to read troubleshooting guide");
 
         // Check for common chain-related issues
         assert!(
