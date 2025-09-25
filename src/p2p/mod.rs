@@ -8,4 +8,4 @@ pub mod protocol_impl;
 pub use node::{Node, NodeEvent};
 pub use discovery::{DiscoveryEvent, DhtEvent};
 pub use protocols::{ProtocolEvent, InferenceRequest, InferenceResponse, JobClaim, JobResult};
-pub use crate::config::{NodeConfig, ConnectionLimits, NodeMetrics, DhtRoutingTableHealth, PeerInfo};
+pub use crate::p2p_config::{NodeConfig, ConnectionLimits, NodeMetrics, DhtRoutingTableHealth, PeerInfo};

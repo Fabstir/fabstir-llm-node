@@ -5,7 +5,7 @@ use libp2p::{
 };
 use std::time::Duration;
 
-use crate::config::NodeConfig;
+use crate::p2p_config::NodeConfig;
 use super::protocol_impl::FabstirCodec;
 
 #[derive(NetworkBehaviour)]

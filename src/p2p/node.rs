@@ -17,7 +17,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::config::{ConnectionLimits, DhtRoutingTableHealth, NodeConfig, NodeMetrics, PeerInfo};
+use crate::p2p_config::{ConnectionLimits, DhtRoutingTableHealth, NodeConfig, NodeMetrics, PeerInfo};
 use crate::p2p::{
     behaviour::NodeBehaviour,
     dht::DhtHandler,

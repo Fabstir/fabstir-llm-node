@@ -1,7 +1,7 @@
 use anyhow::Result;
 use fabstir_llm_node::{
     api::{ApiConfig, ApiServer},
-    config::NodeConfig,
+    p2p_config::NodeConfig,
     contracts::{checkpoint_manager::CheckpointManager, Web3Client, Web3Config},
     inference::{EngineConfig, LlmEngine, ModelConfig},
     p2p::{Node, NodeEvent},
