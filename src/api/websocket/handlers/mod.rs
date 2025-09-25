@@ -37,8 +37,8 @@ impl MessageRouter {
     /// Route a message to the appropriate handler
     pub async fn route_message(&self, message: WebSocketMessage) -> Result<WebSocketMessage> {
         match message {
-            WebSocketMessage::SessionInit { session_id, job_id, conversation_context } => {
-                match self.session_init_handler.handle_session_init(&session_id, job_id, conversation_context).await {
+            WebSocketMessage::SessionInit { session_id, job_id, conversation_context, chain_id } => {
+                match self.session_init_handler.handle_session_init_with_chain(&session_id, job_id, conversation_context, chain_id).await {
                     Ok(response) => Ok(WebSocketMessage::Response {
                         session_id: response.session_id,
                         content: format!("Session initialized with {} messages", response.message_count),

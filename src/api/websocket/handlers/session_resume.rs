@@ -73,6 +73,7 @@ impl SessionResumeHandler {
                 last_message_index
             },
             resumed_successfully: true,
+            chain_info: None, // Add chain info support later if needed
         })
     }
     
