@@ -216,29 +216,66 @@ impl SettlementManager {
         session_id: u64,
         chain_id: u64,
     ) -> Result<H256, SettlementError> {
+        info!("[SETTLEMENT] 🔄 Starting settlement process for session {} on chain {}", session_id, chain_id);
+
         let chain_config = self
             .chain_registry
             .get_chain(chain_id)
-            .ok_or(SettlementError::UnsupportedChain(chain_id))?;
+            .ok_or_else(|| {
+                error!("[SETTLEMENT] ❌ Chain {} not found in registry", chain_id);
+                SettlementError::UnsupportedChain(chain_id)
+            })?;
+
+        info!("[SETTLEMENT] ✓ Chain config found: {} ({})", chain_config.name, chain_config.native_token.symbol);
 
         let signer = self
             .get_signer(chain_id)
-            .ok_or(SettlementError::SignerNotFound(chain_id))?;
+            .ok_or_else(|| {
+                error!("[SETTLEMENT] ❌ No signer configured for chain {}", chain_id);
+                SettlementError::SignerNotFound(chain_id)
+            })?;
 
         info!(
-            "Settling session {} on chain {} ({}) using {}",
-            session_id, chain_config.name, chain_id, chain_config.native_token.symbol
+            "[SETTLEMENT] ✓ Signer ready for chain {} - host address: {}",
+            chain_id, self.host_address
         );
 
         // Get gas estimate
+        info!("[SETTLEMENT] 📊 Estimating gas for settlement transaction...");
         let gas_limit = self
             .gas_estimator
-            .estimate_with_buffer(chain_id, "settle_session")?;
+            .estimate_with_buffer(chain_id, "settle_session")
+            .map_err(|e| {
+                error!("[SETTLEMENT] ❌ Gas estimation failed: {:?}", e);
+                e
+            })?;
+
+        info!("[SETTLEMENT] ✓ Gas limit estimated: {}", gas_limit);
+
+        // Check host balance
+        if let Some(provider) = self.get_provider(chain_id) {
+            match provider.get_balance(self.host_address, None).await {
+                Ok(balance) => {
+                    info!("[SETTLEMENT] 💰 Host balance on chain {}: {}", chain_id, balance);
+                    if balance < gas_limit {
+                        warn!("[SETTLEMENT] ⚠️ Host balance may be insufficient for gas costs");
+                    }
+                }
+                Err(e) => {
+                    warn!("[SETTLEMENT] ⚠️ Failed to check host balance: {}", e);
+                }
+            }
+        }
 
         // Here we would build and send the actual transaction
         // For now, return a mock transaction hash
-        warn!("Settlement transaction not yet implemented - returning mock hash");
+        warn!("[SETTLEMENT] ⚠️ MOCK: Settlement transaction not yet implemented - returning mock hash");
+        warn!("[SETTLEMENT] ⚠️ TODO: Integrate with smart contract to trigger actual payment distribution");
+        warn!("[SETTLEMENT] ⚠️ Expected flow: Call contract.settleSession(session_id) -> Distribute payments");
 
-        Ok(H256::from_low_u64_be(session_id))
+        let mock_hash = H256::from_low_u64_be(session_id);
+        info!("[SETTLEMENT] 🎯 Mock settlement completed with hash: {:?}", mock_hash);
+
+        Ok(mock_hash)
     }
 }

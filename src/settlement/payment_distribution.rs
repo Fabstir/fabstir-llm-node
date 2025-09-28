@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentConfig {
@@ -111,28 +111,44 @@ impl PaymentDistributor {
         total_tokens: u64,
         price_per_token: U256,
     ) -> Result<PaymentSplit, SettlementError> {
+        info!("[PAYMENT-SPLIT] 📊 === CALCULATING PAYMENT DISTRIBUTION ===");
+        info!("[PAYMENT-SPLIT]   Chain: {}", chain_id);
+        info!("[PAYMENT-SPLIT]   Deposit amount: {}", deposit);
+        info!("[PAYMENT-SPLIT]   Tokens: {} used / {} total", tokens_used, total_tokens);
+        info!("[PAYMENT-SPLIT]   Price per token: {}", price_per_token);
+
         let chain_config = self
             .chain_registry
             .get_chain(chain_id)
-            .ok_or(SettlementError::UnsupportedChain(chain_id))?;
+            .ok_or_else(|| {
+                error!("[PAYMENT-SPLIT] ❌ Chain {} not found!", chain_id);
+                SettlementError::UnsupportedChain(chain_id)
+            })?;
 
         // Calculate total payment
         let total_payment = price_per_token * U256::from(tokens_used);
+        info!("[PAYMENT-SPLIT]   Total payment due: {}", total_payment);
 
         // Calculate splits
         let host_earnings = total_payment * self.config.host_earnings_percentage / 100;
         let treasury_fee = total_payment * self.config.treasury_fee_percentage / 100;
+        info!("[PAYMENT-SPLIT] 💵 Distribution:");
+        info!("[PAYMENT-SPLIT]   - Host earnings ({}%): {}", self.config.host_earnings_percentage, host_earnings);
+        info!("[PAYMENT-SPLIT]   - Treasury fee ({}%): {}", self.config.treasury_fee_percentage, treasury_fee);
 
         // Calculate refund
         let user_refund = if deposit > total_payment {
-            deposit - total_payment
+            let refund = deposit - total_payment;
+            info!("[PAYMENT-SPLIT]   - User refund: {} (unused deposit)", refund);
+            refund
         } else {
+            info!("[PAYMENT-SPLIT]   - User refund: 0 (full deposit used)");
             U256::zero()
         };
 
-        debug!(
-            "Payment split for chain {}: host={}, treasury={}, refund={}",
-            chain_id, host_earnings, treasury_fee, user_refund
+        info!(
+            "[PAYMENT-SPLIT] ✅ Payment split calculated for chain {}",
+            chain_id
         );
 
         Ok(PaymentSplit {
@@ -238,10 +254,19 @@ impl PaymentDistributor {
         max_tokens: u64,
         price_per_token: U256,
     ) -> Result<PaymentRecord> {
+        info!("[PAYMENT-DIST] 💰 === PROCESSING PAYMENT ===");
+        info!("[PAYMENT-DIST]   Chain ID: {}", chain_id);
+        info!("[PAYMENT-DIST]   Deposit: {}", deposit);
+        info!("[PAYMENT-DIST]   Tokens used: {} / {}", tokens_used, max_tokens);
+        info!("[PAYMENT-DIST]   Price per token: {}", price_per_token);
+
         let chain_config = self
             .chain_registry
             .get_chain(chain_id)
-            .ok_or_else(|| anyhow!("Unsupported chain: {}", chain_id))?;
+            .ok_or_else(|| {
+                error!("[PAYMENT-DIST] ❌ Chain {} not supported!", chain_id);
+                anyhow!("Unsupported chain: {}", chain_id)
+            })?;
 
         let token_symbol = match &token {
             PaymentToken::Native => chain_config.native_token.symbol.clone(),

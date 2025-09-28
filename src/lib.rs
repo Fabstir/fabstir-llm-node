@@ -25,6 +25,7 @@ pub mod settlement;
 pub mod storage;
 pub mod utils;
 pub mod vector;
+pub mod version;
 
 // Re-export main types from new modules
 pub use job_assignment_types::{AssignmentRecord, AssignmentStatus, JobClaimConfig};

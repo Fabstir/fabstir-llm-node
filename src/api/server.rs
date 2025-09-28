@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::handlers::{HealthResponse, ModelInfo, ModelsResponse};
 use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
@@ -222,8 +222,10 @@ impl ApiServer {
 
     pub async fn new(config: ApiConfig) -> Result<Self> {
         // Version stamp for deployment verification
-        eprintln!("🚀 API SERVER VERSION: v6-minimum-token-fix-2024-09-22-05:05");
-        eprintln!("✅ Token tracking enabled in non-streaming path");
+        eprintln!("🚀 API SERVER VERSION: {}", crate::version::VERSION);
+        eprintln!("✅ Multi-chain support enabled (Base Sepolia + opBNB Testnet)");
+        eprintln!("✅ Auto-settlement on disconnect enabled");
+        eprintln!("🔍 Enhanced diagnostic logging for settlement debugging");
 
         // Parse the address
         let addr: SocketAddr = config.listen_addr.parse()?;
@@ -430,26 +432,38 @@ impl ApiServer {
         };
 
         // Track tokens for checkpoint submission (non-streaming path)
+        eprintln!("\n🔍 INFERENCE REQUEST RECEIVED:");
+        eprintln!("   request.job_id: {:?}", request.job_id);
+        eprintln!("   request.session_id: {:?}", request.session_id);
+        eprintln!("   request.model: {}", request.model);
+        eprintln!("   tokens to be used: {}", response.tokens_used);
+
         let job_id = request.job_id.or_else(|| {
             request.session_id.as_ref().and_then(|sid| {
                 let parsed = sid.trim_end_matches('n').parse::<u64>().ok();
-                if parsed.is_some() {
-                    eprintln!("📋 Converted session_id {} to job_id {:?}", sid, parsed);
-                }
+                eprintln!("   Parsing session_id '{}' -> job_id: {:?}", sid, parsed);
                 parsed
             })
         });
 
+        eprintln!("   FINAL job_id for tracking: {:?}", job_id);
+
         if let Some(jid) = job_id {
             if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
                 eprintln!(
-                    "📊 Tracking {} tokens for job {} (non-streaming)",
-                    response.tokens_used, jid
+                    "📊 HTTP: Tracking {} tokens for job {} (session_id: {:?})",
+                    response.tokens_used, jid, request.session_id
                 );
-                let _ = cm
+                match cm
                     .track_tokens(jid, response.tokens_used as u64, request.session_id.clone())
-                    .await;
+                    .await {
+                    Ok(_) => eprintln!("   ✅ Token tracking successful for job {}", jid),
+                    Err(e) => eprintln!("   ❌ Token tracking failed for job {}: {}", jid, e),
+                }
             } else {
+                eprintln!("❌ CRITICAL: No checkpoint manager available!");
+                eprintln!("   HOST_PRIVATE_KEY probably not set");
+                eprintln!("   Tokens will NOT be tracked for settlement!");
                 eprintln!(
                     "📊 Using simple token tracker for job {} (no checkpoint manager)",
                     jid
@@ -813,6 +827,11 @@ async fn websocket_handler(
 async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
     use serde_json::json;
 
+    // Track session information for settlement
+    let mut session_id: Option<String> = None;
+    let mut job_id: Option<u64> = None;
+    let mut chain_id: Option<u64> = None;
+
     // Send connection acknowledgment
     let welcome_msg = json!({
         "type": "connected",
@@ -831,22 +850,127 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
             Ok(axum::extract::ws::Message::Text(text)) => {
                 // Parse WebSocket message
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if json_msg["type"] == "inference" {
+                    // Track session initialization
+                    if json_msg["type"] == "session_init" {
+                        // Handle session_id or sessionId
+                        session_id = json_msg["session_id"].as_str()
+                            .or_else(|| json_msg["sessionId"].as_str())
+                            .map(String::from);
+
+                        // Handle job_id (Rust) or jobId (SDK/contracts) as either string or number
+                        job_id = json_msg["job_id"].as_u64()
+                            .or_else(|| json_msg["job_id"].as_str()
+                                .and_then(|s| s.parse::<u64>().ok()))
+                            .or_else(|| json_msg["jobId"].as_u64())
+                            .or_else(|| json_msg["jobId"].as_str()
+                                .and_then(|s| s.parse::<u64>().ok()));
+
+                        // Handle chain_id or chainId
+                        chain_id = json_msg["chain_id"].as_u64()
+                            .or_else(|| json_msg["chainId"].as_u64());
+
+                        info!("🎯 WebSocket session_init received:");
+                        info!("   session_id: {:?}", session_id);
+                        info!("   job_id: {:?}", job_id);
+                        info!("   chain_id: {:?}", chain_id);
+
+                        info!("📝 WebSocket session initialized - session_id: {:?}, job_id: {:?}, chain_id: {:?}",
+                              session_id, job_id, chain_id);
+                        info!("🔍 Raw job_id value from message: {:?}", json_msg["job_id"]);
+
+                        // CRITICAL: Send response to session_init so SDK doesn't timeout!
+                        // Must echo back the 'id' field for request-response correlation
+                        let mut response = serde_json::json!({
+                            "type": "session_init_ack",
+                            "status": "success",
+                            "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string()),
+                            "job_id": job_id,
+                            "chain_id": chain_id,
+                            "message": "Session initialized successfully"
+                        });
+
+                        // Echo back the message ID if present (SDK uses this for request correlation)
+                        if let Some(msg_id) = json_msg.get("id") {
+                            response["id"] = msg_id.clone();
+                        }
+
+                        if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
+                            error!("Failed to send session_init response: {}", e);
+                        } else {
+                            info!("✅ Sent session_init_ack response to client");
+                        }
+                    }
+
+                    // Handle both "prompt" and "inference" messages
+                    if json_msg["type"] == "prompt" || json_msg["type"] == "inference" {
+                        // Extract message ID for response correlation
+                        let message_id = json_msg.get("id").cloned();
+
+                        // Extract job_id from messages if not already set
+                        if job_id.is_none() {
+                            // Try to get job_id (Rust) or jobId (SDK/contracts)
+                            job_id = json_msg["job_id"].as_u64()
+                                .or_else(|| json_msg["job_id"].as_str()
+                                    .and_then(|s| s.parse::<u64>().ok()))
+                                .or_else(|| json_msg["jobId"].as_u64())
+                                .or_else(|| json_msg["jobId"].as_str()
+                                    .and_then(|s| s.parse::<u64>().ok()));
+
+                            if job_id.is_some() {
+                                info!("📋 Got job_id from {} message: {:?}", json_msg["type"], job_id);
+                            }
+                        }
+
+                        // Log the message for debugging
+                        info!("💬 {} message received with job_id: {:?}, message_id: {:?}", json_msg["type"], job_id, message_id);
+
+                        // Build InferenceRequest from either prompt or inference message
+                        let request_value = if json_msg["type"] == "prompt" {
+                            // For prompt messages, use the nested request object if available
+                            if json_msg.get("request").is_some() {
+                                // SDK sends a nested request object with all parameters
+                                let mut req = json_msg["request"].clone();
+                                // Add job_id and session_id to the request
+                                if let Some(obj) = req.as_object_mut() {
+                                    obj.insert("job_id".to_string(), json!(job_id));
+                                    obj.insert("session_id".to_string(), json!(session_id));
+                                }
+                                req
+                            } else {
+                                // Fallback: build request from message fields
+                                json!({
+                                    "prompt": json_msg["prompt"].as_str().unwrap_or(""),
+                                    "job_id": job_id,
+                                    "session_id": session_id.clone(),
+                                    "max_tokens": json_msg["max_tokens"].as_u64().unwrap_or(100),
+                                    "temperature": json_msg["temperature"].as_f64().unwrap_or(0.7),
+                                    "stream": json_msg["stream"].as_bool().unwrap_or(true)
+                                })
+                            }
+                        } else {
+                            // For inference messages, use the nested request object
+                            json_msg["request"].clone()
+                        };
+
                         // Debug: Log the entire request
                         info!(
                             "🔍 WebSocket inference request received: {:?}",
-                            json_msg["request"]
+                            request_value
                         );
 
                         if let Ok(request) =
-                            serde_json::from_value::<InferenceRequest>(json_msg["request"].clone())
+                            serde_json::from_value::<InferenceRequest>(request_value)
                         {
                             // Log job_id for payment tracking visibility
-                            if let Some(job_id) = request.job_id {
+                            if let Some(req_job_id) = request.job_id {
                                 info!(
                                     "📋 Processing inference request for blockchain job_id: {}",
-                                    job_id
+                                    req_job_id
                                 );
+                                // Update tracked job_id if not already set
+                                if job_id.is_none() {
+                                    job_id = Some(req_job_id);
+                                }
                             } else {
                                 info!("⚠️  No job_id in WebSocket request");
                             }
@@ -857,12 +981,36 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 .await
                             {
                                 Ok(mut receiver) => {
+                                    let mut total_tokens = 0u64; // Track total tokens for this session
+
                                     while let Some(response) = receiver.recv().await {
-                                        let ws_msg = json!({
+                                        // CRITICAL FIX: Track tokens for checkpoint/settlement
+                                        if let Some(jid) = job_id {
+                                            if response.tokens > 0 {
+                                                total_tokens += response.tokens as u64;
+
+                                                // Track tokens with checkpoint manager
+                                                let cm = server.checkpoint_manager.read().await;
+                                                if let Some(checkpoint_manager) = cm.as_ref() {
+                                                    info!("📊 Tracking {} tokens for job {} in WebSocket session",
+                                                          response.tokens, jid);
+                                                    let _ = checkpoint_manager
+                                                        .track_tokens(jid, response.tokens as u64, session_id.clone())
+                                                        .await;
+                                                }
+                                            }
+                                        }
+
+                                        let mut ws_msg = json!({
                                             "type": "stream_chunk",
                                             "content": response.content,
                                             "tokens": response.tokens,
                                         });
+
+                                        // Include message ID if present for correlation
+                                        if let Some(ref msg_id) = message_id {
+                                            ws_msg["id"] = msg_id.clone();
+                                        }
 
                                         if socket
                                             .send(axum::extract::ws::Message::Text(
@@ -875,7 +1023,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         }
 
                                         if response.finish_reason.is_some() {
-                                            let end_msg = json!({"type": "stream_end"});
+                                            let mut end_msg = json!({"type": "stream_end"});
+
+                                            // Include message ID in end message too
+                                            if let Some(ref msg_id) = message_id {
+                                                end_msg["id"] = msg_id.clone();
+                                            }
+
                                             let _ = socket
                                                 .send(axum::extract::ws::Message::Text(
                                                     end_msg.to_string(),
@@ -884,12 +1038,24 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             break;
                                         }
                                     }
+
+                                    // Log total tokens tracked for this session
+                                    if total_tokens > 0 {
+                                        info!("📊 WebSocket session complete - Total tokens tracked for job {:?}: {}",
+                                              job_id, total_tokens);
+                                    }
                                 }
                                 Err(e) => {
-                                    let error_msg = json!({
+                                    let mut error_msg = json!({
                                         "type": "error",
                                         "error": e.to_string()
                                     });
+
+                                    // Include message ID in error message
+                                    if let Some(ref msg_id) = message_id {
+                                        error_msg["id"] = msg_id.clone();
+                                    }
+
                                     let _ = socket
                                         .send(axum::extract::ws::Message::Text(
                                             error_msg.to_string(),
@@ -910,9 +1076,60 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                     break;
                 }
             }
-            Ok(axum::extract::ws::Message::Close(_)) => break,
+            Ok(axum::extract::ws::Message::Close(frame)) => {
+                info!("📴 WebSocket closed by client - Close frame: {:?}", frame);
+                info!("🔍 Current tracked job_id: {:?}, session_id: {:?}", job_id, session_id);
+                break;
+            }
+            Err(e) => {
+                info!("⚠️ WebSocket error: {} - job_id: {:?}, session_id: {:?}", e, job_id, session_id);
+                break;
+            }
             _ => {}
         }
+    }
+
+    // CRITICAL FIX: Trigger settlement on disconnect
+    info!("🔚 WebSocket connection ended - Checking for settlement...");
+    info!("   Session ID: {:?}", session_id);
+    info!("   Job ID: {:?}", job_id);
+    info!("   Chain ID: {:?}", chain_id);
+
+    if let Some(jid) = job_id {
+        info!("\n🚨 WEBSOCKET DISCONNECTED - STARTING SETTLEMENT PROCESS");
+        info!("   Job ID from WebSocket session: {}", jid);
+        info!("   Session ID: {:?}", session_id);
+        info!("   Chain ID: {:?}", chain_id);
+
+        // Get checkpoint manager and complete the session job
+        let cm = server.checkpoint_manager.read().await;
+        info!("   Checkpoint manager available: {}", cm.is_some());
+
+        if let Some(checkpoint_manager) = cm.as_ref() {
+            info!("✅ Calling complete_session_job for job_id: {}", jid);
+
+            // Log the actual call
+            info!("🔄 Making blockchain call to complete job_id: {}", jid);
+
+            match checkpoint_manager.complete_session_job(jid).await {
+                Ok(tx_hash) => {
+                    info!("💰 Settlement completed successfully for job_id: {} with tx: {:?}",
+                          jid, tx_hash);
+                }
+                Err(e) => {
+                    error!("❌ Failed to complete session job {}: {}", jid, e);
+                    error!("   Error details: {:?}", e);
+                }
+            }
+        } else {
+            warn!("⚠️ No checkpoint manager available for settlement");
+            warn!("   This means the node is running without blockchain integration");
+            warn!("   Check if RPC_URL and HOST_PRIVATE_KEY are configured");
+        }
+    } else {
+        info!("ℹ️ WebSocket closed without job_id - no settlement needed");
+        info!("   Session might not have been properly initialized");
+        info!("   Ensure SDK sends job_id in session_init or prompt messages");
     }
 }
 

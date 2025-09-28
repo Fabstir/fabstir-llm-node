@@ -44,15 +44,23 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // Using addresses from .env.local.test and DEPLOYMENT_INFO.json
-                job_marketplace: Address::from_str("0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f")
-                    .expect("Invalid job marketplace address"),
-                node_registry: Address::from_str("0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218")
-                    .expect("Invalid node registry address"),
-                payment_escrow: Address::from_str("0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6")
-                    .expect("Invalid payment escrow address"),
-                host_earnings: Address::from_str("0x908962e8c6CE72610021586f85ebDE09aAc97776")
-                    .expect("Invalid host earnings address"),
+                // Load from environment variables
+                job_marketplace: std::env::var("CONTRACT_JOB_MARKETPLACE")
+                    .ok()
+                    .and_then(|addr| Address::from_str(&addr).ok())
+                    .expect("CONTRACT_JOB_MARKETPLACE environment variable must be set"),
+                node_registry: std::env::var("CONTRACT_NODE_REGISTRY")
+                    .ok()
+                    .and_then(|addr| Address::from_str(&addr).ok())
+                    .expect("CONTRACT_NODE_REGISTRY environment variable must be set"),
+                payment_escrow: std::env::var("CONTRACT_PAYMENT_ESCROW")
+                    .ok()
+                    .and_then(|addr| Address::from_str(&addr).ok())
+                    .expect("CONTRACT_PAYMENT_ESCROW environment variable must be set"),
+                host_earnings: std::env::var("CONTRACT_HOST_EARNINGS")
+                    .ok()
+                    .and_then(|addr| Address::from_str(&addr).ok())
+                    .expect("CONTRACT_HOST_EARNINGS environment variable must be set"),
             },
             confirmation_blocks: 3,
             gas_multiplier: std::env::var("BASE_GAS_MULTIPLIER")
@@ -234,30 +242,22 @@ impl ChainConfigLoader {
 
     fn load_base_sepolia_contracts(&self) -> ContractAddresses {
         ContractAddresses {
-            job_marketplace: std::env::var("BASE_SEPOLIA_JOB_MARKETPLACE")
+            job_marketplace: std::env::var("CONTRACT_JOB_MARKETPLACE")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
-                .unwrap_or_else(|| {
-                    Address::from_str("0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f").unwrap()
-                }),
-            node_registry: std::env::var("BASE_SEPOLIA_NODE_REGISTRY")
+                .expect("CONTRACT_JOB_MARKETPLACE environment variable must be set"),
+            node_registry: std::env::var("CONTRACT_NODE_REGISTRY")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
-                .unwrap_or_else(|| {
-                    Address::from_str("0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218").unwrap()
-                }),
-            payment_escrow: std::env::var("BASE_SEPOLIA_PAYMENT_ESCROW")
+                .expect("CONTRACT_NODE_REGISTRY environment variable must be set"),
+            payment_escrow: std::env::var("CONTRACT_PAYMENT_ESCROW")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
-                .unwrap_or_else(|| {
-                    Address::from_str("0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6").unwrap()
-                }),
-            host_earnings: std::env::var("BASE_SEPOLIA_HOST_EARNINGS")
+                .expect("CONTRACT_PAYMENT_ESCROW environment variable must be set"),
+            host_earnings: std::env::var("CONTRACT_HOST_EARNINGS")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
-                .unwrap_or_else(|| {
-                    Address::from_str("0x908962e8c6CE72610021586f85ebDE09aAc97776").unwrap()
-                }),
+                .expect("CONTRACT_HOST_EARNINGS environment variable must be set"),
         }
     }
 
