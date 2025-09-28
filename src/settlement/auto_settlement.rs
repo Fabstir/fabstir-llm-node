@@ -95,7 +95,7 @@ impl AutoSettlement {
 
     /// Handle WebSocket disconnect and trigger settlement
     pub async fn handle_disconnect(&self, session_id: &str) -> Result<(), SettlementError> {
-        info!("Handling disconnect for session: {}", session_id);
+        info!("[AUTO-SETTLEMENT] 🔌 Started handling disconnect for session: {}", session_id);
 
         self.log_event(
             session_id,
@@ -106,18 +106,24 @@ impl AutoSettlement {
         .await;
 
         // Get session info to determine chain
+        info!("[AUTO-SETTLEMENT] 🔍 Looking up session {} in store...", session_id);
         let store = self.session_store.read().await;
         let session = store
             .get_session(session_id)
             .await
-            .ok_or_else(|| SettlementError::SessionNotFound(session_id.parse().unwrap_or(0)))?;
+            .ok_or_else(|| {
+                error!("[AUTO-SETTLEMENT] ❌ Session {} not found in store!", session_id);
+                SettlementError::SessionNotFound(session_id.parse().unwrap_or(0))
+            })?;
 
         let chain_id = session.chain_id;
         let session_id_u64 = session_id.parse::<u64>().unwrap_or(0);
+        info!("[AUTO-SETTLEMENT] ✓ Session found - Chain ID: {}, Session ID (u64): {}", chain_id, session_id_u64);
 
         drop(store); // Release lock early
 
         // Queue settlement for processing
+        info!("[AUTO-SETTLEMENT] 📦 Creating settlement request...");
         let request = SettlementRequest {
             session_id: session_id_u64,
             chain_id,
@@ -126,13 +132,19 @@ impl AutoSettlement {
             status: SettlementStatus::Pending,
         };
 
+        info!("[AUTO-SETTLEMENT] 📤 Queueing settlement request...");
         self.settlement_manager
-            .queue_settlement(request)
+            .queue_settlement(request.clone())
             .await
-            .map_err(|e| SettlementError::SettlementFailed {
-                chain: chain_id,
-                reason: e.to_string(),
+            .map_err(|e| {
+                error!("[AUTO-SETTLEMENT] ❌ Failed to queue settlement: {}", e);
+                SettlementError::SettlementFailed {
+                    chain: chain_id,
+                    reason: e.to_string(),
+                }
             })?;
+
+        info!("[AUTO-SETTLEMENT] ✓ Settlement queued successfully: {:?}", request);
 
         self.log_event(
             session_id,
@@ -144,9 +156,16 @@ impl AutoSettlement {
 
         // Optionally trigger immediate processing
         if self.config.enable_auto_settlement {
-            self.trigger_settlement_processing().await?;
+            info!("[AUTO-SETTLEMENT] ⚡ Auto-settlement enabled, triggering immediate processing...");
+            match self.trigger_settlement_processing().await {
+                Ok(()) => info!("[AUTO-SETTLEMENT] ✓ Settlement processing triggered successfully"),
+                Err(e) => error!("[AUTO-SETTLEMENT] ❌ Failed to trigger settlement processing: {:?}", e),
+            }
+        } else {
+            warn!("[AUTO-SETTLEMENT] ⚠️ Auto-settlement is DISABLED - settlement will not be processed automatically!");
         }
 
+        info!("[AUTO-SETTLEMENT] ✅ Disconnect handling completed for session {}", session_id);
         Ok(())
     }
 

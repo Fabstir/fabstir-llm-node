@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
+use tracing::info;
 use ethers::providers::{Http, Provider};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -203,19 +204,27 @@ impl Web3Client {
             // Default addresses for Base Sepolia from .env.local.test
             addresses.insert(
                 "NodeRegistry".to_string(),
-                "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".parse()?,
+                std::env::var("CONTRACT_NODE_REGISTRY")
+                    .expect("CONTRACT_NODE_REGISTRY must be set")
+                    .parse()?,
             );
             addresses.insert(
                 "JobMarketplace".to_string(),
-                "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".parse()?,
+                std::env::var("CONTRACT_JOB_MARKETPLACE")
+                    .expect("CONTRACT_JOB_MARKETPLACE must be set")
+                    .parse()?,
             );
             addresses.insert(
                 "ProofSystem".to_string(),
-                "0x2ACcc60893872A499700908889B38C5420CBcFD1".parse()?,
+                std::env::var("CONTRACT_PROOF_SYSTEM")
+                    .expect("CONTRACT_PROOF_SYSTEM must be set")
+                    .parse()?,
             );
             addresses.insert(
                 "HostEarnings".to_string(),
-                "0x908962e8c6CE72610021586f85ebDE09aAc97776".parse()?,
+                std::env::var("CONTRACT_HOST_EARNINGS")
+                    .expect("CONTRACT_HOST_EARNINGS must be set")
+                    .parse()?,
             );
             addresses.insert(
                 "ModelRegistry".to_string(),
@@ -282,7 +291,20 @@ impl Web3Client {
             tx = tx.data(data);
         }
 
-        let pending_tx = wallet.send_transaction(tx, None).await?;
+        // CRITICAL: Use send_transaction which signs locally with SignerMiddleware
+        // This should use eth_sendRawTransaction, not eth_sendTransaction
+        let pending_tx = wallet.send_transaction(tx, None).await
+            .map_err(|e| {
+                // Check if it's the eth_sendTransaction error
+                if e.to_string().contains("eth_sendTransaction") ||
+                   e.to_string().contains("Unsupported method") {
+                    anyhow!("RPC doesn't support eth_sendTransaction. Ensure HOST_PRIVATE_KEY is set and wallet is properly configured. Error: {}", e)
+                } else {
+                    anyhow!("Transaction failed: {}", e)
+                }
+            })?;
+
+        info!("Transaction sent via eth_sendRawTransaction: {:?}", pending_tx.tx_hash());
         Ok(pending_tx.tx_hash())
     }
 

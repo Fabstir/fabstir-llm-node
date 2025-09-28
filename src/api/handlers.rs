@@ -14,12 +14,12 @@ pub struct InferenceRequest {
     pub request_id: Option<String>,
     #[serde(default)]
     pub conversation_context: Vec<Message>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<u64>, // Blockchain job ID for payment
+    #[serde(skip_serializing_if = "Option::is_none", alias = "jobId")]
+    pub job_id: Option<u64>, // Blockchain job ID for payment (accepts job_id or jobId)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<u64>, // Chain ID for multi-chain support
+    #[serde(skip_serializing_if = "Option::is_none", alias = "chainId")]
+    pub chain_id: Option<u64>, // Chain ID for multi-chain support (accepts chain_id or chainId)
 }
 
 fn default_temperature() -> f32 {

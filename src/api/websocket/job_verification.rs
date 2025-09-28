@@ -52,12 +52,14 @@ impl Default for JobVerificationConfig {
         let mut marketplace_addresses = HashMap::new();
         marketplace_addresses.insert(
             84532,
-            "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string(),
+            std::env::var("CONTRACT_JOB_MARKETPLACE")
+                .expect("CONTRACT_JOB_MARKETPLACE must be set"),
         ); // Base Sepolia
         marketplace_addresses.insert(
             5611,
-            "0x0000000000000000000000000000000000000000".to_string(),
-        ); // opBNB placeholder
+            std::env::var("CONTRACT_JOB_MARKETPLACE_OPBNB")
+                .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
+        ); // opBNB - use same address or default
 
         Self {
             enabled: true,

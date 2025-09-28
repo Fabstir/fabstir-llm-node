@@ -1,15 +1,18 @@
 # Fabstir LLM Node
 
-A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking and designed to integrate with llama.cpp for LLM inference and Base L2 for smart contract interactions.
+A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
 ## Features
 
 - **Pure P2P Architecture**: No relay servers or centralized components
+- **Multi-Chain Support**: Base Sepolia and opBNB Testnet (more chains coming)
 - **Direct Client Connections**: Clients connect directly to nodes via libp2p
 - **DHT Discovery**: Nodes announce capabilities using Kademlia DHT
 - **LLM Inference**: Integrated with llama-cpp-2 for GPU-accelerated inference
-- **Smart Contract Integration**: Base L2 blockchain for job state and payments
+- **Smart Contract Integration**: Multi-chain support for job state and payments
 - **Streaming Responses**: Real-time result streaming as generated
+- **Chain-Aware Settlement**: Automatic payment settlement on the correct chain
+- **WebSocket API**: Production-ready with compression, rate limiting, and authentication
 
 ## Prerequisites
 
@@ -56,17 +59,25 @@ CUDA_VISIBLE_DEVICES=0 cargo run --release
 The node can be configured through environment variables:
 
 ```bash
-# Set custom P2P port (default: 9000)
-P2P_PORT=9001 cargo run --release
+# Network Configuration
+P2P_PORT=9001                    # P2P listening port (default: 9000)
+API_PORT=8081                    # API server port (default: 8080)
 
-# Set custom API port (default: 8080)
-API_PORT=8081 cargo run --release
+# Multi-Chain Configuration
+CHAIN_ID=84532                   # Active chain ID (84532=Base Sepolia, 5611=opBNB Testnet)
+BASE_SEPOLIA_RPC=https://...    # Base Sepolia RPC endpoint
+OPBNB_TESTNET_RPC=https://...   # opBNB Testnet RPC endpoint
 
-# Specify model path
-MODEL_PATH=./models/custom-model.gguf cargo run --release
+# Model Configuration
+MODEL_PATH=./models/model.gguf   # Path to GGUF model file
+CUDA_VISIBLE_DEVICES=0           # GPU device selection
 
-# Enable debug logging
-RUST_LOG=debug cargo run --release
+# Storage Configuration
+ENHANCED_S5_URL=http://localhost:5522  # Enhanced S5.js endpoint
+VECTOR_DB_URL=http://localhost:8081    # Vector DB endpoint
+
+# Logging
+RUST_LOG=debug                   # Log level (trace, debug, info, warn, error)
 ```
 
 ### Running in Production
@@ -136,10 +147,18 @@ The node supports GGUF format models. Place your models in the `models/` directo
 
 Once the node is running, it exposes the following endpoints:
 
+### HTTP Endpoints
 - `GET /health` - Health check
-- `POST /inference` - Submit inference request
-- `WS /stream` - WebSocket for streaming responses
 - `GET /status` - Node status and capabilities
+- `GET /chains` - List supported chains
+- `GET /chain/{chain_id}` - Get specific chain configuration
+- `POST /inference` - Submit inference request (includes chain_id)
+
+### WebSocket Endpoints
+- `WS /ws` - WebSocket connection for streaming inference
+  - Session management with chain tracking
+  - Automatic settlement on disconnect
+  - Message compression support
 
 ## Troubleshooting
 
@@ -189,6 +208,11 @@ For issues and questions:
 - Join our Discord community
 - Check the [documentation](docs/) for detailed guides
 
-## Roadmap
+## Documentation
 
-See [IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for the detailed development roadmap and current progress.
+- [Multi-Chain Configuration Guide](docs/MULTI_CHAIN_CONFIG.md) - Configure multi-chain support
+- [Deployment Guide](docs/DEPLOYMENT.md) - Deploy nodes in production
+- [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
+- [API Documentation](docs/API.md) - Complete API reference
+- [Implementation Roadmap](docs/IMPLEMENTATION.md) - Development progress
+- [Multi-Chain Implementation](docs/IMPLEMENTATION-MULTI.md) - Multi-chain feature details

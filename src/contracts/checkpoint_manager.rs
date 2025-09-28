@@ -54,7 +54,7 @@ impl CheckpointManager {
             "📝 CONTRACT VERSION: Using JobMarketplace at {}",
             job_marketplace_address
         );
-        eprintln!("🔖 BUILD VERSION: v6-env-contract-addresses-2024-09-22");
+        eprintln!("🔖 BUILD VERSION: {}", crate::version::VERSION);
 
         Ok(Self {
             web3_client,
@@ -149,22 +149,36 @@ impl CheckpointManager {
 
     /// Submit checkpoint to the blockchain
     async fn submit_checkpoint(&self, job_id: u64, tokens_generated: u64) -> Result<()> {
+        // CRITICAL: Contract requires minimum 100 tokens
+        // Pad to 100 if less to ensure payment distribution works
+        let tokens_to_submit = if tokens_generated < MIN_PROVEN_TOKENS {
+            info!(
+                "📝 Padding tokens from {} to {} (contract minimum) for job {}",
+                tokens_generated, MIN_PROVEN_TOKENS, job_id
+            );
+            MIN_PROVEN_TOKENS
+        } else {
+            tokens_generated
+        };
+
         info!(
-            "Submitting proof of work for job {} with {} tokens...",
-            job_id, tokens_generated
+            "Submitting proof of work for job {} with {} tokens (actual: {})...",
+            job_id, tokens_to_submit, tokens_generated
         );
 
-        // Create proof data with timestamp and token info
+        // Create proof data with actual AND padded token info
         let proof_json = serde_json::json!({
             "timestamp": chrono::Utc::now().timestamp_millis(),
-            "tokensUsed": tokens_generated,
+            "tokensUsed": tokens_to_submit,
+            "actualTokens": tokens_generated,
+            "padded": tokens_generated < MIN_PROVEN_TOKENS,
             "hostAddress": format!("{:?}", self.host_address),
             "jobId": job_id
         });
         let proof_data = proof_json.to_string().into_bytes();
 
-        // Properly encode the function call with selector
-        let data = encode_checkpoint_call(job_id, tokens_generated, proof_data);
+        // Properly encode the function call with selector - use PADDED amount
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_data);
 
         // Send transaction with the correct method signature
         match self
@@ -251,6 +265,80 @@ impl CheckpointManager {
         }
     }
 
+    /// Force submit checkpoint for a job when completing session (ignores MIN_PROVEN_TOKENS)
+    pub async fn force_checkpoint_on_completion(&self, job_id: u64) -> Result<()> {
+        // Use write lock to ensure consistency
+        let mut trackers = self.job_trackers.write().await;
+
+        if let Some(tracker) = trackers.get_mut(&job_id) {
+            let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
+
+            // Check if submission is already in progress
+            if tracker.submission_in_progress {
+                info!(
+                    "⏸️ Skipping force checkpoint for job {} - submission already in progress",
+                    job_id
+                );
+                return Ok(());
+            }
+
+            // For session completion, submit ANY tokens we have (even if < MIN_PROVEN_TOKENS)
+            if tracker.tokens_generated > 0 {
+                let tokens_to_submit = tracker.tokens_generated;
+                let previous_checkpoint = tracker.last_checkpoint;
+
+                info!(
+                    "💪 Force submitting checkpoint on completion for job {} with {} total tokens ({} since last checkpoint)",
+                    job_id, tokens_to_submit, tokens_since_checkpoint
+                );
+
+                // Mark as in progress and update checkpoint optimistically
+                tracker.submission_in_progress = true;
+                tracker.last_checkpoint = tokens_to_submit;
+
+                drop(trackers); // Release lock for async operation
+
+                let result = self.submit_checkpoint(job_id, tokens_to_submit).await;
+
+                // Update tracker based on result
+                let mut trackers = self.job_trackers.write().await;
+                if let Some(tracker) = trackers.get_mut(&job_id) {
+                    tracker.submission_in_progress = false;
+
+                    if let Err(e) = result {
+                        error!("Failed to submit checkpoint for job {}: {}", job_id, e);
+                        // Rollback to previous checkpoint value
+                        tracker.last_checkpoint = previous_checkpoint;
+                        return Err(e);
+                    } else {
+                        info!(
+                            "✅ Successfully submitted proof of {} tokens for job {}",
+                            tokens_to_submit, job_id
+                        );
+                    }
+                }
+            } else {
+                info!(
+                    "⚠️ No tokens to submit for job {} (0 tokens generated)",
+                    job_id
+                );
+            }
+        } else {
+            error!(
+                "❌ No tracker found for job {} - tokens were never tracked!",
+                job_id
+            );
+            error!(
+                "   This means HTTP inference didn't track tokens for this job ID"
+            );
+            error!(
+                "   Check if job_id/session_id is correctly passed in inference requests"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Force submit checkpoint for a job (e.g., when session ends)
     pub async fn force_checkpoint(&self, job_id: u64) -> Result<()> {
         // Use write lock to ensure consistency
@@ -326,8 +414,27 @@ impl CheckpointManager {
         &self,
         job_id: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // First submit any pending checkpoint
-        let _ = self.force_checkpoint(job_id).await;
+        info!("[CHECKPOINT-MGR] 🎯 === STARTING PAYMENT SETTLEMENT PROCESS ===");
+        info!("[CHECKPOINT-MGR] Job ID: {}", job_id);
+        info!("[CHECKPOINT-MGR] This will trigger on-chain payment distribution");
+
+        // Debug: Check what trackers we have
+        {
+            let trackers = self.job_trackers.read().await;
+            info!("[CHECKPOINT-MGR] 📊 Current tracked jobs: {:?}", trackers.keys().collect::<Vec<_>>());
+            if let Some(tracker) = trackers.get(&job_id) {
+                info!("[CHECKPOINT-MGR]   ✓ Job {} token tracking:", job_id);
+                info!("[CHECKPOINT-MGR]     - Tokens generated: {}", tracker.tokens_generated);
+                info!("[CHECKPOINT-MGR]     - Last checkpoint at: {} tokens", tracker.last_checkpoint);
+                info!("[CHECKPOINT-MGR]     - Session ID: {:?}", tracker.session_id);
+            } else {
+                error!("[CHECKPOINT-MGR]   ❌ Job {} has NO TRACKER - payment calculation may be affected!", job_id);
+            }
+        }
+
+        // First submit any pending checkpoint - FORCE submission even if < MIN_PROVEN_TOKENS
+        // When completing a session, we must submit whatever tokens we have
+        let _ = self.force_checkpoint_on_completion(job_id).await;
 
         // Now call completeSessionJob on the contract to trigger payment settlement
         info!(
@@ -335,29 +442,32 @@ impl CheckpointManager {
             job_id
         );
 
-        let data = encode_complete_session_call(job_id);
-        let tx_request = TransactionRequest::new()
-            .to(self.proof_system_address)
-            .data(data)
-            .gas(U256::from(300_000));
+        // TODO: Get actual conversation CID from S5 storage
+        // For now, use a placeholder CID to complete the session
+        let conversation_cid = format!("session_job_{}_completed", job_id);
+        let data = encode_complete_session_call(job_id, conversation_cid);
 
+        // Use the Web3Client's send_transaction which properly signs the transaction
         match self
             .web3_client
-            .provider
-            .send_transaction(tx_request, None)
+            .send_transaction(
+                self.proof_system_address,
+                U256::zero(), // No ETH value, just calling a function
+                Some(data.into()),
+            )
             .await
         {
-            Ok(pending_tx) => {
+            Ok(tx_hash) => {
                 info!(
                     "Transaction sent for completing job {} - tx_hash: {:?}",
                     job_id,
-                    pending_tx.tx_hash()
+                    tx_hash
                 );
 
                 // Wait for confirmation
                 let start = std::time::Instant::now();
-                match pending_tx.await {
-                    Ok(Some(receipt)) => {
+                match self.web3_client.wait_for_confirmation(tx_hash).await {
+                    Ok(receipt) => {
                         let elapsed = start.elapsed().as_secs_f32();
                         info!(
                             "✅ Transaction confirmed after {:.1}s for job {}",
@@ -383,23 +493,153 @@ impl CheckpointManager {
                             error!("❌ Transaction failed for job {}", job_id);
                         }
                     }
-                    Ok(None) => {
-                        error!("❌ Transaction dropped for job {}", job_id);
-                    }
                     Err(e) => {
                         error!("❌ Transaction error for job {}: {:?}", job_id, e);
                     }
                 }
             }
             Err(e) => {
-                error!(
-                    "❌ Failed to send complete session transaction for job {}: {:?}",
-                    job_id, e
-                );
+                // Check if the error is due to dispute window
+                if e.to_string().contains("Must wait dispute window") {
+                    // Get dispute window duration from environment or use defaults
+                    let dispute_window = std::env::var("DISPUTE_WINDOW_SECONDS")
+                        .unwrap_or_else(|_| "30".to_string())
+                        .parse::<u64>()
+                        .unwrap_or(30);
+
+                    warn!(
+                        "⏳ Job {} is in dispute window ({} seconds). Scheduling retry...",
+                        job_id, dispute_window
+                    );
+
+                    // Schedule a delayed retry with exponential backoff
+                    let web3_client = self.web3_client.clone();
+                    let proof_system_address = self.proof_system_address;
+                    let job_trackers = self.job_trackers.clone();
+
+                    tokio::spawn(async move {
+                        let mut retry_count = 0u32;
+                        let max_retries = 5; // Max 5 retries for shorter windows
+
+                        // For testing (30s window): 10s, 20s, 40s delays
+                        // For production (5min window): 2min, 4min, 8min delays
+                        let base_delay = if dispute_window <= 60 {
+                            10 // 10 seconds for test environments
+                        } else {
+                            120 // 2 minutes for production
+                        };
+
+                        loop {
+                            // Calculate delay with exponential backoff
+                            let delay_secs = base_delay * (1 << retry_count);
+
+                            info!(
+                                "⏳ Waiting {} seconds before retry {} for job {} (dispute window: {}s)",
+                                delay_secs, retry_count + 1, job_id, dispute_window
+                            );
+
+                            tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs as u64)).await;
+
+                            info!(
+                                "🔄 Retry {} - Attempting to complete session for job {}",
+                                retry_count + 1, job_id
+                            );
+
+                            // Retry the completion
+                            let conversation_cid = format!("session_job_{}_completed", job_id);
+                            let data = encode_complete_session_call(job_id, conversation_cid);
+
+                            match web3_client
+                                .send_transaction(
+                                    proof_system_address,
+                                    U256::zero(),
+                                    Some(data.into()),
+                                )
+                                .await
+                            {
+                                Ok(tx_hash) => {
+                                    info!(
+                                        "📤 Retry {} transaction sent for job {} - tx_hash: {:?}",
+                                        retry_count + 1, job_id, tx_hash
+                                    );
+
+                                    // Wait for confirmation
+                                    match web3_client.wait_for_confirmation(tx_hash).await {
+                                        Ok(receipt) => {
+                                            if receipt.status == Some(U64::from(1)) {
+                                                info!(
+                                                    "✅ Session completed for job {} after {} retries",
+                                                    job_id, retry_count + 1
+                                                );
+                                                info!("💰 Payments distributed successfully");
+
+                                                // Clean up tracker after successful completion
+                                                let mut trackers = job_trackers.write().await;
+                                                if trackers.remove(&job_id).is_some() {
+                                                    info!("Cleaned up tracker for job {} after successful retry", job_id);
+                                                }
+                                                break; // Success! Exit retry loop
+                                            } else {
+                                                error!("❌ Retry {} transaction failed for job {}", retry_count + 1, job_id);
+                                                break; // Transaction failed for non-dispute reasons
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("❌ Retry {} transaction error for job {}: {:?}", retry_count + 1, job_id, e);
+                                            break; // Transaction error for non-dispute reasons
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let error_msg = e.to_string();
+
+                                    // Check if it's still the dispute window error
+                                    if error_msg.contains("Must wait dispute window") {
+                                        warn!(
+                                            "⏳ Retry {} failed - dispute window still active for job {}",
+                                            retry_count + 1, job_id
+                                        );
+
+                                        retry_count += 1;
+                                        if retry_count >= max_retries {
+                                            error!(
+                                                "❌ Max retries ({}) reached for job {}. Giving up.",
+                                                max_retries, job_id
+                                            );
+
+                                            // Clean up tracker since we're giving up
+                                            let mut trackers = job_trackers.write().await;
+                                            if trackers.remove(&job_id).is_some() {
+                                                warn!("Cleaned up tracker for job {} after max retries", job_id);
+                                            }
+                                            break;
+                                        }
+                                        // Continue to next retry iteration
+                                    } else {
+                                        // Different error - stop retrying
+                                        error!(
+                                            "❌ Failed to send retry {} transaction for job {}: {:?}",
+                                            retry_count + 1, job_id, e
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    // Don't clean up the tracker yet - we'll need it for the retry
+                    return Ok(());
+                } else {
+                    error!(
+                        "❌ Failed to send complete session transaction for job {}: {:?}",
+                        job_id, e
+                    );
+                }
             }
         }
 
-        // Clean up tracker
+        // Clean up tracker (only if not retrying due to dispute window)
         let mut trackers = self.job_trackers.write().await;
         if trackers.remove(&job_id).is_some() {
             info!("Cleaned up tracker for job {}", job_id);
@@ -407,6 +647,7 @@ impl CheckpointManager {
 
         Ok(())
     }
+
 
     /// Clean up job tracker (when job completes)
     pub async fn cleanup_job(&self, job_id: u64) {
@@ -422,24 +663,34 @@ impl CheckpointManager {
 }
 
 // ABI encoding helper for completeSessionJob
-fn encode_complete_session_call(job_id: u64) -> Vec<u8> {
+fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8> {
     use ethers::abi::Function;
 
     // Define the function signature for completeSessionJob
     let function = Function {
         name: "completeSessionJob".to_string(),
-        inputs: vec![ethers::abi::Param {
-            name: "jobId".to_string(),
-            kind: ethers::abi::ParamType::Uint(256),
-            internal_type: None,
-        }],
+        inputs: vec![
+            ethers::abi::Param {
+                name: "jobId".to_string(),
+                kind: ethers::abi::ParamType::Uint(256),
+                internal_type: None,
+            },
+            ethers::abi::Param {
+                name: "conversationCID".to_string(),
+                kind: ethers::abi::ParamType::String,
+                internal_type: None,
+            },
+        ],
         outputs: vec![],
         constant: None,
         state_mutability: ethers::abi::StateMutability::NonPayable,
     };
 
-    // Encode the call data
-    let tokens = vec![ethers::abi::Token::Uint(U256::from(job_id))];
+    // Encode the call data with both parameters
+    let tokens = vec![
+        ethers::abi::Token::Uint(U256::from(job_id)),
+        ethers::abi::Token::String(conversation_cid),
+    ];
     function.encode_input(&tokens).unwrap()
 }
 

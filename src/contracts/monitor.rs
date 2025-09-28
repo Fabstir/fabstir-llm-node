@@ -27,14 +27,9 @@ impl Default for JobMonitorConfig {
     fn default() -> Self {
         // Try to load from environment variables, fall back to defaults
         let marketplace_address = std::env::var("CONTRACT_JOB_MARKETPLACE")
-            .or_else(|_| std::env::var("JOB_MARKETPLACE"))
-            .unwrap_or_else(|_| "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f".to_string())
+            .expect("CONTRACT_JOB_MARKETPLACE environment variable must be set")
             .parse()
-            .unwrap_or_else(|_| {
-                "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f"
-                    .parse()
-                    .unwrap()
-            });
+            .expect("Invalid CONTRACT_JOB_MARKETPLACE address");
 
         let registry_address = std::env::var("CONTRACT_NODE_REGISTRY")
             .or_else(|_| std::env::var("NODE_REGISTRY"))
