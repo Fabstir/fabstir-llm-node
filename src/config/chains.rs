@@ -28,7 +28,7 @@ pub struct TokenInfo {
 pub struct ContractAddresses {
     pub job_marketplace: Address,
     pub node_registry: Address,
-    pub payment_escrow: Address,
+    pub payment_escrow: Option<Address>, // Deprecated, kept for compatibility
     pub host_earnings: Address,
 }
 
@@ -55,8 +55,7 @@ impl ChainConfig {
                     .expect("CONTRACT_NODE_REGISTRY environment variable must be set"),
                 payment_escrow: std::env::var("CONTRACT_PAYMENT_ESCROW")
                     .ok()
-                    .and_then(|addr| Address::from_str(&addr).ok())
-                    .expect("CONTRACT_PAYMENT_ESCROW environment variable must be set"),
+                    .and_then(|addr| Address::from_str(&addr).ok()), // Deprecated, optional
                 host_earnings: std::env::var("CONTRACT_HOST_EARNINGS")
                     .ok()
                     .and_then(|addr| Address::from_str(&addr).ok())
@@ -91,8 +90,7 @@ impl ChainConfig {
                     .unwrap_or_else(Address::zero),
                 payment_escrow: std::env::var("OPBNB_PAYMENT_ESCROW")
                     .ok()
-                    .and_then(|addr| Address::from_str(&addr).ok())
-                    .unwrap_or_else(Address::zero),
+                    .and_then(|addr| Address::from_str(&addr).ok()), // Deprecated, optional
                 host_earnings: std::env::var("OPBNB_HOST_EARNINGS")
                     .ok()
                     .and_then(|addr| Address::from_str(&addr).ok())
@@ -252,8 +250,7 @@ impl ChainConfigLoader {
                 .expect("CONTRACT_NODE_REGISTRY environment variable must be set"),
             payment_escrow: std::env::var("CONTRACT_PAYMENT_ESCROW")
                 .ok()
-                .and_then(|addr| Address::from_str(&addr).ok())
-                .expect("CONTRACT_PAYMENT_ESCROW environment variable must be set"),
+                .and_then(|addr| Address::from_str(&addr).ok()), // Deprecated, optional
             host_earnings: std::env::var("CONTRACT_HOST_EARNINGS")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
@@ -273,8 +270,7 @@ impl ChainConfigLoader {
                 .unwrap_or_else(Address::zero),
             payment_escrow: std::env::var("OPBNB_PAYMENT_ESCROW")
                 .ok()
-                .and_then(|addr| Address::from_str(&addr).ok())
-                .unwrap_or_else(Address::zero),
+                .and_then(|addr| Address::from_str(&addr).ok()), // Deprecated, optional
             host_earnings: std::env::var("OPBNB_HOST_EARNINGS")
                 .ok()
                 .and_then(|addr| Address::from_str(&addr).ok())
