@@ -1112,13 +1112,18 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
             info!("🔄 Making blockchain call to complete job_id: {}", jid);
 
             match checkpoint_manager.complete_session_job(jid).await {
-                Ok(tx_hash) => {
-                    info!("💰 Settlement completed successfully for job_id: {} with tx: {:?}",
-                          jid, tx_hash);
+                Ok(()) => {
+                    info!("💰 Settlement completed successfully for job_id: {}", jid);
                 }
                 Err(e) => {
                     error!("❌ Failed to complete session job {}: {}", jid, e);
                     error!("   Error details: {:?}", e);
+                    // Log specific error types for debugging
+                    if e.to_string().contains("replacement transaction underpriced") {
+                        error!("   This is a nonce conflict - transaction was sent too quickly after previous one");
+                    } else if e.to_string().contains("Must wait dispute window") {
+                        error!("   Job is in dispute window - will retry automatically");
+                    }
                 }
             }
         } else {

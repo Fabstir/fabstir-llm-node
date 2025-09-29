@@ -434,7 +434,19 @@ impl CheckpointManager {
 
         // First submit any pending checkpoint - FORCE submission even if < MIN_PROVEN_TOKENS
         // When completing a session, we must submit whatever tokens we have
-        let _ = self.force_checkpoint_on_completion(job_id).await;
+        let checkpoint_result = self.force_checkpoint_on_completion(job_id).await;
+
+        // If checkpoint submission failed, we should still try to complete the session
+        // but log the error
+        if let Err(e) = checkpoint_result {
+            error!("⚠️ Checkpoint submission failed for job {}: {}", job_id, e);
+            // Continue with session completion anyway
+        }
+
+        // IMPORTANT: Add a small delay to ensure the previous transaction is fully processed
+        // This prevents "replacement transaction underpriced" errors
+        info!("⏳ Waiting 2 seconds for previous transaction to be processed...");
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Now call completeSessionJob on the contract to trigger payment settlement
         info!(
@@ -453,7 +465,7 @@ impl CheckpointManager {
             .send_transaction(
                 self.proof_system_address,
                 U256::zero(), // No ETH value, just calling a function
-                Some(data.into()),
+                Some(data.clone().into()),
             )
             .await
         {
@@ -499,8 +511,55 @@ impl CheckpointManager {
                 }
             }
             Err(e) => {
+                // Check for nonce-related errors and retry with delay
+                if e.to_string().contains("replacement transaction underpriced")
+                    || e.to_string().contains("nonce too low") {
+                    error!("❌ Nonce conflict detected for job {}: {}", job_id, e);
+                    info!("⏳ Retrying with 5 second delay to resolve nonce conflict...");
+
+                    // Wait for previous transaction to clear
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+
+                    // Retry the transaction once
+                    match self
+                        .web3_client
+                        .send_transaction(
+                            self.proof_system_address,
+                            U256::zero(),
+                            Some(data.clone().into()),
+                        )
+                        .await
+                    {
+                        Ok(tx_hash) => {
+                            info!("🔄 Retry successful for job {} - tx_hash: {:?}", job_id, tx_hash);
+
+                            // Wait for confirmation
+                            match self.web3_client.wait_for_confirmation(tx_hash).await {
+                                Ok(receipt) => {
+                                    if receipt.status == Some(U64::from(1)) {
+                                        info!("✅ Session completed on retry for job {}", job_id);
+                                    } else {
+                                        error!("❌ Retry transaction failed for job {}", job_id);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("❌ Retry transaction error for job {}: {:?}", job_id, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("❌ Failed to send complete session transaction for job {}: {}", job_id, e);
+                            // Clean up tracker since we failed
+                            let mut trackers = self.job_trackers.write().await;
+                            if trackers.remove(&job_id).is_some() {
+                                info!("Cleaned up tracker for job {} after retry failure", job_id);
+                            }
+                            return Err(format!("Failed to complete session after retry: {}", e).into());
+                        }
+                    }
+                }
                 // Check if the error is due to dispute window
-                if e.to_string().contains("Must wait dispute window") {
+                else if e.to_string().contains("Must wait dispute window") {
                     // Get dispute window duration from environment or use defaults
                     let dispute_window = std::env::var("DISPUTE_WINDOW_SECONDS")
                         .unwrap_or_else(|_| "30".to_string())
@@ -553,7 +612,7 @@ impl CheckpointManager {
                                 .send_transaction(
                                     proof_system_address,
                                     U256::zero(),
-                                    Some(data.into()),
+                                    Some(data.clone().into()),
                                 )
                                 .await
                             {
@@ -635,6 +694,12 @@ impl CheckpointManager {
                         "❌ Failed to send complete session transaction for job {}: {:?}",
                         job_id, e
                     );
+                    // Clean up tracker and return error
+                    let mut trackers = self.job_trackers.write().await;
+                    if trackers.remove(&job_id).is_some() {
+                        info!("Cleaned up tracker for job {} after failure", job_id);
+                    }
+                    return Err(format!("Failed to send complete session transaction: {}", e).into());
                 }
             }
         }
