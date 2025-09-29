@@ -443,10 +443,9 @@ impl CheckpointManager {
             // Continue with session completion anyway
         }
 
-        // IMPORTANT: Add a small delay to ensure the previous transaction is fully processed
-        // This prevents "replacement transaction underpriced" errors
-        info!("⏳ Waiting 2 seconds for previous transaction to be processed...");
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // IMPORTANT: No need for a fixed delay here - the dispute window is enforced by the contract
+        // If we try to complete too early, the contract will reject with "Must wait dispute window"
+        // and our retry logic below will handle it properly
 
         // Now call completeSessionJob on the contract to trigger payment settlement
         info!(
