@@ -442,8 +442,15 @@ impl LlmEngine {
                 // This is a common pattern when models continue conversations
                 if output.len() > 20 {
                     // Check if we're starting a new question
-                    let last_30 = if output.len() > 30 {
-                        &output[output.len() - 30..]
+                    // Use char_indices to avoid panicking on UTF-8 boundaries
+                    let last_30 = if output.chars().count() > 30 {
+                        // Find the byte index 30 characters from the end
+                        let char_count = output.chars().count();
+                        let start_char_idx = char_count.saturating_sub(30);
+                        output.char_indices()
+                            .nth(start_char_idx)
+                            .map(|(byte_idx, _)| &output[byte_idx..])
+                            .unwrap_or(&output)
                     } else {
                         &output
                     };

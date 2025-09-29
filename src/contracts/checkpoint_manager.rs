@@ -21,6 +21,7 @@ pub struct JobTokenTracker {
     pub last_checkpoint: u64,
     pub session_id: Option<String>,
     pub submission_in_progress: bool,
+    pub last_proof_timestamp: Option<std::time::Instant>,  // Track when last proof was submitted
 }
 
 pub struct CheckpointManager {
@@ -86,6 +87,7 @@ impl CheckpointManager {
                 last_checkpoint: 0,
                 session_id,
                 submission_in_progress: false,
+                last_proof_timestamp: None,
             }
         });
 
@@ -148,18 +150,12 @@ impl CheckpointManager {
     }
 
     /// Submit checkpoint to the blockchain
+    /// IMPORTANT: tokens_generated should be the INCREMENTAL tokens since last checkpoint
     async fn submit_checkpoint(&self, job_id: u64, tokens_generated: u64) -> Result<()> {
-        // CRITICAL: Contract requires minimum 100 tokens
-        // Pad to 100 if less to ensure payment distribution works
-        let tokens_to_submit = if tokens_generated < MIN_PROVEN_TOKENS {
-            info!(
-                "📝 Padding tokens from {} to {} (contract minimum) for job {}",
-                tokens_generated, MIN_PROVEN_TOKENS, job_id
-            );
-            MIN_PROVEN_TOKENS
-        } else {
-            tokens_generated
-        };
+        // CRITICAL: For incremental checkpoints, submit the actual amount
+        // Do NOT pad incremental checkpoints - only the first checkpoint should be padded if needed
+        // The padding logic should be handled by the caller based on whether this is the first checkpoint
+        let tokens_to_submit = tokens_generated;
 
         info!(
             "Submitting proof of work for job {} with {} tokens (actual: {})...",
@@ -283,18 +279,29 @@ impl CheckpointManager {
             }
 
             // For session completion, submit ANY tokens we have (even if < MIN_PROVEN_TOKENS)
-            if tracker.tokens_generated > 0 {
-                let tokens_to_submit = tracker.tokens_generated;
+            if tokens_since_checkpoint > 0 {
+                let mut tokens_to_submit = tokens_since_checkpoint;  // Submit ONLY the delta, not total
                 let previous_checkpoint = tracker.last_checkpoint;
+                let is_first_checkpoint = previous_checkpoint == 0;
+
+                // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
+                // Subsequent checkpoints should submit the actual incremental amount
+                if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                    info!(
+                        "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
+                        tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                    );
+                    tokens_to_submit = MIN_PROVEN_TOKENS;
+                }
 
                 info!(
-                    "💪 Force submitting checkpoint on completion for job {} with {} total tokens ({} since last checkpoint)",
-                    job_id, tokens_to_submit, tokens_since_checkpoint
+                    "💪 Force submitting checkpoint on completion for job {} with {} new tokens (total: {})",
+                    job_id, tokens_to_submit, tracker.tokens_generated
                 );
 
-                // Mark as in progress and update checkpoint optimistically
+                // Mark as in progress and update checkpoint to reflect total tokens proven
                 tracker.submission_in_progress = true;
-                tracker.last_checkpoint = tokens_to_submit;
+                tracker.last_checkpoint = tracker.tokens_generated;  // Update to total after submission
 
                 drop(trackers); // Release lock for async operation
 
@@ -311,15 +318,17 @@ impl CheckpointManager {
                         tracker.last_checkpoint = previous_checkpoint;
                         return Err(e);
                     } else {
+                        // Update timestamp to track when this proof was submitted
+                        tracker.last_proof_timestamp = Some(std::time::Instant::now());
                         info!(
-                            "✅ Successfully submitted proof of {} tokens for job {}",
-                            tokens_to_submit, job_id
+                            "✅ Successfully submitted proof of {} new tokens for job {} (total now: {})",
+                            tokens_to_submit, job_id, tracker.tokens_generated
                         );
                     }
                 }
             } else {
                 info!(
-                    "⚠️ No tokens to submit for job {} (0 tokens generated)",
+                    "⚠️ No new tokens to submit for job {} (0 tokens since last checkpoint)",
                     job_id
                 );
             }
@@ -368,17 +377,28 @@ impl CheckpointManager {
             }
 
             // We have enough tokens to submit
-            let tokens_to_submit = tracker.tokens_generated;
+            let mut tokens_to_submit = tokens_since_checkpoint;  // Submit ONLY the delta, not total
             let previous_checkpoint = tracker.last_checkpoint;
+            let is_first_checkpoint = previous_checkpoint == 0;
+
+            // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
+            // This should rarely happen since we only submit when tokens_since_checkpoint >= MIN_PROVEN_TOKENS
+            if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                info!(
+                    "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
+                    tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                );
+                tokens_to_submit = MIN_PROVEN_TOKENS;
+            }
 
             info!(
-                "Force submitting checkpoint for job {} with {} total tokens ({} since last checkpoint)",
-                job_id, tokens_to_submit, tokens_since_checkpoint
+                "Force submitting checkpoint for job {} with {} new tokens (total: {})",
+                job_id, tokens_to_submit, tracker.tokens_generated
             );
 
-            // Mark as in progress and update checkpoint optimistically
+            // Mark as in progress and update checkpoint to reflect total tokens proven
             tracker.submission_in_progress = true;
-            tracker.last_checkpoint = tokens_to_submit;
+            tracker.last_checkpoint = tracker.tokens_generated;  // Update to total after submission
 
             drop(trackers); // Release lock for async operation
 
@@ -393,6 +413,9 @@ impl CheckpointManager {
                     // Rollback on error
                     tracker.last_checkpoint = previous_checkpoint;
                     return Err(e);
+                } else {
+                    // Update timestamp to track when this proof was submitted
+                    tracker.last_proof_timestamp = Some(std::time::Instant::now());
                 }
             }
         }
@@ -443,9 +466,45 @@ impl CheckpointManager {
             // Continue with session completion anyway
         }
 
-        // IMPORTANT: No need for a fixed delay here - the dispute window is enforced by the contract
-        // If we try to complete too early, the contract will reject with "Must wait dispute window"
-        // and our retry logic below will handle it properly
+        // IMPORTANT: Check if we need to wait for dispute window before attempting completion
+        // Get dispute window duration from environment
+        let dispute_window_secs = std::env::var("DISPUTE_WINDOW_SECONDS")
+            .unwrap_or_else(|_| "30".to_string())
+            .parse::<u64>()
+            .unwrap_or(30);
+
+        // Check if we have a recent proof submission
+        let trackers = self.job_trackers.read().await;
+        if let Some(tracker) = trackers.get(&job_id) {
+            if let Some(last_proof_time) = tracker.last_proof_timestamp {
+                let elapsed = last_proof_time.elapsed().as_secs();
+                if elapsed < dispute_window_secs {
+                    let wait_time = dispute_window_secs - elapsed;
+                    info!(
+                        "⏳ Job {} in dispute window. Last proof submitted {}s ago. Waiting {}s before completion...",
+                        job_id, elapsed, wait_time
+                    );
+                    info!(
+                        "   Dispute window: {}s, Elapsed: {}s, Remaining: {}s",
+                        dispute_window_secs, elapsed, wait_time
+                    );
+                    drop(trackers); // Release lock before sleeping
+                    tokio::time::sleep(Duration::from_secs(wait_time)).await;
+                    info!("✅ Dispute window elapsed for job {}. Proceeding with completion.", job_id);
+                } else {
+                    info!(
+                        "✅ Job {} dispute window already elapsed ({}s > {}s). Proceeding immediately.",
+                        job_id, elapsed, dispute_window_secs
+                    );
+                    drop(trackers);
+                }
+            } else {
+                info!("ℹ️ No recent proof timestamp for job {}. Proceeding with completion.", job_id);
+                drop(trackers);
+            }
+        } else {
+            drop(trackers);
+        }
 
         // Now call completeSessionJob on the contract to trigger payment settlement
         info!(
