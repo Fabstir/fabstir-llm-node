@@ -293,7 +293,7 @@ GET /v1/chains
       "native_token": "ETH",
       "rpc_url": "https://sepolia.base.org",
       "contracts": {
-        "job_marketplace": "0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f",
+        "job_marketplace": "0xdEa1B47872C27458Bb7331Ade99099761C4944Dc",
         "node_registry": "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218",
         "proof_system": "0x2ACcc60893872A499700908889B38C5420CBcFD1",
         "host_earnings": "0x908962e8c6CE72610021586f85ebDE09aAc97776",
@@ -842,7 +842,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 **Requirements**:
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
-- JobMarketplace: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
+- JobMarketplace: 0xdEa1B47872C27458Bb7331Ade99099761C4944Dc
 
 ### Proof Configuration
 
