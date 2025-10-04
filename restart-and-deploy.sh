@@ -36,7 +36,7 @@ docker run -d \
   -e P2P_PORT=9011 \
   -e API_PORT=8083 \
   -e MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf \
-  -e HOST_PRIVATE_KEY="${TEST_HOST_2_PRIVATE_KEY}" \
+  -e HOST_PRIVATE_KEY="${TEST_USER_2_PRIVATE_KEY}" \
   -e RPC_URL="https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR" \
   -e CONTRACT_JOB_MARKETPLACE="${CONTRACT_JOB_MARKETPLACE}" \
   -e CONTRACT_HOST_EARNINGS="${CONTRACT_HOST_EARNINGS}" \
