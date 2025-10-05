@@ -107,18 +107,29 @@ impl CheckpointManager {
                 "🚨 TRIGGERING CHECKPOINT for job {} with {} tokens!",
                 job_id, tracker.tokens_generated
             );
-            let tokens_to_submit = tracker.tokens_generated;
+            // CRITICAL FIX: Submit only the DELTA (tokens since last checkpoint), not cumulative total
+            let mut tokens_to_submit = tokens_since_checkpoint;
             let previous_checkpoint = tracker.last_checkpoint; // Save for rollback
+            let is_first_checkpoint = previous_checkpoint == 0;
+
+            // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
+            if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                info!(
+                    "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
+                    tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                );
+                tokens_to_submit = MIN_PROVEN_TOKENS;
+            }
 
             // Mark submission as in progress to prevent race conditions
             tracker.submission_in_progress = true;
-            // Optimistically update the checkpoint
-            tracker.last_checkpoint = tokens_to_submit;
+            // Optimistically update the checkpoint to reflect cumulative tokens proven
+            tracker.last_checkpoint = tracker.tokens_generated;
 
             drop(trackers); // Release lock before async operation
 
             info!(
-                "Threshold reached for job {} - submitting checkpoint with {} tokens",
+                "Threshold reached for job {} - submitting checkpoint with {} tokens (delta since last checkpoint)",
                 job_id, tokens_to_submit
             );
 
@@ -136,6 +147,13 @@ impl CheckpointManager {
                     warn!(
                         "Rolled back checkpoint for job {} to {} tokens (will retry on next token)",
                         job_id, previous_checkpoint
+                    );
+                } else {
+                    // Update timestamp to track when this proof was submitted (for dispute window)
+                    tracker.last_proof_timestamp = Some(std::time::Instant::now());
+                    info!(
+                        "✅ Checkpoint submitted successfully for job {} - dispute window starts now",
+                        job_id
                     );
                 }
             }
@@ -285,13 +303,25 @@ impl CheckpointManager {
                 let is_first_checkpoint = previous_checkpoint == 0;
 
                 // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-                // Subsequent checkpoints should submit the actual incremental amount
                 if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
                     info!(
                         "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
                         tokens_to_submit, MIN_PROVEN_TOKENS, job_id
                     );
                     tokens_to_submit = MIN_PROVEN_TOKENS;
+                } else if !is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                    // Not first checkpoint and below minimum - contract will reject this
+                    warn!(
+                        "⚠️ Skipping final checkpoint for job {} - only {} tokens remaining (below minimum {})",
+                        job_id, tokens_to_submit, MIN_PROVEN_TOKENS
+                    );
+                    warn!(
+                        "   Total tracked: {} tokens, Last proven: {} tokens, Lost: {} tokens",
+                        tracker.tokens_generated, previous_checkpoint, tokens_to_submit
+                    );
+                    warn!("   These {} tokens will NOT be charged to the user", tokens_to_submit);
+                    drop(trackers);
+                    return Ok(());
                 }
 
                 info!(
