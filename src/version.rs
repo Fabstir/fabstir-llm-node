@@ -1,10 +1,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v7.0.25-incremental-checkpoint-fix-2025-09-29";
+pub const VERSION: &str = "v7.0.27-checkpoint-overcharge-fix-2025-10-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "7.0.25";
+pub const VERSION_NUMBER: &str = "7.0.27";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 7;
@@ -13,10 +13,10 @@ pub const VERSION_MAJOR: u32 = 7;
 pub const VERSION_MINOR: u32 = 0;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 25;
+pub const VERSION_PATCH: u32 = 27;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-09-29";
+pub const BUILD_DATE: &str = "2025-10-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 7);
-        assert_eq!(VERSION_PATCH, 25);
+        assert_eq!(VERSION_PATCH, 27);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("7.0.25"));
-        assert!(version.contains("2025-09-29"));
+        assert!(version.contains("7.0.27"));
+        assert!(version.contains("2025-10-05"));
     }
 }
