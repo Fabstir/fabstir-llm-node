@@ -2,25 +2,29 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (January 24, 2025 - Multi-Chain Update)
+## Current Deployed Contracts (January 28, 2025 - Host-Controlled Pricing)
 
 ### JobMarketplaceWithModels
-- **Address**: 0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f ✅ NEW
-- **Previous**: 0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944
-- **Network**: Base Sepolia
-- **Status**: ✅ MULTI-CHAIN SUPPORT - DEPOSIT/WITHDRAWAL ENABLED
+- **Address**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3 ✅ NEW
+- **Previous**: 0xdEa1B47872C27458Bb7331Ade99099761C4944Dc
+- **Network**: Base Sepolia (Block: 32,051,983)
+- **Status**: ✅ HOST-CONTROLLED PRICING ENABLED
 - **Configuration**:
   - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
   - Authorized in HostEarnings: ✅ CONFIRMED
+  - NodeRegistry: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7 (7-field struct)
 - **Key Features**:
-  - 🆕 Wallet-agnostic deposit/withdrawal functions (depositNative, withdrawNative)
-  - 🆕 createSessionFromDeposit for pre-funded session creation
-  - 🆕 Anyone-can-complete pattern for gasless session ending
-  - 🆕 ChainConfig support for multi-chain deployment (ETH on Base, BNB on opBNB)
-  - 🆕 Enhanced event indexing for better filtering
-  - 🆕 depositor field tracks who paid (EOA or Smart Account)
-  - FIXED: Properly calls creditEarnings() for host balance tracking
-  - Compatible with NodeRegistryWithModels 6-field struct
+  - 🆕 **HOST-CONTROLLED PRICING**: Contract enforces client price >= host minimum
+  - 🆕 **Price Validation**: All session creation functions validate pricing (100-100,000 range)
+  - 🆕 **Query Pricing**: Get host pricing before creating sessions
+  - 🆕 Works with NodeRegistryWithModels 7-field struct (includes minPricePerToken)
+  - Wallet-agnostic deposit/withdrawal functions (depositNative, withdrawNative)
+  - createSessionFromDeposit for pre-funded session creation
+  - Anyone-can-complete pattern for gasless session ending
+  - ChainConfig support for multi-chain deployment (ETH on Base, BNB on opBNB)
+  - Enhanced event indexing for better filtering
+  - depositor field tracks who paid (EOA or Smart Account)
+  - Properly calls creditEarnings() for host balance tracking
   - Validates hosts have supported models
   - User refunds fixed for session jobs
   - Treasury fee accumulation for batch withdrawals (90% host / 10% treasury)
@@ -48,12 +52,18 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - TinyVicuna-1B-32k (CohereForAI/TinyVicuna-1B-32k-GGUF)
   - TinyLlama-1.1B Chat (TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
 
-### NodeRegistryWithModels (DEPLOYED)
-- **Address**: 0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
-- **Network**: Base Sepolia
-- **Status**: ✅ DEPLOYED AND READY
+### NodeRegistryWithModels
+- **Address**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7 ✅ NEW
+- **Previous**: 0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
+- **Network**: Base Sepolia (Block: 32,051,950)
+- **Status**: ✅ HOST-CONTROLLED PRICING ENABLED
 - **Stake Required**: 1000 FAB tokens
 - **Key Features**:
+  - 🆕 **Host-Controlled Pricing**: Hosts set minPricePerToken (100-100,000 range = 0.0001 to 0.1 USDC per token)
+  - 🆕 **Dynamic Pricing Updates**: Hosts can call updatePricing() to change prices
+  - 🆕 **Price Discovery**: Clients call getNodePricing(host) to query pricing
+  - 🆕 **7-Field Node Struct**: Added minPricePerToken field (getNodeFullInfo returns 7 values)
+  - 🆕 **PricingUpdated Event**: Track pricing changes on-chain
   - Integrates with ModelRegistry for approved models only
   - Structured JSON metadata format
   - Tracks which hosts support which models
@@ -79,7 +89,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 - **Address**: 0x908962e8c6CE72610021586f85ebDE09aAc97776
 - **Network**: Base Sepolia
 - **Purpose**: Tracks accumulated earnings for hosts with batch withdrawal support
-- **Authorized Marketplace**: 0x001A47Bb8C6CaD9995639b8776AB5816Ab9Ac4E0
+- **Authorized Marketplace**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3 ✅ UPDATED
 
 ## Model Registry Usage (NEW)
 
@@ -112,9 +122,9 @@ console.log(`Model: ${model.huggingfaceRepo}/${model.fileName}`);
 console.log(`SHA256: ${model.sha256Hash}`);
 console.log(`Active: ${model.active}`);
 
-// For hosts - register with approved models only
+// For hosts - register with approved models AND pricing
 const nodeRegistry = new ethers.Contract(
-  '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218',  // NodeRegistryWithModels
+  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',  // NodeRegistryWithModels - NEW with pricing
   NodeRegistryABI,
   signer
 );
@@ -125,11 +135,107 @@ const metadata = JSON.stringify({
   location: "us-east"
 });
 
+const minPricePerToken = 2000; // 0.002 USDC per token (range: 100-100,000)
+
 await nodeRegistry.registerNode(
   metadata,
   "http://my-host.com:8080",
-  [modelId] // Must be an approved model ID
+  [modelId], // Must be an approved model ID
+  minPricePerToken // NEW: Host sets minimum price
 );
+```
+
+## Host-Controlled Pricing Usage (NEW - January 28, 2025)
+
+### For Hosts: Setting and Updating Pricing
+
+```javascript
+import NodeRegistryABI from './NodeRegistryWithModels-CLIENT-ABI.json';
+import { ethers } from 'ethers';
+
+const nodeRegistry = new ethers.Contract(
+  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',
+  NodeRegistryABI,
+  signer
+);
+
+// Register with pricing (required parameter)
+const minPricePerToken = 2000; // 0.002 USDC per token
+// Price range: 100 (0.0001 USDC) to 100,000 (0.1 USDC) per token
+
+await nodeRegistry.registerNode(
+  metadata,
+  apiUrl,
+  [modelId],
+  minPricePerToken
+);
+
+// Update pricing dynamically
+const newPrice = 3000; // Increase to 0.003 USDC per token
+await nodeRegistry.updatePricing(newPrice);
+
+// Query own pricing
+const myPricing = await nodeRegistry.getNodePricing(myAddress);
+console.log(`My minimum price: ${myPricing} (${myPricing / 1e6} USDC per token)`);
+```
+
+### For Clients: Querying Pricing and Creating Sessions
+
+```javascript
+import JobMarketplaceABI from './JobMarketplaceWithModels-CLIENT-ABI.json';
+import NodeRegistryABI from './NodeRegistryWithModels-CLIENT-ABI.json';
+import { ethers } from 'ethers';
+
+const nodeRegistry = new ethers.Contract(
+  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',
+  NodeRegistryABI,
+  provider
+);
+
+const marketplace = new ethers.Contract(
+  '0x462050a4a551c4292586D9c1DE23e3158a9bF3B3',
+  JobMarketplaceABI,
+  signer
+);
+
+// STEP 1: Query host pricing BEFORE creating session
+const hostAddress = '0x...';
+const hostMinPrice = await nodeRegistry.getNodePricing(hostAddress);
+console.log(`Host minimum: ${hostMinPrice}`);
+
+// Or get all host info including pricing (7th field)
+const [operator, stake, active, metadata, apiUrl, models, minPrice] =
+  await nodeRegistry.getNodeFullInfo(hostAddress);
+
+// STEP 2: Create session with price >= host minimum
+const myPricePerToken = 2500; // Must be >= hostMinPrice
+const deposit = ethers.utils.parseEther('0.1'); // 0.1 ETH
+
+// This will REVERT if myPricePerToken < hostMinPrice
+const tx = await marketplace.createSessionJob(
+  hostAddress,
+  myPricePerToken,
+  3600, // 1 hour max duration
+  100,  // Proof every 100 tokens
+  { value: deposit }
+);
+
+await tx.wait();
+console.log('Session created with validated pricing!');
+```
+
+### Price Validation Rules
+
+⚠️ **CRITICAL**: All session creation functions now validate pricing:
+- `createSessionJob()` - Native token (ETH) sessions
+- `createSessionJobWithToken()` - ERC20 token (USDC) sessions
+- `createSessionFromDeposit()` - Pre-funded sessions
+
+**Validation**: `clientPricePerToken >= hostMinPricePerToken`
+
+**If validation fails**: Transaction reverts with "Price below host minimum"
+
+**Price Range**: 100 to 100,000 (0.0001 to 0.1 USDC per token)
 ```
 
 ## API Discovery Usage
@@ -177,13 +283,13 @@ const provider = new ethers.providers.JsonRpcProvider('https://base-sepolia.g.al
 
 // Create contract instances
 const marketplace = new ethers.Contract(
-  '0x56431bDeA20339c40470eC86BC2E3c09B065AFFe', // CURRENT deployment compatible with NodeRegistryWithModels
+  '0x462050a4a551c4292586D9c1DE23e3158a9bF3B3', // CURRENT deployment with pricing validation
   JobMarketplaceABI,
   provider
 );
 
 const nodeRegistry = new ethers.Contract(
-  '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218', // NodeRegistryWithModels
+  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7', // NodeRegistryWithModels with pricing
   NodeRegistryABI,
   provider
 );

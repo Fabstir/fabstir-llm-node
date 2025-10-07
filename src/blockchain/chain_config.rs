@@ -42,8 +42,8 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                job_marketplace: "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944".to_string(),
-                node_registry: "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218".to_string(),
+                job_marketplace: "0x462050a4a551c4292586D9c1DE23e3158a9bF3B3".to_string(),
+                node_registry: "0xC8dDD546e0993eEB4Df03591208aEDF6336342D7".to_string(),
                 proof_system: "0x2ACcc60893872A499700908889B38C5420CBcFD1".to_string(),
                 host_earnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776".to_string(),
                 model_registry: "0x92b2De840bB2171203011A6dBA928d855cA8183E".to_string(),
