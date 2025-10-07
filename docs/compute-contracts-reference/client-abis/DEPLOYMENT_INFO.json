@@ -1,17 +1,22 @@
 {
   "network": "Base Sepolia",
   "chainId": 84532,
-  "lastUpdated": "2025-01-30",
-  "status": "createSessionUsingFunds - No transferFrom Required",
+  "lastUpdated": "2025-01-28",
+  "status": "Host-Controlled Pricing Enabled - Multi-Chain Support with Price Validation",
   "contracts": {
     "JobMarketplaceWithModels": {
-      "address": "0xA48283776476522d1Edb610678D76a186A312961",
+      "address": "0x462050a4a551c4292586D9c1DE23e3158a9bF3B3",
       "previousAddress": "0xdEa1B47872C27458Bb7331Ade99099761C4944Dc",
-      "deploymentDate": "2025-01-30",
-      "status": "ACTIVE - CREATE SESSION USING FUNDS",
+      "deploymentDate": "2025-01-28",
+      "deploymentBlock": 32051983,
+      "transactionHash": "0x3bcc5230fcae239023cc822e7bedd4fbd34d4b77d5fff9fc43e3763582e0b104",
+      "gasUsed": 3549893,
+      "status": "ACTIVE - HOST-CONTROLLED PRICING",
       "features": [
-        "NEW: createSessionUsingFunds() for pre-deposited balance (no transferFrom)",
-        "NEW: Uses depositFunds()/depositTokens() pre-deposits",
+        "NEW: Host-controlled pricing validation (100-100,000 range)",
+        "NEW: Contract-level price enforcement (client price >= host minimum)",
+        "NEW: Price validation in all session creation functions",
+        "NEW: Works with NodeRegistryWithModels 7-field struct",
         "30-second dispute window (configurable via constructor)",
         "ETH/USDC deposit parity (removed 10x multiplier)",
         "accumulatedTreasuryNative for multi-chain support",
@@ -65,10 +70,20 @@
       ]
     },
     "NodeRegistryWithModels": {
-      "address": "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218",
-      "deploymentDate": "2025-01-13",
-      "status": "ACTIVE - MODEL VALIDATION ENFORCED",
+      "address": "0xC8dDD546e0993eEB4Df03591208aEDF6336342D7",
+      "previousAddress": "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218",
+      "deploymentDate": "2025-01-28",
+      "deploymentBlock": 32051950,
+      "transactionHash": "0xb33fed7ebb85ae915928620a198ef77e5648bf85518c60140adf9150a7175e51",
+      "gasUsed": 1863700,
+      "status": "ACTIVE - HOST-CONTROLLED PRICING ENABLED",
       "features": [
+        "NEW: Host-controlled pricing (minPricePerToken field)",
+        "NEW: updatePricing() for dynamic price updates",
+        "NEW: getNodePricing() for price discovery",
+        "NEW: getNodeFullInfo() returns 7 fields (added pricing)",
+        "NEW: PricingUpdated event",
+        "NEW: Price range validation (100-100,000)",
         "Model validation via ModelRegistry",
         "Structured JSON metadata",
         "Model-to-node mapping",
@@ -90,7 +105,7 @@
       "address": "0x908962e8c6CE72610021586f85ebDE09aAc97776",
       "deploymentDate": "2025-01-05",
       "status": "ACTIVE - MULTI-CHAIN READY",
-      "authorizedMarketplace": "0xA48283776476522d1Edb610678D76a186A312961",
+      "authorizedMarketplace": "0x462050a4a551c4292586D9c1DE23e3158a9bF3B3",
       "features": [
         "Batch withdrawal for hosts",
         "Multi-token support (Native + USDC)",
@@ -154,12 +169,20 @@
     "accumulatedTreasuryTokens": "View accumulated tokens"
   },
   "migrationNotes": {
-    "forHosts": "Existing hosts should call updateApiUrl() to add their endpoint",
-    "forClients": "Update SDK to use new contract addresses and discovery functions",
+    "forHosts": "CRITICAL: Must re-register with pricing parameter. Call registerNode() with minPricePerToken (100-100,000 range). Existing hosts on old contract cannot migrate - must re-register with new contract.",
+    "forClients": "CRITICAL: Update SDK to new contract addresses. Session creation now validates client pricePerToken >= host minPricePerToken. Query pricing before creating sessions.",
     "breakingChanges": [
-      "NodeRegistry nodes() now returns 5 fields instead of 4",
-      "JobMarketplace must handle 5-field struct from NodeRegistry"
-    ]
+      "NodeRegistry getNodeFullInfo() now returns 7 fields instead of 6 (added minPricePerToken)",
+      "registerNode() now requires minPricePerToken parameter (4th parameter)",
+      "Session creation enforces price validation - will revert if price below host minimum",
+      "NO MIGRATION PATH from old contracts - hosts must re-register"
+    ],
+    "pricingFeatures": {
+      "priceRange": "100 to 100,000 (0.0001 to 0.1 USDC per token)",
+      "validation": "Contract enforces client price >= host minimum",
+      "discovery": "Use getNodePricing(host) or getNodeFullInfo(host)[6]",
+      "updates": "Hosts call updatePricing(newPrice) to change pricing dynamically"
+    }
   },
   "rpcEndpoints": [
     "https://sepolia.base.org",
