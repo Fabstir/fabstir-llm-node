@@ -17,7 +17,7 @@
   },
   {
     "type": "function",
-    "name": "MAX_PRICE_PER_TOKEN",
+    "name": "MAX_PRICE_PER_TOKEN_NATIVE",
     "inputs": [],
     "outputs": [
       {
@@ -30,7 +30,33 @@
   },
   {
     "type": "function",
-    "name": "MIN_PRICE_PER_TOKEN",
+    "name": "MAX_PRICE_PER_TOKEN_STABLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PRICE_PER_TOKEN_NATIVE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PRICE_PER_TOKEN_STABLE",
     "inputs": [],
     "outputs": [
       {
@@ -201,6 +227,11 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -230,6 +261,11 @@
     "inputs": [
       {
         "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
         "type": "address",
         "internalType": "address"
       }
@@ -379,7 +415,12 @@
         "internalType": "string"
       },
       {
-        "name": "minPricePerToken",
+        "name": "minPricePerTokenNative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minPricePerTokenStable",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -419,7 +460,12 @@
         "internalType": "bytes32[]"
       },
       {
-        "name": "minPricePerToken",
+        "name": "minPricePerTokenNative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minPricePerTokenStable",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -508,7 +554,20 @@
   },
   {
     "type": "function",
-    "name": "updatePricing",
+    "name": "updatePricingNative",
+    "inputs": [
+      {
+        "name": "newMinPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "updatePricingStable",
     "inputs": [
       {
         "name": "newMinPrice",

@@ -32,8 +32,8 @@ Before registering as a host, you need:
 
 ## Contract Information
 
-**JobMarketplaceWithModels**: `0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f` (Multi-chain support)
-**NodeRegistryWithModels**: `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218`
+**JobMarketplaceWithModels**: `0xe169A4B57700080725f9553E3Cc69885fea13629` (Dual pricing support)
+**NodeRegistryWithModels**: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6`
 **ModelRegistry**: `0x92b2De840bB2171203011A6dBA928d855cA8183E`
 **HostEarnings**: `0x908962e8c6CE72610021586f85ebDE09aAc97776`
 **FAB Token**: `0xC78949004B4EB6dEf2D66e49Cd81231472612D62`
@@ -87,7 +87,7 @@ Before registration, approve the NodeRegistry to transfer your FAB tokens:
 ```javascript
 // Approve 1000 FAB tokens
 const amount = ethers.utils.parseUnits('1000', 18);
-const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
+const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6';
 
 const approveTx = await fabToken.approve(NODE_REGISTRY, amount);
 await approveTx.wait();
@@ -99,7 +99,7 @@ Register with structured metadata and supported models:
 
 ```javascript
 const nodeRegistry = new ethers.Contract(
-  '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218',
+  '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6',
   ['function registerNode(string metadata, string apiUrl, bytes32[] supportedModels) external'],
   signer
 );
@@ -172,7 +172,7 @@ async function registerHost(privateKey, metadata, apiUrl) {
   
   // Contract addresses
   const FAB_TOKEN = '0xC78949004B4EB6dEf2D66e49Cd81231472612D62';
-  const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
+  const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6';
   
   // ABIs
   const fabTokenAbi = [
@@ -333,8 +333,9 @@ await unregisterTx.wait();
 ## Important Notes
 
 ### Recent Updates (January 2025)
+- **Dual Pricing System**: Hosts set separate prices for native (ETH/BNB) and stablecoin (USDC) sessions
 - **Model Governance**: Hosts must now register with approved models from ModelRegistry
-- **New Contract**: NodeRegistryWithModels at `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218`
+- **New Contract**: NodeRegistryWithModels at `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6`
 - **ModelRegistry**: Deployed at `0x92b2De840bB2171203011A6dBA928d855cA8183E`
 - **Structured Metadata**: Now uses JSON format instead of comma-separated strings
 - **Update Functions**: Can update metadata, API URL, and supported models without re-registering
@@ -462,7 +463,7 @@ Once registered, you can:
 4. Complete sessions to claim payment faster
 5. Build reputation in the system
 
-The JobMarketplace contract (`0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f`) verifies your registration and model support before allowing you to serve sessions.
+The JobMarketplace contract (`0xe169A4B57700080725f9553E3Cc69885fea13629`) verifies your registration and model support before allowing you to serve sessions.
 
 ### Host Earnings
 

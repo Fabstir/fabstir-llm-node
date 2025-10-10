@@ -293,8 +293,8 @@ GET /v1/chains
       "native_token": "ETH",
       "rpc_url": "https://sepolia.base.org",
       "contracts": {
-        "job_marketplace": "0xdEa1B47872C27458Bb7331Ade99099761C4944Dc",
-        "node_registry": "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218",
+        "job_marketplace": "0xe169A4B57700080725f9553E3Cc69885fea13629",
+        "node_registry": "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6",
         "proof_system": "0x2ACcc60893872A499700908889B38C5420CBcFD1",
         "host_earnings": "0x908962e8c6CE72610021586f85ebDE09aAc97776",
         "model_registry": "0x92b2De840bB2171203011A6dBA928d855cA8183E",
@@ -842,7 +842,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 **Requirements**:
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
-- JobMarketplace: 0xdEa1B47872C27458Bb7331Ade99099761C4944Dc
+- JobMarketplace: 0xe169A4B57700080725f9553E3Cc69885fea13629
 
 ### Proof Configuration
 
@@ -2498,7 +2498,7 @@ cast client --rpc-url https://sepolia.base.org
 cast client --rpc-url https://opbnb-testnet.binance.org
 
 # Check contract deployment
-cast code 0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f --rpc-url https://sepolia.base.org
+cast code 0xe169A4B57700080725f9553E3Cc69885fea13629 --rpc-url https://sepolia.base.org
 ```
 
 #### Monitor Logs
@@ -2523,8 +2523,8 @@ CHAIN_ID=84532                    # Default chain (Base Sepolia)
 RPC_URL=https://sepolia.base.org  # Default RPC endpoint
 
 # Contract addresses (from .env.contracts)
-JOB_MARKETPLACE_ADDRESS=0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f
-NODE_REGISTRY_ADDRESS=0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
+JOB_MARKETPLACE_ADDRESS=0xe169A4B57700080725f9553E3Cc69885fea13629
+NODE_REGISTRY_ADDRESS=0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 # Node wallet (must have gas on both chains)
 HOST_PRIVATE_KEY=0x...
