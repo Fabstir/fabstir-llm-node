@@ -9,17 +9,20 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::contracts::model_registry::{ApprovedModels, ModelRegistryClient};
+use crate::contracts::pricing_constants::{native, stable};
 use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
-    pub models: Vec<String>,      // Model file paths
-    pub model_ids: Vec<H256>,     // Validated model IDs from registry
-    pub gpu: String,              // "RTX 4090"
-    pub ram_gb: u32,              // 64
-    pub cost_per_token: f64,      // 0.0001
-    pub max_concurrent_jobs: u32, // 5
-    pub api_url: String,          // Node's API endpoint URL
+    pub models: Vec<String>,           // Model file paths
+    pub model_ids: Vec<H256>,          // Validated model IDs from registry
+    pub gpu: String,                   // "RTX 4090"
+    pub ram_gb: u32,                   // 64
+    pub cost_per_token: f64,           // 0.0001 (deprecated, use pricing fields)
+    pub max_concurrent_jobs: u32,      // 5
+    pub api_url: String,               // Node's API endpoint URL
+    pub min_price_native: Option<U256>, // Min price for native tokens (ETH/BNB)
+    pub min_price_stable: Option<U256>, // Min price for stablecoins (USDC)
 }
 
 #[derive(Debug, Clone)]
@@ -149,10 +152,31 @@ impl NodeRegistration {
         // Call the actual contract
         let receipt = if self.use_new_registry {
             if let Some(ref new_contract) = self.new_contract {
-                info!("Calling registerNode on NodeRegistryWithModels");
+                info!("Calling registerNode on NodeRegistryWithModels with dual pricing");
                 debug!("Metadata: {}", metadata_json);
                 debug!("API URL: {}", self.metadata.api_url);
                 debug!("Model IDs: {:?}", self.metadata.model_ids);
+
+                // Get pricing or use defaults
+                let min_price_native = self
+                    .metadata
+                    .min_price_native
+                    .unwrap_or_else(|| native::default_price());
+                let min_price_stable = self
+                    .metadata
+                    .min_price_stable
+                    .unwrap_or_else(|| stable::default_price());
+
+                // Validate pricing ranges
+                native::validate_price(min_price_native)
+                    .map_err(|e| anyhow!("Native pricing validation failed: {}", e))?;
+                stable::validate_price(min_price_stable)
+                    .map_err(|e| anyhow!("Stable pricing validation failed: {}", e))?;
+
+                info!(
+                    "Native pricing: {} wei, Stable pricing: {}",
+                    min_price_native, min_price_stable
+                );
 
                 let method = new_contract
                     .method::<_, ()>(
@@ -161,6 +185,8 @@ impl NodeRegistration {
                             metadata_json.clone(),
                             self.metadata.api_url.clone(),
                             self.metadata.model_ids.clone(),
+                            min_price_native,
+                            min_price_stable,
                         ),
                     )
                     .map_err(|e| anyhow!("Failed to create method call: {}", e))?;
@@ -498,6 +524,8 @@ mod tests {
             cost_per_token: 0.0001,
             max_concurrent_jobs: 5,
             api_url: "http://localhost:8080".to_string(),
+            min_price_native: Some(native::default_price()),
+            min_price_stable: Some(stable::default_price()),
         };
 
         // Serialize to JSON
@@ -509,6 +537,8 @@ mod tests {
         assert_eq!(metadata.models, metadata2.models);
         assert_eq!(metadata.gpu, metadata2.gpu);
         assert_eq!(metadata.ram_gb, metadata2.ram_gb);
+        assert_eq!(metadata.min_price_native, metadata2.min_price_native);
+        assert_eq!(metadata.min_price_stable, metadata2.min_price_stable);
     }
 
     #[test]

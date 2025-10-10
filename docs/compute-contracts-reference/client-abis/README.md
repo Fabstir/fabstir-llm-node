@@ -2,22 +2,23 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (January 28, 2025 - Host-Controlled Pricing)
+## Current Deployed Contracts (January 28, 2025 - Corrected Dual Pricing)
 
 ### JobMarketplaceWithModels
-- **Address**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3 ✅ NEW
-- **Previous**: 0xdEa1B47872C27458Bb7331Ade99099761C4944Dc
-- **Network**: Base Sepolia (Block: 32,051,983)
-- **Status**: ✅ HOST-CONTROLLED PRICING ENABLED
+- **Address**: 0xe169A4B57700080725f9553E3Cc69885fea13629 ✅ NEW - Corrected Dual Pricing
+- **Previous**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3 (Incorrect MAX_PRICE_NATIVE - deprecated)
+- **Network**: Base Sepolia
+- **Status**: ✅ DUAL PRICING WITH 10,000x RANGE
 - **Configuration**:
   - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
   - Authorized in HostEarnings: ✅ CONFIRMED
-  - NodeRegistry: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7 (7-field struct)
+  - NodeRegistry: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 (8-field struct with dual pricing)
 - **Key Features**:
-  - 🆕 **HOST-CONTROLLED PRICING**: Contract enforces client price >= host minimum
-  - 🆕 **Price Validation**: All session creation functions validate pricing (100-100,000 range)
-  - 🆕 **Query Pricing**: Get host pricing before creating sessions
-  - 🆕 Works with NodeRegistryWithModels 7-field struct (includes minPricePerToken)
+  - 🆕 **DUAL PRICING**: Separate native (ETH/BNB) and stable (USDC) pricing fields
+  - 🆕 **10,000x Range**: Both native and stable have 10,000x range (MIN to MAX)
+  - 🆕 **Price Validation**: Validates against correct pricing field based on payment type
+  - 🆕 **Query Pricing**: Get host pricing for both native and stable tokens
+  - 🆕 Works with NodeRegistryWithModels 8-field struct (includes both pricing fields)
   - Wallet-agnostic deposit/withdrawal functions (depositNative, withdrawNative)
   - createSessionFromDeposit for pre-funded session creation
   - Anyone-can-complete pattern for gasless session ending
@@ -53,17 +54,19 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - TinyLlama-1.1B Chat (TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
 
 ### NodeRegistryWithModels
-- **Address**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7 ✅ NEW
-- **Previous**: 0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
-- **Network**: Base Sepolia (Block: 32,051,950)
-- **Status**: ✅ HOST-CONTROLLED PRICING ENABLED
+- **Address**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 ✅ NEW - Corrected Dual Pricing
+- **Previous**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7 (Incorrect MAX_PRICE_NATIVE - deprecated)
+- **Network**: Base Sepolia
+- **Status**: ✅ DUAL PRICING WITH 10,000x RANGE
 - **Stake Required**: 1000 FAB tokens
 - **Key Features**:
-  - 🆕 **Host-Controlled Pricing**: Hosts set minPricePerToken (100-100,000 range = 0.0001 to 0.1 USDC per token)
-  - 🆕 **Dynamic Pricing Updates**: Hosts can call updatePricing() to change prices
-  - 🆕 **Price Discovery**: Clients call getNodePricing(host) to query pricing
-  - 🆕 **7-Field Node Struct**: Added minPricePerToken field (getNodeFullInfo returns 7 values)
-  - 🆕 **PricingUpdated Event**: Track pricing changes on-chain
+  - 🆕 **Dual Pricing**: Separate minPricePerTokenNative and minPricePerTokenStable fields
+  - 🆕 **Native Pricing Range**: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
+  - 🆕 **Stable Pricing Range**: 10 to 100,000 (0.00001 to 0.1 USDC per token)
+  - 🆕 **Dynamic Pricing Updates**: Separate updatePricingNative() and updatePricingStable() functions
+  - 🆕 **Price Discovery**: Query both native and stable pricing separately
+  - 🆕 **8-Field Node Struct**: Added both pricing fields (getNodeFullInfo returns 8 values)
+  - 🆕 **PricingUpdated Events**: Separate events for native and stable pricing changes
   - Integrates with ModelRegistry for approved models only
   - Structured JSON metadata format
   - Tracks which hosts support which models
@@ -89,7 +92,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 - **Address**: 0x908962e8c6CE72610021586f85ebDE09aAc97776
 - **Network**: Base Sepolia
 - **Purpose**: Tracks accumulated earnings for hosts with batch withdrawal support
-- **Authorized Marketplace**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3 ✅ UPDATED
+- **Authorized Marketplace**: 0xe169A4B57700080725f9553E3Cc69885fea13629 ✅ UPDATED (Corrected Dual Pricing)
 
 ## Model Registry Usage (NEW)
 
@@ -122,9 +125,9 @@ console.log(`Model: ${model.huggingfaceRepo}/${model.fileName}`);
 console.log(`SHA256: ${model.sha256Hash}`);
 console.log(`Active: ${model.active}`);
 
-// For hosts - register with approved models AND pricing
+// For hosts - register with approved models AND dual pricing
 const nodeRegistry = new ethers.Contract(
-  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',  // NodeRegistryWithModels - NEW with pricing
+  '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6',  // NodeRegistryWithModels - Corrected dual pricing
   NodeRegistryABI,
   signer
 );
@@ -135,51 +138,63 @@ const metadata = JSON.stringify({
   location: "us-east"
 });
 
-const minPricePerToken = 2000; // 0.002 USDC per token (range: 100-100,000)
+// Dual pricing: separate native and stable
+const minPriceNative = ethers.BigNumber.from("3000000000"); // 3B wei (~$0.000013 @ $4400 ETH)
+const minPriceStable = 15000; // 0.015 USDC per token
 
 await nodeRegistry.registerNode(
   metadata,
   "http://my-host.com:8080",
   [modelId], // Must be an approved model ID
-  minPricePerToken // NEW: Host sets minimum price
+  minPriceNative, // Native token pricing (ETH/BNB)
+  minPriceStable  // Stablecoin pricing (USDC)
 );
 ```
 
-## Host-Controlled Pricing Usage (NEW - January 28, 2025)
+## Dual Pricing Usage (NEW - January 28, 2025)
 
-### For Hosts: Setting and Updating Pricing
+### For Hosts: Setting and Updating Dual Pricing
 
 ```javascript
 import NodeRegistryABI from './NodeRegistryWithModels-CLIENT-ABI.json';
 import { ethers } from 'ethers';
 
 const nodeRegistry = new ethers.Contract(
-  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',
+  '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6',
   NodeRegistryABI,
   signer
 );
 
-// Register with pricing (required parameter)
-const minPricePerToken = 2000; // 0.002 USDC per token
-// Price range: 100 (0.0001 USDC) to 100,000 (0.1 USDC) per token
+// Register with DUAL pricing (both required)
+const minPriceNative = ethers.BigNumber.from("3000000000"); // 3B wei
+const minPriceStable = 15000; // 0.015 USDC per token
+
+// Native range: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
+// Stable range: 10 to 100,000 (0.00001 to 0.1 USDC per token)
 
 await nodeRegistry.registerNode(
   metadata,
   apiUrl,
   [modelId],
-  minPricePerToken
+  minPriceNative,
+  minPriceStable
 );
 
-// Update pricing dynamically
-const newPrice = 3000; // Increase to 0.003 USDC per token
-await nodeRegistry.updatePricing(newPrice);
+// Update native pricing (ETH/BNB)
+const newPriceNative = ethers.BigNumber.from("5000000000"); // 5B wei
+await nodeRegistry.updatePricingNative(newPriceNative);
 
-// Query own pricing
-const myPricing = await nodeRegistry.getNodePricing(myAddress);
-console.log(`My minimum price: ${myPricing} (${myPricing / 1e6} USDC per token)`);
+// Update stable pricing (USDC)
+const newPriceStable = 20000; // 0.02 USDC per token
+await nodeRegistry.updatePricingStable(newPriceStable);
+
+// Query own pricing (returns both)
+const [nativePrice, stablePrice] = await nodeRegistry.getNodePricing(myAddress);
+console.log(`Native: ${nativePrice.toString()} wei`);
+console.log(`Stable: ${stablePrice} (${stablePrice / 1e6} USDC per token)`);
 ```
 
-### For Clients: Querying Pricing and Creating Sessions
+### For Clients: Querying Dual Pricing and Creating Sessions
 
 ```javascript
 import JobMarketplaceABI from './JobMarketplaceWithModels-CLIENT-ABI.json';
@@ -187,55 +202,90 @@ import NodeRegistryABI from './NodeRegistryWithModels-CLIENT-ABI.json';
 import { ethers } from 'ethers';
 
 const nodeRegistry = new ethers.Contract(
-  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',
+  '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6',
   NodeRegistryABI,
   provider
 );
 
 const marketplace = new ethers.Contract(
-  '0x462050a4a551c4292586D9c1DE23e3158a9bF3B3',
+  '0xe169A4B57700080725f9553E3Cc69885fea13629',
   JobMarketplaceABI,
   signer
 );
 
-// STEP 1: Query host pricing BEFORE creating session
+// STEP 1: Query host dual pricing BEFORE creating session
 const hostAddress = '0x...';
-const hostMinPrice = await nodeRegistry.getNodePricing(hostAddress);
-console.log(`Host minimum: ${hostMinPrice}`);
+const [hostMinNative, hostMinStable] = await nodeRegistry.getNodePricing(hostAddress);
+console.log(`Host native minimum: ${hostMinNative.toString()} wei`);
+console.log(`Host stable minimum: ${hostMinStable} (${hostMinStable / 1e6} USDC)`);
 
-// Or get all host info including pricing (7th field)
-const [operator, stake, active, metadata, apiUrl, models, minPrice] =
+// Or get all host info including dual pricing (7th and 8th fields)
+const [operator, stake, active, metadata, apiUrl, models, minNative, minStable] =
   await nodeRegistry.getNodeFullInfo(hostAddress);
 
-// STEP 2: Create session with price >= host minimum
-const myPricePerToken = 2500; // Must be >= hostMinPrice
+// STEP 2a: Create ETH session with price >= host native minimum
+const myPriceNative = ethers.BigNumber.from("4000000000"); // Must be >= hostMinNative
 const deposit = ethers.utils.parseEther('0.1'); // 0.1 ETH
 
-// This will REVERT if myPricePerToken < hostMinPrice
-const tx = await marketplace.createSessionJob(
+// This will REVERT if myPriceNative < hostMinNative
+const txNative = await marketplace.createSessionJob(
   hostAddress,
-  myPricePerToken,
+  myPriceNative,
   3600, // 1 hour max duration
   100,  // Proof every 100 tokens
   { value: deposit }
 );
 
-await tx.wait();
-console.log('Session created with validated pricing!');
+await txNative.wait();
+console.log('ETH session created with validated native pricing!');
+
+// STEP 2b: Create USDC session with price >= host stable minimum
+const myPriceStable = 20000; // Must be >= hostMinStable
+const usdcDeposit = ethers.utils.parseUnits("10", 6); // 10 USDC
+
+// Approve USDC first
+const usdcContract = new ethers.Contract(
+  '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  ['function approve(address,uint256)'],
+  signer
+);
+await usdcContract.approve(marketplace.address, usdcDeposit);
+
+// This will REVERT if myPriceStable < hostMinStable
+const txStable = await marketplace.createSessionJobWithToken(
+  hostAddress,
+  '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC
+  usdcDeposit,
+  myPriceStable,
+  3600,
+  100
+);
+
+await txStable.wait();
+console.log('USDC session created with validated stable pricing!');
 ```
 
-### Price Validation Rules
+### Dual Pricing Validation Rules
 
-⚠️ **CRITICAL**: All session creation functions now validate pricing:
-- `createSessionJob()` - Native token (ETH) sessions
-- `createSessionJobWithToken()` - ERC20 token (USDC) sessions
-- `createSessionFromDeposit()` - Pre-funded sessions
+⚠️ **CRITICAL**: All session creation functions validate against the CORRECT pricing field:
 
-**Validation**: `clientPricePerToken >= hostMinPricePerToken`
+**Native Token Sessions** (ETH/BNB):
+- `createSessionJob()` - Validates against `hostMinPricePerTokenNative`
+- `createSessionFromDeposit()` with ETH - Validates against native pricing
+- **Range**: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
+- **Validation**: `clientPricePerToken >= hostMinPricePerTokenNative`
 
-**If validation fails**: Transaction reverts with "Price below host minimum"
+**Stablecoin Sessions** (USDC):
+- `createSessionJobWithToken()` - Validates against `hostMinPricePerTokenStable`
+- `createSessionFromDeposit()` with USDC - Validates against stable pricing
+- **Range**: 10 to 100,000 (0.00001 to 0.1 USDC per token)
+- **Validation**: `clientPricePerToken >= hostMinPricePerTokenStable`
 
-**Price Range**: 100 to 100,000 (0.0001 to 0.1 USDC per token)
+**If validation fails**: Transaction reverts with:
+- "Price below host minimum (native)" - for ETH sessions
+- "Price below host minimum (stable)" - for USDC sessions
+
+**10,000x Range**: Both native and stable pricing have identical 10,000x range (MIN to MAX)
 ```
 
 ## API Discovery Usage
@@ -283,13 +333,13 @@ const provider = new ethers.providers.JsonRpcProvider('https://base-sepolia.g.al
 
 // Create contract instances
 const marketplace = new ethers.Contract(
-  '0x462050a4a551c4292586D9c1DE23e3158a9bF3B3', // CURRENT deployment with pricing validation
+  '0xe169A4B57700080725f9553E3Cc69885fea13629', // CURRENT deployment with corrected dual pricing
   JobMarketplaceABI,
   provider
 );
 
 const nodeRegistry = new ethers.Contract(
-  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7', // NodeRegistryWithModels with pricing
+  '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6', // NodeRegistryWithModels with corrected dual pricing
   NodeRegistryABI,
   provider
 );
@@ -377,12 +427,28 @@ await nodeRegistry.updateApiUrl('http://your-host.com:8080');
 ```
 
 ### For SDK Developers
-Update contract addresses and use the new discovery functions:
+Update contract addresses and use the new dual pricing contracts:
 ```javascript
-const NODE_REGISTRY = '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218';
-const JOB_MARKETPLACE = '0x56431bDeA20339c40470eC86BC2E3c09B065AFFe';
+const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6'; // Corrected dual pricing
+const JOB_MARKETPLACE = '0xe169A4B57700080725f9553E3Cc69885fea13629'; // Corrected dual pricing
 const MODEL_REGISTRY = '0x92b2De840bB2171203011A6dBA928d855cA8183E';
+const PROOF_SYSTEM = '0x2ACcc60893872A499700908889B38C5420CBcFD1';
+const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 ```
 
+## Deprecated Contracts
+
+### JobMarketplaceWithModels (Incorrect MAX_PRICE_NATIVE)
+- **Address**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3
+- **Deprecated**: January 28, 2025
+- **Reason**: Incorrect MAX_PRICE_NATIVE (only 10x range instead of 10,000x)
+- **Replacement**: 0xe169A4B57700080725f9553E3Cc69885fea13629
+
+### NodeRegistryWithModels (Incorrect MAX_PRICE_NATIVE)
+- **Address**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7
+- **Deprecated**: January 28, 2025
+- **Reason**: Incorrect MAX_PRICE_NATIVE (only 10x range instead of 10,000x)
+- **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
+
 ## Last Updated
-January 13, 2025 - Model governance system added with ModelRegistry and NodeRegistryWithModels contracts
+January 28, 2025 - Corrected dual pricing with 10,000x range for both native and stable tokens

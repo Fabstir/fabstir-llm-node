@@ -108,7 +108,7 @@ class HostDiscovery {
 ```javascript
 // Initialize discovery
 const discovery = new HostDiscovery(
-  "0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218", // NodeRegistryWithModels address
+  "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6", // NodeRegistryWithModels address
   provider
 );
 
@@ -224,7 +224,7 @@ await registry.updateMetadata(JSON.stringify({
 
 ## Important Notes
 
-1. **Already deployed** - NodeRegistryWithModels at `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218` includes API URL support
+1. **Already deployed** - NodeRegistryWithModels at `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` includes API URL support
 2. **Model validation** - Hosts must also register with supported models from ModelRegistry
 3. **Gas costs** - Storing URLs on-chain costs more gas, but provides reliable discovery
 4. **URL validation** - The contract only checks that URLs are non-empty, not that they're valid
@@ -240,9 +240,9 @@ await registry.updateMetadata(JSON.stringify({
 
 ## Contract Addresses
 
-- **NodeRegistryWithModels**: `0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218` (ACTIVE - with API URLs)
+- **NodeRegistryWithModels**: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` (ACTIVE - with API URLs)
 - **ModelRegistry**: `0x92b2De840bB2171203011A6dBA928d855cA8183E` (Model governance)
-- **JobMarketplaceWithModels**: `0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f` (Multi-chain support)
+- **JobMarketplaceWithModels**: `0xe169A4B57700080725f9553E3Cc69885fea13629` (Multi-chain support)
 - **HostEarnings**: `0x908962e8c6CE72610021586f85ebDE09aAc97776` (Earnings accumulation)
 
 ## Testing

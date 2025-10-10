@@ -3,6 +3,7 @@ pub mod client;
 pub mod model_registry;
 pub mod monitor;
 pub mod payments;
+pub mod pricing_constants;
 pub mod proofs;
 pub mod registry_monitor;
 pub mod types;

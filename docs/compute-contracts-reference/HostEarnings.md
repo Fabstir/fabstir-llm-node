@@ -4,8 +4,8 @@
 
 **Contract Address**: `0x908962e8c6CE72610021586f85ebDE09aAc97776`
 **Network**: Base Sepolia | opBNB support planned post-MVP
-**Status**: ✅ ACTIVE - Multi-chain native token & ERC20 accumulation
-**Last Updated**: January 25, 2025
+**Status**: ✅ ACTIVE - Authorized for JobMarketplaceWithModels
+**Last Updated**: January 28, 2025
 
 ### Overview
 
@@ -40,7 +40,7 @@ contract HostEarnings {
 
 ### Integration with JobMarketplace
 
-The HostEarnings contract works in tandem with JobMarketplaceWithModels (`0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f`):
+The HostEarnings contract works in tandem with JobMarketplaceWithModels (`0xe169A4B57700080725f9553E3Cc69885fea13629` - corrected dual pricing):
 
 1. **Session Completion**: Anyone completes a session (user, host, or third party)
 2. **Payment Calculation**: Marketplace calculates 90% host / 10% treasury split
@@ -48,6 +48,8 @@ The HostEarnings contract works in tandem with JobMarketplaceWithModels (`0xaa38
 4. **Accumulation**: Host's earnings accumulate across multiple sessions
 5. **Batch Withdrawal**: Host withdraws all earnings when convenient
 6. **Multi-chain**: Works identically on Base (ETH) and future opBNB (BNB)
+
+**Authorization Status**: JobMarketplaceWithModels is authorized via `setAuthorizedCaller()`
 
 ### Key Functions
 

@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::config::chains::{ChainConfig, ChainRegistry};
+use crate::contracts::pricing_constants::{native, stable};
 use crate::contracts::types::NodeRegistryWithModels;
 
 // FAB Token constants
@@ -255,7 +256,7 @@ impl MultiChainRegistrar {
         use ethers::abi::{Function, Param, ParamType, Token};
         use ethers::types::Bytes;
 
-        // Define the function ABI
+        // Define the function ABI with dual pricing
         let register_function = Function {
             name: "registerNode".to_string(),
             inputs: vec![
@@ -274,11 +275,30 @@ impl MultiChainRegistrar {
                     kind: ParamType::Array(Box::new(ParamType::FixedBytes(32))),
                     internal_type: None,
                 },
+                Param {
+                    name: "minPricePerTokenNative".to_string(),
+                    kind: ParamType::Uint(256),
+                    internal_type: None,
+                },
+                Param {
+                    name: "minPricePerTokenStable".to_string(),
+                    kind: ParamType::Uint(256),
+                    internal_type: None,
+                },
             ],
             outputs: vec![],
             constant: None,
             state_mutability: ethers::abi::StateMutability::NonPayable,
         };
+
+        // Get default pricing
+        let min_price_native = native::default_price();
+        let min_price_stable = stable::default_price();
+
+        info!(
+            "Registering with dual pricing - Native: {} wei, Stable: {}",
+            min_price_native, min_price_stable
+        );
 
         // Encode the function call
         let tokens = vec![
@@ -290,6 +310,8 @@ impl MultiChainRegistrar {
                     .map(|id| Token::FixedBytes(id.to_vec()))
                     .collect(),
             ),
+            Token::Uint(min_price_native),
+            Token::Uint(min_price_stable),
         ];
 
         let encoded = register_function

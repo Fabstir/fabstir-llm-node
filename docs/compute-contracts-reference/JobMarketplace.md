@@ -2,16 +2,17 @@
 
 ## Current Implementation: JobMarketplaceWithModels (Multi-Chain)
 
-**Contract Address**: `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` ✅ NEW
-**Previous Address**: `0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f` (deprecated)
+**Contract Address**: `0xe169A4B57700080725f9553E3Cc69885fea13629` ✅ NEW - Corrected Dual Pricing
+**Previous Address**: `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` (deprecated - incorrect MAX_PRICE_NATIVE)
 **Network**: Base Sepolia (ETH) | opBNB support planned post-MVP
-**Status**: ✅ ACTIVE - Host-controlled pricing with multi-chain/multi-wallet support
+**Status**: ✅ ACTIVE - Dual pricing with 10,000x range
 **Last Updated**: January 28, 2025
 
 ### Key Features
-- **Host-Controlled Pricing**: Contract enforces client price >= host minimum (NEW)
-- **Price Validation**: All session creation functions validate pricing (100-100,000 range)
-- **Price Discovery**: Query host pricing before creating sessions
+- **Dual Pricing System**: Separate validation for native (ETH/BNB) and stable (USDC) pricing
+- **10,000x Range**: Both native and stable pricing have proper 10,000x range validation
+- **Price Validation**: Validates against CORRECT pricing field based on payment type
+- **Price Discovery**: Query dual pricing before creating sessions
 - **Multi-Chain Support**: Native token agnostic (ETH on Base, BNB on opBNB)
 - **Wallet Agnostic**: Works with EOA and Smart Contract wallets
 - **Deposit/Withdrawal Pattern**: Pre-fund accounts for gasless operations
@@ -157,18 +158,23 @@ The dual accumulation pattern provides significant gas savings:
 ### Integration with Other Contracts
 
 #### NodeRegistryWithModels (NEW)
-- Validates host registration AND pricing
+- Validates host registration AND dual pricing
 - Checks FAB token stake (1000 FAB minimum)
-- Returns 7-field struct (includes minPricePerToken)
-- Address: `0xC8dDD546e0993eEB4Df03591208aEDF6336342D7`
+- Returns 8-field struct (includes minPricePerTokenNative and minPricePerTokenStable)
+- Address: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6`
 
-**Price Validation Flow**:
+**Dual Price Validation Flow**:
 ```solidity
 // In JobMarketplaceWithModels
-(, , , , , , uint256 hostMinPrice) = nodeRegistry.getNodeFullInfo(host);
+(, , , , , , uint256 hostMinNative, uint256 hostMinStable) = nodeRegistry.getNodeFullInfo(host);
 require(node.operator != address(0), "Host not registered");
 require(node.active, "Host not active");
-require(pricePerToken >= hostMinPrice, "Price below host minimum");  // NEW
+
+// For ETH sessions - validate against native pricing
+require(pricePerToken >= hostMinNative, "Price below host minimum (native)");
+
+// For USDC sessions - validate against stable pricing
+require(pricePerToken >= hostMinStable, "Price below host minimum (stable)");
 ```
 
 #### ProofSystem
@@ -206,72 +212,114 @@ event EarningsCredited(address indexed host, uint256 amount, address token)
 5. **Emergency Withdrawal**: Respects accumulated amounts
 6. **Price Validation**: Contract enforces host minimum pricing (prevents under-payment)
 
-### Host-Controlled Pricing (NEW - January 28, 2025)
+### Dual Pricing System (NEW - January 28, 2025)
 
-All session creation functions now validate that client's offered price meets or exceeds the host's minimum:
+All session creation functions now validate against the CORRECT pricing field based on payment type:
 
-**Functions with Price Validation**:
-- `createSessionJob()` - Native token (ETH) sessions
-- `createSessionJobWithToken()` - ERC20 token (USDC) sessions
-- `createSessionFromDeposit()` - Pre-funded sessions
+**Functions with Dual Price Validation**:
+- `createSessionJob()` - Native token (ETH) sessions → validates against `hostMinPriceNative`
+- `createSessionJobWithToken()` - ERC20 token (USDC) sessions → validates against `hostMinPriceStable`
+- `createSessionFromDeposit()` - Pre-funded sessions → validates based on token type
 
 **Validation Logic**:
 ```solidity
-(, , , , , , uint256 hostMinPrice) = nodeRegistry.getNodeFullInfo(host);
-require(pricePerToken >= hostMinPrice, "Price below host minimum");
+(, , , , , , uint256 hostMinNative, uint256 hostMinStable) = nodeRegistry.getNodeFullInfo(host);
+
+// For native token (ETH/BNB) sessions
+require(pricePerToken >= hostMinNative, "Price below host minimum (native)");
+
+// For stablecoin (USDC) sessions
+require(pricePerToken >= hostMinStable, "Price below host minimum (stable)");
 ```
 
 **Error Handling**:
-- Transaction reverts with "Price below host minimum" if client price < host minimum
-- Client must query pricing first using `nodeRegistry.getNodePricing(host)`
+- Transaction reverts with "Price below host minimum (native)" for ETH sessions
+- Transaction reverts with "Price below host minimum (stable)" for USDC sessions
+- Client must query dual pricing first using `nodeRegistry.getNodePricing(host)`
 
-**Usage Example**:
+**Usage Example (ETH Session)**:
 ```javascript
 import JobMarketplaceABI from './JobMarketplaceWithModels-CLIENT-ABI.json';
 import NodeRegistryABI from './NodeRegistryWithModels-CLIENT-ABI.json';
 import { ethers } from 'ethers';
 
 const nodeRegistry = new ethers.Contract(
-  '0xC8dDD546e0993eEB4Df03591208aEDF6336342D7',
+  '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6',
   NodeRegistryABI,
   provider
 );
 
 const marketplace = new ethers.Contract(
-  '0x462050a4a551c4292586D9c1DE23e3158a9bF3B3',
+  '0xe169A4B57700080725f9553E3Cc69885fea13629',
   JobMarketplaceABI,
   signer
 );
 
-// STEP 1: Query host pricing BEFORE creating session
+// STEP 1: Query host DUAL pricing BEFORE creating session
 const hostAddress = '0x...';
-const hostMinPrice = await nodeRegistry.getNodePricing(hostAddress);
-console.log(`Host minimum: ${hostMinPrice}`);
+const [hostMinNative, hostMinStable] = await nodeRegistry.getNodePricing(hostAddress);
+console.log(`Host native minimum: ${hostMinNative.toString()} wei`);
+console.log(`Host stable minimum: ${hostMinStable}`);
 
-// STEP 2: Create session with price >= host minimum
-const myPricePerToken = Math.max(hostMinPrice, 2500); // At least host minimum
+// STEP 2: Create ETH session with price >= host native minimum
+const myPriceNative = ethers.BigNumber.from("4000000000"); // Must be >= hostMinNative
 const deposit = ethers.utils.parseEther('0.1'); // 0.1 ETH
 
-// This will REVERT if myPricePerToken < hostMinPrice
+// This will REVERT if myPriceNative < hostMinNative
 const tx = await marketplace.createSessionJob(
   hostAddress,
-  myPricePerToken,
+  myPriceNative,
   3600, // 1 hour max duration
   100,  // Proof every 100 tokens
   { value: deposit }
 );
 
 await tx.wait();
-console.log('Session created with validated pricing!');
+console.log('ETH session created with validated native pricing!');
 ```
 
-**Price Range**: 100 to 100,000 (0.0001 to 0.1 USDC per token)
+**Usage Example (USDC Session)**:
+```javascript
+// STEP 1: Query host DUAL pricing
+const [hostMinNative, hostMinStable] = await nodeRegistry.getNodePricing(hostAddress);
+
+// STEP 2: Create USDC session with price >= host stable minimum
+const myPriceStable = 20000; // Must be >= hostMinStable
+const usdcDeposit = ethers.utils.parseUnits("10", 6); // 10 USDC
+
+// Approve USDC first
+const usdcContract = new ethers.Contract(
+  '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  ['function approve(address,uint256)'],
+  signer
+);
+await usdcContract.approve(marketplace.address, usdcDeposit);
+
+// This will REVERT if myPriceStable < hostMinStable
+const tx = await marketplace.createSessionJobWithToken(
+  hostAddress,
+  '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC
+  usdcDeposit,
+  myPriceStable,
+  3600,
+  100
+);
+
+await tx.wait();
+console.log('USDC session created with validated stable pricing!');
+```
+
+**Pricing Ranges**:
+- **Native (ETH/BNB)**: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
+- **Stable (USDC)**: 10 to 100,000 (0.00001 to 0.1 USDC per token)
+- **Both have 10,000x range** (MIN to MAX)
 
 ### Deployment History
 
 | Date | Address | Features |
 |------|---------|----------|
-| Jan 28, 2025 | `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` | ✅ CURRENT - Host-controlled pricing validation |
+| Jan 28, 2025 | `0xe169A4B57700080725f9553E3Cc69885fea13629` | ✅ CURRENT - Corrected dual pricing (10,000x range) |
+| Jan 28, 2025 | `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` | ⚠️ DEPRECATED - Incorrect MAX_PRICE_NATIVE (10x instead of 10,000x) |
 | Jan 24, 2025 | `0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f` | Deprecated - Multi-chain/wallet support |
 | Jan 13, 2025 | `0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944` | Deprecated - Single chain only |
 | Jan 5, 2025 | `0x55A702Ab5034810F5B9720Fe15f83CFcf914F56b` | Deprecated - Treasury accumulation |
@@ -303,29 +351,34 @@ console.log('Session created with validated pricing!');
 ### Best Practices
 
 1. **For Users**:
-   - **Query host pricing BEFORE creating sessions** (use `nodeRegistry.getNodePricing()`)
-   - Ensure your pricePerToken >= host's minPricePerToken to avoid revert
+   - **Query host DUAL pricing BEFORE creating sessions** (use `nodeRegistry.getNodePricing()` which returns tuple)
+   - Extract both native and stable prices from the tuple
+   - Ensure your pricePerToken >= appropriate host minimum (native for ETH, stable for USDC)
    - Pre-fund deposits for gasless operations
    - Use `createSessionFromDeposit()` for better gas efficiency
    - Let hosts complete sessions to avoid gas costs
    - Works with both EOA and Smart Wallets
 
 2. **For Hosts**:
-   - Set competitive pricing via `nodeRegistry.updatePricing()`
-   - Monitor market rates and adjust pricing accordingly
+   - Set competitive DUAL pricing via `nodeRegistry.updatePricingNative()` and `updatePricingStable()`
+   - Monitor market rates AND ETH price to adjust pricing accordingly
+   - Keep both native and stable pricing updated based on market dynamics
+   - Consider gas costs when setting native pricing
    - Complete sessions to claim payment faster
    - Submit proofs regularly at checkpoint intervals
    - Withdraw accumulated earnings periodically
    - Maintain sufficient FAB stake
 
 3. **For Integrators**:
-   - **Always query pricing before session creation**
-   - Handle "Price below host minimum" errors gracefully
+   - **Always query DUAL pricing before session creation**
+   - Handle tuple return from `getNodePricing()` - extracts (native, stable)
+   - Validate against CORRECT pricing field: native for ETH, stable for USDC
+   - Handle "Price below host minimum (native)" and "(stable)" errors separately
    - Support both inline payment and pre-funded patterns
    - Track `depositor` field, not just `msg.sender`
    - Enable anyone-can-complete for better UX
    - Test with different wallet types
-   - Handle 7-field struct from `nodeRegistry.getNodeFullInfo()`
+   - Handle 8-field struct from `nodeRegistry.getNodeFullInfo()` (not 7!)
 
 ### References
 

@@ -33,10 +33,10 @@ impl Default for JobMonitorConfig {
 
         let registry_address = std::env::var("CONTRACT_NODE_REGISTRY")
             .or_else(|_| std::env::var("NODE_REGISTRY"))
-            .unwrap_or_else(|_| "0xC8dDD546e0993eEB4Df03591208aEDF6336342D7".to_string())
+            .unwrap_or_else(|_| "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6".to_string())
             .parse()
             .unwrap_or_else(|_| {
-                "0xC8dDD546e0993eEB4Df03591208aEDF6336342D7"
+                "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6"
                     .parse()
                     .unwrap()
             });
