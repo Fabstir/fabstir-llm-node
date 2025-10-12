@@ -27,10 +27,12 @@
 
 pub mod ecdh;
 pub mod encryption;
+pub mod session_init;
 pub mod session_keys;
 pub mod signature;
 
 pub use ecdh::derive_shared_key;
 pub use encryption::{decrypt_with_aead, encrypt_with_aead};
+pub use session_init::{decrypt_session_init, EncryptedSessionPayload, SessionInitData};
 pub use session_keys::SessionKeyStore;
 pub use signature::recover_client_address;
