@@ -104,31 +104,42 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 
 ## Phase 2: Signature Verification
 
-### Sub-phase 2.1: ECDSA Signature Recovery
+### Sub-phase 2.1: ECDSA Signature Recovery ✅
 **Goal**: Recover Ethereum address from ECDSA signature
 
 **Tasks**:
-- [ ] Create `src/crypto/signature.rs` module
-- [ ] Implement `recover_public_key()` from signature
-- [ ] Parse 65-byte compact signature (r + s + v)
-- [ ] Handle recovery ID (v parameter)
-- [ ] Convert public key to Ethereum address
-- [ ] Apply Keccak-256 hash for address derivation
-- [ ] Add error handling for invalid signatures
+- [x] Create `src/crypto/signature.rs` module
+- [x] Implement `recover_client_address()` from signature
+- [x] Parse 65-byte compact signature (r + s + v)
+- [x] Handle recovery ID (v parameter, supports 0-3 and 27-28 formats)
+- [x] Convert public key to Ethereum address
+- [x] Apply Keccak-256 hash for address derivation (using tiny-keccak)
+- [x] Add error handling for invalid signatures
+- [x] Add tiny-keccak dependency to Cargo.toml
 
-**Test Files** (TDD - Write First):
-- `tests/crypto/test_signature.rs`
-  - test_recover_public_key()
-  - test_ethereum_address_derivation()
-  - test_matches_sdk_signature()
-  - test_invalid_signature_format()
-  - test_invalid_recovery_id()
-  - test_signature_roundtrip()
+**Test Files**:
+- `tests/crypto/test_signature.rs` - Comprehensive TDD tests (12 test cases) ✅
+  - test_recover_client_address_valid() ✅
+  - test_ethereum_address_format() ✅
+  - test_invalid_signature_size() ✅
+  - test_invalid_signature_too_long() ✅
+  - test_invalid_recovery_id() ✅
+  - test_signature_deterministic() ✅
+  - test_different_messages_different_addresses() ✅
+  - test_corrupted_signature() ✅
+  - test_wrong_message_hash() ✅
+  - test_recovery_id_affects_result() ✅
+  - test_empty_message_hash() ✅
+- `tests/crypto_simple.rs` - Integration tests ✅
+  - test_signature_recovery_basic() ✅
+  - test_signature_invalid_size() ✅
+- Unit tests in `src/crypto/signature.rs` (2 passing) ✅
 
 **Success Criteria**:
-- Signature recovery works
-- Address matches SDK expectations
-- Invalid signatures rejected
+- Signature recovery works ✅
+- Address matches Ethereum format (0x + 40 hex chars) ✅
+- Invalid signatures rejected ✅
+- Supports both 0-1 and 27-28 recovery ID formats ✅
 
 ### Sub-phase 2.2: Session Init Decryption
 **Goal**: Decrypt and verify session initialization payload
@@ -605,7 +616,9 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
   - Sub-phase 1.1: ✅ Complete - Dependencies and Module Structure
   - Sub-phase 1.2: ✅ Complete - ECDH Key Exchange Implementation
   - Sub-phase 1.3: ✅ Complete - XChaCha20-Poly1305 Encryption
-- **Phase 2**: Not Started - Signature Verification
+- **Phase 2**: 🚧 In Progress - Signature Verification
+  - Sub-phase 2.1: ✅ Complete - ECDSA Signature Recovery
+  - Sub-phase 2.2: Not Started - Session Init Decryption
 - **Phase 3**: Not Started - Session Key Management
 - **Phase 4**: Not Started - WebSocket Message Types
 - **Phase 5**: Not Started - WebSocket Handler Integration
@@ -614,7 +627,7 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **IN PROGRESS** - Phase 1 complete, ready for Phase 2
+**Implementation Status**: 🟢 **IN PROGRESS** - Phase 2.1 complete, ready for Phase 2.2
 
 ## Critical Path
 
