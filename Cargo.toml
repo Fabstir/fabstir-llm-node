@@ -78,6 +78,11 @@ aes-gcm = "0.10"
 pbkdf2 = "0.12"
 base64 = "0.22"
 
+# End-to-End Encryption (Phase 6.2)
+k256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+
 # Production hardening dependencies  
 toml = "0.8"
 prometheus = "0.13"
