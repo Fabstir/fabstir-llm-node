@@ -4,3 +4,4 @@
 
 mod test_ecdh;
 mod test_encryption;
+mod test_signature;
