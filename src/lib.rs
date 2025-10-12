@@ -4,6 +4,7 @@ pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod contracts;
+pub mod crypto;
 pub mod embeddings;
 pub mod ezkl;
 pub mod host;
