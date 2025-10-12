@@ -141,33 +141,47 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - Invalid signatures rejected ✅
 - Supports both 0-1 and 27-28 recovery ID formats ✅
 
-### Sub-phase 2.2: Session Init Decryption
+### Sub-phase 2.2: Session Init Decryption ✅
 **Goal**: Decrypt and verify session initialization payload
 
 **Tasks**:
-- [ ] Implement `decrypt_session_init()` function
-- [ ] Parse encrypted payload struct
-- [ ] Perform ECDH with client's ephemeral public key
-- [ ] Decrypt session data with derived key
-- [ ] Recover client address from signature
-- [ ] Verify signature over ciphertext
-- [ ] Parse decrypted session data (job_id, model_name, session_key)
-- [ ] Return session data + client address
+- [x] Implement `decrypt_session_init()` function
+- [x] Parse encrypted payload struct (`EncryptedSessionPayload`)
+- [x] Perform ECDH with client's ephemeral public key
+- [x] Decrypt session data with derived key
+- [x] Recover client address from signature
+- [x] Verify signature over ciphertext
+- [x] Parse decrypted session data (job_id, model_name, session_key, price_per_token)
+- [x] Return session data + client address
 
-**Test Files** (TDD - Write First):
-- `tests/crypto/test_session_init.rs`
-  - test_decrypt_session_init_valid()
-  - test_session_init_with_sdk_data()
-  - test_signature_verification()
-  - test_invalid_signature()
-  - test_corrupted_ciphertext()
-  - test_wrong_node_key()
-  - test_extract_session_key()
+**Modules Created**:
+- `src/crypto/session_init.rs` - Session init decryption module ✅
+  - `EncryptedSessionPayload` struct ✅
+  - `SessionInitData` struct ✅
+  - `decrypt_session_init()` function ✅
+
+**Test Files**:
+- `tests/crypto/test_session_init.rs` - Comprehensive TDD tests (9 test cases) ✅
+  - test_decrypt_session_init_valid() ✅
+  - test_session_init_round_trip() ✅
+  - test_signature_verification() ✅
+  - test_invalid_signature() ✅
+  - test_corrupted_ciphertext() ✅
+  - test_wrong_node_key() ✅
+  - test_extract_session_key() ✅
+  - test_invalid_json_in_plaintext() ✅
+  - test_missing_fields_in_payload() ✅
+- `tests/crypto_simple.rs` - Integration tests ✅
+  - test_session_init_integration() ✅
+  - test_session_init_invalid_signature() ✅
+- Unit tests in `src/crypto/session_init.rs` (3 passing) ✅
 
 **Success Criteria**:
-- Session init decrypts successfully
-- Client address recovered correctly
-- Invalid payloads rejected
+- Session init decrypts successfully ✅
+- Client address recovered correctly ✅
+- Invalid payloads rejected ✅
+- All 9 TDD tests pass ✅
+- Integration tests pass ✅
 
 ## Phase 3: Session Key Management
 
@@ -616,9 +630,9 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
   - Sub-phase 1.1: ✅ Complete - Dependencies and Module Structure
   - Sub-phase 1.2: ✅ Complete - ECDH Key Exchange Implementation
   - Sub-phase 1.3: ✅ Complete - XChaCha20-Poly1305 Encryption
-- **Phase 2**: 🚧 In Progress - Signature Verification
+- **Phase 2**: ✅ Complete - Signature Verification
   - Sub-phase 2.1: ✅ Complete - ECDSA Signature Recovery
-  - Sub-phase 2.2: Not Started - Session Init Decryption
+  - Sub-phase 2.2: ✅ Complete - Session Init Decryption
 - **Phase 3**: Not Started - Session Key Management
 - **Phase 4**: Not Started - WebSocket Message Types
 - **Phase 5**: Not Started - WebSocket Handler Integration
@@ -627,7 +641,7 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **IN PROGRESS** - Phase 2.1 complete, ready for Phase 2.2
+**Implementation Status**: 🟢 **IN PROGRESS** - Phase 2 complete, ready for Phase 3
 
 ## Critical Path
 
