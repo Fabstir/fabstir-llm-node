@@ -53,4 +53,5 @@ s5-mock-service/
 s5-client/
 s5-storage-proxy/
 
-images/
+screenshots/
+*.tar.gz
