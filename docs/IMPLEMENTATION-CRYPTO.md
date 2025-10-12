@@ -185,32 +185,60 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 
 ## Phase 3: Session Key Management
 
-### Sub-phase 3.1: In-Memory Session Key Store
+### Sub-phase 3.1: In-Memory Session Key Store ✅
 **Goal**: Store session keys securely in memory
 
 **Tasks**:
-- [ ] Create `src/crypto/session_keys.rs` module
-- [ ] Implement `SessionKeyStore` struct with HashMap
-- [ ] Implement `store_key(session_id, key)` method
-- [ ] Implement `get_key(session_id)` method
-- [ ] Implement `clear_key(session_id)` method
-- [ ] Implement `clear_expired_keys()` with TTL
-- [ ] Add thread-safe Arc<RwLock<>> wrapper
-- [ ] Log key operations (without logging actual keys)
+- [x] Create `src/crypto/session_keys.rs` module
+- [x] Implement `SessionKeyStore` struct with HashMap
+- [x] Implement `store_key(session_id, key)` method
+- [x] Implement `get_key(session_id)` method
+- [x] Implement `clear_key(session_id)` method
+- [x] Implement `clear_expired_keys()` with TTL
+- [x] Add thread-safe Arc<RwLock<>> wrapper
+- [x] Log key operations (without logging actual keys)
+- [x] Add TTL support with `with_ttl()` constructor
+- [x] Implement automatic expiration checking in `get_key()`
 
-**Test Files** (TDD - Write First):
-- `tests/crypto/test_session_keys.rs`
-  - test_store_and_retrieve_key()
-  - test_get_nonexistent_key()
-  - test_clear_key()
-  - test_concurrent_access()
-  - test_key_expiration()
-  - test_multiple_sessions()
+**Modules Enhanced**:
+- `src/crypto/session_keys.rs` - Enhanced with TTL support ✅
+  - `SessionKeyStore::new()` - Create store without TTL ✅
+  - `SessionKeyStore::with_ttl()` - Create store with TTL ✅
+  - `store_key()` - Store with timestamp ✅
+  - `get_key()` - Retrieve with expiration check ✅
+  - `clear_key()` - Remove key ✅
+  - `clear_expired_keys()` - Batch expiration cleanup ✅
+  - `count()` - Get key count ✅
+  - `clear_all()` - Clear all keys ✅
+
+**Test Files**:
+- `tests/crypto/test_session_keys.rs` - Comprehensive TDD tests (14 test cases) ✅
+  - test_store_and_retrieve_key() ✅
+  - test_get_nonexistent_key() ✅
+  - test_clear_key() ✅
+  - test_concurrent_access() ✅
+  - test_key_expiration() ✅
+  - test_multiple_sessions() ✅
+  - test_overwrite_existing_key() ✅
+  - test_clear_all_keys() ✅
+  - test_partial_expiration() ✅
+  - test_ttl_default_behavior() ✅
+  - test_clear_nonexistent_key() ✅
+  - test_concurrent_reads() ✅
+  - test_store_updates_expiration() ✅
+  - test_empty_session_id() ✅
+- `tests/crypto_simple.rs` - Integration tests ✅
+  - test_session_key_store_basic() ✅
+  - test_session_key_store_workflow() ✅
+- Unit tests in `src/crypto/session_keys.rs` (6 passing) ✅
 
 **Success Criteria**:
-- Keys stored and retrieved correctly
-- Thread-safe concurrent access
-- Keys cleared on session end
+- Keys stored and retrieved correctly ✅
+- Thread-safe concurrent access ✅
+- Keys cleared on session end ✅
+- TTL-based expiration works ✅
+- All 14 TDD tests pass ✅
+- Integration tests pass ✅
 
 ### Sub-phase 3.2: Session Lifecycle Integration
 **Goal**: Integrate session keys with session lifecycle

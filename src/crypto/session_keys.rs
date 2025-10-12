@@ -7,31 +7,62 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+
+/// Entry storing a session key with optional expiration
+#[derive(Clone, Copy)]
+struct KeyEntry {
+    key: [u8; 32],
+    stored_at: Instant,
+}
 
 /// In-memory storage for session encryption keys
 ///
 /// Provides thread-safe storage and retrieval of session keys using
-/// a session ID as the lookup key.
+/// a session ID as the lookup key. Supports optional TTL for automatic
+/// key expiration.
 ///
 /// # Example
 ///
 /// ```ignore
+/// // Without TTL
 /// let store = SessionKeyStore::new();
 /// store.store_key("session-123", [0u8; 32]).await;
 /// let key = store.get_key("session-123").await;
 /// store.clear_key("session-123").await;
+///
+/// // With TTL
+/// let store = SessionKeyStore::with_ttl(Duration::from_secs(3600));
+/// store.store_key("session-456", [0u8; 32]).await;
+/// // Key will expire after 1 hour
 /// ```
 #[derive(Clone)]
 pub struct SessionKeyStore {
-    keys: Arc<RwLock<HashMap<String, [u8; 32]>>>,
+    keys: Arc<RwLock<HashMap<String, KeyEntry>>>,
+    ttl: Option<Duration>,
 }
 
 impl SessionKeyStore {
-    /// Create a new session key store
+    /// Create a new session key store without TTL
     pub fn new() -> Self {
         Self {
             keys: Arc::new(RwLock::new(HashMap::new())),
+            ttl: None,
+        }
+    }
+
+    /// Create a new session key store with TTL
+    ///
+    /// Keys will expire after the specified duration from when they were stored.
+    ///
+    /// # Arguments
+    ///
+    /// * `ttl` - Time-to-live duration for keys
+    pub fn with_ttl(ttl: Duration) -> Self {
+        Self {
+            keys: Arc::new(RwLock::new(HashMap::new())),
+            ttl: Some(ttl),
         }
     }
 
@@ -43,7 +74,11 @@ impl SessionKeyStore {
     /// * `key` - 32-byte encryption key
     pub async fn store_key(&self, session_id: String, key: [u8; 32]) {
         let mut keys = self.keys.write().await;
-        keys.insert(session_id.clone(), key);
+        let entry = KeyEntry {
+            key,
+            stored_at: Instant::now(),
+        };
+        keys.insert(session_id.clone(), entry);
         tracing::info!(
             "🔑 Session key stored for session: {} (total keys: {})",
             session_id,
@@ -53,16 +88,28 @@ impl SessionKeyStore {
 
     /// Retrieve a session key
     ///
+    /// Returns None if the key doesn't exist or has expired.
+    ///
     /// # Arguments
     ///
     /// * `session_id` - Unique session identifier
     ///
     /// # Returns
     ///
-    /// The 32-byte encryption key if found, None otherwise
+    /// The 32-byte encryption key if found and not expired, None otherwise
     pub async fn get_key(&self, session_id: &str) -> Option<[u8; 32]> {
         let keys = self.keys.read().await;
-        keys.get(session_id).copied()
+        if let Some(entry) = keys.get(session_id) {
+            // Check if expired
+            if let Some(ttl) = self.ttl {
+                if entry.stored_at.elapsed() > ttl {
+                    return None; // Expired
+                }
+            }
+            Some(entry.key)
+        } else {
+            None
+        }
     }
 
     /// Clear a session key
@@ -97,6 +144,37 @@ impl SessionKeyStore {
         let count = keys.len();
         keys.clear();
         tracing::info!("🗑️  Cleared all session keys (count: {})", count);
+    }
+
+    /// Clear expired session keys
+    ///
+    /// Removes all keys that have exceeded their TTL. If no TTL is configured,
+    /// this method does nothing.
+    ///
+    /// # Returns
+    ///
+    /// The number of keys that were cleared
+    pub async fn clear_expired_keys(&self) -> usize {
+        if let Some(ttl) = self.ttl {
+            let mut keys = self.keys.write().await;
+            let now = Instant::now();
+            let initial_count = keys.len();
+
+            // Remove expired keys
+            keys.retain(|_, entry| now.duration_since(entry.stored_at) <= ttl);
+
+            let cleared_count = initial_count - keys.len();
+            if cleared_count > 0 {
+                tracing::info!(
+                    "🗑️  Cleared {} expired session keys (remaining: {})",
+                    cleared_count,
+                    keys.len()
+                );
+            }
+            cleared_count
+        } else {
+            0 // No TTL configured, nothing to clear
+        }
     }
 }
 
