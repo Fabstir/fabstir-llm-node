@@ -5,8 +5,12 @@
 //! initialization where the client sends an ephemeral public key.
 
 use anyhow::{anyhow, Result};
-use k256::ecdh::EphemeralSecret;
-use k256::PublicKey;
+use hkdf::Hkdf;
+use k256::{
+    elliptic_curve::sec1::FromEncodedPoint,
+    EncodedPoint, PublicKey, SecretKey,
+};
+use sha2::Sha256;
 
 /// Derive a shared encryption key using ECDH
 ///
@@ -30,13 +34,52 @@ use k256::PublicKey;
 /// // Use shared_key for decrypting session init payload
 /// ```
 pub fn derive_shared_key(client_eph_pub: &[u8], node_priv_key: &[u8]) -> Result<[u8; 32]> {
-    // TODO: Implement ECDH key derivation
-    // 1. Parse client's ephemeral public key
-    // 2. Parse node's private key
-    // 3. Perform ECDH multiplication
-    // 4. Apply HKDF-SHA256 to derive encryption key
+    // 1. Validate and parse node's private key (32 bytes)
+    if node_priv_key.len() != 32 {
+        return Err(anyhow!(
+            "Invalid node private key size: expected 32 bytes, got {}",
+            node_priv_key.len()
+        ));
+    }
 
-    Err(anyhow!("ECDH key derivation not yet implemented"))
+    // Parse node's private key
+    let node_secret = SecretKey::from_slice(node_priv_key)
+        .map_err(|e| anyhow!("Failed to parse node private key: {}", e))?;
+
+    // 2. Validate and parse client's ephemeral public key
+    // Supports both compressed (33 bytes) and uncompressed (65 bytes) formats
+    if client_eph_pub.len() != 33 && client_eph_pub.len() != 65 {
+        return Err(anyhow!(
+            "Invalid client public key size: expected 33 or 65 bytes, got {}",
+            client_eph_pub.len()
+        ));
+    }
+
+    // Parse client's ephemeral public key
+    let encoded_point = EncodedPoint::from_bytes(client_eph_pub)
+        .map_err(|e| anyhow!("Failed to parse client public key: {}", e))?;
+
+    let client_pub = PublicKey::from_encoded_point(&encoded_point);
+    let client_pub = if client_pub.is_some().into() {
+        client_pub.unwrap()
+    } else {
+        return Err(anyhow!("Invalid client public key point"));
+    };
+
+    // 3. Perform ECDH: shared_point = client_pub * node_secret
+    let shared_secret = k256::ecdh::diffie_hellman(
+        node_secret.to_nonzero_scalar(),
+        client_pub.as_affine(),
+    );
+
+    // 4. Derive encryption key using HKDF-SHA256
+    // Extract entropy from shared secret and expand to 32-byte key
+    let hkdf = Hkdf::<Sha256>::new(None, shared_secret.raw_secret_bytes());
+    let mut derived_key = [0u8; 32];
+    hkdf.expand(&[], &mut derived_key)
+        .map_err(|e| anyhow!("HKDF key derivation failed: {}", e))?;
+
+    Ok(derived_key)
 }
 
 #[cfg(test)]
