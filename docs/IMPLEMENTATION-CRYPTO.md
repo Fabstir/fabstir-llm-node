@@ -69,31 +69,38 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - Invalid keys rejected with clear error messages ✅
 - Supports both compressed and uncompressed public keys ✅
 
-### Sub-phase 1.3: XChaCha20-Poly1305 Encryption
+### Sub-phase 1.3: XChaCha20-Poly1305 Encryption ✅
 **Goal**: Implement symmetric encryption/decryption
 
 **Tasks**:
-- [ ] Create `src/crypto/encryption.rs` module
-- [ ] Implement `decrypt_with_aead()` function
-- [ ] Implement `encrypt_with_aead()` function
-- [ ] Support 24-byte nonces (XChaCha20)
-- [ ] Validate AAD (additional authenticated data)
-- [ ] Handle authentication tag verification
-- [ ] Add error handling for decryption failures
+- [x] Create `src/crypto/encryption.rs` module
+- [x] Implement `decrypt_with_aead()` function using chacha20poly1305
+- [x] Implement `encrypt_with_aead()` function using chacha20poly1305
+- [x] Support 24-byte nonces (XChaCha20)
+- [x] Validate AAD (additional authenticated data)
+- [x] Handle authentication tag verification (automatic with Poly1305)
+- [x] Add error handling for decryption failures
+- [x] Validate nonce and key sizes (24 bytes and 32 bytes respectively)
 
-**Test Files** (TDD - Write First):
-- `tests/crypto/test_encryption.rs`
-  - test_encrypt_decrypt_roundtrip()
-  - test_decryption_with_aad()
-  - test_invalid_nonce_size()
-  - test_authentication_failure()
-  - test_tampered_ciphertext()
-  - test_wrong_key_decryption()
+**Test Files**:
+- `tests/crypto/test_encryption.rs` - Comprehensive TDD tests (14 test cases) ✅
+  - test_encrypt_decrypt_roundtrip() ✅
+  - test_decryption_with_aad() ✅
+  - test_invalid_nonce_size() ✅
+  - test_authentication_failure() ✅
+  - test_tampered_ciphertext() ✅
+  - test_wrong_key_decryption() ✅
+  - +8 additional edge case tests ✅
+- `tests/crypto_simple.rs` - Integration tests ✅
+  - test_encryption_basic() ✅
+  - test_encryption_wrong_key() ✅
+- Unit tests in `src/crypto/encryption.rs` (2 passing) ✅
 
 **Success Criteria**:
-- Encryption/decryption roundtrip works
-- AAD properly authenticated
-- Tampered messages rejected
+- Encryption/decryption roundtrip works ✅
+- AAD properly authenticated ✅
+- Tampered messages rejected ✅
+- 16-byte authentication tag appended to ciphertext ✅
 
 ## Phase 2: Signature Verification
 
@@ -594,10 +601,10 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 ## Current Progress Summary
 
 ### 🚧 Phase Status
-- **Phase 1**: 🚧 In Progress - Cryptography Foundation
+- **Phase 1**: ✅ Complete - Cryptography Foundation
   - Sub-phase 1.1: ✅ Complete - Dependencies and Module Structure
   - Sub-phase 1.2: ✅ Complete - ECDH Key Exchange Implementation
-  - Sub-phase 1.3: ⏳ Next - XChaCha20-Poly1305 Encryption
+  - Sub-phase 1.3: ✅ Complete - XChaCha20-Poly1305 Encryption
 - **Phase 2**: Not Started - Signature Verification
 - **Phase 3**: Not Started - Session Key Management
 - **Phase 4**: Not Started - WebSocket Message Types
@@ -607,7 +614,7 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **IN PROGRESS** - Phase 1.1-1.2 complete, ready for Phase 1.3
+**Implementation Status**: 🟢 **IN PROGRESS** - Phase 1 complete, ready for Phase 2
 
 ## Critical Path
 

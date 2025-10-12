@@ -5,6 +5,10 @@
 //! confidentiality and authenticity for messages.
 
 use anyhow::{anyhow, Result};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 
 /// Decrypt data using XChaCha20-Poly1305 AEAD
 ///
@@ -31,13 +35,41 @@ pub fn decrypt_with_aead(
     aad: &[u8],
     key: &[u8],
 ) -> Result<Vec<u8>> {
-    // TODO: Implement XChaCha20-Poly1305 decryption
-    // 1. Validate nonce size (24 bytes)
-    // 2. Validate key size (32 bytes)
-    // 3. Create cipher instance
-    // 4. Decrypt and verify authentication tag
+    // 1. Validate nonce size (24 bytes for XChaCha20)
+    if nonce.len() != 24 {
+        return Err(anyhow!(
+            "Invalid nonce size: expected 24 bytes, got {}",
+            nonce.len()
+        ));
+    }
 
-    Err(anyhow!("XChaCha20-Poly1305 decryption not yet implemented"))
+    // 2. Validate key size (32 bytes / 256 bits)
+    if key.len() != 32 {
+        return Err(anyhow!(
+            "Invalid key size: expected 32 bytes, got {}",
+            key.len()
+        ));
+    }
+
+    // 3. Create cipher instance
+    let cipher = XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
+
+    // 4. Prepare nonce
+    let xnonce = XNonce::from_slice(nonce);
+
+    // 5. Prepare payload with AAD
+    let payload = Payload {
+        msg: ciphertext,
+        aad,
+    };
+
+    // 6. Decrypt and verify authentication tag
+    let plaintext = cipher
+        .decrypt(xnonce, payload)
+        .map_err(|e| anyhow!("Decryption failed (authentication error): {}", e))?;
+
+    Ok(plaintext)
 }
 
 /// Encrypt data using XChaCha20-Poly1305 AEAD
@@ -63,38 +95,69 @@ pub fn encrypt_with_aead(
     aad: &[u8],
     key: &[u8],
 ) -> Result<Vec<u8>> {
-    // TODO: Implement XChaCha20-Poly1305 encryption
-    // 1. Validate nonce size (24 bytes)
-    // 2. Validate key size (32 bytes)
-    // 3. Create cipher instance
-    // 4. Encrypt and append authentication tag
+    // 1. Validate nonce size (24 bytes for XChaCha20)
+    if nonce.len() != 24 {
+        return Err(anyhow!(
+            "Invalid nonce size: expected 24 bytes, got {}",
+            nonce.len()
+        ));
+    }
 
-    Err(anyhow!("XChaCha20-Poly1305 encryption not yet implemented"))
+    // 2. Validate key size (32 bytes / 256 bits)
+    if key.len() != 32 {
+        return Err(anyhow!(
+            "Invalid key size: expected 32 bytes, got {}",
+            key.len()
+        ));
+    }
+
+    // 3. Create cipher instance
+    let cipher = XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
+
+    // 4. Prepare nonce
+    let xnonce = XNonce::from_slice(nonce);
+
+    // 5. Prepare payload with AAD
+    let payload = Payload {
+        msg: plaintext,
+        aad,
+    };
+
+    // 6. Encrypt and append 16-byte authentication tag
+    let ciphertext = cipher
+        .encrypt(xnonce, payload)
+        .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+
+    Ok(ciphertext)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{rngs::OsRng, RngCore};
 
     #[test]
-    fn test_decrypt_placeholder() {
-        let ciphertext = vec![0u8; 32];
-        let nonce = vec![0u8; 24];
-        let aad = vec![];
-        let key = vec![0u8; 32];
+    fn test_encrypt_decrypt_basic() {
+        // Basic encrypt/decrypt roundtrip
+        let plaintext = b"test message";
+        let mut key = [0u8; 32];
+        let mut nonce = [0u8; 24];
+        OsRng.fill_bytes(&mut key);
+        OsRng.fill_bytes(&mut nonce);
 
-        let result = decrypt_with_aead(&ciphertext, &nonce, &aad, &key);
-        assert!(result.is_err()); // Should fail until implemented
+        let ciphertext = encrypt_with_aead(plaintext, &nonce, b"", &key).unwrap();
+        let decrypted = decrypt_with_aead(&ciphertext, &nonce, b"", &key).unwrap();
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
-    fn test_encrypt_placeholder() {
-        let plaintext = b"test message";
-        let nonce = vec![0u8; 24];
-        let aad = vec![];
-        let key = vec![0u8; 32];
+    fn test_invalid_nonce_size() {
+        let plaintext = b"test";
+        let key = [0u8; 32];
+        let short_nonce = [0u8; 12];
 
-        let result = encrypt_with_aead(plaintext, &nonce, &aad, &key);
-        assert!(result.is_err()); // Should fail until implemented
+        let result = encrypt_with_aead(plaintext, &short_nonce, b"", &key);
+        assert!(result.is_err());
     }
 }
