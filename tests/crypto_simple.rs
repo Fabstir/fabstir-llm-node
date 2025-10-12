@@ -2,7 +2,7 @@
 
 use fabstir_llm_node::crypto::{
     decrypt_session_init, decrypt_with_aead, derive_shared_key, encrypt_with_aead,
-    recover_client_address, EncryptedSessionPayload,
+    recover_client_address, EncryptedSessionPayload, SessionKeyStore,
 };
 use k256::{
     ecdh::EphemeralSecret,
@@ -293,4 +293,54 @@ fn test_session_init_invalid_signature() {
     let result = decrypt_session_init(&payload, &node_priv_bytes);
     assert!(result.is_err(), "Should reject invalid signature");
     assert!(result.unwrap_err().to_string().contains("Signature verification failed"));
+}
+
+#[tokio::test]
+async fn test_session_key_store_basic() {
+    // Basic integration test for SessionKeyStore
+    let store = SessionKeyStore::new();
+    let session_id = "integration-session-1".to_string();
+    let key = [123u8; 32];
+
+    // Store key
+    store.store_key(session_id.clone(), key).await;
+
+    // Retrieve key
+    let retrieved = store.get_key(&session_id).await;
+    assert_eq!(retrieved, Some(key), "Should retrieve stored key");
+
+    // Clear key
+    store.clear_key(&session_id).await;
+    assert_eq!(store.get_key(&session_id).await, None, "Key should be cleared");
+}
+
+#[tokio::test]
+async fn test_session_key_store_workflow() {
+    // Simulate a real session workflow
+    let store = SessionKeyStore::new();
+
+    // Session 1: Full lifecycle
+    let session1_id = "user-session-abc".to_string();
+    let session1_key = [11u8; 32];
+    store.store_key(session1_id.clone(), session1_key).await;
+
+    // Session 2: Concurrent session
+    let session2_id = "user-session-xyz".to_string();
+    let session2_key = [22u8; 32];
+    store.store_key(session2_id.clone(), session2_key).await;
+
+    // Both keys should be retrievable
+    assert_eq!(store.get_key(&session1_id).await, Some(session1_key));
+    assert_eq!(store.get_key(&session2_id).await, Some(session2_key));
+    assert_eq!(store.count().await, 2);
+
+    // End session 1
+    store.clear_key(&session1_id).await;
+    assert_eq!(store.get_key(&session1_id).await, None);
+    assert_eq!(store.get_key(&session2_id).await, Some(session2_key));
+    assert_eq!(store.count().await, 1);
+
+    // End session 2
+    store.clear_key(&session2_id).await;
+    assert_eq!(store.count().await, 0);
 }
