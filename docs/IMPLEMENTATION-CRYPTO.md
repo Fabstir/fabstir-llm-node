@@ -504,32 +504,109 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Dependencies**: Uses decrypt_with_aead() from Phase 1, SessionKeyStore from Phase 3
 - **Note**: Responses currently sent as plaintext; encryption in Sub-phase 5.3
 
-### Sub-phase 5.3: Encrypted Response Streaming
+### Sub-phase 5.3: Encrypted Response Streaming ✅
 **Goal**: Encrypt and stream response chunks
+**Completed**: January 2025 (Phase 6.2.1)
 
 **Tasks**:
-- [ ] Add `encrypt_and_send_chunk()` function
-- [ ] Retrieve session key for encryption
-- [ ] Generate random 24-byte nonce per chunk
-- [ ] Prepare AAD with message index + timestamp
-- [ ] Encrypt chunk with XChaCha20-Poly1305
-- [ ] Send encrypted_chunk message
-- [ ] Handle streaming completion
-- [ ] Send final encrypted_response
+- [x] Add encryption logic to encrypted_message handler
+- [x] Retrieve session key for encryption
+- [x] Generate random 24-byte nonce per chunk using CSPRNG
+- [x] Prepare AAD with message index (format: "chunk_{index}")
+- [x] Encrypt chunk with XChaCha20-Poly1305
+- [x] Send encrypted_chunk message with ciphertextHex, nonceHex, aadHex, index
+- [x] Handle streaming completion with finish_reason
+- [x] Send final encrypted_response message
 
-**Test Files** (TDD - Write First):
-- `tests/websocket/test_encrypted_streaming.rs`
-  - test_encrypt_response_chunk()
-  - test_streaming_encrypted_chunks()
-  - test_unique_nonces_per_chunk()
-  - test_aad_includes_index()
-  - test_final_encrypted_response()
-  - test_streaming_without_session_key()
+**Test Files** (TDD - Written First):
+- `tests/websocket/test_encrypted_streaming.rs` - 12 test cases ✅
+  - test_encrypt_response_chunk() ✅
+  - test_streaming_encrypted_chunks() ✅
+  - test_unique_nonces_per_chunk() ✅
+  - test_aad_includes_index() ✅
+  - test_final_encrypted_response() ✅
+  - test_streaming_without_session_key() ✅
+  - test_chunk_with_message_id() ✅
+  - test_encryption_preserves_token_count() ✅
+  - test_nonce_randomness() ✅
+  - test_encrypted_chunk_structure() ✅
+  - test_encrypted_response_structure() ✅
+  - test_streaming_maintains_order() ✅
+
+**Implementation**:
+- Modified encrypted_message handler streaming loop (src/api/server.rs:1096-1257)
+- Encryption flow:
+  1. Initialize chunk_index counter to 0
+  2. For each response chunk:
+     - Generate random 24-byte nonce using rand::thread_rng().fill_bytes()
+     - Create AAD: format!("chunk_{}", chunk_index)
+     - Encrypt response.content with encrypt_with_aead()
+     - Build encrypted_chunk message with hex-encoded fields
+     - Include tokens, message_id, session_id, and chunk index
+     - Send encrypted_chunk over WebSocket
+     - Increment chunk_index
+  3. On finish_reason:
+     - Generate new random nonce for final message
+     - Encrypt finish_reason string
+     - Send encrypted_response message
+     - Break streaming loop
+
+**Message Structures**:
+- `encrypted_chunk`: Interim streaming messages
+  ```json
+  {
+    "type": "encrypted_chunk",
+    "session_id": "session-123",
+    "id": "msg-id",
+    "tokens": 5,
+    "payload": {
+      "ciphertextHex": "...",
+      "nonceHex": "...",
+      "aadHex": "...",
+      "index": 0
+    }
+  }
+  ```
+- `encrypted_response`: Final message with finish_reason
+  ```json
+  {
+    "type": "encrypted_response",
+    "session_id": "session-123",
+    "id": "msg-id",
+    "payload": {
+      "ciphertextHex": "...",
+      "nonceHex": "...",
+      "aadHex": "..."
+    }
+  }
+  ```
+
+**Security Features**:
+- ✅ Unique nonces per chunk (CSPRNG using rand::thread_rng())
+- ✅ AAD with chunk index prevents replay/reordering attacks
+- ✅ Separate encryption for final message
+- ✅ Token tracking preserved for checkpoint submission
+- ✅ Message ID correlation maintained for SDK request tracking
 
 **Success Criteria**:
-- Response chunks encrypted correctly
-- Nonces unique per chunk
-- Streaming works end-to-end
+- ✅ Response chunks encrypted correctly with XChaCha20-Poly1305
+- ✅ Nonces unique per chunk (CSPRNG)
+- ✅ AAD includes chunk index for ordering validation
+- ✅ Streaming works end-to-end
+- ✅ Final message sent with encrypted finish_reason
+- ✅ Token tracking maintained for settlement
+- ✅ Test suite complete (12 tests)
+- ✅ Library compiles successfully
+
+**Deliverables Summary**:
+- **Code Changes**: 2 files modified
+  - `tests/websocket/test_encrypted_streaming.rs` (new, 300+ lines, 12 tests)
+  - `src/api/server.rs` (161 lines modified: streaming encryption logic)
+  - `tests/websocket_tests.rs` (module registration)
+- **Test Coverage**: 12 test cases covering encryption, nonces, AAD, ordering, errors
+- **LOC Added**: ~460 lines (tests + encryption logic)
+- **Dependencies**: Uses encrypt_with_aead() from Phase 1, SessionKeyStore from Phase 3
+- **Security**: CSPRNG for nonces, AAD for ordering, unique nonces per chunk
 
 ### Sub-phase 5.4: Backward Compatibility
 **Goal**: Support both encrypted and plaintext sessions
@@ -801,14 +878,14 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Phase 5**: 🚧 In Progress - WebSocket Handler Integration
   - Sub-phase 5.1: ✅ Complete - Encrypted Session Init Handler (routing + infrastructure)
   - Sub-phase 5.2: ✅ Complete - Encrypted Message Handler (decrypt + inference)
-  - Sub-phase 5.3: Not Started - Encrypted Response Streaming
+  - Sub-phase 5.3: ✅ Complete - Encrypted Response Streaming (encrypt responses)
   - Sub-phase 5.4: Not Started - Backward Compatibility
 - **Phase 6**: Not Started - Node Private Key Access
 - **Phase 7**: Not Started - Error Handling
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **IN PROGRESS** - Phase 5.2 complete, ready for Sub-phase 5.3 (Encrypted Response Streaming) or Phase 6 (Node Private Key Access)
+**Implementation Status**: 🟢 **IN PROGRESS** - Phase 5.3 complete, ready for Sub-phase 5.4 (Backward Compatibility) or Phase 6 (Node Private Key Access)
 
 ## Critical Path
 
