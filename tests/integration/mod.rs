@@ -8,4 +8,7 @@ pub mod mock {
 }
 
 #[cfg(test)]
+pub mod test_e2e_encryption;
+
+#[cfg(test)]
 pub mod test_host_management;
