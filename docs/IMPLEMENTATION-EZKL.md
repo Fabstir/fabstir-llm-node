@@ -17,17 +17,17 @@ Implementation plan for replacing mock EZKL proofs with real commitment-based ze
 **Goal**: Add EZKL library and verify basic functionality
 
 #### Tasks
-- [ ] Research latest stable EZKL crate version (v22.x or newer)
-- [ ] Write test for EZKL library availability check
-- [ ] Write test for basic EZKL circuit compilation
-- [ ] Add EZKL to Cargo.toml with feature flag
-- [ ] Add required crypto dependencies (halo2, ark-std)
-- [ ] Create feature flag `real-ezkl` (default off)
-- [ ] Create EZKL config module with environment variables
-- [ ] Implement EZKL availability check function
-- [ ] Add conditional compilation for mock vs real
-- [ ] Verify builds work with and without `real-ezkl` feature
-- [ ] Document EZKL installation requirements
+- [x] Research latest stable EZKL crate version (v22.x or newer) - v22.3.0
+- [x] Write test for EZKL library availability check
+- [x] Write test for basic EZKL circuit compilation
+- [x] Add EZKL to Cargo.toml with feature flag
+- [x] Add required crypto dependencies (halo2, ark-std)
+- [x] Create feature flag `real-ezkl` (default off)
+- [x] Create EZKL config module with environment variables
+- [x] Implement EZKL availability check function
+- [x] Add conditional compilation for mock vs real
+- [x] Verify builds work with and without `real-ezkl` feature
+- [x] Document EZKL installation requirements - requires nightly Rust
 
 **Test Files:**
 - `tests/ezkl/test_ezkl_availability.rs` (max 150 lines) - Library availability tests

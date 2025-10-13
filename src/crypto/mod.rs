@@ -7,6 +7,7 @@
 //! - **Encryption**: XChaCha20-Poly1305 AEAD for message encryption
 //! - **Signature**: ECDSA signature recovery for client authentication
 //! - **Session Keys**: In-memory storage of session encryption keys
+//! - **EZKL**: Zero-knowledge proof generation for result commitments (Phase 1.1)
 //!
 //! ## Security Considerations
 //!
@@ -28,6 +29,7 @@
 pub mod ecdh;
 pub mod encryption;
 pub mod error;
+pub mod ezkl;
 pub mod private_key;
 pub mod session_init;
 pub mod session_keys;

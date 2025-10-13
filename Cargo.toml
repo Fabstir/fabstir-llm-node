@@ -95,8 +95,19 @@ bs58 = "0.5"
 clap = { version = "4.5", features = ["derive", "env"] }
 dotenv = "0.15"
 
-# Optional: For future real EZKL integration (commented out for now)
-# ezkl = { version = "7.0", optional = true }
+# Real EZKL Integration (Phase 1.1)
+# NOTE: EZKL requires nightly Rust toolchain due to profile-rustflags feature
+# To enable real EZKL:
+#   1. Switch to nightly: rustup default nightly
+#   2. Uncomment the dependencies below
+#   3. Build with: cargo build --features real-ezkl
+#
+# For now (Sub-phase 1.1), we use mock implementation with stable Rust
+# ezkl = { git = "https://github.com/zkonduit/ezkl", tag = "v22.3.0", optional = true }
+# halo2_proofs = { version = "0.3", optional = true }
+# ark-std = { version = "0.4", optional = true }
+# ark-ff = { version = "0.4", optional = true }
+# ark-serialize = { version = "0.4", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -106,12 +117,18 @@ ethers = { version = "2.0", features = ["ws", "rustls"] }
 tempfile = "3.8"
 rand = "0.8"
 
+# For benchmarking EZKL performance (Phase 1.1)
+criterion = "0.5"
+
 [features]
 default = ["inference"]
 inference = []
 
-# Optional: Add feature flag for real EZKL (for future use)
-# real-ezkl = ["ezkl"]
+# Real EZKL feature flag (Phase 1.1)
+# Enable with: cargo build --features real-ezkl
+# NOTE: Currently uses mock implementation (dependencies commented out above)
+# When dependencies are uncommented (with nightly Rust), this will enable real EZKL
+real-ezkl = []  # Empty for now, will add deps when uncommented: ["ezkl", "halo2_proofs", "ark-std", "ark-ff", "ark-serialize"]
 
 [[test]]
 name = "performance_tests"
