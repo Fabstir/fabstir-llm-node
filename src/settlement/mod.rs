@@ -4,3 +4,4 @@ pub mod manager;
 pub mod payment_distribution;
 pub mod queue;
 pub mod types;
+pub mod validator;

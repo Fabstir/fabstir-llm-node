@@ -12,3 +12,6 @@ pub mod test_e2e_encryption;
 
 #[cfg(test)]
 pub mod test_host_management;
+
+#[cfg(test)]
+pub mod test_proof_payment_flow;

@@ -1,7 +1,9 @@
 pub mod cbor_compat;
 pub mod enhanced_s5_client;
 pub mod model_storage;
+pub mod proof_store;
 pub mod result_cache;
+pub mod result_store;
 pub mod s5_client;
 
 // Re-export main types for convenience
@@ -25,3 +27,7 @@ pub use result_cache::{
 
 // Re-export Enhanced S5 types
 pub use enhanced_s5_client::{EnhancedS5Client, HealthResponse, S5Config, S5File};
+
+// Re-export proof and result storage types
+pub use proof_store::{ProofStore, ProofStoreStats};
+pub use result_store::{ResultStore, ResultStoreStats};
