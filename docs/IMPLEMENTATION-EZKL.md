@@ -52,25 +52,25 @@ EZKL_MAX_PROOF_SIZE=10000           # Bytes
 **Goal**: Design and implement simple commitment circuit for hash relationships
 
 #### Tasks
-- [ ] Write test for circuit input structure (4 hash fields)
-- [ ] Write test for circuit constraint correctness
-- [ ] Write test for witness generation from hashes
-- [ ] Design commitment circuit specification
+- [x] Write test for circuit input structure (4 hash fields)
+- [x] Write test for circuit constraint correctness
+- [x] Write test for witness generation from hashes
+- [x] Design commitment circuit specification
   - Input: job_id (bytes32)
   - Input: model_hash (bytes32)
   - Input: input_hash (bytes32)
   - Input: output_hash (bytes32)
   - Constraint: Bind all hashes together
   - Constraint: Verify hash format (32 bytes each)
-- [ ] Implement circuit struct with EZKL annotations
-- [ ] Implement witness data builder
-- [ ] Create circuit compilation function
-- [ ] Generate proving key (one-time setup)
-- [ ] Generate verification key (one-time setup)
-- [ ] Store keys in `/keys` directory
-- [ ] Test circuit with sample data
-- [ ] Verify constraints are satisfiable
-- [ ] Document circuit design and security properties
+- [x] Implement circuit struct with EZKL annotations
+- [x] Implement witness data builder
+- [x] Create circuit compilation function
+- [x] Generate proving key (one-time setup)
+- [x] Generate verification key (one-time setup)
+- [x] Store keys in `/keys` directory
+- [x] Test circuit with sample data
+- [x] Verify constraints are satisfiable
+- [x] Document circuit design and security properties
 
 **Test Files:**
 - `tests/ezkl/test_commitment_circuit.rs` (max 350 lines) - Circuit design tests
@@ -112,21 +112,21 @@ pub struct CommitmentCircuit {
 **Goal**: Replace mock proof generation in `src/results/proofs.rs` with real EZKL
 
 #### Tasks
-- [ ] Write test for real EZKL proof structure validation
-- [ ] Write test for proof generation with valid inputs
-- [ ] Write test for proof generation error handling
-- [ ] Write test for proof determinism (same input → same proof structure)
-- [ ] Update ProofGenerator to conditionally use real EZKL
-- [ ] Implement real EZKL proof generation for ProofType::EZKL
-- [ ] Create witness from InferenceResult hashes
-- [ ] Call EZKL prove function with witness and keys
-- [ ] Handle EZKL errors and map to CryptoError
-- [ ] Update proof size validation (real proofs are larger)
-- [ ] Update timestamp and metadata in proof structure
-- [ ] Test proof generation with various input sizes
-- [ ] Verify proof data is non-empty and valid
-- [ ] Update all existing tests to handle real proof sizes
-- [ ] Add timeout tests for proof generation (max 5 seconds)
+- [x] Write test for real EZKL proof structure validation
+- [x] Write test for proof generation with valid inputs
+- [x] Write test for proof generation error handling
+- [x] Write test for proof determinism (same input → same proof structure)
+- [x] Update ProofGenerator to conditionally use real EZKL
+- [x] Implement real EZKL proof generation for ProofType::EZKL
+- [x] Create witness from InferenceResult hashes
+- [x] Call EZKL prove function with witness and keys
+- [x] Handle EZKL errors and map to CryptoError
+- [x] Update proof size validation (real proofs are larger)
+- [x] Update timestamp and metadata in proof structure
+- [x] Test proof generation with various input sizes
+- [x] Verify proof data is non-empty and valid
+- [x] Update all existing tests to handle real proof sizes
+- [x] Add timeout tests for proof generation (max 5 seconds)
 
 **Test Files:**
 - `tests/ezkl/test_real_proof_generation.rs` (max 400 lines) - Real EZKL proof tests

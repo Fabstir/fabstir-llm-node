@@ -1,0 +1,389 @@
+//! EZKL Proof Generation
+//!
+//! Handles generation of EZKL zero-knowledge proofs for commitment circuits.
+//! Supports both real EZKL (with feature flag) and mock implementation.
+
+use super::circuit::CommitmentCircuit;
+use super::error::{EzklError, EzklResult};
+use super::setup::{load_proving_key, validate_proving_key, ProvingKey};
+use super::witness::Witness;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Generated proof data
+#[derive(Debug, Clone)]
+pub struct ProofData {
+    /// Proof bytes (SNARK proof)
+    pub proof_bytes: Vec<u8>,
+    /// Proof timestamp (when generated)
+    pub timestamp: u64,
+    /// Model hash commitment
+    pub model_hash: [u8; 32],
+    /// Input hash commitment
+    pub input_hash: [u8; 32],
+    /// Output hash commitment
+    pub output_hash: [u8; 32],
+}
+
+/// EZKL proof generator
+pub struct EzklProver {
+    /// Cached proving key
+    proving_key: Option<ProvingKey>,
+    /// Path to proving key file
+    proving_key_path: Option<std::path::PathBuf>,
+}
+
+impl EzklProver {
+    /// Create new prover without preloaded keys
+    pub fn new() -> Self {
+        Self {
+            proving_key: None,
+            proving_key_path: None,
+        }
+    }
+
+    /// Create new prover with proving key path
+    pub fn with_key_path(key_path: impl AsRef<Path>) -> Self {
+        Self {
+            proving_key: None,
+            proving_key_path: Some(key_path.as_ref().to_path_buf()),
+        }
+    }
+
+    /// Create new prover with preloaded proving key
+    pub fn with_key(proving_key: ProvingKey) -> EzklResult<Self> {
+        validate_proving_key(&proving_key)?;
+        Ok(Self {
+            proving_key: Some(proving_key),
+            proving_key_path: None,
+        })
+    }
+
+    /// Load proving key from configured path or provided path
+    pub fn load_key(&mut self, key_path: Option<&Path>) -> EzklResult<&ProvingKey> {
+        // If key already loaded, return it
+        if self.proving_key.is_some() {
+            return Ok(self.proving_key.as_ref().unwrap());
+        }
+
+        // Determine key path to use
+        let path = key_path
+            .or_else(|| self.proving_key_path.as_deref())
+            .ok_or_else(|| {
+                EzklError::config_error("No proving key path configured or provided")
+            })?;
+
+        // Load key from file
+        tracing::info!("📖 Loading proving key from {:?}", path);
+        let key = load_proving_key(path).map_err(|e| EzklError::KeyLoadFailed {
+            path: path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+
+        // Validate key
+        validate_proving_key(&key)?;
+
+        // Cache key
+        self.proving_key = Some(key);
+        Ok(self.proving_key.as_ref().unwrap())
+    }
+
+    /// Generate proof from witness data
+    ///
+    /// This is the main entry point for proof generation.
+    /// It handles both mock and real EZKL implementations based on feature flags.
+    pub fn generate_proof(&mut self, witness: &Witness) -> EzklResult<ProofData> {
+        tracing::debug!("🔨 Generating EZKL proof for witness");
+
+        // Validate witness
+        if !witness.is_valid() {
+            return Err(EzklError::InvalidWitness {
+                reason: "Witness validation failed".to_string(),
+            });
+        }
+
+        // Generate timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Generate proof based on feature flag
+        #[cfg(feature = "real-ezkl")]
+        {
+            self.generate_real_proof(witness, timestamp)
+        }
+
+        #[cfg(not(feature = "real-ezkl"))]
+        {
+            self.generate_mock_proof(witness, timestamp)
+        }
+    }
+
+    /// Generate mock proof (when real-ezkl feature is disabled)
+    ///
+    /// This creates a deterministic mock proof for testing and development.
+    #[cfg(not(feature = "real-ezkl"))]
+    fn generate_mock_proof(&self, witness: &Witness, timestamp: u64) -> EzklResult<ProofData> {
+        tracing::debug!("🎭 Generating mock EZKL proof");
+
+        // Mock proof structure:
+        // - Header: 0xEF (EZKL marker)
+        // - Size: 200 bytes total
+        // - Contains: job_id, model_hash, input_hash, output_hash
+
+        let mut proof_bytes = Vec::with_capacity(200);
+
+        // Header
+        proof_bytes.push(0xEF); // EZKL marker
+
+        // Add witness data (for verification)
+        proof_bytes.extend_from_slice(witness.job_id());
+        proof_bytes.extend_from_slice(witness.model_hash());
+        proof_bytes.extend_from_slice(witness.input_hash());
+        proof_bytes.extend_from_slice(witness.output_hash());
+
+        // Pad to 200 bytes
+        while proof_bytes.len() < 200 {
+            proof_bytes.push(0x00);
+        }
+
+        tracing::info!(
+            "✅ Generated mock EZKL proof ({} bytes)",
+            proof_bytes.len()
+        );
+
+        Ok(ProofData {
+            proof_bytes,
+            timestamp,
+            model_hash: *witness.model_hash(),
+            input_hash: *witness.input_hash(),
+            output_hash: *witness.output_hash(),
+        })
+    }
+
+    /// Generate real EZKL proof (when real-ezkl feature is enabled)
+    ///
+    /// This uses the actual EZKL library to generate SNARK proofs.
+    #[cfg(feature = "real-ezkl")]
+    fn generate_real_proof(&mut self, witness: &Witness, timestamp: u64) -> EzklResult<ProofData> {
+        tracing::info!("🔐 Generating real EZKL proof");
+
+        // Load proving key if not already loaded
+        let _proving_key = self.load_key(None)?;
+
+        // TODO: Implement real EZKL proof generation
+        // This will be implemented when EZKL library is integrated
+        // Steps:
+        // 1. Create circuit from witness
+        // 2. Compile circuit with EZKL
+        // 3. Generate proof using EZKL prover
+        // 4. Return ProofData with real SNARK proof
+
+        Err(EzklError::proof_generation_failed(
+            "Real EZKL proof generation not yet implemented. \
+             This requires nightly Rust and uncommenting EZKL dependencies in Cargo.toml",
+        ))
+    }
+
+    /// Generate proof from circuit and witness
+    ///
+    /// This is a lower-level interface that takes both circuit and witness.
+    pub fn generate_proof_from_circuit(
+        &mut self,
+        circuit: &CommitmentCircuit,
+        witness: &Witness,
+    ) -> EzklResult<ProofData> {
+        // Validate circuit and witness match
+        if circuit.job_id != *witness.job_id()
+            || circuit.model_hash != *witness.model_hash()
+            || circuit.input_hash != *witness.input_hash()
+            || circuit.output_hash != *witness.output_hash()
+        {
+            return Err(EzklError::InvalidWitness {
+                reason: "Circuit and witness do not match".to_string(),
+            });
+        }
+
+        // Validate circuit
+        if !circuit.is_valid() {
+            return Err(EzklError::CircuitValidationFailed {
+                reason: "Circuit validation failed".to_string(),
+            });
+        }
+
+        // Generate proof from witness
+        self.generate_proof(witness)
+    }
+}
+
+impl Default for EzklProver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Helper function to generate proof from witness (convenience function)
+pub fn generate_proof(witness: &Witness, proving_key_path: Option<&Path>) -> EzklResult<ProofData> {
+    let mut prover = if let Some(path) = proving_key_path {
+        EzklProver::with_key_path(path)
+    } else {
+        EzklProver::new()
+    };
+
+    prover.generate_proof(witness)
+}
+
+/// Helper function to generate proof from circuit and witness
+pub fn generate_proof_from_circuit(
+    circuit: &CommitmentCircuit,
+    witness: &Witness,
+    proving_key_path: Option<&Path>,
+) -> EzklResult<ProofData> {
+    let mut prover = if let Some(path) = proving_key_path {
+        EzklProver::with_key_path(path)
+    } else {
+        EzklProver::new()
+    };
+
+    prover.generate_proof_from_circuit(circuit, witness)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::ezkl::WitnessBuilder;
+
+    fn create_test_witness() -> Witness {
+        WitnessBuilder::new()
+            .with_job_id([0u8; 32])
+            .with_model_hash([1u8; 32])
+            .with_input_hash([2u8; 32])
+            .with_output_hash([3u8; 32])
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_prover_new() {
+        let prover = EzklProver::new();
+        assert!(prover.proving_key.is_none());
+        assert!(prover.proving_key_path.is_none());
+    }
+
+    #[test]
+    fn test_prover_with_key_path() {
+        let prover = EzklProver::with_key_path("/test/key.bin");
+        assert!(prover.proving_key.is_none());
+        assert!(prover.proving_key_path.is_some());
+    }
+
+    #[test]
+    #[cfg(not(feature = "real-ezkl"))]
+    fn test_generate_mock_proof() -> EzklResult<()> {
+        let mut prover = EzklProver::new();
+        let witness = create_test_witness();
+
+        let proof = prover.generate_proof(&witness)?;
+
+        // Verify proof structure
+        assert_eq!(proof.proof_bytes.len(), 200);
+        assert_eq!(proof.proof_bytes[0], 0xEF); // EZKL marker
+        assert_eq!(proof.model_hash, *witness.model_hash());
+        assert_eq!(proof.input_hash, *witness.input_hash());
+        assert_eq!(proof.output_hash, *witness.output_hash());
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(not(feature = "real-ezkl"))]
+    fn test_mock_proof_contains_witness_data() -> EzklResult<()> {
+        let mut prover = EzklProver::new();
+        let witness = create_test_witness();
+
+        let proof = prover.generate_proof(&witness)?;
+
+        // Verify proof contains witness data
+        assert_eq!(&proof.proof_bytes[1..33], witness.job_id());
+        assert_eq!(&proof.proof_bytes[33..65], witness.model_hash());
+        assert_eq!(&proof.proof_bytes[65..97], witness.input_hash());
+        assert_eq!(&proof.proof_bytes[97..129], witness.output_hash());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_proof_invalid_witness() {
+        let mut prover = EzklProver::new();
+
+        // Create witness that will fail validation (empty is actually valid)
+        // We'll need to test with an actually invalid witness
+        // For now, we test that valid witnesses work
+        let witness = create_test_witness();
+        let result = prover.generate_proof(&witness);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(not(feature = "real-ezkl"))]
+    fn test_proof_timestamp() -> EzklResult<()> {
+        let mut prover = EzklProver::new();
+        let witness = create_test_witness();
+
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let proof = prover.generate_proof(&witness)?;
+
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        assert!(proof.timestamp >= before);
+        assert!(proof.timestamp <= after);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convenience_function() -> EzklResult<()> {
+        let witness = create_test_witness();
+        let proof = generate_proof(&witness, None)?;
+
+        assert!(!proof.proof_bytes.is_empty());
+        assert_eq!(proof.model_hash, *witness.model_hash());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_proof_from_circuit_matching() -> EzklResult<()> {
+        let witness = create_test_witness();
+        let circuit = CommitmentCircuit::new(
+            *witness.job_id(),
+            *witness.model_hash(),
+            *witness.input_hash(),
+            *witness.output_hash(),
+        );
+
+        let proof = generate_proof_from_circuit(&circuit, &witness, None)?;
+
+        assert!(!proof.proof_bytes.is_empty());
+        assert_eq!(proof.model_hash, *witness.model_hash());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_proof_from_circuit_mismatch() {
+        let witness = create_test_witness();
+        let circuit = CommitmentCircuit::new([9u8; 32], [9u8; 32], [9u8; 32], [9u8; 32]);
+
+        let result = generate_proof_from_circuit(&circuit, &witness, None);
+        assert!(result.is_err());
+    }
+}

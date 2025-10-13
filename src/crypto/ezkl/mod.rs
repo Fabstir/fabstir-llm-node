@@ -14,8 +14,11 @@
 //!
 //! - `config`: Environment-based configuration
 //! - `availability`: Library availability checks
-//! - `circuit`: Circuit definitions (future)
-//! - `witness`: Witness data generation (future)
+//! - `circuit`: Circuit definitions for commitment proofs
+//! - `witness`: Witness data generation from hashes
+//! - `setup`: Key generation and circuit compilation
+//! - `prover`: Proof generation (Phase 2.1)
+//! - `error`: EZKL-specific error types (Phase 2.1)
 //!
 //! ## Usage
 //!
@@ -30,22 +33,27 @@
 //! ```
 
 pub mod availability;
+pub mod circuit;
 pub mod config;
+pub mod error;
+pub mod prover;
+pub mod setup;
+pub mod witness;
 
-// Future sub-modules (Phase 1.2 and beyond)
-// pub mod circuit;
-// pub mod witness;
-// pub mod setup;
-// pub mod prover;
+// Future sub-modules (Phase 2.2 and beyond)
 // pub mod verifier;
 // pub mod key_manager;
 // pub mod cache;
 // pub mod metrics;
-// pub mod error;
 
 // Re-export commonly used types
 pub use availability::{is_ezkl_available, EzklCapabilities};
+pub use circuit::{CommitmentCircuit, CircuitMetadata};
 pub use config::EzklConfig;
+pub use error::{EzklError, EzklResult};
+pub use prover::{generate_proof, generate_proof_from_circuit, EzklProver, ProofData};
+pub use setup::{compile_circuit, generate_keys, keys_are_compatible, load_proving_key, load_verifying_key, ProvingKey, VerificationKey};
+pub use witness::{Witness, WitnessBuilder};
 
 /// Module version
 pub const MODULE_VERSION: &str = "0.1.0";
