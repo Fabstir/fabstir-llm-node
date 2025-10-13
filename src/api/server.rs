@@ -892,6 +892,15 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         chain_id = json_msg["chain_id"].as_u64()
                             .or_else(|| json_msg["chainId"].as_u64());
 
+                        // DEPRECATED: Plaintext session (Phase 6.2.1, Sub-phase 5.4)
+                        // SDK v6.2+ uses encryption by default. Plaintext is a fallback for clients with `encryption: false`.
+                        warn!(
+                            "⚠️ DEPRECATED: Plaintext session_init detected for session_id: {:?}. \
+                            Encryption is strongly recommended for privacy and security. \
+                            Update your SDK to use encrypted sessions or enable encryption: true in session options.",
+                            session_id
+                        );
+
                         info!("🎯 WebSocket session_init received:");
                         info!("   session_id: {:?}", session_id);
                         info!("   job_id: {:?}", job_id);
@@ -1416,6 +1425,15 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle both "prompt" and "inference" messages
                     if json_msg["type"] == "prompt" || json_msg["type"] == "inference" {
+                        // DEPRECATED: Plaintext prompt/inference (Phase 6.2.1, Sub-phase 5.4)
+                        // SDK v6.2+ uses encryption by default. Plaintext is a fallback for clients with `encryption: false`.
+                        warn!(
+                            "⚠️ DEPRECATED: Plaintext {} message detected for session_id: {:?}. \
+                            Encryption is strongly recommended for privacy and security. \
+                            Update your SDK to use encrypted_message or enable encryption: true in session options.",
+                            json_msg["type"], session_id
+                        );
+
                         // Extract message ID for response correlation
                         let message_id = json_msg.get("id").cloned();
 
