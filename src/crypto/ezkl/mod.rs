@@ -19,6 +19,9 @@
 //! - `setup`: Key generation and circuit compilation
 //! - `prover`: Proof generation (Phase 2.1)
 //! - `error`: EZKL-specific error types (Phase 2.1)
+//! - `key_manager`: Key loading and caching (Phase 2.2)
+//! - `cache`: Proof caching with LRU eviction (Phase 2.2)
+//! - `metrics`: Prometheus metrics (Phase 2.2)
 //!
 //! ## Usage
 //!
@@ -33,24 +36,27 @@
 //! ```
 
 pub mod availability;
+pub mod cache;
 pub mod circuit;
 pub mod config;
 pub mod error;
+pub mod key_manager;
+pub mod metrics;
 pub mod prover;
 pub mod setup;
 pub mod witness;
 
-// Future sub-modules (Phase 2.2 and beyond)
+// Future sub-modules (Phase 3 and beyond)
 // pub mod verifier;
-// pub mod key_manager;
-// pub mod cache;
-// pub mod metrics;
 
 // Re-export commonly used types
 pub use availability::{is_ezkl_available, EzklCapabilities};
+pub use cache::{CacheStats, ProofCache};
 pub use circuit::{CommitmentCircuit, CircuitMetadata};
 pub use config::EzklConfig;
 pub use error::{EzklError, EzklResult};
+pub use key_manager::{KeyCacheStats, KeyManager};
+pub use metrics::{global_metrics, EzklMetrics};
 pub use prover::{generate_proof, generate_proof_from_circuit, EzklProver, ProofData};
 pub use setup::{compile_circuit, generate_keys, keys_are_compatible, load_proving_key, load_verifying_key, ProvingKey, VerificationKey};
 pub use witness::{Witness, WitnessBuilder};
