@@ -938,28 +938,63 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 
 ## Phase 7: Error Handling
 
-### Sub-phase 7.1: Crypto Error Types
+### Sub-phase 7.1: Crypto Error Types ✅
 **Goal**: Define comprehensive error types for crypto operations
+**Completed**: January 2025 (Phase 7)
 
 **Tasks**:
-- [ ] Create `CryptoError` enum in `src/crypto/error.rs`
-- [ ] Add variants: DecryptionFailed, InvalidSignature, InvalidKey, etc.
-- [ ] Implement Display and Error traits
-- [ ] Add error context (session_id, operation)
-- [ ] Create From implementations for crypto library errors
-- [ ] Add error logging with context
+- [x] Create `CryptoError` enum in `src/crypto/error.rs`
+- [x] Add variants: DecryptionFailed, InvalidSignature, InvalidKey, etc.
+- [x] Implement Display and Error traits
+- [x] Add error context (session_id, operation)
+- [x] Create From implementations for crypto library errors
+- [x] Add error logging with context
 
-**Test Files** (TDD - Write First):
-- `tests/crypto/test_errors.rs`
-  - test_crypto_error_types()
-  - test_error_display()
-  - test_error_context()
-  - test_error_conversion()
+**Test Files** (TDD - Written First):
+- `tests/crypto/test_errors.rs` - 4 test cases ✅
+  - test_crypto_error_types() ✅
+  - test_error_display() ✅
+  - test_error_context() ✅
+  - test_error_conversion() ✅
+
+**Implementation**:
+- Created `src/crypto/error.rs` module (265 lines)
+- Implemented `CryptoError` enum with 8 variants:
+  - DecryptionFailed (operation, reason)
+  - InvalidSignature (operation, reason)
+  - InvalidKey (key_type, reason)
+  - InvalidNonce (expected_size, actual_size)
+  - KeyDerivationFailed (operation, reason)
+  - InvalidPayload (field, reason)
+  - SessionKeyNotFound (session_id)
+  - Other (generic error message)
+- Implemented Display trait with clear, contextual error messages
+- Implemented std::error::Error trait
+- Created From implementations for:
+  - anyhow::Error → CryptoError::Other
+  - hex::FromHexError → CryptoError::InvalidPayload
+  - k256::elliptic_curve::Error → CryptoError::InvalidKey
+  - chacha20poly1305::aead::Error → CryptoError::DecryptionFailed
+- All error variants preserve context (operation, session_id, key_type, etc.)
+- Added unit tests in error.rs module (4 tests passing)
 
 **Success Criteria**:
-- Errors well-defined
-- Context preserved
-- Clear error messages
+- ✅ Errors well-defined (8 variants covering all crypto operations)
+- ✅ Context preserved (operation, session_id, key_type, field, reason)
+- ✅ Clear error messages (Display trait provides human-readable output)
+- ✅ Library compiles successfully
+- ✅ From implementations for automatic error conversion
+- ✅ Test suite complete (4 TDD tests + 4 unit tests)
+
+**Deliverables Summary**:
+- **Code Changes**: 3 files created/modified
+  - `src/crypto/error.rs` (new, 265 lines with documentation and tests)
+  - `src/crypto/mod.rs` (added module and export)
+  - `tests/crypto/test_errors.rs` (new, 200+ lines, 4 comprehensive tests)
+  - `tests/crypto_tests.rs` (module registration)
+- **Test Coverage**: 4 TDD tests + 4 unit tests in module
+- **LOC Added**: ~465 lines (implementation + tests + documentation)
+- **Dependencies**: Uses anyhow, hex, k256, chacha20poly1305 for error conversions
 
 ### Sub-phase 7.2: WebSocket Error Responses
 **Goal**: Send appropriate error messages to clients
