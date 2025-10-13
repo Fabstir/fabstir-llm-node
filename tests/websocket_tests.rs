@@ -42,6 +42,7 @@ mod websocket {
     mod test_encrypted_streaming;
     mod test_backward_compat;
     mod test_session_init_decryption;
+    mod test_crypto_errors;
     // mod test_chain_messages; // TODO: Implement chain message types first
     // mod test_session_handlers; // TODO: Fix test implementation
     // mod test_connection_chain; // TODO: Implement chain connection types first
