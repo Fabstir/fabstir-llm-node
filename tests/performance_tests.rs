@@ -5,4 +5,5 @@ mod performance {
     mod test_batching;
     mod test_caching;
     mod test_load_balancing;
+    mod test_ezkl_load;
 }

@@ -15,3 +15,9 @@ pub mod test_host_management;
 
 #[cfg(test)]
 pub mod test_proof_payment_flow;
+
+#[cfg(test)]
+pub mod test_proof_dispute;
+
+#[cfg(test)]
+pub mod test_ezkl_end_to_end;
