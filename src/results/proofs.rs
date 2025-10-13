@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+// EZKL integration (Phase 2.1)
+use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceProof {
     pub job_id: String,
@@ -70,17 +73,47 @@ impl ProofGenerator {
                 proof_hash.into_bytes()
             }
             ProofType::EZKL => {
-                // Simulate EZKL proof generation
-                let mut proof = vec![0xEF; 200]; // Mock EZKL proof header
-                proof.extend_from_slice(model_hash.as_bytes());
-                proof.extend_from_slice(input_hash.as_bytes());
-                proof.extend_from_slice(output_hash.as_bytes());
+                // Real EZKL proof generation (Phase 2.1)
+                #[cfg(feature = "real-ezkl")]
+                {
+                    // Use real EZKL prover
+                    let witness = WitnessBuilder::new()
+                        .with_job_id_string(&result.job_id)
+                        .with_model_path(&self.config.model_path)
+                        .with_input_string(&result.prompt)
+                        .with_output_string(&result.response)
+                        .build()
+                        .map_err(|e| anyhow::anyhow!("Failed to build EZKL witness: {}", e))?;
 
-                // Ensure we don't exceed max size
-                if proof.len() > self.config.max_proof_size {
-                    proof.truncate(self.config.max_proof_size);
+                    let mut prover = EzklProver::new();
+                    let proof_data = prover
+                        .generate_proof(&witness)
+                        .map_err(|e| anyhow::anyhow!("Failed to generate EZKL proof: {}", e))?;
+
+                    tracing::info!(
+                        "✅ Generated real EZKL proof ({} bytes)",
+                        proof_data.proof_bytes.len()
+                    );
+
+                    proof_data.proof_bytes
                 }
-                proof
+                #[cfg(not(feature = "real-ezkl"))]
+                {
+                    // Mock EZKL proof generation (for development)
+                    let mut proof = vec![0xEF; 200]; // Mock EZKL proof header
+                    proof.extend_from_slice(model_hash.as_bytes());
+                    proof.extend_from_slice(input_hash.as_bytes());
+                    proof.extend_from_slice(output_hash.as_bytes());
+
+                    // Ensure we don't exceed max size
+                    if proof.len() > self.config.max_proof_size {
+                        proof.truncate(self.config.max_proof_size);
+                    }
+
+                    tracing::debug!("🎭 Generated mock EZKL proof ({} bytes)", proof.len());
+
+                    proof
+                }
             }
             ProofType::Risc0 => {
                 // Simulate Risc0 proof generation
@@ -147,8 +180,23 @@ impl ProofGenerator {
                 Ok(!proof.proof_data.is_empty())
             }
             ProofType::EZKL => {
-                // Mock EZKL verification
-                Ok(proof.proof_data.len() >= 200 && proof.proof_data[0] == 0xEF)
+                // EZKL verification (Phase 2.1 - basic structure check, Phase 3.1 - real verification)
+                #[cfg(feature = "real-ezkl")]
+                {
+                    // TODO (Phase 3.1): Implement real EZKL proof verification
+                    // For now, just verify proof is not empty and has reasonable size
+                    let is_valid = !proof.proof_data.is_empty()
+                        && proof.proof_data.len() >= 200
+                        && proof.proof_data.len() <= 10_000; // Real proofs: 2-10 KB
+
+                    tracing::debug!("🔍 EZKL proof verification (structure check): {}", is_valid);
+                    Ok(is_valid)
+                }
+                #[cfg(not(feature = "real-ezkl"))]
+                {
+                    // Mock EZKL verification
+                    Ok(proof.proof_data.len() >= 200 && proof.proof_data[0] == 0xEF)
+                }
             }
             ProofType::Risc0 => {
                 // Mock Risc0 verification
