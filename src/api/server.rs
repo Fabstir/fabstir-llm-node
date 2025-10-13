@@ -924,6 +924,51 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         }
                     }
 
+                    // Handle encrypted session initialization (Phase 6.2.1)
+                    if json_msg["type"] == "encrypted_session_init" {
+                        info!("🔐 Encrypted session_init received");
+
+                        // Extract session_id and chain_id
+                        session_id = json_msg["session_id"].as_str()
+                            .or_else(|| json_msg["sessionId"].as_str())
+                            .map(String::from);
+
+                        chain_id = json_msg["chain_id"].as_u64()
+                            .or_else(|| json_msg["chainId"].as_u64())
+                            .or(Some(84532)); // Default to Base Sepolia
+
+                        // TODO: Get node's private key from environment (Sub-phase 6.1)
+                        // For now, log that encryption is requested but not yet implemented
+                        warn!("🚧 Encrypted session init requested but node private key not configured");
+                        warn!("   Set HOST_PRIVATE_KEY environment variable to enable encryption");
+
+                        // Send error response for now
+                        let mut response = json!({
+                            "type": "error",
+                            "code": "ENCRYPTION_NOT_SUPPORTED",
+                            "message": "Node does not yet support encrypted sessions. Please use plaintext session_init.",
+                            "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                        });
+
+                        // Echo back the message ID if present
+                        if let Some(msg_id) = json_msg.get("id") {
+                            response["id"] = msg_id.clone();
+                        }
+
+                        if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
+                            error!("Failed to send encrypted_session_init error response: {}", e);
+                        }
+
+                        // Note: Full implementation in Sub-phase 6.1 will:
+                        // 1. Parse encrypted payload from json_msg["payload"]
+                        // 2. Call decrypt_session_init() with node's private key
+                        // 3. Extract session_key, job_id, model_name, price_per_token
+                        // 4. Recover and log client_address
+                        // 5. Store session_key in session_key_store
+                        // 6. Track metadata (job_id, chain_id, client_address)
+                        // 7. Send session_init_ack response
+                    }
+
                     // Handle both "prompt" and "inference" messages
                     if json_msg["type"] == "prompt" || json_msg["type"] == "inference" {
                         // Extract message ID for response correlation
