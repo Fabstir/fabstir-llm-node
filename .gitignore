@@ -55,3 +55,5 @@ s5-storage-proxy/
 
 screenshots/
 *.tar.gz
+*.tar.gz.sha256
+
