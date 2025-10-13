@@ -969,6 +969,374 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         // 7. Send session_init_ack response
                     }
 
+                    // Handle encrypted messages (Phase 6.2.1, Sub-phase 5.2)
+                    if json_msg["type"] == "encrypted_message" {
+                        info!("🔐 Encrypted message received");
+
+                        // Extract session_id
+                        let current_session_id = json_msg["session_id"].as_str()
+                            .or_else(|| json_msg["sessionId"].as_str())
+                            .map(String::from)
+                            .or(session_id.clone());
+
+                        if let Some(sid) = &current_session_id {
+                            // Try to retrieve session key from store
+                            let session_key_result = server.session_key_store.get_key(sid).await;
+
+                            if let Some(session_key) = session_key_result {
+                                // Parse encrypted payload
+                                if let Some(payload_obj) = json_msg.get("payload") {
+                                    let ciphertext_hex = payload_obj["ciphertextHex"].as_str();
+                                    let nonce_hex = payload_obj["nonceHex"].as_str();
+                                    let aad_hex = payload_obj["aadHex"].as_str();
+
+                                    if let (Some(ct_hex), Some(n_hex), Some(a_hex)) =
+                                        (ciphertext_hex, nonce_hex, aad_hex)
+                                    {
+                                        // Strip "0x" prefix if present
+                                        let ct_hex = ct_hex.strip_prefix("0x").unwrap_or(ct_hex);
+                                        let n_hex = n_hex.strip_prefix("0x").unwrap_or(n_hex);
+                                        let a_hex = a_hex.strip_prefix("0x").unwrap_or(a_hex);
+
+                                        // Decode hex fields
+                                        match (
+                                            hex::decode(ct_hex),
+                                            hex::decode(n_hex),
+                                            hex::decode(a_hex),
+                                        ) {
+                                            (Ok(ciphertext), Ok(nonce_bytes), Ok(aad_bytes)) => {
+                                                // Validate nonce size
+                                                if nonce_bytes.len() != 24 {
+                                                    let mut error_msg = json!({
+                                                        "type": "error",
+                                                        "code": "INVALID_NONCE_SIZE",
+                                                        "message": format!(
+                                                            "Invalid nonce size: expected 24 bytes, got {}",
+                                                            nonce_bytes.len()
+                                                        )
+                                                    });
+
+                                                    if let Some(msg_id) = json_msg.get("id") {
+                                                        error_msg["id"] = msg_id.clone();
+                                                    }
+
+                                                    let _ = socket
+                                                        .send(axum::extract::ws::Message::Text(
+                                                            error_msg.to_string(),
+                                                        ))
+                                                        .await;
+                                                    continue;
+                                                }
+
+                                                // Convert nonce to array
+                                                let mut nonce = [0u8; 24];
+                                                nonce.copy_from_slice(&nonce_bytes);
+
+                                                // Decrypt message
+                                                match crate::crypto::decrypt_with_aead(
+                                                    &ciphertext,
+                                                    &nonce,
+                                                    &aad_bytes,
+                                                    &session_key,
+                                                ) {
+                                                    Ok(plaintext_bytes) => {
+                                                        // Convert plaintext to string
+                                                        match String::from_utf8(plaintext_bytes) {
+                                                            Ok(plaintext_prompt) => {
+                                                                info!(
+                                                                    "✅ Decrypted prompt: {}",
+                                                                    plaintext_prompt
+                                                                );
+
+                                                                // Build inference request from decrypted prompt
+                                                                // Reuse the existing inference logic
+                                                                let request_value = json!({
+                                                                    "prompt": plaintext_prompt,
+                                                                    "job_id": job_id,
+                                                                    "session_id": current_session_id,
+                                                                    "max_tokens": json_msg.get("max_tokens")
+                                                                        .and_then(|v| v.as_u64())
+                                                                        .unwrap_or(100),
+                                                                    "temperature": json_msg.get("temperature")
+                                                                        .and_then(|v| v.as_f64())
+                                                                        .unwrap_or(0.7),
+                                                                    "stream": json_msg.get("stream")
+                                                                        .and_then(|v| v.as_bool())
+                                                                        .unwrap_or(true)
+                                                                });
+
+                                                                // Extract message ID for response correlation
+                                                                let message_id =
+                                                                    json_msg.get("id").cloned();
+
+                                                                if let Ok(request) =
+                                                                    serde_json::from_value::<
+                                                                        InferenceRequest,
+                                                                    >(
+                                                                        request_value
+                                                                    )
+                                                                {
+                                                                    info!(
+                                                                        "📋 Processing encrypted inference request for job_id: {:?}",
+                                                                        request.job_id
+                                                                    );
+
+                                                                    // Handle streaming inference (same as plaintext)
+                                                                    match server
+                                                                        .handle_streaming_request(
+                                                                            request,
+                                                                            "ws-client".to_string(),
+                                                                        )
+                                                                        .await
+                                                                    {
+                                                                        Ok(mut receiver) => {
+                                                                            let mut total_tokens =
+                                                                                0u64;
+
+                                                                            while let Some(response) =
+                                                                                receiver.recv().await
+                                                                            {
+                                                                                // Track tokens
+                                                                                if let Some(jid) =
+                                                                                    job_id
+                                                                                {
+                                                                                    if response.tokens
+                                                                                        > 0
+                                                                                    {
+                                                                                        total_tokens +=
+                                                                                            response
+                                                                                                .tokens
+                                                                                                as u64;
+
+                                                                                        let cm = server
+                                                                                            .checkpoint_manager
+                                                                                            .read()
+                                                                                            .await;
+                                                                                        if let Some(
+                                                                                            checkpoint_manager,
+                                                                                        ) =
+                                                                                            cm.as_ref()
+                                                                                        {
+                                                                                            info!("📊 Tracking {} tokens for job {} in encrypted session", response.tokens, jid);
+                                                                                            let _ = checkpoint_manager.track_tokens(jid, response.tokens as u64, current_session_id.clone()).await;
+                                                                                        }
+                                                                                    }
+                                                                                }
+
+                                                                                // TODO: Encrypt response chunks with session key
+                                                                                // For now, send plaintext response
+                                                                                let mut ws_msg = json!({
+                                                                                    "type": "stream_chunk",
+                                                                                    "content": response.content,
+                                                                                    "tokens": response.tokens,
+                                                                                });
+
+                                                                                if let Some(ref msg_id) =
+                                                                                    message_id
+                                                                                {
+                                                                                    ws_msg["id"] =
+                                                                                        msg_id.clone();
+                                                                                }
+
+                                                                                if socket
+                                                                                    .send(
+                                                                                        axum::extract::ws::Message::Text(
+                                                                                            ws_msg.to_string(),
+                                                                                        ),
+                                                                                    )
+                                                                                    .await
+                                                                                    .is_err()
+                                                                                {
+                                                                                    break;
+                                                                                }
+
+                                                                                if response
+                                                                                    .finish_reason
+                                                                                    .is_some()
+                                                                                {
+                                                                                    let mut end_msg =
+                                                                                        json!({
+                                                                                        "type": "stream_end"
+                                                                                    });
+
+                                                                                    if let Some(
+                                                                                        ref msg_id,
+                                                                                    ) = message_id
+                                                                                    {
+                                                                                        end_msg["id"] =
+                                                                                            msg_id
+                                                                                                .clone();
+                                                                                    }
+
+                                                                                    let _ = socket
+                                                                                        .send(
+                                                                                            axum::extract::ws::Message::Text(
+                                                                                                end_msg.to_string(),
+                                                                                            ),
+                                                                                        )
+                                                                                        .await;
+                                                                                    break;
+                                                                                }
+                                                                            }
+
+                                                                            info!(
+                                                                                "📊 Encrypted session complete - Total tokens: {}",
+                                                                                total_tokens
+                                                                            );
+                                                                        }
+                                                                        Err(e) => {
+                                                                            let mut error_msg = json!({
+                                                                                "type": "error",
+                                                                                "error": e.to_string()
+                                                                            });
+
+                                                                            if let Some(ref msg_id) =
+                                                                                message_id
+                                                                            {
+                                                                                error_msg["id"] =
+                                                                                    msg_id.clone();
+                                                                            }
+
+                                                                            let _ = socket
+                                                                                .send(
+                                                                                    axum::extract::ws::Message::Text(
+                                                                                        error_msg.to_string(),
+                                                                                    ),
+                                                                                )
+                                                                                .await;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(_) => {
+                                                                let mut error_msg = json!({
+                                                                    "type": "error",
+                                                                    "code": "INVALID_UTF8",
+                                                                    "message": "Decrypted plaintext is not valid UTF-8"
+                                                                });
+
+                                                                if let Some(msg_id) =
+                                                                    json_msg.get("id")
+                                                                {
+                                                                    error_msg["id"] =
+                                                                        msg_id.clone();
+                                                                }
+
+                                                                let _ = socket
+                                                                    .send(
+                                                                        axum::extract::ws::Message::Text(
+                                                                            error_msg.to_string(),
+                                                                        ),
+                                                                    )
+                                                                    .await;
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        let mut error_msg = json!({
+                                                            "type": "error",
+                                                            "code": "DECRYPTION_FAILED",
+                                                            "message": format!("Failed to decrypt message: {}", e)
+                                                        });
+
+                                                        if let Some(msg_id) = json_msg.get("id") {
+                                                            error_msg["id"] = msg_id.clone();
+                                                        }
+
+                                                        let _ = socket
+                                                            .send(axum::extract::ws::Message::Text(
+                                                                error_msg.to_string(),
+                                                            ))
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                let mut error_msg = json!({
+                                                    "type": "error",
+                                                    "code": "INVALID_HEX_ENCODING",
+                                                    "message": "Failed to decode hex fields in payload"
+                                                });
+
+                                                if let Some(msg_id) = json_msg.get("id") {
+                                                    error_msg["id"] = msg_id.clone();
+                                                }
+
+                                                let _ = socket
+                                                    .send(axum::extract::ws::Message::Text(
+                                                        error_msg.to_string(),
+                                                    ))
+                                                    .await;
+                                            }
+                                        }
+                                    } else {
+                                        let mut error_msg = json!({
+                                            "type": "error",
+                                            "code": "MISSING_PAYLOAD_FIELDS",
+                                            "message": "Payload must contain ciphertextHex, nonceHex, and aadHex"
+                                        });
+
+                                        if let Some(msg_id) = json_msg.get("id") {
+                                            error_msg["id"] = msg_id.clone();
+                                        }
+
+                                        let _ = socket
+                                            .send(axum::extract::ws::Message::Text(
+                                                error_msg.to_string(),
+                                            ))
+                                            .await;
+                                    }
+                                } else {
+                                    let mut error_msg = json!({
+                                        "type": "error",
+                                        "code": "MISSING_PAYLOAD",
+                                        "message": "encrypted_message must include payload object"
+                                    });
+
+                                    if let Some(msg_id) = json_msg.get("id") {
+                                        error_msg["id"] = msg_id.clone();
+                                    }
+
+                                    let _ = socket
+                                        .send(axum::extract::ws::Message::Text(
+                                            error_msg.to_string(),
+                                        ))
+                                        .await;
+                                }
+                            } else {
+                                let mut error_msg = json!({
+                                    "type": "error",
+                                    "code": "SESSION_KEY_NOT_FOUND",
+                                    "message": format!("No session key found for session_id: {}", sid)
+                                });
+
+                                if let Some(msg_id) = json_msg.get("id") {
+                                    error_msg["id"] = msg_id.clone();
+                                }
+
+                                let _ = socket
+                                    .send(axum::extract::ws::Message::Text(
+                                        error_msg.to_string(),
+                                    ))
+                                    .await;
+                            }
+                        } else {
+                            let mut error_msg = json!({
+                                "type": "error",
+                                "code": "MISSING_SESSION_ID",
+                                "message": "encrypted_message requires session_id"
+                            });
+
+                            if let Some(msg_id) = json_msg.get("id") {
+                                error_msg["id"] = msg_id.clone();
+                            }
+
+                            let _ = socket
+                                .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                .await;
+                        }
+                    }
+
                     // Handle both "prompt" and "inference" messages
                     if json_msg["type"] == "prompt" || json_msg["type"] == "inference" {
                         // Extract message ID for response correlation

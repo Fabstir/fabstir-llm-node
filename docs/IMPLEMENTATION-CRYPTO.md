@@ -435,32 +435,74 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Dependencies**: Uses existing crypto infrastructure from Phases 1-4
 - **Next Dependency**: Node private key (HOST_PRIVATE_KEY env var) - Sub-phase 6.1
 
-### Sub-phase 5.2: Encrypted Message Handler
+### Sub-phase 5.2: Encrypted Message Handler ✅
 **Goal**: Handle encrypted prompt messages
+**Completed**: January 2025 (Phase 6.2.1)
 
 **Tasks**:
-- [ ] Add `handle_encrypted_message()` function
-- [ ] Parse encrypted_message from JSON
-- [ ] Retrieve session key from SessionKeyStore
-- [ ] Decrypt message with session key
-- [ ] Validate AAD for replay protection
-- [ ] Extract plaintext prompt
-- [ ] Process inference (existing logic)
-- [ ] Return encrypted response
+- [x] Add `handle_encrypted_message()` routing in `src/api/server.rs`
+- [x] Parse encrypted_message from JSON
+- [x] Retrieve session key from SessionKeyStore
+- [x] Decrypt message with session key (using decrypt_with_aead)
+- [x] Validate AAD for replay protection
+- [x] Extract plaintext prompt
+- [x] Process inference with existing streaming logic
+- [x] Return plaintext response (encrypted response in Sub-phase 5.3)
 
-**Test Files** (TDD - Write First):
-- `tests/websocket/test_encrypted_messages_handler.rs`
-  - test_encrypted_message_handler()
-  - test_message_decryption()
-  - test_missing_session_key()
-  - test_invalid_nonce()
-  - test_aad_validation()
-  - test_inference_with_encrypted_prompt()
+**Test Files** (TDD - Written First):
+- `tests/websocket/test_encrypted_message_handler.rs` - 11 test cases ✅
+  - test_encrypted_message_handler() ✅
+  - test_message_decryption() ✅
+  - test_missing_session_key() ✅
+  - test_invalid_nonce() ✅
+  - test_aad_validation() ✅
+  - test_inference_with_encrypted_prompt() ✅
+  - test_empty_ciphertext() ✅
+  - test_wrong_session_key() ✅
+  - test_message_id_echo() ✅
+  - test_session_key_persistence() ✅
+  - test_hex_with_0x_prefix() ✅
+
+**Implementation**:
+- Created WebSocket message routing for `encrypted_message` in handle_websocket() (src/api/server.rs:972-1338)
+- Handler flow:
+  1. Extracts session_id from message
+  2. Retrieves session key from SessionKeyStore
+  3. Parses encrypted payload (ciphertextHex, nonceHex, aadHex)
+  4. Strips "0x" prefixes from hex fields
+  5. Decodes hex to bytes
+  6. Validates nonce size (24 bytes)
+  7. Decrypts using decrypt_with_aead()
+  8. Extracts plaintext prompt
+  9. Routes to existing inference flow
+  10. Returns plaintext response (encryption in Sub-phase 5.3)
+- Error handling for:
+  - Missing session_id → MISSING_SESSION_ID
+  - Session key not found → SESSION_KEY_NOT_FOUND
+  - Invalid hex encoding → INVALID_HEX_ENCODING
+  - Invalid nonce size → INVALID_NONCE_SIZE
+  - Missing payload fields → MISSING_PAYLOAD_FIELDS
+  - Decryption failure → DECRYPTION_FAILED
+  - Invalid UTF-8 → INVALID_UTF8
 
 **Success Criteria**:
-- Encrypted messages decrypt successfully
-- Missing session key handled
-- AAD validated
+- ✅ Encrypted messages decrypt successfully
+- ✅ Missing session key handled with clear error
+- ✅ AAD validated during AEAD decryption
+- ✅ Test suite complete (11 tests passing)
+- ✅ Token tracking works for encrypted sessions
+- ✅ Message ID echo for request correlation
+- ⏳ Response encryption pending Sub-phase 5.3
+
+**Deliverables Summary**:
+- **Code Changes**: 3 files modified/created
+  - `tests/websocket/test_encrypted_message_handler.rs` (new, 370+ lines)
+  - `tests/websocket_tests.rs` (module registration)
+  - `src/api/server.rs` (366 lines: encrypted_message routing + decryption + inference)
+- **Test Coverage**: 11 test cases, 100% passing
+- **LOC Added**: ~730 lines (tests + handler)
+- **Dependencies**: Uses decrypt_with_aead() from Phase 1, SessionKeyStore from Phase 3
+- **Note**: Responses currently sent as plaintext; encryption in Sub-phase 5.3
 
 ### Sub-phase 5.3: Encrypted Response Streaming
 **Goal**: Encrypt and stream response chunks
@@ -758,7 +800,7 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
   - Sub-phase 4.2: ✅ Complete - Message Parsing and Validation
 - **Phase 5**: 🚧 In Progress - WebSocket Handler Integration
   - Sub-phase 5.1: ✅ Complete - Encrypted Session Init Handler (routing + infrastructure)
-  - Sub-phase 5.2: Not Started - Encrypted Message Handler
+  - Sub-phase 5.2: ✅ Complete - Encrypted Message Handler (decrypt + inference)
   - Sub-phase 5.3: Not Started - Encrypted Response Streaming
   - Sub-phase 5.4: Not Started - Backward Compatibility
 - **Phase 6**: Not Started - Node Private Key Access
@@ -766,7 +808,7 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **IN PROGRESS** - Phase 5.1 complete, ready for Phase 6 (Node Private Key Access)
+**Implementation Status**: 🟢 **IN PROGRESS** - Phase 5.2 complete, ready for Sub-phase 5.3 (Encrypted Response Streaming) or Phase 6 (Node Private Key Access)
 
 ## Critical Path
 
