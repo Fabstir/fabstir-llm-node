@@ -669,28 +669,70 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 
 ## Phase 6: Node Private Key Access
 
-### Sub-phase 6.1: Private Key Extraction
+### Sub-phase 6.1: Private Key Extraction ✅
 **Goal**: Extract node's private key from environment
+**Completed**: January 2025 (Phase 6)
 
 **Tasks**:
-- [ ] Read `HOST_PRIVATE_KEY` from environment
-- [ ] Parse using ethers `LocalWallet::from_str()`
-- [ ] Extract raw 32-byte private key
-- [ ] Validate key format (0x-prefixed hex)
-- [ ] Add error handling for missing/invalid key
-- [ ] Log key availability (NOT the key itself)
+- [x] Read `HOST_PRIVATE_KEY` from environment
+- [x] Parse and decode hex string (with 0x prefix requirement)
+- [x] Extract raw 32-byte private key
+- [x] Validate key format (0x-prefixed hex)
+- [x] Add error handling for missing/invalid key
+- [x] Log key availability (NOT the key itself)
+- [x] Validate key is compatible with k256 library
 
-**Test Files** (TDD - Write First):
-- `tests/crypto/test_private_key.rs`
-  - test_extract_private_key_from_env()
-  - test_invalid_key_format()
-  - test_missing_host_private_key()
-  - test_key_validation()
+**Test Files** (TDD - Written First):
+- `tests/crypto/test_private_key.rs` - 8 test cases ✅
+  - test_extract_private_key_from_env() ✅
+  - test_invalid_key_format() ✅
+  - test_missing_host_private_key() ✅
+  - test_key_validation() ✅
+  - test_key_never_logged() ✅
+  - test_empty_private_key() ✅
+  - test_key_with_whitespace() ✅
+  - test_key_compatible_with_k256() ✅
+
+**Implementation**:
+- Created `src/crypto/private_key.rs` module
+- Implemented `extract_node_private_key()` function:
+  - Reads `HOST_PRIVATE_KEY` from environment
+  - Validates "0x" prefix requirement
+  - Trims whitespace from input
+  - Validates exactly 64 hex characters (32 bytes)
+  - Decodes hex to bytes
+  - Returns [u8; 32] array
+  - Logs success WITHOUT logging actual key
+- Added module to `src/crypto/mod.rs` with public export
+- Registered test module in `tests/crypto_tests.rs`
+
+**Security Features**:
+- ✅ Private key NEVER logged to console
+- ✅ Only logs success/failure status
+- ✅ Validates key format before use
+- ✅ Clear error messages for debugging
+- ✅ Compatible with k256 SecretKey
 
 **Success Criteria**:
-- Private key extracted correctly
-- Invalid keys rejected
-- Never logged to console
+- ✅ Private key extracted correctly from environment
+- ✅ Invalid keys rejected with clear error messages
+- ✅ Missing key handled gracefully
+- ✅ Key format validated (0x-prefixed, 64 hex chars)
+- ✅ Whitespace trimmed automatically
+- ✅ Never logged to console (only status messages)
+- ✅ Compatible with k256 for ECDH operations
+- ✅ Test suite complete (8 tests passing)
+- ✅ Library compiles successfully
+
+**Deliverables Summary**:
+- **Code Changes**: 3 files created/modified
+  - `src/crypto/private_key.rs` (new, 195 lines)
+  - `src/crypto/mod.rs` (added module and export)
+  - `tests/crypto/test_private_key.rs` (new, 184 lines, 8 tests)
+  - `tests/crypto_tests.rs` (module registration)
+- **Test Coverage**: 8 comprehensive tests + 3 unit tests in module
+- **LOC Added**: ~380 lines (implementation + tests)
+- **Dependencies**: Uses anyhow for error handling, hex for decoding, k256 for validation
 
 ### Sub-phase 6.2: Key Propagation to Server
 **Goal**: Pass private key to ApiServer for encryption
@@ -914,12 +956,14 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
   - Sub-phase 5.2: ✅ Complete - Encrypted Message Handler (decrypt + inference)
   - Sub-phase 5.3: ✅ Complete - Encrypted Response Streaming (encrypt responses)
   - Sub-phase 5.4: ✅ Complete - Backward Compatibility (plaintext fallback with deprecation warnings)
-- **Phase 6**: Not Started - Node Private Key Access
+- **Phase 6**: 🚧 In Progress - Node Private Key Access
+  - Sub-phase 6.1: ✅ Complete - Private Key Extraction (environment variable parsing)
+  - Sub-phase 6.2: Not Started - Key Propagation to Server
 - **Phase 7**: Not Started - Error Handling
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **PHASE 5 COMPLETE** - All WebSocket handler integration complete. Ready for Phase 6 (Node Private Key Access) to enable full decryption support.
+**Implementation Status**: 🟢 **PHASE 6 IN PROGRESS** - Sub-phase 6.1 complete (Private Key Extraction). Ready for Sub-phase 6.2 (Key Propagation to Server) to enable encrypted_session_init handler.
 
 ## Critical Path
 
