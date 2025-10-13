@@ -282,31 +282,44 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 
 ## Phase 4: WebSocket Message Types
 
-### Sub-phase 4.1: Encrypted Message Type Definitions
+### Sub-phase 4.1: Encrypted Message Type Definitions ✅
 **Goal**: Add encrypted message types to WebSocket protocol
 
 **Tasks**:
-- [ ] Update `src/api/websocket/message_types.rs`
-- [ ] Add `EncryptedSessionInit` to `MessageType` enum
-- [ ] Add `EncryptedMessage` to `MessageType` enum
-- [ ] Add `EncryptedChunk` to `MessageType` enum
-- [ ] Add `EncryptedResponse` to `MessageType` enum
-- [ ] Create `EncryptedPayload` struct
-- [ ] Create `SessionInitData` struct
-- [ ] Implement serde serialization/deserialization
+- [x] Update `src/api/websocket/message_types.rs`
+- [x] Add `EncryptedSessionInit` to `MessageType` enum
+- [x] Add `EncryptedMessage` to `MessageType` enum
+- [x] Add `EncryptedChunk` to `MessageType` enum
+- [x] Add `EncryptedResponse` to `MessageType` enum
+- [x] Create `SessionInitEncryptedPayload` struct
+- [x] Create `MessageEncryptedPayload` struct
+- [x] Create `ChunkEncryptedPayload` struct
+- [x] Create `ResponseEncryptedPayload` struct
+- [x] Implement serde serialization/deserialization
+- [x] Add encrypted message types to `tests/websocket_tests.rs` module list
 
 **Test Files** (TDD - Write First):
-- `tests/websocket/test_encrypted_messages.rs`
-  - test_encrypted_session_init_parsing()
-  - test_encrypted_message_parsing()
-  - test_encrypted_payload_structure()
-  - test_message_type_serialization()
-  - test_backward_compatible_parsing()
+- `tests/websocket/test_encrypted_messages.rs` - 14 test cases ✅
+  - test_encrypted_session_init_parsing() ✅
+  - test_encrypted_message_parsing() ✅
+  - test_encrypted_chunk_parsing() ✅
+  - test_encrypted_response_parsing() ✅
+  - test_encrypted_payload_structure() ✅
+  - test_message_type_serialization() ✅
+  - test_backward_compatible_parsing() ✅
+  - test_session_init_encrypted_payload_fields() ✅
+  - test_message_encrypted_payload_fields() ✅
+  - test_chunk_encrypted_payload_with_index() ✅
+  - test_response_encrypted_payload_with_finish_reason() ✅
+  - test_optional_session_id_field() ✅
+  - test_hex_string_format_validation() ✅
+  - test_message_type_enum_coverage() ✅
 
 **Success Criteria**:
-- Message types parse correctly
-- Serde works for all types
-- Backward compatible with plaintext
+- Message types parse correctly ✅
+- Serde works for all types ✅
+- Backward compatible with plaintext ✅
+- All 14 tests pass ✅
 
 ### Sub-phase 4.2: Message Parsing and Validation
 **Goal**: Parse and validate encrypted messages
@@ -680,14 +693,16 @@ This implementation plan adds end-to-end encryption support to the Fabstir LLM N
 - **Phase 3**: ✅ Complete - Session Key Management
   - Sub-phase 3.1: ✅ Complete - In-Memory Session Key Store
   - Sub-phase 3.2: ✅ Complete - Session Lifecycle Integration
-- **Phase 4**: Not Started - WebSocket Message Types
+- **Phase 4**: 🚧 In Progress - WebSocket Message Types
+  - Sub-phase 4.1: ✅ Complete - Encrypted Message Type Definitions
+  - Sub-phase 4.2: Not Started - Message Parsing and Validation
 - **Phase 5**: Not Started - WebSocket Handler Integration
 - **Phase 6**: Not Started - Node Private Key Access
 - **Phase 7**: Not Started - Error Handling
 - **Phase 8**: Not Started - Testing and Validation
 - **Phase 9**: Not Started - Documentation
 
-**Implementation Status**: 🟢 **IN PROGRESS** - Phase 3 complete, ready for Phase 4
+**Implementation Status**: 🟢 **IN PROGRESS** - Phase 4.1 complete, ready for Phase 4.2
 
 ## Critical Path
 

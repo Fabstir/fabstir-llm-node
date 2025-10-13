@@ -19,6 +19,12 @@ pub enum MessageType {
     Pong,
     Close,
 
+    // Encrypted message types (Phase 6.2.1)
+    EncryptedSessionInit,
+    EncryptedMessage,
+    EncryptedChunk,
+    EncryptedResponse,
+
     // Error and unknown
     Error,
     Unknown,
@@ -142,5 +148,100 @@ impl SessionControlMessage {
     pub fn from_payload(payload: &Value) -> Result<Self, String> {
         serde_json::from_value(payload.clone())
             .map_err(|e| format!("Failed to parse session control message: {}", e))
+    }
+}
+
+// ============================================================================
+// Encrypted Message Payloads (Phase 6.2.1)
+// ============================================================================
+
+/// Encrypted payload for session initialization (includes ephemeral public key and signature)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInitEncryptedPayload {
+    #[serde(rename = "ephPubHex")]
+    pub eph_pub_hex: String,
+
+    #[serde(rename = "ciphertextHex")]
+    pub ciphertext_hex: String,
+
+    #[serde(rename = "nonceHex")]
+    pub nonce_hex: String,
+
+    #[serde(rename = "signatureHex")]
+    pub signature_hex: String,
+
+    #[serde(rename = "aadHex")]
+    pub aad_hex: String,
+}
+
+/// Encrypted payload for regular messages (no ephemeral key or signature)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageEncryptedPayload {
+    #[serde(rename = "ciphertextHex")]
+    pub ciphertext_hex: String,
+
+    #[serde(rename = "nonceHex")]
+    pub nonce_hex: String,
+
+    #[serde(rename = "aadHex")]
+    pub aad_hex: String,
+}
+
+/// Encrypted payload for streaming response chunks (includes chunk index)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkEncryptedPayload {
+    #[serde(rename = "ciphertextHex")]
+    pub ciphertext_hex: String,
+
+    #[serde(rename = "nonceHex")]
+    pub nonce_hex: String,
+
+    #[serde(rename = "aadHex")]
+    pub aad_hex: String,
+
+    pub index: u32,
+}
+
+/// Encrypted payload for final response (includes finish_reason)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseEncryptedPayload {
+    #[serde(rename = "ciphertextHex")]
+    pub ciphertext_hex: String,
+
+    #[serde(rename = "nonceHex")]
+    pub nonce_hex: String,
+
+    #[serde(rename = "aadHex")]
+    pub aad_hex: String,
+
+    pub finish_reason: String,
+}
+
+// Helper functions for parsing encrypted messages
+impl SessionInitEncryptedPayload {
+    pub fn from_payload(payload: &Value) -> Result<Self, String> {
+        serde_json::from_value(payload.clone())
+            .map_err(|e| format!("Failed to parse session init encrypted payload: {}", e))
+    }
+}
+
+impl MessageEncryptedPayload {
+    pub fn from_payload(payload: &Value) -> Result<Self, String> {
+        serde_json::from_value(payload.clone())
+            .map_err(|e| format!("Failed to parse message encrypted payload: {}", e))
+    }
+}
+
+impl ChunkEncryptedPayload {
+    pub fn from_payload(payload: &Value) -> Result<Self, String> {
+        serde_json::from_value(payload.clone())
+            .map_err(|e| format!("Failed to parse chunk encrypted payload: {}", e))
+    }
+}
+
+impl ResponseEncryptedPayload {
+    pub fn from_payload(payload: &Value) -> Result<Self, String> {
+        serde_json::from_value(payload.clone())
+            .map_err(|e| format!("Failed to parse response encrypted payload: {}", e))
     }
 }
