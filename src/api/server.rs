@@ -184,6 +184,7 @@ pub struct ApiServer {
     token_tracker: Arc<TokenTracker>,
     checkpoint_manager: Arc<RwLock<Option<Arc<CheckpointManager>>>>,
     session_key_store: Arc<SessionKeyStore>,
+    node_private_key: Option<[u8; 32]>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
 }
@@ -224,6 +225,7 @@ impl ApiServer {
             token_tracker: Arc::new(TokenTracker::new()),
             checkpoint_manager: Arc::new(RwLock::new(None)),
             session_key_store: Arc::new(SessionKeyStore::new()),
+            node_private_key: None,
             shutdown_tx: None,
             listener: None,
         }
@@ -253,6 +255,21 @@ impl ApiServer {
 
         let connection_pool = Arc::new(ConnectionPool::new(pool_config).await?);
 
+        // Extract node private key for encrypted sessions (Phase 6.2.1, Sub-phase 6.2)
+        // If HOST_PRIVATE_KEY is not set, node will operate in plaintext-only mode
+        let node_private_key = match crate::crypto::extract_node_private_key() {
+            Ok(key) => {
+                info!("🔐 Node private key loaded - encrypted sessions enabled");
+                Some(key)
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to load node private key: {}", e);
+                warn!("   Node will operate in plaintext-only mode");
+                warn!("   Set HOST_PRIVATE_KEY environment variable to enable encrypted sessions");
+                None
+            }
+        };
+
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
@@ -269,6 +286,7 @@ impl ApiServer {
             token_tracker: Arc::new(TokenTracker::new()),
             checkpoint_manager: Arc::new(RwLock::new(None)),
             session_key_store: Arc::new(SessionKeyStore::new()),
+            node_private_key,
             shutdown_tx: None,
             listener: Some(listener),
             config,
@@ -318,6 +336,7 @@ impl ApiServer {
             token_tracker: self.token_tracker.clone(),
             checkpoint_manager: self.checkpoint_manager.clone(),
             session_key_store: self.session_key_store.clone(),
+            node_private_key: self.node_private_key,
             shutdown_tx: None,
             listener: None,
         })
@@ -346,6 +365,16 @@ impl ApiServer {
     /// Get the session key store for encryption/decryption operations
     pub fn get_session_key_store(&self) -> Arc<SessionKeyStore> {
         self.session_key_store.clone()
+    }
+
+    /// Get the node's private key for encrypted session initialization (Phase 6.2.1, Sub-phase 6.2)
+    ///
+    /// Returns `Some([u8; 32])` if the node has a private key configured (encrypted mode enabled),
+    /// or `None` if operating in plaintext-only mode.
+    ///
+    /// The private key is used for ECDH key exchange during encrypted_session_init handshake.
+    pub fn get_node_private_key(&self) -> Option<[u8; 32]> {
+        self.node_private_key
     }
 
     /// Get session key metrics
@@ -933,7 +962,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         }
                     }
 
-                    // Handle encrypted session initialization (Phase 6.2.1)
+                    // Handle encrypted session initialization (Phase 6.2.1, Sub-phase 6.2)
                     if json_msg["type"] == "encrypted_session_init" {
                         info!("🔐 Encrypted session_init received");
 
@@ -946,36 +975,203 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             .or_else(|| json_msg["chainId"].as_u64())
                             .or(Some(84532)); // Default to Base Sepolia
 
-                        // TODO: Get node's private key from environment (Sub-phase 6.1)
-                        // For now, log that encryption is requested but not yet implemented
-                        warn!("🚧 Encrypted session init requested but node private key not configured");
-                        warn!("   Set HOST_PRIVATE_KEY environment variable to enable encryption");
+                        // Get node's private key from ApiServer (Phase 6.2.1, Sub-phase 6.2)
+                        let node_private_key_opt = server.get_node_private_key();
 
-                        // Send error response for now
-                        let mut response = json!({
-                            "type": "error",
-                            "code": "ENCRYPTION_NOT_SUPPORTED",
-                            "message": "Node does not yet support encrypted sessions. Please use plaintext session_init.",
-                            "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
-                        });
+                        if let Some(node_private_key) = node_private_key_opt {
+                            // Node has private key - can handle encrypted sessions
+                            info!("✅ Node private key available - processing encrypted session init");
 
-                        // Echo back the message ID if present
-                        if let Some(msg_id) = json_msg.get("id") {
-                            response["id"] = msg_id.clone();
+                            // Parse encrypted payload (Phase 6.2.1, Sub-phase 6.3)
+                            if let Some(payload_obj) = json_msg.get("payload") {
+                                // Extract hex fields from payload
+                                let eph_pub_hex = payload_obj["ephPubHex"].as_str();
+                                let ciphertext_hex = payload_obj["ciphertextHex"].as_str();
+                                let signature_hex = payload_obj["signatureHex"].as_str();
+                                let nonce_hex = payload_obj["nonceHex"].as_str();
+                                let aad_hex = payload_obj["aadHex"].as_str();
+
+                                // Validate all required fields are present
+                                if let (Some(eph_pub), Some(ciphertext), Some(signature), Some(nonce), Some(aad)) =
+                                    (eph_pub_hex, ciphertext_hex, signature_hex, nonce_hex, aad_hex)
+                                {
+                                    // Strip "0x" prefix if present
+                                    let eph_pub = eph_pub.strip_prefix("0x").unwrap_or(eph_pub);
+                                    let ciphertext = ciphertext.strip_prefix("0x").unwrap_or(ciphertext);
+                                    let signature = signature.strip_prefix("0x").unwrap_or(signature);
+                                    let nonce = nonce.strip_prefix("0x").unwrap_or(nonce);
+                                    let aad = aad.strip_prefix("0x").unwrap_or(aad);
+
+                                    // Decode hex fields
+                                    match (
+                                        hex::decode(eph_pub),
+                                        hex::decode(ciphertext),
+                                        hex::decode(signature),
+                                        hex::decode(nonce),
+                                        hex::decode(aad),
+                                    ) {
+                                        (Ok(eph_pub_bytes), Ok(ciphertext_bytes), Ok(signature_bytes), Ok(nonce_bytes), Ok(aad_bytes)) => {
+                                            // Validate nonce size (must be 24 bytes for XChaCha20)
+                                            if nonce_bytes.len() != 24 {
+                                                let mut error_msg = json!({
+                                                    "type": "error",
+                                                    "code": "INVALID_NONCE_SIZE",
+                                                    "message": format!("Invalid nonce size: expected 24 bytes, got {}", nonce_bytes.len()),
+                                                    "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                                });
+
+                                                if let Some(msg_id) = json_msg.get("id") {
+                                                    error_msg["id"] = msg_id.clone();
+                                                }
+
+                                                let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                                continue;
+                                            }
+
+                                            // Build EncryptedSessionPayload for decryption
+                                            let encrypted_payload = crate::crypto::EncryptedSessionPayload {
+                                                eph_pub: eph_pub_bytes,
+                                                ciphertext: ciphertext_bytes,
+                                                signature: signature_bytes,
+                                                nonce: nonce_bytes,
+                                                aad: aad_bytes,
+                                            };
+
+                                            // Decrypt session init payload
+                                            match crate::crypto::decrypt_session_init(&encrypted_payload, &node_private_key) {
+                                                Ok(session_init_data) => {
+                                                    info!("✅ Successfully decrypted session init payload");
+
+                                                    // Extract session data
+                                                    let extracted_session_key = session_init_data.session_key;
+                                                    let extracted_job_id_str = session_init_data.job_id;
+                                                    let model_name = session_init_data.model_name;
+                                                    let price_per_token = session_init_data.price_per_token;
+                                                    let client_address = session_init_data.client_address;
+
+                                                    // Update tracked session/job info - parse job_id from string
+                                                    job_id = extracted_job_id_str.parse::<u64>().ok();
+
+                                                    info!("🔐 Session init data:");
+                                                    info!("   job_id: {} (parsed to {:?})", extracted_job_id_str, job_id);
+                                                    info!("   model_name: {}", model_name);
+                                                    info!("   price_per_token: {}", price_per_token);
+                                                    info!("   client_address: {}", client_address);
+
+                                                    // Store session key in SessionKeyStore
+                                                    if let Some(sid) = &session_id {
+                                                        server.session_key_store.store_key(
+                                                            sid.clone(),
+                                                            extracted_session_key,
+                                                        ).await;
+
+                                                        info!("✅ Session key stored for session_id: {}", sid);
+                                                    } else {
+                                                        warn!("⚠️ No session_id provided - session key not stored");
+                                                    }
+
+                                                    // Send session_init_ack response
+                                                    let mut response = json!({
+                                                        "type": "session_init_ack",
+                                                        "status": "success",
+                                                        "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string()),
+                                                        "job_id": job_id,
+                                                        "chain_id": chain_id,
+                                                        "client_address": client_address,
+                                                        "message": "Encrypted session initialized successfully"
+                                                    });
+
+                                                    if let Some(msg_id) = json_msg.get("id") {
+                                                        response["id"] = msg_id.clone();
+                                                    }
+
+                                                    if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
+                                                        error!("Failed to send encrypted session_init_ack: {}", e);
+                                                    } else {
+                                                        info!("✅ Sent encrypted session_init_ack to client");
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to decrypt session init: {}", e);
+                                                    let mut error_msg = json!({
+                                                        "type": "error",
+                                                        "code": "DECRYPTION_FAILED",
+                                                        "message": format!("Failed to decrypt session init payload: {}", e),
+                                                        "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                                    });
+
+                                                    if let Some(msg_id) = json_msg.get("id") {
+                                                        error_msg["id"] = msg_id.clone();
+                                                    }
+
+                                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            let mut error_msg = json!({
+                                                "type": "error",
+                                                "code": "INVALID_HEX_ENCODING",
+                                                "message": "Failed to decode hex fields in encrypted session init payload",
+                                                "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                            });
+
+                                            if let Some(msg_id) = json_msg.get("id") {
+                                                error_msg["id"] = msg_id.clone();
+                                            }
+
+                                            let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                        }
+                                    }
+                                } else {
+                                    let mut error_msg = json!({
+                                        "type": "error",
+                                        "code": "INVALID_PAYLOAD",
+                                        "message": "Missing required fields in encrypted session init payload (ephPubHex, ciphertextHex, signatureHex, nonceHex, aadHex)",
+                                        "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                    });
+
+                                    if let Some(msg_id) = json_msg.get("id") {
+                                        error_msg["id"] = msg_id.clone();
+                                    }
+
+                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                }
+                            } else {
+                                let mut error_msg = json!({
+                                    "type": "error",
+                                    "code": "MISSING_PAYLOAD",
+                                    "message": "encrypted_session_init must include payload object",
+                                    "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                });
+
+                                if let Some(msg_id) = json_msg.get("id") {
+                                    error_msg["id"] = msg_id.clone();
+                                }
+
+                                let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                            }
+                        } else {
+                            // No private key - node operates in plaintext-only mode
+                            warn!("⚠️ Encrypted session init requested but node private key not configured");
+                            warn!("   Set HOST_PRIVATE_KEY environment variable to enable encryption");
+
+                            // Send error response directing client to use plaintext
+                            let mut response = json!({
+                                "type": "error",
+                                "code": "ENCRYPTION_NOT_SUPPORTED",
+                                "message": "Node does not have encryption key configured. Please use plaintext session_init or configure HOST_PRIVATE_KEY.",
+                                "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                            });
+
+                            if let Some(msg_id) = json_msg.get("id") {
+                                response["id"] = msg_id.clone();
+                            }
+
+                            if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
+                                error!("Failed to send encrypted_session_init error response: {}", e);
+                            }
                         }
-
-                        if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
-                            error!("Failed to send encrypted_session_init error response: {}", e);
-                        }
-
-                        // Note: Full implementation in Sub-phase 6.1 will:
-                        // 1. Parse encrypted payload from json_msg["payload"]
-                        // 2. Call decrypt_session_init() with node's private key
-                        // 3. Extract session_key, job_id, model_name, price_per_token
-                        // 4. Recover and log client_address
-                        // 5. Store session_key in session_key_store
-                        // 6. Track metadata (job_id, chain_id, client_address)
-                        // 7. Send session_init_ack response
                     }
 
                     // Handle encrypted messages (Phase 6.2.1, Sub-phase 5.2)
