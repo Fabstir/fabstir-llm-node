@@ -36,6 +36,38 @@ cp .env.contracts.example .env.contracts
 nano .env
 ```
 
+**Important: Configure Encryption** (Recommended for Production)
+
+```bash
+# Generate or use existing Ethereum private key
+# For testing:
+openssl rand -hex 32 | sed 's/^/0x/' > .host_key
+
+# For production: Use existing wallet or HSM
+
+# Set private key (DO NOT commit to git)
+export HOST_PRIVATE_KEY=0x1234567890abcdef...  # 66 characters (0x + 64 hex)
+
+# Add to .env (gitignored)
+echo "HOST_PRIVATE_KEY=$HOST_PRIVATE_KEY" >> .env
+
+# Verify key format
+echo $HOST_PRIVATE_KEY | wc -c  # Should be 67 (66 + newline)
+
+# Configure session TTL (optional, default: 3600 seconds)
+export SESSION_KEY_TTL_SECONDS=3600
+echo "SESSION_KEY_TTL_SECONDS=3600" >> .env
+```
+
+**Security Note**:
+- ✅ Keep `HOST_PRIVATE_KEY` in secrets management (Kubernetes secrets, AWS Secrets Manager, etc.)
+- ✅ Use different keys for production and testing
+- ✅ Never commit `.env` to version control
+- ✅ Rotate keys quarterly
+- ❌ Never log or print private keys
+
+See `docs/ENCRYPTION_SECURITY.md` for comprehensive security guide.
+
 #### 3. Build Docker Image
 
 ```bash
@@ -92,6 +124,8 @@ WorkingDirectory=/opt/fabstir-node
 Environment="RUST_LOG=info"
 Environment="P2P_PORT=9000"
 Environment="API_PORT=8080"
+# Encryption configuration (load from secrets file)
+EnvironmentFile=/opt/fabstir-node/.env.secrets
 ExecStart=/opt/fabstir-node/fabstir-llm-node
 Restart=always
 RestartSec=10
@@ -116,7 +150,32 @@ sudo systemctl status fabstir-node
 
 ### Option 3: Kubernetes Deployment
 
-#### 1. Create ConfigMap
+#### 1. Create Secrets (for Encryption)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fabstir-secrets
+type: Opaque
+stringData:
+  HOST_PRIVATE_KEY: "0x1234567890abcdef..."  # Your private key
+```
+
+**Create secret from file**:
+```bash
+# Store key in file (temporary)
+echo "0x1234567890abcdef..." > host_key.txt
+
+# Create Kubernetes secret
+kubectl create secret generic fabstir-secrets \
+  --from-file=HOST_PRIVATE_KEY=host_key.txt
+
+# Delete temporary file
+shred -u host_key.txt
+```
+
+#### 2. Create ConfigMap
 
 ```yaml
 apiVersion: v1
@@ -129,9 +188,10 @@ data:
   DEFAULT_CHAIN_ID: "84532"
   BASE_SEPOLIA_RPC: "https://sepolia.base.org"
   OPBNB_TESTNET_RPC: "https://opbnb-testnet-rpc.bnbchain.org"
+  SESSION_KEY_TTL_SECONDS: "3600"  # 1 hour
 ```
 
-#### 2. Create Deployment
+#### 3. Create Deployment
 
 ```yaml
 apiVersion: apps/v1
@@ -159,6 +219,8 @@ spec:
         envFrom:
         - configMapRef:
             name: fabstir-config
+        - secretRef:
+            name: fabstir-secrets  # Include encryption secrets
         resources:
           requests:
             memory: "8Gi"
@@ -369,9 +431,80 @@ nvidia-smi dmon -s pucvmet
 
 ### 1. Private Key Management
 
-- Use hardware security modules (HSM) or key management services
-- Never store private keys in plain text
-- Rotate keys regularly
+**For Encryption (HOST_PRIVATE_KEY)**:
+
+```bash
+# Production: Use secrets management
+# AWS Secrets Manager
+aws secretsmanager create-secret \
+  --name fabstir-node-private-key \
+  --secret-string "0x..."
+
+# HashiCorp Vault
+vault kv put secret/fabstir/private-key value="0x..."
+
+# Kubernetes Secrets
+kubectl create secret generic fabstir-secrets \
+  --from-literal=HOST_PRIVATE_KEY="0x..."
+
+# Azure Key Vault
+az keyvault secret set \
+  --vault-name fabstir-vault \
+  --name host-private-key \
+  --value "0x..."
+```
+
+**Key Rotation Procedure** (Recommended: Quarterly):
+
+```bash
+# 1. Generate new key
+openssl rand -hex 32 | sed 's/^/0x/' > new_key.txt
+
+# 2. Update secrets management
+kubectl create secret generic fabstir-secrets-new \
+  --from-file=HOST_PRIVATE_KEY=new_key.txt
+
+# 3. Update deployment to use new secret
+kubectl patch deployment fabstir-node \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"fabstir-node","envFrom":[{"secretRef":{"name":"fabstir-secrets-new"}}]}]}}}}'
+
+# 4. Verify node restarts and loads new key
+kubectl logs -f deployment/fabstir-node | grep "Private key loaded"
+
+# 5. Delete old secret
+kubectl delete secret fabstir-secrets
+
+# 6. Securely delete temporary file
+shred -u new_key.txt
+```
+
+**Best Practices**:
+- ✅ Use HSM or key management services in production
+- ✅ Never store private keys in plain text files
+- ✅ Rotate keys quarterly or after security incidents
+- ✅ Use different keys for each environment (dev/staging/prod)
+- ✅ Restrict access to secrets (RBAC)
+- ✅ Audit all secret access
+- ❌ Never log private keys
+- ❌ Never commit keys to version control
+- ❌ Never share keys between nodes
+
+**Monitoring Encryption Status**:
+
+```bash
+# Check if encryption is enabled
+curl http://localhost:8080/v1/metrics/session_keys
+
+# Expected response when encryption is enabled:
+# {
+#   "active_sessions": 5,
+#   "total_keys_stored": 5,
+#   "memory_usage_estimate_bytes": 640
+# }
+
+# If encryption is disabled, encrypted_session_init will return:
+# "ENCRYPTION_NOT_SUPPORTED"
+```
 
 ### 2. Access Control
 

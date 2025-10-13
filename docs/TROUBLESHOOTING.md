@@ -305,6 +305,210 @@ docker-compose down vector-db
 docker-compose up -d vector-db
 ```
 
+### 9. Encryption Issues
+
+#### Symptoms
+- ENCRYPTION_NOT_SUPPORTED errors
+- DECRYPTION_FAILED errors
+- INVALID_SIGNATURE errors
+- SESSION_KEY_NOT_FOUND errors
+
+#### Causes & Solutions
+
+**Node Missing Private Key**
+```bash
+# Error: "ENCRYPTION_NOT_SUPPORTED"
+# Cause: HOST_PRIVATE_KEY not configured
+
+# Check if key is set
+echo $HOST_PRIVATE_KEY
+
+# Solution: Set private key
+export HOST_PRIVATE_KEY=0x1234567890abcdef...  # 66 chars (0x + 64 hex)
+
+# Restart node
+cargo run --release
+
+# Verify in logs
+# Look for: "Private key loaded successfully"
+```
+
+**Invalid Private Key Format**
+```bash
+# Error: "Invalid private key format"
+
+# Check key format (must be 0x-prefixed, 64 hex characters)
+echo $HOST_PRIVATE_KEY | wc -c  # Should be 67 (66 + newline)
+
+# Solution: Fix format
+# Correct: 0x followed by 64 hex characters
+export HOST_PRIVATE_KEY=0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+
+# Incorrect formats:
+# - Missing 0x prefix
+# - Too short/long
+# - Non-hex characters
+```
+
+**Decryption Failures**
+```bash
+# Error: "DECRYPTION_FAILED"
+# Possible causes:
+# 1. Wrong session key
+# 2. Invalid nonce size
+# 3. Corrupted ciphertext
+# 4. Mismatched AAD
+
+# Debug with logs
+RUST_LOG=fabstir_llm_node::crypto=debug cargo run
+
+# Look for specific error:
+# - "Invalid nonce size: expected 24, got X"
+# - "Authentication tag verification failed"
+# - "Invalid hex encoding"
+
+# Client-side checklist:
+# ✓ Nonce is exactly 24 bytes (XChaCha20, not ChaCha20's 12 bytes)
+# ✓ Session key matches the one from session init
+# ✓ AAD format is correct (e.g., "message_0")
+# ✓ Ciphertext is properly hex-encoded
+```
+
+**Signature Verification Failures**
+```bash
+# Error: "INVALID_SIGNATURE"
+# Cause: Client signature doesn't verify
+
+# Common issues:
+# 1. Wrong message hash signed
+# 2. Wrong private key used
+# 3. Signature format incorrect
+
+# Verify signature format
+# Should be 65 bytes: r (32) + s (32) + v (1)
+# In hex: 130 characters (or 132 with 0x prefix)
+
+# Debug client-side:
+const messageHash = sha256(ciphertext);  // Hash ciphertext, not plaintext
+const signature = await wallet.signMessage(messageHash);
+console.log('Signature length:', signature.length);  // Should be 65 or 130 (hex)
+
+# Node logs will show recovered address
+RUST_LOG=fabstir_llm_node::crypto=debug cargo run
+# Look for: "Client address recovered: 0x..."
+```
+
+**Session Key Not Found**
+```bash
+# Error: "SESSION_KEY_NOT_FOUND"
+# Cause: Session not initialized or expired
+
+# Check session status
+curl http://localhost:8080/v1/metrics/session_keys
+
+# Solution 1: Initialize session first
+# Send encrypted_session_init before encrypted_message
+
+# Solution 2: Check TTL settings
+export SESSION_KEY_TTL_SECONDS=3600  # 1 hour
+
+# Solution 3: Verify session_id matches
+# Client must use same session_id for init and messages
+```
+
+**Invalid Nonce Size**
+```bash
+# Error: "INVALID_NONCE_SIZE: expected 24, got 12"
+# Cause: Using ChaCha20 nonce (12 bytes) instead of XChaCha20 (24 bytes)
+
+# Solution: Generate 24-byte nonce
+const nonce = crypto.getRandomValues(new Uint8Array(24));  // ✓ Correct
+const nonce = crypto.getRandomValues(new Uint8Array(12));  // ✗ Wrong
+```
+
+**Hex Encoding Errors**
+```bash
+# Error: "INVALID_HEX_ENCODING"
+# Cause: Malformed hex strings
+
+# Common issues:
+# - Odd-length hex string
+# - Non-hex characters (g-z, special chars)
+# - Missing bytes
+
+# Solution: Verify hex encoding
+function bytesToHex(bytes) {
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+# Optional: Add 0x prefix (node strips it)
+const hex = '0x' + bytesToHex(bytes);
+```
+
+**Testing Encryption Locally**
+```bash
+# Run security tests
+cargo test --test security_tests
+
+# Test specific scenario
+cargo test test_replay_attack_prevented -- --exact
+
+# Verify encryption roundtrip
+cargo test test_encrypt_decrypt_roundtrip -- --nocapture
+
+# Enable crypto debug logging
+RUST_LOG=fabstir_llm_node::crypto=trace cargo run
+```
+
+**Session Key Metrics**
+```bash
+# Check active sessions
+curl http://localhost:8080/v1/metrics/session_keys
+
+# Response shows:
+# - active_sessions: number of sessions with stored keys
+# - total_keys_stored: total keys in memory
+# - memory_usage_estimate_bytes: approximate memory used
+# - expired_keys_cleaned: number of expired keys removed
+
+# If memory usage is high, reduce TTL:
+export SESSION_KEY_TTL_SECONDS=1800  # 30 minutes
+```
+
+**Client-Side Debug Checklist**
+- [ ] Nonces are unique per encryption (never reused)
+- [ ] Nonce size is exactly 24 bytes
+- [ ] Session key matches the one from session init
+- [ ] Signature is over ciphertext hash, not plaintext
+- [ ] AAD format matches server expectations
+- [ ] Hex encoding is correct (even length, valid chars)
+- [ ] session_init_ack received before sending encrypted_message
+- [ ] Same session_id used for init and messages
+
+**Security Best Practices**
+```bash
+# For node operators:
+# ✓ Keep HOST_PRIVATE_KEY in secrets management
+# ✓ Use different keys for production and testing
+# ✓ Rotate keys quarterly
+# ✓ Monitor session key metrics
+# ✓ Set reasonable session TTL
+
+# For SDK developers:
+# ✓ Generate new nonce for EVERY encryption
+# ✓ Clear session keys on disconnect
+# ✓ Validate decryption success before processing
+# ✓ Use CSPRNG for nonce generation
+# ✓ Never log private keys or session keys
+```
+
+**See Also**:
+- `docs/ENCRYPTION_SECURITY.md` - Comprehensive security guide
+- `docs/sdk-reference/NODE_ENCRYPTION_GUIDE.md` - SDK integration
+- `docs/API.md` - Encryption protocol documentation
+
 ## Performance Issues
 
 ### High CPU Usage
