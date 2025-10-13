@@ -45,6 +45,12 @@ pub enum ErrorCode {
     UnsupportedChain,
     ChainMismatch,
     JobNotFoundOnChain,
+    // Encryption-specific errors (Phase 6.2.1)
+    InvalidEncryptedPayload,
+    DecryptionFailed,
+    InvalidSignature,
+    SessionKeyNotFound,
+    EncryptionError,
 }
 
 impl fmt::Display for ErrorCode {
@@ -65,6 +71,11 @@ impl fmt::Display for ErrorCode {
             ErrorCode::UnsupportedChain => write!(f, "UNSUPPORTED_CHAIN"),
             ErrorCode::ChainMismatch => write!(f, "CHAIN_MISMATCH"),
             ErrorCode::JobNotFoundOnChain => write!(f, "JOB_NOT_FOUND_ON_CHAIN"),
+            ErrorCode::InvalidEncryptedPayload => write!(f, "INVALID_ENCRYPTED_PAYLOAD"),
+            ErrorCode::DecryptionFailed => write!(f, "DECRYPTION_FAILED"),
+            ErrorCode::InvalidSignature => write!(f, "INVALID_SIGNATURE"),
+            ErrorCode::SessionKeyNotFound => write!(f, "SESSION_KEY_NOT_FOUND"),
+            ErrorCode::EncryptionError => write!(f, "ENCRYPTION_ERROR"),
         }
     }
 }
