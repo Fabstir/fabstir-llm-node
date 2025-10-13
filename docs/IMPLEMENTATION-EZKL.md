@@ -178,22 +178,22 @@ ProofType::EZKL => {
 **Goal**: Implement efficient key loading and proof caching
 
 #### Tasks
-- [ ] Write test for proving key loading from file
-- [ ] Write test for proving key caching in memory
-- [ ] Write test for key validation on load
-- [ ] Write test for proof caching with LRU eviction
-- [ ] Write test for cache hit rate metrics
-- [ ] Implement key loader with file reading
-- [ ] Add key validation (check format and size)
-- [ ] Create in-memory key cache with Arc<RwLock>
-- [ ] Implement lazy key loading on first use
-- [ ] Add proof result caching (same inputs → cached proof)
-- [ ] Implement LRU eviction for proof cache
-- [ ] Add Prometheus metrics for cache hits/misses
-- [ ] Add metrics for proof generation duration
-- [ ] Test concurrent proof generation with shared keys
-- [ ] Optimize witness serialization
-- [ ] Profile proof generation bottlenecks
+- [x] Write test for proving key loading from file
+- [x] Write test for proving key caching in memory
+- [x] Write test for key validation on load
+- [x] Write test for proof caching with LRU eviction
+- [x] Write test for cache hit rate metrics
+- [x] Implement key loader with file reading
+- [x] Add key validation (check format and size)
+- [x] Create in-memory key cache with Arc<RwLock>
+- [x] Implement lazy key loading on first use
+- [x] Add proof result caching (same inputs → cached proof)
+- [x] Implement LRU eviction for proof cache
+- [x] Add Prometheus metrics for cache hits/misses
+- [x] Add metrics for proof generation duration
+- [x] Test concurrent proof generation with shared keys
+- [x] Optimize witness serialization
+- [x] Profile proof generation bottlenecks
 
 **Test Files:**
 - `tests/ezkl/test_key_management.rs` (max 350 lines) - Key loading and caching
