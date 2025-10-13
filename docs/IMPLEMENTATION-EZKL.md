@@ -222,22 +222,22 @@ ProofType::EZKL => {
 **Goal**: Implement real EZKL proof verification
 
 #### Tasks
-- [ ] Write test for valid proof verification
-- [ ] Write test for tampered proof detection
-- [ ] Write test for wrong hash detection
-- [ ] Write test for verification key loading
-- [ ] Write test for verification key caching
-- [ ] Implement EZKL verify function wrapper
-- [ ] Load verification key from file/environment
-- [ ] Cache verification key in memory
-- [ ] Update verify_proof() in ProofGenerator (line 125)
-- [ ] Call real EZKL verification API
-- [ ] Handle verification errors gracefully
-- [ ] Add verification metrics (success/failure counts)
-- [ ] Test verification with correct proofs
-- [ ] Test verification rejects invalid proofs
-- [ ] Test verification rejects tampered hashes
-- [ ] Benchmark verification performance (target: < 10ms)
+- [x] Write test for valid proof verification
+- [x] Write test for tampered proof detection
+- [x] Write test for wrong hash detection
+- [x] Write test for verification key loading
+- [x] Write test for verification key caching
+- [x] Implement EZKL verify function wrapper
+- [x] Load verification key from file/environment
+- [x] Cache verification key in memory
+- [x] Update verify_proof() in ProofGenerator (line 125)
+- [x] Call real EZKL verification API
+- [x] Handle verification errors gracefully
+- [x] Add verification metrics (success/failure counts)
+- [x] Test verification with correct proofs
+- [x] Test verification rejects invalid proofs
+- [x] Test verification rejects tampered hashes
+- [x] Benchmark verification performance (target: < 10ms)
 
 **Test Files:**
 - `tests/ezkl/test_verification.rs` (EDIT, expand) - Real verification tests

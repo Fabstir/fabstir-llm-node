@@ -3,5 +3,7 @@
 mod ezkl {
     mod test_integration;
     mod test_proof_generation;
+    mod test_tamper_detection;
     mod test_verification;
+    mod test_verification_performance;
 }

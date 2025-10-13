@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-// EZKL integration (Phase 2.1)
-use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
+// EZKL integration (Phase 2.1, Phase 3.1)
+use crate::crypto::ezkl::{EzklProver, EzklVerifier, ProofData, WitnessBuilder};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceProof {
@@ -180,16 +180,40 @@ impl ProofGenerator {
                 Ok(!proof.proof_data.is_empty())
             }
             ProofType::EZKL => {
-                // EZKL verification (Phase 2.1 - basic structure check, Phase 3.1 - real verification)
+                // EZKL verification (Phase 3.1 - real verification)
                 #[cfg(feature = "real-ezkl")]
                 {
-                    // TODO (Phase 3.1): Implement real EZKL proof verification
-                    // For now, just verify proof is not empty and has reasonable size
-                    let is_valid = !proof.proof_data.is_empty()
-                        && proof.proof_data.len() >= 200
-                        && proof.proof_data.len() <= 10_000; // Real proofs: 2-10 KB
+                    // Convert string hashes back to bytes for witness
+                    let model_hash_bytes = hex_str_to_bytes32(&proof.model_hash)?;
+                    let input_hash_bytes = hex_str_to_bytes32(&proof.input_hash)?;
+                    let output_hash_bytes = hex_str_to_bytes32(&proof.output_hash)?;
+                    let job_id_bytes = hex_str_to_bytes32(&proof.job_id)?;
 
-                    tracing::debug!("🔍 EZKL proof verification (structure check): {}", is_valid);
+                    // Reconstruct witness from proof
+                    let witness = WitnessBuilder::new()
+                        .with_job_id(job_id_bytes)
+                        .with_model_hash(model_hash_bytes)
+                        .with_input_hash(input_hash_bytes)
+                        .with_output_hash(output_hash_bytes)
+                        .build()
+                        .map_err(|e| anyhow::anyhow!("Failed to build witness: {}", e))?;
+
+                    // Create ProofData from InferenceProof
+                    let proof_data = ProofData {
+                        proof_bytes: proof.proof_data.clone(),
+                        timestamp: proof.timestamp.timestamp() as u64,
+                        model_hash: model_hash_bytes,
+                        input_hash: input_hash_bytes,
+                        output_hash: output_hash_bytes,
+                    };
+
+                    // Verify using real EZKL verifier
+                    let mut verifier = EzklVerifier::new();
+                    let is_valid = verifier
+                        .verify_proof(&proof_data, &witness)
+                        .map_err(|e| anyhow::anyhow!("EZKL verification failed: {}", e))?;
+
+                    tracing::debug!("🔍 Real EZKL proof verification: {}", is_valid);
                     Ok(is_valid)
                 }
                 #[cfg(not(feature = "real-ezkl"))]
@@ -217,5 +241,28 @@ impl ProofGenerator {
         hasher.update(data);
         let result = hasher.finalize();
         format!("{:x}", result)
+    }
+}
+
+/// Helper function to convert hex string to 32-byte array
+fn hex_str_to_bytes32(hex_str: &str) -> Result<[u8; 32]> {
+    // Remove "0x" prefix if present
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+
+    // Handle case where string might be a hash (64 chars) or other format
+    if hex_str.len() == 64 {
+        // Standard SHA256 hex string
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            bytes[i] = u8::from_str_radix(&hex_str[i * 2..i * 2 + 2], 16)
+                .map_err(|e| anyhow::anyhow!("Invalid hex string: {}", e))?;
+        }
+        Ok(bytes)
+    } else {
+        // For job_id or other strings, hash them to get 32 bytes
+        let mut hasher = Sha256::new();
+        hasher.update(hex_str.as_bytes());
+        let result = hasher.finalize();
+        Ok(result.into())
     }
 }

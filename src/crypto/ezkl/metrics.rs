@@ -28,6 +28,16 @@ pub struct EzklMetrics {
     proof_generation_duration_ms: Arc<AtomicU64>,
     /// Number of proofs generated (for averaging)
     proof_count: Arc<AtomicU64>,
+    /// Number of proof verification attempts
+    verification_total: Arc<AtomicU64>,
+    /// Number of successful verifications
+    verification_success: Arc<AtomicU64>,
+    /// Number of failed verifications
+    verification_failures: Arc<AtomicU64>,
+    /// Total verification time in milliseconds
+    verification_duration_ms: Arc<AtomicU64>,
+    /// Number of verifications (for averaging)
+    verification_count: Arc<AtomicU64>,
 }
 
 impl EzklMetrics {
@@ -44,6 +54,11 @@ impl EzklMetrics {
             key_cache_misses: Arc::new(AtomicU64::new(0)),
             proof_generation_duration_ms: Arc::new(AtomicU64::new(0)),
             proof_count: Arc::new(AtomicU64::new(0)),
+            verification_total: Arc::new(AtomicU64::new(0)),
+            verification_success: Arc::new(AtomicU64::new(0)),
+            verification_failures: Arc::new(AtomicU64::new(0)),
+            verification_duration_ms: Arc::new(AtomicU64::new(0)),
+            verification_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -92,6 +107,24 @@ impl EzklMetrics {
         self.key_cache_misses.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record proof verification attempt
+    pub fn record_verification_attempt(&self) {
+        self.verification_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record successful proof verification
+    pub fn record_verification_success(&self, duration_ms: u64) {
+        self.verification_success.fetch_add(1, Ordering::Relaxed);
+        self.verification_duration_ms
+            .fetch_add(duration_ms, Ordering::Relaxed);
+        self.verification_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record proof verification failure
+    pub fn record_verification_failure(&self) {
+        self.verification_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
     // Getters for metrics values
 
     /// Get total proof generation attempts
@@ -132,6 +165,45 @@ impl EzklMetrics {
     /// Get key cache misses
     pub fn key_cache_misses(&self) -> u64 {
         self.key_cache_misses.load(Ordering::Relaxed)
+    }
+
+    /// Get total verification attempts
+    pub fn verification_total(&self) -> u64 {
+        self.verification_total.load(Ordering::Relaxed)
+    }
+
+    /// Get successful verifications
+    pub fn verification_success(&self) -> u64 {
+        self.verification_success.load(Ordering::Relaxed)
+    }
+
+    /// Get verification failures
+    pub fn verification_failures(&self) -> u64 {
+        self.verification_failures.load(Ordering::Relaxed)
+    }
+
+    /// Get average verification time in milliseconds
+    pub fn avg_verification_ms(&self) -> f64 {
+        let total_ms = self.verification_duration_ms.load(Ordering::Relaxed);
+        let count = self.verification_count.load(Ordering::Relaxed);
+
+        if count == 0 {
+            0.0
+        } else {
+            total_ms as f64 / count as f64
+        }
+    }
+
+    /// Get verification success rate (0.0 to 1.0)
+    pub fn verification_success_rate(&self) -> f64 {
+        let total = self.verification_total();
+        let success = self.verification_success();
+
+        if total == 0 {
+            0.0
+        } else {
+            success as f64 / total as f64
+        }
     }
 
     /// Get average proof generation time in milliseconds
@@ -197,6 +269,11 @@ impl EzklMetrics {
         self.proof_generation_duration_ms
             .store(0, Ordering::Relaxed);
         self.proof_count.store(0, Ordering::Relaxed);
+        self.verification_total.store(0, Ordering::Relaxed);
+        self.verification_success.store(0, Ordering::Relaxed);
+        self.verification_failures.store(0, Ordering::Relaxed);
+        self.verification_duration_ms.store(0, Ordering::Relaxed);
+        self.verification_count.store(0, Ordering::Relaxed);
     }
 
     /// Export metrics in Prometheus text format
@@ -249,6 +326,26 @@ ezkl_avg_proof_generation_ms {:.2}
 # HELP ezkl_proof_generation_success_rate Proof generation success rate
 # TYPE ezkl_proof_generation_success_rate gauge
 ezkl_proof_generation_success_rate {:.4}
+
+# HELP ezkl_verification_total Total number of proof verification attempts
+# TYPE ezkl_verification_total counter
+ezkl_verification_total {}
+
+# HELP ezkl_verification_success Number of successful proof verifications
+# TYPE ezkl_verification_success counter
+ezkl_verification_success {}
+
+# HELP ezkl_verification_failures Number of failed proof verifications
+# TYPE ezkl_verification_failures counter
+ezkl_verification_failures {}
+
+# HELP ezkl_avg_verification_ms Average verification time in milliseconds
+# TYPE ezkl_avg_verification_ms gauge
+ezkl_avg_verification_ms {:.2}
+
+# HELP ezkl_verification_success_rate Verification success rate
+# TYPE ezkl_verification_success_rate gauge
+ezkl_verification_success_rate {:.4}
 "#,
             self.proof_generation_total(),
             self.proof_generation_success(),
@@ -262,6 +359,11 @@ ezkl_proof_generation_success_rate {:.4}
             self.key_cache_hit_rate(),
             self.avg_proof_generation_ms(),
             self.proof_generation_success_rate(),
+            self.verification_total(),
+            self.verification_success(),
+            self.verification_failures(),
+            self.avg_verification_ms(),
+            self.verification_success_rate(),
         )
     }
 }
@@ -401,5 +503,65 @@ mod tests {
         // Should access same instance
         let metrics2 = global_metrics();
         assert!(metrics2.cache_hits() >= 1);
+    }
+
+    #[test]
+    fn test_verification_metrics() {
+        let metrics = EzklMetrics::new();
+
+        metrics.record_verification_attempt();
+        assert_eq!(metrics.verification_total(), 1);
+
+        metrics.record_verification_success(5);
+        assert_eq!(metrics.verification_success(), 1);
+
+        metrics.record_verification_failure();
+        assert_eq!(metrics.verification_failures(), 1);
+    }
+
+    #[test]
+    fn test_average_verification_time() {
+        let metrics = EzklMetrics::new();
+
+        metrics.record_verification_success(10);
+        metrics.record_verification_success(20);
+
+        assert_eq!(metrics.avg_verification_ms(), 15.0);
+    }
+
+    #[test]
+    fn test_verification_success_rate() {
+        let metrics = EzklMetrics::new();
+
+        metrics.record_verification_attempt();
+        metrics.record_verification_success(5);
+        metrics.record_verification_attempt();
+        metrics.record_verification_failure();
+
+        assert_eq!(metrics.verification_success_rate(), 0.5);
+    }
+
+    #[test]
+    fn test_verification_zero_division() {
+        let metrics = EzklMetrics::new();
+
+        // Should not panic with zero values
+        assert_eq!(metrics.verification_total(), 0);
+        assert_eq!(metrics.avg_verification_ms(), 0.0);
+        assert_eq!(metrics.verification_success_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_verification_prometheus_export() {
+        let metrics = EzklMetrics::new();
+
+        metrics.record_verification_attempt();
+        metrics.record_verification_success(5);
+
+        let export = metrics.export_prometheus();
+
+        assert!(export.contains("ezkl_verification_total 1"));
+        assert!(export.contains("ezkl_verification_success 1"));
+        assert!(export.contains("ezkl_verification_failures 0"));
     }
 }
