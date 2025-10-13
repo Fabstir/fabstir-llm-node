@@ -6,4 +6,5 @@ mod ezkl {
     mod test_tamper_detection;
     mod test_verification;
     mod test_verification_performance;
+    mod test_error_recovery;
 }
