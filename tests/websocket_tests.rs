@@ -37,6 +37,7 @@ mod websocket {
     mod test_transport;
     mod test_encrypted_messages;
     mod test_message_parsing;
+    mod test_encrypted_session_init;
     // mod test_chain_messages; // TODO: Implement chain message types first
     // mod test_session_handlers; // TODO: Fix test implementation
     // mod test_connection_chain; // TODO: Implement chain connection types first
