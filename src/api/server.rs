@@ -1093,6 +1093,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                             let mut total_tokens =
                                                                                 0u64;
 
+                                                                            let mut chunk_index = 0u32;
+
                                                                             while let Some(response) =
                                                                                 receiver.recv().await
                                                                             {
@@ -1123,59 +1125,134 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     }
                                                                                 }
 
-                                                                                // TODO: Encrypt response chunks with session key
-                                                                                // For now, send plaintext response
-                                                                                let mut ws_msg = json!({
-                                                                                    "type": "stream_chunk",
-                                                                                    "content": response.content,
-                                                                                    "tokens": response.tokens,
-                                                                                });
+                                                                                // Encrypt response chunks with session key (Phase 6.2.1, Sub-phase 5.3)
+                                                                                // Generate random 24-byte nonce using CSPRNG
+                                                                                let mut nonce = [0u8; 24];
+                                                                                use rand::RngCore;
+                                                                                rand::thread_rng().fill_bytes(&mut nonce);
 
-                                                                                if let Some(ref msg_id) =
-                                                                                    message_id
-                                                                                {
-                                                                                    ws_msg["id"] =
-                                                                                        msg_id.clone();
-                                                                                }
+                                                                                // Prepare AAD with chunk index for ordering validation
+                                                                                let aad = format!("chunk_{}", chunk_index);
+                                                                                let aad_bytes = aad.as_bytes();
 
-                                                                                if socket
-                                                                                    .send(
-                                                                                        axum::extract::ws::Message::Text(
-                                                                                            ws_msg.to_string(),
-                                                                                        ),
-                                                                                    )
-                                                                                    .await
-                                                                                    .is_err()
-                                                                                {
-                                                                                    break;
-                                                                                }
+                                                                                // Encrypt the response content
+                                                                                match crate::crypto::encrypt_with_aead(
+                                                                                    response.content.as_bytes(),
+                                                                                    &nonce,
+                                                                                    aad_bytes,
+                                                                                    &session_key,
+                                                                                ) {
+                                                                                    Ok(ciphertext) => {
+                                                                                        // Build encrypted_chunk message
+                                                                                        let mut ws_msg = json!({
+                                                                                            "type": "encrypted_chunk",
+                                                                                            "tokens": response.tokens,
+                                                                                            "payload": {
+                                                                                                "ciphertextHex": hex::encode(&ciphertext),
+                                                                                                "nonceHex": hex::encode(&nonce),
+                                                                                                "aadHex": hex::encode(aad_bytes),
+                                                                                                "index": chunk_index
+                                                                                            }
+                                                                                        });
 
-                                                                                if response
-                                                                                    .finish_reason
-                                                                                    .is_some()
-                                                                                {
-                                                                                    let mut end_msg =
-                                                                                        json!({
-                                                                                        "type": "stream_end"
-                                                                                    });
+                                                                                        // Include message ID for correlation
+                                                                                        if let Some(ref msg_id) = message_id {
+                                                                                            ws_msg["id"] = msg_id.clone();
+                                                                                        }
 
-                                                                                    if let Some(
-                                                                                        ref msg_id,
-                                                                                    ) = message_id
-                                                                                    {
-                                                                                        end_msg["id"] =
-                                                                                            msg_id
-                                                                                                .clone();
+                                                                                        // Include session_id
+                                                                                        if let Some(ref sid) = current_session_id {
+                                                                                            ws_msg["session_id"] = json!(sid);
+                                                                                        }
+
+                                                                                        // Send encrypted chunk
+                                                                                        if socket
+                                                                                            .send(
+                                                                                                axum::extract::ws::Message::Text(
+                                                                                                    ws_msg.to_string(),
+                                                                                                ),
+                                                                                            )
+                                                                                            .await
+                                                                                            .is_err()
+                                                                                        {
+                                                                                            break;
+                                                                                        }
+
+                                                                                        chunk_index += 1;
+
+                                                                                        // Handle streaming completion
+                                                                                        if response.finish_reason.is_some() {
+                                                                                            // Send final encrypted_response message
+                                                                                            // Generate new nonce for final message
+                                                                                            let mut final_nonce = [0u8; 24];
+                                                                                            rand::thread_rng().fill_bytes(&mut final_nonce);
+
+                                                                                            // AAD for final message
+                                                                                            let final_aad = b"encrypted_response_final";
+
+                                                                                            // Encrypt finish_reason
+                                                                                            let finish_reason_str = response.finish_reason.as_ref().unwrap();
+                                                                                            match crate::crypto::encrypt_with_aead(
+                                                                                                finish_reason_str.as_bytes(),
+                                                                                                &final_nonce,
+                                                                                                final_aad,
+                                                                                                &session_key,
+                                                                                            ) {
+                                                                                                Ok(final_ciphertext) => {
+                                                                                                    let mut end_msg = json!({
+                                                                                                        "type": "encrypted_response",
+                                                                                                        "payload": {
+                                                                                                            "ciphertextHex": hex::encode(&final_ciphertext),
+                                                                                                            "nonceHex": hex::encode(&final_nonce),
+                                                                                                            "aadHex": hex::encode(final_aad),
+                                                                                                        }
+                                                                                                    });
+
+                                                                                                    // Include message ID
+                                                                                                    if let Some(ref msg_id) = message_id {
+                                                                                                        end_msg["id"] = msg_id.clone();
+                                                                                                    }
+
+                                                                                                    // Include session_id
+                                                                                                    if let Some(ref sid) = current_session_id {
+                                                                                                        end_msg["session_id"] = json!(sid);
+                                                                                                    }
+
+                                                                                                    let _ = socket
+                                                                                                        .send(
+                                                                                                            axum::extract::ws::Message::Text(
+                                                                                                                end_msg.to_string(),
+                                                                                                            ),
+                                                                                                        )
+                                                                                                        .await;
+                                                                                                }
+                                                                                                Err(e) => {
+                                                                                                    error!("Failed to encrypt final response: {}", e);
+                                                                                                }
+                                                                                            }
+                                                                                            break;
+                                                                                        }
                                                                                     }
+                                                                                    Err(e) => {
+                                                                                        error!("Failed to encrypt response chunk: {}", e);
+                                                                                        // Send error message
+                                                                                        let mut error_msg = json!({
+                                                                                            "type": "error",
+                                                                                            "code": "ENCRYPTION_FAILED",
+                                                                                            "message": format!("Failed to encrypt response: {}", e)
+                                                                                        });
 
-                                                                                    let _ = socket
-                                                                                        .send(
-                                                                                            axum::extract::ws::Message::Text(
-                                                                                                end_msg.to_string(),
-                                                                                            ),
-                                                                                        )
-                                                                                        .await;
-                                                                                    break;
+                                                                                        if let Some(ref msg_id) = message_id {
+                                                                                            error_msg["id"] = msg_id.clone();
+                                                                                        }
+
+                                                                                        let _ = socket
+                                                                                            .send(axum::extract::ws::Message::Text(
+                                                                                                error_msg.to_string(),
+                                                                                            ))
+                                                                                            .await;
+                                                                                        break;
+                                                                                    }
                                                                                 }
                                                                             }
 
