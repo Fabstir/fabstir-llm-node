@@ -183,9 +183,12 @@ fn test_signature_deterministic() {
 
 #[test]
 fn test_different_messages_different_addresses() {
-    // NOTE: This test is about showing that signing different messages
-    // produces different signatures (which is expected behavior)
+    // NOTE: This test verifies that different messages produce different signatures,
+    // but both recover to the same signer address
     let signing_key = SigningKey::random(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let public_key = k256::PublicKey::from(verifying_key);
+    let expected_address = pubkey_to_address(&public_key);
 
     let message1 = b"message one";
     let message2 = b"message two";
@@ -208,28 +211,38 @@ fn test_different_messages_different_addresses() {
     compact_sig1[..64].copy_from_slice(&sig1_bytes[..]);
     compact_sig2[..64].copy_from_slice(&sig2_bytes[..]);
 
-    // Find correct recovery IDs
+    // Find correct recovery IDs that match expected address
     let mut addr1 = None;
     let mut addr2 = None;
 
-    for recovery_id in 0..2 {
+    for recovery_id in 0..4 {
         compact_sig1[64] = recovery_id;
         if let Ok(addr) = recover_client_address(&compact_sig1, hash1.as_slice()) {
-            addr1 = Some(addr);
-            break;
+            if addr == expected_address {
+                addr1 = Some(addr);
+                break;
+            }
         }
     }
 
-    for recovery_id in 0..2 {
+    for recovery_id in 0..4 {
         compact_sig2[64] = recovery_id;
         if let Ok(addr) = recover_client_address(&compact_sig2, hash2.as_slice()) {
-            addr2 = Some(addr);
-            break;
+            if addr == expected_address {
+                addr2 = Some(addr);
+                break;
+            }
         }
     }
 
-    assert!(addr1.is_some() && addr2.is_some(), "Both signatures should recover successfully");
-    assert_eq!(addr1.unwrap(), addr2.unwrap(), "Both should recover to same signer address");
+    assert!(addr1.is_some(), "First signature should recover successfully");
+    assert!(addr2.is_some(), "Second signature should recover successfully");
+
+    let addr1_value = addr1.unwrap();
+    let addr2_value = addr2.unwrap();
+
+    assert_eq!(addr1_value, addr2_value, "Both should recover to same signer address");
+    assert_eq!(addr1_value, expected_address, "Recovered address should match expected");
 }
 
 #[test]
