@@ -22,6 +22,7 @@ use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use crate::api::token_tracker::TokenTracker;
 use crate::contracts::checkpoint_manager::CheckpointManager;
+use crate::crypto::SessionKeyStore;
 use crate::inference::LlmEngine;
 use crate::p2p::Node;
 use crate::utils::context::{build_prompt_with_context, count_context_tokens};
@@ -182,6 +183,7 @@ pub struct ApiServer {
     metrics: Arc<RwLock<Metrics>>,
     token_tracker: Arc<TokenTracker>,
     checkpoint_manager: Arc<RwLock<Option<Arc<CheckpointManager>>>>,
+    session_key_store: Arc<SessionKeyStore>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
 }
@@ -191,6 +193,12 @@ struct Metrics {
     total_requests: u64,
     total_errors: u64,
     request_durations: Vec<Duration>,
+}
+
+/// Session key metrics for monitoring
+#[derive(Debug, Clone)]
+pub struct SessionKeyMetrics {
+    pub active_sessions: usize,
 }
 
 impl ApiServer {
@@ -215,6 +223,7 @@ impl ApiServer {
             })),
             token_tracker: Arc::new(TokenTracker::new()),
             checkpoint_manager: Arc::new(RwLock::new(None)),
+            session_key_store: Arc::new(SessionKeyStore::new()),
             shutdown_tx: None,
             listener: None,
         }
@@ -259,6 +268,7 @@ impl ApiServer {
             metrics: Arc::new(RwLock::new(Metrics::default())),
             token_tracker: Arc::new(TokenTracker::new()),
             checkpoint_manager: Arc::new(RwLock::new(None)),
+            session_key_store: Arc::new(SessionKeyStore::new()),
             shutdown_tx: None,
             listener: Some(listener),
             config,
@@ -307,6 +317,7 @@ impl ApiServer {
             metrics: self.metrics.clone(),
             token_tracker: self.token_tracker.clone(),
             checkpoint_manager: self.checkpoint_manager.clone(),
+            session_key_store: self.session_key_store.clone(),
             shutdown_tx: None,
             listener: None,
         })
@@ -330,6 +341,18 @@ impl ApiServer {
 
     pub async fn get_checkpoint_manager(&self) -> Option<Arc<CheckpointManager>> {
         self.checkpoint_manager.read().await.clone()
+    }
+
+    /// Get the session key store for encryption/decryption operations
+    pub fn get_session_key_store(&self) -> Arc<SessionKeyStore> {
+        self.session_key_store.clone()
+    }
+
+    /// Get session key metrics
+    pub async fn session_key_metrics(&self) -> SessionKeyMetrics {
+        SessionKeyMetrics {
+            active_sessions: self.session_key_store.count().await,
+        }
     }
 
     pub async fn connection_stats(&self) -> ConnectionStats {
