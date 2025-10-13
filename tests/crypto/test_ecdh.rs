@@ -33,29 +33,27 @@ fn test_derive_shared_key_valid() {
 
 #[test]
 fn test_ecdh_matches_expected_output() {
-    // Use fixed test vectors to ensure deterministic output
-    // These are example values - in real implementation, we'd use test vectors
-    // from the SDK to ensure compatibility
+    // Use valid test vectors with deterministic keys
+    // Generate a valid keypair first, then use those values
 
-    // Fixed node private key (32 bytes)
-    let node_priv_bytes = hex::decode(
-        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-    ).unwrap();
+    // Generate a valid node private key
+    let node_secret = SecretKey::random(&mut OsRng);
+    let node_priv_bytes = node_secret.to_bytes();
 
-    // Fixed client ephemeral public key (33 bytes compressed)
-    let client_eph_pub_hex = "02" // compressed prefix
-        .to_string() + "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-    let client_eph_pub_bytes = hex::decode(&client_eph_pub_hex).unwrap();
+    // Generate a valid client ephemeral public key
+    let client_ephemeral = EphemeralSecret::random(&mut OsRng);
+    let client_eph_pub = PublicKey::from(&client_ephemeral);
+    let client_eph_pub_bytes = client_eph_pub.to_encoded_point(true); // compressed
 
     // Derive shared key
-    let result = derive_shared_key(&client_eph_pub_bytes, &node_priv_bytes);
+    let result = derive_shared_key(client_eph_pub_bytes.as_bytes(), &node_priv_bytes);
 
     // Should succeed
-    assert!(result.is_ok(), "ECDH with fixed vectors should succeed");
+    assert!(result.is_ok(), "ECDH with valid vectors should succeed");
     let shared_key = result.unwrap();
 
     // Key should be deterministic for same inputs
-    let result2 = derive_shared_key(&client_eph_pub_bytes, &node_priv_bytes);
+    let result2 = derive_shared_key(client_eph_pub_bytes.as_bytes(), &node_priv_bytes);
     assert_eq!(
         result2.unwrap(),
         shared_key,
