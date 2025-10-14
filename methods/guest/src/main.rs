@@ -7,8 +7,8 @@
 // knowledge of 4 hash commitments (job_id, model_hash, input_hash, output_hash)
 // without revealing the actual hash values to the verifier.
 //
-// Phase: 1.2 (Placeholder created)
-// Status: Awaiting Phase 2.2 implementation
+// Phase: 2.2 (Implementation complete)
+// Status: Production-ready guest program
 //
 // How it works:
 // 1. Host (prover) sends 4x [u8; 32] hashes via env::write()
@@ -22,22 +22,24 @@ risc0_zkvm::guest::entry!(main);
 use risc0_zkvm::guest::env;
 
 pub fn main() {
-    // Phase 1.2: Placeholder implementation
-    // Phase 2.2: Will implement full witness reading and commitment
+    // Phase 2.2: Read witness data from host (4x 32-byte hashes)
+    // Each env::read() call retrieves one [u8; 32] array sent by the host
+    let job_id: [u8; 32] = env::read();
+    let model_hash: [u8; 32] = env::read();
+    let input_hash: [u8; 32] = env::read();
+    let output_hash: [u8; 32] = env::read();
 
-    // TODO Phase 2.2: Read witness data from host (4x 32-byte hashes)
-    // let job_id: [u8; 32] = env::read();
-    // let model_hash: [u8; 32] = env::read();
-    // let input_hash: [u8; 32] = env::read();
-    // let output_hash: [u8; 32] = env::read();
-
-    // TODO Phase 2.2: Commit all values to journal (makes them public)
+    // Phase 2.2: Commit all values to journal (makes them public)
     // Journal is the public output of the proof that verifier can check
-    // env::commit(&job_id);
-    // env::commit(&model_hash);
-    // env::commit(&input_hash);
-    // env::commit(&output_hash);
+    // The order must match: job_id, model_hash, input_hash, output_hash
+    // Note: Using commit_slice to write raw bytes without serialization metadata
+    env::commit_slice(&job_id);
+    env::commit_slice(&model_hash);
+    env::commit_slice(&input_hash);
+    env::commit_slice(&output_hash);
 
-    // Placeholder: Empty guest program compiles and generates valid ELF
-    // This allows Phase 1.3 to verify the build system works correctly
+    // That's it! The zkVM will:
+    // 1. Generate a STARK proof that this code executed correctly
+    // 2. Include the journal (4 committed hashes) as public output
+    // 3. Allow verifiers to check the proof without re-running the guest
 }
