@@ -94,11 +94,10 @@ fn test_verify_wrong_image_id() {
     // Tamper with proof bytes to simulate wrong image ID
     // (In practice, we can't easily create a proof with a different guest program,
     // so we simulate by corrupting the proof structure)
-    if proof.proof_bytes.len() > 100 {
-        // Corrupt bytes that likely contain the image ID in the receipt
-        for i in 50..60 {
-            proof.proof_bytes[i] ^= 0xFF;
-        }
+    // Corrupt first 1000 bytes which include receipt metadata and critical structure
+    let tamper_end = std::cmp::min(1000, proof.proof_bytes.len());
+    for i in 0..tamper_end {
+        proof.proof_bytes[i] ^= 0xFF;
     }
 
     let mut verifier = EzklVerifier::new();
