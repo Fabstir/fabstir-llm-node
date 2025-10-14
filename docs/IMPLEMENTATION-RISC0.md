@@ -200,11 +200,11 @@ If we need faster proofs in the future:
 - ✅ **Phase 1.3 COMPLETE**: Compilation verified (both modes working, toolchain installed)
 - **Total Time**: ~3 hours (close to 4-6 hour estimate)
 
-### 🔄 Next Up: Phase 2 - Guest Program Implementation
-- ⏸️ **Phase 2.1 PENDING**: Write guest program tests (TDD)
+### 🔄 In Progress: Phase 2 - Guest Program Implementation
+- ✅ **Phase 2.1 COMPLETE**: Write guest program tests (TDD) - 6 tests, ~2 hours
 - ⏸️ **Phase 2.2 PENDING**: Implement guest program (witness reading, commitment)
 - ⏸️ **Phase 2.3 PENDING**: Build and test guest ELF
-- **Estimate**: 4-6 hours
+- **Estimate**: 4-6 hours total, ~2-4 hours remaining
 
 ### ⏸️ Phases 3-5: Proof Generation, Verification, Testing
 - Stub functions still in place (will replace in Phases 3-4):
@@ -460,40 +460,99 @@ rzup install rust  # Installs Rust 1.88.0 for RISC-V target
 **Prerequisites**: Phase 1 complete
 **Goal**: Implement zkVM guest code that proves commitment knowledge
 
-### Sub-phase 2.1: Write Guest Tests ⏸️ NOT STARTED
+### Sub-phase 2.1: Write Guest Tests ✅ COMPLETE (2025-10-14)
 
 **Goal**: Define expected guest program behavior with tests
 
 #### Tasks
 
-**Step 1: Create Test Structure** ⏸️
-- [ ] Create `methods/guest/src/tests.rs` (if guest allows tests)
-- [ ] Or create host-side tests in `tests/risc0/test_guest_behavior.rs`
-- [ ] Define test cases for guest program
+**Step 1: Create Test Structure** ✅
+- [x] Create `methods/guest/src/tests.rs` (if guest allows tests)
+- [x] Or create host-side tests in `tests/risc0/test_guest_behavior.rs`
+- [x] Define test cases for guest program
 
-**Step 2: Write Test Cases** ⏸️
+**Step 2: Write Test Cases** ✅
 
-Test cases to implement:
+Test cases implemented:
 1. **test_guest_reads_four_hashes** - Verify guest can read 4x [u8; 32]
 2. **test_guest_commits_to_journal** - Verify all hashes written to journal
 3. **test_guest_journal_order** - Verify job_id, model, input, output order
 4. **test_guest_handles_serialization** - Verify proper encoding/decoding
+5. **test_guest_with_real_witness_data** - Production-like data with string hashing
+6. **test_guest_produces_valid_receipt** - Receipt structure validation
 
-**Step 3: Create Mock Execution** ⏸️
-- [ ] Write helper to execute guest in test mode
-- [ ] Verify journal contents match expectations
-- [ ] Test with different hash values
+**Step 3: Create Mock Execution** ✅
+- [x] Write helper to execute guest in test mode
+- [x] Verify journal contents match expectations
+- [x] Test with different hash values
 
 #### Success Criteria
-- [ ] Test framework for guest behavior exists
-- [ ] Tests fail (guest not implemented yet)
-- [ ] Test expectations clearly documented
+- [x] Test framework for guest behavior exists
+- [x] Tests fail (guest not implemented yet)
+- [x] Test expectations clearly documented
 
 #### Files Created
-- `tests/risc0/test_guest_behavior.rs`
+- ✅ `tests/risc0/test_guest_behavior.rs` - 6 comprehensive test cases (350+ lines)
+- ✅ `tests/risc0_tests.rs` - Module integrator for Risc0 tests
 
-#### Time Estimate
-**2 hours**
+#### Test Results
+
+**Compilation**:
+```bash
+✅ Tests compile successfully with `--features real-ezkl`
+✅ Tests compile in mock mode without feature flag
+```
+
+**Execution** (Expected to fail - guest not implemented):
+```bash
+$ cargo test --features real-ezkl --test risc0_tests
+running 6 tests
+test risc0::test_guest_behavior::test_guest_reads_four_hashes ... FAILED
+test risc0::test_guest_behavior::test_guest_commits_to_journal ... FAILED
+test risc0::test_guest_behavior::test_guest_journal_order ... FAILED
+test risc0::test_guest_behavior::test_guest_handles_serialization ... FAILED
+test risc0::test_guest_behavior::test_guest_with_real_witness_data ... FAILED
+test risc0::test_guest_behavior::test_guest_produces_valid_receipt ... FAILED
+
+All tests fail with expected error: guest program not implemented (empty main)
+✅ CORRECT BEHAVIOR - tests ready for Phase 2.2 implementation
+```
+
+**Mock Mode Tests**:
+```bash
+$ cargo test --test risc0_tests
+running 2 tests
+test risc0::test_guest_behavior::test_mock_mode_compiles ... ok
+test risc0::test_guest_behavior::test_mock_mode_documentation ... ok
+✅ Mock mode tests pass, providing compilation verification
+```
+
+#### Test Coverage
+
+All 6 tests use host-side integration testing approach:
+- **ExecutorEnv::builder()** to pass witness data to guest
+- **default_prover().prove()** to execute guest program
+- **Receipt.journal** verification for output validation
+- **bincode deserialization** for journal parsing
+- **Feature gating** with `#[cfg(feature = "real-ezkl")]`
+
+Test scenarios cover:
+- Basic witness reading (4x [u8; 32])
+- Journal commitment (128+ bytes expected)
+- Correct ordering (job_id, model_hash, input_hash, output_hash)
+- Serialization robustness (various bit patterns)
+- Real-world data (string-based hashing via WitnessBuilder)
+- Receipt structure validation
+
+#### Actual Time
+**~2 hours** (on target with estimate)
+
+#### Notes
+- Chose host-side tests instead of guest tests (no_std environment limitation)
+- Tests are comprehensive and production-ready
+- All tests fail correctly with "NotFound" or empty journal errors
+- TDD approach successful - tests define exact guest behavior expected
+- Ready for Phase 2.2 implementation (uncomment TODOs in methods/guest/src/main.rs)
 
 ---
 
@@ -1189,17 +1248,20 @@ Risc0 doesn't require key generation - it's transparent!
 | **Phase 1.2**: Create Guest Program Structure | ✅ **COMPLETE** | 2025-10-14 | ~30 min |
 | **Phase 1.3**: Verify Compilation | ✅ **COMPLETE** | 2025-10-14 | ~1.5 hours |
 | **Phase 1**: Dependencies and Setup | ✅ **COMPLETE** | 2025-10-14 | **~3 hours total** |
-| Phase 2: Guest Program | ⏸️ Not Started | - | 4-6 hours (est) |
+| **Phase 2.1**: Write Guest Tests | ✅ **COMPLETE** | 2025-10-14 | ~2 hours |
+| Phase 2.2: Implement Guest Program | ⏸️ Not Started | - | ~1 hour (est) |
+| Phase 2.3: Build and Test Guest ELF | ⏸️ Not Started | - | ~1-2 hours (est) |
+| **Phase 2**: Guest Program | 🔄 **IN PROGRESS** | - | 4-6 hours (est, ~2h done) |
 | Phase 3: Proof Generation | ⏸️ Not Started | - | 6-8 hours (est) |
 | Phase 4: Proof Verification | ⏸️ Not Started | - | 6-8 hours (est) |
 | Phase 5: End-to-End Testing | ⏸️ Not Started | - | 4-6 hours (est) |
 
 ### Current Status
 
-**Active Phase**: ✅ Phase 1 Complete - Ready for Phase 2
+**Active Phase**: 🔄 Phase 2 In Progress - Phase 2.1 Complete
 **Blocker**: None
-**Next Step**: Phase 2.1 - Write guest program tests (TDD approach)
-**Progress**: 3/13 sub-phases complete (23.1%)
+**Next Step**: Phase 2.2 - Implement guest program (uncomment TODOs in methods/guest/src/main.rs)
+**Progress**: 4/13 sub-phases complete (30.8%)
 
 ---
 
@@ -1228,5 +1290,5 @@ Risc0 doesn't require key generation - it's transparent!
 ---
 
 **Last Updated**: 2025-10-14
-**Next Review**: After Phase 1 completion
-**Status**: 🔄 **PHASE 1 IN PROGRESS** (2/3 sub-phases complete, 15.4% overall)
+**Next Review**: After Phase 2 completion
+**Status**: 🔄 **PHASE 2 IN PROGRESS** (4/13 sub-phases complete, 30.8% overall)
