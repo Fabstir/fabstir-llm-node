@@ -189,7 +189,7 @@ Implementation plan for replacing mock EZKL proofs with real commitment-based ze
 **Step 4: Refactor** 🔄
 - [ ] Add documentation for feature flag usage
 - [ ] Create examples of conditional compilation
-- [ ] Update CI/CD to test both with/without feature
+- [ ] Document testing approach for both feature modes (with/without real-ezkl)
 - [ ] Document EZKL installation requirements (nightly Rust)
 - [ ] Run tests - verify still pass
 
@@ -869,7 +869,7 @@ pub async fn verify_proof(&self, proof: &InferenceProof, result: &InferenceResul
 **Step 2: Update Test Expectations**
 - [ ] Identify which tests need proof size updates (200 bytes → 2-10KB)
 - [ ] Identify which tests need timeout updates (instant → up to 5s)
-- [ ] Create migration checklist for each test file
+- [ ] Create test update checklist for each test file
 - [ ] Update test assertions for real proof structure
 
 **Step 3: Run and Fix Tests** ✅ GREEN
@@ -883,7 +883,7 @@ pub async fn verify_proof(&self, proof: &InferenceProof, result: &InferenceResul
 - [ ] Fix any failures, verify all 49+ tests pass
 
 **Step 4: Refactor** 🔄
-- [ ] Add CI/CD job for real-ezkl tests
+- [ ] Document testing procedures for both mock and real EZKL
 - [ ] Document differences between mock and real EZKL behavior
 - [ ] Create test utilities for real EZKL tests
 - [ ] Run tests - verify all still pass
@@ -1213,7 +1213,6 @@ groups:
 **Step 3: Create Examples and Guides** ✅ GREEN
 - [ ] Create example proof generation code
 - [ ] Create example verification code
-- [ ] Create migration guide from mock to real EZKL
 - [ ] Create security best practices guide
 - [ ] Create performance tuning guide
 - [ ] Run documentation through review process
@@ -1241,8 +1240,7 @@ groups:
 4. **API Documentation** - Proof-related API endpoints and formats
 5. **Monitoring Guide** - How to set up and use monitoring dashboards
 6. **Security Guide** - Security properties, assumptions, and best practices
-7. **Migration Guide** - How to migrate from mock to real EZKL
-8. **Performance Tuning** - How to optimize EZKL performance
+7. **Performance Tuning** - How to optimize EZKL performance
 
 ---
 
@@ -1372,7 +1370,9 @@ fabstir-llm-node/
 
 ---
 
-## Migration Path from Mock to Real EZKL
+## Implementation Timeline and Development Schedule
+
+> **Note**: This section outlines the development roadmap for implementing Phases 2-7 of the EZKL integration. This is a technical implementation timeline, not end-user migration.
 
 ### Development Phase (Weeks 1-2)
 1. **Day 1-2**: Phase 2 - EZKL Library Integration
@@ -1406,18 +1406,22 @@ fabstir-llm-node/
    - Sub-phase 7.3: Documentation and guides
 
 ### Testing Phase (Week 3)
-1. Run all tests with `real-ezkl` feature in CI/CD
+1. Run all tests with `real-ezkl` feature
 2. Performance testing on target hardware
 3. Load testing with concurrent proofs
 4. Security audit of circuit design
 
-### Staging Deployment (Week 4)
+### Staging Deployment (POST-MVP)
+> **Note**: The following deployment procedures are planned for post-MVP when production infrastructure is ready.
+
 1. Deploy to staging environment
 2. Generate production keys
 3. Test end-to-end with staging contracts
 4. Monitor performance and errors
 
-### Production Rollout (Week 5+)
+### Production Rollout (POST-MVP)
+> **Note**: Production rollout strategy will be implemented after MVP completion and production UI readiness.
+
 1. Deploy with `real-ezkl` disabled initially
 2. Enable `real-ezkl` for 10% of proofs (canary)
 3. Monitor metrics and errors closely
@@ -1884,7 +1888,6 @@ cargo bench --features real-ezkl --bench ezkl_benchmarks
 - [ ] Document key generation procedure
 - [ ] Create troubleshooting guide for common issues
 - [ ] Add environment variable documentation
-- [ ] Create migration guide from mock to real EZKL
 - [ ] Update API documentation with proof fields
 - [ ] Create circuit specification document
 - [ ] Document security assumptions and guarantees
@@ -2046,35 +2049,6 @@ fabstir-llm-node/
     ├── EZKL_TROUBLESHOOTING.md           # Troubleshooting guide
     └── EZKL_API.md                       # API documentation
 ```
-
----
-
-## Migration Path from Mock to Real EZKL
-
-### Development Phase (Weeks 1-2)
-1. **Day 1-2**: Phase 1 - Setup and circuit design
-2. **Day 3-4**: Phase 2 - Real proof generation
-3. **Day 5-6**: Phase 3 - Verification and integration
-4. **Day 7**: Phase 4 - Testing and documentation
-
-### Testing Phase (Week 3)
-1. Run all tests with `real-ezkl` feature in CI/CD
-2. Performance testing on target hardware
-3. Load testing with concurrent proofs
-4. Security audit of circuit design
-
-### Staging Deployment (Week 4)
-1. Deploy to staging environment
-2. Generate production keys
-3. Test end-to-end with staging contracts
-4. Monitor performance and errors
-
-### Production Rollout (Week 5+)
-1. Deploy with `real-ezkl` disabled initially
-2. Enable `real-ezkl` for 10% of proofs (canary)
-3. Monitor metrics and errors closely
-4. Gradually increase to 100% if stable
-5. Keep mock as fallback for emergency
 
 ---
 
