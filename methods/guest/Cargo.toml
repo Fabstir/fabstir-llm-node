@@ -1,0 +1,23 @@
+[package]
+name = "commitment-guest"
+version = "0.1.0"
+edition = "2021"
+
+# Risc0 zkVM Guest Program
+# This package contains the code that runs inside the zero-knowledge virtual machine.
+# It proves knowledge of 4 hash commitments without revealing the actual values.
+#
+# Build: Automatically compiled by build.rs when --features real-ezkl is enabled
+# Target: riscv32im-risc0-zkvm-elf (RISC-V architecture for zkVM)
+# Output: ELF binary + Image ID constants for host program
+
+[dependencies]
+# Risc0 zkVM guest runtime
+# - no_std: Guest runs in constrained environment (no OS)
+# - std feature: Provides basic std-like functionality for guest
+risc0-zkvm = { version = "2.0", default-features = false, features = ["std"] }
+
+# Serialization for reading/writing data to/from host
+# - Used for env::read() and env::commit() operations
+# - no_std compatible with derive feature for guest structs
+serde = { version = "1.0", default-features = false, features = ["derive"] }
