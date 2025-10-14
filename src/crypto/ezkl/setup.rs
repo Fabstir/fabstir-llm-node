@@ -205,7 +205,11 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    // Note: Setup tests are only for EZKL (SNARK proofs with circuit compilation and key generation)
+    // Risc0 uses transparent setup (no keys, no circuit compilation), so these tests don't apply
+
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_compile_circuit() -> Result<()> {
         let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
         let compiled = compile_circuit(&circuit)?;
@@ -214,6 +218,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_generate_keys() -> Result<()> {
         let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
         let compiled = compile_circuit(&circuit)?;
@@ -225,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_save_and_load_proving_key() -> Result<()> {
         let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
         let compiled = compile_circuit(&circuit)?;
@@ -242,6 +248,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_save_and_load_verifying_key() -> Result<()> {
         let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
         let compiled = compile_circuit(&circuit)?;
@@ -259,6 +266,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_validate_keys() -> Result<()> {
         let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
         let compiled = compile_circuit(&circuit)?;
@@ -270,6 +278,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_keys_compatibility() -> Result<()> {
         let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
         let compiled = compile_circuit(&circuit)?;

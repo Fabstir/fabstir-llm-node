@@ -378,10 +378,17 @@ unsafe impl Sync for KeyManager {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Note: Key manager tests are only for EZKL (SNARK proofs with keys)
+    // Risc0 uses transparent setup (no keys), so these tests don't apply
+    #[cfg(not(feature = "real-ezkl"))]
     use crate::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key, save_verifying_key};
+    #[cfg(not(feature = "real-ezkl"))]
     use crate::crypto::ezkl::CommitmentCircuit;
+    #[cfg(not(feature = "real-ezkl"))]
     use tempfile::TempDir;
 
+    #[cfg(not(feature = "real-ezkl"))]
     fn setup_test_keys() -> (TempDir, PathBuf, PathBuf) {
         let temp_dir = TempDir::new().unwrap();
         let proving_path = temp_dir.path().join("proving_key.bin");
@@ -405,6 +412,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_load_proving_key() {
         let (_temp_dir, proving_path, _) = setup_test_keys();
         let manager = KeyManager::new();
@@ -414,6 +422,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_load_verifying_key() {
         let (_temp_dir, _, verifying_path) = setup_test_keys();
         let manager = KeyManager::new();
@@ -423,6 +432,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_key_caching() {
         let (_temp_dir, proving_path, _) = setup_test_keys();
         let manager = KeyManager::new();
@@ -440,6 +450,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_cache_invalidation() {
         let (_temp_dir, proving_path, _) = setup_test_keys();
         let manager = KeyManager::new();
@@ -452,6 +463,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_is_key_cached() {
         let (_temp_dir, proving_path, _) = setup_test_keys();
         let manager = KeyManager::new();
@@ -464,6 +476,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_memory_usage_tracking() {
         let (_temp_dir, proving_path, _) = setup_test_keys();
         let manager = KeyManager::new();
