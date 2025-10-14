@@ -1,0 +1,33 @@
+# Rust Toolchain Configuration for Fabstir LLM Node
+#
+# This project requires nightly Rust for EZKL integration.
+# EZKL commit 40ce9df (May 26, 2025) requires Rust 1.89+ for svm-rs@0.5.19
+#
+# Pinned Version: nightly-2025-07-01
+# - Provides Rust 1.89+ (required for svm-rs dependency)
+# - Verified working with EZKL commit 40ce9df
+# - Build time: 4m 46s (release profile)
+# - Pin date: 2025-10-14
+# - Review schedule: Quarterly (January, April, July, October)
+# - Next review: 2026-01-14
+#
+# Build Command:
+#   rustup override set nightly-2025-07-01
+#   cargo build --release --features real-ezkl
+#
+# Update Process:
+# 1. Test new nightly version in CI
+# 2. Run full test suite: cargo test --all-features
+# 3. Run EZKL build: cargo build --release --features real-ezkl
+# 4. Update this file with new date
+# 5. Document any breaking changes
+#
+# Monitoring:
+# - Track EZKL repository for stable Rust support
+# - Monitor Rust nightly releases for breaking changes
+# - Review quarterly for security updates
+
+[toolchain]
+channel = "nightly-2025-07-01"
+components = ["rustfmt", "clippy", "rust-src"]
+profile = "default"
