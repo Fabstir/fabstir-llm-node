@@ -86,7 +86,7 @@ fn test_batch_proof_generation_performance() -> Result<()> {
     }
 
     let duration = start.elapsed();
-    let avg_time = duration / count;
+    let avg_time = duration / count as u32;
 
     println!("Generated {} proofs in {:?}", count, duration);
     println!("Average time per proof: {:?}", avg_time);
