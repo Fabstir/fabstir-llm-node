@@ -1,0 +1,6 @@
+# Ignore all key files
+*.bin
+*.key
+
+# But track this .gitignore file
+!.gitignore
