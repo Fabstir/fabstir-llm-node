@@ -5,6 +5,7 @@ mod ezkl {
     mod test_commitment_circuit;  // Phase 2.2: Circuit design tests
     mod test_witness_generation;  // Phase 2.2: Witness builder tests
     mod test_circuit_constraints; // Phase 2.2: Constraint tests
+    mod test_key_management;      // Phase 2.3: Key generation tests
     mod test_integration;
     mod test_proof_generation;
     mod test_tamper_detection;
