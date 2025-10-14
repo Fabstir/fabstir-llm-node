@@ -15,7 +15,7 @@ edition = "2021"
 # Risc0 zkVM guest runtime
 # - no_std: Guest runs in constrained environment (no OS)
 # - std feature: Provides basic std-like functionality for guest
-risc0-zkvm = { version = "2.0", default-features = false, features = ["std"] }
+risc0-zkvm = { version = "3.0", default-features = false, features = ["std"] }
 
 # Serialization for reading/writing data to/from host
 # - Used for env::read() and env::commit() operations

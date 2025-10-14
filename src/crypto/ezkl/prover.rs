@@ -179,7 +179,9 @@ impl EzklProver {
         tracing::info!("🔐 Generating real Risc0 proof");
 
         // Build executor environment with witness data
-        // Each write() call sends one [u8; 32] to the guest program
+        // Use write() with references to let serde handle serialization
+        // Guest uses env::read() which expects serde-serialized data
+        // Risc0 v3.0: Both host and guest must be on same version for compatibility
         tracing::debug!("📝 Building ExecutorEnv with witness data");
         let env = ExecutorEnv::builder()
             .write(witness.job_id())

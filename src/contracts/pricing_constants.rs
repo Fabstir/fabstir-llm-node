@@ -139,9 +139,12 @@ mod tests {
 
     #[test]
     fn test_native_pricing_range() {
-        assert_eq!(
-            native::MAX_PRICE_PER_TOKEN / native::MIN_PRICE_PER_TOKEN,
-            10_000
+        // Use floating point to verify 10,000x range (integer division truncates to 9999)
+        let ratio = native::MAX_PRICE_PER_TOKEN as f64 / native::MIN_PRICE_PER_TOKEN as f64;
+        assert!(
+            (ratio - 10_000.0).abs() < 0.1,
+            "Expected ~10000x range, got {}",
+            ratio
         );
     }
 
