@@ -9,6 +9,14 @@ use super::setup::{load_verifying_key, validate_verifying_key, VerificationKey};
 use super::witness::Witness;
 use std::path::Path;
 
+// Risc0 imports (only when real-ezkl feature is enabled)
+#[cfg(feature = "real-ezkl")]
+use risc0_zkvm::Receipt;
+
+// Import generated guest program constants
+#[cfg(feature = "real-ezkl")]
+include!(concat!(env!("OUT_DIR"), "/methods.rs"));
+
 /// EZKL proof verifier
 pub struct EzklVerifier {
     /// Cached verification key
@@ -235,47 +243,165 @@ impl EzklVerifier {
         Ok(true)
     }
 
-    /// Verify real EZKL proof (when real-ezkl feature is enabled)
+    /// Verify real Risc0 proof (when real-ezkl feature is enabled)
     ///
-    /// This uses the actual EZKL library to verify SNARK proofs.
+    /// This uses the Risc0 zkVM to verify STARK proofs.
+    /// Performs cryptographic verification and validates journal contents.
     #[cfg(feature = "real-ezkl")]
     fn verify_real_proof(&mut self, proof: &ProofData, witness: &Witness) -> EzklResult<bool> {
-        tracing::info!("🔐 Verifying real EZKL proof");
+        tracing::info!("🔐 Verifying real Risc0 proof");
 
-        // Load verification key if not already loaded
-        let _verification_key = self.load_key(None)?;
+        // Deserialize receipt from proof bytes
+        tracing::debug!("📦 Deserializing receipt ({} bytes)", proof.proof_bytes.len());
+        let receipt: Receipt = bincode::deserialize(&proof.proof_bytes)
+            .map_err(|e| EzklError::ProofVerificationFailed {
+                reason: format!("Failed to deserialize receipt: {}", e),
+            })?;
 
-        // TODO: Implement real EZKL proof verification
-        // This will be implemented when EZKL library is integrated
-        // Steps:
-        // 1. Extract public inputs from witness
-        // 2. Call EZKL verification API with proof and public inputs
-        // 3. Return verification result
+        // Verify the receipt cryptographically
+        tracing::debug!("🔍 Verifying receipt signature...");
+        receipt
+            .verify(COMMITMENT_GUEST_ID)
+            .map_err(|e| EzklError::ProofVerificationFailed {
+                reason: format!("Receipt verification failed: {}", e),
+            })?;
 
-        Err(EzklError::ProofVerificationFailed {
-            reason: "Real EZKL proof verification not yet implemented. \
-                     This requires nightly Rust and uncommenting EZKL dependencies in Cargo.toml"
-                .to_string(),
-        })
+        tracing::info!("✅ Cryptographic verification passed");
+
+        // Decode journal and verify it matches expected witness
+        tracing::debug!("📖 Verifying journal contents...");
+        let mut journal = receipt.journal.bytes.as_slice();
+
+        let j_job_id: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode job_id: {}", e),
+            }
+        })?;
+        let j_model_hash: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode model_hash: {}", e),
+            }
+        })?;
+        let j_input_hash: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode input_hash: {}", e),
+            }
+        })?;
+        let j_output_hash: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode output_hash: {}", e),
+            }
+        })?;
+
+        // Verify all hashes match expected values
+        let matches = j_job_id == *witness.job_id()
+            && j_model_hash == *witness.model_hash()
+            && j_input_hash == *witness.input_hash()
+            && j_output_hash == *witness.output_hash();
+
+        if matches {
+            tracing::info!("✅ Journal contents verified");
+        } else {
+            tracing::warn!("❌ Journal mismatch detected");
+            tracing::debug!(
+                "Expected: job_id={:?}, model={:?}, input={:?}, output={:?}",
+                &witness.job_id()[..8],
+                &witness.model_hash()[..8],
+                &witness.input_hash()[..8],
+                &witness.output_hash()[..8]
+            );
+            tracing::debug!(
+                "Got: job_id={:?}, model={:?}, input={:?}, output={:?}",
+                &j_job_id[..8],
+                &j_model_hash[..8],
+                &j_input_hash[..8],
+                &j_output_hash[..8]
+            );
+        }
+
+        Ok(matches)
     }
 
-    /// Verify real EZKL proof from bytes
+    /// Verify real Risc0 proof from bytes
     #[cfg(feature = "real-ezkl")]
     fn verify_real_proof_bytes(
         &mut self,
         proof_bytes: &[u8],
         public_inputs: &[&[u8; 32]],
     ) -> EzklResult<bool> {
-        tracing::info!("🔐 Verifying real EZKL proof from bytes");
+        tracing::info!("🔐 Verifying real Risc0 proof from bytes");
 
-        // Load verification key if not already loaded
-        let _verification_key = self.load_key(None)?;
+        // Deserialize receipt from proof bytes
+        tracing::debug!("📦 Deserializing receipt ({} bytes)", proof_bytes.len());
+        let receipt: Receipt = bincode::deserialize(proof_bytes).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to deserialize receipt: {}", e),
+            }
+        })?;
 
-        // TODO: Implement real EZKL proof verification from bytes
-        Err(EzklError::ProofVerificationFailed {
-            reason: "Real EZKL proof verification from bytes not yet implemented"
-                .to_string(),
-        })
+        // Verify the receipt cryptographically
+        tracing::debug!("🔍 Verifying receipt signature...");
+        receipt
+            .verify(COMMITMENT_GUEST_ID)
+            .map_err(|e| EzklError::ProofVerificationFailed {
+                reason: format!("Receipt verification failed: {}", e),
+            })?;
+
+        tracing::info!("✅ Cryptographic verification passed");
+
+        // Decode journal and verify it matches expected public inputs
+        tracing::debug!("📖 Verifying journal contents...");
+        let mut journal = receipt.journal.bytes.as_slice();
+
+        let j_job_id: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode job_id: {}", e),
+            }
+        })?;
+        let j_model_hash: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode model_hash: {}", e),
+            }
+        })?;
+        let j_input_hash: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode input_hash: {}", e),
+            }
+        })?;
+        let j_output_hash: [u8; 32] = bincode::deserialize_from(&mut journal).map_err(|e| {
+            EzklError::ProofVerificationFailed {
+                reason: format!("Failed to decode output_hash: {}", e),
+            }
+        })?;
+
+        // Verify all hashes match expected public inputs
+        // public_inputs[0] = model_hash, [1] = input_hash, [2] = output_hash
+        let matches = if public_inputs.len() >= 4 {
+            j_job_id == *public_inputs[0]
+                && j_model_hash == *public_inputs[1]
+                && j_input_hash == *public_inputs[2]
+                && j_output_hash == *public_inputs[3]
+        } else if public_inputs.len() == 3 {
+            // Backward compatibility: if only 3 inputs, skip job_id check
+            j_model_hash == *public_inputs[0]
+                && j_input_hash == *public_inputs[1]
+                && j_output_hash == *public_inputs[2]
+        } else {
+            return Err(EzklError::ProofVerificationFailed {
+                reason: format!(
+                    "Expected 3 or 4 public inputs, got {}",
+                    public_inputs.len()
+                ),
+            });
+        };
+
+        if matches {
+            tracing::info!("✅ Journal contents verified");
+        } else {
+            tracing::warn!("❌ Journal mismatch detected");
+        }
+
+        Ok(matches)
     }
 }
 
