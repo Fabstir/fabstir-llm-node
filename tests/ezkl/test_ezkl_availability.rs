@@ -36,22 +36,19 @@ fn test_ezkl_feature_detection() {
 #[test]
 fn test_check_ezkl_availability() -> Result<()> {
     // This will call our availability check function
-    // For now, this test will fail until we implement the function
-
-    // TODO: Uncomment when implementation is ready
-    // use fabstir_llm_node::crypto::ezkl::availability::is_ezkl_available;
-    // let is_available = is_ezkl_available();
+    use fabstir_llm_node::crypto::ezkl::availability::is_ezkl_available;
+    let is_available = is_ezkl_available();
 
     #[cfg(feature = "real-ezkl")]
     {
         // When real-ezkl is enabled, it should be available
-        // TODO: assert!(is_available, "EZKL should be available with real-ezkl feature");
+        assert!(is_available, "EZKL should be available with real-ezkl feature");
     }
 
     #[cfg(not(feature = "real-ezkl"))]
     {
         // When disabled, availability check should return false
-        // TODO: assert!(!is_available, "EZKL should not be available without real-ezkl feature");
+        assert!(!is_available, "EZKL should not be available without real-ezkl feature");
     }
 
     Ok(())
@@ -62,12 +59,13 @@ fn test_check_ezkl_availability() -> Result<()> {
 #[test]
 fn test_ezkl_version_check() -> Result<()> {
     // This test only runs when real-ezkl feature is enabled
-    // TODO: Uncomment when implementation is ready
-    // use fabstir_llm_node::crypto::ezkl::availability::get_ezkl_version;
+    use fabstir_llm_node::crypto::ezkl::availability::get_ezkl_version;
 
-    // let version = get_ezkl_version()?;
-    // assert!(!version.is_empty(), "EZKL version should not be empty");
-    // assert!(version.starts_with("22."), "EZKL version should be 22.x");
+    let version = get_ezkl_version();
+    assert!(version.is_some(), "EZKL version should be available with real-ezkl feature");
+    let ver = version.unwrap();
+    assert!(!ver.is_empty(), "EZKL version should not be empty");
+    assert!(ver.starts_with("22."), "EZKL version should be 22.x");
 
     Ok(())
 }
@@ -85,23 +83,24 @@ fn test_mock_implementation_active() {
 #[test]
 fn test_ezkl_capabilities() -> Result<()> {
     // Check what capabilities are available
-    // TODO: Uncomment when implementation is ready
-    // use fabstir_llm_node::crypto::ezkl::availability::EzklCapabilities;
+    use fabstir_llm_node::crypto::ezkl::availability::EzklCapabilities;
 
-    // let caps = EzklCapabilities::check()?;
+    let caps = EzklCapabilities::check();
 
     #[cfg(feature = "real-ezkl")]
     {
         // With real EZKL, we should have full capabilities
-        // TODO: assert!(caps.can_generate_proofs);
-        // TODO: assert!(caps.can_verify_proofs);
-        // TODO: assert!(caps.can_compile_circuits);
+        assert!(caps.can_generate_proofs, "Should be able to generate proofs with real-ezkl");
+        assert!(caps.can_verify_proofs, "Should be able to verify proofs with real-ezkl");
+        assert!(caps.can_compile_circuits, "Should be able to compile circuits with real-ezkl");
+        assert!(!caps.is_mock, "Should not be using mock with real-ezkl");
     }
 
     #[cfg(not(feature = "real-ezkl"))]
     {
         // With mock, we have limited capabilities
-        // TODO: assert!(caps.is_mock);
+        assert!(caps.is_mock, "Should be using mock without real-ezkl");
+        assert!(!caps.can_compile_circuits, "Should not be able to compile circuits without real-ezkl");
     }
 
     Ok(())
@@ -111,12 +110,11 @@ fn test_ezkl_capabilities() -> Result<()> {
 #[test]
 fn test_ezkl_init_no_panic() {
     // Ensure initialization doesn't panic
-    // TODO: Uncomment when implementation is ready
-    // use fabstir_llm_node::crypto::ezkl::availability::init_ezkl;
+    use fabstir_llm_node::crypto::ezkl::availability::init_ezkl;
 
     // This should not panic regardless of feature flag
-    // let result = init_ezkl();
-    // assert!(result.is_ok() || result.is_err(), "Init should return a Result");
+    let result = init_ezkl();
+    assert!(result.is_ok(), "Init should succeed: {:?}", result.err());
 }
 
 /// Test conditional compilation works correctly
