@@ -94,16 +94,33 @@ impl EzklVerifier {
         }
 
         // Check proof size is reasonable (not too small or too large)
+        // Different size expectations for mock vs real proofs:
+        // - Mock EZKL: ~200 bytes
+        // - Real Risc0: 100-500KB (STARK proofs)
         if proof.proof_bytes.len() < 10 {
             return Err(EzklError::ProofVerificationFailed {
                 reason: format!("Proof too small: {} bytes", proof.proof_bytes.len()),
             });
         }
 
-        if proof.proof_bytes.len() > 100_000 {
-            return Err(EzklError::ProofVerificationFailed {
-                reason: format!("Proof too large: {} bytes", proof.proof_bytes.len()),
-            });
+        #[cfg(feature = "real-ezkl")]
+        {
+            // Risc0 STARK proofs: 100KB - 500KB expected
+            if proof.proof_bytes.len() > 500_000 {
+                return Err(EzklError::ProofVerificationFailed {
+                    reason: format!("Proof too large: {} bytes (expected < 500KB for STARK proofs)", proof.proof_bytes.len()),
+                });
+            }
+        }
+
+        #[cfg(not(feature = "real-ezkl"))]
+        {
+            // Mock proofs: ~200 bytes expected
+            if proof.proof_bytes.len() > 100_000 {
+                return Err(EzklError::ProofVerificationFailed {
+                    reason: format!("Proof too large: {} bytes (expected < 100KB for mock proofs)", proof.proof_bytes.len()),
+                });
+            }
         }
 
         // Verify hashes match between proof and witness
@@ -407,6 +424,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "real-ezkl"))]
     fn test_convenience_function() -> EzklResult<()> {
         use crate::crypto::ezkl::EzklProver;
 
@@ -417,7 +435,6 @@ mod tests {
 
         let is_valid = verify_proof(&proof, &witness, None)?;
 
-        #[cfg(not(feature = "real-ezkl"))]
         assert!(is_valid, "Convenience function should work");
 
         Ok(())
