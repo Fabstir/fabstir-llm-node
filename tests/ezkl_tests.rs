@@ -2,6 +2,9 @@
 
 mod ezkl {
     mod test_ezkl_availability;  // Phase 2.1: Availability tests
+    mod test_commitment_circuit;  // Phase 2.2: Circuit design tests
+    mod test_witness_generation;  // Phase 2.2: Witness builder tests
+    mod test_circuit_constraints; // Phase 2.2: Constraint tests
     mod test_integration;
     mod test_proof_generation;
     mod test_tamper_detection;
