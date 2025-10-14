@@ -9,6 +9,7 @@ mod ezkl {
     mod test_integration;
     mod test_proof_generation;
     mod test_proof_validation;    // Phase 3.3: Proof validation tests
+    mod test_proof_caching;       // Phase 4.2: Proof caching tests
     mod test_tamper_detection;
     mod test_verification;
     mod test_verification_performance;
