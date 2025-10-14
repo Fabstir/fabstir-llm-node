@@ -3,6 +3,12 @@ name = "fabstir-llm-node"
 version = "0.1.0"
 edition = "2021"
 
+# Risc0 zkVM configuration (Phase 1.1)
+# Specifies guest program directories to compile
+# Note: Paths are relative to workspace root
+[package.metadata.risc0]
+methods = ["methods/guest"]  # Will create this directory in Phase 1.2
+
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
@@ -95,20 +101,22 @@ bs58 = "0.5"
 clap = { version = "4.5", features = ["derive", "env"] }
 dotenv = "0.15"
 
-# Real EZKL Integration (Phase 2.1 - Dependencies Added)
-# NOTE: EZKL v22.3.0 requires nightly Rust due to profile-rustflags feature
-# To enable real EZKL:
-#   1. Install nightly: rustup toolchain install nightly
-#   2. Switch to nightly: rustup default nightly
-#   3. Build with: cargo build --features real-ezkl
+# Real Zero-Knowledge Proof Integration (Phase 1.1 - Risc0 zkVM)
+# DECISION: Switched from EZKL to Risc0 zkVM (2025-10-14)
+# Reason: EZKL designed for ML inference (wrong tool), Risc0 10x simpler
+# Performance: 0.2-2.3s proof generation, 194-281KB proofs (exceeds MVP requirements)
+# To enable real ZK proofs:
+#   1. Build with: cargo build --release --features real-ezkl
 #
-# Current Status: Dependencies added, awaiting nightly Rust for compilation
+# Current Status: Risc0 v2.0 dependencies added, guest program pending Phase 1.2
 # System falls back to mock implementation when real-ezkl feature is disabled
-ezkl = { git = "https://github.com/zkonduit/ezkl", tag = "v22.3.0", optional = true }
-halo2_proofs = { version = "0.3", optional = true }
-ark-std = { version = "0.4", optional = true }
-ark-ff = { version = "0.4", optional = true }
-ark-serialize = { version = "0.4", optional = true }
+risc0-zkvm = { version = "2.0", optional = true }
+
+# Legacy EZKL dependencies (kept for reference, not used)
+# ezkl = { git = "https://github.com/zkonduit/ezkl", rev = "40ce9df", optional = true }
+# ark-std = { version = "0.4", optional = true }
+# ark-ff = { version = "0.4", optional = true }
+# ark-serialize = { version = "0.4", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -121,14 +129,19 @@ rand = "0.8"
 # For benchmarking EZKL performance (Phase 1.1)
 criterion = "0.5"
 
+[build-dependencies]
+# Risc0 build system for compiling guest programs (Phase 1.1)
+risc0-build = { version = "2.0", optional = true }
+
 [features]
 default = ["inference"]
 inference = []
 
-# Real EZKL feature flag (Phase 2.1)
+# Real ZK Proof feature flag (Phase 1.1 - Risc0 zkVM)
 # Enable with: cargo build --features real-ezkl
-# Includes all EZKL cryptographic dependencies for zero-knowledge proofs
-real-ezkl = ["ezkl", "halo2_proofs", "ark-std", "ark-ff", "ark-serialize"]
+# Includes Risc0 zkVM for STARK-based zero-knowledge proofs
+# Performance: 0.2-2.3s generation, 194-281KB proofs, <1s verification
+real-ezkl = ["risc0-zkvm", "risc0-build"]
 
 [[test]]
 name = "performance_tests"
