@@ -23,7 +23,9 @@ use risc0_zkvm::guest::env;
 
 pub fn main() {
     // Phase 2.2: Read witness data from host (4x 32-byte hashes)
-    // Each env::read() call retrieves one [u8; 32] array sent by the host
+    // Host sends data using write() (serde serialization)
+    // Guest reads using env::read() (serde deserialization)
+    // Risc0 v3.0: Both sides must use matching serialization
     let job_id: [u8; 32] = env::read();
     let model_hash: [u8; 32] = env::read();
     let input_hash: [u8; 32] = env::read();
@@ -32,7 +34,7 @@ pub fn main() {
     // Phase 2.2: Commit all values to journal (makes them public)
     // Journal is the public output of the proof that verifier can check
     // The order must match: job_id, model_hash, input_hash, output_hash
-    // Note: Using commit_slice to write raw bytes without serialization metadata
+    // Using commit_slice to write raw bytes to journal (no serialization overhead)
     env::commit_slice(&job_id);
     env::commit_slice(&model_hash);
     env::commit_slice(&input_hash);
