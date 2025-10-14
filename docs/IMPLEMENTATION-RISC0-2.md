@@ -211,46 +211,98 @@ function submitProofOfWork(
 
 ## Phase 2: Node S5 Integration
 
-**Timeline**: 3-4 hours
+**Timeline**: 2.5-3 hours (reduced from 3-4 hours due to s5-rs simplicity)
 **Prerequisites**: Phase 1 complete (new contract deployed)
-**Goal**: Integrate S5 proof upload and modify checkpoint submission
+**Goal**: Integrate s5-rs for direct P2P proof upload and modify checkpoint submission
 
-### Sub-phase 2.1: Add S5 Client to CheckpointManager
+### S5 Integration Architecture
 
-**Goal**: Integrate S5Storage client into CheckpointManager for proof uploads
+**Native Rust Client**: Using [s5-rs](https://github.com/s5-dev/s5-rs) for direct S5 network access
+
+**Why s5-rs:**
+- ✅ Native Rust library (no HTTP bridge)
+- ✅ Direct P2P connection to S5 network
+- ✅ No external services needed (no ENHANCED_S5_URL)
+- ✅ Simpler deployment (single binary)
+- ✅ Better performance and type safety
+- ✅ Automatic content addressing (CID from hash)
+
+**Architecture:**
+```
+Rust Node → s5-rs → S5 P2P Network
+          (direct)  (decentralized storage)
+```
+
+**vs Old Approach:**
+```
+Rust Node → HTTP → Enhanced S5.js → S5 Network
+          (complex) (Node.js service)
+```
+
+**S5 Client Initialization:**
+```rust
+let s5_client = S5Client::builder()
+    .initial_peers(vec![
+        "wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p"
+    ])
+    .build()
+    .await?;
+```
+
+**Proof Upload:**
+```rust
+// Upload 221KB proof
+let blob_id = s5_client.upload_blob(&proof_bytes).await?;
+let cid = blob_id.to_string();  // e.g., "u8pDTQHOOY..."
+
+// Later: Download for verification
+let blob_id = BlobId::from_string(&cid)?;
+let proof_bytes = s5_client.download_blob(&blob_id).await?;
+```
+
+---
+
+### Sub-phase 2.1: Add s5-rs Dependency and Client
+
+**Goal**: Integrate s5-rs native Rust client into CheckpointManager for direct P2P proof uploads
 
 #### Tasks
 
-**Step 1: Add S5 Client Field**
+**Step 1: Add s5-rs Dependency**
+- [ ] Add `s5 = "0.1"` to `Cargo.toml` dependencies (check latest version on crates.io)
+- [ ] Verify compilation: `cargo check`
+
+**Step 2: Add S5 Client Field**
 - [ ] Modify `CheckpointManager` struct in `src/contracts/checkpoint_manager.rs`
-- [ ] Add `s5_client: Arc<Box<dyn S5Storage>>` field
-- [ ] Update constructor to initialize S5 client from environment
+- [ ] Add `s5_client: s5::S5Client` field
+- [ ] Update constructor to initialize S5 client with peer list
 
 **Expected Changes**:
 ```rust
 // src/contracts/checkpoint_manager.rs
 
-use crate::storage::s5_client::S5Client;
+use s5::S5Client;
 
 pub struct CheckpointManager {
     web3_client: Arc<Web3Client>,
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
     proof_system_address: Address,
     host_address: Address,
-    s5_client: Arc<Box<dyn S5Storage>>, // NEW
+    s5_client: S5Client, // NEW: Direct s5-rs client (no trait abstraction)
 }
 
 impl CheckpointManager {
-    pub fn new(web3_client: Arc<Web3Client>) -> Result<Self> {
+    pub async fn new(web3_client: Arc<Web3Client>) -> Result<Self> {
         // ... existing code ...
 
-        // Initialize S5 client
-        let s5_client = Arc::new(
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(S5Client::create_from_env())
-            })?
-        );
+        // Initialize S5 client with P2P peers
+        let s5_client = S5Client::builder()
+            .initial_peers(vec![
+                "wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p".to_string()
+            ])
+            .build()
+            .await
+            .map_err(|e| anyhow!("Failed to initialize S5 client: {}", e))?;
 
         Ok(Self {
             web3_client,
@@ -263,32 +315,44 @@ impl CheckpointManager {
 }
 ```
 
-**Step 2: Update Tests**
-- [ ] Add S5 mock to test fixtures
-- [ ] Verify CheckpointManager initialization with S5 client
+**Step 3: Update Constructor Call Sites**
+- [ ] Make CheckpointManager::new() async where called
+- [ ] Or keep synchronous constructor and initialize s5_client lazily on first use
+
+**Step 4: Update Tests**
+- [ ] For tests, create mock S5Client or use conditional compilation
+- [ ] Verify CheckpointManager initialization
 
 #### Success Criteria
-- [ ] CheckpointManager has S5 client field
-- [ ] S5 client initializes from environment (`ENHANCED_S5_URL` or mock)
-- [ ] Tests compile and pass with new field
+- [ ] s5-rs dependency added and compiles
+- [ ] CheckpointManager has S5Client field
+- [ ] S5 client connects to P2P network (no external services needed)
+- [ ] Tests compile and pass
 
 #### Files Modified
+- [ ] `Cargo.toml` - Add s5 dependency
 - [ ] `src/contracts/checkpoint_manager.rs` - Add field, update constructor
 
 #### Estimated Time
 **~30 minutes**
 
+#### Notes
+- **No environment variables needed** - peer list hardcoded
+- **No external services** - connects directly to S5 P2P network
+- **Native Rust** - better performance than HTTP bridge
+- Can add peer configuration from env later if needed
+
 ---
 
 ### Sub-phase 2.2: Implement Proof Upload to S5
 
-**Goal**: Upload generated STARK proof to S5 and get CID
+**Goal**: Upload generated STARK proof to S5 and get CID using s5-rs
 
 #### Tasks
 
 **Step 1: Add Proof Upload Method**
 - [ ] Create `upload_proof_to_s5()` method in CheckpointManager
-- [ ] Generate unique S5 path: `home/proofs/job_{jobId}_ts_{timestamp}.proof`
+- [ ] Use s5-rs `upload_blob()` API directly (no paths needed)
 - [ ] Handle upload errors with retry logic
 
 **Expected Implementation**:
@@ -301,15 +365,16 @@ impl CheckpointManager {
         job_id: u64,
         proof_bytes: &[u8],
     ) -> Result<String> {
-        let timestamp = chrono::Utc::now().timestamp();
-        let proof_path = format!("home/proofs/job_{}_ts_{}.proof", job_id, timestamp);
+        info!("📤 Uploading proof to S5 for job {} ({} bytes)", job_id, proof_bytes.len());
 
-        info!("📤 Uploading proof to S5: {} ({} bytes)", proof_path, proof_bytes.len());
-
-        let cid = self.s5_client
-            .put(&proof_path, proof_bytes.to_vec())
+        // Upload blob directly using s5-rs
+        let blob_id = self.s5_client
+            .upload_blob(proof_bytes)
             .await
             .map_err(|e| anyhow!("S5 upload failed: {}", e))?;
+
+        // Convert BlobId to string CID
+        let cid = blob_id.to_string();
 
         info!("✅ Proof uploaded to S5: CID={}", cid);
         Ok(cid)
@@ -317,27 +382,65 @@ impl CheckpointManager {
 }
 ```
 
-**Step 2: Integrate Upload into generate_proof()**
-- [ ] Modify `generate_proof()` method to return `(Vec<u8>, String)` (proof bytes + CID)
-- [ ] Upload proof after generation
-- [ ] Return both proof bytes and CID
+**Step 2: Integrate Upload into submit_checkpoint()**
+- [ ] Call `upload_proof_to_s5()` after `generate_proof()`
+- [ ] Keep proof bytes for hash calculation
+- [ ] Get CID from upload
 
 **Step 3: Add Error Handling**
 - [ ] Handle S5 upload failures gracefully
-- [ ] Add retry logic (max 3 retries)
+- [ ] Add retry logic (max 3 retries with exponential backoff)
 - [ ] Log upload status and CID
+- [ ] Handle network errors
+
+**Example with Retry**:
+```rust
+async fn upload_proof_to_s5_with_retry(
+    &self,
+    job_id: u64,
+    proof_bytes: &[u8],
+) -> Result<String> {
+    let mut retries = 0;
+    let max_retries = 3;
+
+    loop {
+        match self.s5_client.upload_blob(proof_bytes).await {
+            Ok(blob_id) => {
+                let cid = blob_id.to_string();
+                info!("✅ Proof uploaded to S5: CID={}", cid);
+                return Ok(cid);
+            }
+            Err(e) if retries < max_retries => {
+                retries += 1;
+                let delay = std::time::Duration::from_secs(2u64.pow(retries));
+                warn!("⚠️ S5 upload failed (attempt {}/{}): {}", retries, max_retries, e);
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => {
+                return Err(anyhow!("S5 upload failed after {} retries: {}", max_retries, e));
+            }
+        }
+    }
+}
+```
 
 #### Success Criteria
-- [ ] Proof uploads to S5 successfully
-- [ ] CID returned from upload
+- [ ] Proof uploads to S5 successfully via s5-rs
+- [ ] CID returned from upload (BlobId string format)
 - [ ] Proof retrievable from S5 by CID
-- [ ] Error handling for upload failures
+- [ ] Error handling and retry logic working
+- [ ] No external HTTP services needed
 
 #### Files Modified
-- [ ] `src/contracts/checkpoint_manager.rs` - Add upload method, integrate into generate_proof()
+- [ ] `src/contracts/checkpoint_manager.rs` - Add upload method
 
 #### Estimated Time
-**~1 hour**
+**~45 minutes** (simplified from 1 hour due to s5-rs simplicity)
+
+#### Notes
+- **No paths needed** - s5-rs stores blobs by content hash automatically
+- **Direct P2P** - uploads go directly to S5 network, no portal needed
+- **Automatic deduplication** - same proof uploaded twice gets same CID
 
 ---
 
@@ -546,8 +649,8 @@ fn encode_checkpoint_call(
 
 **Step 1: Update Environment**
 - [ ] Set `CONTRACT_JOB_MARKETPLACE` to new contract address
-- [ ] Verify `ENHANCED_S5_URL` configured (or using mock)
 - [ ] Verify `HOST_PRIVATE_KEY` set
+- [ ] No S5 configuration needed (s5-rs connects directly to P2P network)
 
 **Step 2: Deploy Node**
 - [ ] Extract v8.1.2 tarball
@@ -599,11 +702,14 @@ fn encode_checkpoint_call(
 - [x] New ABI generated and documented
 
 ### Phase 2: Node S5 Integration
+- [ ] s5-rs dependency added
 - [ ] S5 client integrated into CheckpointManager
+- [ ] Direct P2P connection to S5 network established
 - [ ] Proof uploads to S5 successfully
 - [ ] Transaction encodes hash + CID
 - [ ] Transaction size < 1KB (fits RPC limit)
 - [ ] Version updated to v8.1.2
+- [ ] No external S5 services required
 
 ### Phase 3: Testing
 - [ ] Local tests pass
@@ -622,6 +728,7 @@ fn encode_checkpoint_call(
 - [ ] `docs/compute-contracts-reference/JobMarketplace.md` - Deployment docs
 
 ### Phase 2: Node S5 Integration (Node Developer)
+- [ ] `Cargo.toml` - Add s5-rs dependency
 - [ ] `src/contracts/checkpoint_manager.rs` - S5 integration, upload method, encoding update
 - [ ] `/workspace/VERSION` - Version bump
 - [ ] `/workspace/src/version.rs` - Version constants
@@ -637,21 +744,21 @@ If issues arise during deployment:
 
 1. **Contract Rollback**: Revert to previous contract address in `.env.contracts`
 2. **Node Rollback**: Deploy v8.1.1 tarball (still generates proofs, but fails submission)
-3. **S5 Issues**: Node falls back to mock S5 if `ENHANCED_S5_URL` not set
+3. **S5 Issues**: If S5 P2P network unreachable, node will fail checkpoint submission (no fallback - proof generation is mandatory)
 
 ---
 
 ## Notes and Considerations
 
-### S5 Path Convention
-- Proof path: `home/proofs/job_{jobId}_ts_{timestamp}.proof`
-- Ensures unique paths per checkpoint
-- Easy to locate by job ID
+### S5 Content Addressing
+- **No paths needed**: s5-rs stores blobs by content hash (automatic CID)
+- **Automatic deduplication**: Same proof bytes → same CID
+- **Unique by content**: Different proofs always have different CIDs
 
 ### CID Format
-- S5 returns CID like `s5://abc123...`
+- s5-rs returns CID from `BlobId` (e.g., "u8pDTQHOOY...")
 - Store as string in contract
-- Use CID to fetch proof: `s5_client.get_by_cid(cid)`
+- Retrieve proof: `s5_client.download_blob(&blob_id)`
 
 ### Transaction Size
 - Proof hash: 32 bytes
@@ -662,10 +769,11 @@ If issues arise during deployment:
 ### Verification Flow
 1. Get job proof hash from contract
 2. Get job proof CID from contract events
-3. Fetch proof from S5: `s5_client.get_by_cid(cid)`
-4. Calculate hash: `sha256(proof_bytes)`
-5. Compare: `calculated_hash == on_chain_hash`
-6. Verify proof: `risc0::verify(proof, public_inputs)`
+3. Parse CID: `let blob_id = BlobId::from_string(&cid)?`
+4. Fetch proof from S5: `s5_client.download_blob(&blob_id)`
+5. Calculate hash: `sha256(proof_bytes)`
+6. Compare: `calculated_hash == on_chain_hash`
+7. Verify proof: `risc0::verify(proof, public_inputs)`
 
 ### Security Considerations
 - ✅ Proof integrity: SHA256 hash prevents tampering
@@ -682,15 +790,15 @@ If issues arise during deployment:
 | **Phase 1: Contract Updates** | 2-3 hours | Contracts Developer |
 | Sub-phase 1.1: Update Signature | 1.5-2 hours | Contracts Developer |
 | Sub-phase 1.2: Deploy and ABI | 1-1.5 hours | Contracts Developer |
-| **Phase 2: Node S5 Integration** | 3-4 hours | Node Developer |
-| Sub-phase 2.1: Add S5 Client | 30 minutes | Node Developer |
-| Sub-phase 2.2: Proof Upload | 1 hour | Node Developer |
+| **Phase 2: Node S5 Integration** | 2.5-3 hours | Node Developer |
+| Sub-phase 2.1: Add s5-rs Client | 30 minutes | Node Developer |
+| Sub-phase 2.2: Proof Upload | 45 minutes | Node Developer |
 | Sub-phase 2.3: Update Encoding | 1.5 hours | Node Developer |
 | Sub-phase 2.4: Version & Build | 30 min + build | Node Developer |
 | **Phase 3: Testing** | 1-2 hours | Both |
 | Sub-phase 3.1: Local Tests | 1 hour | Node Developer |
 | Sub-phase 3.2: Testnet Deploy | 1 hour | Both |
-| **TOTAL** | **6-9 hours** | |
+| **TOTAL** | **5.5-8 hours** | (reduced due to s5-rs simplicity) |
 
 ---
 

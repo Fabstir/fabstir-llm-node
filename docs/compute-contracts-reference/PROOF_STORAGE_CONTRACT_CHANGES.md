@@ -77,7 +77,7 @@ function submitProofOfWork(
 **Changes**:
 - Replace `bytes calldata proof` with `bytes32 proofHash, string calldata proofCID`
 - Hash is 32 bytes (SHA256 of full proof)
-- CID is S5 storage identifier (e.g., "s5://abc123...")
+- CID is S5 blob identifier from s5-rs (e.g., "u8pDTQHOOY..." - no "s5://" prefix)
 
 ---
 
@@ -255,7 +255,7 @@ function testSubmitProofOfWork_WithHashAndCID() public {
     uint256 jobId = 1;
     uint256 tokensClaimed = 100;
     bytes32 proofHash = keccak256("test_proof");
-    string memory proofCID = "s5://test123";
+    string memory proofCID = "u8pDTQHOOYtest123";
 
     vm.prank(host);
     marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID);
@@ -275,7 +275,7 @@ function testSubmitProofOfWork_EmitsEventWithCID() public {
     uint256 jobId = 1;
     uint256 tokensClaimed = 100;
     bytes32 proofHash = keccak256("test_proof");
-    string memory proofCID = "s5://test123";
+    string memory proofCID = "u8pDTQHOOYtest123";
 
     vm.expectEmit(true, true, false, true);
     emit ProofSubmitted(jobId, host, tokensClaimed, proofHash, proofCID);
@@ -294,7 +294,7 @@ function testSubmitProofOfWork_TransactionSize() public {
     bytes32 proofHash = keccak256("test_proof");
 
     // Simulate realistic CID length (~50-100 chars)
-    string memory proofCID = "s5://abcdef1234567890abcdef1234567890abcdef1234567890";
+    string memory proofCID = "u8pDTQHOOYabcdef1234567890abcdef1234567890abcdef1234567890";
 
     vm.prank(host);
     bytes memory txData = abi.encodeWithSignature(
@@ -316,7 +316,7 @@ function testSubmitProofOfWork_UpdatesLastProofTime() public {
     uint256 jobId = 1;
     uint256 tokensClaimed = 100;
     bytes32 proofHash = keccak256("test_proof");
-    string memory proofCID = "s5://test123";
+    string memory proofCID = "u8pDTQHOOYtest123";
 
     uint256 beforeTime = block.timestamp;
 
@@ -341,8 +341,8 @@ After deployment, test with actual node:
 3. **Verify Node Logs**:
    ```
    🔐 Generating real Risc0 STARK proof for job X
-   📤 Uploading proof to S5
-   ✅ Proof uploaded to S5: CID=s5://...
+   📤 Uploading proof to S5 for job X (221466 bytes)
+   ✅ Proof uploaded to S5: CID=u8pDTQHOOY...
    📊 Proof hash: 0x...
    ✅ Checkpoint SUCCESS for job X
    ```
