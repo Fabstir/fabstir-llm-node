@@ -8,6 +8,7 @@ mod ezkl {
     mod test_key_management;      // Phase 2.3: Key generation tests
     mod test_integration;
     mod test_proof_generation;
+    mod test_proof_validation;    // Phase 3.3: Proof validation tests
     mod test_tamper_detection;
     mod test_verification;
     mod test_verification_performance;
