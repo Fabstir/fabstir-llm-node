@@ -1255,7 +1255,14 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                                                                 // Build inference request from decrypted prompt
                                                                 // Reuse the existing inference logic
+                                                                // Extract model from message or use default
+                                                                let model = json_msg.get("model")
+                                                                    .and_then(|v| v.as_str())
+                                                                    .unwrap_or("tiny-vicuna")
+                                                                    .to_string();
+
                                                                 let request_value = json!({
+                                                                    "model": model,  // REQUIRED field!
                                                                     "prompt": plaintext_prompt,
                                                                     "job_id": job_id,
                                                                     "session_id": current_session_id,
@@ -1371,16 +1378,21 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                         }
 
                                                                                         // Send encrypted chunk
-                                                                                        if socket
+                                                                                        match socket
                                                                                             .send(
                                                                                                 axum::extract::ws::Message::Text(
                                                                                                     ws_msg.to_string(),
                                                                                                 ),
                                                                                             )
                                                                                             .await
-                                                                                            .is_err()
                                                                                         {
-                                                                                            break;
+                                                                                            Ok(_) => {
+                                                                                                info!("✅ Sent encrypted_chunk {} (tokens: {})", chunk_index, response.tokens);
+                                                                                            }
+                                                                                            Err(e) => {
+                                                                                                error!("❌ Failed to send encrypted_chunk {}: {}", chunk_index, e);
+                                                                                                break;
+                                                                                            }
                                                                                         }
 
                                                                                         chunk_index += 1;
@@ -1423,13 +1435,22 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                         end_msg["session_id"] = json!(sid);
                                                                                                     }
 
-                                                                                                    let _ = socket
+                                                                                                    // Send final encrypted_response
+                                                                                                    match socket
                                                                                                         .send(
                                                                                                             axum::extract::ws::Message::Text(
                                                                                                                 end_msg.to_string(),
                                                                                                             ),
                                                                                                         )
-                                                                                                        .await;
+                                                                                                        .await
+                                                                                                    {
+                                                                                                        Ok(_) => {
+                                                                                                            info!("🏁 Sent final encrypted_response (finish_reason: {})", finish_reason_str);
+                                                                                                        }
+                                                                                                        Err(e) => {
+                                                                                                            error!("❌ Failed to send final encrypted_response: {}", e);
+                                                                                                        }
+                                                                                                    }
                                                                                                 }
                                                                                                 Err(e) => {
                                                                                                     error!("Failed to encrypt final response: {}", e);
