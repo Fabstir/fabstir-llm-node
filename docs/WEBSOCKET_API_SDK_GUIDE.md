@@ -290,7 +290,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 **Requirements:**
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
-- JobMarketplace contract: 0xe169A4B57700080725f9553E3Cc69885fea13629
+- JobMarketplace: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E (v8.1.2+)
 
 ## Compression Support
 
