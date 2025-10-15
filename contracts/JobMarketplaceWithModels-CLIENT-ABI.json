@@ -752,6 +752,16 @@
         "name": "conversationCID",
         "type": "string",
         "internalType": "string"
+      },
+      {
+        "name": "lastProofHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "lastProofCID",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "stateMutability": "view"
@@ -784,9 +794,14 @@
         "internalType": "uint256"
       },
       {
-        "name": "proof",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "proofHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proofCID",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [],
@@ -1145,6 +1160,12 @@
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "proofCID",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false

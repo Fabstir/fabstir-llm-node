@@ -73,6 +73,11 @@ bytes = "1.5"
 # Storage dependencies
 serde_cbor = "0.11"
 
+# S5 Decentralized Storage (Phase 2.1 - Off-Chain Proof Storage)
+# Native Rust client for direct P2P connection to S5 network
+# Used for storing STARK proofs (221KB) off-chain to avoid RPC size limits
+s5 = "0.1"
+
 # EZKL dependencies (for mock implementation)
 blake3 = "1.5"
 

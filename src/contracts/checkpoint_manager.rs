@@ -11,6 +11,10 @@ use tracing::{error, info, warn};
 
 use super::client::Web3Client;
 
+// S5 decentralized storage for off-chain proof storage (Phase 2.1)
+// This will be added once s5 crate is available - placeholder for now
+// use s5::S5Client;
+
 #[cfg(feature = "real-ezkl")]
 use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
 
@@ -254,10 +258,37 @@ impl CheckpointManager {
         );
 
         // Generate STARK proof using Risc0 zkVM
-        let proof_data = self.generate_proof(job_id, tokens_generated)?;
+        let proof_bytes = self.generate_proof(job_id, tokens_generated)?;
 
-        // Properly encode the function call with selector - use PADDED amount
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_data);
+        info!(
+            "📊 Proof generated: {} bytes ({:.2} KB)",
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        );
+
+        // Calculate SHA256 hash of proof (v8.1.2)
+        let mut hasher = Sha256::new();
+        hasher.update(&proof_bytes);
+        let proof_hash = hasher.finalize();
+        let proof_hash_bytes: [u8; 32] = proof_hash.into();
+
+        info!("📊 Proof hash: 0x{}", hex::encode(&proof_hash_bytes));
+
+        // TODO (Phase 2.2): Upload proof to S5 and get CID
+        // For now, use a placeholder CID until S5 integration is complete
+        // When s5 crate is available:
+        // let proof_cid = self.upload_proof_to_s5(job_id, &proof_bytes).await?;
+        let proof_cid = format!("TODO_S5_CID_job_{}_{}bytes", job_id, proof_bytes.len());
+        warn!("⚠️ Using placeholder CID (S5 integration pending): {}", proof_cid);
+
+        // Encode contract call with hash + CID (NEW v8.1.2 signature)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);
+
+        info!(
+            "📦 Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
+            data.len(),
+            proof_bytes.len() / 1024
+        );
 
         // Send transaction with the correct method signature
         match self
@@ -912,11 +943,18 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
     function.encode_input(&tokens).unwrap()
 }
 
-// ABI encoding helper for submitProofOfWork
-fn encode_checkpoint_call(job_id: u64, tokens_generated: u64, proof: Vec<u8>) -> Vec<u8> {
+// ABI encoding helper for submitProofOfWork (v8.1.2 - S5 off-chain storage)
+// NEW: Accepts proof hash + CID instead of full proof bytes
+fn encode_checkpoint_call(
+    job_id: u64,
+    tokens_generated: u64,
+    proof_hash: [u8; 32],
+    proof_cid: String,
+) -> Vec<u8> {
     use ethers::abi::Function;
 
-    // Define the function signature for submitProofOfWork
+    // Define the NEW function signature for submitProofOfWork
+    // Contract now accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, string proofCID)
     let function = Function {
         name: "submitProofOfWork".to_string(),
         inputs: vec![
@@ -931,8 +969,13 @@ fn encode_checkpoint_call(job_id: u64, tokens_generated: u64, proof: Vec<u8>) ->
                 internal_type: None,
             },
             ethers::abi::Param {
-                name: "proof".to_string(),
-                kind: ethers::abi::ParamType::Bytes,
+                name: "proofHash".to_string(),
+                kind: ethers::abi::ParamType::FixedBytes(32), // NEW: bytes32 instead of bytes
+                internal_type: None,
+            },
+            ethers::abi::Param {
+                name: "proofCID".to_string(),
+                kind: ethers::abi::ParamType::String, // NEW: S5 CID
                 internal_type: None,
             },
         ],
@@ -941,19 +984,13 @@ fn encode_checkpoint_call(job_id: u64, tokens_generated: u64, proof: Vec<u8>) ->
         state_mutability: ethers::abi::StateMutability::NonPayable,
     };
 
-    // Encode the function call properly
+    // Encode the function call with hash + CID
     let tokens = vec![
         Token::Uint(U256::from(job_id)),
         Token::Uint(U256::from(tokens_generated)),
-        Token::Bytes(proof),
+        Token::FixedBytes(proof_hash.to_vec()), // NEW: 32-byte hash
+        Token::String(proof_cid),                // NEW: S5 CID string
     ];
 
-    function.encode_input(&tokens).unwrap_or_else(|_| {
-        // Fallback to manual encoding if the proper method fails
-        let selector = ethers::utils::keccak256("submitCheckpoint(uint256,uint256,bytes)");
-        let mut data = selector[0..4].to_vec();
-        let params = ethers::abi::encode(&tokens);
-        data.extend_from_slice(&params);
-        data
-    })
+    function.encode_input(&tokens).expect("Failed to encode submitProofOfWork call")
 }
