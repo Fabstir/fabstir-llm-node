@@ -12,8 +12,7 @@ use tracing::{error, info, warn};
 use super::client::Web3Client;
 
 // S5 decentralized storage for off-chain proof storage (Phase 2.1)
-// This will be added once s5 crate is available - placeholder for now
-// use s5::S5Client;
+use crate::storage::s5_client::{S5Client, S5Storage};
 
 #[cfg(feature = "real-ezkl")]
 use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
@@ -37,10 +36,11 @@ pub struct CheckpointManager {
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
     proof_system_address: Address,
     host_address: Address,
+    s5_storage: Box<dyn S5Storage>,  // S5 storage for off-chain proof storage
 }
 
 impl CheckpointManager {
-    pub fn new(web3_client: Arc<Web3Client>) -> Result<Self> {
+    pub async fn new(web3_client: Arc<Web3Client>) -> Result<Self> {
         // Read JobMarketplace address from environment variable
         let job_marketplace_address =
             std::env::var("CONTRACT_JOB_MARKETPLACE").unwrap_or_else(|_| {
@@ -54,6 +54,13 @@ impl CheckpointManager {
 
         // Get host address from web3 client
         let host_address = web3_client.address();
+
+        // Initialize S5 storage for off-chain proof storage (Phase 2.1)
+        let s5_storage = S5Client::create_from_env()
+            .await
+            .map_err(|e| anyhow!("Failed to initialize S5 storage: {}", e))?;
+
+        info!("✅ S5 storage initialized for off-chain proof storage");
 
         eprintln!(
             "🏠 CheckpointManager initialized with host address: {:?}",
@@ -70,6 +77,7 @@ impl CheckpointManager {
             job_trackers: Arc::new(RwLock::new(HashMap::new())),
             proof_system_address,
             host_address,
+            s5_storage,
         })
     }
 
@@ -175,6 +183,33 @@ impl CheckpointManager {
         Ok(())
     }
 
+    /// Upload proof to S5 decentralized storage and return CID (Phase 2.2)
+    async fn upload_proof_to_s5(&self, job_id: u64, proof_bytes: &[u8]) -> Result<String> {
+        info!(
+            "📤 Uploading proof to S5 for job {} ({} bytes, {:.2} KB)",
+            job_id,
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        );
+
+        // Use a path that works with both Mock and EnhancedS5 backends
+        let proof_path = format!("home/proofs/job_{}_proof.bin", job_id);
+
+        // Upload to S5 - this will return a CID
+        let cid = self
+            .s5_storage
+            .put(&proof_path, proof_bytes.to_vec())
+            .await
+            .map_err(|e| anyhow!("S5 upload failed: {}", e))?;
+
+        info!("✅ Proof uploaded to S5 successfully");
+        info!("   Path: {}", proof_path);
+        info!("   CID: {}", cid);
+        info!("   Size: {} bytes ({:.2} KB)", proof_bytes.len(), proof_bytes.len() as f64 / 1024.0);
+
+        Ok(cid)
+    }
+
     /// Generate cryptographic proof of work
     /// Creates witness from available data and generates Risc0 STARK proof
     fn generate_proof(&self, job_id: u64, tokens_generated: u64) -> Result<Vec<u8>> {
@@ -274,12 +309,8 @@ impl CheckpointManager {
 
         info!("📊 Proof hash: 0x{}", hex::encode(&proof_hash_bytes));
 
-        // TODO (Phase 2.2): Upload proof to S5 and get CID
-        // For now, use a placeholder CID until S5 integration is complete
-        // When s5 crate is available:
-        // let proof_cid = self.upload_proof_to_s5(job_id, &proof_bytes).await?;
-        let proof_cid = format!("TODO_S5_CID_job_{}_{}bytes", job_id, proof_bytes.len());
-        warn!("⚠️ Using placeholder CID (S5 integration pending): {}", proof_cid);
+        // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
+        let proof_cid = self.upload_proof_to_s5(job_id, &proof_bytes).await?;
 
         // Encode contract call with hash + CID (NEW v8.1.2 signature)
         let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);

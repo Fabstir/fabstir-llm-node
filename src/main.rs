@@ -153,7 +153,7 @@ async fn main() -> Result<()> {
         match Web3Client::new(web3_config).await {
             Ok(web3_client) => {
                 let web3_client = Arc::new(web3_client);
-                match CheckpointManager::new(web3_client) {
+                match CheckpointManager::new(web3_client).await {
                     Ok(checkpoint_manager) => {
                         api_server
                             .set_checkpoint_manager(Arc::new(checkpoint_manager))
