@@ -76,12 +76,15 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
 ### ✅ Prerequisites Complete
 - ✅ STARK proof generation working (v8.1.1)
 - ✅ GPU acceleration functional (RTX 4090: 280ms per proof)
-- ✅ S5 client infrastructure exists (`src/storage/s5_client.rs`)
+- ✅ S5 dependency added (`s5 = "0.1"`)
 - ✅ Proof size measured: 221,466 bytes (216.28 KB)
 
-### ⏳ In Progress
-- [ ] Phase 1: Contract Updates (Contracts Developer)
-- [ ] Phase 2: Node S5 Integration
+### ✅ Completed
+- [x] Phase 1: Contract Updates (Contracts Developer) - NEW CONTRACT: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E`
+- [x] Phase 2: Node Integration (Partial) - Hash+CID submission working, S5 upload pending
+
+### ⏳ Remaining
+- [ ] Phase 2.2: Complete S5 upload integration (when s5 crate API is available)
 - [ ] Phase 3: Testing and Deployment
 
 ---
@@ -804,15 +807,28 @@ If issues arise during deployment:
 
 ## Current Status
 
-**Date**: 2025-10-14
-**Version**: v8.1.1 (proof generation working, submission blocked)
-**Next Step**: Phase 1.1 - Contract developer updates `submitProofOfWork` signature
+**Date**: 2025-10-15
+**Version**: v8.1.2 (hash+CID submission integrated, S5 upload pending)
+**Deployed Contract**: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (Base Sepolia)
 
-**Blockers**:
-- [ ] Contract developer availability
-- [ ] Contract deployment to Base Sepolia
+**✅ Completed**:
+- [x] Phase 1: Contract deployed with hash+CID signature
+- [x] Contract address updated in chain_config.rs
+- [x] New ABI integrated
+- [x] encode_checkpoint_call() updated for hash+CID
+- [x] SHA256 hash calculation added
+- [x] Version bumped to v8.1.2
+- [x] Build successful (cargo check passes)
 
-**Ready to Start**: Phase 2 can begin in parallel with contract work (prepare code, await deployment)
+**⏳ Pending**:
+- [ ] Complete S5 upload integration (waiting for s5 crate API availability)
+- [ ] Phase 3: Full testing with real S5 upload
+
+**Current Behavior**:
+- Node calculates SHA256 hash of proof ✅
+- Node uses placeholder CID (TODO_S5_CID_job_X_Xbytes) ⚠️
+- Transaction submitted with hash+CID to new contract ✅
+- Transaction size reduced 737x (221KB → ~300 bytes) ✅
 
 ---
 
