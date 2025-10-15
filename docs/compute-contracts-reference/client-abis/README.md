@@ -2,22 +2,27 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (January 28, 2025 - Corrected Dual Pricing)
+## Current Deployed Contracts (October 15, 2025 - v8.1.2 Off-Chain Proof Storage)
 
-### JobMarketplaceWithModels
-- **Address**: 0xe169A4B57700080725f9553E3Cc69885fea13629
+### JobMarketplaceWithModels (v8.1.2+ Hash+CID)
+- **Address**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E
 - **Network**: Base Sepolia
-- **Status**: ✅ DUAL PRICING WITH 10,000x RANGE
+- **Deployed**: October 15, 2025
+- **Status**: ✅ LATEST - HASH+CID PROOF STORAGE (v8.1.2+)
 - **Configuration**:
   - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
   - Authorized in HostEarnings: ✅ CONFIRMED
   - NodeRegistry: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 (8-field struct with dual pricing)
 - **Key Features**:
-  - 🆕 **DUAL PRICING**: Separate native (ETH/BNB) and stable (USDC) pricing fields
-  - 🆕 **10,000x Range**: Both native and stable have 10,000x range (MIN to MAX)
-  - 🆕 **Price Validation**: Validates against correct pricing field based on payment type
-  - 🆕 **Query Pricing**: Get host pricing for both native and stable tokens
-  - 🆕 Works with NodeRegistryWithModels 8-field struct (includes both pricing fields)
+  - 🆕 **Off-Chain Proof Storage**: 221KB STARK proofs stored in S5, only hash+CID on-chain
+  - 🆕 **Transaction Size Reduction**: 737x smaller (221KB → ~300 bytes)
+  - 🆕 **submitProofOfWork**: Accepts SHA256 hash (32 bytes) + S5 CID string instead of full proof
+  - 🆕 **Fits RPC Limits**: ~300 byte transactions fit well within RPC size limits
+  - **DUAL PRICING**: Separate native (ETH/BNB) and stable (USDC) pricing fields
+  - **10,000x Range**: Both native and stable have 10,000x range (MIN to MAX)
+  - **Price Validation**: Validates against correct pricing field based on payment type
+  - **Query Pricing**: Get host pricing for both native and stable tokens
+  - Works with NodeRegistryWithModels 8-field struct (includes both pricing fields)
   - Wallet-agnostic deposit/withdrawal functions (depositNative, withdrawNative)
   - createSessionFromDeposit for pre-funded session creation
   - Anyone-can-complete pattern for gasless session ending
@@ -91,7 +96,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 - **Address**: 0x908962e8c6CE72610021586f85ebDE09aAc97776
 - **Network**: Base Sepolia
 - **Purpose**: Tracks accumulated earnings for hosts with batch withdrawal support
-- **Authorized Marketplace**: 0xe169A4B57700080725f9553E3Cc69885fea13629 ✅ UPDATED (Corrected Dual Pricing)
+- **Authorized Marketplace**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E ✅ LATEST (v8.1.2+ Hash+CID)
 
 ## Model Registry Usage (NEW)
 
@@ -207,7 +212,7 @@ const nodeRegistry = new ethers.Contract(
 );
 
 const marketplace = new ethers.Contract(
-  '0xe169A4B57700080725f9553E3Cc69885fea13629',
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',  // v8.1.2+ Hash+CID proof storage
   JobMarketplaceABI,
   signer
 );
@@ -332,7 +337,7 @@ const provider = new ethers.providers.JsonRpcProvider('https://base-sepolia.g.al
 
 // Create contract instances
 const marketplace = new ethers.Contract(
-  '0xe169A4B57700080725f9553E3Cc69885fea13629', // CURRENT deployment with corrected dual pricing
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E', // v8.1.2+ Hash+CID proof storage
   JobMarketplaceABI,
   provider
 );
@@ -426,10 +431,10 @@ await nodeRegistry.updateApiUrl('http://your-host.com:8080');
 ```
 
 ### For SDK Developers
-Update contract addresses and use the new dual pricing contracts:
+Update contract addresses to use v8.1.2+ hash+CID proof storage:
 ```javascript
-const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6'; // Corrected dual pricing
-const JOB_MARKETPLACE = '0xe169A4B57700080725f9553E3Cc69885fea13629'; // Corrected dual pricing
+const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6'; // Dual pricing support
+const JOB_MARKETPLACE = '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E'; // v8.1.2+ Hash+CID proof storage
 const MODEL_REGISTRY = '0x92b2De840bB2171203011A6dBA928d855cA8183E';
 const PROOF_SYSTEM = '0x2ACcc60893872A499700908889B38C5420CBcFD1';
 const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
@@ -437,11 +442,18 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 
 ## Deprecated Contracts
 
+### JobMarketplaceWithModels (Pre-v8.1.2, Full Proof Submission)
+- **Address**: 0xe169A4B57700080725f9553E3Cc69885fea13629
+- **Deprecated**: October 15, 2025
+- **Reason**: Full 221KB proof submission exceeded RPC transaction size limits (737x larger than needed)
+- **Replacement**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E (v8.1.2+ Hash+CID)
+- **Migration**: Update contract address and use hash+CID proof submission instead of full proof
+
 ### JobMarketplaceWithModels (Incorrect MAX_PRICE_NATIVE)
 - **Address**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3
 - **Deprecated**: January 28, 2025
 - **Reason**: Incorrect MAX_PRICE_NATIVE (only 10x range instead of 10,000x)
-- **Replacement**: 0xe169A4B57700080725f9553E3Cc69885fea13629
+- **Replacement**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E (v8.1.2+ Hash+CID)
 
 ### NodeRegistryWithModels (Incorrect MAX_PRICE_NATIVE)
 - **Address**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7
@@ -450,4 +462,4 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-January 28, 2025 - Corrected dual pricing with 10,000x range for both native and stable tokens
+October 15, 2025 - v8.1.2 off-chain proof storage with hash+CID submission (737x transaction size reduction)
