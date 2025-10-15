@@ -5,8 +5,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 ## Current Deployed Contracts (January 28, 2025 - Corrected Dual Pricing)
 
 ### JobMarketplaceWithModels
-- **Address**: 0xe169A4B57700080725f9553E3Cc69885fea13629 ✅ NEW - Corrected Dual Pricing
-- **Previous**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3 (Incorrect MAX_PRICE_NATIVE - deprecated)
+- **Address**: 0xe169A4B57700080725f9553E3Cc69885fea13629
 - **Network**: Base Sepolia
 - **Status**: ✅ DUAL PRICING WITH 10,000x RANGE
 - **Configuration**:

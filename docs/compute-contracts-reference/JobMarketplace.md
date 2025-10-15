@@ -2,13 +2,21 @@
 
 ## Current Implementation: JobMarketplaceWithModels (Multi-Chain)
 
-**Contract Address**: `0xe169A4B57700080725f9553E3Cc69885fea13629` ✅ NEW - Corrected Dual Pricing
-**Previous Address**: `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` (deprecated - incorrect MAX_PRICE_NATIVE)
+**Contract Address**: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E`
 **Network**: Base Sepolia (ETH) | opBNB support planned post-MVP
-**Status**: ✅ ACTIVE - Dual pricing with 10,000x range
-**Last Updated**: January 28, 2025
+**Status**: ✅ ACTIVE - S5 Off-Chain Proof Storage with Dual Pricing
+**Last Updated**: October 14, 2025
+
+> **🚀 LATEST UPDATE**: S5 Off-Chain Proof Storage (Oct 14, 2025)
+>
+> **Breaking Change**: `submitProofOfWork` now accepts hash + CID instead of full proof bytes
+> - Transaction size: 221KB → 300 bytes (737x reduction)
+> - Storage cost: ~$50 → ~$0.001 per proof
+> - Full proofs stored in S5 decentralized storage
+> - On-chain: SHA256 hash (32 bytes) + S5 CID (string) only
 
 ### Key Features
+- **S5 Off-Chain Proof Storage**: Proofs stored in S5, only hash + CID on-chain (737x size reduction)
 - **Dual Pricing System**: Separate validation for native (ETH/BNB) and stable (USDC) pricing
 - **10,000x Range**: Both native and stable pricing have proper 10,000x range validation
 - **Price Validation**: Validates against CORRECT pricing field based on payment type
@@ -23,7 +31,7 @@
 - **Host Earnings Accumulation**: Via HostEarnings contract with proper creditEarnings
 - **Streaming Payments**: Proof-of-work based token consumption model
 - **Multi-Token Support**: Native tokens and ERC20 (USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e)
-- **EZKL Proof Verification**: Integration with ProofSystem contract
+- **Proof Integrity**: SHA256 hash verification prevents proof tampering
 - **Economic Minimums**: MIN_DEPOSIT (0.0002 ETH on Base), MIN_PROVEN_TOKENS (100)
 - **Gas Savings**: ~80% reduction through dual accumulation
 
@@ -54,6 +62,29 @@ contract JobMarketplaceWithModels {
     mapping(address => uint256[]) public userSessions;
     mapping(address => uint256[]) public hostSessions;
 }
+
+// SessionJob struct (18 fields)
+struct SessionJob {
+    address depositor;           // User who created and funded the session
+    address host;                // Host serving AI inference
+    uint256 deposit;             // Total USDC/ETH deposited
+    uint256 pricePerToken;       // Wei/smallest unit per AI token
+    uint256 maxDuration;         // Session timeout
+    uint256 proofInterval;       // Tokens between proofs (e.g., 100)
+    uint256 tokensConsumed;      // Total tokens consumed so far
+    uint256 createdAt;           // Block timestamp
+    bool active;                 // Session status
+    string conversationCID;      // IPFS CID after completion
+    address paymentToken;        // address(0) for ETH, or USDC address
+    uint256 lastProofTimestamp;  // Timestamp of last proof submission
+    uint256 totalPayment;        // Total paid to host (accumulated)
+    uint256 hostEarnings;        // Host's earnings from this session
+    uint256 treasuryFee;         // Treasury fee from this session
+    bytes32 modelHash;           // Approved model identifier
+    bytes32 lastProofHash;       // NEW: SHA256 hash of most recent proof
+    string lastProofCID;         // NEW: S5 CID for proof retrieval
+}
+
 ```
 
 ### Session Job Lifecycle
@@ -104,12 +135,13 @@ function createSessionFromDeposit(
     uint256 proofInterval
 ) external returns (uint256)
 
-// Submit proof of work
+// Submit proof of work (S5 off-chain storage)
 function submitProofOfWork(
     uint256 jobId,
-    bytes calldata ekzlProof,
-    uint256 tokensInBatch
-) external returns (bool verified)
+    uint256 tokensClaimed,
+    bytes32 proofHash,       // SHA256 hash of proof (32 bytes)
+    string calldata proofCID // S5 CID for proof retrieval
+) external
 
 // Complete session (anyone can call)
 function completeSessionJob(
@@ -177,10 +209,19 @@ require(pricePerToken >= hostMinNative, "Price below host minimum (native)");
 require(pricePerToken >= hostMinStable, "Price below host minimum (stable)");
 ```
 
-#### ProofSystem
-- Verifies EZKL proofs
-- Prevents proof replay attacks
+#### ProofSystem (Updated for S5 Storage)
+- **Note**: With S5 off-chain storage, on-chain proof verification is no longer performed
+- Contract trusts host's proof hash; disputes fetch full proof from S5 for verification
+- ProofSystem configured but not actively verifying (hash verification instead)
 - Address: `0x2ACcc60893872A499700908889B38C5420CBcFD1`
+
+**S5 Proof Flow**:
+1. Host generates STARK proof (221KB)
+2. Host uploads proof to S5 → receives CID
+3. Host calculates SHA256 hash of proof
+4. Host submits `submitProofOfWork(jobId, tokens, hash, cid)`
+5. Contract stores hash + CID on-chain (~300 bytes)
+6. On dispute: Full proof retrieved from S5 via CID and verified
 
 #### HostEarnings
 - Accumulates host payments
@@ -192,7 +233,7 @@ require(pricePerToken >= hostMinStable, "Price below host minimum (stable)");
 ```solidity
 // Session lifecycle
 event SessionJobCreated(uint256 indexed jobId, address indexed user, address indexed host, uint256 deposit, uint256 pricePerToken, uint256 maxDuration)
-event ProofSubmitted(uint256 indexed jobId, address indexed host, uint256 tokensClaimed, bytes32 proofHash, bool verified)
+event ProofSubmitted(uint256 indexed jobId, address indexed host, uint256 tokensClaimed, bytes32 proofHash, string proofCID)
 event SessionCompleted(uint256 indexed jobId, address indexed completedBy, uint256 tokensPaid, uint256 paymentAmount, uint256 refundAmount)
 
 // Treasury accumulation
@@ -206,11 +247,85 @@ event EarningsCredited(address indexed host, uint256 amount, address token)
 ### Security Considerations
 
 1. **ReentrancyGuard**: All state-changing functions protected
-2. **Proof Verification**: Integration with ProofSystem prevents fraud
-3. **Timeout Protection**: Automatic refunds for abandoned sessions
-4. **Access Control**: Treasury-only functions for fee withdrawal
-5. **Emergency Withdrawal**: Respects accumulated amounts
-6. **Price Validation**: Contract enforces host minimum pricing (prevents under-payment)
+2. **Proof Integrity**: SHA256 hash verification prevents proof tampering
+3. **Proof Availability**: S5 decentralized storage ensures proof retrieval
+4. **Timeout Protection**: Automatic refunds for abandoned sessions
+5. **Access Control**: Treasury-only functions for fee withdrawal
+6. **Emergency Withdrawal**: Respects accumulated amounts
+7. **Price Validation**: Contract enforces host minimum pricing (prevents under-payment)
+8. **Trust Model**: Contract trusts host's hash; disputes fetch proof from S5
+
+### Breaking Changes (October 14, 2025)
+
+#### `submitProofOfWork` Function Signature Changed
+
+**OLD (Deprecated)**:
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    bytes calldata ekzlProof,  // 221KB STARK proof
+    uint256 tokensInBatch
+) external returns (bool verified)
+```
+
+**NEW (Current)**:
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,        // SHA256 hash (32 bytes)
+    string calldata proofCID  // S5 CID for retrieval
+) external
+```
+
+#### Migration Guide for Node Operators
+
+**Before** (❌ No longer works):
+```javascript
+const proof = await generateProof(jobData);
+await marketplace.submitProofOfWork(jobId, proof, 1000);
+```
+
+**After** (✅ Required):
+```javascript
+// 1. Generate proof
+const proof = await generateProof(jobData);
+
+// 2. Upload to S5
+const proofCID = await s5.uploadBlob(proof);
+
+// 3. Calculate hash
+const proofHash = '0x' + crypto.createHash('sha256').update(proof).digest('hex');
+
+// 4. Submit hash + CID
+await marketplace.submitProofOfWork(jobId, 1000, proofHash, proofCID);
+```
+
+#### Migration Guide for SDK/Client Developers
+
+1. **Update Contract Address**: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E`
+2. **Update ABI**: Use latest `JobMarketplaceWithModels-CLIENT-ABI.json`
+3. **Update Event Listeners**: `ProofSubmitted` event now includes `proofCID` parameter
+4. **S5 Integration**: Add S5 client library for proof retrieval
+5. **Hash Verification**: Implement SHA256 verification for downloaded proofs
+
+#### Why This Change?
+
+- **Problem**: STARK proofs (221KB) exceeded RPC transaction limit (128KB)
+- **Impact**: ALL proof submissions were failing with "oversized data" error
+- **Solution**: Store full proofs off-chain, submit only hash + CID
+- **Benefits**:
+  - Transaction size: 221KB → 300 bytes (737x reduction)
+  - Storage cost: ~$50 → ~$0.001 per proof (5000x cheaper)
+  - Gas cost: Minimal increase for string storage
+  - Proof integrity: SHA256 hash prevents tampering
+  - Proof availability: S5 decentralized storage
+
+#### Backward Compatibility
+
+⚠️ **NO backward compatibility** - the old contract (`0xe169A4B57700080725f9553E3Cc69885fea13629`) remains functional for existing sessions, but new sessions should use the updated contract.
+
+**Rollback Plan**: If critical issues discovered, old contract can still accept new sessions as a fallback.
 
 ### Dual Pricing System (NEW - January 28, 2025)
 
@@ -250,7 +365,7 @@ const nodeRegistry = new ethers.Contract(
 );
 
 const marketplace = new ethers.Contract(
-  '0xe169A4B57700080725f9553E3Cc69885fea13629',
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',
   JobMarketplaceABI,
   signer
 );
@@ -309,22 +424,67 @@ await tx.wait();
 console.log('USDC session created with validated stable pricing!');
 ```
 
+**Usage Example (Host Proof Submission with S5)**:
+```javascript
+import crypto from 'crypto';
+import { S5Client } from '@lumeweb/s5-js';
+
+// Initialize S5 client
+const s5 = new S5Client('https://s5.lumeweb.com');
+
+// 1. Generate STARK proof (existing node logic)
+const proof = await generateRisc0Proof(jobData);
+console.log(`Proof size: ${proof.length} bytes`); // ~221KB
+
+// 2. Upload proof to S5
+const proofCID = await s5.uploadBlob(proof);
+console.log(`Proof uploaded to S5: ${proofCID}`);
+
+// 3. Calculate SHA256 hash of proof
+const proofHash = '0x' + crypto.createHash('sha256').update(proof).digest('hex');
+console.log(`Proof hash: ${proofHash}`);
+
+// 4. Submit hash + CID to blockchain
+const marketplace = new ethers.Contract(
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',
+  JobMarketplaceABI,
+  signer
+);
+
+const tx = await marketplace.submitProofOfWork(
+  jobId,
+  tokensClaimed,  // e.g., 1000 tokens
+  proofHash,      // 32-byte SHA256 hash
+  proofCID        // S5 CID string
+);
+
+await tx.wait();
+console.log('Proof submitted! Transaction size: ~300 bytes (vs 221KB)');
+
+// 5. Listen for event
+marketplace.on('ProofSubmitted', (jobId, host, tokens, hash, cid) => {
+  console.log(`Proof event: jobId=${jobId}, tokens=${tokens}, cid=${cid}`);
+});
+```
+
+**Retrieving Proofs from S5** (for disputes or verification):
+```javascript
+// Download proof from S5 using CID
+const storedProof = await s5.downloadBlob(proofCID);
+
+// Verify integrity
+const downloadedHash = '0x' + crypto.createHash('sha256').update(storedProof).digest('hex');
+if (downloadedHash !== proofHash) {
+  throw new Error('Proof integrity check failed!');
+}
+
+console.log('Proof retrieved and verified from S5');
+```
+
 **Pricing Ranges**:
 - **Native (ETH/BNB)**: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
 - **Stable (USDC)**: 10 to 100,000 (0.00001 to 0.1 USDC per token)
 - **Both have 10,000x range** (MIN to MAX)
-
-### Deployment History
-
-| Date | Address | Features |
-|------|---------|----------|
-| Jan 28, 2025 | `0xe169A4B57700080725f9553E3Cc69885fea13629` | ✅ CURRENT - Corrected dual pricing (10,000x range) |
-| Jan 28, 2025 | `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` | ⚠️ DEPRECATED - Incorrect MAX_PRICE_NATIVE (10x instead of 10,000x) |
-| Jan 24, 2025 | `0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f` | Deprecated - Multi-chain/wallet support |
-| Jan 13, 2025 | `0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944` | Deprecated - Single chain only |
-| Jan 5, 2025 | `0x55A702Ab5034810F5B9720Fe15f83CFcf914F56b` | Deprecated - Treasury accumulation |
-| Jan 4, 2025 | `0x9A945fFBe786881AaD92C462Ad0bd8aC177A8069` | Deprecated - Host accumulation |
-| Dec 2024 | Various | Earlier versions |
 
 ### Multi-Chain Configuration
 
@@ -382,6 +542,7 @@ console.log('USDC session created with validated stable pricing!');
 
 ### References
 
+- [S5_PROOF_STORAGE_DEPLOYMENT.md](../../S5_PROOF_STORAGE_DEPLOYMENT.md) - **NEW** S5 proof storage deployment guide
 - [NodeRegistry.md](./NodeRegistry.md) - Host registration and pricing documentation
 - [IMPLEMENTATION-MARKET.md](../../IMPLEMENTATION-MARKET.md) - Pricing implementation plan
 - [MULTI_CHAIN_DEPLOYMENT.md](../../MULTI_CHAIN_DEPLOYMENT.md) - Multi-chain deployment guide
@@ -391,3 +552,4 @@ console.log('USDC session created with validated stable pricing!');
 - [CONTRACT_ADDRESSES.md](../../../CONTRACT_ADDRESSES.md) - Latest addresses
 - [Source Code](../../../src/JobMarketplaceWithModels.sol) - Contract implementation
 - [Tests](../../../test/JobMarketplace/MultiChain/) - Multi-chain test suite
+- [S5 Documentation](https://docs.sfive.net/) - S5 decentralized storage documentation
