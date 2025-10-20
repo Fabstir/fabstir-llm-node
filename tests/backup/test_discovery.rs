@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::p2p::{Node, NodeConfig, NodeEvent, DiscoveryEvent};
 use libp2p::PeerId;
 use std::time::Duration;

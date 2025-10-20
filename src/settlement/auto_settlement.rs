@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::manager::SettlementManager;
 use super::types::{SettlementError, SettlementRequest, SettlementStatus};
 use crate::api::websocket::session_store::SessionStore;

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::job_processor::Message;
 use serde::{Deserialize, Serialize};
 

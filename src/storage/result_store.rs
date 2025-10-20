@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Inference Result Storage Module
 //!
 //! Provides in-memory storage for inference results associated with jobs.

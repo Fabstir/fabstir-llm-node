@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import time

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description

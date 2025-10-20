@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::providers::{Http, Middleware, Provider};
 use fabstir_llm_node::config::chains::{ChainConfigLoader, MultiChainProvider, ProviderHealth};
 use std::sync::Arc;

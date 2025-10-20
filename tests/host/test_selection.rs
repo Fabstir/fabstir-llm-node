@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::prelude::*;
 use fabstir_llm_node::host::registry::HostInfo;
 use fabstir_llm_node::host::selection::{

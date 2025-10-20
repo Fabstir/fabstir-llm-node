@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::types::SettlementError;
 use crate::config::chains::ChainRegistry;
 use anyhow::{anyhow, Result};

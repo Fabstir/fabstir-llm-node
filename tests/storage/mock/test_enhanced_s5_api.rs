@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/storage/mock/test_enhanced_s5_api.rs
 // Phase 4.1.1: Enhanced S5.js with Internal Mock - API Integration Tests
 // Updated to match actual Enhanced S5.js API

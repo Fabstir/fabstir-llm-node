@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::gas_estimator::GasEstimator;
 use super::queue::{SettlementQueue, SettlementRequest};
 use super::types::{SettlementError, SettlementResult, SettlementStatus};

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # Script to run Phase 4.1.3 integration tests
 # This verifies we're in the RED phase of TDD

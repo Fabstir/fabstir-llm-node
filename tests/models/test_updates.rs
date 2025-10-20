@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::Result;
 use fabstir_llm_node::models::{
     MigrationPlan, ModelUpdater, ModelVersion, RollbackPolicy, UpdateConfig, UpdateError,

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Settlement Validation Tests
 //!
 //! Tests that demonstrate proof validation before payment settlement.

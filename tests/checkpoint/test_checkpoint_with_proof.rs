@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Checkpoint Integration Tests with EZKL Proofs
 //!
 //! Tests that demonstrate checkpoint submission generating and storing EZKL proofs.

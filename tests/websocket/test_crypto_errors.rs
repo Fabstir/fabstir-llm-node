@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! WebSocket Crypto Error Response Tests (TDD - Phase 7, Sub-phase 7.2)
 //!
 //! These tests verify that the WebSocket handlers send appropriate error messages

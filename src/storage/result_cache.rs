@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::storage::{CborCompat, S5Storage, StorageError};
 use chrono::{DateTime, Duration, Utc};
 use lru::LruCache;

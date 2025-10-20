@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::session::WebSocketSession;
 use anyhow::Result;
 use async_trait::async_trait;

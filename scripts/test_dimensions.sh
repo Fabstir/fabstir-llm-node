@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # test_dimensions.sh
 # Test what vector dimensions the Vector DB actually accepts

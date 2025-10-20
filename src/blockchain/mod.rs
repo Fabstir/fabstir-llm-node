@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 pub mod chain_config;
 pub mod multi_chain_registrar;
 pub mod registration_health;

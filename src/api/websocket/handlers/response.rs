@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::api::websocket::{
     handlers::session_init::SessionInitHandler,
     messages::{ChainInfo, ConversationMessage, StreamToken},

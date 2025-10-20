@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Comprehensive Security Testing for Cryptographic Implementation
 //!
 //! This module contains security-focused tests to validate that the

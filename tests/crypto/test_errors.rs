@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Crypto Error Types Tests (TDD - Phase 7, Sub-phase 7.1)
 //!
 //! These tests verify comprehensive error handling for crypto operations:

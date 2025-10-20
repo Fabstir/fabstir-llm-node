@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Risc0 Guest Program Behavior Tests
 //!
 //! Tests for the Risc0 zkVM guest program that proves knowledge of hash commitments.

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! TDD Tests for ECDH Key Exchange
 //!
 //! These tests define the expected behavior of the ECDH key derivation

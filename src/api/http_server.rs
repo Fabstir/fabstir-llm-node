@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::{
     extract::{Json, Path, Query, State},

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::types::{Address, U256};
 use fabstir_llm_node::api::websocket::job_verification::{
     BlockchainVerifier, JobDetails, JobStatus, JobVerificationConfig, JobVerifier,

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde_json::{json, Value};

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Commitment Circuit Design Tests
 //!
 //! Tests for the commitment circuit that proves hash relationships

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Proof Caching with LRU Eviction
 //!
 //! Caches generated proofs to avoid regenerating identical proofs.

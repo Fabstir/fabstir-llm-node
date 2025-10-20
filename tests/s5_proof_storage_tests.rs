@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Sub-phase 3.1: Local Testing for S5 Proof Storage (v8.1.2)
 //
 // Tests for off-chain proof storage with hash+CID submission:

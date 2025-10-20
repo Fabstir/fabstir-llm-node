@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Include all storage test modules
 mod storage {
     mod test_cbor_compat;

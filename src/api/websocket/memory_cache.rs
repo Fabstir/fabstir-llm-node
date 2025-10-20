@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::messages::ConversationMessage;
 use anyhow::{anyhow, Result};
 use std::collections::VecDeque;

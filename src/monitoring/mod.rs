@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // src/monitoring/mod.rs - Main monitoring module
 
 pub mod alerting;

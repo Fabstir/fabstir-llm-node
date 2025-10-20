@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::prelude::*;
 use fabstir_llm_node::contracts::{JobEvent, JobMonitor, JobMonitorConfig, JobStatus};
 use fabstir_llm_node::{Web3Client, Web3Config};

@@ -1,3 +1,5 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
 openapi: 3.0.3
 info:
   title: Fabstir LLM Node API

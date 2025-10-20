@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // src/performance/mod.rs - Performance optimization modules
 
 pub mod batching;

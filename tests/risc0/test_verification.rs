@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Risc0 Proof Verification Tests
 //!
 //! Tests for real Risc0 STARK proof verification. These tests follow TDD approach -

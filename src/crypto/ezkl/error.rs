@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! EZKL-Specific Error Types
 //!
 //! Error types for EZKL proof generation and verification operations.

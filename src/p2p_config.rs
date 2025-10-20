@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use libp2p::{identity::Keypair, Multiaddr, PeerId};
 use std::time::Duration;
 

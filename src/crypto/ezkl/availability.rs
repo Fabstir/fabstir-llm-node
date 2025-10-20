@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! EZKL Availability and Capability Checks
 //!
 //! Provides functions to check if EZKL is available and what capabilities

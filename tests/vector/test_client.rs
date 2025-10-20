@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::vector::{
     FilterOperator, FilterValue, SearchOptions, SearchResult, VectorBackend, VectorDBClient,
     VectorDBConfig, VectorEntry, VectorError, VectorId, VectorStats,

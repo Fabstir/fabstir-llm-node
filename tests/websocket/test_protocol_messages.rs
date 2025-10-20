@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::api::websocket::{
     protocol::{MessageType, ProtocolError, ProtocolMessage, SessionCommand},
     protocol_handlers::{HandlerRegistry, MessageHandler},

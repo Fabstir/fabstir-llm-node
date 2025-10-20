@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::types::SettlementError;
 pub use super::types::{SettlementRequest, SettlementStatus};
 use std::cmp::Ordering;

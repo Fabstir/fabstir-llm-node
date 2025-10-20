@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Proof Validation Tests
 //!
 //! Tests for EZKL proof size and format validation

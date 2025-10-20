@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::{anyhow, Result};
 use ethers::types::{H256, U256};
 use futures::future::BoxFuture;

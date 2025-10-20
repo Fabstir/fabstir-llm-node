@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use ethers::types::{Address, TransactionReceipt, H256, U256};

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Tests for registration health monitoring system
 use anyhow::Result;
 use std::sync::Arc;

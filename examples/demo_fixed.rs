@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Demo to show the memory corruption is fixed
 use fabstir_llm_node::inference::{EngineConfig, InferenceRequest, LlmEngine, ModelConfig};
 use std::path::PathBuf;

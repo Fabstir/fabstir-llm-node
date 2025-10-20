@@ -1,3 +1,7 @@
+// ---
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
+// ---
 // Build script for Fabstir LLM Node
 //
 // Phase 1.1: Risc0 zkVM Guest Program Compilation

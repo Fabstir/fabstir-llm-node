@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::api::websocket::manager::SessionManager;
 use fabstir_llm_node::api::websocket::session::{SessionConfig, WebSocketSession};
 use fabstir_llm_node::config::chains::ChainRegistry;

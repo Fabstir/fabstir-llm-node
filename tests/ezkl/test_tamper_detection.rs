@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Tamper Detection Tests (Sub-phase 3.1)
 //!
 //! Tests verification system's ability to detect various types of tampering

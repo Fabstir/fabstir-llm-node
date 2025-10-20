@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::types::{GasEstimate, SettlementError};
 use ethers::types::U256;
 use std::collections::HashMap;

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;

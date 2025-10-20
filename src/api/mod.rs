@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 pub mod errors;
 pub mod handlers;
 pub mod http_server;

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::prelude::*;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};

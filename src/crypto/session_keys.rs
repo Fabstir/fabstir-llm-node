@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Session Key Storage
 //!
 //! Manages in-memory storage of session encryption keys. Keys are stored

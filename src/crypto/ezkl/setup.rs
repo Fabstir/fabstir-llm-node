@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Circuit Setup and Key Generation
 //!
 //! Handles circuit compilation and proving/verification key generation.

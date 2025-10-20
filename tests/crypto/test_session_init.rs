@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! TDD Tests for Session Init Decryption
 //!
 //! These tests define the expected behavior of the decrypt_session_init()

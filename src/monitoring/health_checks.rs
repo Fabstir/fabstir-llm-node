@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // src/monitoring/health_checks.rs - Health monitoring and checks
 
 use anyhow::{anyhow, Result};

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::persistence::{PersistenceConfig, SessionPersistence};
 use super::session::{SessionConfig, SessionMetrics, WebSocketSession};
 use crate::job_processor::Message;

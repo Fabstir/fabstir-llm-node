@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! ApiServer Private Key Propagation Tests (TDD - Phase 6.2.1, Sub-phase 6.2)
 //!
 //! These tests verify that the ApiServer can receive and store the node's private key:

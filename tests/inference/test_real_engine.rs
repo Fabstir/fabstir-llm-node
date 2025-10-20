@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::inference::{
     EngineConfig, LlmEngine, ModelConfig, InferenceRequest, InferenceResult
 };

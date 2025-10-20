@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::chains::{ChainConfig, ChainConfigLoader, ChainRegistry};
 use anyhow::{anyhow, Result};
 use ethers::providers::{Http, Middleware, Provider};

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Node Private Key Extraction (Phase 6, Sub-phase 6.1)
 //!
 //! This module handles extraction of the node's private key from environment variables.

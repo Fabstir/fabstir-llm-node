@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::vector::vector_db_client::{VectorDbClient, VectorDbConfig};
 use serde_json::json;
 use std::time::Duration;

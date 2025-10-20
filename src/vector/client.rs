@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use reqwest::{Client, Error as ReqwestError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

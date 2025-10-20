@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # reset_vector_db.sh
 # Reset Vector DB to use 384-dimensional vectors (for all-MiniLM-L6-v2)

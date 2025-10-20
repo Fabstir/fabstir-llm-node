@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::storage::{
     S5Backend, S5Client, S5ClientConfig, S5Entry, S5EntryType, S5Metadata, S5Storage,
     S5StorageConfig, StorageError,

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::storage::{CborCompat, CompressionType, S5Storage, StorageError};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

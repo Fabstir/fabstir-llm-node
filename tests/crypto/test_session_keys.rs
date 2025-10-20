@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! TDD Tests for Session Key Store
 //!
 //! These tests define the expected behavior of the SessionKeyStore

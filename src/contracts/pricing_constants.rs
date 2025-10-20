@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 /// Dual Pricing System Constants
 ///
 /// These constants define the pricing ranges for native tokens (ETH/BNB) and

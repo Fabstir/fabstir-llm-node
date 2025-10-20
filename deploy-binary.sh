@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Quick deployment script that bypasses Docker build issues
 
 echo "Deploying new binary to production nodes..."

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Message Parsing and Validation Tests (TDD - Phase 6.2.1, Sub-phase 4.2)
 //!
 //! These tests verify that encrypted message payloads can be properly validated,

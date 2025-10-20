@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use chrono::{DateTime, Duration, NaiveTime, Utc, Weekday};
 use fabstir_llm_node::host::{
     AvailabilityManager, AvailabilitySchedule, AvailabilityStatus, CapacityConfig,

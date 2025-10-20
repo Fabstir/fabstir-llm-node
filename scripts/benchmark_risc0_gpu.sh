@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Risc0 GPU Benchmarking Script for Phase 5.2
 #
 # This script benchmarks Risc0 zkVM proof generation with CUDA GPU acceleration
