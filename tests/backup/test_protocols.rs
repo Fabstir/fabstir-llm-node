@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::p2p::{
     Node, NodeConfig, NodeEvent, ProtocolEvent, 
     InferenceRequest, InferenceResponse, JobClaim, JobResult

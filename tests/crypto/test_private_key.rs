@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Private Key Extraction Tests (TDD - Phase 6, Sub-phase 6.1)
 //!
 //! These tests verify that the node can extract its private key from environment:

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 #[cfg(test)]
 mod tests {
     use fabstir_llm_node::job_processor::Message;

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;

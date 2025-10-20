@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use bytes::{Bytes, BytesMut};

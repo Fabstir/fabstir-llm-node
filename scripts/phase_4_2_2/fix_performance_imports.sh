@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 echo "Fixing import paths in performance tests..."
 

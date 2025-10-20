@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Quick script to verify test files exist and count tests
 
 echo "Verifying Phase 3.4 Monitoring Test Files"

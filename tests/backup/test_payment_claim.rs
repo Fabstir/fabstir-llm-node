@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/test_payment_claim.rs
 
 use ethers::prelude::*;

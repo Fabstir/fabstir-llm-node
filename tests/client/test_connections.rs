@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::api::{ApiConfig, ApiServer, ConnectionPool, ConnectionStats};
 use futures_util::StreamExt;
 use reqwest::Client;

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Proof Dispute Scenario Tests
 //!
 //! Tests various fraud scenarios and dispute resolution:

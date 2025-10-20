@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! ECDH Key Exchange Implementation
 //!
 //! Implements Elliptic Curve Diffie-Hellman key exchange using secp256k1

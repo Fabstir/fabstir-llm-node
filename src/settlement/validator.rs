@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Settlement Validation Module
 //!
 //! Validates EZKL proofs before payment release to ensure proof integrity.

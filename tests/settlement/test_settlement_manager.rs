@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::signers::Signer;
 use ethers::types::U256;
 use fabstir_llm_node::config::chains::ChainRegistry;

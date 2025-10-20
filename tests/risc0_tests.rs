@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/risc0_tests.rs - Include all Risc0 zkVM test modules
 
 mod risc0 {

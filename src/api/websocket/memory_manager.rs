@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::session::{SessionConfig, WebSocketSession};
 use anyhow::{anyhow, Result};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Proof Caching Tests
 //!
 //! Tests for EZKL proof caching with LRU eviction.

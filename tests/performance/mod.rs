@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 mod connected {
     mod test_delayed;
     mod test_diagnostic;

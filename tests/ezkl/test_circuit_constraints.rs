@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Circuit Constraint Tests
 //!
 //! Tests for verifying that the commitment circuit has correct constraints

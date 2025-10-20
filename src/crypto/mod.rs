@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! End-to-End Encryption Module (Phase 6.2)
 //!
 //! This module implements the cryptographic primitives needed for end-to-end

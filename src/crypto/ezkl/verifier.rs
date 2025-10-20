@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! EZKL Proof Verification
 //!
 //! Handles verification of EZKL zero-knowledge proofs for commitment circuits.

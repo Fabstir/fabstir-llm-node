@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Final solution to run Model Management tests
 
 echo "Running Model Management Tests - Phase 3.2 (Final Solution)"

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Session Initialization Decryption
 //!
 //! Implements decryption and verification of encrypted session initialization payloads.

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Verification Performance Tests (Sub-phase 3.1)
 //!
 //! Performance benchmarks for EZKL proof verification.

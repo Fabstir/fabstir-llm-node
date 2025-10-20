@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Session Lifecycle Integration Tests (TDD - Phase 6.2.1, Sub-phase 3.2)
 //!
 //! These tests verify that session keys are properly integrated with the

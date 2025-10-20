@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::{
     message_types::{
         ConnectionMode, InferenceMessage, MessageType, SessionControl, SessionControlMessage,

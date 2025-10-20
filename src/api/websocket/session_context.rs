@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::api::websocket::messages::ChainInfo;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;

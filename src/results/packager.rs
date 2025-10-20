@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};

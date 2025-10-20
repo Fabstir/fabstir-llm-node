@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/monitoring_tests.rs - Include all monitoring test modules
 
 mod monitoring {

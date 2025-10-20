@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! TDD Tests for XChaCha20-Poly1305 Encryption/Decryption
 //!
 //! These tests define the expected behavior of the AEAD encryption

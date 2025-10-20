@@ -1,0 +1,66 @@
+SPDX-License-Identifier: BUSL-1.1
+
+Business Source License 1.1
+
+Parameters
+
+- Licensor: Fabstir (“Licensor”)
+- Licensed Work: Platformless AI and associated Fabstir repositories (the “Licensed Work”)
+- Additional Use Grant (Production Use): Permitted only on the Official Platformless AI Network(s) and only where protocol-level staking, fees, and rewards are transacted using the FAB Token. All other Production Use is prohibited prior to the Change Date unless you obtain a separate commercial license from Licensor.
+- Change Date: 2029-01-01
+- Change License: GNU Affero General Public License, version 3.0 or any later version (AGPL-3.0-or-later)
+- Copyright Notice: © 2025 Fabstir.
+
+1. Definitions
+
+- “License” means this Business Source License version 1.1.
+- “Licensor” means the copyright holder noted above.
+- “Licensed Work” means the work identified above, including any accompanying files and documentation, made available under this License.
+- “Additional Use Grant” means the Production Use permission stated in Parameters.
+- “Change Date” is the date stated in Parameters on which this License automatically converts to the Change License.
+- “Change License” means the open-source license identified in Parameters that will govern the Licensed Work from the Change Date.
+- “Production Use” means use of the Licensed Work, in whole or in part, to provide a service or functionality to any person or entity other than the Licensee, or for any internal use intended for, or resulting in, running workloads other than software development, testing, evaluation, research, or non-commercial experimentation.
+- “Canonical Notice Repo” means the repository identified in this repository’s NOTICE file as the canonical location where Licensor publishes designations of Official Platformless AI Network(s) and the FAB Token. Licensor may update the Canonical Notice Repo by public notice in this repository or in the Canonical Notice Repo itself.
+- “Official Platformless AI Network(s)” (the “Official Network(s)”) means any blockchain, rollup, sidechain, L2, testnet, or other network that Licensor designates as official for Platformless AI by public notice (i) in this repository or (ii) in the Canonical Notice Repo. Designations may be updated from time to time by similar public notice.
+- “FAB Token” means the protocol token designated by Licensor as canonical for the Official Network(s) by public notice (i) in this repository or (ii) in the Canonical Notice Repo, including any canonical wrapped/bridged representations that Licensor designates. Designations may be updated from time to time by similar public notice.
+- “Competing Network” means any network that provides functionality substantially similar to the Official Network(s) and is not designated as official by Licensor, or that uses a token other than the FAB Token for protocol-level staking, fees, or rewards.
+- “Commercial Hosting Service” means offering the Licensed Work (or any derivative) to third parties as a managed or hosted service (including SaaS, PaaS, or managed API), whether paid or free.
+- “Operate Nodes” includes running validators, sequencers, provers, miners, indexers, relays, gateways, or other infrastructure that materially participates in consensus, data availability, execution, settlement, indexing, or routing for a network.
+
+2. Grant of Rights (Prior to the Change Date)
+
+Subject to this License, Licensor grants you a non-exclusive, worldwide, non-transferable, non-sublicensable, royalty-free license to copy, modify, create derivative works of, and redistribute the Licensed Work, and to use it for non-Production Use.
+Production Use is additionally permitted only to the extent expressly allowed by the Additional Use Grant in Parameters.
+
+3. Limitations (Prior to the Change Date)
+
+a. Field-of-Use (FAB / Official Network). Except as permitted under the Additional Use Grant, no Production Use is allowed prior to the Change Date. Production Use is limited to the Official Network(s) and must transact protocol-level staking, fees, and rewards using the FAB Token.
+b. No Competing Network Launch. You may not launch, deploy, operate, or offer a Competing Network, including any network (modified or unmodified) intended to replace or substitute the Official Network(s), or that uses a token other than the FAB Token for protocol-level staking, fees, or rewards.
+c. No Competing Node Operation/Services. You may not Operate Nodes on, or provide infrastructure/services for, any Competing Network.
+d. No Commercial Hosting. You may not offer the Licensed Work (or derivatives) as a Commercial Hosting Service, including SaaS/PaaS/managed service/API for third parties.
+e. No Trademark License. This License does not grant rights to use Licensor’s names, logos, or trademarks.
+f. Patent Retaliation. If you institute patent litigation (including a cross-claim or counterclaim) alleging that the Licensed Work or any portion of it infringes a patent, your rights under this License terminate immediately.
+
+4. Redistribution Conditions
+
+If you redistribute the Licensed Work, or any portion or derivative of it, you must: (1) include this License in full; (2) retain all copyright, license, and attribution notices; and (3) clearly indicate any material modifications you have made.
+
+5. Change Date and Change License
+
+On the Change Date, the License for the Licensed Work automatically and irrevocably converts to the Change License for all recipients and downstream users, without further action by Licensor. From the Change Date onward, the Licensed Work is licensed under AGPL-3.0-or-later, and the pre-Change Date restrictions in Section 3 do not apply.
+
+6. Termination
+
+Your rights under this License terminate automatically if you breach it. Upon termination, you must cease use and distribution of the Licensed Work. Your obligations under Sections 3–9 survive termination to the extent necessary to enforce violations occurring prior to termination.
+
+7. Disclaimer of Warranty
+
+THE LICENSED WORK IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AND TITLE. THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE LICENSED WORK IS WITH YOU.
+
+8. Limitation of Liability
+
+IN NO EVENT SHALL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE LICENSED WORK OR THE USE OR OTHER DEALINGS IN THE LICENSED WORK, INCLUDING WITHOUT LIMITATION ANY INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES.
+
+9. General
+
+This License is the entire agreement with respect to the Licensed Work. If any provision is held unenforceable, that provision shall be reformed only to the extent necessary to make it enforceable. This License shall be governed by applicable copyright law.

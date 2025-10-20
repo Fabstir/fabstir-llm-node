@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

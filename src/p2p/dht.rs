@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::Result;
 use libp2p::{
     kad::{Event as KademliaEvent, GetProvidersOk, GetRecordOk, QueryId, QueryResult, RecordKey},

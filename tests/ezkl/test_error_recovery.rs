@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Error Recovery Tests for EZKL Proof System
 //!
 //! Tests error handling and recovery scenarios:

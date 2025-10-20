@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Key Management and Caching
 //!
 //! Handles loading, caching, and validation of EZKL proving and verification keys.

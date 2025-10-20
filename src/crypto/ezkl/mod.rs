@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! EZKL Zero-Knowledge Proof Module
 //!
 //! This module provides integration with EZKL for generating commitment-based

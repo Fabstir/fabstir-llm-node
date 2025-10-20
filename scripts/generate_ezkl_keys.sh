@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Generate EZKL Proving and Verification Keys
 #
 # This script generates the cryptographic keys needed for EZKL proof generation.

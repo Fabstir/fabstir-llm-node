@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use libp2p::{
     identify, kad, mdns, rendezvous, request_response, swarm::NetworkBehaviour, StreamProtocol,
 };

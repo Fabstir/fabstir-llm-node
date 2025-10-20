@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::api::websocket::messages::WebSocketMessage;
 use anyhow::{anyhow, Result};
 use flate2::write::{DeflateEncoder, GzEncoder};

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Include all qa test modules
 mod qa {
     mod test_accuracy;

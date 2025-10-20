@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Commitment Circuit Implementation
 //!
 //! Simple commitment circuit that proves knowledge of hash relationships

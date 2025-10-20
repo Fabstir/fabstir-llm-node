@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/integration/mock/test_cache_flow.rs
 // Phase 4.1.3: Cache Flow Implementation
 // This test verifies the caching workflow:

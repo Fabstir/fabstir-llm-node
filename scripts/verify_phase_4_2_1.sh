@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # verify_phase_4_2_1.sh
 # Verify that Vector DB is correctly using Enhanced S5.js as storage

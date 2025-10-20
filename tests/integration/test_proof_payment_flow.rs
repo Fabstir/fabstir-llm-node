@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! End-to-End Proof Payment Flow Integration Tests
 //!
 //! Tests the complete flow from inference → proof generation → checkpoint →

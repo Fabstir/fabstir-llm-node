@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/models/test_gdpr.rs - Decentralized GDPR compliance tests
 
 use anyhow::Result;

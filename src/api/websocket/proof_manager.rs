@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};

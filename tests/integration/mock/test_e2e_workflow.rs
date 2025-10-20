@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/integration/mock/test_e2e_workflow.rs
 // Phase 4.1.3: Integration with Both Mocks
 // This test verifies the complete workflow:

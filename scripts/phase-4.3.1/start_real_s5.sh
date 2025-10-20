@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # Script to start real S5 services with corrected Docker image names
 echo "=== Starting Real S5 Backend Integration ==="

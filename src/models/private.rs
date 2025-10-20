@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // src/models/private.rs - Private model hosting support
 
 use aes_gcm::{

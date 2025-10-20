@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Risc0 Proof Generation Tests
 //!
 //! Tests for proof generation using Risc0 zkVM. These tests verify that the

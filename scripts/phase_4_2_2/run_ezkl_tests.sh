@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Script to run EZKL tests for Phase 3.1
 
 echo "Running EZKL Integration Tests - Phase 3.1"

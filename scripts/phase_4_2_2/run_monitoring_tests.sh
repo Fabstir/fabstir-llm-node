@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 # Script to run Monitoring & Metrics tests for Phase 3.4
 
 echo "Running Monitoring & Metrics Tests - Phase 3.4"

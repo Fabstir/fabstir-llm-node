@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::api::websocket::session_store::SessionStore;
 use crate::settlement::manager::SettlementManager;
 use anyhow::{anyhow, Result};

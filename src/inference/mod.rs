@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Export all submodules and their public types
 pub mod cache;
 pub mod engine;

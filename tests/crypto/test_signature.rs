@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! TDD Tests for ECDSA Signature Recovery
 //!
 //! These tests define the expected behavior of signature recovery

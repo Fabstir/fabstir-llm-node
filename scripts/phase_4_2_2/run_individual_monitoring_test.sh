@@ -1,3 +1,5 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
 #\!/bin/bash
 # Save as: run_individual_monitoring_test.sh
 

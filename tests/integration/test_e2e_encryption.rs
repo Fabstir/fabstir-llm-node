@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! End-to-End Encryption Integration Tests (Phase 8.2)
 //!
 //! These tests verify the complete encryption flow from client to node,

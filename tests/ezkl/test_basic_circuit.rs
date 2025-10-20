@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Basic EZKL Circuit Compilation Tests
 //!
 //! Tests that verify basic EZKL circuit functionality when real-ezkl

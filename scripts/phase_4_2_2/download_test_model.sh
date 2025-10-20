@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # Download a small test model for llama.cpp integration testing
 echo "Creating models directory..."

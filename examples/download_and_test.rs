@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Download a compatible model and test real LLM inference
 use anyhow::Result;
 use std::path::Path;

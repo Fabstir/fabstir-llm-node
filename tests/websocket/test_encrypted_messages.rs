@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Encrypted Message Type Tests (TDD - Phase 6.2.1, Sub-phase 4.1)
 //!
 //! These tests verify that encrypted message types can be properly serialized,

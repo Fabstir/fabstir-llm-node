@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use fabstir_llm_node::api::websocket::{
     context_manager::{ContextConfig, ContextManager},
     context_strategies::{CompressionStrategy, OverflowStrategy, SummarizationConfig},

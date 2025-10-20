@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use super::packager::PackagedResult;
 use anyhow::Result;
 use futures::stream::Stream;

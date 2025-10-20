@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Witness Data Generation Tests
 //!
 //! Tests for generating witness data from hash values for circuit proving.

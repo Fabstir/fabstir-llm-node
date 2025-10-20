@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // Tests for multi-chain node registration system
 // Following requirements from HOST_REGISTRATION_GUIDE.md
 

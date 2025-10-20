@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::api::{ErrorResponse, InferenceResponse, StreamingResponse};
 use crate::blockchain::ChainRegistry;
 use std::sync::Arc;

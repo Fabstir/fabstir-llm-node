@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Crypto Module Tests
 //!
 //! Test suite for end-to-end encryption functionality (Phase 6.2)

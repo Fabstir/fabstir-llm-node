@@ -1,3 +1,5 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
 services:
   # Enhanced S5 with permission fixes
   s5-enhanced-real:

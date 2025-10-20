@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! EZKL Configuration Module
 //!
 //! Provides configuration for EZKL proof generation from environment variables.

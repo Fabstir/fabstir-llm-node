@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use fabstir_llm_node::api::websocket::auth::{SignatureConfig, SignatureVerifier};
 use rand::rngs::OsRng;

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! ECDSA Signature Recovery
 //!
 //! Recovers Ethereum addresses from ECDSA signatures. This is used to

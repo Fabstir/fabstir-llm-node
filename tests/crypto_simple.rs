@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Simple crypto tests that can run without linking issues
 
 use fabstir_llm_node::crypto::{

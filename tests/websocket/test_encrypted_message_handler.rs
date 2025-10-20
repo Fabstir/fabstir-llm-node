@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Encrypted Message Handler Tests (TDD - Phase 6.2.1, Sub-phase 5.2)
 //!
 //! These tests verify that the node properly handles encrypted_message WebSocket messages:

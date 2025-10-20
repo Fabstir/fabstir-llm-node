@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Real EZKL Proof Generation Tests
 //!
 //! Tests for real EZKL proof generation functionality.

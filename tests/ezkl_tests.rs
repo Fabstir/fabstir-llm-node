@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // tests/ezkl_tests.rs - Include all EZKL test modules
 
 mod ezkl {

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! XChaCha20-Poly1305 Encryption/Decryption
 //!
 //! Implements authenticated encryption using XChaCha20-Poly1305 AEAD

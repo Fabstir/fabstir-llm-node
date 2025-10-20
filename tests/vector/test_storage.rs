@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use chrono::{Duration, Utc};
 use fabstir_llm_node::vector::{
     IndexType, MigrationConfig, MigrationStatus, MigrationStatusType, S5Backend, S5Client,

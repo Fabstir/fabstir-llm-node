@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use ethers::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

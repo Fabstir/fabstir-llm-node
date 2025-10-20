@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Proof Storage Module
 //!
 //! Provides in-memory storage for EZKL proofs associated with jobs.

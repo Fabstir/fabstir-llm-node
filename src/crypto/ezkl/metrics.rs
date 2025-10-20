@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! EZKL Prometheus Metrics
 //!
 //! Provides Prometheus metrics for EZKL proof generation and caching.

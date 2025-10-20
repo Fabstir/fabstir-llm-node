@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 pub mod cbor_compat;
 pub mod enhanced_s5_client;
 pub mod model_storage;

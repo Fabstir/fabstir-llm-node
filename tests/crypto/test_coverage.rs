@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Comprehensive Coverage Tests for Crypto Module (Phase 8.1)
 //!
 //! This file documents the comprehensive test coverage we have for all crypto functions.

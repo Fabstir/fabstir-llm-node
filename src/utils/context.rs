@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::job_processor::Message;
 
 /// Build a prompt with conversation context

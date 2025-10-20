@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
 
 # update_docker_compose_384d.sh
 # Update docker-compose to use 384-dimensional vectors

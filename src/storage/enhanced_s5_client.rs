@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 // src/storage/enhanced_s5_client.rs
 // Phase 4.1.1: Enhanced S5.js with Internal Mock - HTTP Client Implementation
 

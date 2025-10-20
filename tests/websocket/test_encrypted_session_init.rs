@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 //! Encrypted Session Initialization Handler Tests (TDD - Phase 6.2.1, Sub-phase 5.1)
 //!
 //! These tests verify that the node properly handles encrypted_session_init WebSocket messages:

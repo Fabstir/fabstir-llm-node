@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
 use crate::inference::InferenceResult;
 use anyhow::{anyhow, Result};
 use regex::Regex;
