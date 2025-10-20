@@ -198,15 +198,32 @@ ls -la models/
 file models/your-model.gguf
 ```
 
-## Contributing
+## License & Usage
 
-Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+This project is source-available under the **Business Source License 1.1** (BUSL-1.1).
 
-## License
+### You MAY:
+- ✅ View, audit, and review the code (trustless verification)
+- ✅ Use in production on the Official Platformless AI Network with FAB token
+- ✅ Run nodes on the Official Platformless AI Network
+- ✅ Fork for development, testing, research, and security audits
 
-This project is licensed under the **Business Source License 1.1 (BUSL-1.1)** - see the [LICENSE](LICENSE) file for details.
+### You MAY NOT (before 2029-01-01):
+- ❌ Launch competing networks with different staking tokens
+- ❌ Operate nodes on competing networks
+- ❌ Offer as commercial hosting service (SaaS/PaaS)
 
-**Note**: This license converts to Apache 2.0 after the change date specified in the LICENSE file. See [NOTICE](NOTICE) for copyright information.
+**After 2029-01-01**: Automatically converts to AGPL-3.0-or-later.
+
+See [LICENSE](LICENSE) for full terms.
+
+### Interested in Contributing?
+
+We welcome contributions! If you're interested in contributing, please reach out via:
+- 💬 [Discord Community](https://discord.gg/fabstir)
+- 📧 Email: support@fabstir.com
+
+For code contributions, please ensure you've read and understood the license terms above.
 
 ## Support
 
