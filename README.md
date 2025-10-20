@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2025 Fabstir
+SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Fabstir LLM Node
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
@@ -199,7 +204,9 @@ Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details on our code of c
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **Business Source License 1.1 (BUSL-1.1)** - see the [LICENSE](LICENSE) file for details.
+
+**Note**: This license converts to Apache 2.0 after the change date specified in the LICENSE file. See [NOTICE](NOTICE) for copyright information.
 
 ## Support
 
