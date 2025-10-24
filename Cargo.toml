@@ -111,13 +111,14 @@ dotenv = "0.15"
 # Real Zero-Knowledge Proof Integration (Phase 1.1 - Risc0 zkVM)
 # DECISION: Switched from EZKL to Risc0 zkVM (2025-10-14)
 # Reason: EZKL designed for ML inference (wrong tool), Risc0 10x simpler
-# Performance: 0.2-2.3s proof generation, 194-281KB proofs (exceeds MVP requirements)
+# Performance: 2-5s CPU proof generation, 194-281KB proofs (exceeds MVP requirements)
 # To enable real ZK proofs:
 #   1. Build with: cargo build --release --features real-ezkl
 #
-# Current Status: Risc0 v2.0 dependencies added, guest program pending Phase 1.2
+# NOTE: CUDA disabled due to vGPU incompatibility (NVIDIA A16-2Q)
+# CPU proving is stable and reliable, just slightly slower than GPU
 # System falls back to mock implementation when real-ezkl feature is disabled
-risc0-zkvm = { version = "3.0", optional = true, features = ["cuda"] }
+risc0-zkvm = { version = "3.0", optional = true }
 
 # Legacy EZKL dependencies (kept for reference, not used)
 # ezkl = { git = "https://github.com/zkonduit/ezkl", rev = "40ce9df", optional = true }
