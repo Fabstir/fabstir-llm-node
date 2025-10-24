@@ -80,7 +80,11 @@ async fn test_concurrent_access() {
     handle2.await.unwrap();
 
     // Should have 100 keys stored
-    assert_eq!(store.count().await, 100, "Should have 100 keys from concurrent access");
+    assert_eq!(
+        store.count().await,
+        100,
+        "Should have 100 keys from concurrent access"
+    );
 }
 
 #[tokio::test]
@@ -96,7 +100,10 @@ async fn test_key_expiration() {
     store.store_key(session_id.clone(), key).await;
 
     // Should be retrievable immediately
-    assert!(store.get_key(&session_id).await.is_some(), "Key should exist immediately");
+    assert!(
+        store.get_key(&session_id).await.is_some(),
+        "Key should exist immediately"
+    );
 
     // Wait for expiration
     sleep(Duration::from_millis(150)).await;
@@ -130,7 +137,12 @@ async fn test_multiple_sessions() {
     // Verify all keys are retrievable
     for (id, expected_key) in &sessions {
         let retrieved = store.get_key(id).await;
-        assert_eq!(retrieved, Some(*expected_key), "Should retrieve correct key for {}", id);
+        assert_eq!(
+            retrieved,
+            Some(*expected_key),
+            "Should retrieve correct key for {}",
+            id
+        );
     }
 
     // Count should match
@@ -165,7 +177,9 @@ async fn test_clear_all_keys() {
 
     // Store multiple keys
     for i in 0..10 {
-        store.store_key(format!("session-{}", i), [i as u8; 32]).await;
+        store
+            .store_key(format!("session-{}", i), [i as u8; 32])
+            .await;
     }
 
     assert_eq!(store.count().await, 10);
@@ -190,7 +204,9 @@ async fn test_partial_expiration() {
 
     // Store first batch of keys
     for i in 0..5 {
-        store.store_key(format!("session-old-{}", i), [i as u8; 32]).await;
+        store
+            .store_key(format!("session-old-{}", i), [i as u8; 32])
+            .await;
     }
 
     // Wait for first batch to approach expiration
@@ -198,7 +214,9 @@ async fn test_partial_expiration() {
 
     // Store second batch (these should not expire yet)
     for i in 0..5 {
-        store.store_key(format!("session-new-{}", i), [i as u8; 32]).await;
+        store
+            .store_key(format!("session-new-{}", i), [i as u8; 32])
+            .await;
     }
 
     // Wait for first batch to fully expire

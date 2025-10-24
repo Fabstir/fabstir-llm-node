@@ -218,24 +218,28 @@ impl SettlementManager {
         session_id: u64,
         chain_id: u64,
     ) -> Result<H256, SettlementError> {
-        info!("[SETTLEMENT] 🔄 Starting settlement process for session {} on chain {}", session_id, chain_id);
+        info!(
+            "[SETTLEMENT] 🔄 Starting settlement process for session {} on chain {}",
+            session_id, chain_id
+        );
 
-        let chain_config = self
-            .chain_registry
-            .get_chain(chain_id)
-            .ok_or_else(|| {
-                error!("[SETTLEMENT] ❌ Chain {} not found in registry", chain_id);
-                SettlementError::UnsupportedChain(chain_id)
-            })?;
+        let chain_config = self.chain_registry.get_chain(chain_id).ok_or_else(|| {
+            error!("[SETTLEMENT] ❌ Chain {} not found in registry", chain_id);
+            SettlementError::UnsupportedChain(chain_id)
+        })?;
 
-        info!("[SETTLEMENT] ✓ Chain config found: {} ({})", chain_config.name, chain_config.native_token.symbol);
+        info!(
+            "[SETTLEMENT] ✓ Chain config found: {} ({})",
+            chain_config.name, chain_config.native_token.symbol
+        );
 
-        let signer = self
-            .get_signer(chain_id)
-            .ok_or_else(|| {
-                error!("[SETTLEMENT] ❌ No signer configured for chain {}", chain_id);
-                SettlementError::SignerNotFound(chain_id)
-            })?;
+        let signer = self.get_signer(chain_id).ok_or_else(|| {
+            error!(
+                "[SETTLEMENT] ❌ No signer configured for chain {}",
+                chain_id
+            );
+            SettlementError::SignerNotFound(chain_id)
+        })?;
 
         info!(
             "[SETTLEMENT] ✓ Signer ready for chain {} - host address: {}",
@@ -258,7 +262,10 @@ impl SettlementManager {
         if let Some(provider) = self.get_provider(chain_id) {
             match provider.get_balance(self.host_address, None).await {
                 Ok(balance) => {
-                    info!("[SETTLEMENT] 💰 Host balance on chain {}: {}", chain_id, balance);
+                    info!(
+                        "[SETTLEMENT] 💰 Host balance on chain {}: {}",
+                        chain_id, balance
+                    );
                     if balance < gas_limit {
                         warn!("[SETTLEMENT] ⚠️ Host balance may be insufficient for gas costs");
                     }
@@ -276,7 +283,10 @@ impl SettlementManager {
         warn!("[SETTLEMENT] ⚠️ Expected flow: Call contract.settleSession(session_id) -> Distribute payments");
 
         let mock_hash = H256::from_low_u64_be(session_id);
-        info!("[SETTLEMENT] 🎯 Mock settlement completed with hash: {:?}", mock_hash);
+        info!(
+            "[SETTLEMENT] 🎯 Mock settlement completed with hash: {:?}",
+            mock_hash
+        );
 
         Ok(mock_hash)
     }

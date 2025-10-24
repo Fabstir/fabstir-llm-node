@@ -510,7 +510,8 @@ impl ApiServer {
                 );
                 match cm
                     .track_tokens(jid, response.tokens_used as u64, request.session_id.clone())
-                    .await {
+                    .await
+                {
                     Ok(_) => eprintln!("   ✅ Token tracking successful for job {}", jid),
                     Err(e) => eprintln!("   ❌ Token tracking failed for job {}: {}", jid, e),
                 }
@@ -907,20 +908,29 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                     // Track session initialization
                     if json_msg["type"] == "session_init" {
                         // Handle session_id or sessionId
-                        session_id = json_msg["session_id"].as_str()
+                        session_id = json_msg["session_id"]
+                            .as_str()
                             .or_else(|| json_msg["sessionId"].as_str())
                             .map(String::from);
 
                         // Handle job_id (Rust) or jobId (SDK/contracts) as either string or number
-                        job_id = json_msg["job_id"].as_u64()
-                            .or_else(|| json_msg["job_id"].as_str()
-                                .and_then(|s| s.parse::<u64>().ok()))
+                        job_id = json_msg["job_id"]
+                            .as_u64()
+                            .or_else(|| {
+                                json_msg["job_id"]
+                                    .as_str()
+                                    .and_then(|s| s.parse::<u64>().ok())
+                            })
                             .or_else(|| json_msg["jobId"].as_u64())
-                            .or_else(|| json_msg["jobId"].as_str()
-                                .and_then(|s| s.parse::<u64>().ok()));
+                            .or_else(|| {
+                                json_msg["jobId"]
+                                    .as_str()
+                                    .and_then(|s| s.parse::<u64>().ok())
+                            });
 
                         // Handle chain_id or chainId
-                        chain_id = json_msg["chain_id"].as_u64()
+                        chain_id = json_msg["chain_id"]
+                            .as_u64()
                             .or_else(|| json_msg["chainId"].as_u64());
 
                         // DEPRECATED: Plaintext session (Phase 6.2.1, Sub-phase 5.4)
@@ -957,7 +967,10 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             response["id"] = msg_id.clone();
                         }
 
-                        if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
+                        if let Err(e) = socket
+                            .send(axum::extract::ws::Message::Text(response.to_string()))
+                            .await
+                        {
                             error!("Failed to send session_init response: {}", e);
                         } else {
                             info!("✅ Sent session_init_ack response to client");
@@ -969,11 +982,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         info!("🔐 Encrypted session_init received");
 
                         // Extract session_id and chain_id
-                        session_id = json_msg["session_id"].as_str()
+                        session_id = json_msg["session_id"]
+                            .as_str()
                             .or_else(|| json_msg["sessionId"].as_str())
                             .map(String::from);
 
-                        chain_id = json_msg["chain_id"].as_u64()
+                        chain_id = json_msg["chain_id"]
+                            .as_u64()
                             .or_else(|| json_msg["chainId"].as_u64())
                             .or(Some(84532)); // Default to Base Sepolia
 
@@ -982,7 +997,9 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                         if let Some(node_private_key) = node_private_key_opt {
                             // Node has private key - can handle encrypted sessions
-                            info!("✅ Node private key available - processing encrypted session init");
+                            info!(
+                                "✅ Node private key available - processing encrypted session init"
+                            );
 
                             // Parse encrypted payload (Phase 6.2.1, Sub-phase 6.3)
                             if let Some(payload_obj) = json_msg.get("payload") {
@@ -994,13 +1011,25 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 let aad_hex = payload_obj["aadHex"].as_str();
 
                                 // Validate all required fields are present
-                                if let (Some(eph_pub), Some(ciphertext), Some(signature), Some(nonce), Some(aad)) =
-                                    (eph_pub_hex, ciphertext_hex, signature_hex, nonce_hex, aad_hex)
-                                {
+                                if let (
+                                    Some(eph_pub),
+                                    Some(ciphertext),
+                                    Some(signature),
+                                    Some(nonce),
+                                    Some(aad),
+                                ) = (
+                                    eph_pub_hex,
+                                    ciphertext_hex,
+                                    signature_hex,
+                                    nonce_hex,
+                                    aad_hex,
+                                ) {
                                     // Strip "0x" prefix if present
                                     let eph_pub = eph_pub.strip_prefix("0x").unwrap_or(eph_pub);
-                                    let ciphertext = ciphertext.strip_prefix("0x").unwrap_or(ciphertext);
-                                    let signature = signature.strip_prefix("0x").unwrap_or(signature);
+                                    let ciphertext =
+                                        ciphertext.strip_prefix("0x").unwrap_or(ciphertext);
+                                    let signature =
+                                        signature.strip_prefix("0x").unwrap_or(signature);
                                     let nonce = nonce.strip_prefix("0x").unwrap_or(nonce);
                                     let aad = aad.strip_prefix("0x").unwrap_or(aad);
 
@@ -1012,7 +1041,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         hex::decode(nonce),
                                         hex::decode(aad),
                                     ) {
-                                        (Ok(eph_pub_bytes), Ok(ciphertext_bytes), Ok(signature_bytes), Ok(nonce_bytes), Ok(aad_bytes)) => {
+                                        (
+                                            Ok(eph_pub_bytes),
+                                            Ok(ciphertext_bytes),
+                                            Ok(signature_bytes),
+                                            Ok(nonce_bytes),
+                                            Ok(aad_bytes),
+                                        ) => {
                                             // Validate nonce size (must be 24 bytes for XChaCha20)
                                             if nonce_bytes.len() != 24 {
                                                 let mut error_msg = json!({
@@ -1026,46 +1061,68 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     error_msg["id"] = msg_id.clone();
                                                 }
 
-                                                let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                                let _ = socket
+                                                    .send(axum::extract::ws::Message::Text(
+                                                        error_msg.to_string(),
+                                                    ))
+                                                    .await;
                                                 continue;
                                             }
 
                                             // Build EncryptedSessionPayload for decryption
-                                            let encrypted_payload = crate::crypto::EncryptedSessionPayload {
-                                                eph_pub: eph_pub_bytes,
-                                                ciphertext: ciphertext_bytes,
-                                                signature: signature_bytes,
-                                                nonce: nonce_bytes,
-                                                aad: aad_bytes,
-                                            };
+                                            let encrypted_payload =
+                                                crate::crypto::EncryptedSessionPayload {
+                                                    eph_pub: eph_pub_bytes,
+                                                    ciphertext: ciphertext_bytes,
+                                                    signature: signature_bytes,
+                                                    nonce: nonce_bytes,
+                                                    aad: aad_bytes,
+                                                };
 
                                             // Decrypt session init payload
-                                            match crate::crypto::decrypt_session_init(&encrypted_payload, &node_private_key) {
+                                            match crate::crypto::decrypt_session_init(
+                                                &encrypted_payload,
+                                                &node_private_key,
+                                            ) {
                                                 Ok(session_init_data) => {
                                                     info!("✅ Successfully decrypted session init payload");
 
                                                     // Extract session data
-                                                    let extracted_session_key = session_init_data.session_key;
-                                                    let extracted_job_id_str = session_init_data.job_id;
+                                                    let extracted_session_key =
+                                                        session_init_data.session_key;
+                                                    let extracted_job_id_str =
+                                                        session_init_data.job_id;
                                                     let model_name = session_init_data.model_name;
-                                                    let price_per_token = session_init_data.price_per_token;
-                                                    let client_address = session_init_data.client_address;
+                                                    let price_per_token =
+                                                        session_init_data.price_per_token;
+                                                    let client_address =
+                                                        session_init_data.client_address;
 
                                                     // Update tracked session/job info - parse job_id from string
-                                                    job_id = extracted_job_id_str.parse::<u64>().ok();
+                                                    job_id =
+                                                        extracted_job_id_str.parse::<u64>().ok();
 
                                                     info!("🔐 Session init data:");
-                                                    info!("   job_id: {} (parsed to {:?})", extracted_job_id_str, job_id);
+                                                    info!(
+                                                        "   job_id: {} (parsed to {:?})",
+                                                        extracted_job_id_str, job_id
+                                                    );
                                                     info!("   model_name: {}", model_name);
-                                                    info!("   price_per_token: {}", price_per_token);
+                                                    info!(
+                                                        "   price_per_token: {}",
+                                                        price_per_token
+                                                    );
                                                     info!("   client_address: {}", client_address);
 
                                                     // Store session key in SessionKeyStore
                                                     if let Some(sid) = &session_id {
-                                                        server.session_key_store.store_key(
-                                                            sid.clone(),
-                                                            extracted_session_key,
-                                                        ).await;
+                                                        server
+                                                            .session_key_store
+                                                            .store_key(
+                                                                sid.clone(),
+                                                                extracted_session_key,
+                                                            )
+                                                            .await;
 
                                                         info!("✅ Session key stored for session_id: {}", sid);
                                                     } else {
@@ -1087,7 +1144,12 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         response["id"] = msg_id.clone();
                                                     }
 
-                                                    if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
+                                                    if let Err(e) = socket
+                                                        .send(axum::extract::ws::Message::Text(
+                                                            response.to_string(),
+                                                        ))
+                                                        .await
+                                                    {
                                                         error!("Failed to send encrypted session_init_ack: {}", e);
                                                     } else {
                                                         info!("✅ Sent encrypted session_init_ack to client");
@@ -1106,7 +1168,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         error_msg["id"] = msg_id.clone();
                                                     }
 
-                                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                                    let _ = socket
+                                                        .send(axum::extract::ws::Message::Text(
+                                                            error_msg.to_string(),
+                                                        ))
+                                                        .await;
                                                 }
                                             }
                                         }
@@ -1122,7 +1188,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 error_msg["id"] = msg_id.clone();
                                             }
 
-                                            let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                            let _ = socket
+                                                .send(axum::extract::ws::Message::Text(
+                                                    error_msg.to_string(),
+                                                ))
+                                                .await;
                                         }
                                     }
                                 } else {
@@ -1137,7 +1207,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         error_msg["id"] = msg_id.clone();
                                     }
 
-                                    let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                    let _ = socket
+                                        .send(axum::extract::ws::Message::Text(
+                                            error_msg.to_string(),
+                                        ))
+                                        .await;
                                 }
                             } else {
                                 let mut error_msg = json!({
@@ -1151,12 +1225,16 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     error_msg["id"] = msg_id.clone();
                                 }
 
-                                let _ = socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await;
+                                let _ = socket
+                                    .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                    .await;
                             }
                         } else {
                             // No private key - node operates in plaintext-only mode
                             warn!("⚠️ Encrypted session init requested but node private key not configured");
-                            warn!("   Set HOST_PRIVATE_KEY environment variable to enable encryption");
+                            warn!(
+                                "   Set HOST_PRIVATE_KEY environment variable to enable encryption"
+                            );
 
                             // Send error response directing client to use plaintext
                             let mut response = json!({
@@ -1170,8 +1248,14 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 response["id"] = msg_id.clone();
                             }
 
-                            if let Err(e) = socket.send(axum::extract::ws::Message::Text(response.to_string())).await {
-                                error!("Failed to send encrypted_session_init error response: {}", e);
+                            if let Err(e) = socket
+                                .send(axum::extract::ws::Message::Text(response.to_string()))
+                                .await
+                            {
+                                error!(
+                                    "Failed to send encrypted_session_init error response: {}",
+                                    e
+                                );
                             }
                         }
                     }
@@ -1181,7 +1265,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         info!("🔐 Encrypted message received");
 
                         // Extract session_id
-                        let current_session_id = json_msg["session_id"].as_str()
+                        let current_session_id = json_msg["session_id"]
+                            .as_str()
                             .or_else(|| json_msg["sessionId"].as_str())
                             .map(String::from)
                             .or(session_id.clone());
@@ -1258,7 +1343,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 // Build inference request from decrypted prompt
                                                                 // Reuse the existing inference logic
                                                                 // Extract model from message or use default
-                                                                let model = json_msg.get("model")
+                                                                let model = json_msg
+                                                                    .get("model")
                                                                     .and_then(|v| v.as_str())
                                                                     .unwrap_or("tiny-vicuna")
                                                                     .to_string();
@@ -1307,16 +1393,21 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                             let mut total_tokens =
                                                                                 0u64;
 
-                                                                            let mut chunk_index = 0u32;
+                                                                            let mut chunk_index =
+                                                                                0u32;
 
-                                                                            while let Some(response) =
-                                                                                receiver.recv().await
+                                                                            while let Some(
+                                                                                response,
+                                                                            ) = receiver
+                                                                                .recv()
+                                                                                .await
                                                                             {
                                                                                 // Track tokens
                                                                                 if let Some(jid) =
                                                                                     job_id
                                                                                 {
-                                                                                    if response.tokens
+                                                                                    if response
+                                                                                        .tokens
                                                                                         > 0
                                                                                     {
                                                                                         total_tokens +=
@@ -1341,13 +1432,21 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                                                                                 // Encrypt response chunks with session key (Phase 6.2.1, Sub-phase 5.3)
                                                                                 // Generate random 24-byte nonce using CSPRNG
-                                                                                let mut nonce = [0u8; 24];
+                                                                                let mut nonce =
+                                                                                    [0u8; 24];
                                                                                 use rand::RngCore;
-                                                                                rand::thread_rng().fill_bytes(&mut nonce);
+                                                                                rand::thread_rng()
+                                                                                    .fill_bytes(
+                                                                                        &mut nonce,
+                                                                                    );
 
                                                                                 // Prepare AAD with chunk index for ordering validation
-                                                                                let aad = format!("chunk_{}", chunk_index);
-                                                                                let aad_bytes = aad.as_bytes();
+                                                                                let aad = format!(
+                                                                                    "chunk_{}",
+                                                                                    chunk_index
+                                                                                );
+                                                                                let aad_bytes =
+                                                                                    aad.as_bytes();
 
                                                                                 // Encrypt the response content
                                                                                 match crate::crypto::encrypt_with_aead(
@@ -1495,8 +1594,9 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 "error": e.to_string()
                                                                             });
 
-                                                                            if let Some(ref msg_id) =
-                                                                                message_id
+                                                                            if let Some(
+                                                                                ref msg_id,
+                                                                            ) = message_id
                                                                             {
                                                                                 error_msg["id"] =
                                                                                     msg_id.clone();
@@ -1620,9 +1720,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 }
 
                                 let _ = socket
-                                    .send(axum::extract::ws::Message::Text(
-                                        error_msg.to_string(),
-                                    ))
+                                    .send(axum::extract::ws::Message::Text(error_msg.to_string()))
                                     .await;
                             }
                         } else {
@@ -1659,20 +1757,33 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         // Extract job_id from messages if not already set
                         if job_id.is_none() {
                             // Try to get job_id (Rust) or jobId (SDK/contracts)
-                            job_id = json_msg["job_id"].as_u64()
-                                .or_else(|| json_msg["job_id"].as_str()
-                                    .and_then(|s| s.parse::<u64>().ok()))
+                            job_id = json_msg["job_id"]
+                                .as_u64()
+                                .or_else(|| {
+                                    json_msg["job_id"]
+                                        .as_str()
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                })
                                 .or_else(|| json_msg["jobId"].as_u64())
-                                .or_else(|| json_msg["jobId"].as_str()
-                                    .and_then(|s| s.parse::<u64>().ok()));
+                                .or_else(|| {
+                                    json_msg["jobId"]
+                                        .as_str()
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                });
 
                             if job_id.is_some() {
-                                info!("📋 Got job_id from {} message: {:?}", json_msg["type"], job_id);
+                                info!(
+                                    "📋 Got job_id from {} message: {:?}",
+                                    json_msg["type"], job_id
+                                );
                             }
                         }
 
                         // Log the message for debugging
-                        info!("💬 {} message received with job_id: {:?}, message_id: {:?}", json_msg["type"], job_id, message_id);
+                        info!(
+                            "💬 {} message received with job_id: {:?}, message_id: {:?}",
+                            json_msg["type"], job_id, message_id
+                        );
 
                         // Build InferenceRequest from either prompt or inference message
                         let request_value = if json_msg["type"] == "prompt" {
@@ -1745,7 +1856,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     info!("📊 Tracking {} tokens for job {} in WebSocket session",
                                                           response.tokens, jid);
                                                     let _ = checkpoint_manager
-                                                        .track_tokens(jid, response.tokens as u64, session_id.clone())
+                                                        .track_tokens(
+                                                            jid,
+                                                            response.tokens as u64,
+                                                            session_id.clone(),
+                                                        )
                                                         .await;
                                                 }
                                             }
@@ -1828,11 +1943,17 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
             }
             Ok(axum::extract::ws::Message::Close(frame)) => {
                 info!("📴 WebSocket closed by client - Close frame: {:?}", frame);
-                info!("🔍 Current tracked job_id: {:?}, session_id: {:?}", job_id, session_id);
+                info!(
+                    "🔍 Current tracked job_id: {:?}, session_id: {:?}",
+                    job_id, session_id
+                );
                 break;
             }
             Err(e) => {
-                info!("⚠️ WebSocket error: {} - job_id: {:?}, session_id: {:?}", e, job_id, session_id);
+                info!(
+                    "⚠️ WebSocket error: {} - job_id: {:?}, session_id: {:?}",
+                    e, job_id, session_id
+                );
                 break;
             }
             _ => {}
@@ -1869,7 +1990,9 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                     error!("❌ Failed to complete session job {}: {}", jid, e);
                     error!("   Error details: {:?}", e);
                     // Log specific error types for debugging
-                    if e.to_string().contains("replacement transaction underpriced") {
+                    if e.to_string()
+                        .contains("replacement transaction underpriced")
+                    {
                         error!("   This is a nonce conflict - transaction was sent too quickly after previous one");
                     } else if e.to_string().contains("Must wait dispute window") {
                         error!("   Job is in dispute window - will retry automatically");

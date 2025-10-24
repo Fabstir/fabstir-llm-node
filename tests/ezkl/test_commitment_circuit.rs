@@ -49,10 +49,10 @@ fn test_create_circuit_with_valid_inputs() -> Result<()> {
     use fabstir_llm_node::crypto::ezkl::circuit::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new(
-        [0u8; 32],  // job_id
-        [1u8; 32],  // model_hash
-        [2u8; 32],  // input_hash
-        [3u8; 32],  // output_hash
+        [0u8; 32], // job_id
+        [1u8; 32], // model_hash
+        [2u8; 32], // input_hash
+        [3u8; 32], // output_hash
     );
 
     assert!(circuit.is_valid());
@@ -115,10 +115,8 @@ fn test_circuit_rejects_invalid_sizes() {
 
     // Wrong size should fail
     let result = CommitmentCircuit::from_bytes(
-        &[0u8; 16],  // Too short
-        &[1u8; 32],
-        &[2u8; 32],
-        &[3u8; 32],
+        &[0u8; 16], // Too short
+        &[1u8; 32], &[2u8; 32], &[3u8; 32],
     );
 
     assert!(result.is_err());
@@ -130,12 +128,7 @@ fn test_circuit_serialization() -> Result<()> {
     // Circuit should be serializable
     use fabstir_llm_node::crypto::ezkl::circuit::CommitmentCircuit;
 
-    let circuit = CommitmentCircuit::new(
-        [0u8; 32],
-        [1u8; 32],
-        [2u8; 32],
-        [3u8; 32],
-    );
+    let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
 
     let json = serde_json::to_string(&circuit)?;
     assert!(!json.is_empty());

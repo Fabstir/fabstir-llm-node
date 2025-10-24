@@ -144,7 +144,10 @@ impl fmt::Display for CryptoError {
             CryptoError::InvalidKey { key_type, reason } => {
                 write!(f, "Invalid key ({}): {}", key_type, reason)
             }
-            CryptoError::InvalidNonce { expected_size, actual_size } => {
+            CryptoError::InvalidNonce {
+                expected_size,
+                actual_size,
+            } => {
                 write!(
                     f,
                     "Invalid nonce size: expected {} bytes, got {} bytes",

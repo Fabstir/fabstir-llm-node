@@ -38,6 +38,8 @@ fn main() {
     // Without real-ezkl feature, build script does nothing
     #[cfg(not(feature = "real-ezkl"))]
     {
-        println!("cargo:warning=⏭️  Skipping Risc0 guest compilation (real-ezkl feature not enabled)");
+        println!(
+            "cargo:warning=⏭️  Skipping Risc0 guest compilation (real-ezkl feature not enabled)"
+        );
     }
 }

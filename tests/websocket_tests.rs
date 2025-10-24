@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 mod websocket {
     mod test_auth;
+    mod test_backward_compat;
     mod test_compression;
     mod test_connection;
     mod test_context_building;
     mod test_context_limits;
     mod test_context_management;
+    mod test_crypto_errors;
     mod test_e2e_scenarios;
+    mod test_encrypted_message_handler;
+    mod test_encrypted_messages;
+    mod test_encrypted_session_init;
+    mod test_encrypted_streaming;
     mod test_error_handling;
     mod test_handler_fallback;
     mod test_health;
@@ -15,6 +21,7 @@ mod websocket {
     mod test_integration;
     mod test_jwt_security;
     mod test_memory_management;
+    mod test_message_parsing;
     mod test_message_types;
     mod test_metrics;
     mod test_performance;
@@ -30,6 +37,7 @@ mod websocket {
     mod test_response_streaming;
     mod test_server;
     mod test_session_init;
+    mod test_session_init_decryption;
     mod test_session_lifecycle;
     mod test_session_protocol;
     mod test_session_resume;
@@ -37,14 +45,6 @@ mod websocket {
     mod test_signature_verification;
     mod test_stateful_handler;
     mod test_transport;
-    mod test_encrypted_messages;
-    mod test_message_parsing;
-    mod test_encrypted_session_init;
-    mod test_encrypted_message_handler;
-    mod test_encrypted_streaming;
-    mod test_backward_compat;
-    mod test_session_init_decryption;
-    mod test_crypto_errors;
     // mod test_chain_messages; // TODO: Implement chain message types first
     // mod test_session_handlers; // TODO: Fix test implementation
     // mod test_connection_chain; // TODO: Implement chain connection types first

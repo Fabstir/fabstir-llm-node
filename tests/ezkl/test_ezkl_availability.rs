@@ -44,13 +44,19 @@ fn test_check_ezkl_availability() -> Result<()> {
     #[cfg(feature = "real-ezkl")]
     {
         // When real-ezkl is enabled, it should be available
-        assert!(is_available, "EZKL should be available with real-ezkl feature");
+        assert!(
+            is_available,
+            "EZKL should be available with real-ezkl feature"
+        );
     }
 
     #[cfg(not(feature = "real-ezkl"))]
     {
         // When disabled, availability check should return false
-        assert!(!is_available, "EZKL should not be available without real-ezkl feature");
+        assert!(
+            !is_available,
+            "EZKL should not be available without real-ezkl feature"
+        );
     }
 
     Ok(())
@@ -64,7 +70,10 @@ fn test_ezkl_version_check() -> Result<()> {
     use fabstir_llm_node::crypto::ezkl::availability::get_ezkl_version;
 
     let version = get_ezkl_version();
-    assert!(version.is_some(), "EZKL version should be available with real-ezkl feature");
+    assert!(
+        version.is_some(),
+        "EZKL version should be available with real-ezkl feature"
+    );
     let ver = version.unwrap();
     assert!(!ver.is_empty(), "EZKL version should not be empty");
     assert!(ver.starts_with("22."), "EZKL version should be 22.x");
@@ -78,7 +87,10 @@ fn test_ezkl_version_check() -> Result<()> {
 fn test_mock_implementation_active() {
     // When real-ezkl is disabled, we should use mock
     let using_mock = true;
-    assert!(using_mock, "Mock implementation should be active without real-ezkl");
+    assert!(
+        using_mock,
+        "Mock implementation should be active without real-ezkl"
+    );
 }
 
 /// Test EZKL capability check
@@ -92,9 +104,18 @@ fn test_ezkl_capabilities() -> Result<()> {
     #[cfg(feature = "real-ezkl")]
     {
         // With real EZKL, we should have full capabilities
-        assert!(caps.can_generate_proofs, "Should be able to generate proofs with real-ezkl");
-        assert!(caps.can_verify_proofs, "Should be able to verify proofs with real-ezkl");
-        assert!(caps.can_compile_circuits, "Should be able to compile circuits with real-ezkl");
+        assert!(
+            caps.can_generate_proofs,
+            "Should be able to generate proofs with real-ezkl"
+        );
+        assert!(
+            caps.can_verify_proofs,
+            "Should be able to verify proofs with real-ezkl"
+        );
+        assert!(
+            caps.can_compile_circuits,
+            "Should be able to compile circuits with real-ezkl"
+        );
         assert!(!caps.is_mock, "Should not be using mock with real-ezkl");
     }
 
@@ -102,7 +123,10 @@ fn test_ezkl_capabilities() -> Result<()> {
     {
         // With mock, we have limited capabilities
         assert!(caps.is_mock, "Should be using mock without real-ezkl");
-        assert!(!caps.can_compile_circuits, "Should not be able to compile circuits without real-ezkl");
+        assert!(
+            !caps.can_compile_circuits,
+            "Should not be able to compile circuits without real-ezkl"
+        );
     }
 
     Ok(())
@@ -135,5 +159,8 @@ fn test_conditional_compilation() {
     }
 
     // Exactly one branch should compile
-    assert_eq!(feature_count, 1, "Exactly one feature branch should be active");
+    assert_eq!(
+        feature_count, 1,
+        "Exactly one feature branch should be active"
+    );
 }

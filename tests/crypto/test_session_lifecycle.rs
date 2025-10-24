@@ -83,7 +83,10 @@ async fn test_session_key_stored_on_init() {
 
     // Verify session doesn't exist initially
     assert_eq!(state.session_count().await, 0);
-    assert!(state.get_session_key_for_decryption(&session_id).await.is_none());
+    assert!(state
+        .get_session_key_for_decryption(&session_id)
+        .await
+        .is_none());
 
     // Handle session init
     state
@@ -118,7 +121,10 @@ async fn test_session_key_used_for_decryption() {
             .get_session_key_for_decryption(&session_id)
             .await
             .expect("Session key should be available for decryption");
-        assert_eq!(retrieved_key, session_key, "Key should be consistent across multiple retrievals");
+        assert_eq!(
+            retrieved_key, session_key,
+            "Key should be consistent across multiple retrievals"
+        );
     }
 }
 
@@ -163,7 +169,10 @@ async fn test_session_key_cleared_on_timeout() {
     assert_eq!(state.session_count().await, 1);
 
     // Key should be available immediately
-    assert!(state.get_session_key_for_decryption(&session_id).await.is_some());
+    assert!(state
+        .get_session_key_for_decryption(&session_id)
+        .await
+        .is_some());
 
     // Wait for TTL to expire
     sleep(ttl + Duration::from_millis(50)).await;
@@ -174,7 +183,10 @@ async fn test_session_key_cleared_on_timeout() {
 
     // Verify key is cleared
     assert_eq!(state.session_count().await, 0);
-    assert!(state.get_session_key_for_decryption(&session_id).await.is_none());
+    assert!(state
+        .get_session_key_for_decryption(&session_id)
+        .await
+        .is_none());
 }
 
 #[tokio::test]
@@ -188,8 +200,15 @@ async fn test_session_without_encryption() {
 
     // Session is active but has no encryption key
     assert!(state.is_session_active(&session_id).await);
-    assert!(state.get_session_key_for_decryption(&session_id).await.is_none());
-    assert_eq!(state.session_count().await, 0, "No keys stored for plaintext session");
+    assert!(state
+        .get_session_key_for_decryption(&session_id)
+        .await
+        .is_none());
+    assert_eq!(
+        state.session_count().await,
+        0,
+        "No keys stored for plaintext session"
+    );
 }
 
 #[tokio::test]
@@ -239,7 +258,10 @@ async fn test_session_key_retrieval_nonexistent() {
     let result = state
         .get_session_key_for_decryption(&nonexistent_session)
         .await;
-    assert!(result.is_none(), "Should return None for nonexistent session");
+    assert!(
+        result.is_none(),
+        "Should return None for nonexistent session"
+    );
 }
 
 #[tokio::test]
@@ -272,18 +294,18 @@ async fn test_session_key_overwrite() {
     let new_key = [20u8; 32];
 
     // Initialize with old key
-    state
-        .handle_session_init(session_id.clone(), old_key)
-        .await;
+    state.handle_session_init(session_id.clone(), old_key).await;
     let retrieved = state.get_session_key_for_decryption(&session_id).await;
     assert_eq!(retrieved, Some(old_key));
 
     // Re-initialize with new key
-    state
-        .handle_session_init(session_id.clone(), new_key)
-        .await;
+    state.handle_session_init(session_id.clone(), new_key).await;
     let retrieved = state.get_session_key_for_decryption(&session_id).await;
-    assert_eq!(retrieved, Some(new_key), "Key should be updated to new value");
+    assert_eq!(
+        retrieved,
+        Some(new_key),
+        "Key should be updated to new value"
+    );
 }
 
 #[tokio::test]
@@ -314,8 +336,14 @@ async fn test_partial_timeout_cleanup() {
     assert_eq!(state.session_count().await, 1, "Session 2 should remain");
 
     // Verify session 1 is gone but session 2 remains
-    assert!(state.get_session_key_for_decryption("session-1").await.is_none());
-    assert!(state.get_session_key_for_decryption("session-2").await.is_some());
+    assert!(state
+        .get_session_key_for_decryption("session-1")
+        .await
+        .is_none());
+    assert!(state
+        .get_session_key_for_decryption("session-2")
+        .await
+        .is_some());
 }
 
 #[tokio::test]
@@ -339,7 +367,10 @@ async fn test_no_timeout_without_ttl() {
 
     // Verify key still exists
     assert_eq!(state.session_count().await, 1);
-    assert!(state.get_session_key_for_decryption(&session_id).await.is_some());
+    assert!(state
+        .get_session_key_for_decryption(&session_id)
+        .await
+        .is_some());
 }
 
 #[tokio::test]
@@ -375,7 +406,10 @@ async fn test_session_lifecycle_complete_flow() {
     // 5. Verify cleanup
     assert!(!state.is_session_active(&session_id).await);
     assert_eq!(state.session_count().await, 0);
-    assert!(state.get_session_key_for_decryption(&session_id).await.is_none());
+    assert!(state
+        .get_session_key_for_decryption(&session_id)
+        .await
+        .is_none());
 }
 
 #[tokio::test]

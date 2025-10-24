@@ -30,7 +30,11 @@ fn test_decrypt_session_init_valid() {
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
     // Client performs ECDH to derive shared key
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Create session data
     let session_data = serde_json::json!({
@@ -88,7 +92,11 @@ fn test_session_init_round_trip() {
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
     // Derive shared key
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Create and encrypt session data
     let original_session_key = [42u8; 32];
@@ -141,7 +149,11 @@ fn test_signature_verification() {
     let client_eph_pub = client_secret.public_key();
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     let session_data = serde_json::json!({
         "jobId": "sig-test",
@@ -170,7 +182,10 @@ fn test_signature_verification() {
             break;
         }
     }
-    assert!(expected_address.is_some(), "Should recover address with valid signature");
+    assert!(
+        expected_address.is_some(),
+        "Should recover address with valid signature"
+    );
 
     let payload = EncryptedSessionPayload {
         eph_pub: client_eph_pub_bytes.to_vec(),
@@ -194,7 +209,11 @@ fn test_invalid_signature() {
     let client_eph_pub = client_secret.public_key();
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     let session_data = serde_json::json!({
         "jobId": "invalid-sig-test",
@@ -232,7 +251,11 @@ fn test_corrupted_ciphertext() {
     let client_eph_pub = client_secret.public_key();
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     let session_data = serde_json::json!({
         "jobId": "corrupt-test",
@@ -267,7 +290,10 @@ fn test_corrupted_ciphertext() {
     };
 
     let result = decrypt_session_init(&payload, &node_priv_bytes);
-    assert!(result.is_err(), "Corrupted ciphertext should fail decryption");
+    assert!(
+        result.is_err(),
+        "Corrupted ciphertext should fail decryption"
+    );
 }
 
 #[test]
@@ -284,7 +310,11 @@ fn test_wrong_node_key() {
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
     // Client derives key with node1's public key
-    let shared_key = derive_shared_key(node_public1.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public1.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     let session_data = serde_json::json!({
         "jobId": "wrong-key-test",
@@ -314,7 +344,10 @@ fn test_wrong_node_key() {
 
     // Try to decrypt with node2's private key (wrong key)
     let result = decrypt_session_init(&payload, &node_priv_bytes2);
-    assert!(result.is_err(), "Wrong node private key should fail decryption");
+    assert!(
+        result.is_err(),
+        "Wrong node private key should fail decryption"
+    );
 }
 
 #[test]
@@ -327,7 +360,11 @@ fn test_extract_session_key() {
     let client_eph_pub = client_secret.public_key();
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Use a specific session key
     let expected_session_key = [0xAB; 32];
@@ -374,7 +411,11 @@ fn test_invalid_json_in_plaintext() {
     let client_eph_pub = client_secret.public_key();
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Invalid JSON
     let invalid_json = "{ this is not valid json }";
@@ -411,7 +452,11 @@ fn test_missing_fields_in_payload() {
     let client_eph_pub = client_secret.public_key();
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Missing sessionKey field
     let incomplete_data = serde_json::json!({

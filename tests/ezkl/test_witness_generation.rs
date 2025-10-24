@@ -63,9 +63,9 @@ fn test_witness_validation() {
 #[cfg(feature = "inference")]
 fn test_witness_from_inference_result() -> Result<()> {
     // Should create witness from InferenceResult
+    use chrono::Utc;
     use fabstir_llm_node::crypto::ezkl::witness::create_witness_from_result;
     use fabstir_llm_node::results::packager::{InferenceResult, ResultMetadata};
-    use chrono::Utc;
 
     let result = InferenceResult {
         job_id: "test_job".to_string(),
@@ -239,7 +239,7 @@ fn test_witness_with_empty_job_id() {
     use fabstir_llm_node::crypto::ezkl::witness::WitnessBuilder;
 
     let result = WitnessBuilder::new()
-        .with_job_id([0u8; 32])  // All zeros
+        .with_job_id([0u8; 32]) // All zeros
         .with_model_hash([1u8; 32])
         .with_input_hash([2u8; 32])
         .with_output_hash([3u8; 32])

@@ -19,7 +19,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-fn create_inference_result(job_id: u64, model: &str, prompt: &str, response: &str, tokens: u32) -> InferenceResult {
+fn create_inference_result(
+    job_id: u64,
+    model: &str,
+    prompt: &str,
+    response: &str,
+    tokens: u32,
+) -> InferenceResult {
     InferenceResult {
         job_id: job_id.to_string(),
         model_id: model.to_string(),
@@ -63,7 +69,10 @@ async fn test_e2e_single_job_complete_flow() -> Result<()> {
         "Quantum computing uses quantum mechanics to process information...",
         150,
     );
-    println!("✅ Inference complete: {} tokens generated", result.tokens_generated);
+    println!(
+        "✅ Inference complete: {} tokens generated",
+        result.tokens_generated
+    );
 
     // Step 2: Generate EZKL proof
     println!("\n2️⃣  Generating EZKL proof...");
@@ -71,30 +80,46 @@ async fn test_e2e_single_job_complete_flow() -> Result<()> {
     let start = Instant::now();
     let proof = proof_gen.generate_proof(&result).await?;
     let proof_time = start.elapsed();
-    println!("✅ Proof generated in {:?} ({} bytes)", proof_time, proof.proof_data.len());
-    assert!(!proof.proof_data.is_empty(), "Proof data should not be empty");
+    println!(
+        "✅ Proof generated in {:?} ({} bytes)",
+        proof_time,
+        proof.proof_data.len()
+    );
+    assert!(
+        !proof.proof_data.is_empty(),
+        "Proof data should not be empty"
+    );
 
     // Step 3: Store proof and result (checkpoint would do this)
     println!("\n3️⃣  Storing proof and result...");
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    result_store.write().await.store_result(job_id, result.clone()).await?;
-    proof_store.write().await.store_proof(job_id, proof.clone()).await?;
+    result_store
+        .write()
+        .await
+        .store_result(job_id, result.clone())
+        .await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(job_id, proof.clone())
+        .await?;
     println!("✅ Data stored successfully");
 
     // Step 4: Validate before settlement
     println!("\n4️⃣  Validating proof before settlement...");
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let start = Instant::now();
     let is_valid = validator.validate_before_settlement(job_id).await?;
     let validate_time = start.elapsed();
-    println!("✅ Validation complete in {:?}: {}", validate_time, if is_valid { "VALID" } else { "INVALID" });
+    println!(
+        "✅ Validation complete in {:?}: {}",
+        validate_time,
+        if is_valid { "VALID" } else { "INVALID" }
+    );
     assert!(is_valid, "Proof validation must pass");
 
     // Step 5: Check metrics
@@ -104,7 +129,10 @@ async fn test_e2e_single_job_complete_flow() -> Result<()> {
     println!("   - Total validations: {}", metrics.validations_total());
     println!("   - Passed: {}", metrics.validations_passed());
     println!("   - Failed: {}", metrics.validations_failed());
-    println!("   - Success rate: {:.1}%", metrics.validation_success_rate());
+    println!(
+        "   - Success rate: {:.1}%",
+        metrics.validation_success_rate()
+    );
     println!("   - Avg duration: {:.2}ms", metrics.avg_validation_ms());
 
     assert_eq!(metrics.validations_total(), 1);
@@ -113,7 +141,10 @@ async fn test_e2e_single_job_complete_flow() -> Result<()> {
 
     // Step 6: Simulate settlement (payment release)
     println!("\n6️⃣  Simulating settlement...");
-    println!("💰 Payment released: {} tokens × rate = settlement amount", result.tokens_generated);
+    println!(
+        "💰 Payment released: {} tokens × rate = settlement amount",
+        result.tokens_generated
+    );
     println!("✅ Settlement complete");
 
     // Step 7: Cleanup
@@ -159,8 +190,18 @@ async fn test_e2e_multi_job_concurrent_flow() -> Result<()> {
                 let proof = proof_gen.generate_proof(&result).await.unwrap();
 
                 // Storage
-                result_store.write().await.store_result(job_id, result).await.unwrap();
-                proof_store.write().await.store_proof(job_id, proof).await.unwrap();
+                result_store
+                    .write()
+                    .await
+                    .store_result(job_id, result)
+                    .await
+                    .unwrap();
+                proof_store
+                    .write()
+                    .await
+                    .store_proof(job_id, proof)
+                    .await
+                    .unwrap();
 
                 job_id
             })
@@ -173,8 +214,15 @@ async fn test_e2e_multi_job_concurrent_flow() -> Result<()> {
     }
 
     let processing_time = start.elapsed();
-    println!("✅ All {} jobs processed in {:?}", completed_jobs.len(), processing_time);
-    println!("⚡ Avg time per job: {:?}", processing_time / completed_jobs.len() as u32);
+    println!(
+        "✅ All {} jobs processed in {:?}",
+        completed_jobs.len(),
+        processing_time
+    );
+    println!(
+        "⚡ Avg time per job: {:?}",
+        processing_time / completed_jobs.len() as u32
+    );
 
     // Validate all jobs
     println!("\n🔍 Validating all jobs...");
@@ -189,9 +237,7 @@ async fn test_e2e_multi_job_concurrent_flow() -> Result<()> {
         .iter()
         .map(|&job_id| {
             let validator = validator.clone();
-            tokio::spawn(async move {
-                validator.validate_before_settlement(job_id).await.unwrap()
-            })
+            tokio::spawn(async move { validator.validate_before_settlement(job_id).await.unwrap() })
         })
         .collect();
 
@@ -201,8 +247,15 @@ async fn test_e2e_multi_job_concurrent_flow() -> Result<()> {
     }
 
     let validation_time = start.elapsed();
-    println!("✅ All {} validations complete in {:?}", validation_results.len(), validation_time);
-    println!("⚡ Avg validation time: {:?}", validation_time / validation_results.len() as u32);
+    println!(
+        "✅ All {} validations complete in {:?}",
+        validation_results.len(),
+        validation_time
+    );
+    println!(
+        "⚡ Avg validation time: {:?}",
+        validation_time / validation_results.len() as u32
+    );
 
     // Check all passed
     let all_valid = validation_results.iter().all(|&v| v);
@@ -213,7 +266,10 @@ async fn test_e2e_multi_job_concurrent_flow() -> Result<()> {
     let metrics = validator.metrics();
     println!("\n📊 Final Metrics:");
     println!("   - Total validations: {}", metrics.validations_total());
-    println!("   - Success rate: {:.1}%", metrics.validation_success_rate());
+    println!(
+        "   - Success rate: {:.1}%",
+        metrics.validation_success_rate()
+    );
     println!("   - Avg duration: {:.2}ms", metrics.avg_validation_ms());
 
     assert_eq!(metrics.validations_total(), 10);
@@ -235,30 +291,47 @@ async fn test_e2e_mixed_valid_invalid_jobs() -> Result<()> {
     println!("1️⃣  Processing valid job 3000...");
     let result_valid = create_inference_result(3000, "model-a", "prompt", "response", 100);
     let proof_valid = proof_gen.generate_proof(&result_valid).await?;
-    result_store.write().await.store_result(3000, result_valid).await?;
-    proof_store.write().await.store_proof(3000, proof_valid).await?;
+    result_store
+        .write()
+        .await
+        .store_result(3000, result_valid)
+        .await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(3000, proof_valid)
+        .await?;
 
     // Job 3001: Invalid (tampered output)
     println!("2️⃣  Processing invalid job 3001 (tampered)...");
     let result_original = create_inference_result(3001, "model-a", "prompt", "original", 100);
     let proof_tampered = proof_gen.generate_proof(&result_original).await?;
     let result_tampered = create_inference_result(3001, "model-a", "prompt", "tampered", 100);
-    result_store.write().await.store_result(3001, result_tampered).await?;
-    proof_store.write().await.store_proof(3001, proof_tampered).await?;
+    result_store
+        .write()
+        .await
+        .store_result(3001, result_tampered)
+        .await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(3001, proof_tampered)
+        .await?;
 
     // Job 3002: Invalid (missing proof)
     println!("3️⃣  Processing invalid job 3002 (missing proof)...");
     let result_missing = create_inference_result(3002, "model-a", "prompt", "response", 100);
-    result_store.write().await.store_result(3002, result_missing).await?;
+    result_store
+        .write()
+        .await
+        .store_result(3002, result_missing)
+        .await?;
     // No proof stored!
 
     // Validate all
     println!("\n🔍 Validating all jobs...");
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Job 3000 should pass
     let valid_result = validator.validate_before_settlement(3000).await?;
@@ -278,10 +351,16 @@ async fn test_e2e_mixed_valid_invalid_jobs() -> Result<()> {
     // Check metrics
     let metrics = validator.metrics();
     println!("\n📊 Final Metrics:");
-    println!("   - Total: {} (1 valid, 1 invalid, 1 error)", metrics.validations_total());
+    println!(
+        "   - Total: {} (1 valid, 1 invalid, 1 error)",
+        metrics.validations_total()
+    );
     println!("   - Passed: {}", metrics.validations_passed());
     println!("   - Failed: {}", metrics.validations_failed());
-    println!("   - Success rate: {:.1}%", metrics.validation_success_rate());
+    println!(
+        "   - Success rate: {:.1}%",
+        metrics.validation_success_rate()
+    );
 
     assert_eq!(metrics.validations_total(), 3);
     assert_eq!(metrics.validations_passed(), 1);
@@ -311,7 +390,11 @@ async fn test_e2e_store_statistics_tracking() -> Result<()> {
         );
         let proof = proof_gen.generate_proof(&result).await?;
 
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
 
@@ -336,11 +419,8 @@ async fn test_e2e_store_statistics_tracking() -> Result<()> {
 
     // Validate (causes hits)
     println!("\n🔍 Performing validations (generates hits)...");
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     for job_id in 4000..4005 {
         validator.validate_before_settlement(job_id).await?;
@@ -351,8 +431,14 @@ async fn test_e2e_store_statistics_tracking() -> Result<()> {
     let result_stats_after = result_store.read().await.stats().await;
 
     println!("\n📊 Updated Stats After Validation:");
-    println!("   - Proof hits: {} (was {})", proof_stats_after.hits, proof_stats.hits);
-    println!("   - Result hits: {} (was {})", result_stats_after.hits, result_stats.hits);
+    println!(
+        "   - Proof hits: {} (was {})",
+        proof_stats_after.hits, proof_stats.hits
+    );
+    println!(
+        "   - Result hits: {} (was {})",
+        result_stats_after.hits, result_stats.hits
+    );
 
     assert_eq!(proof_stats_after.hits, 5, "Should have 5 proof hits");
     assert_eq!(result_stats_after.hits, 5, "Should have 5 result hits");
@@ -387,33 +473,37 @@ async fn test_e2e_cleanup_workflow() -> Result<()> {
     for job_id in 5000..5003 {
         let result = create_inference_result(job_id, "model", "prompt", "response", 100);
         let proof = proof_gen.generate_proof(&result).await?;
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
 
     let result_stats_before = result_store.read().await.stats().await;
     let proof_stats_before = proof_store.read().await.stats().await;
-    println!("✅ Initial state: {} results, {} proofs",
-        result_stats_before.total_results,
-        proof_stats_before.total_proofs
+    println!(
+        "✅ Initial state: {} results, {} proofs",
+        result_stats_before.total_results, proof_stats_before.total_proofs
     );
 
     // Validate and settle job 5000
     println!("\n💰 Settling job 5000...");
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     validator.validate_before_settlement(5000).await?;
     validator.cleanup_job(5000).await?;
 
     let result_stats_after = result_store.read().await.stats().await;
     let proof_stats_after = proof_store.read().await.stats().await;
-    println!("✅ After cleanup: {} results (was {}), {} proofs (was {})",
-        result_stats_after.total_results, result_stats_before.total_results,
-        proof_stats_after.total_proofs, proof_stats_before.total_proofs
+    println!(
+        "✅ After cleanup: {} results (was {}), {} proofs (was {})",
+        result_stats_after.total_results,
+        result_stats_before.total_results,
+        proof_stats_after.total_proofs,
+        proof_stats_before.total_proofs
     );
 
     assert_eq!(result_stats_after.total_results, 2);
@@ -427,9 +517,9 @@ async fn test_e2e_cleanup_workflow() -> Result<()> {
 
     let result_stats_final = result_store.read().await.stats().await;
     let proof_stats_final = proof_store.read().await.stats().await;
-    println!("✅ Final state: {} results, {} proofs (all cleaned)",
-        result_stats_final.total_results,
-        proof_stats_final.total_proofs
+    println!(
+        "✅ Final state: {} results, {} proofs (all cleaned)",
+        result_stats_final.total_results, proof_stats_final.total_proofs
     );
 
     assert_eq!(result_stats_final.total_results, 0);

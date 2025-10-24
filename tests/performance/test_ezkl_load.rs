@@ -80,10 +80,16 @@ async fn test_load_sequential_proof_generation() -> Result<()> {
     println!("   - p50: {:?}", p50);
     println!("   - p95: {:?}", p95);
     println!("   - p99: {:?}", p99);
-    println!("   - Throughput: {:.1} proofs/sec", count as f64 / total_time.as_secs_f64());
+    println!(
+        "   - Throughput: {:.1} proofs/sec",
+        count as f64 / total_time.as_secs_f64()
+    );
 
     // Performance targets (mock EZKL should be fast)
-    assert!(avg_time < Duration::from_millis(100), "Avg proof time should be < 100ms");
+    assert!(
+        avg_time < Duration::from_millis(100),
+        "Avg proof time should be < 100ms"
+    );
     assert!(p95 < Duration::from_millis(200), "p95 should be < 200ms");
 
     Ok(())
@@ -97,7 +103,10 @@ async fn test_load_concurrent_proof_generation() -> Result<()> {
     let count = 100;
     let concurrency = 20;
 
-    println!("🚀 Generating {} proofs with {} concurrent tasks...", count, concurrency);
+    println!(
+        "🚀 Generating {} proofs with {} concurrent tasks...",
+        count, concurrency
+    );
     let start = Instant::now();
 
     let mut handles = Vec::new();
@@ -154,7 +163,11 @@ async fn test_load_high_volume_validation() -> Result<()> {
     for job_id in 0..count {
         let result = create_test_result(job_id, 500);
         let proof = proof_gen.generate_proof(&result).await?;
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
     println!("✅ Setup complete");
@@ -205,7 +218,10 @@ async fn test_load_high_volume_validation() -> Result<()> {
     println!("\n📊 Validator Metrics:");
     println!("   - Total: {}", metrics.validations_total());
     println!("   - Passed: {}", metrics.validations_passed());
-    println!("   - Success rate: {:.1}%", metrics.validation_success_rate());
+    println!(
+        "   - Success rate: {:.1}%",
+        metrics.validation_success_rate()
+    );
     println!("   - Avg time: {:.2}ms", metrics.avg_validation_ms());
 
     assert_eq!(metrics.validations_total(), count as u64);
@@ -229,7 +245,11 @@ async fn test_load_memory_pressure() -> Result<()> {
     for job_id in 0..count {
         let result = create_test_result(job_id, 2000); // 2KB each
         let proof = proof_gen.generate_proof(&result).await?;
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
 
@@ -239,7 +259,10 @@ async fn test_load_memory_pressure() -> Result<()> {
 
     println!("\n📊 Store Statistics:");
     println!("   - Proofs stored: {}", proof_stats.total_proofs);
-    println!("   - Proof storage: {:.2} MB", proof_stats.total_size_bytes as f64 / 1_000_000.0);
+    println!(
+        "   - Proof storage: {:.2} MB",
+        proof_stats.total_size_bytes as f64 / 1_000_000.0
+    );
     println!("   - Results stored: {}", result_stats.total_results);
     println!("   - Total tokens: {}", result_stats.total_tokens);
 
@@ -248,11 +271,8 @@ async fn test_load_memory_pressure() -> Result<()> {
 
     // Simulate cleanup under pressure
     println!("\n🧹 Cleaning up old jobs...");
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Cleanup first 250 jobs
     for job_id in 0..(count / 2) {
@@ -263,8 +283,14 @@ async fn test_load_memory_pressure() -> Result<()> {
     let result_stats_after = result_store.read().await.stats().await;
 
     println!("📊 After Cleanup:");
-    println!("   - Proofs: {} (was {})", proof_stats_after.total_proofs, proof_stats.total_proofs);
-    println!("   - Results: {} (was {})", result_stats_after.total_results, result_stats.total_results);
+    println!(
+        "   - Proofs: {} (was {})",
+        proof_stats_after.total_proofs, proof_stats.total_proofs
+    );
+    println!(
+        "   - Results: {} (was {})",
+        result_stats_after.total_results, result_stats.total_results
+    );
 
     assert_eq!(proof_stats_after.total_proofs, (count / 2) as usize);
     assert_eq!(result_stats_after.total_results, (count / 2) as usize);
@@ -290,7 +316,8 @@ async fn test_load_variable_proof_sizes() -> Result<()> {
         let proof = proof_gen.generate_proof(&result).await?;
         let time = start.elapsed();
 
-        println!("   Input size: {:>5} bytes → Proof: {:>4} bytes in {:>6.2}ms",
+        println!(
+            "   Input size: {:>5} bytes → Proof: {:>4} bytes in {:>6.2}ms",
             size,
             proof.proof_data.len(),
             time.as_secs_f64() * 1000.0
@@ -316,13 +343,21 @@ async fn test_load_burst_traffic() -> Result<()> {
     let burst_size = 50;
     let num_bursts = 3;
 
-    println!("💥 Simulating {} bursts of {} jobs each...\n", num_bursts, burst_size);
+    println!(
+        "💥 Simulating {} bursts of {} jobs each...\n",
+        num_bursts, burst_size
+    );
 
     for burst in 0..num_bursts {
         let start_id = burst * burst_size;
         let end_id = start_id + burst_size;
 
-        println!("   Burst {} (jobs {}-{})...", burst + 1, start_id, end_id - 1);
+        println!(
+            "   Burst {} (jobs {}-{})...",
+            burst + 1,
+            start_id,
+            end_id - 1
+        );
         let start = Instant::now();
 
         // Process burst concurrently
@@ -335,8 +370,18 @@ async fn test_load_burst_traffic() -> Result<()> {
                 tokio::spawn(async move {
                     let result = create_test_result(job_id, 1000);
                     let proof = proof_gen.generate_proof(&result).await.unwrap();
-                    result_store.write().await.store_result(job_id, result).await.unwrap();
-                    proof_store.write().await.store_proof(job_id, proof).await.unwrap();
+                    result_store
+                        .write()
+                        .await
+                        .store_result(job_id, result)
+                        .await
+                        .unwrap();
+                    proof_store
+                        .write()
+                        .await
+                        .store_proof(job_id, proof)
+                        .await
+                        .unwrap();
                 })
             })
             .collect();
@@ -346,7 +391,8 @@ async fn test_load_burst_traffic() -> Result<()> {
         }
 
         let burst_time = start.elapsed();
-        println!("      ✅ Completed in {:?} ({:.1} jobs/sec)",
+        println!(
+            "      ✅ Completed in {:?} ({:.1} jobs/sec)",
             burst_time,
             burst_size as f64 / burst_time.as_secs_f64()
         );
@@ -364,7 +410,10 @@ async fn test_load_burst_traffic() -> Result<()> {
     println!("   - Total results: {}", result_stats.total_results);
 
     assert_eq!(proof_stats.total_proofs, (burst_size * num_bursts) as usize);
-    assert_eq!(result_stats.total_results, (burst_size * num_bursts) as usize);
+    assert_eq!(
+        result_stats.total_results,
+        (burst_size * num_bursts) as usize
+    );
 
     println!("✅ Burst traffic handling successful");
 
@@ -379,7 +428,10 @@ async fn test_load_sustained_throughput() -> Result<()> {
     let duration = Duration::from_secs(5);
     let concurrency = 10;
 
-    println!("⏱️  Running sustained load for {:?} with {} concurrent tasks...", duration, concurrency);
+    println!(
+        "⏱️  Running sustained load for {:?} with {} concurrent tasks...",
+        duration, concurrency
+    );
 
     let start = Instant::now();
     let mut job_id = 0u64;

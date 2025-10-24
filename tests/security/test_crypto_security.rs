@@ -143,18 +143,16 @@ fn test_replay_attack_prevented() {
     let nonce_0 = rand::random::<[u8; 24]>();
     let aad_0 = b"message_0";
 
-    let ciphertext_0 =
-        encrypt_with_aead(message_0.as_bytes(), &nonce_0, aad_0, &session_key)
-            .expect("Should encrypt message 0");
+    let ciphertext_0 = encrypt_with_aead(message_0.as_bytes(), &nonce_0, aad_0, &session_key)
+        .expect("Should encrypt message 0");
 
     // Encrypt message 1 with AAD "message_1"
     let message_1 = "Check balance";
     let nonce_1 = rand::random::<[u8; 24]>();
     let aad_1 = b"message_1";
 
-    let _ciphertext_1 =
-        encrypt_with_aead(message_1.as_bytes(), &nonce_1, aad_1, &session_key)
-            .expect("Should encrypt message 1");
+    let _ciphertext_1 = encrypt_with_aead(message_1.as_bytes(), &nonce_1, aad_1, &session_key)
+        .expect("Should encrypt message 1");
 
     // Attacker tries to replay message_0 as message_1
     // This should fail because AAD doesn't match
@@ -199,19 +197,15 @@ fn test_signature_forgery_rejected() {
     let client_signing_key = SigningKey::random(&mut OsRng);
 
     // Create valid encrypted session init
-    let (mut payload, _) =
-        create_encrypted_session_init(&node_public, &client_signing_key)
-            .expect("Should create valid payload");
+    let (mut payload, _) = create_encrypted_session_init(&node_public, &client_signing_key)
+        .expect("Should create valid payload");
 
     // Test 1: Completely random signature
     let random_signature = vec![0x42u8; 65];
     payload.signature = random_signature;
 
     let result = decrypt_session_init(&payload, &node_priv_bytes);
-    assert!(
-        result.is_err(),
-        "Random signature should be rejected"
-    );
+    assert!(result.is_err(), "Random signature should be rejected");
 
     // Test 2: Valid signature from different keypair
     let attacker_signing_key = SigningKey::random(&mut OsRng);
@@ -248,17 +242,13 @@ fn test_signature_forgery_rejected() {
     }
 
     // Test 3: Signature with invalid recovery ID
-    let (mut payload, _) =
-        create_encrypted_session_init(&node_public, &client_signing_key)
-            .expect("Should create valid payload");
+    let (mut payload, _) = create_encrypted_session_init(&node_public, &client_signing_key)
+        .expect("Should create valid payload");
 
     payload.signature[64] = 77; // Invalid recovery ID
 
     let result = decrypt_session_init(&payload, &node_priv_bytes);
-    assert!(
-        result.is_err(),
-        "Invalid recovery ID should be rejected"
-    );
+    assert!(result.is_err(), "Invalid recovery ID should be rejected");
 }
 
 #[test]
@@ -271,8 +261,8 @@ fn test_mitm_detected() {
     let nonce = rand::random::<[u8; 24]>();
     let aad = b"message_0";
 
-    let mut ciphertext = encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key)
-        .expect("Should encrypt");
+    let mut ciphertext =
+        encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key).expect("Should encrypt");
 
     // Test 1: Flip one bit in ciphertext
     if !ciphertext.is_empty() {
@@ -287,8 +277,8 @@ fn test_mitm_detected() {
 
     // Test 2: Truncate ciphertext
     let session_key2 = SecretKey::random(&mut OsRng).to_bytes();
-    let ciphertext2 = encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key2)
-        .expect("Should encrypt");
+    let ciphertext2 =
+        encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key2).expect("Should encrypt");
 
     let truncated = &ciphertext2[..ciphertext2.len() - 5];
 
@@ -297,16 +287,13 @@ fn test_mitm_detected() {
 
     // Test 3: Append data to ciphertext
     let session_key3 = SecretKey::random(&mut OsRng).to_bytes();
-    let mut ciphertext3 = encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key3)
-        .expect("Should encrypt");
+    let mut ciphertext3 =
+        encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key3).expect("Should encrypt");
 
     ciphertext3.extend_from_slice(b"INJECTED");
 
     let result = decrypt_with_aead(&ciphertext3, &nonce, aad, &session_key3);
-    assert!(
-        result.is_err(),
-        "Ciphertext with appended data should fail"
-    );
+    assert!(result.is_err(), "Ciphertext with appended data should fail");
 
     // Test 4: Replace entire ciphertext with different valid ciphertext
     let session_key4 = SecretKey::random(&mut OsRng).to_bytes();
@@ -464,11 +451,7 @@ fn test_nonce_uniqueness_enforcement() {
     }
 
     // All nonces should be unique (probability of collision is negligible with 24-byte nonces)
-    assert_eq!(
-        nonces.len(),
-        100,
-        "All 100 nonces should be unique"
-    );
+    assert_eq!(nonces.len(), 100, "All 100 nonces should be unique");
 
     println!("Generated 100 unique nonces - nonce generation is working correctly");
 }
@@ -488,8 +471,8 @@ fn test_timing_attack_resistance_basic() {
     let aad = b"timing_test";
 
     // Encrypt a valid message
-    let valid_ciphertext = encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key)
-        .expect("Should encrypt");
+    let valid_ciphertext =
+        encrypt_with_aead(message.as_bytes(), &nonce, aad, &session_key).expect("Should encrypt");
 
     // Create an invalid ciphertext (tampered)
     let mut invalid_ciphertext = valid_ciphertext.clone();
@@ -574,14 +557,10 @@ fn test_key_derivation_uniqueness() {
     );
 
     // Verify the node can derive the same keys
-    let node_shared_1 = k256::ecdh::diffie_hellman(
-        node_secret.to_nonzero_scalar(),
-        client_pub_1.as_affine(),
-    );
-    let node_shared_2 = k256::ecdh::diffie_hellman(
-        node_secret.to_nonzero_scalar(),
-        client_pub_2.as_affine(),
-    );
+    let node_shared_1 =
+        k256::ecdh::diffie_hellman(node_secret.to_nonzero_scalar(), client_pub_1.as_affine());
+    let node_shared_2 =
+        k256::ecdh::diffie_hellman(node_secret.to_nonzero_scalar(), client_pub_2.as_affine());
 
     let node_bytes_1: &[u8] = node_shared_1.raw_secret_bytes();
     let node_bytes_2: &[u8] = node_shared_2.raw_secret_bytes();
@@ -615,27 +594,20 @@ fn test_aad_integrity_critical() {
     let aad_original = b"chain_id=1;nonce=12345";
 
     // Encrypt with original AAD
-    let ciphertext =
-        encrypt_with_aead(message.as_bytes(), &nonce, aad_original, &session_key)
-            .expect("Should encrypt");
+    let ciphertext = encrypt_with_aead(message.as_bytes(), &nonce, aad_original, &session_key)
+        .expect("Should encrypt");
 
     // Attacker tries to modify AAD to change transaction context
     let aad_modified = b"chain_id=999;nonce=12345";
 
     let result = decrypt_with_aead(&ciphertext, &nonce, aad_modified, &session_key);
-    assert!(
-        result.is_err(),
-        "Modified AAD should fail authentication"
-    );
+    assert!(result.is_err(), "Modified AAD should fail authentication");
 
     // Attacker tries to remove part of AAD
     let aad_truncated = b"chain_id=1";
 
     let result = decrypt_with_aead(&ciphertext, &nonce, aad_truncated, &session_key);
-    assert!(
-        result.is_err(),
-        "Truncated AAD should fail authentication"
-    );
+    assert!(result.is_err(), "Truncated AAD should fail authentication");
 
     // Verify original AAD still works
     let result = decrypt_with_aead(&ciphertext, &nonce, aad_original, &session_key);

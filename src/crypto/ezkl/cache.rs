@@ -176,11 +176,7 @@ impl ProofCacheInner {
 
     fn update_stats(&mut self) {
         self.stats.entries = self.proofs.len();
-        self.stats.memory_bytes = self
-            .proofs
-            .values()
-            .map(|cached| cached.size_bytes)
-            .sum();
+        self.stats.memory_bytes = self.proofs.values().map(|cached| cached.size_bytes).sum();
     }
 
     fn stats(&self) -> CacheStats {

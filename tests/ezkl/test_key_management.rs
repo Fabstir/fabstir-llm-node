@@ -27,7 +27,7 @@ fn test_load_proving_key_from_file() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create a mock proving key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -50,7 +50,9 @@ fn test_load_verifying_key_from_file() -> Result<()> {
     let key_path = temp_dir.path().join("verifying_key.bin");
 
     // Create a mock verification key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_verifying_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{
+        compile_circuit, generate_keys, save_verifying_key,
+    };
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -73,7 +75,7 @@ fn test_key_caching_in_memory() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -125,7 +127,7 @@ fn test_concurrent_key_loading() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -178,7 +180,7 @@ fn test_key_preloading() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -206,7 +208,7 @@ fn test_key_cache_invalidation() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -255,7 +257,7 @@ fn test_lazy_key_loading() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -283,7 +285,7 @@ fn test_key_rotation() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create initial key
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -314,7 +316,7 @@ fn test_key_memory_usage() -> Result<()> {
     let temp_dir = TempDir::new()?;
 
     // Create multiple keys
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -347,7 +349,7 @@ fn test_key_path_canonicalization() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);
@@ -386,7 +388,7 @@ fn test_key_loading_performance() -> Result<()> {
     let key_path = temp_dir.path().join("proving_key.bin");
 
     // Create key file
-    use fabstir_llm_node::crypto::ezkl::setup::{generate_keys, compile_circuit, save_proving_key};
+    use fabstir_llm_node::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key};
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
 
     let circuit = CommitmentCircuit::new([0u8; 32], [1u8; 32], [2u8; 32], [3u8; 32]);

@@ -136,10 +136,7 @@ fn test_verify_journal_mismatch() {
         .verify_proof(&proof, &witness2)
         .expect("Verification should not error (just return false)");
 
-    assert!(
-        !is_valid,
-        "Proof should not verify with mismatched witness"
-    );
+    assert!(!is_valid, "Proof should not verify with mismatched witness");
 }
 
 #[test]

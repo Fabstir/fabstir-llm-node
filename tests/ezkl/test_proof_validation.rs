@@ -5,7 +5,7 @@
 //! Tests for EZKL proof size and format validation
 
 use anyhow::Result;
-use fabstir_llm_node::crypto::ezkl::{EzklProver, WitnessBuilder, ProofData};
+use fabstir_llm_node::crypto::ezkl::{EzklProver, ProofData, WitnessBuilder};
 
 /// Helper to create test witness
 fn create_test_witness() -> Result<fabstir_llm_node::crypto::ezkl::Witness> {
@@ -30,7 +30,11 @@ fn test_proof_size_within_range() -> Result<()> {
     #[cfg(not(feature = "real-ezkl"))]
     {
         // Mock proof should be 200 bytes
-        assert_eq!(proof.proof_bytes.len(), 200, "Mock proof should be exactly 200 bytes");
+        assert_eq!(
+            proof.proof_bytes.len(),
+            200,
+            "Mock proof should be exactly 200 bytes"
+        );
     }
 
     #[cfg(feature = "real-ezkl")]
@@ -124,11 +128,18 @@ fn test_proof_has_required_fields() -> Result<()> {
     let proof = prover.generate_proof(&witness)?;
 
     // Verify all fields are present
-    assert!(!proof.proof_bytes.is_empty(), "proof_bytes should not be empty");
+    assert!(
+        !proof.proof_bytes.is_empty(),
+        "proof_bytes should not be empty"
+    );
     assert!(proof.timestamp > 0, "timestamp should be set");
     assert_eq!(proof.model_hash.len(), 32, "model_hash should be 32 bytes");
     assert_eq!(proof.input_hash.len(), 32, "input_hash should be 32 bytes");
-    assert_eq!(proof.output_hash.len(), 32, "output_hash should be 32 bytes");
+    assert_eq!(
+        proof.output_hash.len(),
+        32,
+        "output_hash should be 32 bytes"
+    );
 
     Ok(())
 }

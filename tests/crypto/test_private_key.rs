@@ -33,7 +33,8 @@ fn test_extract_private_key_from_env() {
     assert_eq!(private_key_bytes.len(), 32);
 
     // Expected: Matches the test key
-    let expected_bytes = hex::decode("1234567890123456789012345678901234567890123456789012345678901234").unwrap();
+    let expected_bytes =
+        hex::decode("1234567890123456789012345678901234567890123456789012345678901234").unwrap();
     assert_eq!(private_key_bytes, expected_bytes.as_slice());
 
     // Cleanup
@@ -45,10 +46,10 @@ fn test_extract_private_key_from_env() {
 fn test_invalid_key_format() {
     // Test various invalid formats
     let invalid_keys = vec![
-        "not_hex",                          // Not hex
-        "0x123",                            // Too short
-        "0xZZZZ567890123456789012345678901234567890123456789012345678901234", // Invalid hex chars
-        "1234567890123456789012345678901234567890123456789012345678901234",   // Missing 0x prefix
+        "not_hex",                                                             // Not hex
+        "0x123",                                                               // Too short
+        "0xZZZZ567890123456789012345678901234567890123456789012345678901234",  // Invalid hex chars
+        "1234567890123456789012345678901234567890123456789012345678901234",    // Missing 0x prefix
         "0x12345678901234567890123456789012345678901234567890123456789012345", // Too long (65 chars)
     ];
 
@@ -58,7 +59,11 @@ fn test_invalid_key_format() {
         let result = fabstir_llm_node::crypto::extract_node_private_key();
 
         // Expected: Error returned for invalid format
-        assert!(result.is_err(), "Should reject invalid key: {}", invalid_key);
+        assert!(
+            result.is_err(),
+            "Should reject invalid key: {}",
+            invalid_key
+        );
 
         env::remove_var("HOST_PRIVATE_KEY");
     }

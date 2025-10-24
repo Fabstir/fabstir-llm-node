@@ -109,7 +109,11 @@ pub fn save_proving_key(key: &ProvingKey, path: &Path) -> Result<()> {
     }
 
     fs::write(path, &key.key_data)?;
-    tracing::info!("📝 Saved proving key to {:?} ({} bytes)", path, key.key_data.len());
+    tracing::info!(
+        "📝 Saved proving key to {:?} ({} bytes)",
+        path,
+        key.key_data.len()
+    );
     Ok(())
 }
 
@@ -121,7 +125,11 @@ pub fn save_verifying_key(key: &VerificationKey, path: &Path) -> Result<()> {
     }
 
     fs::write(path, &key.key_data)?;
-    tracing::info!("📝 Saved verification key to {:?} ({} bytes)", path, key.key_data.len());
+    tracing::info!(
+        "📝 Saved verification key to {:?} ({} bytes)",
+        path,
+        key.key_data.len()
+    );
     Ok(())
 }
 
@@ -132,7 +140,11 @@ pub fn load_proving_key(path: &Path) -> Result<ProvingKey> {
     }
 
     let key_data = fs::read(path)?;
-    tracing::info!("📖 Loaded proving key from {:?} ({} bytes)", path, key_data.len());
+    tracing::info!(
+        "📖 Loaded proving key from {:?} ({} bytes)",
+        path,
+        key_data.len()
+    );
 
     Ok(ProvingKey { key_data })
 }
@@ -144,7 +156,11 @@ pub fn load_verifying_key(path: &Path) -> Result<VerificationKey> {
     }
 
     let key_data = fs::read(path)?;
-    tracing::info!("📖 Loaded verification key from {:?} ({} bytes)", path, key_data.len());
+    tracing::info!(
+        "📖 Loaded verification key from {:?} ({} bytes)",
+        path,
+        key_data.len()
+    );
 
     Ok(VerificationKey { key_data })
 }

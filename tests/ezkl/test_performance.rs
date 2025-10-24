@@ -256,7 +256,7 @@ fn test_proof_generation_p50_p95_p99() -> Result<()> {
 fn test_key_loading_performance() -> Result<()> {
     // Test that key loading meets < 50ms target
     use fabstir_llm_node::crypto::ezkl::setup::{
-        compile_circuit, generate_keys, save_proving_key, load_proving_key,
+        compile_circuit, generate_keys, load_proving_key, save_proving_key,
     };
     use fabstir_llm_node::crypto::ezkl::CommitmentCircuit;
     use tempfile::TempDir;
@@ -328,10 +328,16 @@ fn test_proof_throughput_sequential() -> Result<()> {
 
     // Target: 20-100 proofs/second (mock should be much higher)
     #[cfg(not(feature = "real-ezkl"))]
-    assert!(throughput > 1000.0, "Mock throughput should be > 1000 proofs/sec");
+    assert!(
+        throughput > 1000.0,
+        "Mock throughput should be > 1000 proofs/sec"
+    );
 
     #[cfg(feature = "real-ezkl")]
-    assert!(throughput > 20.0, "Real EZKL throughput should be > 20 proofs/sec");
+    assert!(
+        throughput > 20.0,
+        "Real EZKL throughput should be > 20 proofs/sec"
+    );
 
     Ok(())
 }

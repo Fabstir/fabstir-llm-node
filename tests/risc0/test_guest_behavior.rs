@@ -57,7 +57,10 @@ fn test_guest_reads_four_hashes() -> Result<()> {
     let receipt = prove_info.receipt;
 
     // If we got here without panic, guest successfully read all 4 hashes
-    assert!(receipt.journal.bytes.len() > 0, "Journal should contain data");
+    assert!(
+        receipt.journal.bytes.len() > 0,
+        "Journal should contain data"
+    );
 
     Ok(())
 }
@@ -175,9 +178,9 @@ fn test_guest_handles_serialization() -> Result<()> {
 
     // Use random-looking data to test serialization robustness
     let job_id = [
-        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-        0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x01, 0x02, 0x03, 0x04,
-        0x05, 0x06, 0x07, 0x08,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+        0x07, 0x08,
     ];
 
     let model_hash = [0xFFu8; 32]; // All 0xFF
@@ -313,15 +316,15 @@ fn test_guest_produces_valid_receipt() -> Result<()> {
     let receipt = prove_info.receipt;
 
     // Receipt should have a journal
-    assert!(!receipt.journal.bytes.is_empty(), "Receipt should have journal");
+    assert!(
+        !receipt.journal.bytes.is_empty(),
+        "Receipt should have journal"
+    );
 
     // Receipt should be verifiable (we'll test actual verification in Phase 4)
     // For now, just ensure receipt structure is valid
     let _journal_len = receipt.journal.bytes.len();
-    assert!(
-        _journal_len > 0,
-        "Journal should contain committed data"
-    );
+    assert!(_journal_len > 0, "Journal should contain committed data");
 
     Ok(())
 }

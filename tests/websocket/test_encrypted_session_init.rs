@@ -13,7 +13,7 @@
 //! **TDD Approach**: Tests written BEFORE handler implementation.
 
 use fabstir_llm_node::crypto::{
-    decrypt_session_init, encrypt_with_aead, derive_shared_key, EncryptedSessionPayload,
+    decrypt_session_init, derive_shared_key, encrypt_with_aead, EncryptedSessionPayload,
     SessionKeyStore,
 };
 use k256::ecdsa::SigningKey;
@@ -102,7 +102,8 @@ fn test_encrypted_init_handler() {
     let (client_private, _client_public) = generate_keypair();
 
     // Create encrypted session init payload
-    let (payload, expected_session_key) = create_test_session_init_payload(&node_private, &client_private);
+    let (payload, expected_session_key) =
+        create_test_session_init_payload(&node_private, &client_private);
 
     // Verify payload structure
     assert_eq!(payload["type"], "encrypted_session_init");
@@ -123,7 +124,8 @@ fn test_init_stores_session_key() {
 
     let (node_private, _) = generate_keypair();
     let (client_private, _) = generate_keypair();
-    let (payload, expected_session_key) = create_test_session_init_payload(&node_private, &client_private);
+    let (payload, expected_session_key) =
+        create_test_session_init_payload(&node_private, &client_private);
 
     // Parse encrypted payload
     let eph_pub_hex = payload["payload"]["ephPubHex"].as_str().unwrap();
@@ -152,7 +154,9 @@ fn test_init_stores_session_key() {
     let session_id = payload["session_id"].as_str().unwrap();
 
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        store.store_key(session_id.to_string(), session_data.session_key).await;
+        store
+            .store_key(session_id.to_string(), session_data.session_key)
+            .await;
 
         // Verify key was stored
         let retrieved_key = store.get_key(session_id).await;
@@ -253,9 +257,9 @@ fn test_init_invalid_signature() {
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("Signature verification failed") ||
-        error_msg.contains("invalid signature") ||
-        error_msg.contains("recovery")
+        error_msg.contains("Signature verification failed")
+            || error_msg.contains("invalid signature")
+            || error_msg.contains("recovery")
     );
 
     // Expected: Handler would send error response and close connection
@@ -292,9 +296,9 @@ fn test_init_decryption_failure() {
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("Decryption failed") ||
-        error_msg.contains("authentication") ||
-        error_msg.contains("AEAD")
+        error_msg.contains("Decryption failed")
+            || error_msg.contains("authentication")
+            || error_msg.contains("AEAD")
     );
 
     // Expected: Handler would send error response with code DECRYPTION_FAILED

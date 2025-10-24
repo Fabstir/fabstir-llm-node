@@ -96,10 +96,7 @@ fn test_detect_wrong_model_hash() -> Result<()> {
         .verify_proof(&proof, &tampered_witness)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Wrong model hash should fail verification"
-    );
+    assert!(!is_valid, "Wrong model hash should fail verification");
     Ok(())
 }
 
@@ -121,10 +118,7 @@ fn test_detect_wrong_input_hash() -> Result<()> {
         .verify_proof(&proof, &tampered_witness)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Wrong input hash should fail verification"
-    );
+    assert!(!is_valid, "Wrong input hash should fail verification");
     Ok(())
 }
 
@@ -146,10 +140,7 @@ fn test_detect_wrong_output_hash() -> Result<()> {
         .verify_proof(&proof, &tampered_witness)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Wrong output hash should fail verification"
-    );
+    assert!(!is_valid, "Wrong output hash should fail verification");
     Ok(())
 }
 
@@ -167,10 +158,7 @@ fn test_detect_proof_replay_attack() -> Result<()> {
         .verify_proof(&proof1, &witness2)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Proof replay attack should be detected"
-    );
+    assert!(!is_valid, "Proof replay attack should be detected");
     Ok(())
 }
 
@@ -195,10 +183,7 @@ fn test_detect_partial_hash_tampering() -> Result<()> {
         .verify_proof(&proof, &tampered_witness)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Even single byte tampering should be detected"
-    );
+    assert!(!is_valid, "Even single byte tampering should be detected");
     Ok(())
 }
 
@@ -217,10 +202,7 @@ fn test_detect_proof_substitution() -> Result<()> {
         .verify_proof(&proof_a, &witness_b)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Proof substitution should be detected"
-    );
+    assert!(!is_valid, "Proof substitution should be detected");
     Ok(())
 }
 
@@ -260,7 +242,7 @@ fn test_detect_public_input_mismatch() -> Result<()> {
 
     // Try to verify with wrong public inputs
     let wrong_public_inputs = vec![
-        &[0u8; 32],  // Wrong model hash
+        &[0u8; 32], // Wrong model hash
         witness.input_hash(),
         witness.output_hash(),
     ];
@@ -308,10 +290,7 @@ fn test_detect_full_tampering_scenario() -> Result<()> {
         .verify_proof(&proof_original, &witness_fake)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert!(
-        !is_valid,
-        "Complete tampering scenario should be detected"
-    );
+    assert!(!is_valid, "Complete tampering scenario should be detected");
 
     // Also verify original still works
     let original_valid = verifier

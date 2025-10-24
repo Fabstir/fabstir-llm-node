@@ -39,7 +39,12 @@ fn test_coverage_statistics() {
 
     // Verify each module has adequate coverage (at least 4 tests per module)
     for (module, count) in expected_test_counts {
-        assert!(count >= 4, "{} module should have at least 4 tests, has {}", module, count);
+        assert!(
+            count >= 4,
+            "{} module should have at least 4 tests, has {}",
+            module,
+            count
+        );
     }
 }
 

@@ -101,8 +101,10 @@ fn test_batch_verification_throughput() -> Result<()> {
     println!("Batch verification:");
     println!("  Total time: {:?}", duration);
     println!("  Per proof: {:?}", avg_per_proof);
-    println!("  Throughput: {:.2} verifications/sec",
-        batch_size as f64 / duration.as_secs_f64());
+    println!(
+        "  Throughput: {:.2} verifications/sec",
+        batch_size as f64 / duration.as_secs_f64()
+    );
 
     Ok(())
 }
@@ -358,7 +360,10 @@ fn test_cold_start_vs_warm_cache() -> Result<()> {
     println!("Cold start vs warm cache:");
     println!("  Avg cold start: {:?}", avg_cold);
     println!("  Avg warm cache: {:?}", avg_warm);
-    println!("  Speedup: {:.2}x", avg_cold.as_secs_f64() / avg_warm.as_secs_f64());
+    println!(
+        "  Speedup: {:.2}x",
+        avg_cold.as_secs_f64() / avg_warm.as_secs_f64()
+    );
 
     Ok(())
 }

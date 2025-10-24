@@ -132,7 +132,10 @@ impl SettlementValidator {
             Err(e) => {
                 let duration = start.elapsed().as_millis() as u64;
                 self.metrics.record_validation_failure(duration);
-                error!("❌ [VALIDATOR] Failed to retrieve proof for job {}: {}", job_id, e);
+                error!(
+                    "❌ [VALIDATOR] Failed to retrieve proof for job {}: {}",
+                    job_id, e
+                );
                 return Err(e);
             }
         };
@@ -143,7 +146,10 @@ impl SettlementValidator {
             Err(e) => {
                 let duration = start.elapsed().as_millis() as u64;
                 self.metrics.record_validation_failure(duration);
-                error!("❌ [VALIDATOR] Failed to retrieve result for job {}: {}", job_id, e);
+                error!(
+                    "❌ [VALIDATOR] Failed to retrieve result for job {}: {}",
+                    job_id, e
+                );
                 return Err(e);
             }
         };
@@ -154,7 +160,10 @@ impl SettlementValidator {
             Err(e) => {
                 let duration = start.elapsed().as_millis() as u64;
                 self.metrics.record_validation_failure(duration);
-                error!("❌ [VALIDATOR] Verification error for job {}: {}", job_id, e);
+                error!(
+                    "❌ [VALIDATOR] Verification error for job {}: {}",
+                    job_id, e
+                );
                 return Err(e);
             }
         };
@@ -163,10 +172,16 @@ impl SettlementValidator {
 
         if is_valid {
             self.metrics.record_validation_success(duration);
-            info!("✅ [VALIDATOR] Proof validated successfully for job {} ({} ms)", job_id, duration);
+            info!(
+                "✅ [VALIDATOR] Proof validated successfully for job {} ({} ms)",
+                job_id, duration
+            );
         } else {
             self.metrics.record_validation_failure(duration);
-            warn!("❌ [VALIDATOR] Proof validation failed for job {} ({} ms)", job_id, duration);
+            warn!(
+                "❌ [VALIDATOR] Proof validation failed for job {} ({} ms)",
+                job_id, duration
+            );
         }
 
         Ok(is_valid)
@@ -237,12 +252,18 @@ impl SettlementValidator {
 
         // Remove proof
         if let Err(e) = self.proof_store.write().await.remove_proof(job_id).await {
-            warn!("[VALIDATOR] Failed to remove proof for job {}: {}", job_id, e);
+            warn!(
+                "[VALIDATOR] Failed to remove proof for job {}: {}",
+                job_id, e
+            );
         }
 
         // Remove result
         if let Err(e) = self.result_store.write().await.remove_result(job_id).await {
-            warn!("[VALIDATOR] Failed to remove result for job {}: {}", job_id, e);
+            warn!(
+                "[VALIDATOR] Failed to remove result for job {}: {}",
+                job_id, e
+            );
         }
 
         info!("[VALIDATOR] ✓ Cleanup completed for job {}", job_id);
@@ -287,11 +308,7 @@ mod tests {
         let proof_store = Arc::new(RwLock::new(ProofStore::new()));
         let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-        let validator = SettlementValidator::new(
-            proof_generator,
-            proof_store,
-            result_store,
-        );
+        let validator = SettlementValidator::new(proof_generator, proof_store, result_store);
 
         assert_eq!(validator.metrics.validations_total(), 0);
     }
@@ -302,11 +319,7 @@ mod tests {
         let proof_store = Arc::new(RwLock::new(ProofStore::new()));
         let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-        let validator = SettlementValidator::new(
-            proof_generator,
-            proof_store,
-            result_store,
-        );
+        let validator = SettlementValidator::new(proof_generator, proof_store, result_store);
 
         // Try to validate non-existent proof
         let result = validator.validate_before_settlement(123).await;
@@ -332,12 +345,22 @@ mod tests {
 
         // Store result only
         let result = create_test_result("456");
-        result_store.write().await.store_result(456, result.clone()).await.unwrap();
+        result_store
+            .write()
+            .await
+            .store_result(456, result.clone())
+            .await
+            .unwrap();
         assert!(!validator.has_required_data(456).await);
 
         // Store proof
         let proof = proof_generator.generate_proof(&result).await.unwrap();
-        proof_store.write().await.store_proof(456, proof).await.unwrap();
+        proof_store
+            .write()
+            .await
+            .store_proof(456, proof)
+            .await
+            .unwrap();
 
         // Now both exist
         assert!(validator.has_required_data(456).await);
@@ -357,9 +380,19 @@ mod tests {
 
         // Store data
         let result = create_test_result("789");
-        result_store.write().await.store_result(789, result.clone()).await.unwrap();
+        result_store
+            .write()
+            .await
+            .store_result(789, result.clone())
+            .await
+            .unwrap();
         let proof = proof_generator.generate_proof(&result).await.unwrap();
-        proof_store.write().await.store_proof(789, proof).await.unwrap();
+        proof_store
+            .write()
+            .await
+            .store_proof(789, proof)
+            .await
+            .unwrap();
 
         assert!(validator.has_required_data(789).await);
 
@@ -388,9 +421,19 @@ mod tests {
 
         // Attempt 2: Valid proof+result (success)
         let result = create_test_result("222");
-        result_store.write().await.store_result(222, result.clone()).await.unwrap();
+        result_store
+            .write()
+            .await
+            .store_result(222, result.clone())
+            .await
+            .unwrap();
         let proof = proof_generator.generate_proof(&result).await.unwrap();
-        proof_store.write().await.store_proof(222, proof).await.unwrap();
+        proof_store
+            .write()
+            .await
+            .store_proof(222, proof)
+            .await
+            .unwrap();
 
         let is_valid = validator.validate_before_settlement(222).await.unwrap();
         assert!(is_valid);

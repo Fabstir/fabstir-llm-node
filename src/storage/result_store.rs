@@ -104,7 +104,10 @@ impl ResultStore {
             stats.total_tokens = stats.total_tokens.saturating_sub(tokens);
             drop(stats);
 
-            info!("✅ Result removed for job {} ({} tokens freed)", job_id, tokens);
+            info!(
+                "✅ Result removed for job {} ({} tokens freed)",
+                job_id, tokens
+            );
             Ok(result)
         } else {
             warn!("⚠️ No result to remove for job {}", job_id);
@@ -154,8 +157,8 @@ impl Default for ResultStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::results::packager::ResultMetadata;
+    use chrono::Utc;
 
     fn create_test_result(job_id: &str, tokens: u32) -> InferenceResult {
         InferenceResult {

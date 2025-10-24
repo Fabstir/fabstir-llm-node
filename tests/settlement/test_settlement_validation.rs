@@ -46,11 +46,8 @@ async fn test_validate_with_valid_proof() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Store result and proof
     let result = create_test_result(100, "Valid response");
@@ -77,11 +74,8 @@ async fn test_validate_with_invalid_proof() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Store result and proof
     let result = create_test_result(200, "Original response");
@@ -116,11 +110,8 @@ async fn test_validate_with_missing_proof() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Store only result, no proof
     let result = create_test_result(300, "Response");
@@ -143,11 +134,8 @@ async fn test_validate_with_tampered_result() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Generate proof for original result
     let original = create_test_result(400, "Original output");
@@ -158,7 +146,11 @@ async fn test_validate_with_tampered_result() -> Result<()> {
 
     // Store tampered result with different output
     let tampered = create_test_result(400, "Tampered output - malicious");
-    result_store.write().await.store_result(400, tampered).await?;
+    result_store
+        .write()
+        .await
+        .store_result(400, tampered)
+        .await?;
 
     // Validation should fail
     let is_valid = validator.validate_before_settlement(400).await?;
@@ -176,11 +168,8 @@ async fn test_validate_blocks_settlement_on_failure() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Setup invalid scenario (missing proof)
     let result = create_test_result(500, "Response");
@@ -205,28 +194,37 @@ async fn test_validator_metrics_tracking() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Validation 1: Success
     let result1 = create_test_result(600, "Response 1");
     let proof1 = proof_gen.generate_proof(&result1).await?;
-    result_store.write().await.store_result(600, result1).await?;
+    result_store
+        .write()
+        .await
+        .store_result(600, result1)
+        .await?;
     proof_store.write().await.store_proof(600, proof1).await?;
     let _ = validator.validate_before_settlement(600).await?;
 
     // Validation 2: Failure (missing proof)
     let result2 = create_test_result(601, "Response 2");
-    result_store.write().await.store_result(601, result2).await?;
+    result_store
+        .write()
+        .await
+        .store_result(601, result2)
+        .await?;
     let _ = validator.validate_before_settlement(601).await;
 
     // Validation 3: Success
     let result3 = create_test_result(602, "Response 3");
     let proof3 = proof_gen.generate_proof(&result3).await?;
-    result_store.write().await.store_result(602, result3).await?;
+    result_store
+        .write()
+        .await
+        .store_result(602, result3)
+        .await?;
     proof_store.write().await.store_proof(602, proof3).await?;
     let _ = validator.validate_before_settlement(602).await?;
 
@@ -258,7 +256,11 @@ async fn test_concurrent_validations() -> Result<()> {
     for job_id in 700..710 {
         let result = create_test_result(job_id, &format!("Response {}", job_id));
         let proof = proof_gen.generate_proof(&result).await?;
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
 
@@ -266,12 +268,7 @@ async fn test_concurrent_validations() -> Result<()> {
     let handles: Vec<_> = (700..710)
         .map(|job_id| {
             let validator = validator.clone();
-            tokio::spawn(async move {
-                validator
-                    .validate_before_settlement(job_id)
-                    .await
-                    .unwrap()
-            })
+            tokio::spawn(async move { validator.validate_before_settlement(job_id).await.unwrap() })
         })
         .collect();
 
@@ -293,11 +290,8 @@ async fn test_validator_caching() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Setup job
     let result = create_test_result(800, "Response");
@@ -328,11 +322,8 @@ async fn test_validator_cleanup() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Setup and validate job
     let result = create_test_result(900, "Response");

@@ -166,7 +166,10 @@ fn test_error_context() {
     };
 
     match err {
-        CryptoError::InvalidNonce { expected_size, actual_size } => {
+        CryptoError::InvalidNonce {
+            expected_size,
+            actual_size,
+        } => {
             assert_eq!(expected_size, 24);
             assert_eq!(actual_size, 32);
         }

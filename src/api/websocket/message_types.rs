@@ -292,10 +292,7 @@ fn decode_hex_field(hex_str: &str, field_name: &str) -> Result<Vec<u8>, Validati
 }
 
 /// Decode hex field but allow empty (for optional fields like AAD)
-fn decode_hex_field_optional(
-    hex_str: &str,
-    field_name: &str,
-) -> Result<Vec<u8>, ValidationError> {
+fn decode_hex_field_optional(hex_str: &str, field_name: &str) -> Result<Vec<u8>, ValidationError> {
     if hex_str.is_empty() {
         return Ok(Vec::new());
     }

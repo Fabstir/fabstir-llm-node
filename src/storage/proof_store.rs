@@ -102,7 +102,10 @@ impl ProofStore {
             stats.total_size_bytes = stats.total_size_bytes.saturating_sub(proof_size);
             drop(stats);
 
-            info!("✅ Proof removed for job {} ({} bytes freed)", job_id, proof_size);
+            info!(
+                "✅ Proof removed for job {} ({} bytes freed)",
+                job_id, proof_size
+            );
             Ok(proof)
         } else {
             warn!("⚠️ No proof to remove for job {}", job_id);
@@ -152,8 +155,8 @@ impl Default for ProofStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::results::proofs::ProofType;
+    use chrono::Utc;
 
     fn create_test_proof(job_id: &str, proof_size: usize) -> InferenceProof {
         InferenceProof {

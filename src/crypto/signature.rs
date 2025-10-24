@@ -156,7 +156,9 @@ mod tests {
         for recovery_id in 0..2 {
             compact_sig[64] = recovery_id;
 
-            if let Ok(recovered_address) = recover_client_address(&compact_sig, message_hash.as_slice()) {
+            if let Ok(recovered_address) =
+                recover_client_address(&compact_sig, message_hash.as_slice())
+            {
                 if recovered_address == expected_address {
                     // Success!
                     assert_eq!(recovered_address.len(), 42);

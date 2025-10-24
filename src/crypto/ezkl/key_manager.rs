@@ -6,7 +6,10 @@
 //! Provides thread-safe key caching with Arc<RwLock> for concurrent access.
 
 use super::error::{EzklError, EzklResult};
-use super::setup::{load_proving_key, load_verifying_key, validate_proving_key, validate_verifying_key, ProvingKey, VerificationKey};
+use super::setup::{
+    load_proving_key, load_verifying_key, validate_proving_key, validate_verifying_key, ProvingKey,
+    VerificationKey,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -110,11 +113,7 @@ impl<T: Clone> KeyCache<T> {
 
     fn update_stats(&mut self) {
         self.stats.cached_keys = self.keys.len();
-        self.stats.memory_bytes = self
-            .keys
-            .values()
-            .map(|cached| cached.size_bytes)
-            .sum();
+        self.stats.memory_bytes = self.keys.values().map(|cached| cached.size_bytes).sum();
     }
 
     fn stats(&self) -> KeyCacheStats {
@@ -192,9 +191,7 @@ impl KeyManager {
     /// Checks cache first. If not found, loads from disk and caches.
     pub fn load_proving_key(&self, path: &Path) -> EzklResult<ProvingKey> {
         // Canonicalize path for consistent cache keys
-        let canonical_path = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         // Check cache first
         {
@@ -234,9 +231,7 @@ impl KeyManager {
     /// Checks cache first. If not found, loads from disk and caches.
     pub fn load_verifying_key(&self, path: &Path) -> EzklResult<VerificationKey> {
         // Canonicalize path for consistent cache keys
-        let canonical_path = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         // Check cache first
         {
@@ -299,9 +294,7 @@ impl KeyManager {
 
     /// Reload proving key (invalidate and load fresh)
     pub fn reload_proving_key(&self, path: &Path) -> EzklResult<ProvingKey> {
-        let canonical_path = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         {
             let mut cache = self.proving_key_cache.write().unwrap();
@@ -313,9 +306,7 @@ impl KeyManager {
 
     /// Reload verification key (invalidate and load fresh)
     pub fn reload_verifying_key(&self, path: &Path) -> EzklResult<VerificationKey> {
-        let canonical_path = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         {
             let mut cache = self.verifying_key_cache.write().unwrap();
@@ -348,9 +339,7 @@ impl KeyManager {
 
     /// Check if a proving key is loaded in cache
     pub fn is_proving_key_cached(&self, path: &Path) -> bool {
-        let canonical_path = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         let cache = self.proving_key_cache.read().unwrap();
         cache.keys.contains_key(&canonical_path)
@@ -358,9 +347,7 @@ impl KeyManager {
 
     /// Check if a verification key is loaded in cache
     pub fn is_verifying_key_cached(&self, path: &Path) -> bool {
-        let canonical_path = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         let cache = self.verifying_key_cache.read().unwrap();
         cache.keys.contains_key(&canonical_path)
@@ -384,7 +371,9 @@ mod tests {
     // Note: Key manager tests are only for EZKL (SNARK proofs with keys)
     // Risc0 uses transparent setup (no keys), so these tests don't apply
     #[cfg(not(feature = "real-ezkl"))]
-    use crate::crypto::ezkl::setup::{compile_circuit, generate_keys, save_proving_key, save_verifying_key};
+    use crate::crypto::ezkl::setup::{
+        compile_circuit, generate_keys, save_proving_key, save_verifying_key,
+    };
     #[cfg(not(feature = "real-ezkl"))]
     use crate::crypto::ezkl::CommitmentCircuit;
     #[cfg(not(feature = "real-ezkl"))]

@@ -169,12 +169,13 @@ impl CommitmentCircuit {
         output_hash_hex: &str,
     ) -> Result<Self> {
         let job_id = hex::decode(job_id_hex.strip_prefix("0x").unwrap_or(job_id_hex))?;
-        let model_hash =
-            hex::decode(model_hash_hex.strip_prefix("0x").unwrap_or(model_hash_hex))?;
-        let input_hash =
-            hex::decode(input_hash_hex.strip_prefix("0x").unwrap_or(input_hash_hex))?;
-        let output_hash =
-            hex::decode(output_hash_hex.strip_prefix("0x").unwrap_or(output_hash_hex))?;
+        let model_hash = hex::decode(model_hash_hex.strip_prefix("0x").unwrap_or(model_hash_hex))?;
+        let input_hash = hex::decode(input_hash_hex.strip_prefix("0x").unwrap_or(input_hash_hex))?;
+        let output_hash = hex::decode(
+            output_hash_hex
+                .strip_prefix("0x")
+                .unwrap_or(output_hash_hex),
+        )?;
 
         Self::from_bytes(&job_id, &model_hash, &input_hash, &output_hash)
     }
@@ -298,7 +299,8 @@ mod tests {
 
     #[test]
     fn test_circuit_from_bytes() -> Result<()> {
-        let circuit = CommitmentCircuit::from_bytes(&[0u8; 32], &[1u8; 32], &[2u8; 32], &[3u8; 32])?;
+        let circuit =
+            CommitmentCircuit::from_bytes(&[0u8; 32], &[1u8; 32], &[2u8; 32], &[3u8; 32])?;
         assert!(circuit.is_valid());
         Ok(())
     }
