@@ -35,13 +35,9 @@ impl Default for JobMonitorConfig {
 
         let registry_address = std::env::var("CONTRACT_NODE_REGISTRY")
             .or_else(|_| std::env::var("NODE_REGISTRY"))
-            .unwrap_or_else(|_| "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6".to_string())
+            .expect("❌ FATAL: CONTRACT_NODE_REGISTRY (or NODE_REGISTRY) environment variable MUST be set")
             .parse()
-            .unwrap_or_else(|_| {
-                "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6"
-                    .parse()
-                    .unwrap()
-            });
+            .expect("❌ FATAL: Invalid CONTRACT_NODE_REGISTRY address format");
 
         Self {
             marketplace_address,

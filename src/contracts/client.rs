@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
-use tracing::info;
 use ethers::providers::{Http, Provider};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
+use tracing::info;
 
 use super::types::*;
 
@@ -230,7 +230,9 @@ impl Web3Client {
             );
             addresses.insert(
                 "ModelRegistry".to_string(),
-                "0x92b2De840bB2171203011A6dBA928d855cA8183E".parse()?,
+                std::env::var("CONTRACT_MODEL_REGISTRY")
+                    .expect("❌ FATAL: CONTRACT_MODEL_REGISTRY must be set")
+                    .parse()?,
             );
         }
 
@@ -306,7 +308,10 @@ impl Web3Client {
                 }
             })?;
 
-        info!("Transaction sent via eth_sendRawTransaction: {:?}", pending_tx.tx_hash());
+        info!(
+            "Transaction sent via eth_sendRawTransaction: {:?}",
+            pending_tx.tx_hash()
+        );
         Ok(pending_tx.tx_hash())
     }
 

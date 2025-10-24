@@ -30,7 +30,7 @@ pub struct JobTokenTracker {
     pub last_checkpoint: u64,
     pub session_id: Option<String>,
     pub submission_in_progress: bool,
-    pub last_proof_timestamp: Option<std::time::Instant>,  // Track when last proof was submitted
+    pub last_proof_timestamp: Option<std::time::Instant>, // Track when last proof was submitted
 }
 
 pub struct CheckpointManager {
@@ -38,17 +38,14 @@ pub struct CheckpointManager {
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
     proof_system_address: Address,
     host_address: Address,
-    s5_storage: Box<dyn S5Storage>,  // S5 storage for off-chain proof storage
+    s5_storage: Box<dyn S5Storage>, // S5 storage for off-chain proof storage
 }
 
 impl CheckpointManager {
     pub async fn new(web3_client: Arc<Web3Client>) -> Result<Self> {
-        // Read JobMarketplace address from environment variable
-        let job_marketplace_address =
-            std::env::var("CONTRACT_JOB_MARKETPLACE").unwrap_or_else(|_| {
-                warn!("CONTRACT_JOB_MARKETPLACE not set, using default address");
-                "0x1273E6358aa52Bb5B160c34Bf2e617B745e4A944".to_string()
-            });
+        // Read JobMarketplace address from environment variable - REQUIRED, NO FALLBACK
+        let job_marketplace_address = std::env::var("CONTRACT_JOB_MARKETPLACE")
+            .expect("❌ FATAL: CONTRACT_JOB_MARKETPLACE environment variable MUST be set. No fallback addresses allowed.");
 
         let proof_system_address = job_marketplace_address
             .parse()
@@ -207,7 +204,11 @@ impl CheckpointManager {
         info!("✅ Proof uploaded to S5 successfully");
         info!("   Path: {}", proof_path);
         info!("   CID: {}", cid);
-        info!("   Size: {} bytes ({:.2} KB)", proof_bytes.len(), proof_bytes.len() as f64 / 1024.0);
+        info!(
+            "   Size: {} bytes ({:.2} KB)",
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        );
 
         Ok(cid)
     }
@@ -217,7 +218,10 @@ impl CheckpointManager {
     fn generate_proof(&self, job_id: u64, tokens_generated: u64) -> Result<Vec<u8>> {
         #[cfg(feature = "real-ezkl")]
         {
-            info!("🔐 Generating real Risc0 STARK proof for job {} ({} tokens)", job_id, tokens_generated);
+            info!(
+                "🔐 Generating real Risc0 STARK proof for job {} ({} tokens)",
+                job_id, tokens_generated
+            );
 
             // Create witness from available data
             // job_id: Convert u64 to [u8; 32] by creating SHA256 hash
@@ -226,8 +230,8 @@ impl CheckpointManager {
             job_id_bytes.copy_from_slice(&job_id_hash);
 
             // model_hash: Get from MODEL_PATH environment variable
-            let model_path = std::env::var("MODEL_PATH")
-                .unwrap_or_else(|_| "./models/default.gguf".to_string());
+            let model_path =
+                std::env::var("MODEL_PATH").unwrap_or_else(|_| "./models/default.gguf".to_string());
             let model_hash = Sha256::digest(model_path.as_bytes());
             let mut model_hash_bytes = [0u8; 32];
             model_hash_bytes.copy_from_slice(&model_hash);
@@ -255,10 +259,12 @@ impl CheckpointManager {
 
             // Generate proof
             let mut prover = EzklProver::new();
-            let proof_data = prover.generate_proof(&witness)
+            let proof_data = prover
+                .generate_proof(&witness)
                 .map_err(|e| anyhow!("Failed to generate proof: {}", e))?;
 
-            info!("✅ STARK proof generated: {} bytes ({:.2} KB)",
+            info!(
+                "✅ STARK proof generated: {} bytes ({:.2} KB)",
                 proof_data.proof_bytes.len(),
                 proof_data.proof_bytes.len() as f64 / 1024.0
             );
@@ -427,7 +433,7 @@ impl CheckpointManager {
 
             // For session completion, submit ANY tokens we have (even if < MIN_PROVEN_TOKENS)
             if tokens_since_checkpoint > 0 {
-                let mut tokens_to_submit = tokens_since_checkpoint;  // Submit ONLY the delta, not total
+                let mut tokens_to_submit = tokens_since_checkpoint; // Submit ONLY the delta, not total
                 let previous_checkpoint = tracker.last_checkpoint;
                 let is_first_checkpoint = previous_checkpoint == 0;
 
@@ -448,7 +454,10 @@ impl CheckpointManager {
                         "   Total tracked: {} tokens, Last proven: {} tokens, Lost: {} tokens",
                         tracker.tokens_generated, previous_checkpoint, tokens_to_submit
                     );
-                    warn!("   These {} tokens will NOT be charged to the user", tokens_to_submit);
+                    warn!(
+                        "   These {} tokens will NOT be charged to the user",
+                        tokens_to_submit
+                    );
                     drop(trackers);
                     return Ok(());
                 }
@@ -460,7 +469,7 @@ impl CheckpointManager {
 
                 // Mark as in progress and update checkpoint to reflect total tokens proven
                 tracker.submission_in_progress = true;
-                tracker.last_checkpoint = tracker.tokens_generated;  // Update to total after submission
+                tracker.last_checkpoint = tracker.tokens_generated; // Update to total after submission
 
                 drop(trackers); // Release lock for async operation
 
@@ -496,12 +505,8 @@ impl CheckpointManager {
                 "❌ No tracker found for job {} - tokens were never tracked!",
                 job_id
             );
-            error!(
-                "   This means HTTP inference didn't track tokens for this job ID"
-            );
-            error!(
-                "   Check if job_id/session_id is correctly passed in inference requests"
-            );
+            error!("   This means HTTP inference didn't track tokens for this job ID");
+            error!("   Check if job_id/session_id is correctly passed in inference requests");
         }
 
         Ok(())
@@ -536,7 +541,7 @@ impl CheckpointManager {
             }
 
             // We have enough tokens to submit
-            let mut tokens_to_submit = tokens_since_checkpoint;  // Submit ONLY the delta, not total
+            let mut tokens_to_submit = tokens_since_checkpoint; // Submit ONLY the delta, not total
             let previous_checkpoint = tracker.last_checkpoint;
             let is_first_checkpoint = previous_checkpoint == 0;
 
@@ -557,7 +562,7 @@ impl CheckpointManager {
 
             // Mark as in progress and update checkpoint to reflect total tokens proven
             tracker.submission_in_progress = true;
-            tracker.last_checkpoint = tracker.tokens_generated;  // Update to total after submission
+            tracker.last_checkpoint = tracker.tokens_generated; // Update to total after submission
 
             drop(trackers); // Release lock for async operation
 
@@ -603,12 +608,24 @@ impl CheckpointManager {
         // Debug: Check what trackers we have
         {
             let trackers = self.job_trackers.read().await;
-            info!("[CHECKPOINT-MGR] 📊 Current tracked jobs: {:?}", trackers.keys().collect::<Vec<_>>());
+            info!(
+                "[CHECKPOINT-MGR] 📊 Current tracked jobs: {:?}",
+                trackers.keys().collect::<Vec<_>>()
+            );
             if let Some(tracker) = trackers.get(&job_id) {
                 info!("[CHECKPOINT-MGR]   ✓ Job {} token tracking:", job_id);
-                info!("[CHECKPOINT-MGR]     - Tokens generated: {}", tracker.tokens_generated);
-                info!("[CHECKPOINT-MGR]     - Last checkpoint at: {} tokens", tracker.last_checkpoint);
-                info!("[CHECKPOINT-MGR]     - Session ID: {:?}", tracker.session_id);
+                info!(
+                    "[CHECKPOINT-MGR]     - Tokens generated: {}",
+                    tracker.tokens_generated
+                );
+                info!(
+                    "[CHECKPOINT-MGR]     - Last checkpoint at: {} tokens",
+                    tracker.last_checkpoint
+                );
+                info!(
+                    "[CHECKPOINT-MGR]     - Session ID: {:?}",
+                    tracker.session_id
+                );
             } else {
                 error!("[CHECKPOINT-MGR]   ❌ Job {} has NO TRACKER - payment calculation may be affected!", job_id);
             }
@@ -649,7 +666,10 @@ impl CheckpointManager {
                     );
                     drop(trackers); // Release lock before sleeping
                     tokio::time::sleep(Duration::from_secs(wait_time)).await;
-                    info!("✅ Dispute window elapsed for job {}. Proceeding with completion.", job_id);
+                    info!(
+                        "✅ Dispute window elapsed for job {}. Proceeding with completion.",
+                        job_id
+                    );
                 } else {
                     info!(
                         "✅ Job {} dispute window already elapsed ({}s > {}s). Proceeding immediately.",
@@ -658,7 +678,10 @@ impl CheckpointManager {
                     drop(trackers);
                 }
             } else {
-                info!("ℹ️ No recent proof timestamp for job {}. Proceeding with completion.", job_id);
+                info!(
+                    "ℹ️ No recent proof timestamp for job {}. Proceeding with completion.",
+                    job_id
+                );
                 drop(trackers);
             }
         } else {
@@ -689,8 +712,7 @@ impl CheckpointManager {
             Ok(tx_hash) => {
                 info!(
                     "Transaction sent for completing job {} - tx_hash: {:?}",
-                    job_id,
-                    tx_hash
+                    job_id, tx_hash
                 );
 
                 // Wait for confirmation
@@ -729,8 +751,10 @@ impl CheckpointManager {
             }
             Err(e) => {
                 // Check for nonce-related errors and retry with delay
-                if e.to_string().contains("replacement transaction underpriced")
-                    || e.to_string().contains("nonce too low") {
+                if e.to_string()
+                    .contains("replacement transaction underpriced")
+                    || e.to_string().contains("nonce too low")
+                {
                     error!("❌ Nonce conflict detected for job {}: {}", job_id, e);
                     info!("⏳ Retrying with 5 second delay to resolve nonce conflict...");
 
@@ -748,7 +772,10 @@ impl CheckpointManager {
                         .await
                     {
                         Ok(tx_hash) => {
-                            info!("🔄 Retry successful for job {} - tx_hash: {:?}", job_id, tx_hash);
+                            info!(
+                                "🔄 Retry successful for job {} - tx_hash: {:?}",
+                                job_id, tx_hash
+                            );
 
                             // Wait for confirmation
                             match self.web3_client.wait_for_confirmation(tx_hash).await {
@@ -760,18 +787,26 @@ impl CheckpointManager {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("❌ Retry transaction error for job {}: {:?}", job_id, e);
+                                    error!(
+                                        "❌ Retry transaction error for job {}: {:?}",
+                                        job_id, e
+                                    );
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("❌ Failed to send complete session transaction for job {}: {}", job_id, e);
+                            error!(
+                                "❌ Failed to send complete session transaction for job {}: {}",
+                                job_id, e
+                            );
                             // Clean up tracker since we failed
                             let mut trackers = self.job_trackers.write().await;
                             if trackers.remove(&job_id).is_some() {
                                 info!("Cleaned up tracker for job {} after retry failure", job_id);
                             }
-                            return Err(format!("Failed to complete session after retry: {}", e).into());
+                            return Err(
+                                format!("Failed to complete session after retry: {}", e).into()
+                            );
                         }
                     }
                 }
@@ -814,11 +849,13 @@ impl CheckpointManager {
                                 delay_secs, retry_count + 1, job_id, dispute_window
                             );
 
-                            tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs as u64)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs as u64))
+                                .await;
 
                             info!(
                                 "🔄 Retry {} - Attempting to complete session for job {}",
-                                retry_count + 1, job_id
+                                retry_count + 1,
+                                job_id
                             );
 
                             // Retry the completion
@@ -836,7 +873,9 @@ impl CheckpointManager {
                                 Ok(tx_hash) => {
                                     info!(
                                         "📤 Retry {} transaction sent for job {} - tx_hash: {:?}",
-                                        retry_count + 1, job_id, tx_hash
+                                        retry_count + 1,
+                                        job_id,
+                                        tx_hash
                                     );
 
                                     // Wait for confirmation
@@ -856,12 +895,21 @@ impl CheckpointManager {
                                                 }
                                                 break; // Success! Exit retry loop
                                             } else {
-                                                error!("❌ Retry {} transaction failed for job {}", retry_count + 1, job_id);
+                                                error!(
+                                                    "❌ Retry {} transaction failed for job {}",
+                                                    retry_count + 1,
+                                                    job_id
+                                                );
                                                 break; // Transaction failed for non-dispute reasons
                                             }
                                         }
                                         Err(e) => {
-                                            error!("❌ Retry {} transaction error for job {}: {:?}", retry_count + 1, job_id, e);
+                                            error!(
+                                                "❌ Retry {} transaction error for job {}: {:?}",
+                                                retry_count + 1,
+                                                job_id,
+                                                e
+                                            );
                                             break; // Transaction error for non-dispute reasons
                                         }
                                     }
@@ -916,7 +964,9 @@ impl CheckpointManager {
                     if trackers.remove(&job_id).is_some() {
                         info!("Cleaned up tracker for job {} after failure", job_id);
                     }
-                    return Err(format!("Failed to send complete session transaction: {}", e).into());
+                    return Err(
+                        format!("Failed to send complete session transaction: {}", e).into(),
+                    );
                 }
             }
         }
@@ -929,7 +979,6 @@ impl CheckpointManager {
 
         Ok(())
     }
-
 
     /// Clean up job tracker (when job completes)
     pub async fn cleanup_job(&self, job_id: u64) {
@@ -1022,8 +1071,10 @@ fn encode_checkpoint_call(
         Token::Uint(U256::from(job_id)),
         Token::Uint(U256::from(tokens_generated)),
         Token::FixedBytes(proof_hash.to_vec()), // NEW: 32-byte hash
-        Token::String(proof_cid),                // NEW: S5 CID string
+        Token::String(proof_cid),               // NEW: S5 CID string
     ];
 
-    function.encode_input(&tokens).expect("Failed to encode submitProofOfWork call")
+    function
+        .encode_input(&tokens)
+        .expect("Failed to encode submitProofOfWork call")
 }

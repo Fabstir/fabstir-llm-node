@@ -22,15 +22,13 @@ pub struct PaymentConfig {
 
 impl Default for PaymentConfig {
     fn default() -> Self {
-        // Try to load from environment variables, fall back to defaults
+        // Load from environment variable - REQUIRED, NO FALLBACK
         let escrow_address = std::env::var("PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS")
-            .unwrap_or_else(|_| "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6".to_string())
+            .expect(
+                "❌ FATAL: PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS environment variable MUST be set",
+            )
             .parse()
-            .unwrap_or_else(|_| {
-                "0xa4C5599Ea3617060ce86Ff0916409e1fb4a0d2c6"
-                    .parse()
-                    .unwrap()
-            });
+            .expect("❌ FATAL: Invalid PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS format");
 
         Self {
             escrow_address,
