@@ -61,7 +61,7 @@ impl Default for JobVerificationConfig {
             5611,
             std::env::var("CONTRACT_JOB_MARKETPLACE_OPBNB")
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
-        ); // opBNB - use same address or default
+        ); // opBNB - optional, defaults to zero address if not configured
 
         Self {
             enabled: true,

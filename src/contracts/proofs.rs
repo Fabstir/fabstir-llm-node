@@ -28,15 +28,11 @@ pub struct ProofConfig {
 
 impl Default for ProofConfig {
     fn default() -> Self {
-        // Try to load from environment variables, fall back to defaults
+        // Load from environment variable - REQUIRED, NO FALLBACK
         let proof_system_address = std::env::var("PROOF_SYSTEM_ADDRESS")
-            .unwrap_or_else(|_| "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E".to_string())
+            .expect("❌ FATAL: PROOF_SYSTEM_ADDRESS environment variable MUST be set")
             .parse()
-            .unwrap_or_else(|_| {
-                "0x2c15728e9E60fdB482F616f8A581E8a81f27CF0E"
-                    .parse()
-                    .unwrap()
-            });
+            .expect("❌ FATAL: Invalid PROOF_SYSTEM_ADDRESS format");
 
         // EZKL verifier is optional (blank means not deployed)
         let ezkl_verifier_address = std::env::var("EZKL_VERIFIER_ADDRESS")

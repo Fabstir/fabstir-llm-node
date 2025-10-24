@@ -66,7 +66,7 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // These will be deployed and configured later
+                // opBNB contracts - OPTIONAL, will be skipped if not deployed (zero addresses)
                 job_marketplace: std::env::var("OPBNB_JOB_MARKETPLACE")
                     .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
                 node_registry: std::env::var("OPBNB_NODE_REGISTRY")
