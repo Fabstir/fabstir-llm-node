@@ -125,5 +125,8 @@ async fn test_key_cloned_for_http() {
     env::remove_var("HOST_PRIVATE_KEY");
 
     // This test will be implemented after clone_for_http() is updated
-    assert!(true, "Placeholder - will implement after clone_for_http update");
+    assert!(
+        true,
+        "Placeholder - will implement after clone_for_http update"
+    );
 }

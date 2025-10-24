@@ -48,19 +48,23 @@ async fn test_missing_proof_error_recovery() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Store result but NO proof
     let result = create_test_result(1000);
-    result_store.write().await.store_result(1000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(1000, result)
+        .await?;
 
     // Attempt 1: Should error with missing proof
     let validation_result = validator.validate_before_settlement(1000).await;
-    assert!(validation_result.is_err(), "Should error when proof is missing");
+    assert!(
+        validation_result.is_err(),
+        "Should error when proof is missing"
+    );
 
     // Recovery: Add the proof
     let proof = proof_gen.generate_proof(&create_test_result(1000)).await?;
@@ -79,11 +83,8 @@ async fn test_missing_result_error_recovery() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Store proof but NO result
     let result = create_test_result(2000);
@@ -92,10 +93,17 @@ async fn test_missing_result_error_recovery() -> Result<()> {
 
     // Attempt 1: Should error with missing result
     let validation_result = validator.validate_before_settlement(2000).await;
-    assert!(validation_result.is_err(), "Should error when result is missing");
+    assert!(
+        validation_result.is_err(),
+        "Should error when result is missing"
+    );
 
     // Recovery: Add the result
-    result_store.write().await.store_result(2000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(2000, result)
+        .await?;
 
     // Attempt 2: Should succeed after recovery
     let is_valid = validator.validate_before_settlement(2000).await?;
@@ -110,11 +118,8 @@ async fn test_corrupted_proof_detection() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Generate valid proof
     let result = create_test_result(3000);
@@ -127,7 +132,11 @@ async fn test_corrupted_proof_detection() -> Result<()> {
 
     // Store corrupted proof
     proof_store.write().await.store_proof(3000, proof).await?;
-    result_store.write().await.store_result(3000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(3000, result)
+        .await?;
 
     // Validation should detect corruption
     let is_valid = validator.validate_before_settlement(3000).await?;
@@ -151,8 +160,18 @@ async fn test_proof_store_concurrent_access_recovery() -> Result<()> {
             tokio::spawn(async move {
                 let result = create_test_result(job_id);
                 let proof = proof_gen.generate_proof(&result).await.unwrap();
-                result_store.write().await.store_result(job_id, result).await.unwrap();
-                proof_store.write().await.store_proof(job_id, proof).await.unwrap();
+                result_store
+                    .write()
+                    .await
+                    .store_result(job_id, result)
+                    .await
+                    .unwrap();
+                proof_store
+                    .write()
+                    .await
+                    .store_proof(job_id, proof)
+                    .await
+                    .unwrap();
             })
         })
         .collect();
@@ -162,15 +181,16 @@ async fn test_proof_store_concurrent_access_recovery() -> Result<()> {
     }
 
     // Verify all data is accessible
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     for job_id in 4000..4010 {
         let is_valid = validator.validate_before_settlement(job_id).await?;
-        assert!(is_valid, "Job {} should be valid after concurrent writes", job_id);
+        assert!(
+            is_valid,
+            "Job {} should be valid after concurrent writes",
+            job_id
+        );
     }
 
     Ok(())
@@ -182,17 +202,22 @@ async fn test_store_clear_recovery() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Store valid data
     let result = create_test_result(5000);
     let proof = proof_gen.generate_proof(&result).await?;
-    result_store.write().await.store_result(5000, result.clone()).await?;
-    proof_store.write().await.store_proof(5000, proof.clone()).await?;
+    result_store
+        .write()
+        .await
+        .store_result(5000, result.clone())
+        .await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(5000, proof.clone())
+        .await?;
 
     // Verify it works
     let is_valid = validator.validate_before_settlement(5000).await?;
@@ -207,7 +232,11 @@ async fn test_store_clear_recovery() -> Result<()> {
     assert!(validation_result.is_err(), "Should error after store clear");
 
     // Recovery: Re-add the data
-    result_store.write().await.store_result(5000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(5000, result)
+        .await?;
     proof_store.write().await.store_proof(5000, proof).await?;
 
     // Should work again
@@ -223,11 +252,8 @@ async fn test_validation_with_empty_stores() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Validate with completely empty stores
     let validation_result = validator.validate_before_settlement(6000).await;
@@ -246,11 +272,8 @@ async fn test_multiple_validation_failures_recovery() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Multiple failed attempts
     for _ in 0..5 {
@@ -266,7 +289,11 @@ async fn test_multiple_validation_failures_recovery() -> Result<()> {
     // Recovery
     let result = create_test_result(7000);
     let proof = proof_gen.generate_proof(&result).await?;
-    result_store.write().await.store_result(7000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(7000, result)
+        .await?;
     proof_store.write().await.store_proof(7000, proof).await?;
 
     // Should succeed
@@ -288,17 +315,22 @@ async fn test_cleanup_and_revalidation() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // First validation cycle
     let result = create_test_result(8000);
     let proof = proof_gen.generate_proof(&result).await?;
-    result_store.write().await.store_result(8000, result.clone()).await?;
-    proof_store.write().await.store_proof(8000, proof.clone()).await?;
+    result_store
+        .write()
+        .await
+        .store_result(8000, result.clone())
+        .await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(8000, proof.clone())
+        .await?;
 
     let is_valid = validator.validate_before_settlement(8000).await?;
     assert!(is_valid);
@@ -311,7 +343,11 @@ async fn test_cleanup_and_revalidation() -> Result<()> {
     assert!(validation_result.is_err(), "Should fail after cleanup");
 
     // Recovery: Re-add for new settlement attempt
-    result_store.write().await.store_result(8000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(8000, result)
+        .await?;
     proof_store.write().await.store_proof(8000, proof).await?;
 
     let is_valid = validator.validate_before_settlement(8000).await?;

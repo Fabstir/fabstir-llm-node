@@ -241,14 +241,7 @@ fn test_streaming_encrypted_chunks() {
 
     let session_key = SecretKey::random(&mut OsRng).to_bytes();
 
-    let chunks = vec![
-        "The ",
-        "capital ",
-        "of ",
-        "France ",
-        "is ",
-        "Paris.",
-    ];
+    let chunks = vec!["The ", "capital ", "of ", "France ", "is ", "Paris."];
 
     let mut encrypted_chunks = Vec::new();
 
@@ -316,8 +309,8 @@ fn test_concurrent_encrypted_sessions() {
         let (ciphertext, nonce, aad) =
             simulate_client_encrypt_message(&session_key, &prompt, 0).expect("Should encrypt");
 
-        let decrypted = decrypt_with_aead(&ciphertext, &nonce, &aad, &session_key)
-            .expect("Should decrypt");
+        let decrypted =
+            decrypt_with_aead(&ciphertext, &nonce, &aad, &session_key).expect("Should decrypt");
 
         let decrypted_prompt = String::from_utf8(decrypted).expect("Should be UTF-8");
         assert_eq!(decrypted_prompt, prompt);
@@ -388,8 +381,8 @@ fn test_aad_validation() {
     let aad = b"message_0";
 
     let prompt = "Test message";
-    let ciphertext = encrypt_with_aead(prompt.as_bytes(), &nonce, aad, &session_key)
-        .expect("Should encrypt");
+    let ciphertext =
+        encrypt_with_aead(prompt.as_bytes(), &nonce, aad, &session_key).expect("Should encrypt");
 
     // Try to decrypt with tampered AAD (should fail)
     let tampered_aad = b"message_1"; // Wrong AAD
@@ -431,8 +424,8 @@ fn test_client_signature_recovery() {
         .expect("Should create session");
 
     // Node decrypts and recovers address
-    let decrypted = decrypt_session_init(&encrypted_payload, &node_priv_bytes)
-        .expect("Should decrypt");
+    let decrypted =
+        decrypt_session_init(&encrypted_payload, &node_priv_bytes).expect("Should decrypt");
 
     // Verify: Recovered address matches
     assert_eq!(
@@ -458,26 +451,17 @@ fn test_replay_attack_prevention() {
     // Node decrypts message 0
     let decrypted_0 = decrypt_with_aead(&ciphertext_0, &nonce_0, &aad_0, &session_key)
         .expect("Should decrypt message 0");
-    assert_eq!(
-        String::from_utf8(decrypted_0).unwrap(),
-        "Message 0"
-    );
+    assert_eq!(String::from_utf8(decrypted_0).unwrap(), "Message 0");
 
     // Attacker tries to replay message 0 as message 1 (should fail AAD check)
     // This is prevented because AAD contains message index
     let result = decrypt_with_aead(&ciphertext_0, &nonce_0, &aad_1, &session_key);
-    assert!(
-        result.is_err(),
-        "Replay with different AAD should fail"
-    );
+    assert!(result.is_err(), "Replay with different AAD should fail");
 
     // Node decrypts message 1 normally (should succeed)
     let decrypted_1 = decrypt_with_aead(&ciphertext_1, &nonce_1, &aad_1, &session_key)
         .expect("Should decrypt message 1");
-    assert_eq!(
-        String::from_utf8(decrypted_1).unwrap(),
-        "Message 1"
-    );
+    assert_eq!(String::from_utf8(decrypted_1).unwrap(), "Message 1");
 }
 
 #[test]
@@ -500,11 +484,7 @@ fn test_session_lifecycle_complete() {
     let session_key = &session_data.session_key;
 
     // 2. Exchange multiple messages
-    let messages = vec![
-        "Hello, node!",
-        "What is 2+2?",
-        "Thank you!",
-    ];
+    let messages = vec!["Hello, node!", "What is 2+2?", "Thank you!"];
 
     let mut responses = Vec::new();
 
@@ -514,8 +494,8 @@ fn test_session_lifecycle_complete() {
             simulate_client_encrypt_message(session_key, msg, index).expect("Should encrypt");
 
         // Node: Decrypt message
-        let decrypted = decrypt_with_aead(&ciphertext, &nonce, &aad, session_key)
-            .expect("Should decrypt");
+        let decrypted =
+            decrypt_with_aead(&ciphertext, &nonce, &aad, session_key).expect("Should decrypt");
 
         let prompt = String::from_utf8(decrypted).expect("Should be UTF-8");
         assert_eq!(&prompt, msg);
@@ -566,8 +546,8 @@ fn test_tampered_ciphertext_rejected() {
     let aad = b"message_0";
 
     let prompt = "Original message";
-    let mut ciphertext = encrypt_with_aead(prompt.as_bytes(), &nonce, aad, &session_key)
-        .expect("Should encrypt");
+    let mut ciphertext =
+        encrypt_with_aead(prompt.as_bytes(), &nonce, aad, &session_key).expect("Should encrypt");
 
     // Tamper with ciphertext
     if let Some(byte) = ciphertext.get_mut(0) {

@@ -69,11 +69,7 @@ pub const BREAKING_CHANGES: &[&str] = &[
 
 /// Get formatted version string for logging
 pub fn get_version_string() -> String {
-    format!(
-        "Fabstir LLM Node {} ({})",
-        VERSION_NUMBER,
-        BUILD_DATE
-    )
+    format!("Fabstir LLM Node {} ({})", VERSION_NUMBER, BUILD_DATE)
 }
 
 /// Get full version info for API responses

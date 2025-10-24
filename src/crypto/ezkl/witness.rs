@@ -168,9 +168,7 @@ impl WitnessBuilder {
 
     /// Build witness (validates all fields are present)
     pub fn build(self) -> Result<Witness> {
-        let job_id = self
-            .job_id
-            .ok_or_else(|| anyhow!("job_id is required"))?;
+        let job_id = self.job_id.ok_or_else(|| anyhow!("job_id is required"))?;
         let model_hash = self
             .model_hash
             .ok_or_else(|| anyhow!("model_hash is required"))?;

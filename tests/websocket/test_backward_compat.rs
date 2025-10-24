@@ -31,7 +31,10 @@ fn test_plaintext_session_still_works() {
 
     // Expected: Node processes this without error
     assert_eq!(plaintext_session_init["type"], "session_init");
-    assert_eq!(plaintext_session_init["session_id"], "plaintext-session-123");
+    assert_eq!(
+        plaintext_session_init["session_id"],
+        "plaintext-session-123"
+    );
 
     // Expected: Node sends session_init_ack (existing handler behavior)
     let expected_ack = json!({
@@ -144,15 +147,15 @@ fn test_session_mode_detection() {
     // Test that node auto-detects encrypted vs plaintext from message type
 
     let messages = vec![
-        ("encrypted_session_init", true),  // Encrypted
-        ("encrypted_message", true),       // Encrypted
-        ("encrypted_chunk", true),         // Encrypted
-        ("encrypted_response", true),      // Encrypted
-        ("session_init", false),           // Plaintext
-        ("prompt", false),                 // Plaintext
-        ("inference", false),              // Plaintext
-        ("stream_chunk", false),           // Plaintext (node to client)
-        ("stream_end", false),             // Plaintext (node to client)
+        ("encrypted_session_init", true), // Encrypted
+        ("encrypted_message", true),      // Encrypted
+        ("encrypted_chunk", true),        // Encrypted
+        ("encrypted_response", true),     // Encrypted
+        ("session_init", false),          // Plaintext
+        ("prompt", false),                // Plaintext
+        ("inference", false),             // Plaintext
+        ("stream_chunk", false),          // Plaintext (node to client)
+        ("stream_end", false),            // Plaintext (node to client)
     ];
 
     for (msg_type, is_encrypted) in messages {
@@ -223,7 +226,10 @@ fn test_encryption_is_default_path() {
 
     // Expected: Encrypted messages are the norm
     assert_eq!(sdk_default_message["type"], "encrypted_session_init");
-    assert!(sdk_default_message["type"].as_str().unwrap().starts_with("encrypted_"));
+    assert!(sdk_default_message["type"]
+        .as_str()
+        .unwrap()
+        .starts_with("encrypted_"));
 
     // Expected: Node has full handler support for encrypted messages
     // (Validated by Sub-phases 5.1, 5.2, 5.3)

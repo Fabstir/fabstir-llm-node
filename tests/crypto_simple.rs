@@ -8,10 +8,9 @@ use fabstir_llm_node::crypto::{
 };
 use k256::{
     ecdh::EphemeralSecret,
-    ecdsa::{SigningKey, signature::Signer},
+    ecdsa::{signature::Signer, SigningKey},
     elliptic_curve::sec1::ToEncodedPoint,
-    PublicKey,
-    SecretKey,
+    PublicKey, SecretKey,
 };
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -125,11 +124,15 @@ fn test_signature_recovery_basic() {
     for recovery_id in 0..2 {
         compact_sig[64] = recovery_id;
 
-        if let Ok(recovered_address) = recover_client_address(&compact_sig, message_hash.as_slice()) {
+        if let Ok(recovered_address) = recover_client_address(&compact_sig, message_hash.as_slice())
+        {
             if recovered_address == expected_address {
                 // Success!
                 assert_eq!(recovered_address.len(), 42, "Address should be 42 chars");
-                assert!(recovered_address.starts_with("0x"), "Address should start with 0x");
+                assert!(
+                    recovered_address.starts_with("0x"),
+                    "Address should start with 0x"
+                );
                 return;
             }
         }
@@ -177,7 +180,11 @@ fn test_session_init_integration() {
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
     // Client derives shared key (simulating client-side ECDH)
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Create session data JSON
     let session_data = serde_json::json!({
@@ -263,7 +270,11 @@ fn test_session_init_invalid_signature() {
     let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
 
     // Client derives shared key (simulating client-side ECDH)
-    let shared_key = derive_shared_key(node_public.to_sec1_bytes().as_ref(), &client_secret.to_bytes()).unwrap();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
 
     // Create session data JSON
     let session_data = serde_json::json!({
@@ -294,7 +305,10 @@ fn test_session_init_invalid_signature() {
     // Node should reject invalid signature
     let result = decrypt_session_init(&payload, &node_priv_bytes);
     assert!(result.is_err(), "Should reject invalid signature");
-    assert!(result.unwrap_err().to_string().contains("Signature verification failed"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Signature verification failed"));
 }
 
 #[tokio::test]
@@ -313,7 +327,11 @@ async fn test_session_key_store_basic() {
 
     // Clear key
     store.clear_key(&session_id).await;
-    assert_eq!(store.get_key(&session_id).await, None, "Key should be cleared");
+    assert_eq!(
+        store.get_key(&session_id).await,
+        None,
+        "Key should be cleared"
+    );
 }
 
 #[tokio::test]

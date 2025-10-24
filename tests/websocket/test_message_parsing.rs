@@ -47,12 +47,12 @@ fn test_parse_valid_message_payload() {
 fn test_invalid_hex_encoding() {
     // Test that invalid hex characters are rejected
     let invalid_hex_cases = vec![
-        "GHIJ",          // Invalid hex characters
-        "zzzz",          // Invalid hex characters
-        "12 34",         // Space in hex
-        "12\n34",        // Newline in hex
-        "12.34",         // Dot in hex
-        "hello world",   // Non-hex string
+        "GHIJ",        // Invalid hex characters
+        "zzzz",        // Invalid hex characters
+        "12 34",       // Space in hex
+        "12\n34",      // Newline in hex
+        "12.34",       // Dot in hex
+        "hello world", // Non-hex string
     ];
 
     for invalid_hex in invalid_hex_cases {
@@ -88,18 +88,26 @@ fn test_hex_without_prefix() {
 fn test_invalid_nonce_size() {
     // Test that nonce must be exactly 24 bytes
     let invalid_nonce_sizes = vec![
-        ("", 0),                                               // Empty
-        ("0102", 1),                                          // Too short
-        ("010203040506070809", 9),                            // Too short
-        ("0102030405060708090a0b0c0d0e0f1011121314151617", 23), // 23 bytes
+        ("", 0),                                                    // Empty
+        ("0102", 1),                                                // Too short
+        ("010203040506070809", 9),                                  // Too short
+        ("0102030405060708090a0b0c0d0e0f1011121314151617", 23),     // 23 bytes
         ("0102030405060708090a0b0c0d0e0f10111213141516171819", 25), // 25 bytes
-        ("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20", 32), // Too long
+        (
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            32,
+        ), // Too long
     ];
 
     for (hex_str, expected_len) in invalid_nonce_sizes {
         if !hex_str.is_empty() {
             let decoded = hex::decode(hex_str).unwrap();
-            assert_ne!(decoded.len(), 24, "Expected size {} but validation should reject", expected_len);
+            assert_ne!(
+                decoded.len(),
+                24,
+                "Expected size {} but validation should reject",
+                expected_len
+            );
         }
     }
 
@@ -116,8 +124,8 @@ fn test_invalid_signature_size() {
     let sig_66 = "00".repeat(66);
 
     let invalid_signature_sizes = vec![
-        ("", 0),                 // Empty
-        ("0102", 1),            // Too short
+        ("", 0),               // Empty
+        ("0102", 1),           // Too short
         (sig_64.as_str(), 64), // 64 bytes
         (sig_66.as_str(), 66), // 66 bytes
     ];
@@ -125,7 +133,12 @@ fn test_invalid_signature_size() {
     for (hex_str, expected_len) in invalid_signature_sizes {
         if !hex_str.is_empty() {
             let decoded = hex::decode(hex_str).unwrap();
-            assert_ne!(decoded.len(), 65, "Expected size {} but validation should reject", expected_len);
+            assert_ne!(
+                decoded.len(),
+                65,
+                "Expected size {} but validation should reject",
+                expected_len
+            );
         }
     }
 
@@ -144,8 +157,8 @@ fn test_invalid_pubkey_size() {
     let pk_66 = "00".repeat(66);
 
     let invalid_pubkey_sizes = vec![
-        ("", 0),                 // Empty
-        ("0102", 1),            // Too short
+        ("", 0),              // Empty
+        ("0102", 1),          // Too short
         (pk_32.as_str(), 32), // 32 bytes
         (pk_34.as_str(), 34), // 34 bytes
         (pk_64.as_str(), 64), // 64 bytes
@@ -155,8 +168,18 @@ fn test_invalid_pubkey_size() {
     for (hex_str, expected_len) in invalid_pubkey_sizes {
         if !hex_str.is_empty() {
             let decoded = hex::decode(hex_str).unwrap();
-            assert_ne!(decoded.len(), 33, "Expected size {} but validation should reject", expected_len);
-            assert_ne!(decoded.len(), 65, "Expected size {} but validation should reject", expected_len);
+            assert_ne!(
+                decoded.len(),
+                33,
+                "Expected size {} but validation should reject",
+                expected_len
+            );
+            assert_ne!(
+                decoded.len(),
+                65,
+                "Expected size {} but validation should reject",
+                expected_len
+            );
         }
     }
 
@@ -214,10 +237,10 @@ fn test_empty_hex_fields() {
 fn test_odd_length_hex() {
     // Test that hex strings with odd length are rejected
     let odd_length_hex = vec![
-        "0",          // 1 char
-        "012",        // 3 chars
-        "01234",      // 5 chars
-        "0123456",    // 7 chars
+        "0",       // 1 char
+        "012",     // 3 chars
+        "01234",   // 5 chars
+        "0123456", // 7 chars
     ];
 
     for hex_str in odd_length_hex {
@@ -230,11 +253,11 @@ fn test_odd_length_hex() {
 fn test_non_hex_characters() {
     // Test that non-hex characters are rejected
     let non_hex_strings = vec![
-        "g0",         // 'g' is not hex
-        "0G",         // 'G' is not hex
-        "zz",         // 'z' is not hex
-        "🔥",         // Emoji
-        "test",       // Letters beyond 'f'
+        "g0",   // 'g' is not hex
+        "0G",   // 'G' is not hex
+        "zz",   // 'z' is not hex
+        "🔥",   // Emoji
+        "test", // Letters beyond 'f'
     ];
 
     for hex_str in non_hex_strings {
@@ -278,9 +301,9 @@ fn test_ciphertext_can_be_any_size() {
     let ct_1000 = "ff".repeat(1000);
 
     let ciphertext_sizes = vec![
-        ("0102", 2),                                        // 2 bytes
-        ("deadbeef", 4),                                    // 4 bytes
-        (ct_100.as_str(), 100), // 100 bytes
+        ("0102", 2),              // 2 bytes
+        ("deadbeef", 4),          // 4 bytes
+        (ct_100.as_str(), 100),   // 100 bytes
         (ct_1000.as_str(), 1000), // 1000 bytes
     ];
 
@@ -301,9 +324,9 @@ fn test_aad_can_be_empty_or_any_size() {
     let aad_256 = "aa".repeat(256);
 
     let aad_cases = vec![
-        ("", 0),                                            // Empty is OK
-        ("00", 1),                                          // 1 byte
-        ("deadbeef", 4),                                    // 4 bytes
+        ("", 0),                 // Empty is OK
+        ("00", 1),               // 1 byte
+        ("deadbeef", 4),         // 4 bytes
         (aad_256.as_str(), 256), // 256 bytes
     ];
 

@@ -44,7 +44,10 @@ fn test_generate_real_proof_basic() -> Result<()> {
     let proof = prover.generate_proof(&witness)?;
 
     // Basic assertions
-    assert!(!proof.proof_bytes.is_empty(), "Proof bytes should not be empty");
+    assert!(
+        !proof.proof_bytes.is_empty(),
+        "Proof bytes should not be empty"
+    );
     assert!(proof.timestamp > 0, "Proof should have valid timestamp");
     assert_eq!(proof.model_hash, [2u8; 32], "Model hash should match");
     assert_eq!(proof.input_hash, [3u8; 32], "Input hash should match");
@@ -100,9 +103,18 @@ fn test_proof_contains_witness_data() -> Result<()> {
 
     // Verify all hashes match
     assert_eq!(j_job_id, job_id, "Job ID should match in journal");
-    assert_eq!(j_model_hash, model_hash, "Model hash should match in journal");
-    assert_eq!(j_input_hash, input_hash, "Input hash should match in journal");
-    assert_eq!(j_output_hash, output_hash, "Output hash should match in journal");
+    assert_eq!(
+        j_model_hash, model_hash,
+        "Model hash should match in journal"
+    );
+    assert_eq!(
+        j_input_hash, input_hash,
+        "Input hash should match in journal"
+    );
+    assert_eq!(
+        j_output_hash, output_hash,
+        "Output hash should match in journal"
+    );
 
     Ok(())
 }
@@ -128,7 +140,10 @@ fn test_proof_is_serializable() -> Result<()> {
 
     // Serialize ProofData
     let serialized = bincode::serialize(&proof)?;
-    assert!(!serialized.is_empty(), "Serialized proof should not be empty");
+    assert!(
+        !serialized.is_empty(),
+        "Serialized proof should not be empty"
+    );
 
     // Deserialize ProofData
     let deserialized: fabstir_llm_node::crypto::ezkl::ProofData =
@@ -160,7 +175,10 @@ fn test_proof_is_serializable() -> Result<()> {
     // Verify the receipt itself is still valid after serialization
     use risc0_zkvm::Receipt;
     let receipt: Receipt = bincode::deserialize(&deserialized.proof_bytes)?;
-    assert!(!receipt.journal.bytes.is_empty(), "Receipt journal should not be empty");
+    assert!(
+        !receipt.journal.bytes.is_empty(),
+        "Receipt journal should not be empty"
+    );
 
     Ok(())
 }
@@ -185,10 +203,25 @@ fn test_proof_with_real_witness_data() -> Result<()> {
     let proof = prover.generate_proof(&witness)?;
 
     // Verify proof was generated
-    assert!(!proof.proof_bytes.is_empty(), "Proof bytes should not be empty");
-    assert_eq!(proof.model_hash, *witness.model_hash(), "Model hash should match");
-    assert_eq!(proof.input_hash, *witness.input_hash(), "Input hash should match");
-    assert_eq!(proof.output_hash, *witness.output_hash(), "Output hash should match");
+    assert!(
+        !proof.proof_bytes.is_empty(),
+        "Proof bytes should not be empty"
+    );
+    assert_eq!(
+        proof.model_hash,
+        *witness.model_hash(),
+        "Model hash should match"
+    );
+    assert_eq!(
+        proof.input_hash,
+        *witness.input_hash(),
+        "Input hash should match"
+    );
+    assert_eq!(
+        proof.output_hash,
+        *witness.output_hash(),
+        "Output hash should match"
+    );
 
     Ok(())
 }
@@ -215,7 +248,11 @@ fn test_proof_size_reasonable() -> Result<()> {
 
     // Check proof size
     let proof_size = proof.proof_bytes.len();
-    println!("Proof size: {} bytes ({:.2} KB)", proof_size, proof_size as f64 / 1024.0);
+    println!(
+        "Proof size: {} bytes ({:.2} KB)",
+        proof_size,
+        proof_size as f64 / 1024.0
+    );
 
     // Risc0 STARK proofs should be 194-281KB according to benchmarks
     // Allow up to 500KB for safety margin
@@ -256,11 +293,17 @@ fn test_proof_generation_error_handling() -> Result<()> {
 
     let mut prover = EzklProver::new();
     let result = prover.generate_proof(&valid_witness);
-    assert!(result.is_ok(), "Valid witness should generate proof successfully");
+    assert!(
+        result.is_ok(),
+        "Valid witness should generate proof successfully"
+    );
 
     // Test 2: Verify proof generation works multiple times
     let result2 = prover.generate_proof(&valid_witness);
-    assert!(result2.is_ok(), "Should be able to generate multiple proofs");
+    assert!(
+        result2.is_ok(),
+        "Should be able to generate multiple proofs"
+    );
 
     Ok(())
 }

@@ -262,8 +262,10 @@ fn test_optional_session_id_field() {
         }
     });
     // session_id is absent, which is valid for session init
-    assert!(msg_without_session.get("session_id").is_none() ||
-            msg_without_session["session_id"].is_null());
+    assert!(
+        msg_without_session.get("session_id").is_none()
+            || msg_without_session["session_id"].is_null()
+    );
 }
 
 #[test]

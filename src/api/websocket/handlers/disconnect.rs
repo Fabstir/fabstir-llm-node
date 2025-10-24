@@ -25,7 +25,10 @@ impl DisconnectHandler {
 
     /// Handle WebSocket disconnect event
     pub async fn handle_disconnect(&self, session_id: &str) -> Result<()> {
-        info!("[DISCONNECT-HANDLER] 🔌 === WebSocket Disconnect Event === Session: {}", session_id);
+        info!(
+            "[DISCONNECT-HANDLER] 🔌 === WebSocket Disconnect Event === Session: {}",
+            session_id
+        );
 
         // Get session info before cleanup
         info!("[DISCONNECT-HANDLER] 🔍 Acquiring session store lock...");
@@ -50,9 +53,7 @@ impl DisconnectHandler {
 
             // Trigger settlement if manager is available
             if let Some(settlement_manager) = &self.settlement_manager {
-                info!(
-                    "[DISCONNECT-HANDLER] 💰 === Starting Payment Settlement ==="
-                );
+                info!("[DISCONNECT-HANDLER] 💰 === Starting Payment Settlement ===");
                 info!(
                     "[DISCONNECT-HANDLER] Triggering settlement for session {} on chain {}",
                     session_id, chain_id
@@ -63,17 +64,9 @@ impl DisconnectHandler {
                     .await
                 {
                     Ok(tx_hash) => {
-                        info!(
-                            "[DISCONNECT-HANDLER] ✅ Settlement initiated successfully!",
-                        );
-                        info!(
-                            "[DISCONNECT-HANDLER]   - Session: {}",
-                            session_id
-                        );
-                        info!(
-                            "[DISCONNECT-HANDLER]   - Transaction Hash: {:?}",
-                            tx_hash
-                        );
+                        info!("[DISCONNECT-HANDLER] ✅ Settlement initiated successfully!",);
+                        info!("[DISCONNECT-HANDLER]   - Session: {}", session_id);
+                        info!("[DISCONNECT-HANDLER]   - Transaction Hash: {:?}", tx_hash);
                         info!(
                             "[DISCONNECT-HANDLER] 💸 Payment settlement should now be processing..."
                         );
@@ -83,13 +76,8 @@ impl DisconnectHandler {
                             "[DISCONNECT-HANDLER] ❌ Settlement FAILED for session {} on chain {}",
                             session_id, chain_id
                         );
-                        error!(
-                            "[DISCONNECT-HANDLER]   - Error: {}",
-                            e
-                        );
-                        error!(
-                            "[DISCONNECT-HANDLER] ⚠️ Settlement will need to be retried later!"
-                        );
+                        error!("[DISCONNECT-HANDLER]   - Error: {}", e);
+                        error!("[DISCONNECT-HANDLER] ⚠️ Settlement will need to be retried later!");
                         // Continue with cleanup even if settlement fails
                         // The settlement can be retried later
                     }
@@ -97,17 +85,26 @@ impl DisconnectHandler {
             } else {
                 warn!("[DISCONNECT-HANDLER] ⚠️ NO SETTLEMENT MANAGER AVAILABLE!");
                 warn!("[DISCONNECT-HANDLER] ⚠️ Payment settlement SKIPPED - this means payments won't be distributed!");
-                warn!("[DISCONNECT-HANDLER] ⚠️ This session ({}) will need manual settlement later", session_id);
+                warn!(
+                    "[DISCONNECT-HANDLER] ⚠️ This session ({}) will need manual settlement later",
+                    session_id
+                );
             }
         } else {
             // Just clean up if session doesn't exist
-            warn!("[DISCONNECT-HANDLER] ⚠️ Session {} not found in store during disconnect", session_id);
+            warn!(
+                "[DISCONNECT-HANDLER] ⚠️ Session {} not found in store during disconnect",
+                session_id
+            );
             info!("[DISCONNECT-HANDLER] Attempting cleanup anyway...");
             store.destroy_session(session_id).await;
             warn!("[DISCONNECT-HANDLER] ⚠️ No settlement possible - session data missing");
         }
 
-        info!("[DISCONNECT-HANDLER] ✔️ Disconnect handling completed for session {}", session_id);
+        info!(
+            "[DISCONNECT-HANDLER] ✔️ Disconnect handling completed for session {}",
+            session_id
+        );
         Ok(())
     }
 

@@ -118,7 +118,10 @@ impl EzklVerifier {
             // Risc0 STARK proofs: 100KB - 500KB expected
             if proof.proof_bytes.len() > 500_000 {
                 return Err(EzklError::ProofVerificationFailed {
-                    reason: format!("Proof too large: {} bytes (expected < 500KB for STARK proofs)", proof.proof_bytes.len()),
+                    reason: format!(
+                        "Proof too large: {} bytes (expected < 500KB for STARK proofs)",
+                        proof.proof_bytes.len()
+                    ),
                 });
             }
         }
@@ -128,7 +131,10 @@ impl EzklVerifier {
             // Mock proofs: ~200 bytes expected
             if proof.proof_bytes.len() > 100_000 {
                 return Err(EzklError::ProofVerificationFailed {
-                    reason: format!("Proof too large: {} bytes (expected < 100KB for mock proofs)", proof.proof_bytes.len()),
+                    reason: format!(
+                        "Proof too large: {} bytes (expected < 100KB for mock proofs)",
+                        proof.proof_bytes.len()
+                    ),
                 });
             }
         }
@@ -229,7 +235,11 @@ impl EzklVerifier {
 
     /// Verify mock proof from bytes
     #[cfg(not(feature = "real-ezkl"))]
-    fn verify_mock_proof_bytes(&self, proof_bytes: &[u8], _public_inputs: &[&[u8; 32]]) -> EzklResult<bool> {
+    fn verify_mock_proof_bytes(
+        &self,
+        proof_bytes: &[u8],
+        _public_inputs: &[&[u8; 32]],
+    ) -> EzklResult<bool> {
         tracing::debug!("🎭 Verifying mock EZKL proof from bytes");
 
         // Same checks as verify_mock_proof
@@ -254,11 +264,15 @@ impl EzklVerifier {
         tracing::info!("🔐 Verifying real Risc0 proof");
 
         // Deserialize receipt from proof bytes
-        tracing::debug!("📦 Deserializing receipt ({} bytes)", proof.proof_bytes.len());
-        let receipt: Receipt = bincode::deserialize(&proof.proof_bytes)
-            .map_err(|e| EzklError::ProofVerificationFailed {
+        tracing::debug!(
+            "📦 Deserializing receipt ({} bytes)",
+            proof.proof_bytes.len()
+        );
+        let receipt: Receipt = bincode::deserialize(&proof.proof_bytes).map_err(|e| {
+            EzklError::ProofVerificationFailed {
                 reason: format!("Failed to deserialize receipt: {}", e),
-            })?;
+            }
+        })?;
 
         // Verify the receipt cryptographically
         tracing::debug!("🔍 Verifying receipt signature...");
@@ -335,11 +349,10 @@ impl EzklVerifier {
 
         // Deserialize receipt from proof bytes
         tracing::debug!("📦 Deserializing receipt ({} bytes)", proof_bytes.len());
-        let receipt: Receipt = bincode::deserialize(proof_bytes).map_err(|e| {
-            EzklError::ProofVerificationFailed {
+        let receipt: Receipt =
+            bincode::deserialize(proof_bytes).map_err(|e| EzklError::ProofVerificationFailed {
                 reason: format!("Failed to deserialize receipt: {}", e),
-            }
-        })?;
+            })?;
 
         // Verify the receipt cryptographically
         tracing::debug!("🔍 Verifying receipt signature...");
@@ -390,10 +403,7 @@ impl EzklVerifier {
                 && j_output_hash == *public_inputs[2]
         } else {
             return Err(EzklError::ProofVerificationFailed {
-                reason: format!(
-                    "Expected 3 or 4 public inputs, got {}",
-                    public_inputs.len()
-                ),
+                reason: format!("Expected 3 or 4 public inputs, got {}", public_inputs.len()),
             });
         };
 

@@ -8,10 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use hkdf::Hkdf;
-use k256::{
-    elliptic_curve::sec1::FromEncodedPoint,
-    EncodedPoint, PublicKey, SecretKey,
-};
+use k256::{elliptic_curve::sec1::FromEncodedPoint, EncodedPoint, PublicKey, SecretKey};
 use sha2::Sha256;
 
 /// Derive a shared encryption key using ECDH
@@ -69,10 +66,8 @@ pub fn derive_shared_key(client_eph_pub: &[u8], node_priv_key: &[u8]) -> Result<
     };
 
     // 3. Perform ECDH: shared_point = client_pub * node_secret
-    let shared_secret = k256::ecdh::diffie_hellman(
-        node_secret.to_nonzero_scalar(),
-        client_pub.as_affine(),
-    );
+    let shared_secret =
+        k256::ecdh::diffie_hellman(node_secret.to_nonzero_scalar(), client_pub.as_affine());
 
     // 4. Derive encryption key using HKDF-SHA256
     // Extract entropy from shared secret and expand to 32-byte key

@@ -32,13 +32,8 @@ fn test_encrypt_response_chunk() {
     let aad_bytes = aad.as_bytes();
 
     // Encrypt chunk
-    let ciphertext = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce,
-        aad_bytes,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad_bytes, &session_key).unwrap();
 
     // Verify ciphertext is not empty
     assert!(!ciphertext.is_empty());
@@ -83,13 +78,8 @@ fn test_streaming_encrypted_chunks() {
         let aad_bytes = aad.as_bytes();
 
         // Encrypt chunk
-        let ciphertext = encrypt_with_aead(
-            chunk_content.as_bytes(),
-            &nonce,
-            aad_bytes,
-            &session_key,
-        )
-        .unwrap();
+        let ciphertext =
+            encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad_bytes, &session_key).unwrap();
 
         encrypted_chunks.push((ciphertext, nonce, index));
     }
@@ -122,21 +112,11 @@ fn test_unique_nonces_per_chunk() {
 
     let aad = b"chunk_0";
 
-    let ciphertext1 = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce1,
-        aad,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext1 =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce1, aad, &session_key).unwrap();
 
-    let ciphertext2 = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce2,
-        aad,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext2 =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce2, aad, &session_key).unwrap();
 
     // Different nonces should produce different ciphertexts (even for same plaintext)
     assert_ne!(ciphertext1, ciphertext2);
@@ -155,23 +135,13 @@ fn test_aad_includes_index() {
 
     // Encrypt with AAD including index 0
     let aad_0 = b"chunk_0";
-    let ciphertext_0 = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce,
-        aad_0,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext_0 =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad_0, &session_key).unwrap();
 
     // Encrypt with AAD including index 1
     let aad_1 = b"chunk_1";
-    let ciphertext_1 = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce,
-        aad_1,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext_1 =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad_1, &session_key).unwrap();
 
     // Different AAD should produce different ciphertexts
     assert_ne!(ciphertext_0, ciphertext_1);
@@ -260,13 +230,8 @@ fn test_chunk_with_message_id() {
     let nonce = [1u8; 24];
     let aad = b"chunk_0";
 
-    let ciphertext = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce,
-        aad,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad, &session_key).unwrap();
 
     let encrypted_chunk = json!({
         "type": "encrypted_chunk",
@@ -295,13 +260,8 @@ fn test_encryption_preserves_token_count() {
     let nonce = [1u8; 24];
     let aad = b"chunk_0";
 
-    let ciphertext = encrypt_with_aead(
-        chunk_content.as_bytes(),
-        &nonce,
-        aad,
-        &session_key,
-    )
-    .unwrap();
+    let ciphertext =
+        encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad, &session_key).unwrap();
 
     // Expected chunk message with token count
     let encrypted_chunk = json!({
@@ -414,13 +374,8 @@ fn test_streaming_maintains_order() {
         let aad = format!("chunk_{}", expected_index);
         let aad_bytes = aad.as_bytes();
 
-        let _ciphertext = encrypt_with_aead(
-            chunk_content.as_bytes(),
-            &nonce,
-            aad_bytes,
-            &session_key,
-        )
-        .unwrap();
+        let _ciphertext =
+            encrypt_with_aead(chunk_content.as_bytes(), &nonce, aad_bytes, &session_key).unwrap();
 
         // Verify index matches expected order
         assert_eq!(expected_index, expected_index);

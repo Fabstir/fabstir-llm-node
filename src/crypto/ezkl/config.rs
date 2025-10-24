@@ -38,7 +38,7 @@ impl Default for EzklConfig {
             verifying_key_path: PathBuf::from("./keys/verifying_key.bin"),
             circuit_path: PathBuf::from("./circuits/commitment.circuit"),
             max_proof_size: 10_000, // 10KB max
-            cache_size: 100, // Cache 100 proofs
+            cache_size: 100,        // Cache 100 proofs
         }
     }
 }
@@ -149,7 +149,10 @@ mod tests {
 
         let config = EzklConfig::from_env();
         assert!(!config.enabled);
-        assert_eq!(config.proving_key_path, PathBuf::from("./keys/proving_key.bin"));
+        assert_eq!(
+            config.proving_key_path,
+            PathBuf::from("./keys/proving_key.bin")
+        );
         assert_eq!(config.max_proof_size, 10_000);
     }
 

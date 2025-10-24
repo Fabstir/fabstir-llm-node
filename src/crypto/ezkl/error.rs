@@ -228,11 +228,9 @@ impl EzklError {
                     seconds
                 )
             }
-            Self::EzklNotAvailable => {
-                "EZKL library is not available. Using mock implementation. \
+            Self::EzklNotAvailable => "EZKL library is not available. Using mock implementation. \
                  To enable real EZKL, build with: cargo build --features real-ezkl"
-                    .to_string()
-            }
+                .to_string(),
             Self::FeatureNotAvailable { feature } => {
                 format!(
                     "Feature '{}' requires real EZKL. Build with: cargo build --features real-ezkl",

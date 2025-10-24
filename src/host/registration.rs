@@ -16,13 +16,13 @@ use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
-    pub models: Vec<String>,           // Model file paths
-    pub model_ids: Vec<H256>,          // Validated model IDs from registry
-    pub gpu: String,                   // "RTX 4090"
-    pub ram_gb: u32,                   // 64
-    pub cost_per_token: f64,           // 0.0001 (deprecated, use pricing fields)
-    pub max_concurrent_jobs: u32,      // 5
-    pub api_url: String,               // Node's API endpoint URL
+    pub models: Vec<String>,            // Model file paths
+    pub model_ids: Vec<H256>,           // Validated model IDs from registry
+    pub gpu: String,                    // "RTX 4090"
+    pub ram_gb: u32,                    // 64
+    pub cost_per_token: f64,            // 0.0001 (deprecated, use pricing fields)
+    pub max_concurrent_jobs: u32,       // 5
+    pub api_url: String,                // Node's API endpoint URL
     pub min_price_native: Option<U256>, // Min price for native tokens (ETH/BNB)
     pub min_price_stable: Option<U256>, // Min price for stablecoins (USDC)
 }

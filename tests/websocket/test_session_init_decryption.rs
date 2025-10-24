@@ -42,7 +42,10 @@ async fn test_decrypt_valid_session_init() {
 /// Test that session_init stores session key in SessionKeyStore
 #[tokio::test]
 async fn test_session_init_stores_session_key() {
-    env::set_var("HOST_PRIVATE_KEY", "0xabcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0xabcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",
+    );
 
     // TODO: Create encrypted session_init with known session_key
     // TODO: Send message and wait for response
@@ -50,13 +53,19 @@ async fn test_session_init_stores_session_key() {
     // TODO: Verify session_key matches expected value
 
     env::remove_var("HOST_PRIVATE_KEY");
-    assert!(true, "Placeholder - implement after SessionKeyStore query method");
+    assert!(
+        true,
+        "Placeholder - implement after SessionKeyStore query method"
+    );
 }
 
 /// Test that session_init recovers correct client address from signature
 #[tokio::test]
 async fn test_session_init_recovers_client_address() {
-    env::set_var("HOST_PRIVATE_KEY", "0x5555666677778888999900001111222233334444555566667777888899990000");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x5555666677778888999900001111222233334444555566667777888899990000",
+    );
 
     // TODO: Use known test wallet private key to sign payload
     // TODO: Send encrypted_session_init
@@ -70,7 +79,10 @@ async fn test_session_init_recovers_client_address() {
 /// Test that session_init sends proper ack response
 #[tokio::test]
 async fn test_session_init_sends_ack() {
-    env::set_var("HOST_PRIVATE_KEY", "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+    );
 
     // TODO: Send encrypted_session_init with message_id
     // TODO: Verify response type is "session_init_ack"
@@ -85,7 +97,10 @@ async fn test_session_init_sends_ack() {
 /// Test that invalid signature is rejected
 #[tokio::test]
 async fn test_session_init_invalid_signature() {
-    env::set_var("HOST_PRIVATE_KEY", "0x1111111111111111111111111111111111111111111111111111111111111111");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+    );
 
     // TODO: Create encrypted payload
     // TODO: Replace signature with random invalid bytes
@@ -100,7 +115,10 @@ async fn test_session_init_invalid_signature() {
 /// Test that decryption failure is handled gracefully
 #[tokio::test]
 async fn test_session_init_decryption_failure() {
-    env::set_var("HOST_PRIVATE_KEY", "0x2222222222222222222222222222222222222222222222222222222222222222");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+    );
 
     // TODO: Create payload encrypted for DIFFERENT node key
     // TODO: Send to server (will fail ECDH/decryption)
@@ -115,7 +133,10 @@ async fn test_session_init_decryption_failure() {
 /// Test that corrupted ciphertext is rejected
 #[tokio::test]
 async fn test_session_init_corrupted_payload() {
-    env::set_var("HOST_PRIVATE_KEY", "0x3333333333333333333333333333333333333333333333333333333333333333");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+    );
 
     // TODO: Create valid encrypted payload
     // TODO: Corrupt ciphertext (flip some bytes)
@@ -130,7 +151,10 @@ async fn test_session_init_corrupted_payload() {
 /// Test that missing required fields are rejected
 #[tokio::test]
 async fn test_session_init_missing_fields() {
-    env::set_var("HOST_PRIVATE_KEY", "0x4444444444444444444444444444444444444444444444444444444444444444");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+    );
 
     // TODO: Create message missing ephPubHex field
     // TODO: Verify error response "INVALID_PAYLOAD"
@@ -148,7 +172,10 @@ async fn test_session_init_missing_fields() {
 /// Test that invalid hex encoding is rejected
 #[tokio::test]
 async fn test_session_init_invalid_hex() {
-    env::set_var("HOST_PRIVATE_KEY", "0x6666666666666666666666666666666666666666666666666666666666666666");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x6666666666666666666666666666666666666666666666666666666666666666",
+    );
 
     // TODO: Create message with invalid hex (non-hex characters)
     // TODO: Send encrypted_session_init
@@ -164,7 +191,10 @@ async fn test_session_init_invalid_hex() {
 /// Test that wrong nonce size is rejected
 #[tokio::test]
 async fn test_session_init_wrong_nonce_size() {
-    env::set_var("HOST_PRIVATE_KEY", "0x7777777777777777777777777777777777777777777777777777777777777777");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x7777777777777777777777777777777777777777777777777777777777777777",
+    );
 
     // TODO: Create message with nonce != 24 bytes
     // TODO: Send encrypted_session_init
@@ -177,7 +207,10 @@ async fn test_session_init_wrong_nonce_size() {
 /// Test that session metadata is tracked correctly
 #[tokio::test]
 async fn test_session_init_tracks_metadata() {
-    env::set_var("HOST_PRIVATE_KEY", "0x8888888888888888888888888888888888888888888888888888888888888888");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x8888888888888888888888888888888888888888888888888888888888888888",
+    );
 
     // TODO: Create encrypted session_init with:
     //   - job_id = 12345
@@ -194,7 +227,10 @@ async fn test_session_init_tracks_metadata() {
 /// Test that message_id is echoed in response
 #[tokio::test]
 async fn test_session_init_message_id_echo() {
-    env::set_var("HOST_PRIVATE_KEY", "0x9999999999999999999999999999999999999999999999999999999999999999");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0x9999999999999999999999999999999999999999999999999999999999999999",
+    );
 
     // TODO: Create encrypted_session_init with id = "test-msg-123"
     // TODO: Send and receive response
@@ -220,7 +256,10 @@ async fn test_session_init_without_private_key() {
 /// Test that concurrent session inits are handled correctly
 #[tokio::test]
 async fn test_concurrent_session_inits() {
-    env::set_var("HOST_PRIVATE_KEY", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
 
     // TODO: Create 5 different encrypted session_init messages
     // TODO: Send all 5 concurrently
@@ -235,7 +274,10 @@ async fn test_concurrent_session_inits() {
 /// Test that job_id is extracted from session data
 #[tokio::test]
 async fn test_session_init_job_id_extraction() {
-    env::set_var("HOST_PRIVATE_KEY", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    env::set_var(
+        "HOST_PRIVATE_KEY",
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
 
     // TODO: Create encrypted session_init with job_id = 99999
     // TODO: Send and verify ack

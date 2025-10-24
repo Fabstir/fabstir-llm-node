@@ -43,7 +43,10 @@ async fn test_decryption_failure_response() {
     // Verify error structure
     assert_eq!(expected_error["type"], "error");
     assert_eq!(expected_error["code"], "DECRYPTION_FAILED");
-    assert!(expected_error["message"].as_str().unwrap().contains("decrypt"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("decrypt"));
 
     // Expected behavior:
     // 1. Handler receives encrypted_message with invalid ciphertext
@@ -80,7 +83,10 @@ async fn test_invalid_signature_response() {
     // Verify error structure
     assert_eq!(expected_error["type"], "error");
     assert!(expected_error["code"].as_str().unwrap().contains("FAILED"));
-    assert!(expected_error["message"].as_str().unwrap().contains("signature"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("signature"));
     assert_eq!(expected_error["session_id"], "session-123");
 
     // Expected behavior:
@@ -117,8 +123,14 @@ async fn test_missing_session_key_response() {
     // Verify error structure
     assert_eq!(expected_error["type"], "error");
     assert_eq!(expected_error["code"], "SESSION_KEY_NOT_FOUND");
-    assert!(expected_error["message"].as_str().unwrap().contains("session_id"));
-    assert!(expected_error["message"].as_str().unwrap().contains("session-456"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("session_id"));
+    assert!(expected_error["message"]
+        .as_str()
+        .unwrap()
+        .contains("session-456"));
 
     // Expected behavior:
     // 1. Handler receives encrypted_message
@@ -216,9 +228,9 @@ async fn test_error_logged_with_context() {
         assert!(!msg.is_empty());
         // Should contain operation or session context
         assert!(
-            msg.contains("encrypted_message") ||
-            msg.contains("session_init") ||
-            msg.contains("session-789")
+            msg.contains("encrypted_message")
+                || msg.contains("session_init")
+                || msg.contains("session-789")
         );
     }
 
@@ -268,17 +280,17 @@ async fn test_error_codes_distinct() {
 
     // EXISTING ERROR CODES (from src/api/server.rs):
     let error_codes = vec![
-        "DECRYPTION_FAILED",           // Decryption or signature failure
-        "INVALID_SIGNATURE",            // (could be added for clarity)
-        "SESSION_KEY_NOT_FOUND",        // Session key not in store
-        "INVALID_NONCE_SIZE",           // Nonce not 24 bytes
-        "INVALID_HEX_ENCODING",         // Hex decode failed
-        "MISSING_PAYLOAD",              // No payload object
-        "INVALID_PAYLOAD",              // Missing payload fields
-        "MISSING_SESSION_ID",           // No session_id in message
-        "ENCRYPTION_NOT_SUPPORTED",     // Node has no private key
-        "INVALID_UTF8",                 // Decrypted plaintext not UTF-8
-        "ENCRYPTION_FAILED",            // Response encryption failed
+        "DECRYPTION_FAILED",        // Decryption or signature failure
+        "INVALID_SIGNATURE",        // (could be added for clarity)
+        "SESSION_KEY_NOT_FOUND",    // Session key not in store
+        "INVALID_NONCE_SIZE",       // Nonce not 24 bytes
+        "INVALID_HEX_ENCODING",     // Hex decode failed
+        "MISSING_PAYLOAD",          // No payload object
+        "INVALID_PAYLOAD",          // Missing payload fields
+        "MISSING_SESSION_ID",       // No session_id in message
+        "ENCRYPTION_NOT_SUPPORTED", // Node has no private key
+        "INVALID_UTF8",             // Decrypted plaintext not UTF-8
+        "ENCRYPTION_FAILED",        // Response encryption failed
     ];
 
     // Verify all codes are unique
@@ -289,8 +301,10 @@ async fn test_error_codes_distinct() {
     // Verify all codes are uppercase with underscores or digits
     for code in &error_codes {
         assert!(
-            code.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
-            "Error code '{}' contains invalid characters", code
+            code.chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
+            "Error code '{}' contains invalid characters",
+            code
         );
     }
 
@@ -360,7 +374,7 @@ async fn test_invalid_nonce_size_error() {
 
     let invalid_nonce_16 = [0u8; 16]; // Too short
     let invalid_nonce_32 = [0u8; 32]; // Too long
-    let valid_nonce = [0u8; 24];      // Correct
+    let valid_nonce = [0u8; 24]; // Correct
 
     // Test with CryptoError
     use fabstir_llm_node::crypto::CryptoError;

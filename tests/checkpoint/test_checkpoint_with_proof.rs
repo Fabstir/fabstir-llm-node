@@ -9,7 +9,9 @@ use anyhow::Result;
 use chrono::Utc;
 use fabstir_llm_node::crypto::ezkl::{EzklProver, ProofData};
 use fabstir_llm_node::results::packager::{InferenceResult, ResultMetadata};
-use fabstir_llm_node::results::proofs::{InferenceProof, ProofGenerationConfig, ProofGenerator, ProofType};
+use fabstir_llm_node::results::proofs::{
+    InferenceProof, ProofGenerationConfig, ProofGenerator, ProofType,
+};
 use fabstir_llm_node::storage::{ProofStore, ResultStore};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -67,7 +69,11 @@ async fn test_checkpoint_stores_proof_in_store() -> Result<()> {
 
     // Generate and store proof
     let proof = proof_gen.generate_proof(&result).await?;
-    proof_store.write().await.store_proof(200, proof.clone()).await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(200, proof.clone())
+        .await?;
 
     // Verify proof can be retrieved
     let retrieved = proof_store.read().await.retrieve_proof(200).await?;
@@ -141,7 +147,11 @@ async fn test_force_checkpoint_includes_proof() -> Result<()> {
 
     // Generate proof as if checkpoint was forced
     let proof = proof_gen.generate_proof(&result).await?;
-    proof_store.write().await.store_proof(600, proof.clone()).await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(600, proof.clone())
+        .await?;
 
     // Verify proof exists
     assert!(proof_store.read().await.has_proof(600).await);
@@ -233,7 +243,11 @@ async fn test_checkpoint_result_and_proof_stored() -> Result<()> {
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
     // Store both result and proof (as checkpoint would)
-    result_store.write().await.store_result(1000, result.clone()).await?;
+    result_store
+        .write()
+        .await
+        .store_result(1000, result.clone())
+        .await?;
     let proof = proof_gen.generate_proof(&result).await?;
     proof_store.write().await.store_proof(1000, proof).await?;
 
@@ -295,7 +309,11 @@ async fn test_checkpoint_multiple_proofs_same_job() -> Result<()> {
 
     // Store second proof (overwrites)
     let proof2 = proof_gen.generate_proof(&result).await?;
-    proof_store.write().await.store_proof(1300, proof2.clone()).await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(1300, proof2.clone())
+        .await?;
 
     // Should have only one proof (the latest)
     assert_eq!(proof_store.read().await.len().await, 1);

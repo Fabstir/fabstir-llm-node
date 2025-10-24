@@ -7,10 +7,10 @@
 // 2. Transaction encoding with hash+CID
 // 3. Integration test for full checkpoint flow
 
-use fabstir_llm_node::storage::s5_client::{MockS5Backend, S5Storage};
-use sha2::{Digest, Sha256};
 use ethers::abi::{Function, Param, ParamType, Token};
 use ethers::types::U256;
+use fabstir_llm_node::storage::s5_client::{MockS5Backend, S5Storage};
+use sha2::{Digest, Sha256};
 
 // ============================================================================
 // Step 1: Test S5 Upload
@@ -37,7 +37,11 @@ async fn test_s5_upload_proof() {
     assert!(cid.starts_with("s5://"), "CID should have s5:// prefix");
 
     println!("✅ S5 Upload Test: CID={}", cid);
-    println!("   Proof size: {} bytes ({:.2} KB)", proof_bytes.len(), proof_bytes.len() as f64 / 1024.0);
+    println!(
+        "   Proof size: {} bytes ({:.2} KB)",
+        proof_bytes.len(),
+        proof_bytes.len() as f64 / 1024.0
+    );
 }
 
 #[tokio::test]
@@ -50,7 +54,10 @@ async fn test_s5_proof_retrieval_by_cid() {
     let original_proof = vec![0xCD; 221_466];
     let proof_path = format!("home/proofs/job_{}_proof.bin", job_id);
 
-    let cid = s5_backend.put(&proof_path, original_proof.clone()).await.unwrap();
+    let cid = s5_backend
+        .put(&proof_path, original_proof.clone())
+        .await
+        .unwrap();
 
     // Test retrieval by CID
     let result = s5_backend.get_by_cid(&cid).await;
@@ -59,10 +66,20 @@ async fn test_s5_proof_retrieval_by_cid() {
     let retrieved_proof = result.unwrap();
 
     // Verify retrieved proof matches original
-    assert_eq!(retrieved_proof.len(), original_proof.len(), "Proof size should match");
-    assert_eq!(retrieved_proof, original_proof, "Proof content should match exactly");
+    assert_eq!(
+        retrieved_proof.len(),
+        original_proof.len(),
+        "Proof size should match"
+    );
+    assert_eq!(
+        retrieved_proof, original_proof,
+        "Proof content should match exactly"
+    );
 
-    println!("✅ S5 Retrieval Test: Retrieved {} bytes from CID", retrieved_proof.len());
+    println!(
+        "✅ S5 Retrieval Test: Retrieved {} bytes from CID",
+        retrieved_proof.len()
+    );
 }
 
 #[tokio::test]
@@ -73,8 +90,14 @@ async fn test_s5_upload_deduplication() {
     // Upload same proof twice
     let proof_bytes = vec![0xEF; 221_466];
 
-    let cid1 = s5_backend.put("home/proofs/job_1_proof.bin", proof_bytes.clone()).await.unwrap();
-    let cid2 = s5_backend.put("home/proofs/job_2_proof.bin", proof_bytes.clone()).await.unwrap();
+    let cid1 = s5_backend
+        .put("home/proofs/job_1_proof.bin", proof_bytes.clone())
+        .await
+        .unwrap();
+    let cid2 = s5_backend
+        .put("home/proofs/job_2_proof.bin", proof_bytes.clone())
+        .await
+        .unwrap();
 
     // Same content should generate same CID (content-addressed)
     assert_eq!(cid1, cid2, "Same proof content should generate same CID");
@@ -98,16 +121,28 @@ fn test_encode_checkpoint_call_with_hash_and_cid() {
     let proof_cid = "s5://abc123def456...";
 
     // Encode the call
-    let encoded = encode_checkpoint_call(job_id, tokens_generated, proof_hash, proof_cid.to_string());
+    let encoded =
+        encode_checkpoint_call(job_id, tokens_generated, proof_hash, proof_cid.to_string());
 
     // Verify transaction size
-    assert!(encoded.len() < 1024, "Transaction should be < 1KB, got {} bytes", encoded.len());
-    assert!(encoded.len() > 100, "Transaction should have reasonable size, got {} bytes", encoded.len());
+    assert!(
+        encoded.len() < 1024,
+        "Transaction should be < 1KB, got {} bytes",
+        encoded.len()
+    );
+    assert!(
+        encoded.len() > 100,
+        "Transaction should have reasonable size, got {} bytes",
+        encoded.len()
+    );
 
     println!("✅ Transaction Encoding Test:");
     println!("   Transaction size: {} bytes", encoded.len());
-    println!("   Size reduction: 221KB → {} bytes ({}x smaller)",
-             encoded.len(), 221_466 / encoded.len());
+    println!(
+        "   Size reduction: 221KB → {} bytes ({}x smaller)",
+        encoded.len(),
+        221_466 / encoded.len()
+    );
 
     // Verify function selector (first 4 bytes)
     assert_eq!(encoded.len() >= 4, true, "Should have function selector");
@@ -134,15 +169,24 @@ fn test_transaction_size_within_rpc_limits() {
     // Both should be well under 128KB RPC limit
     const RPC_LIMIT: usize = 131_072; // 128KB
 
-    assert!(encoded_short.len() < RPC_LIMIT, "Short CID transaction should fit RPC limit");
-    assert!(encoded_long.len() < RPC_LIMIT, "Long CID transaction should fit RPC limit");
+    assert!(
+        encoded_short.len() < RPC_LIMIT,
+        "Short CID transaction should fit RPC limit"
+    );
+    assert!(
+        encoded_long.len() < RPC_LIMIT,
+        "Long CID transaction should fit RPC limit"
+    );
     assert!(encoded_long.len() < 1024, "Even long CID should be < 1KB");
 
     println!("✅ RPC Limit Test:");
     println!("   Short CID tx: {} bytes", encoded_short.len());
     println!("   Long CID tx: {} bytes", encoded_long.len());
     println!("   RPC limit: {} bytes", RPC_LIMIT);
-    println!("   Headroom: {}x smaller than limit", RPC_LIMIT / encoded_long.len());
+    println!(
+        "   Headroom: {}x smaller than limit",
+        RPC_LIMIT / encoded_long.len()
+    );
 }
 
 #[test]
@@ -212,7 +256,11 @@ async fn test_full_checkpoint_flow_with_mock_s5() {
 
     // Step 1: Generate mock proof (221KB like real STARK proof)
     let proof_bytes = generate_mock_proof(job_id, tokens_generated);
-    assert_eq!(proof_bytes.len(), 221_466, "Mock proof should be same size as real proof");
+    assert_eq!(
+        proof_bytes.len(),
+        221_466,
+        "Mock proof should be same size as real proof"
+    );
 
     // Step 2: Calculate SHA256 hash
     let mut hasher = Sha256::new();
@@ -225,27 +273,43 @@ async fn test_full_checkpoint_flow_with_mock_s5() {
     // Step 3: Upload to S5
     let s5_backend = MockS5Backend::new();
     let proof_path = format!("home/proofs/job_{}_proof.bin", job_id);
-    let proof_cid = s5_backend.put(&proof_path, proof_bytes.clone()).await.unwrap();
+    let proof_cid = s5_backend
+        .put(&proof_path, proof_bytes.clone())
+        .await
+        .unwrap();
 
     println!("📦 Proof CID: {}", proof_cid);
     assert!(!proof_cid.is_empty(), "CID should be generated");
 
     // Step 4: Encode transaction with hash+CID
-    let encoded_tx = encode_checkpoint_call(job_id, tokens_generated, proof_hash_bytes, proof_cid.clone());
+    let encoded_tx = encode_checkpoint_call(
+        job_id,
+        tokens_generated,
+        proof_hash_bytes,
+        proof_cid.clone(),
+    );
 
-    println!("📦 Transaction size: {} bytes (was {}KB proof - {}x reduction!)",
-             encoded_tx.len(),
-             proof_bytes.len() / 1024,
-             proof_bytes.len() / encoded_tx.len());
+    println!(
+        "📦 Transaction size: {} bytes (was {}KB proof - {}x reduction!)",
+        encoded_tx.len(),
+        proof_bytes.len() / 1024,
+        proof_bytes.len() / encoded_tx.len()
+    );
 
     // Step 5: Verify transaction fits RPC limits
     const RPC_LIMIT: usize = 131_072; // 128KB
-    assert!(encoded_tx.len() < RPC_LIMIT, "Transaction must fit RPC limit");
+    assert!(
+        encoded_tx.len() < RPC_LIMIT,
+        "Transaction must fit RPC limit"
+    );
     assert!(encoded_tx.len() < 1024, "Transaction should be < 1KB");
 
     // Step 6: Verify proof can be retrieved and verified
     let retrieved_proof = s5_backend.get_by_cid(&proof_cid).await.unwrap();
-    assert_eq!(retrieved_proof, proof_bytes, "Retrieved proof should match original");
+    assert_eq!(
+        retrieved_proof, proof_bytes,
+        "Retrieved proof should match original"
+    );
 
     // Verify hash of retrieved proof matches
     let mut hasher2 = Sha256::new();
@@ -253,7 +317,10 @@ async fn test_full_checkpoint_flow_with_mock_s5() {
     let retrieved_hash = hasher2.finalize();
     let retrieved_hash_bytes: [u8; 32] = retrieved_hash.into();
 
-    assert_eq!(retrieved_hash_bytes, proof_hash_bytes, "Hash should match after retrieval");
+    assert_eq!(
+        retrieved_hash_bytes, proof_hash_bytes,
+        "Hash should match after retrieval"
+    );
 
     println!("✅ Integration Test PASSED:");
     println!("   ✓ Proof generation: {} bytes", proof_bytes.len());
@@ -262,8 +329,11 @@ async fn test_full_checkpoint_flow_with_mock_s5() {
     println!("   ✓ Transaction encoding: {} bytes", encoded_tx.len());
     println!("   ✓ Proof retrieval: verified");
     println!("   ✓ Hash verification: matched");
-    println!("   ✓ Size reduction: {}x (221KB → {}B)",
-             proof_bytes.len() / encoded_tx.len(), encoded_tx.len());
+    println!(
+        "   ✓ Size reduction: {}x (221KB → {}B)",
+        proof_bytes.len() / encoded_tx.len(),
+        encoded_tx.len()
+    );
 }
 
 #[tokio::test]
@@ -275,10 +345,10 @@ async fn test_multiple_checkpoints_different_cids() {
 
     for job_id in 1..=5 {
         let proof = generate_mock_proof(job_id, 100);
-        let cid = s5_backend.put(
-            &format!("home/proofs/job_{}_proof.bin", job_id),
-            proof
-        ).await.unwrap();
+        let cid = s5_backend
+            .put(&format!("home/proofs/job_{}_proof.bin", job_id), proof)
+            .await
+            .unwrap();
 
         cids.push(cid.clone());
         println!("Job {}: CID = {}", job_id, cid);
@@ -286,12 +356,18 @@ async fn test_multiple_checkpoints_different_cids() {
 
     // Verify all CIDs are different (different job IDs create different proofs)
     for i in 0..cids.len() {
-        for j in (i+1)..cids.len() {
-            assert_ne!(cids[i], cids[j], "Different proofs should have different CIDs");
+        for j in (i + 1)..cids.len() {
+            assert_ne!(
+                cids[i], cids[j],
+                "Different proofs should have different CIDs"
+            );
         }
     }
 
-    println!("✅ Multiple Checkpoint Test: All {} CIDs are unique", cids.len());
+    println!(
+        "✅ Multiple Checkpoint Test: All {} CIDs are unique",
+        cids.len()
+    );
 }
 
 // ============================================================================
@@ -308,7 +384,8 @@ fn generate_mock_proof(job_id: u64, tokens: u64) -> Vec<u8> {
 
     // Expand to 221,466 bytes (real proof size)
     let mut proof = Vec::with_capacity(221_466);
-    for i in 0u32..6921 {  // 221,466 / 32 = 6920.6875
+    for i in 0u32..6921 {
+        // 221,466 / 32 = 6920.6875
         hasher = Sha256::new();
         hasher.update(&hash);
         hasher.update(&i.to_le_bytes());
@@ -361,7 +438,9 @@ fn encode_checkpoint_call(
         Token::String(proof_cid),
     ];
 
-    function.encode_input(&tokens).expect("Failed to encode submitProofOfWork call")
+    function
+        .encode_input(&tokens)
+        .expect("Failed to encode submitProofOfWork call")
 }
 
 // ============================================================================
@@ -403,7 +482,10 @@ async fn test_quota_limit() {
     // Third upload should fail (exceeds quota)
     let proof3 = vec![0xCC; 221_466];
     let result3 = s5_backend.put("home/proofs/job_3.bin", proof3).await;
-    assert!(result3.is_err(), "Third upload should fail (quota exceeded)");
+    assert!(
+        result3.is_err(),
+        "Third upload should fail (quota exceeded)"
+    );
 
     println!("✅ Quota Limit Test: Quota enforcement working correctly");
 }

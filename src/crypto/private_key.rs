@@ -97,12 +97,8 @@ pub fn extract_node_private_key() -> Result<[u8; 32]> {
     }
 
     // Decode hex to bytes
-    let key_bytes = hex::decode(hex_str).map_err(|e| {
-        anyhow!(
-            "HOST_PRIVATE_KEY contains invalid hex characters: {}",
-            e
-        )
-    })?;
+    let key_bytes = hex::decode(hex_str)
+        .map_err(|e| anyhow!("HOST_PRIVATE_KEY contains invalid hex characters: {}", e))?;
 
     // Validate decoded length (should be exactly 32 bytes)
     if key_bytes.len() != 32 {

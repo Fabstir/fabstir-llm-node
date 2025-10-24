@@ -7,7 +7,6 @@
 ///
 /// The pricing system separates native token pricing from stablecoin pricing to
 /// account for different decimal places and economic models.
-
 use ethers::types::{Address, U256};
 use std::str::FromStr;
 
@@ -44,15 +43,13 @@ pub mod native {
         if price < min_price() {
             return Err(format!(
                 "Native price {} below minimum {}",
-                price,
-                MIN_PRICE_PER_TOKEN
+                price, MIN_PRICE_PER_TOKEN
             ));
         }
         if price > max_price() {
             return Err(format!(
                 "Native price {} above maximum {}",
-                price,
-                MAX_PRICE_PER_TOKEN
+                price, MAX_PRICE_PER_TOKEN
             ));
         }
         Ok(())
@@ -98,15 +95,13 @@ pub mod stable {
         if price < min_price() {
             return Err(format!(
                 "Stable price {} below minimum {}",
-                price,
-                MIN_PRICE_PER_TOKEN
+                price, MIN_PRICE_PER_TOKEN
             ));
         }
         if price > max_price() {
             return Err(format!(
                 "Stable price {} above maximum {}",
-                price,
-                MAX_PRICE_PER_TOKEN
+                price, MAX_PRICE_PER_TOKEN
             ));
         }
         Ok(())

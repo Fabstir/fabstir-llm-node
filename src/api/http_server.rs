@@ -459,8 +459,14 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                     }
 
                     // Get checkpoint manager and complete the session
-                    tracing::info!("[HTTP-WS] 💰 === Session End Detected - Initiating Payment Settlement ===");
-                    tracing::info!("[HTTP-WS] Job ID: {}, Chain: {}", job_id, current_chain_id.unwrap_or(0));
+                    tracing::info!(
+                        "[HTTP-WS] 💰 === Session End Detected - Initiating Payment Settlement ==="
+                    );
+                    tracing::info!(
+                        "[HTTP-WS] Job ID: {}, Chain: {}",
+                        job_id,
+                        current_chain_id.unwrap_or(0)
+                    );
 
                     if let Some(checkpoint_manager) =
                         state.api_server.get_checkpoint_manager().await
@@ -472,7 +478,9 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                                 job_id,
                                 e
                             );
-                            tracing::error!("[HTTP-WS] ⚠️ Payment settlement may not have occurred!");
+                            tracing::error!(
+                                "[HTTP-WS] ⚠️ Payment settlement may not have occurred!"
+                            );
                         } else {
                             tracing::info!(
                                 "[HTTP-WS] ✅ Session job {} completed successfully",
@@ -484,9 +492,7 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                             tracing::info!("[HTTP-WS]   - User refund (unused tokens)");
                         }
                     } else {
-                        tracing::error!(
-                            "[HTTP-WS] ⚠️ NO CHECKPOINT MANAGER AVAILABLE!"
-                        );
+                        tracing::error!("[HTTP-WS] ⚠️ NO CHECKPOINT MANAGER AVAILABLE!");
                         tracing::error!(
                             "[HTTP-WS] ⚠️ Cannot complete session job {} - PAYMENTS WILL NOT BE SETTLED!",
                             job_id
@@ -501,9 +507,7 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
 
     // Also trigger payment settlement when connection drops unexpectedly
     if let Some(job_id) = current_job_id {
-        tracing::info!(
-            "[HTTP-WS-DISCONNECT] 🔌 === WebSocket Disconnected Unexpectedly ==="
-        );
+        tracing::info!("[HTTP-WS-DISCONNECT] 🔌 === WebSocket Disconnected Unexpectedly ===");
         tracing::info!(
             "[HTTP-WS-DISCONNECT] 💰 Triggering emergency payment settlement for job {} on chain {}",
             job_id,
@@ -520,16 +524,15 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
         }
 
         if let Some(checkpoint_manager) = state.api_server.get_checkpoint_manager().await {
-            tracing::info!("[HTTP-WS-DISCONNECT] ✓ Checkpoint manager available, initiating settlement...");
+            tracing::info!(
+                "[HTTP-WS-DISCONNECT] ✓ Checkpoint manager available, initiating settlement..."
+            );
             if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
                 tracing::error!(
                     "[HTTP-WS-DISCONNECT] ❌ CRITICAL: Failed to complete session job {} on disconnect!",
                     job_id
                 );
-                tracing::error!(
-                    "[HTTP-WS-DISCONNECT]   Error: {:?}",
-                    e
-                );
+                tracing::error!("[HTTP-WS-DISCONNECT]   Error: {:?}", e);
                 tracing::error!(
                     "[HTTP-WS-DISCONNECT] ⚠️ PAYMENTS NOT SETTLED - Manual intervention may be required!"
                 );
@@ -543,9 +546,7 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                 );
             }
         } else {
-            tracing::error!(
-                "[HTTP-WS-DISCONNECT] ⚠️ CRITICAL: No checkpoint manager available!"
-            );
+            tracing::error!("[HTTP-WS-DISCONNECT] ⚠️ CRITICAL: No checkpoint manager available!");
             tracing::error!(
                 "[HTTP-WS-DISCONNECT] ⚠️ Session {} cannot be settled - payments stuck!",
                 job_id

@@ -7,7 +7,7 @@
 
 use fabstir_llm_node::crypto::recover_client_address;
 use k256::{
-    ecdsa::{SigningKey, Signature, signature::Signer},
+    ecdsa::{signature::Signer, Signature, SigningKey},
     elliptic_curve::sec1::ToEncodedPoint,
 };
 use rand::rngs::OsRng;
@@ -93,16 +93,26 @@ fn test_ethereum_address_format() {
     if let Ok(address) = result {
         // Ethereum address format checks
         assert!(address.starts_with("0x"), "Address should start with 0x");
-        assert_eq!(address.len(), 42, "Address should be 42 characters (0x + 40 hex)");
+        assert_eq!(
+            address.len(),
+            42,
+            "Address should be 42 characters (0x + 40 hex)"
+        );
 
         // Check all characters after 0x are valid hex
         let hex_part = &address[2..];
-        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()), "Address should only contain hex digits");
+        assert!(
+            hex_part.chars().all(|c| c.is_ascii_hexdigit()),
+            "Address should only contain hex digits"
+        );
     } else {
         // Try recovery ID 1
         compact_sig[64] = 1;
         let result = recover_client_address(&compact_sig, message_hash.as_slice());
-        assert!(result.is_ok(), "Signature recovery should succeed with valid signature");
+        assert!(
+            result.is_ok(),
+            "Signature recovery should succeed with valid signature"
+        );
 
         let address = result.unwrap();
         assert!(address.starts_with("0x"));
@@ -173,14 +183,20 @@ fn test_signature_deterministic() {
         }
     }
 
-    assert!(address1.is_some(), "Should recover address on first attempt");
+    assert!(
+        address1.is_some(),
+        "Should recover address on first attempt"
+    );
     let (address1, recovery_id) = address1.unwrap();
 
     // Recover again with same signature and recovery ID
     compact_sig[64] = recovery_id;
     let address2 = recover_client_address(&compact_sig, message_hash.as_slice()).unwrap();
 
-    assert_eq!(address1, address2, "Same signature should produce same address");
+    assert_eq!(
+        address1, address2,
+        "Same signature should produce same address"
+    );
 }
 
 #[test]
@@ -202,7 +218,11 @@ fn test_different_messages_different_addresses() {
     let sig2: Signature = signing_key.sign(message2);
 
     // Signatures should be different
-    assert_ne!(sig1.to_bytes(), sig2.to_bytes(), "Different messages should produce different signatures");
+    assert_ne!(
+        sig1.to_bytes(),
+        sig2.to_bytes(),
+        "Different messages should produce different signatures"
+    );
 
     // But both should recover to the same signer address
     let sig1_bytes = sig1.to_bytes();
@@ -237,14 +257,26 @@ fn test_different_messages_different_addresses() {
         }
     }
 
-    assert!(addr1.is_some(), "First signature should recover successfully");
-    assert!(addr2.is_some(), "Second signature should recover successfully");
+    assert!(
+        addr1.is_some(),
+        "First signature should recover successfully"
+    );
+    assert!(
+        addr2.is_some(),
+        "Second signature should recover successfully"
+    );
 
     let addr1_value = addr1.unwrap();
     let addr2_value = addr2.unwrap();
 
-    assert_eq!(addr1_value, addr2_value, "Both should recover to same signer address");
-    assert_eq!(addr1_value, expected_address, "Recovered address should match expected");
+    assert_eq!(
+        addr1_value, addr2_value,
+        "Both should recover to same signer address"
+    );
+    assert_eq!(
+        addr1_value, expected_address,
+        "Recovered address should match expected"
+    );
 }
 
 #[test]
@@ -273,7 +305,10 @@ fn test_corrupted_signature() {
         let public_key = k256::PublicKey::from(verifying_key);
         let expected_address = pubkey_to_address(&public_key);
 
-        assert_ne!(corrupted_address, expected_address, "Corrupted signature should not recover correct address");
+        assert_ne!(
+            corrupted_address, expected_address,
+            "Corrupted signature should not recover correct address"
+        );
     }
     // Alternatively, recovery might fail entirely, which is also acceptable
 }
@@ -310,7 +345,10 @@ fn test_wrong_message_hash() {
 
     if let Some(wrong_address) = recovered_with_wrong {
         // If recovery succeeds, it should produce wrong address
-        assert_ne!(wrong_address, expected_address, "Wrong message hash should not recover correct address");
+        assert_ne!(
+            wrong_address, expected_address,
+            "Wrong message hash should not recover correct address"
+        );
     }
     // Alternatively, recovery might fail, which is also acceptable behavior
 }
@@ -337,7 +375,10 @@ fn test_recovery_id_affects_result() {
 
     // At least one should succeed, and if both succeed they should differ
     // (unless by coincidence both IDs recover to same address, which is unlikely)
-    assert!(result0.is_ok() || result1.is_ok(), "At least one recovery ID should work");
+    assert!(
+        result0.is_ok() || result1.is_ok(),
+        "At least one recovery ID should work"
+    );
 
     if result0.is_ok() && result1.is_ok() {
         // Both succeeded - they should produce different addresses
@@ -353,7 +394,10 @@ fn test_recovery_id_affects_result() {
         let matches0 = addr0 == expected_address;
         let matches1 = addr1 == expected_address;
 
-        assert!(matches0 ^ matches1, "Exactly one recovery ID should produce correct address");
+        assert!(
+            matches0 ^ matches1,
+            "Exactly one recovery ID should produce correct address"
+        );
     }
 }
 
@@ -379,5 +423,8 @@ fn test_empty_message_hash() {
         }
     }
 
-    assert!(recovered, "Should be able to recover from empty message signature");
+    assert!(
+        recovered,
+        "Should be able to recover from empty message signature"
+    );
 }

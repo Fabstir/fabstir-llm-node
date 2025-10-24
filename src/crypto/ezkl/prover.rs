@@ -79,9 +79,7 @@ impl EzklProver {
         // Determine key path to use
         let path = key_path
             .or_else(|| self.proving_key_path.as_deref())
-            .ok_or_else(|| {
-                EzklError::config_error("No proving key path configured or provided")
-            })?;
+            .ok_or_else(|| EzklError::config_error("No proving key path configured or provided"))?;
 
         // Load key from file
         tracing::info!("📖 Loading proving key from {:?}", path);
@@ -158,10 +156,7 @@ impl EzklProver {
             proof_bytes.push(0x00);
         }
 
-        tracing::info!(
-            "✅ Generated mock EZKL proof ({} bytes)",
-            proof_bytes.len()
-        );
+        tracing::info!("✅ Generated mock EZKL proof ({} bytes)", proof_bytes.len());
 
         Ok(ProofData {
             proof_bytes,
@@ -211,11 +206,9 @@ impl EzklProver {
         tracing::info!("🔨 Running Risc0 prover (this may take 2-3 seconds on CPU)...");
         let prover = default_prover();
 
-        let prove_info = prover
-            .prove(env, COMMITMENT_GUEST_ELF)
-            .map_err(|e| {
-                EzklError::proof_generation_failed(&format!("Prover execution failed: {}", e))
-            })?;
+        let prove_info = prover.prove(env, COMMITMENT_GUEST_ELF).map_err(|e| {
+            EzklError::proof_generation_failed(&format!("Prover execution failed: {}", e))
+        })?;
 
         let receipt = prove_info.receipt;
         tracing::info!("✅ Proof generated successfully");

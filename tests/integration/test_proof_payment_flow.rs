@@ -58,15 +58,20 @@ async fn test_full_inference_to_payment_flow() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    result_store.write().await.store_result(1000, result.clone()).await?;
-    proof_store.write().await.store_proof(1000, proof.clone()).await?;
+    result_store
+        .write()
+        .await
+        .store_result(1000, result.clone())
+        .await?;
+    proof_store
+        .write()
+        .await
+        .store_proof(1000, proof.clone())
+        .await?;
 
     // 4. Settlement validation
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let is_valid = validator.validate_before_settlement(1000).await?;
     assert!(is_valid, "Proof validation must pass for payment");
@@ -110,11 +115,8 @@ async fn test_invalid_proof_prevents_payment() -> Result<()> {
         .await?;
 
     // 4. Settlement validation should FAIL
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let is_valid = validator.validate_before_settlement(2000).await?;
     assert!(!is_valid, "Tampered result MUST fail validation");
@@ -133,14 +135,15 @@ async fn test_missing_proof_prevents_payment() -> Result<()> {
 
     // 1. Result exists but proof is missing
     let result = create_inference_result(3000, 150);
-    result_store.write().await.store_result(3000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(3000, result)
+        .await?;
 
     // 2. Try to settle without proof
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let validation_result = validator.validate_before_settlement(3000).await;
 
@@ -167,18 +170,19 @@ async fn test_checkpoint_proof_payment_settlement() -> Result<()> {
     // 1. Checkpoint 1: 100 tokens
     let proof1 = proof_gen.generate_proof(&result).await?;
     proof_store.write().await.store_proof(4000, proof1).await?;
-    result_store.write().await.store_result(4000, result.clone()).await?;
+    result_store
+        .write()
+        .await
+        .store_result(4000, result.clone())
+        .await?;
 
     // 2. Checkpoint 2: 200 more tokens (cumulative)
     let proof2 = proof_gen.generate_proof(&result).await?;
     proof_store.write().await.store_proof(4000, proof2).await?;
 
     // 3. Final settlement
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let is_valid = validator.validate_before_settlement(4000).await?;
     assert!(is_valid);
@@ -203,16 +207,17 @@ async fn test_multi_checkpoint_proof_flow() -> Result<()> {
         let proof = proof_gen.generate_proof(&result).await?;
 
         // Store
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
 
     // Validate all checkpoints
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     for checkpoint_id in 0..3 {
         let job_id = 5000 + checkpoint_id;
@@ -233,14 +238,15 @@ async fn test_proof_validation_timeout() -> Result<()> {
     let result = create_inference_result(6000, 200);
     let proof = proof_gen.generate_proof(&result).await?;
 
-    result_store.write().await.store_result(6000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(6000, result)
+        .await?;
     proof_store.write().await.store_proof(6000, proof).await?;
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let start = std::time::Instant::now();
     let is_valid = validator.validate_before_settlement(6000).await?;
@@ -267,7 +273,11 @@ async fn test_concurrent_job_settlements() -> Result<()> {
         let result = create_inference_result(job_id, 150);
         let proof = proof_gen.generate_proof(&result).await?;
 
-        result_store.write().await.store_result(job_id, result).await?;
+        result_store
+            .write()
+            .await
+            .store_result(job_id, result)
+            .await?;
         proof_store.write().await.store_proof(job_id, proof).await?;
     }
 
@@ -281,12 +291,7 @@ async fn test_concurrent_job_settlements() -> Result<()> {
     let handles: Vec<_> = (7000..7010)
         .map(|job_id| {
             let validator = validator.clone();
-            tokio::spawn(async move {
-                validator
-                    .validate_before_settlement(job_id)
-                    .await
-                    .unwrap()
-            })
+            tokio::spawn(async move { validator.validate_before_settlement(job_id).await.unwrap() })
         })
         .collect();
 
@@ -336,11 +341,8 @@ async fn test_settlement_with_chain_specific_proof() -> Result<()> {
         .await?;
 
     // Validate both
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let base_valid = validator.validate_before_settlement(8000).await?;
     let opbnb_valid = validator.validate_before_settlement(8001).await?;
@@ -363,15 +365,16 @@ async fn test_proof_storage_retrieval_e2e() -> Result<()> {
 
     let proof_size = proof.proof_data.len();
 
-    result_store.write().await.store_result(9000, result).await?;
+    result_store
+        .write()
+        .await
+        .store_result(9000, result)
+        .await?;
     proof_store.write().await.store_proof(9000, proof).await?;
 
     // 2. Retrieve for validation
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     let retrieved_proof = validator.retrieve_proof(9000).await?;
     assert_eq!(retrieved_proof.proof_data.len(), proof_size);
@@ -398,11 +401,8 @@ async fn test_validator_error_recovery() -> Result<()> {
     let proof_store = Arc::new(RwLock::new(ProofStore::new()));
     let result_store = Arc::new(RwLock::new(ResultStore::new()));
 
-    let validator = SettlementValidator::new(
-        proof_gen.clone(),
-        proof_store.clone(),
-        result_store.clone(),
-    );
+    let validator =
+        SettlementValidator::new(proof_gen.clone(), proof_store.clone(), result_store.clone());
 
     // Attempt 1: Missing data (should error)
     let result1 = validator.validate_before_settlement(10000).await;

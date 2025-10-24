@@ -12,16 +12,11 @@
 //!
 //! **TDD Approach**: Tests written BEFORE handler implementation.
 
-use fabstir_llm_node::crypto::{
-    encrypt_with_aead, SessionKeyStore,
-};
+use fabstir_llm_node::crypto::{encrypt_with_aead, SessionKeyStore};
 use serde_json::json;
 
 /// Create a valid encrypted message payload for testing
-fn create_test_encrypted_message(
-    session_key: &[u8; 32],
-    prompt: &str,
-) -> serde_json::Value {
+fn create_test_encrypted_message(session_key: &[u8; 32], prompt: &str) -> serde_json::Value {
     // Encrypt prompt with session key
     let nonce = [2u8; 24]; // Different from session_init nonce
     let aad = b"encrypted_message";
@@ -87,12 +82,9 @@ fn test_message_decryption() {
     nonce.copy_from_slice(&nonce_bytes);
 
     // Decrypt using the same session key
-    let decrypted = fabstir_llm_node::crypto::decrypt_with_aead(
-        &ciphertext,
-        &nonce,
-        &aad_bytes,
-        &session_key
-    ).unwrap();
+    let decrypted =
+        fabstir_llm_node::crypto::decrypt_with_aead(&ciphertext, &nonce, &aad_bytes, &session_key)
+            .unwrap();
 
     let decrypted_prompt = String::from_utf8(decrypted).unwrap();
 
@@ -169,29 +161,21 @@ fn test_aad_validation() {
     nonce.copy_from_slice(&nonce_bytes);
 
     // Decrypt with correct AAD - should succeed
-    let result_correct = fabstir_llm_node::crypto::decrypt_with_aead(
-        &ciphertext,
-        &nonce,
-        &aad_bytes,
-        &session_key
-    );
+    let result_correct =
+        fabstir_llm_node::crypto::decrypt_with_aead(&ciphertext, &nonce, &aad_bytes, &session_key);
     assert!(result_correct.is_ok());
 
     // Decrypt with WRONG AAD - should fail
     let wrong_aad = b"wrong_aad";
-    let result_wrong = fabstir_llm_node::crypto::decrypt_with_aead(
-        &ciphertext,
-        &nonce,
-        wrong_aad,
-        &session_key
-    );
+    let result_wrong =
+        fabstir_llm_node::crypto::decrypt_with_aead(&ciphertext, &nonce, wrong_aad, &session_key);
     assert!(result_wrong.is_err());
 
     let error_msg = result_wrong.unwrap_err().to_string();
     assert!(
-        error_msg.contains("Decryption failed") ||
-        error_msg.contains("authentication") ||
-        error_msg.contains("AEAD")
+        error_msg.contains("Decryption failed")
+            || error_msg.contains("authentication")
+            || error_msg.contains("AEAD")
     );
 
     // Expected: Handler would validate AAD matches expected value
@@ -234,8 +218,9 @@ fn test_inference_with_encrypted_prompt() {
             &ciphertext,
             &nonce,
             &aad_bytes,
-            &retrieved_key.unwrap()
-        ).unwrap();
+            &retrieved_key.unwrap(),
+        )
+        .unwrap();
 
         let decrypted_prompt = String::from_utf8(decrypted).unwrap();
 
@@ -289,20 +274,16 @@ fn test_wrong_session_key() {
     nonce.copy_from_slice(&nonce_bytes);
 
     // Try to decrypt with wrong key
-    let result = fabstir_llm_node::crypto::decrypt_with_aead(
-        &ciphertext,
-        &nonce,
-        &aad_bytes,
-        &wrong_key
-    );
+    let result =
+        fabstir_llm_node::crypto::decrypt_with_aead(&ciphertext, &nonce, &aad_bytes, &wrong_key);
 
     // Should fail
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("Decryption failed") ||
-        error_msg.contains("authentication") ||
-        error_msg.contains("AEAD")
+        error_msg.contains("Decryption failed")
+            || error_msg.contains("authentication")
+            || error_msg.contains("AEAD")
     );
 
     // Expected: Handler would send error response
@@ -368,8 +349,9 @@ fn test_session_key_persistence() {
                 &ciphertext,
                 &nonce,
                 &aad_bytes,
-                &retrieved_key.unwrap()
-            ).unwrap();
+                &retrieved_key.unwrap(),
+            )
+            .unwrap();
 
             let decrypted_prompt = String::from_utf8(decrypted).unwrap();
             assert_eq!(decrypted_prompt, prompt);
@@ -395,10 +377,14 @@ fn test_hex_with_0x_prefix() {
 
     // Parse and strip prefix
     let ciphertext_with_prefix = payload["payload"]["ciphertextHex"].as_str().unwrap();
-    let ciphertext_stripped = ciphertext_with_prefix.strip_prefix("0x").unwrap_or(ciphertext_with_prefix);
+    let ciphertext_stripped = ciphertext_with_prefix
+        .strip_prefix("0x")
+        .unwrap_or(ciphertext_with_prefix);
 
     let nonce_with_prefix = payload["payload"]["nonceHex"].as_str().unwrap();
-    let nonce_stripped = nonce_with_prefix.strip_prefix("0x").unwrap_or(nonce_with_prefix);
+    let nonce_stripped = nonce_with_prefix
+        .strip_prefix("0x")
+        .unwrap_or(nonce_with_prefix);
 
     // Should decode successfully
     let ciphertext = hex::decode(ciphertext_stripped).unwrap();

@@ -80,8 +80,7 @@ impl EzklMetrics {
 
     /// Record proof generation error
     pub fn record_proof_generation_error(&self) {
-        self.proof_generation_errors
-            .fetch_add(1, Ordering::Relaxed);
+        self.proof_generation_errors.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record proof cache hit

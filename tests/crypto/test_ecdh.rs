@@ -6,11 +6,7 @@
 //! function BEFORE implementation. Following strict TDD methodology.
 
 use fabstir_llm_node::crypto::derive_shared_key;
-use k256::{
-    ecdh::EphemeralSecret,
-    elliptic_curve::sec1::ToEncodedPoint,
-    PublicKey, SecretKey,
-};
+use k256::{ecdh::EphemeralSecret, elliptic_curve::sec1::ToEncodedPoint, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 
 #[test]
@@ -72,10 +68,7 @@ fn test_invalid_public_key() {
     let invalid_pub = vec![0u8; 20]; // Too short
 
     let result = derive_shared_key(&invalid_pub, &node_priv_bytes);
-    assert!(
-        result.is_err(),
-        "Should fail with invalid public key size"
-    );
+    assert!(result.is_err(), "Should fail with invalid public key size");
 }
 
 #[test]
@@ -87,10 +80,7 @@ fn test_invalid_public_key_malformed() {
     let invalid_pub = vec![0xFF; 33]; // Invalid point
 
     let result = derive_shared_key(&invalid_pub, &node_priv_bytes);
-    assert!(
-        result.is_err(),
-        "Should fail with malformed public key"
-    );
+    assert!(result.is_err(), "Should fail with malformed public key");
 }
 
 #[test]
@@ -104,10 +94,7 @@ fn test_invalid_private_key() {
     let invalid_priv = vec![0u8; 16]; // Too short
 
     let result = derive_shared_key(client_eph_pub_bytes.as_bytes(), &invalid_priv);
-    assert!(
-        result.is_err(),
-        "Should fail with invalid private key size"
-    );
+    assert!(result.is_err(), "Should fail with invalid private key size");
 }
 
 #[test]
@@ -142,14 +129,10 @@ fn test_different_keys_different_secrets() {
     let client_eph_pub_bytes = client_eph_pub.to_encoded_point(true);
 
     // Derive shared keys with different node keys
-    let key1 = derive_shared_key(
-        client_eph_pub_bytes.as_bytes(),
-        &node_secret1.to_bytes()
-    ).unwrap();
-    let key2 = derive_shared_key(
-        client_eph_pub_bytes.as_bytes(),
-        &node_secret2.to_bytes()
-    ).unwrap();
+    let key1 =
+        derive_shared_key(client_eph_pub_bytes.as_bytes(), &node_secret1.to_bytes()).unwrap();
+    let key2 =
+        derive_shared_key(client_eph_pub_bytes.as_bytes(), &node_secret2.to_bytes()).unwrap();
 
     assert_ne!(
         key1, key2,
@@ -169,10 +152,7 @@ fn test_uncompressed_public_key() {
     // Test with uncompressed public key (65 bytes)
     let client_eph_pub_uncompressed = client_eph_pub.to_encoded_point(false);
 
-    let result = derive_shared_key(
-        client_eph_pub_uncompressed.as_bytes(),
-        &node_priv_bytes
-    );
+    let result = derive_shared_key(client_eph_pub_uncompressed.as_bytes(), &node_priv_bytes);
 
     // Should also work with uncompressed keys
     assert!(
@@ -192,10 +172,7 @@ fn test_zero_private_key_rejected() {
     let zero_priv = vec![0u8; 32];
 
     let result = derive_shared_key(client_eph_pub_bytes.as_bytes(), &zero_priv);
-    assert!(
-        result.is_err(),
-        "Should reject zero private key as invalid"
-    );
+    assert!(result.is_err(), "Should reject zero private key as invalid");
 }
 
 #[test]
@@ -209,15 +186,9 @@ fn test_shared_secret_not_all_zeros() {
     let client_eph_pub_bytes = client_eph_pub.to_encoded_point(true);
 
     // Derive shared key
-    let shared_key = derive_shared_key(
-        client_eph_pub_bytes.as_bytes(),
-        &node_priv_bytes
-    ).unwrap();
+    let shared_key = derive_shared_key(client_eph_pub_bytes.as_bytes(), &node_priv_bytes).unwrap();
 
     // Shared secret should not be all zeros (extremely unlikely)
     let is_all_zeros = shared_key.iter().all(|&b| b == 0);
-    assert!(
-        !is_all_zeros,
-        "Shared secret should not be all zeros"
-    );
+    assert!(!is_all_zeros, "Shared secret should not be all zeros");
 }

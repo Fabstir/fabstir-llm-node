@@ -49,8 +49,8 @@ impl EzklCapabilities {
             Self {
                 available: false,
                 is_mock: true,
-                can_generate_proofs: true,  // Mock proofs
-                can_verify_proofs: true,    // Mock verification
+                can_generate_proofs: true,   // Mock proofs
+                can_verify_proofs: true,     // Mock verification
                 can_compile_circuits: false, // No real compilation
                 version: None,
             }
@@ -99,7 +99,10 @@ pub fn init_ezkl() -> anyhow::Result<()> {
         // - Check library version
         // - Initialize any global state
         // - Validate system requirements
-        tracing::info!("🔐 Real EZKL initialized (v{})", crate::crypto::ezkl::SUPPORTED_EZKL_VERSION);
+        tracing::info!(
+            "🔐 Real EZKL initialized (v{})",
+            crate::crypto::ezkl::SUPPORTED_EZKL_VERSION
+        );
     }
 
     #[cfg(not(feature = "real-ezkl"))]
@@ -133,7 +136,7 @@ mod tests {
             assert!(!caps.available);
             assert!(caps.is_mock);
             assert!(caps.can_generate_proofs); // Mock proofs
-            assert!(caps.can_verify_proofs);    // Mock verification
+            assert!(caps.can_verify_proofs); // Mock verification
             assert!(!caps.can_compile_circuits); // No real compilation
             assert!(caps.version.is_none());
         }

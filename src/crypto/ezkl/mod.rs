@@ -52,13 +52,16 @@ pub mod witness;
 // Re-export commonly used types
 pub use availability::{is_ezkl_available, EzklCapabilities};
 pub use cache::{CacheStats, ProofCache};
-pub use circuit::{CommitmentCircuit, CircuitMetadata};
+pub use circuit::{CircuitMetadata, CommitmentCircuit};
 pub use config::EzklConfig;
 pub use error::{EzklError, EzklResult};
 pub use key_manager::{KeyCacheStats, KeyManager};
 pub use metrics::{global_metrics, EzklMetrics};
 pub use prover::{generate_proof, generate_proof_from_circuit, EzklProver, ProofData};
-pub use setup::{compile_circuit, generate_keys, keys_are_compatible, load_proving_key, load_verifying_key, ProvingKey, VerificationKey};
+pub use setup::{
+    compile_circuit, generate_keys, keys_are_compatible, load_proving_key, load_verifying_key,
+    ProvingKey, VerificationKey,
+};
 pub use verifier::{verify_proof as verify_ezkl_proof, verify_proof_bytes, EzklVerifier};
 pub use witness::{Witness, WitnessBuilder};
 

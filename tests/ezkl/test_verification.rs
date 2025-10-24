@@ -301,7 +301,7 @@ fn test_verify_invalid_proof_random_bytes() -> Result<()> {
     // Should either return Ok(false) for invalid proof or Err for malformed
     match result {
         Ok(is_valid) => assert!(!is_valid, "Random bytes should not verify"),
-        Err(_) => {}, // Malformed proof error is acceptable
+        Err(_) => {} // Malformed proof error is acceptable
     }
     Ok(())
 }
@@ -395,10 +395,7 @@ fn test_verify_proof_determinism() -> Result<()> {
         .verify_proof(&proof, &witness)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    assert_eq!(
-        result1, result2,
-        "Verification should be deterministic"
-    );
+    assert_eq!(result1, result2, "Verification should be deterministic");
     Ok(())
 }
 
@@ -440,7 +437,10 @@ fn test_mock_verification_marker() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Mock proofs should have 0xEF marker
-    assert_eq!(proof.proof_bytes[0], 0xEF, "Mock proof should have EZKL marker");
+    assert_eq!(
+        proof.proof_bytes[0], 0xEF,
+        "Mock proof should have EZKL marker"
+    );
 
     let mut verifier = EzklVerifier::new();
     let is_valid = verifier
