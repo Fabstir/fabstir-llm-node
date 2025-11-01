@@ -1,11 +1,12 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 
-//! EmbedResponse and EmbeddingResult types (Sub-phase 1.2)
+//! EmbedResponse and EmbeddingResult types (Sub-phase 2.2)
 //!
-//! This module defines the response structure for the embedding API.
-//! Full implementation will be completed in later sub-phases.
+//! This module defines the response structure for the embedding API with
+//! helper methods for chain context, validation, and convenience builders.
 
+use crate::api::ApiError;
 use serde::{Deserialize, Serialize};
 
 /// Individual embedding result for one text input
@@ -84,6 +85,141 @@ pub struct EmbedResponse {
 
     /// Native token symbol (e.g., "ETH", "BNB")
     pub native_token: String,
+}
+
+impl EmbedResponse {
+    /// Adds chain context to the response
+    ///
+    /// Populates chain_name and native_token based on the chain_id.
+    /// Supports Base Sepolia (84532) and opBNB Testnet (5611).
+    ///
+    /// # Arguments
+    /// - `chain_id`: The chain ID to get context for
+    ///
+    /// # Returns
+    /// Self with chain context populated (builder pattern)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let response = EmbedResponse { /* ... */ }
+    ///     .add_chain_context(84532);
+    /// assert_eq!(response.chain_name, "Base Sepolia");
+    /// ```
+    pub fn add_chain_context(mut self, chain_id: u64) -> Self {
+        // Map chain_id to chain context
+        // Uses same pattern as handler stub from Sub-phase 1.2
+        let (chain_name, native_token) = match chain_id {
+            84532 => ("Base Sepolia", "ETH"),
+            5611 => ("opBNB Testnet", "BNB"),
+            _ => {
+                // Unknown chain - fall back to Base Sepolia
+                ("Base Sepolia", "ETH")
+            }
+        };
+
+        self.chain_id = chain_id;
+        self.chain_name = chain_name.to_string();
+        self.native_token = native_token.to_string();
+
+        self
+    }
+
+    /// Validates that all embeddings are exactly 384 dimensions
+    ///
+    /// The vector database requires exactly 384-dimensional embeddings.
+    /// This method performs defensive validation to ensure all embeddings
+    /// meet this requirement.
+    ///
+    /// # Returns
+    /// - `Ok(())` if all embeddings are 384 dimensions
+    /// - `Err(ApiError::ValidationError)` if any embedding has wrong dimensions
+    ///
+    /// # Example
+    /// ```ignore
+    /// let response = EmbedResponse { /* ... */ };
+    /// response.validate_embedding_dimensions()?;
+    /// ```
+    pub fn validate_embedding_dimensions(&self) -> Result<(), ApiError> {
+        for (index, result) in self.embeddings.iter().enumerate() {
+            if result.embedding.len() != 384 {
+                return Err(ApiError::ValidationError {
+                    field: format!("embeddings[{}].embedding", index),
+                    message: format!(
+                        "embedding must be exactly 384 dimensions (got {})",
+                        result.embedding.len()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the total number of float values across all embeddings
+    ///
+    /// # Example
+    /// ```ignore
+    /// let response = EmbedResponse { /* 3 embeddings */ };
+    /// assert_eq!(response.total_dimensions(), 384 * 3); // 1152
+    /// ```
+    pub fn total_dimensions(&self) -> usize {
+        self.embeddings.iter().map(|e| e.embedding.len()).sum()
+    }
+
+    /// Returns the number of embeddings in the response
+    ///
+    /// # Example
+    /// ```ignore
+    /// let response = EmbedResponse { /* ... */ };
+    /// assert_eq!(response.embedding_count(), 5);
+    /// ```
+    pub fn embedding_count(&self) -> usize {
+        self.embeddings.len()
+    }
+
+    /// Sets the model name (builder pattern)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let response = EmbedResponse::from(embeddings)
+    ///     .with_model("all-MiniLM-L6-v2".to_string());
+    /// ```
+    pub fn with_model(mut self, model: String) -> Self {
+        self.model = model;
+        self
+    }
+}
+
+impl From<Vec<EmbeddingResult>> for EmbedResponse {
+    /// Creates an EmbedResponse from a vector of EmbeddingResults
+    ///
+    /// This builder pattern convenience method creates a response with:
+    /// - provider: "host"
+    /// - cost: 0.0
+    /// - total_tokens: sum of all token_counts
+    /// - chain_id: 84532 (Base Sepolia default)
+    /// - model: "all-MiniLM-L6-v2" (default)
+    ///
+    /// Use `with_model()` and `add_chain_context()` to customize.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let embeddings = vec![/* ... */];
+    /// let response: EmbedResponse = embeddings.into();
+    /// ```
+    fn from(embeddings: Vec<EmbeddingResult>) -> Self {
+        let total_tokens: usize = embeddings.iter().map(|e| e.token_count).sum();
+
+        EmbedResponse {
+            embeddings,
+            model: "all-MiniLM-L6-v2".to_string(),
+            provider: "host".to_string(),
+            total_tokens,
+            cost: 0.0,
+            chain_id: 84532, // Default to Base Sepolia
+            chain_name: String::new(),
+            native_token: String::new(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -220,50 +220,65 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 
 ---
 
-### Sub-phase 2.2: Define Response Type ⏳
+### Sub-phase 2.2: Define Response Type ✅
 **Goal**: Create EmbedResponse struct following multi-chain patterns
 
 **Tasks**:
-- [ ] Define `EmbeddingResult` struct in `src/api/embed/response.rs`
-  - [ ] `embedding: Vec<f32>` field (384 floats)
-  - [ ] `text: String` field (original input)
-  - [ ] `token_count: u32` field
-- [ ] Define `EmbedResponse` struct
-  - [ ] `embeddings: Vec<EmbeddingResult>` field
-  - [ ] `model: String` field
-  - [ ] `provider: String` field (always "host")
-  - [ ] `total_tokens: u32` field
-  - [ ] `cost: f64` field (always 0.0)
-  - [ ] `chain_id: u64` field
-  - [ ] `chain_name: String` field
-  - [ ] `native_token: String` field
-- [ ] Implement `add_chain_context()` helper method
-- [ ] Add serde derives with camelCase rename (tokenCount, totalTokens)
-- [ ] Implement `From<Vec<EmbeddingResult>>` for builder pattern
+- [x] Define `EmbeddingResult` struct in `src/api/embed/response.rs`
+  - [x] `embedding: Vec<f32>` field (384 floats)
+  - [x] `text: String` field (original input)
+  - [x] `token_count: usize` field
+- [x] Define `EmbedResponse` struct (already complete from Sub-phase 1.2)
+  - [x] `embeddings: Vec<EmbeddingResult>` field
+  - [x] `model: String` field
+  - [x] `provider: String` field (always "host")
+  - [x] `total_tokens: usize` field
+  - [x] `cost: f64` field (always 0.0)
+  - [x] `chain_id: u64` field
+  - [x] `chain_name: String` field
+  - [x] `native_token: String` field
+- [x] Implement `add_chain_context()` helper method
+- [x] Implement `validate_embedding_dimensions()` method (defensive validation)
+- [x] Implement helper methods: `total_dimensions()`, `embedding_count()`, `with_model()`
+- [x] Add serde derives with camelCase rename (tokenCount, totalTokens, chainId, chainName, nativeToken)
+- [x] Implement `From<Vec<EmbeddingResult>>` for builder pattern
 
-**Test Files** (TDD - Write First):
-- `tests/api/test_embed_response.rs` - 8 test cases
-  - test_response_structure()
-  - test_embedding_result_structure()
-  - test_chain_context_included()
-  - test_token_count_aggregation()
-  - test_cost_always_zero()
-  - test_provider_always_host()
-  - test_json_serialization_camelcase()
-  - test_embedding_vector_length_384()
+**Test Files** (TDD - Written First):
+- `tests/api/test_embed_response.rs` - 10 test cases (8 required + 2 bonus)
+  - test_response_structure() ✅
+  - test_embedding_result_structure() ✅
+  - test_chain_context_included() ✅
+  - test_token_count_aggregation() ✅
+  - test_cost_always_zero() ✅
+  - test_provider_always_host() ✅
+  - test_json_serialization_camelcase() ✅
+  - test_embedding_vector_length_384() ✅
+  - test_helper_methods() ✅ (bonus)
+  - test_builder_from_embedding_results() ✅ (bonus)
 
 **Success Criteria**:
-- [ ] All 8 structure tests pass
-- [ ] JSON uses camelCase (tokenCount, not token_count)
-- [ ] Chain context matches existing patterns
-- [ ] Cost field always 0.0 for host embeddings
+- [x] All 10 structure tests pass
+- [x] JSON uses camelCase (tokenCount, totalTokens, chainId, chainName, nativeToken)
+- [x] Chain context matches existing patterns (Base Sepolia 84532, opBNB Testnet 5611)
+- [x] Cost field always 0.0 for host embeddings
+- [x] Provider field always "host"
 
 **Deliverables**:
-- `src/api/embed/response.rs` (~150 lines)
-- 8 passing TDD tests
-- Consistent with existing API response patterns
+- ✅ Updated `src/api/embed/response.rs` (264 lines, +140 lines for helpers/validation)
+- ✅ 10 passing TDD tests (8 required + 2 bonus)
+- ✅ Consistent with existing API response patterns
+- ✅ Helper methods for convenience and validation
 
-**Estimated Time**: 2 hours
+**Actual Time**: 1.5 hours
+
+**Notes**:
+- Followed strict TDD: Created 10 tests FIRST, then implemented helper methods
+- `add_chain_context()` uses simple match pattern (84532→Base Sepolia, 5611→opBNB Testnet)
+- `validate_embedding_dimensions()` provides defensive 384-dimension validation
+- Builder pattern `From<Vec<EmbeddingResult>>` auto-calculates total_tokens
+- All helper methods use builder pattern (return Self) for method chaining
+- Chain context falls back to Base Sepolia for unknown chain IDs
+- All tests pass on first run after implementation
 
 ---
 
