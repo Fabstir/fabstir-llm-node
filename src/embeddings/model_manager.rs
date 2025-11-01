@@ -68,8 +68,10 @@ impl EmbeddingModelManager {
     /// - Return Arc to model for shared access
     pub async fn get_model(&self, model_name: &str) -> Result<Arc<OnnxEmbeddingModel>> {
         // Stub implementation - will be completed in Sub-phase 3.4
-        // For now, create a new model every time
-        let model = OnnxEmbeddingModel::new(model_name.to_string()).await?;
+        // For now, create a new model every time with hardcoded paths
+        let model_path = format!("/workspace/models/{}-onnx/model.onnx", model_name);
+        let tokenizer_path = format!("/workspace/models/{}-onnx/tokenizer.json", model_name);
+        let model = OnnxEmbeddingModel::new(model_path, tokenizer_path).await?;
         Ok(Arc::new(model))
     }
 
