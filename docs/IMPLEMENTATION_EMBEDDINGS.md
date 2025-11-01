@@ -565,54 +565,63 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 
 ## Phase 5: Model Discovery Endpoint
 
-### Sub-phase 5.1: GET /v1/models?type=embedding ⏳
+### Sub-phase 5.1: GET /v1/models?type=embedding ✅
 **Goal**: Allow clients to discover available embedding models
 
 **Tasks**:
-- [ ] Create `ModelInfo` struct in `src/api/embed/response.rs`
-  - [ ] `name: String`
-  - [ ] `dimensions: usize`
-  - [ ] `available: bool`
-  - [ ] `is_default: bool`
-- [ ] Create `ModelsResponse` struct
-  - [ ] `models: Vec<ModelInfo>`
-  - [ ] `chain_id: u64`
-  - [ ] `chain_name: String`
-- [ ] Update existing `list_models_handler()` in `src/api/http_server.rs`
-  - [ ] Accept query parameter `?type=embedding`
-  - [ ] If type=embedding, return embedding models
-  - [ ] If type=inference or no param, return inference models
-  - [ ] Get embedding models from `state.api_server.get_embedding_manager()`
-  - [ ] Call `manager.list_models()`
-  - [ ] Add chain context
-  - [ ] Return JSON response
-- [ ] Handle case where no embedding models loaded
-  - [ ] Return empty models array (not an error)
+- [x] ModelInfo struct already exists in `src/embeddings/model_manager.rs`
+  - [x] `name: String`
+  - [x] `dimensions: usize`
+  - [x] `available: bool`
+  - [x] `is_default: bool`
+  - [x] Added `serde::Serialize` and `serde::Deserialize` derives
+- [x] Update ChainQuery struct in `src/api/http_server.rs`
+  - [x] Added `r#type: Option<String>` field with `#[serde(rename = "type")]`
+- [x] Update existing `models_handler()` in `src/api/http_server.rs`
+  - [x] Accept query parameter `?type=embedding`
+  - [x] If type=embedding, return embedding models
+  - [x] If type=inference or no param, return inference models
+  - [x] Get embedding models from `state.embedding_model_manager`
+  - [x] Call `manager.list_models()`
+  - [x] Add chain context (chain_id, chain_name)
+  - [x] Return JSON response
+- [x] Handle case where no models loaded
+  - [x] Return empty models array (not an error) for both embedding and inference models
 
-**Test Files** (TDD - Write First):
-- `tests/api/test_models_endpoint.rs` - 8 test cases
-  - test_list_embedding_models()
-  - test_list_inference_models()
-  - test_default_model_marked()
-  - test_model_dimensions_included()
-  - test_model_availability_status()
-  - test_no_models_returns_empty_array()
-  - test_chain_context_included()
-  - test_query_param_type_filtering()
+**Test Files** (TDD - Written First):
+- `tests/api/test_models_endpoint.rs` - 8 test cases ✅
+  - test_list_embedding_models() ✅
+  - test_list_inference_models() ✅
+  - test_default_model_marked() ✅
+  - test_model_dimensions_included() ✅
+  - test_model_availability_status() ✅
+  - test_no_models_returns_empty_array() ✅
+  - test_chain_context_included() ✅
+  - test_query_param_type_filtering() ✅
 
 **Success Criteria**:
-- [ ] All 8 model listing tests pass
-- [ ] Query parameter filtering works
-- [ ] Default model is marked correctly
-- [ ] Returns empty array if no models loaded
-- [ ] Chain context included in response
+- [x] All 8 model listing tests pass (8/8 passing)
+- [x] Query parameter filtering works
+- [x] Default model is marked correctly
+- [x] Returns empty array if no models loaded
+- [x] Chain context included in response
 
 **Deliverables**:
-- Updated `src/api/http_server.rs` (~60 lines added)
-- Updated `src/api/embed/response.rs` (~40 lines added)
-- 8 passing TDD tests
+- ✅ Updated `src/api/http_server.rs` (modified ChainQuery struct, updated models_handler to handle type parameter)
+- ✅ Updated `src/embeddings/model_manager.rs` (added Serialize/Deserialize to ModelInfo)
+- ✅ Created `tests/api/test_models_endpoint.rs` (350 lines, NEW - 8/8 tests passing)
+- ✅ Updated `tests/api_tests.rs` (registered test_models_endpoint module)
 
-**Estimated Time**: 2 hours
+**Actual Time**: 1.5 hours
+
+**Notes**:
+- **Reused Existing ModelInfo**: The embedding `ModelInfo` struct already existed in the model_manager with all required fields, so no new struct was needed in response.rs.
+- **Handler Return Type**: Changed models_handler signature to `impl IntoResponse` for flexibility to return different response types.
+- **Graceful Degradation**: Both embedding and inference model endpoints return empty arrays when no models are loaded (200 OK with empty array, not 500 error).
+- **Type Parameter**: Used `r#type` field name with `#[serde(rename = "type")]` to handle Rust keyword.
+- **Default Behavior**: Without type parameter, endpoint defaults to "inference" for backward compatibility.
+- **Chain Context**: All responses include chain_id and chain_name fields.
+- **TDD Success**: All 8 tests passed on first run after implementation fixes. Tests verified query parameter filtering, model metadata, availability status, and graceful degradation.
 
 ---
 
@@ -977,8 +986,8 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 - **Phase 4**: ✅ Complete - HTTP Endpoint Handler
   - Sub-phase 4.1: ✅ Complete - Handler Implementation (15/15 tests passing)
   - Sub-phase 4.2: ✅ Complete - Route Registration (6/6 tests passing)
-- **Phase 5**: ⏳ Not Started - Model Discovery Endpoint
-  - Sub-phase 5.1: ⏳ Not Started - GET /v1/models?type=embedding
+- **Phase 5**: ✅ Complete - Model Discovery Endpoint
+  - Sub-phase 5.1: ✅ Complete - GET /v1/models?type=embedding (8/8 tests passing)
 - **Phase 6**: ⏳ Not Started - Integration Testing
   - Sub-phase 6.1: ⏳ Not Started - End-to-End Integration Tests
   - Sub-phase 6.2: ⏳ Not Started - Compatibility Testing

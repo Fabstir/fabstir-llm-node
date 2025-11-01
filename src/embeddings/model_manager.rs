@@ -26,7 +26,7 @@ pub struct EmbeddingModelConfig {
 }
 
 /// Information about an available embedding model
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelInfo {
     /// Model name
     pub name: String,
