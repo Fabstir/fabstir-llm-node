@@ -27,7 +27,7 @@ mod onnx_model_tests {
     /// Verifies that the ONNX model can be loaded from the downloaded files.
     #[tokio::test]
     async fn test_model_loads_successfully() {
-        let result = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH).await;
+        let result = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH).await;
 
         assert!(
             result.is_ok(),
@@ -45,7 +45,7 @@ mod onnx_model_tests {
     /// Verifies that the model outputs exactly 384 dimensions during validation.
     #[tokio::test]
     async fn test_model_validates_384_dimensions() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -62,7 +62,7 @@ mod onnx_model_tests {
     /// Verifies that embedding a single text returns exactly 384 floats.
     #[tokio::test]
     async fn test_embed_single_returns_384_dims() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -94,7 +94,7 @@ mod onnx_model_tests {
     /// Verifies that embedding a batch of texts returns correct number of embeddings.
     #[tokio::test]
     async fn test_embed_batch_returns_correct_count() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -132,7 +132,7 @@ mod onnx_model_tests {
     /// Verifies that embedding the same text twice produces identical results.
     #[tokio::test]
     async fn test_embeddings_are_deterministic() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -164,7 +164,7 @@ mod onnx_model_tests {
     /// and similar texts have more similar embeddings.
     #[tokio::test]
     async fn test_different_texts_different_embeddings() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -209,7 +209,7 @@ mod onnx_model_tests {
     /// Verifies that count_tokens() returns accurate token counts.
     #[tokio::test]
     async fn test_token_counting() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -253,7 +253,7 @@ mod onnx_model_tests {
     /// Verifies that embedding an empty string doesn't panic and returns valid vector.
     #[tokio::test]
     async fn test_empty_text_handling() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -282,7 +282,7 @@ mod onnx_model_tests {
     /// Verifies that very long texts are truncated gracefully without panicking.
     #[tokio::test]
     async fn test_long_text_truncation() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .expect("Failed to load model");
 
@@ -318,7 +318,7 @@ mod onnx_model_tests {
     #[tokio::test]
     async fn test_invalid_model_path_error() {
         let invalid_path = "/nonexistent/path/to/model.onnx";
-        let result = OnnxEmbeddingModel::new(invalid_path, TOKENIZER_PATH).await;
+        let result = OnnxEmbeddingModel::new("test-model", invalid_path, TOKENIZER_PATH).await;
 
         assert!(
             result.is_err(),

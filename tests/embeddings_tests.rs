@@ -4,4 +4,5 @@
 
 mod embeddings {
     mod test_onnx_model;
+    mod test_model_manager;
 }
