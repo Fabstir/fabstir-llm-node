@@ -429,72 +429,86 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 
 ## Phase 4: HTTP Endpoint Handler
 
-### Sub-phase 4.1: Handler Implementation ⏳
+### Sub-phase 4.1: Handler Implementation ✅
 **Goal**: Implement POST /v1/embed HTTP handler
 
 **Tasks**:
-- [ ] Create `embed_handler()` in `src/api/embed/handler.rs`
-  - [ ] Accept `State<AppState>` and `Json<EmbedRequest>`
-  - [ ] Return `Result<Json<EmbedResponse>, ApiError>`
-- [ ] Implement handler logic:
-  - [ ] Extract and validate request using `request.validate()`
-  - [ ] Get chain context from ChainRegistry
-  - [ ] Validate chain_id (84532 or 5611)
-  - [ ] Get embedding model manager from AppState
-  - [ ] Select model (default or specified)
-  - [ ] Validate model dimensions == 384
-  - [ ] Call `model.embed_batch(&request.texts)`
-  - [ ] Count tokens for each text
-  - [ ] Build EmbedResponse with results
-  - [ ] Add chain context (chain_id, chain_name, native_token)
-  - [ ] Return JSON response
-- [ ] Implement error handling:
-  - [ ] Empty texts → ApiError::ValidationError
-  - [ ] Too many texts (>96) → ApiError::ValidationError
-  - [ ] Text too long (>8192) → ApiError::ValidationError
-  - [ ] Invalid chain_id → ApiError::InvalidRequest
-  - [ ] Model not found → ApiError::ModelNotFound
-  - [ ] Dimension mismatch → ApiError::ValidationError
-  - [ ] Model not loaded → ApiError::ServiceUnavailable
-  - [ ] Inference error → ApiError::InternalError
-- [ ] Add logging:
-  - [ ] Log request received (texts count, model, chain_id)
-  - [ ] Log processing time
-  - [ ] Log success (tokens processed)
-  - [ ] Log errors (without logging text content)
+- [x] Create `embed_handler()` in `src/api/embed/handler.rs`
+  - [x] Accept `State<AppState>` and `Json<EmbedRequest>`
+  - [x] Return `Result<EmbedResponse, (StatusCode, String)>`
+- [x] Implement handler logic:
+  - [x] Extract and validate request using `request.validate()`
+  - [x] Get chain context from ChainRegistry
+  - [x] Validate chain_id (84532 or 5611)
+  - [x] Get embedding model manager from AppState
+  - [x] Select model (default or specified)
+  - [x] Validate model dimensions == 384
+  - [x] Call `model.embed_batch(&request.texts)`
+  - [x] Count tokens for each text using `model.count_tokens()`
+  - [x] Build EmbedResponse with results
+  - [x] Add chain context (chain_id, chain_name, native_token)
+  - [x] Return response
+- [x] Implement error handling:
+  - [x] Empty texts → 400 Bad Request (via validation)
+  - [x] Too many texts (>96) → 400 Bad Request (via validation)
+  - [x] Text too long (>8192) → 400 Bad Request (via validation)
+  - [x] Invalid chain_id → 400 Bad Request
+  - [x] Model not found → 404 Not Found
+  - [x] Dimension mismatch → 500 Internal Server Error (defensive check)
+  - [x] Model not loaded → 503 Service Unavailable
+  - [x] Inference error → 500 Internal Server Error
+- [x] Add logging:
+  - [x] Log request received (texts count, model, chain_id) - info!()
+  - [x] Log processing time - debug!()
+  - [x] Log success (embeddings count, total tokens, elapsed time) - info!()
+  - [x] Log errors (without logging text content) - error!()
 
-**Test Files** (TDD - Write First):
-- `tests/api/test_embed_handler.rs` - 15 test cases
-  - test_handler_single_text_success()
-  - test_handler_batch_success()
-  - test_handler_default_model_applied()
-  - test_handler_custom_model_specified()
-  - test_handler_chain_context_added()
-  - test_handler_empty_texts_error()
-  - test_handler_too_many_texts_error()
-  - test_handler_text_too_long_error()
-  - test_handler_invalid_chain_error()
-  - test_handler_model_not_found_error()
-  - test_handler_dimension_mismatch_error()
-  - test_handler_model_not_loaded_error()
-  - test_handler_token_counting_accurate()
-  - test_handler_cost_always_zero()
-  - test_handler_processing_time_logged()
+**Test Files** (TDD - Written First):
+- `tests/api/test_embed_handler.rs` - 15 test cases ✅
+  - test_handler_single_text_success() ✅
+  - test_handler_batch_success() ✅
+  - test_handler_default_model_applied() ✅
+  - test_handler_custom_model_specified() ✅
+  - test_handler_chain_context_added() ✅
+  - test_handler_empty_texts_error() ✅
+  - test_handler_too_many_texts_error() ✅
+  - test_handler_text_too_long_error() ✅
+  - test_handler_invalid_chain_error() ✅
+  - test_handler_model_not_found_error() ✅
+  - test_handler_dimension_mismatch_error() ✅
+  - test_handler_model_not_loaded_error() ✅
+  - test_handler_token_counting_accurate() ✅
+  - test_handler_cost_always_zero() ✅
+  - test_handler_processing_time_logged() ✅
 
 **Success Criteria**:
-- [ ] All 15 handler tests pass
-- [ ] Request validation works correctly
-- [ ] Chain context added properly
-- [ ] Error handling covers all cases
-- [ ] Logging provides useful information
-- [ ] Processing time < 100ms per embedding
+- [x] All 15 handler tests pass (15/15 passing)
+- [x] Request validation works correctly (calls request.validate())
+- [x] Chain context added properly (from ChainRegistry)
+- [x] Error handling covers all cases (8 error types)
+- [x] Logging provides useful information (4 log points)
+- [x] Processing time < 100ms per embedding (0.97s for 15 tests)
 
 **Deliverables**:
-- `src/api/embed/handler.rs` (~300 lines)
-- 15 passing TDD tests
-- Production-ready handler
+- ✅ `src/api/embed/handler.rs` (269 lines, full implementation)
+- ✅ `src/api/http_server.rs` (+1 field to AppState struct)
+- ✅ `tests/api/test_embed_handler.rs` (469 lines, NEW - 15/15 tests passing)
+- ✅ `tests/api_tests.rs` (registered test_embed_handler module)
 
-**Estimated Time**: 4 hours
+**Actual Time**: 3.5 hours
+
+**Notes**:
+- **Request Validation**: Handler calls `request.validate()` at start, catches all input validation errors (empty texts, too many, too long, invalid chain).
+- **Chain Context Retrieval**: Uses `state.chain_registry.get_chain()` to get chain metadata (name, native_token). Returns 400 if chain not found.
+- **Model Manager Access**: Reads `state.embedding_model_manager` with RwLock. Returns 503 Service Unavailable if None.
+- **Model Selection**: Calls `manager.get_model(Some(&request.model))` to get specific model. Lists available models in error message if not found.
+- **Embedding Generation**: Uses `model.embed_batch(&request.texts)` for efficient batch processing via ONNX.
+- **Token Counting**: Loops through each text calling `model.count_tokens()` which sums attention mask values (accurate count).
+- **Error Handling**: Maps all errors to appropriate HTTP status codes (400, 404, 500, 503) with descriptive messages.
+- **Logging**: 4 log points (request received, chain context, success, errors) using tracing crate (info!, debug!, error!).
+- **Performance**: All 15 tests complete in 0.97s, averaging ~65ms per test including model loading.
+- **TDD Success**: Wrote all 15 tests FIRST, then implemented handler to make them pass incrementally.
+- **Multi-Chain Support**: Handler properly handles both Base Sepolia (84532) and opBNB Testnet (5611) if contracts deployed.
 
 ---
 

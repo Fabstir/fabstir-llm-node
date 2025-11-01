@@ -33,6 +33,7 @@ pub struct AppState {
     pub chain_registry: Arc<ChainRegistry>,
     pub sessions: Arc<RwLock<HashMap<u64, SessionInfo>>>,
     pub chain_stats: Arc<RwLock<HashMap<u64, ChainStatistics>>>,
+    pub embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
 }
 
 impl AppState {
@@ -42,6 +43,7 @@ impl AppState {
             chain_registry: Arc::new(ChainRegistry::new()),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             chain_stats: Arc::new(RwLock::new(HashMap::new())),
+            embedding_model_manager: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -82,6 +84,7 @@ pub async fn start_server(api_server: ApiServer) -> Result<(), Box<dyn std::erro
         chain_registry: Arc::new(ChainRegistry::new()),
         sessions: Arc::new(RwLock::new(HashMap::new())),
         chain_stats: Arc::new(RwLock::new(HashMap::new())),
+        embedding_model_manager: Arc::new(RwLock::new(None)),
     });
 
     let app = create_app(state);
