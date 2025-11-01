@@ -11,5 +11,6 @@ mod api {
     mod test_embed_module;
     mod test_embed_request;
     mod test_embed_response;
+    mod test_route_registration;
     mod test_server_crypto;
 }

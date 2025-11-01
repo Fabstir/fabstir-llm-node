@@ -52,7 +52,7 @@ use tracing::{debug, error, info};
 pub async fn embed_handler(
     State(state): State<AppState>,
     Json(request): Json<EmbedRequest>,
-) -> Result<EmbedResponse, (StatusCode, String)> {
+) -> Result<Json<EmbedResponse>, (StatusCode, String)> {
     let start_time = std::time::Instant::now();
 
     // Log request received
@@ -195,7 +195,7 @@ pub async fn embed_handler(
         elapsed
     );
 
-    Ok(response)
+    Ok(Json(response))
 }
 
 #[cfg(test)]
@@ -238,7 +238,7 @@ mod tests {
         let result = embed_handler(State(state), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed: {:?}", result.err());
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(response.embeddings.len(), 1);
         assert_eq!(response.embeddings[0].embedding.len(), 384);
         assert_eq!(response.model, "all-MiniLM-L6-v2");
