@@ -31,7 +31,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 axum = { version = "0.7", features = ["ws", "json", "macros"] }
-tower = "0.4"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 hyper = "1.0"
 tokio-stream = { version = "0.1", features = ["sync"] }

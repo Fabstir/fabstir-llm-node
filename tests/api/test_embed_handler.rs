@@ -81,7 +81,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed: {:?}", result.err());
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(response.embeddings.len(), 1, "Should return 1 embedding");
         assert_eq!(
             response.embeddings[0].embedding.len(),
@@ -119,7 +119,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed: {:?}", result.err());
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(response.embeddings.len(), 3, "Should return 3 embeddings");
 
         for (i, result) in response.embeddings.iter().enumerate() {
@@ -158,7 +158,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(
             response.model, "all-MiniLM-L6-v2",
             "Should use default model"
@@ -184,7 +184,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(response.model, "all-MiniLM-L6-v2", "Should use specified model");
     }
 
@@ -205,7 +205,7 @@ mod embed_handler_tests {
         let result = embed_handler(State(state.clone()), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(response.chain_id, 84532);
         assert_eq!(response.chain_name, "Base Sepolia");
         assert_eq!(response.native_token, "ETH");
@@ -256,7 +256,7 @@ mod embed_handler_tests {
         let result = embed_handler(State(state), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
 
         // First text ("hello") should have 2-4 tokens
         assert!(
@@ -297,7 +297,7 @@ mod embed_handler_tests {
         let result = embed_handler(State(state), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         assert_eq!(response.cost, 0.0, "Host embeddings should be free");
         assert_eq!(response.provider, "host", "Provider should be 'host'");
     }
@@ -462,7 +462,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Valid model should succeed");
 
-        let response = result.unwrap();
+        let response = result.unwrap().0;  // Extract from Json wrapper
         // Verify dimensions are correct
         assert_eq!(
             response.embeddings[0].embedding.len(),

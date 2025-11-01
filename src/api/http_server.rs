@@ -16,8 +16,8 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::{
-    ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse,
-    InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
+    embed::embed_handler, ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse,
+    ChainsResponse, InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
     SessionInfoResponse, SessionStatus, TotalStatistics,
 };
 use crate::blockchain::{ChainConfig, ChainRegistry};
@@ -65,6 +65,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/session/:session_id/info", get(session_info_handler))
         // Inference endpoint
         .route("/v1/inference", post(inference_handler))
+        // Embedding endpoint
+        .route("/v1/embed", post(embed_handler))
         // WebSocket endpoint
         .route("/v1/ws", get(websocket_handler))
         // Metrics endpoint
