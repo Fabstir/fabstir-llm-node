@@ -627,47 +627,59 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 
 ## Phase 6: Integration Testing
 
-### Sub-phase 6.1: End-to-End Integration Tests ⏳
+### Sub-phase 6.1: End-to-End Integration Tests ✅
 **Goal**: Comprehensive integration tests with real HTTP requests
 
 **Tasks**:
-- [ ] Create `tests/integration/test_embed_e2e.rs`
-- [ ] Set up test server with real embedding models
-- [ ] Test complete request/response cycle
-- [ ] Test concurrent requests
-- [ ] Test error scenarios
-- [ ] Test performance benchmarks
+- [x] Create `tests/integration/test_embed_e2e.rs`
+- [x] Set up test server with real embedding models
+- [x] Test complete request/response cycle
+- [x] Test concurrent requests
+- [x] Test error scenarios
+- [x] Test performance benchmarks
 
-**Test Files** (TDD - Write First):
-- `tests/integration/test_embed_e2e.rs` - 14 test cases
-  - test_e2e_single_embedding()
-  - test_e2e_batch_embedding()
-  - test_e2e_default_model()
-  - test_e2e_custom_model()
-  - test_e2e_model_discovery()
-  - test_e2e_chain_context_base_sepolia()
-  - test_e2e_chain_context_opbnb()
-  - test_e2e_validation_errors()
-  - test_e2e_model_not_found()
-  - test_e2e_concurrent_requests()
-  - test_e2e_large_batch_96_texts()
-  - test_e2e_empty_text_rejected()
-  - test_e2e_response_format()
-  - test_e2e_performance_benchmark()
+**Test Files** (TDD - Written First):
+- `tests/integration/test_embed_e2e.rs` - 14 test cases ✅
+  - test_e2e_single_embedding() ✅
+  - test_e2e_batch_embedding() ✅
+  - test_e2e_default_model() ✅
+  - test_e2e_custom_model() ✅
+  - test_e2e_model_discovery() ✅
+  - test_e2e_chain_context_base_sepolia() ✅
+  - test_e2e_chain_context_opbnb() ✅
+  - test_e2e_validation_errors() ✅
+  - test_e2e_model_not_found() ✅
+  - test_e2e_concurrent_requests() ✅
+  - test_e2e_large_batch_96_texts() ✅
+  - test_e2e_empty_text_rejected() ✅
+  - test_e2e_response_format() ✅
+  - test_e2e_performance_benchmark() ✅
 
 **Success Criteria**:
-- [ ] All 14 E2E tests pass
-- [ ] Concurrent requests handled correctly
-- [ ] Performance meets targets (<100ms per embedding)
-- [ ] All error scenarios covered
-- [ ] Response format matches specification
+- [x] All 14 E2E tests pass (14/14 passing)
+- [x] Concurrent requests handled correctly
+- [x] Performance meets targets (<100ms per embedding) - achieved 76ms
+- [x] All error scenarios covered
+- [x] Response format matches specification
 
 **Deliverables**:
-- `tests/integration/test_embed_e2e.rs` (~600 lines)
-- 14 passing integration tests
-- Performance benchmarks documented
+- ✅ Created `tests/integration/test_embed_e2e.rs` (565 lines, NEW - 14/14 tests passing)
+- ✅ Updated `tests/integration/mod.rs` (registered test module)
+- ✅ Updated `src/api/embed/handler.rs` (added "default" model handling, use actual model name in response)
+- ✅ Performance benchmarks documented (76ms per embedding, well under 100ms target)
 
-**Estimated Time**: 4 hours
+**Actual Time**: 2 hours
+
+**Notes**:
+- **Default Model Handling**: Handler now recognizes "default" as a special value and maps it to the actual default model name. Response returns actual model name (e.g., "all-MiniLM-L6-v2"), not "default".
+- **Performance**: Single embedding benchmark shows 76ms latency on test hardware, well under the <100ms target.
+- **Concurrent Testing**: Successfully tested 10 concurrent requests without errors or race conditions.
+- **Batch Testing**: Verified maximum batch size of 96 texts processes correctly.
+- **Error Coverage**: Tests cover all error scenarios: empty texts, empty strings, invalid model, invalid chain, text too long.
+- **Response Validation**: Comprehensive verification that response format matches specification exactly.
+- **Chain Context**: Tests verify both Base Sepolia (84532) and opBNB Testnet (5611) chain contexts when available.
+- **Model Discovery**: Integration test verifies model discovery endpoint returns correct embedding model metadata.
+- **TDD Success**: All 14 tests passed after fixing "default" model handling.
 
 ---
 
@@ -988,8 +1000,8 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
   - Sub-phase 4.2: ✅ Complete - Route Registration (6/6 tests passing)
 - **Phase 5**: ✅ Complete - Model Discovery Endpoint
   - Sub-phase 5.1: ✅ Complete - GET /v1/models?type=embedding (8/8 tests passing)
-- **Phase 6**: ⏳ Not Started - Integration Testing
-  - Sub-phase 6.1: ⏳ Not Started - End-to-End Integration Tests
+- **Phase 6**: ⏳ In Progress - Integration Testing
+  - Sub-phase 6.1: ✅ Complete - End-to-End Integration Tests (14/14 tests passing)
   - Sub-phase 6.2: ⏳ Not Started - Compatibility Testing
 - **Phase 7**: ⏳ Not Started - Documentation
   - Sub-phase 7.1: ⏳ Not Started - API Documentation
