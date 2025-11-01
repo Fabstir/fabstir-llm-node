@@ -106,38 +106,54 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 
 ---
 
-### Sub-phase 1.2: Create Module Structure ⏳
+### Sub-phase 1.2: Create Module Structure ✅
 **Goal**: Create embedding module structure following existing patterns
 
 **Tasks**:
-- [ ] Create `src/api/embed/mod.rs` module
-- [ ] Create `src/api/embed/request.rs` for EmbedRequest type
-- [ ] Create `src/api/embed/response.rs` for EmbedResponse type
-- [ ] Create `src/api/embed/handler.rs` for HTTP handler
-- [ ] Create `src/embeddings/onnx_model.rs` for ONNX model wrapper
-- [ ] Create `src/embeddings/model_manager.rs` for multi-model management
-- [ ] Update `src/api/mod.rs` to export embed module
-- [ ] Update `src/embeddings/mod.rs` to export ONNX types
-- [ ] Add module declarations to `lib.rs`
+- [x] Create `src/api/embed/mod.rs` module
+- [x] Create `src/api/embed/request.rs` for EmbedRequest type
+- [x] Create `src/api/embed/response.rs` for EmbedResponse type
+- [x] Create `src/api/embed/handler.rs` for HTTP handler (stub)
+- [x] Create `src/embeddings/onnx_model.rs` for ONNX model wrapper (stub)
+- [x] Create `src/embeddings/model_manager.rs` for multi-model management (stub)
+- [x] Update `src/api/mod.rs` to export embed module
+- [x] Update `src/embeddings/mod.rs` to export ONNX types
+- [x] Run `cargo test --test api_tests test_embed` (8/8 tests pass)
 
-**Test Files** (TDD - Write First):
-- `tests/api/test_embed_module.rs` - Module structure tests
-  - test_embed_module_exists()
-  - test_request_response_types_exported()
-  - test_handler_accessible()
+**Test Files** (TDD - Written First):
+- `tests/api/test_embed_module.rs` - Module structure tests (8 tests)
+  - test_embed_module_exists() ✅
+  - test_request_response_types_exported() ✅
+  - test_handler_accessible() ✅
+  - test_request_deserialization() ✅
+  - test_request_defaults() ✅
+  - test_response_serialization() ✅
+  - test_embedding_module_types_accessible() ✅
+  - test_embedding_result_structure() ✅
 
 **Success Criteria**:
-- [ ] All modules compile without errors
-- [ ] Module structure follows existing API patterns
-- [ ] Types are properly exported
-- [ ] No circular dependencies
+- [x] All modules compile without errors
+- [x] Module structure follows existing API patterns
+- [x] Types are properly exported
+- [x] No circular dependencies
 
 **Deliverables**:
-- 6 new module files created
-- Module structure matches existing API patterns
-- Passing module structure tests
+- ✅ 6 new module files created (`src/api/embed/{mod,request,response,handler}.rs`, `src/embeddings/{onnx_model,model_manager}.rs`)
+- ✅ Module structure matches existing API patterns (copied from websocket module structure)
+- ✅ 8/8 passing module structure tests
+- ✅ Request/Response types with serde defaults and camelCase serialization
+- ✅ Stub implementations with TODO comments for future sub-phases
 
-**Estimated Time**: 1 hour
+**Actual Time**: 1 hour
+
+**Notes**:
+- Followed strict TDD: Created test file FIRST (`tests/api/test_embed_module.rs`), then implementation
+- Created stub implementations with extensive TODO comments for Phases 3-4
+- Request type includes serde defaults: model="all-MiniLM-L6-v2", chain_id=84532
+- Response type uses camelCase serialization (tokenCount, totalTokens) for API consistency
+- Handler stub returns zero embeddings for now (will implement in Phase 4)
+- ONNX model and manager are stubs (will implement in Phase 3)
+- All 8 TDD tests pass on first run after implementation
 
 ---
 
