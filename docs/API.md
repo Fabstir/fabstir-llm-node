@@ -453,6 +453,246 @@ GET /v1/session/{session_id}/info
 
 ---
 
+### Generate Embeddings
+
+Generate 384-dimensional text embeddings using host-side ONNX models. This endpoint provides **zero-cost embeddings** as an alternative to expensive external APIs (OpenAI, Cohere), enabling efficient vector database operations and semantic search.
+
+#### Request
+
+```http
+POST /v1/embed
+Content-Type: application/json
+```
+
+```json
+{
+  "texts": [
+    "Machine learning is a subset of artificial intelligence",
+    "Deep learning uses neural networks with multiple layers"
+  ],
+  "model": "all-MiniLM-L6-v2",
+  "chainId": 84532
+}
+```
+
+#### Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `texts` | Array<String> | Yes | - | Array of texts to embed (1-96 texts) |
+| `model` | String | No | "all-MiniLM-L6-v2" | Embedding model to use (or "default") |
+| `chainId` | Integer | No | 84532 | Blockchain network ID (84532 for Base Sepolia, 5611 for opBNB Testnet) |
+
+#### Request Validation
+
+- **Text Count**: 1-96 texts per request
+- **Text Length**: 1-8192 characters per text
+- **No Empty/Whitespace-Only**: All texts must contain non-whitespace characters
+- **Supported Chains**: 84532 (Base Sepolia) or 5611 (opBNB Testnet)
+
+#### Response
+
+```json
+{
+  "embeddings": [
+    {
+      "embedding": [0.123, -0.456, 0.789, ...],
+      "text": "Machine learning is a subset of artificial intelligence",
+      "tokenCount": 12
+    },
+    {
+      "embedding": [0.234, -0.567, 0.891, ...],
+      "text": "Deep learning uses neural networks with multiple layers",
+      "tokenCount": 10
+    }
+  ],
+  "model": "all-MiniLM-L6-v2",
+  "provider": "host",
+  "totalTokens": 22,
+  "cost": 0.0,
+  "chainId": 84532,
+  "chainName": "Base Sepolia",
+  "nativeToken": "ETH"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `embeddings` | Array | Array of embedding results, one per input text |
+| `embeddings[].embedding` | Array<Float> | 384-dimensional embedding vector |
+| `embeddings[].text` | String | Original input text |
+| `embeddings[].tokenCount` | Integer | Number of tokens in this text (excluding padding) |
+| `model` | String | Actual model name used for generation |
+| `provider` | String | Always "host" for node-generated embeddings |
+| `totalTokens` | Integer | Sum of all token counts |
+| `cost` | Float | Always 0.0 (zero-cost embeddings) |
+| `chainId` | Integer | Chain ID used for this request |
+| `chainName` | String | Human-readable chain name |
+| `nativeToken` | String | Native token symbol (ETH or BNB) |
+
+#### Embedding Dimensions
+
+All embeddings are **exactly 384 dimensions** to match the vector database requirements. This is validated at runtime:
+
+- Model outputs are verified to be 384-dimensional
+- Dimension mismatches return HTTP 500 with error details
+- Compatible with Fabstir Vector DB (384D indexes)
+
+#### Model Selection
+
+Request "default" model or specify by name:
+
+```json
+{
+  "texts": ["Example text"],
+  "model": "default"  // Uses default model
+}
+```
+
+```json
+{
+  "texts": ["Example text"],
+  "model": "all-MiniLM-L6-v2"  // Specific model
+}
+```
+
+Available models can be discovered via `GET /v1/models?type=embedding`.
+
+#### Status Codes
+
+- `200 OK` - Successfully generated embeddings
+- `400 Bad Request` - Invalid request parameters (see error codes below)
+- `404 Not Found` - Model not found or not loaded
+- `500 Internal Server Error` - Embedding generation failed or dimension mismatch
+- `503 Service Unavailable` - Embedding service not available (model manager not initialized)
+
+#### Error Codes
+
+| Code | HTTP Status | Description | Example |
+|------|-------------|-------------|---------|
+| `VALIDATION_ERROR` | 400 | Invalid request parameters | Empty texts array, text too long |
+| `INVALID_CHAIN_ID` | 400 | Unsupported chain ID | Using chain_id other than 84532 or 5611 |
+| `MODEL_NOT_FOUND` | 404 | Requested model not available | Typo in model name |
+| `DIMENSION_MISMATCH` | 500 | Model outputs wrong dimensions | Model not configured for 384D |
+| `SERVICE_UNAVAILABLE` | 503 | Embedding manager not loaded | Node started without embedding support |
+| `INFERENCE_FAILED` | 500 | ONNX inference error | Model file corrupted |
+
+#### Error Response Format
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation error: Text length exceeds maximum of 8192 characters (got 10000)",
+    "field": "texts",
+    "details": "Text at index 0 is too long"
+  }
+}
+```
+
+#### Performance Characteristics
+
+**Single Text Embedding:**
+- **CPU**: <100ms per embedding (typical: 76ms)
+- **GPU** (optional): <50ms per embedding
+- **Memory**: ~90MB model size (all-MiniLM-L6-v2)
+
+**Batch Embedding:**
+- **Batch 10**: <500ms total (CPU)
+- **Batch 96** (max): <3s total (CPU)
+- **Throughput**: ~500 embeddings/second (CPU)
+
+**Model Specs:**
+- **Model**: all-MiniLM-L6-v2 (sentence-transformers)
+- **Size**: 90MB ONNX format
+- **Dimensions**: 384 (fixed)
+- **Max Input**: 128 tokens (truncated if longer)
+- **Runtime**: ONNX Runtime (CPU optimized)
+
+---
+
+### List Embedding Models
+
+Discover available embedding models on the node. This extends the existing `/v1/models` endpoint with a `type` query parameter.
+
+#### Request
+
+```http
+GET /v1/models?type=embedding&chain_id=84532
+```
+
+#### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `type` | String | No | "inference" | Model type: "embedding" or "inference" |
+| `chain_id` | Integer | No | 84532 | Chain ID (84532 or 5611) |
+
+#### Response
+
+```json
+{
+  "models": [
+    {
+      "name": "all-MiniLM-L6-v2",
+      "dimensions": 384,
+      "available": true,
+      "is_default": true
+    }
+  ],
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `models` | Array | List of available embedding models |
+| `models[].name` | String | Model identifier (e.g., "all-MiniLM-L6-v2") |
+| `models[].dimensions` | Integer | Embedding vector dimensions (always 384) |
+| `models[].available` | Boolean | Whether model is currently loaded |
+| `models[].is_default` | Boolean | Whether this is the default model |
+| `chain_id` | Integer | Chain ID for this response |
+| `chain_name` | String | Human-readable chain name |
+
+#### Default Behavior
+
+Without `type` parameter, endpoint returns inference models (backward compatible):
+
+```bash
+# Returns inference models (Llama, TinyVicuna, etc.)
+curl "http://localhost:8080/v1/models"
+
+# Returns embedding models
+curl "http://localhost:8080/v1/models?type=embedding"
+
+# Explicit inference models
+curl "http://localhost:8080/v1/models?type=inference"
+```
+
+#### Empty Models Array
+
+If no embedding models are loaded, the endpoint returns an empty array (not an error):
+
+```json
+{
+  "models": [],
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia"
+}
+```
+
+#### Status Codes
+
+- `200 OK` - Successfully retrieved models (even if empty array)
+- `400 Bad Request` - Invalid query parameters
+
+---
+
 ## WebSocket API (Production Ready - Phases 8.7-8.12)
 
 For real-time bidirectional communication and conversation management, connect via WebSocket. The WebSocket API has been completely rebuilt with production features including stateless memory caching, compression, rate limiting, JWT authentication, Ed25519 signatures, and **automatic payment settlement on disconnect (v5+)**.
@@ -1165,6 +1405,33 @@ curl -X POST http://localhost:8080/v1/inference \
   }'
 ```
 
+#### Generate Embeddings
+
+```bash
+# Single text embedding
+curl -X POST http://localhost:8080/v1/embed \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": ["What is machine learning?"]
+  }'
+
+# Batch embedding with explicit model
+curl -X POST http://localhost:8080/v1/embed \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": [
+      "Machine learning is a subset of AI",
+      "Deep learning uses neural networks",
+      "Neural networks mimic biological neurons"
+    ],
+    "model": "all-MiniLM-L6-v2",
+    "chainId": 84532
+  }'
+
+# List available embedding models
+curl "http://localhost:8080/v1/models?type=embedding"
+```
+
 ### Python
 
 ```python
@@ -1205,6 +1472,46 @@ def streaming_inference(prompt, model="llama-2-7b"):
                     print(data['content'], end='', flush=True)
                     if data.get('finish_reason'):
                         break
+
+# Generate embeddings
+def generate_embeddings(texts, model="all-MiniLM-L6-v2", chain_id=84532):
+    """Generate embeddings for multiple texts"""
+    url = "http://localhost:8080/v1/embed"
+    payload = {
+        "texts": texts,
+        "model": model,
+        "chainId": chain_id
+    }
+
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Embedding error: {response.status_code} - {response.text}")
+
+# List embedding models
+def list_embedding_models(chain_id=84532):
+    """Get available embedding models"""
+    url = f"http://localhost:8080/v1/models?type=embedding&chain_id={chain_id}"
+    response = requests.get(url)
+    return response.json()
+
+# Example usage
+texts = [
+    "Machine learning is a subset of AI",
+    "Deep learning uses neural networks",
+    "Transformers revolutionized NLP"
+]
+
+result = generate_embeddings(texts)
+print(f"Generated {len(result['embeddings'])} embeddings")
+print(f"Total tokens: {result['totalTokens']}")
+print(f"Cost: ${result['cost']} (zero-cost!)")
+print(f"Dimensions: {len(result['embeddings'][0]['embedding'])}")
+
+# List available models
+models = list_embedding_models()
+print(f"Available models: {[m['name'] for m in models['models']]}")
 ```
 
 ### JavaScript/TypeScript
@@ -1257,6 +1564,78 @@ function streamingInference(prompt, model = 'llama-2-7b') {
     console.error('EventSource error:', error);
     eventSource.close();
   };
+}
+
+// Generate embeddings
+async function generateEmbeddings(texts, model = 'all-MiniLM-L6-v2', chainId = 84532) {
+  const response = await fetch('http://localhost:8080/v1/embed', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      texts,
+      model,
+      chainId,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Embedding error! status: ${response.status}`);
+  }
+
+  return await response.json();
+}
+
+// List embedding models
+async function listEmbeddingModels(chainId = 84532) {
+  const response = await fetch(
+    `http://localhost:8080/v1/models?type=embedding&chain_id=${chainId}`
+  );
+  return await response.json();
+}
+
+// Example usage with TypeScript types
+interface EmbeddingResult {
+  embedding: number[];  // 384-dimensional vector
+  text: string;
+  tokenCount: number;
+}
+
+interface EmbedResponse {
+  embeddings: EmbeddingResult[];
+  model: string;
+  provider: string;
+  totalTokens: number;
+  cost: number;
+  chainId: number;
+  chainName: string;
+  nativeToken: string;
+}
+
+async function example() {
+  const texts = [
+    "Machine learning is a subset of AI",
+    "Deep learning uses neural networks",
+    "Transformers revolutionized NLP"
+  ];
+
+  try {
+    const result: EmbedResponse = await generateEmbeddings(texts);
+    console.log(`Generated ${result.embeddings.length} embeddings`);
+    console.log(`Total tokens: ${result.totalTokens}`);
+    console.log(`Cost: $${result.cost} (zero-cost!)`);
+    console.log(`Dimensions: ${result.embeddings[0].embedding.length}`);
+
+    // Use embeddings for similarity search, RAG, etc.
+    const embeddings = result.embeddings.map(e => e.embedding);
+
+    // List available models
+    const models = await listEmbeddingModels();
+    console.log(`Available models: ${models.models.map(m => m.name).join(', ')}`);
+  } catch (error) {
+    console.error('Error generating embeddings:', error);
+  }
 }
 ```
 
@@ -2654,6 +3033,213 @@ Future versions will maintain backward compatibility where possible. Breaking ch
   export MODEL_CACHE_SIZE=2
   cargo run --release
   ```
+
+#### Embedding Issues
+
+**Problem: "Embedding service not available" (503 error)**
+- **Cause**: Embedding model manager not initialized
+- **Solution**: Download embedding models and verify model path
+- **Steps**:
+  ```bash
+  # Download embedding model
+  ./scripts/download_embedding_model.sh
+
+  # Verify model files exist
+  ls -lh models/all-MiniLM-L6-v2-onnx/
+
+  # Should see:
+  # - model.onnx (~90MB)
+  # - tokenizer.json (~500KB)
+
+  # Restart node with embedding support
+  cargo run --release
+  ```
+
+**Problem: "Model not found" when requesting embedding model**
+- **Cause**: Model name typo or model not loaded
+- **Solution**: List available models and use exact name
+- **Debug**:
+  ```bash
+  # List available embedding models
+  curl "http://localhost:8080/v1/models?type=embedding"
+
+  # Use exact name from response
+  curl -X POST http://localhost:8080/v1/embed \
+    -H "Content-Type: application/json" \
+    -d '{"texts": ["test"], "model": "all-MiniLM-L6-v2"}'
+  ```
+
+**Problem: "Dimension mismatch" error (500 error)**
+- **Cause**: Model outputs wrong dimensions (not 384)
+- **Solution**: Re-download model files or use different model
+- **Verification**:
+  ```bash
+  # Re-download model with correct dimensions
+  ./scripts/download_embedding_model.sh
+
+  # Check model config in logs
+  RUST_LOG=debug cargo run 2>&1 | grep "dimension"
+  ```
+
+**Problem: Embedding request times out**
+- **Cause**: Too many texts in batch or texts too long
+- **Solution**: Reduce batch size or text length
+- **Limits**:
+  - Maximum texts per request: 96
+  - Maximum text length: 8192 characters
+  - Recommended batch size: 10-20 for optimal performance
+- **Example**:
+  ```bash
+  # Split large batch into smaller chunks
+  # Bad: 200 texts at once
+  # Good: 10 batches of 20 texts each
+  ```
+
+**Problem: "Text too long" validation error (400 error)**
+- **Cause**: Individual text exceeds 8192 character limit
+- **Solution**: Truncate or split long texts
+- **Example**:
+  ```python
+  def chunk_text(text, max_length=8000):
+      """Split long text into chunks"""
+      return [text[i:i+max_length] for i in range(0, len(text), max_length)]
+
+  # Use chunked texts
+  long_text = "very long document..."
+  chunks = chunk_text(long_text)
+  embeddings = generate_embeddings(chunks)
+  ```
+
+**Problem: "Empty texts" validation error (400 error)**
+- **Cause**: Sending empty array or whitespace-only strings
+- **Solution**: Filter empty/whitespace strings before sending
+- **Example**:
+  ```python
+  # Filter out empty and whitespace-only strings
+  texts = [t.strip() for t in raw_texts if t and t.strip()]
+  if texts:
+      embeddings = generate_embeddings(texts)
+  ```
+
+**Problem: Slow embedding generation**
+- **Cause**: CPU-only inference or large batch size
+- **Solution**: Optimize batch size or consider GPU acceleration (optional)
+- **Performance Tips**:
+  - Optimal batch size: 10-20 texts per request
+  - CPU performance: ~76ms per embedding (~13 embeddings/second)
+  - Memory usage: ~90MB for model
+  - Use concurrent requests for higher throughput
+- **Example Parallel Processing**:
+  ```python
+  import asyncio
+  import aiohttp
+
+  async def embed_batch(session, texts):
+      async with session.post(
+          'http://localhost:8080/v1/embed',
+          json={'texts': texts}
+      ) as response:
+          return await response.json()
+
+  async def embed_large_dataset(all_texts, batch_size=20):
+      async with aiohttp.ClientSession() as session:
+          tasks = []
+          for i in range(0, len(all_texts), batch_size):
+              batch = all_texts[i:i+batch_size]
+              tasks.append(embed_batch(session, batch))
+          return await asyncio.gather(*tasks)
+  ```
+
+**Problem: Model download fails**
+- **Cause**: Network issues or incorrect model repository
+- **Solution**: Verify network connection and use pinned model version
+- **Manual Download**:
+  ```bash
+  # Download from HuggingFace (if script fails)
+  cd models/
+  mkdir -p all-MiniLM-L6-v2-onnx
+  cd all-MiniLM-L6-v2-onnx
+
+  # Download model file
+  wget https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/refs%2Fpr%2F21/onnx/model.onnx
+
+  # Download tokenizer
+  wget https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/refs%2Fpr%2F21/tokenizer.json
+
+  # Verify file sizes
+  ls -lh
+  # model.onnx should be ~90MB
+  # tokenizer.json should be ~500KB
+  ```
+
+### Model Download Instructions
+
+The embedding endpoint requires ONNX models to be downloaded before use.
+
+#### Automatic Download (Recommended)
+
+```bash
+# Download all required embedding models
+./scripts/download_embedding_model.sh
+
+# This downloads:
+# - all-MiniLM-L6-v2 ONNX model (~90MB)
+# - Tokenizer files (~500KB)
+# To: models/all-MiniLM-L6-v2-onnx/
+```
+
+#### Manual Download
+
+If the automatic script fails, download manually:
+
+```bash
+cd models/
+mkdir -p all-MiniLM-L6-v2-onnx
+cd all-MiniLM-L6-v2-onnx
+
+# Download model (ONNX format, 384 dimensions)
+curl -L -o model.onnx \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/refs%2Fpr%2F21/onnx/model.onnx"
+
+# Download tokenizer
+curl -L -o tokenizer.json \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/refs%2Fpr%2F21/tokenizer.json"
+
+# Verify downloads
+ls -lh
+# Should see:
+#   model.onnx      ~90MB
+#   tokenizer.json  ~500KB
+```
+
+#### Verify Model Files
+
+```bash
+# Check file integrity
+sha256sum models/all-MiniLM-L6-v2-onnx/model.onnx
+sha256sum models/all-MiniLM-L6-v2-onnx/tokenizer.json
+
+# Test embedding generation
+curl -X POST http://localhost:8080/v1/embed \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["test embedding"]}'
+
+# Should return 384-dimensional embedding
+```
+
+#### Alternative Models (Future)
+
+Currently, only all-MiniLM-L6-v2 is supported. To add more models:
+
+1. Ensure model outputs exactly 384 dimensions
+2. Download ONNX format model and tokenizer
+3. Add model config to embedding manager initialization
+4. Restart node to load new model
+
+**Supported Formats**:
+- ONNX models only (for CPU/GPU compatibility)
+- Sentence-transformer architecture
+- Output dimension: 384 (required)
 
 ### Debug Commands
 
