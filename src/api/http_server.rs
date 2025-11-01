@@ -25,6 +25,8 @@ use crate::blockchain::{ChainConfig, ChainRegistry};
 #[derive(Deserialize)]
 struct ChainQuery {
     chain_id: Option<u64>,
+    #[serde(rename = "type")]
+    r#type: Option<String>,
 }
 
 #[derive(Clone)]
@@ -109,29 +111,69 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 async fn models_handler(
     State(state): State<AppState>,
     Query(query): Query<ChainQuery>,
-) -> Result<axum::response::Json<ModelsResponse>, ApiErrorResponse> {
+) -> impl IntoResponse {
     let chain_id = query
         .chain_id
         .unwrap_or_else(|| state.chain_registry.get_default_chain_id());
 
     // Get chain info
-    let chain = state
-        .chain_registry
-        .get_chain(chain_id)
-        .ok_or(ApiError::InvalidRequest("Invalid chain ID".to_string()))?;
+    let chain = match state.chain_registry.get_chain(chain_id) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::response::Json(serde_json::json!({
+                    "error": "Invalid chain ID"
+                })),
+            )
+                .into_response();
+        }
+    };
 
-    // Get models (in real implementation, this would query chain-specific models)
-    let mut response = state
-        .api_server
-        .get_available_models()
-        .await
-        .map_err(|e| ApiErrorResponse(e))?;
+    // Check model type parameter
+    let model_type = query.r#type.as_deref().unwrap_or("inference");
 
-    // Add chain information to response
-    response.chain_id = Some(chain_id);
-    response.chain_name = Some(chain.name.clone());
+    match model_type {
+        "embedding" => {
+            // Get embedding models
+            let manager_guard = state.embedding_model_manager.read().await;
+            let models = if let Some(manager) = manager_guard.as_ref() {
+                manager.list_models()
+            } else {
+                // No embedding models loaded - return empty array
+                Vec::new()
+            };
 
-    Ok(axum::response::Json(response))
+            // Create response with embedding models
+            let response = serde_json::json!({
+                "models": models,
+                "chain_id": chain_id,
+                "chain_name": chain.name,
+            });
+
+            (StatusCode::OK, axum::response::Json(response)).into_response()
+        }
+        "inference" | _ => {
+            // Get inference models (existing behavior)
+            let mut response = match state.api_server.get_available_models().await {
+                Ok(r) => r,
+                Err(_) => {
+                    // No inference models loaded - return empty array
+                    ModelsResponse {
+                        models: Vec::new(),
+                        chain_id: None,
+                        chain_name: None,
+                    }
+                }
+            };
+
+            // Add chain information to response
+            response.chain_id = Some(chain_id);
+            response.chain_name = Some(chain.name.clone());
+
+            (StatusCode::OK, axum::response::Json(response)).into_response()
+        }
+    }
 }
 
 async fn chains_handler(State(state): State<AppState>) -> impl IntoResponse {
