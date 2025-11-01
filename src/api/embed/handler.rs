@@ -104,7 +104,12 @@ pub async fn embed_handler(
 
     // Step 4: Select model (default or specified)
     let model_name = &request.model;
-    let model = manager.get_model(Some(model_name)).await.map_err(|e| {
+    let model_option = if model_name == "default" {
+        None
+    } else {
+        Some(model_name.as_str())
+    };
+    let model = manager.get_model(model_option).await.map_err(|e| {
         error!("Model not found: {} - {}", model_name, e);
 
         // Get available models for error message
@@ -121,7 +126,7 @@ pub async fn embed_handler(
         )
     })?;
 
-    debug!("Using model: {} ({} dimensions)", model_name, model.dimension());
+    debug!("Using model: {} ({} dimensions)", model.model_name(), model.dimension());
 
     // Step 5: Validate model dimensions (defensive check)
     if model.dimension() != 384 {
@@ -174,10 +179,11 @@ pub async fn embed_handler(
 
     // Step 8: Build response
     let total_tokens: usize = embedding_results.iter().map(|e| e.token_count).sum();
+    let actual_model_name = model.model_name().to_string();
 
     let response = EmbedResponse {
         embeddings: embedding_results,
-        model: model_name.clone(),
+        model: actual_model_name,
         provider: "host".to_string(),
         total_tokens,
         cost: 0.0, // Host embeddings are zero-cost
