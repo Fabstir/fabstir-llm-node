@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 pub mod model_manager;
 pub mod onnx_model;
 
-pub use model_manager::EmbeddingModelManager;
+pub use model_manager::{EmbeddingModelConfig, EmbeddingModelManager, ModelInfo};
 pub use onnx_model::OnnxEmbeddingModel;
 
 #[derive(Debug, Clone)]

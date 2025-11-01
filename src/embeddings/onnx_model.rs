@@ -85,11 +85,13 @@ impl OnnxEmbeddingModel {
     /// # Example
     /// ```ignore
     /// let model = OnnxEmbeddingModel::new(
+    ///     "all-MiniLM-L6-v2",
     ///     "/workspace/models/all-MiniLM-L6-v2-onnx/model.onnx",
     ///     "/workspace/models/all-MiniLM-L6-v2-onnx/tokenizer.json"
     /// ).await?;
     /// ```
-    pub async fn new<P: AsRef<Path>>(model_path: P, tokenizer_path: P) -> Result<Self> {
+    pub async fn new<P: AsRef<Path>>(model_name: impl Into<String>, model_path: P, tokenizer_path: P) -> Result<Self> {
+        let model_name = model_name.into();
         let model_path = model_path.as_ref();
         let tokenizer_path = tokenizer_path.as_ref();
 
@@ -167,7 +169,7 @@ impl OnnxEmbeddingModel {
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
             tokenizer: Arc::new(tokenizer),
-            model_name: "all-MiniLM-L6-v2".to_string(),
+            model_name,
             dimension: 384,
             max_length: 256,
         })
