@@ -1,13 +1,14 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 
-//! ONNX Embedding Model Wrapper (Sub-phase 3.1)
+//! ONNX Embedding Model Wrapper (Sub-phase 3.1, GPU support in 8.2)
 //!
 //! This module provides a wrapper around ONNX Runtime for running
 //! the all-MiniLM-L6-v2 sentence transformer model.
 //!
 //! Features:
 //! - ONNX model loading from disk
+//! - GPU acceleration via CUDA (with automatic CPU fallback)
 //! - BERT tokenization with padding/truncation
 //! - Single and batch embedding generation
 //! - Mean pooling over token embeddings
@@ -15,12 +16,14 @@
 
 use anyhow::{Context, Result};
 use ndarray::{Array2, Axis};
+use ort::execution_providers::{CPUExecutionProvider, CUDAExecutionProvider};
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Value;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
+use tracing::{info, warn};
 
 /// ONNX-based embedding model (all-MiniLM-L6-v2)
 ///
@@ -109,15 +112,44 @@ impl OnnxEmbeddingModel {
             );
         }
 
-        // Load ONNX model session (ort 2.0 API)
-        let mut session = Session::builder()
+        // Load ONNX model session with GPU support (Sub-phase 8.2)
+        // Try CUDA first, fall back to CPU if unavailable
+        info!("🚀 Initializing ONNX embedding model with GPU support");
+
+        // Try CUDA-only first to detect if CUDA is actually available
+        info!("   Attempting CUDA execution provider...");
+        let cuda_result = Session::builder()
             .context("Failed to create session builder")?
+            .with_execution_providers([CUDAExecutionProvider::default().build()])
+            .context("Failed to set CUDA execution provider")?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .context("Failed to set optimization level")?
             .with_intra_threads(4)
             .context("Failed to set intra threads")?
-            .commit_from_file(model_path)
-            .context(format!("Failed to load ONNX model from {}", model_path.display()))?;
+            .commit_from_file(model_path);
+
+        let mut session = match cuda_result {
+            Ok(s) => {
+                info!("✅ CUDA execution provider initialized successfully!");
+                s
+            }
+            Err(e) => {
+                warn!("⚠️  CUDA execution provider failed: {}", e);
+                warn!("   Falling back to CPU execution provider");
+                Session::builder()
+                    .context("Failed to create session builder")?
+                    .with_execution_providers([CPUExecutionProvider::default().build()])
+                    .context("Failed to set CPU execution provider")?
+                    .with_optimization_level(GraphOptimizationLevel::Level3)
+                    .context("Failed to set optimization level")?
+                    .with_intra_threads(4)
+                    .context("Failed to set intra threads")?
+                    .commit_from_file(model_path)
+                    .context(format!("Failed to load ONNX model from {}", model_path.display()))?
+            }
+        };
+
+        info!("✅ ONNX embedding model loaded successfully");
 
         // Load tokenizer
         let tokenizer = Tokenizer::from_file(tokenizer_path)
@@ -452,7 +484,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_model_creation() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .unwrap();
         assert_eq!(model.dimension(), 384);
@@ -462,7 +494,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_embed_basic() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .unwrap();
         let embedding = model.embed("test").await.unwrap();
@@ -472,7 +504,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_embed_batch_basic() {
-        let model = OnnxEmbeddingModel::new(MODEL_PATH, TOKENIZER_PATH)
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
             .await
             .unwrap();
         let texts = vec!["test1".to_string(), "test2".to_string()];

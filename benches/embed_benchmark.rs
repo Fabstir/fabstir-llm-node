@@ -20,7 +20,21 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fabstir_llm_node::embeddings::OnnxEmbeddingModel;
 use std::sync::Arc;
+use std::sync::Once;
 use tokio::runtime::Runtime;
+
+static INIT: Once = Once::new();
+
+/// Initialize tracing for benchmarks (only once)
+fn init_tracing() {
+    INIT.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_target(false)
+            .init();
+        eprintln!("\n📊 Tracing initialized for benchmarks\n");
+    });
+}
 
 // Model paths for benchmarking
 const MODEL_PATH: &str = "/workspace/models/all-MiniLM-L6-v2-onnx/model.onnx";
@@ -28,6 +42,9 @@ const TOKENIZER_PATH: &str = "/workspace/models/all-MiniLM-L6-v2-onnx/tokenizer.
 
 /// Setup helper: Create embedding model for benchmarks
 fn setup_model(rt: &Runtime) -> Arc<OnnxEmbeddingModel> {
+    // Initialize tracing to see CUDA logs
+    init_tracing();
+
     rt.block_on(async {
         let model = OnnxEmbeddingModel::new(
             "all-MiniLM-L6-v2",

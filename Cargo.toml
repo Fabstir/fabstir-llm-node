@@ -47,7 +47,7 @@ indicatif = "0.17"
 # Embedding dependencies (Sub-phase 1.1 - Host-Side Embeddings)
 # ONNX Runtime for sentence transformer inference (all-MiniLM-L6-v2)
 # Used for /v1/embed endpoint - zero-cost embeddings for SDK clients
-ort = { version = "2.0.0-rc.10", features = ["download-binaries"] }
+ort = { version = "2.0.0-rc.10", features = ["download-binaries", "cuda"] }
 tokenizers = "0.20"             # HuggingFace tokenizers for text preprocessing
 ndarray = "0.16"                # N-dimensional arrays for tensor operations
 
