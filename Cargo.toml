@@ -161,3 +161,7 @@ real-ezkl = ["risc0-zkvm", "risc0-build"]
 [[test]]
 name = "performance_tests"
 path = "tests/performance/mod.rs"
+
+[[bench]]
+name = "embed_benchmark"
+harness = false
