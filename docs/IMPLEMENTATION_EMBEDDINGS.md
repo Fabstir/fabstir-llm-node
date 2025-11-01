@@ -159,50 +159,64 @@ This implementation plan adds a production `/v1/embed` endpoint to fabstir-llm-n
 
 ## Phase 2: Request/Response Types
 
-### Sub-phase 2.1: Define Request Type ⏳
+### Sub-phase 2.1: Define Request Type ✅
 **Goal**: Create EmbedRequest struct with validation following ApiError patterns
 
 **Tasks**:
-- [ ] Define `EmbedRequest` struct in `src/api/embed/request.rs`
-  - [ ] `texts: Vec<String>` field (1-96 items)
-  - [ ] `model: Option<String>` field (defaults to "all-MiniLM-L6-v2")
-  - [ ] `chain_id: Option<u64>` field (defaults to 84532)
-- [ ] Implement `Default` trait for optional fields
-- [ ] Implement `validate()` method with clear error messages
-  - [ ] Validate texts count (1-96)
-  - [ ] Validate each text length (1-8192 characters)
-  - [ ] Validate chain_id (84532 or 5611)
-  - [ ] Validate model name (if specified)
-- [ ] Implement `From<ApiError>` conversions
-- [ ] Add serde derives for JSON serialization
+- [x] Define `EmbedRequest` struct in `src/api/embed/request.rs`
+  - [x] `texts: Vec<String>` field (1-96 items)
+  - [x] `model: String` field with serde default "all-MiniLM-L6-v2"
+  - [x] `chain_id: u64` field with serde default 84532
+- [x] Implement serde defaults for optional fields
+- [x] Implement `validate()` method with clear error messages
+  - [x] Validate texts count (1-96)
+  - [x] Validate each text length (1-8192 characters)
+  - [x] Validate whitespace-only text rejection
+  - [x] Validate chain_id (84532 or 5611)
+  - [x] Validate model name (not empty)
+- [x] Use `ApiError::ValidationError` for validation errors
+- [x] Add serde derives for JSON serialization with camelCase
+- [x] Add helper methods: `supported_chain_ids()`, `is_chain_supported()`
 
-**Test Files** (TDD - Write First):
-- `tests/api/test_embed_request.rs` - 12 test cases
-  - test_valid_request_single_text()
-  - test_valid_request_batch()
-  - test_default_model_applied()
-  - test_default_chain_id_applied()
-  - test_empty_texts_rejected()
-  - test_too_many_texts_rejected() (>96)
-  - test_text_too_long_rejected() (>8192 chars)
-  - test_invalid_chain_id_rejected()
-  - test_whitespace_only_text_rejected()
-  - test_json_serialization()
-  - test_json_deserialization()
-  - test_validation_error_messages_clear()
+**Test Files** (TDD - Written First):
+- `tests/api/test_embed_request.rs` - 15 test cases (3 bonus edge cases)
+  - test_valid_request_single_text() ✅
+  - test_valid_request_batch() ✅
+  - test_default_model_applied() ✅
+  - test_default_chain_id_applied() ✅
+  - test_empty_texts_rejected() ✅
+  - test_too_many_texts_rejected() (>96) ✅
+  - test_text_too_long_rejected() (>8192 chars) ✅
+  - test_invalid_chain_id_rejected() ✅
+  - test_whitespace_only_text_rejected() ✅
+  - test_json_serialization() ✅
+  - test_json_deserialization() ✅
+  - test_validation_error_messages_clear() ✅
+  - test_maximum_batch_size_valid() (96 texts) ✅
+  - test_maximum_text_length_valid() (8192 chars) ✅
+  - test_opbnb_chain_id_valid() (5611) ✅
 
 **Success Criteria**:
-- [ ] All 12 validation tests pass
-- [ ] Error messages are clear and actionable
-- [ ] JSON serialization works correctly
-- [ ] Follows existing ApiError patterns
+- [x] All 15 validation tests pass
+- [x] Error messages are clear and actionable
+- [x] JSON serialization works correctly
+- [x] Follows existing ApiError patterns
 
 **Deliverables**:
-- `src/api/embed/request.rs` (~200 lines)
-- 12 passing TDD tests
-- Clear validation error messages
+- ✅ Updated `src/api/embed/request.rs` (167 lines, +85 lines for validation)
+- ✅ 15 passing TDD tests (12 required + 3 edge cases)
+- ✅ Clear validation error messages with field names and limits
+- ✅ Helper methods for chain validation
 
-**Estimated Time**: 2 hours
+**Actual Time**: 1.5 hours
+
+**Notes**:
+- Followed strict TDD: Created 15 tests FIRST, then implemented validation
+- Used `ApiError::ValidationError { field, message }` for all validation errors
+- Error messages include specific values (e.g., "got 100 items" when limit is 96)
+- Validation covers all edge cases: empty, max, max+1, whitespace-only
+- Multi-chain support: 84532 (Base Sepolia), 5611 (opBNB Testnet)
+- All tests pass on first run after implementation
 
 ---
 
