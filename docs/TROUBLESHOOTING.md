@@ -672,6 +672,389 @@ rm -rf /opt/fabstir-node/data/identity
 cargo run --bin fabstir-cli -- sync --full
 ```
 
+## Embedding Issues
+
+### Embedding Service Not Available (503)
+
+**Symptoms**: `/v1/embed` endpoint returns 503 Service Unavailable
+
+**Diagnosis**:
+```bash
+# Check if embedding models are loaded
+curl "http://localhost:8080/v1/models?type=embedding"
+
+# Check logs for model loading errors
+RUST_LOG=debug cargo run 2>&1 | grep -i "embedding"
+
+# Verify model files exist
+ls -lh models/all-MiniLM-L6-v2-onnx/
+```
+
+**Solutions**:
+
+1. **Download missing models**:
+   ```bash
+   cd /opt/fabstir-node
+   ./scripts/download_embedding_model.sh
+
+   # Or manual download
+   mkdir -p models/all-MiniLM-L6-v2-onnx
+   cd models/all-MiniLM-L6-v2-onnx
+   wget -O model.onnx "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/refs%2Fpr%2F21/onnx/model.onnx"
+   wget -O tokenizer.json "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/refs%2Fpr%2F21/tokenizer.json"
+   ```
+
+2. **Check environment variables**:
+   ```bash
+   # Add to .env
+   EMBEDDING_MODEL_PATH=/opt/fabstir-node/models/all-MiniLM-L6-v2-onnx/model.onnx
+   EMBEDDING_TOKENIZER_PATH=/opt/fabstir-node/models/all-MiniLM-L6-v2-onnx/tokenizer.json
+   ENABLE_EMBEDDINGS=true
+   ```
+
+3. **Restart node**:
+   ```bash
+   # Restart to load models
+   systemctl restart fabstir-node
+
+   # Verify loading
+   journalctl -u fabstir-node -f | grep -i "embedding"
+   ```
+
+### ONNX Runtime Errors
+
+**Symptoms**: Errors mentioning "ONNX", "inference failed", or "model loading failed"
+
+**Diagnosis**:
+```bash
+# Check ONNX Runtime installation
+ldd target/release/fabstir-llm-node | grep onnx
+
+# Verify model file integrity
+sha256sum models/all-MiniLM-L6-v2-onnx/model.onnx
+# Should be: (verify with known good hash)
+
+# Check file permissions
+ls -la models/all-MiniLM-L6-v2-onnx/
+```
+
+**Solutions**:
+
+1. **Re-download corrupted models**:
+   ```bash
+   # Backup old files
+   mv models/all-MiniLM-L6-v2-onnx models/all-MiniLM-L6-v2-onnx.bak
+
+   # Fresh download
+   ./scripts/download_embedding_model.sh
+   ```
+
+2. **Check ONNX Runtime dependencies**:
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get update
+   sudo apt-get install libgomp1
+
+   # Verify installation
+   cargo test --test integration_tests embedding -- --nocapture
+   ```
+
+3. **Fix permissions**:
+   ```bash
+   chown -R fabstir:fabstir models/all-MiniLM-L6-v2-onnx
+   chmod 644 models/all-MiniLM-L6-v2-onnx/*.{onnx,json}
+   ```
+
+### Dimension Mismatch Errors (500)
+
+**Symptoms**: "Dimension mismatch: expected 384, got XXX"
+
+**Diagnosis**:
+```bash
+# Check model configuration
+RUST_LOG=debug cargo run 2>&1 | grep "dimension"
+
+# Test with known input
+curl -X POST http://localhost:8080/v1/embed \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["test"]}'
+```
+
+**Solutions**:
+
+1. **Ensure correct model version**:
+   ```bash
+   # all-MiniLM-L6-v2 MUST output 384 dimensions
+   # If using different model, verify dimensions match
+
+   # Re-download correct model
+   rm -rf models/all-MiniLM-L6-v2-onnx
+   ./scripts/download_embedding_model.sh
+   ```
+
+2. **Check configuration**:
+   ```bash
+   # Verify EMBEDDING_DIMENSIONS=384 in .env
+   grep EMBEDDING_DIMENSIONS .env
+   ```
+
+### Model Not Found (404)
+
+**Symptoms**: "Model 'XXX' not found. Available models: ..."
+
+**Diagnosis**:
+```bash
+# List available models
+curl "http://localhost:8080/v1/models?type=embedding"
+
+# Check for typos in request
+# Model name is case-sensitive: "all-MiniLM-L6-v2"
+```
+
+**Solutions**:
+
+1. **Use correct model name**:
+   ```bash
+   # Correct
+   curl -X POST http://localhost:8080/v1/embed \
+     -d '{"texts": ["test"], "model": "all-MiniLM-L6-v2"}'
+
+   # Also correct (uses default)
+   curl -X POST http://localhost:8080/v1/embed \
+     -d '{"texts": ["test"], "model": "default"}'
+   ```
+
+2. **Load additional models** (if needed):
+   ```bash
+   # Add model configuration in src/main.rs
+   # Restart node to load new model
+   ```
+
+### Memory Issues
+
+**Symptoms**: Out of memory errors, slow embedding generation, system freezing
+
+**Diagnosis**:
+```bash
+# Monitor memory during embedding requests
+watch -n 1 free -h
+
+# Check embedding model memory usage
+ps aux | grep fabstir-llm-node
+# RSS column shows memory usage
+
+# Stress test with multiple requests
+for i in {1..10}; do
+  curl -X POST http://localhost:8080/v1/embed \
+    -d '{"texts": ["test '$i'"]}' &
+done
+wait
+```
+
+**Solutions**:
+
+1. **Increase system RAM**:
+   ```bash
+   # Minimum requirements:
+   # - LLM only: 2-8GB (depending on model)
+   # - LLM + Embeddings: +500MB
+   # - Recommended: 8GB+ for production
+   ```
+
+2. **Configure swap** (temporary solution):
+   ```bash
+   # Create 4GB swap file
+   sudo fallocate -l 4G /swapfile
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
+
+   # Make permanent
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+   ```
+
+3. **Limit concurrent requests**:
+   ```bash
+   # Add to .env
+   MAX_CONCURRENT_EMBEDDING_REQUESTS=5
+   EMBEDDING_BATCH_SIZE_LIMIT=20  # Reduce from 96 if needed
+   ```
+
+4. **Use smaller LLM model**:
+   ```bash
+   # Switch to TinyLlama instead of Llama-2-7B
+   MODEL_PATH=./models/tinyllama-1b.Q4_K_M.gguf
+   # Saves ~3.5GB RAM
+   ```
+
+### Performance Problems
+
+**Symptoms**: Slow embedding generation (>200ms per embedding)
+
+**Diagnosis**:
+```bash
+# Benchmark embedding performance
+time curl -X POST http://localhost:8080/v1/embed \
+  -d '{"texts": ["benchmark test"]}'
+
+# Check CPU usage
+top -p $(pgrep fabstir-llm-node)
+
+# Monitor with multiple requests
+ab -n 100 -c 10 -p embed_req.json \
+  -T "application/json" \
+  http://localhost:8080/v1/embed
+```
+
+**Solutions**:
+
+1. **Optimize batch size**:
+   ```bash
+   # Optimal batch size: 10-20 texts
+   # Avoid single requests for large datasets
+
+   # Good: Batch of 20
+   curl -X POST http://localhost:8080/v1/embed \
+     -d '{"texts": ["text1", "text2", ..., "text20"]}'
+
+   # Bad: 20 separate requests
+   ```
+
+2. **Use parallel requests** (client-side):
+   ```python
+   import asyncio
+   import aiohttp
+
+   async def embed_batch(session, texts):
+       async with session.post(
+           'http://localhost:8080/v1/embed',
+           json={'texts': texts}
+       ) as response:
+           return await response.json()
+
+   async def embed_dataset(all_texts, batch_size=20):
+       async with aiohttp.ClientSession() as session:
+           tasks = []
+           for i in range(0, len(all_texts), batch_size):
+               batch = all_texts[i:i+batch_size]
+               tasks.append(embed_batch(session, batch))
+           return await asyncio.gather(*tasks)
+   ```
+
+3. **Check system resources**:
+   ```bash
+   # Ensure no CPU throttling
+   cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+   # Should be "performance" not "powersave"
+
+   # Set performance mode
+   echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+   ```
+
+4. **Profile bottlenecks**:
+   ```bash
+   # Run with profiling
+   RUST_LOG=debug cargo run 2>&1 | grep -E "embedding|tokeniz|inference"
+
+   # Look for slow operations:
+   # - Tokenization: <5ms expected
+   # - ONNX inference: <50ms expected (CPU)
+   # - Mean pooling: <1ms expected
+   ```
+
+### Validation Errors (400)
+
+**Common validation errors**:
+
+1. **"Text length exceeds maximum"**:
+   ```bash
+   # Maximum: 8192 characters per text
+   # Solution: Split long texts into chunks
+
+   # Python example
+   def chunk_text(text, max_length=8000):
+       return [text[i:i+max_length]
+               for i in range(0, len(text), max_length)]
+   ```
+
+2. **"Too many texts"**:
+   ```bash
+   # Maximum: 96 texts per request
+   # Solution: Split into multiple requests
+
+   # Process in batches
+   batch_size = 96
+   for i in range(0, len(all_texts), batch_size):
+       batch = all_texts[i:i+batch_size]
+       result = generate_embeddings(batch)
+   ```
+
+3. **"Empty texts array"**:
+   ```bash
+   # Must provide at least 1 non-empty text
+   # Solution: Filter empty strings
+
+   texts = [t.strip() for t in raw_texts if t and t.strip()]
+   if texts:
+       result = generate_embeddings(texts)
+   ```
+
+### Docker/Kubernetes Issues
+
+**Symptoms**: Embeddings work locally but fail in containers
+
+**Diagnosis**:
+```bash
+# Check volume mounts
+docker exec fabstir-node ls -la /app/models/all-MiniLM-L6-v2-onnx/
+
+# Check environment variables
+docker exec fabstir-node env | grep EMBEDDING
+
+# Check container logs
+docker logs fabstir-node 2>&1 | grep -i embedding
+```
+
+**Solutions**:
+
+1. **Fix volume mounts**:
+   ```yaml
+   # docker-compose.yml
+   volumes:
+     - ./models:/app/models  # Ensure this path is correct
+   ```
+
+2. **Verify model files in container**:
+   ```bash
+   # Copy models into container if needed
+   docker cp models/all-MiniLM-L6-v2-onnx \
+     fabstir-node:/app/models/
+
+   # Restart container
+   docker restart fabstir-node
+   ```
+
+3. **Check memory limits**:
+   ```yaml
+   # docker-compose.yml
+   deploy:
+     resources:
+       limits:
+         memory: 8G  # Increase if embedding + LLM needs more
+   ```
+
+4. **Kubernetes ConfigMap**:
+   ```bash
+   # Verify ConfigMap
+   kubectl get configmap fabstir-node-config -o yaml
+
+   # Check environment variables in pod
+   kubectl exec -it fabstir-node-xxx -- env | grep EMBEDDING
+
+   # View logs
+   kubectl logs -f fabstir-node-xxx | grep -i embedding
+   ```
+
 ## Getting Help
 
 If issues persist:
