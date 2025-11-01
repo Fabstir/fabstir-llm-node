@@ -3,6 +3,9 @@
 //! Security test runner
 //!
 //! Runs comprehensive security tests for cryptographic implementation
+//! and embedding API security
 
 #[cfg(test)]
-mod security;
+mod security {
+    mod test_embed_security;
+}
