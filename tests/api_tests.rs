@@ -15,4 +15,5 @@ mod api {
     mod test_models_endpoint;
     mod test_route_registration;
     mod test_server_crypto;
+    mod test_upload_vectors_messages;
 }

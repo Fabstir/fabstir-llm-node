@@ -1,5 +1,6 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -510,5 +511,95 @@ impl ResponseEncryptedPayload {
             aad,
             finish_reason: self.finish_reason.clone(),
         })
+    }
+}
+
+// ============================================================================
+// RAG (Retrieval-Augmented Generation) Message Types - Phase 2
+// ============================================================================
+
+/// Maximum number of vectors allowed per upload batch
+/// Prevents memory exhaustion and ensures reasonable message sizes
+pub const MAX_UPLOAD_BATCH_SIZE: usize = 1000;
+
+/// Request to upload vectors to session storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadVectorsRequest {
+    /// Optional request ID for tracking (client-generated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Vectors to upload
+    pub vectors: Vec<VectorUpload>,
+
+    /// If true, clear existing vectors before uploading
+    /// If false, append to existing vectors
+    pub replace: bool,
+}
+
+/// Single vector to upload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VectorUpload {
+    /// Unique identifier for this vector
+    pub id: String,
+
+    /// 384-dimensional embedding vector
+    pub vector: Vec<f32>,
+
+    /// JSON metadata associated with this vector
+    pub metadata: Value,
+}
+
+/// Response to vector upload request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadVectorsResponse {
+    /// Request ID (if provided in request)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Number of vectors successfully uploaded
+    pub uploaded: usize,
+
+    /// Number of vectors rejected (validation errors)
+    pub rejected: usize,
+
+    /// Error messages for rejected vectors
+    pub errors: Vec<String>,
+}
+
+impl UploadVectorsRequest {
+    /// Validate the upload request
+    ///
+    /// Checks:
+    /// - Batch size <= MAX_UPLOAD_BATCH_SIZE
+    /// - All vectors have 384 dimensions
+    ///
+    /// Returns Ok(()) if valid, Err with details if invalid
+    pub fn validate(&self) -> Result<()> {
+        // Check batch size
+        if self.vectors.len() > MAX_UPLOAD_BATCH_SIZE {
+            return Err(anyhow!(
+                "Upload batch size too large: {} vectors (max: {})",
+                self.vectors.len(),
+                MAX_UPLOAD_BATCH_SIZE
+            ));
+        }
+
+        // Check vector dimensions
+        for (idx, upload) in self.vectors.iter().enumerate() {
+            if upload.vector.len() != 384 {
+                return Err(anyhow!(
+                    "Vector {} (id: {}): Invalid dimensions: expected 384, got {}",
+                    idx,
+                    upload.id,
+                    upload.vector.len()
+                ));
+            }
+        }
+
+        Ok(())
     }
 }

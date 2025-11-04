@@ -127,9 +127,9 @@ Session End:
 | Phase | Status | Tests | Estimated | Notes |
 |-------|--------|-------|-----------|-------|
 | Phase 1: Session Vector Storage | ✅ Complete + Hardened | 47/47 | 6h | All sub-phases + critical fixes! |
-| Phase 2: WebSocket Protocol | ⏳ Not Started | 0/28 | 6h | Upload/search messages |
+| Phase 2: WebSocket Protocol | 🔄 In Progress | 8/28 | 6h | Sub-phase 2.1 complete ✅ |
 | Phase 3: Integration & Testing | ⏳ Not Started | 0/13 | 8h | E2E RAG workflow |
-| **TOTAL** | **54% Complete** | **47/88 tests** | **~20 hours** | **~2-3 days** |
+| **TOTAL** | **63% Complete** | **55/88 tests** | **~20 hours** | **~2-3 days** |
 
 ### Phase 1 Critical Fixes Applied ✅
 - **NaN/Infinity Validation**: Added validation to prevent invalid float values (4 tests)
@@ -300,12 +300,12 @@ Session End:
 
 ## Phase 2: WebSocket Protocol Extensions
 
-### Sub-phase 2.1: Define Vector Upload Messages ⏳
+### Sub-phase 2.1: Define Vector Upload Messages ✅
 **Goal**: Add message types for uploading vectors to session
 
 **Tasks**:
-- [ ] Update `src/api/websocket/message_types.rs`
-- [ ] Define `UploadVectorsRequest` struct:
+- [x] Update `src/api/websocket/message_types.rs`
+- [x] Define `UploadVectorsRequest` struct:
   ```rust
   pub struct UploadVectorsRequest {
       pub vectors: Vec<VectorUpload>,
@@ -317,7 +317,7 @@ Session End:
       pub metadata: Value,
   }
   ```
-- [ ] Define `UploadVectorsResponse` struct:
+- [x] Define `UploadVectorsResponse` struct:
   ```rust
   pub struct UploadVectorsResponse {
       pub uploaded: usize,
@@ -325,11 +325,11 @@ Session End:
       pub errors: Vec<String>,
   }
   ```
-- [ ] Add `UploadVectors` variant to `ClientMessage` enum
-- [ ] Add `UploadVectorsResult` variant to `ServerMessage` enum
-- [ ] Implement serde serialization with camelCase
-- [ ] Add validation: max batch size 1000 vectors per message
-- [ ] Add request ID for tracking
+- [⚠️] Add `UploadVectors` variant to `ClientMessage` enum (Deferred to Sub-phase 2.3)
+- [⚠️] Add `UploadVectorsResult` variant to `ServerMessage` enum (Deferred to Sub-phase 2.3)
+- [x] Implement serde serialization with camelCase
+- [x] Add validation: max batch size 1000 vectors per message
+- [x] Add request ID for tracking
 
 **Test Files** (TDD - Written First):
 - `tests/api/test_upload_vectors_messages.rs` - 8 tests
@@ -343,16 +343,16 @@ Session End:
   - test_upload_request_id_preserved()
 
 **Success Criteria**:
-- [ ] Message types serialize/deserialize correctly
-- [ ] Batch size validation works
-- [ ] Error messages clear
-- [ ] 8 passing tests
+- [x] Message types serialize/deserialize correctly
+- [x] Batch size validation works
+- [x] Error messages clear
+- [x] 8 passing tests
 
 **Deliverables**:
-- [ ] Updated `src/api/websocket/message_types.rs` (+80 lines)
-- [ ] Request/response types
-- [ ] Validation logic
-- [ ] 8 passing tests
+- [x] Updated `src/api/websocket/message_types.rs` (+91 lines)
+- [x] Request/response types
+- [x] Validation logic
+- [x] 8 passing tests
 
 **Estimated Time**: 2 hours
 
