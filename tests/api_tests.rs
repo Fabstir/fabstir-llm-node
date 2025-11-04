@@ -14,6 +14,7 @@ mod api {
     mod test_embed_response;
     mod test_models_endpoint;
     mod test_route_registration;
+    mod test_search_vectors_messages;
     mod test_server_crypto;
     mod test_upload_vectors_messages;
 }

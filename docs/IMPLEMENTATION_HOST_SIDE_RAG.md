@@ -127,9 +127,9 @@ Session End:
 | Phase | Status | Tests | Estimated | Notes |
 |-------|--------|-------|-----------|-------|
 | Phase 1: Session Vector Storage | ✅ Complete + Hardened | 47/47 | 6h | All sub-phases + critical fixes! |
-| Phase 2: WebSocket Protocol | 🔄 In Progress | 8/28 | 6h | Sub-phase 2.1 complete ✅ |
+| Phase 2: WebSocket Protocol | 🔄 In Progress | 17/28 | 6h | Sub-phases 2.1 & 2.2 complete ✅ |
 | Phase 3: Integration & Testing | ⏳ Not Started | 0/13 | 8h | E2E RAG workflow |
-| **TOTAL** | **63% Complete** | **55/88 tests** | **~20 hours** | **~2-3 days** |
+| **TOTAL** | **73% Complete** | **64/88 tests** | **~20 hours** | **~2-3 days** |
 
 ### Phase 1 Critical Fixes Applied ✅
 - **NaN/Infinity Validation**: Added validation to prevent invalid float values (4 tests)
@@ -358,12 +358,12 @@ Session End:
 
 ---
 
-### Sub-phase 2.2: Define Vector Search Messages ⏳
+### Sub-phase 2.2: Define Vector Search Messages ✅
 **Goal**: Add message types for searching vectors
 
 **Tasks**:
-- [ ] Update `src/api/websocket/message_types.rs`
-- [ ] Define `SearchVectorsRequest` struct:
+- [x] Update `src/api/websocket/message_types.rs`
+- [x] Define `SearchVectorsRequest` struct:
   ```rust
   pub struct SearchVectorsRequest {
       pub query_vector: Vec<f32>,
@@ -372,27 +372,27 @@ Session End:
       pub metadata_filter: Option<Value>,
   }
   ```
-- [ ] Define `SearchVectorsResponse` struct:
+- [x] Define `SearchVectorsResponse` struct:
   ```rust
   pub struct SearchVectorsResponse {
-      pub results: Vec<SearchResult>,
+      pub results: Vec<VectorSearchResult>,
       pub total_vectors: usize,
-      pub search_time_ms: f32,
+      pub search_time_ms: f64,
   }
-  pub struct SearchResult {
+  pub struct VectorSearchResult {
       pub id: String,
       pub score: f32,
       pub metadata: Value,
   }
   ```
-- [ ] Add `SearchVectors` variant to `ClientMessage` enum
-- [ ] Add `SearchVectorsResult` variant to `ServerMessage` enum
-- [ ] Implement serde serialization
-- [ ] Add validation: k <= 100 (configurable max)
-- [ ] Add request ID for async response matching
+- [⚠️] Add `SearchVectors` variant to `ClientMessage` enum (Deferred to Sub-phase 2.3)
+- [⚠️] Add `SearchVectorsResult` variant to `ServerMessage` enum (Deferred to Sub-phase 2.3)
+- [x] Implement serde serialization with camelCase
+- [x] Add validation: k <= 100 (MAX_SEARCH_K constant)
+- [x] Add request ID for async response matching
 
 **Test Files** (TDD - Written First):
-- `tests/api/test_search_vectors_messages.rs` - 8 tests
+- `tests/api/test_search_vectors_messages.rs` - 9 tests
   - test_search_request_serialization()
   - test_search_response_deserialization()
   - test_search_validates_k_limit()
@@ -401,17 +401,19 @@ Session End:
   - test_search_with_metadata_filter()
   - test_search_timing_included()
   - test_search_empty_results()
+  - test_search_result_structure()
 
 **Success Criteria**:
-- [ ] Message types work correctly
-- [ ] Validation enforced
-- [ ] Search timing tracked
-- [ ] 8 passing tests
+- [x] Message types work correctly
+- [x] Validation enforced
+- [x] Search timing tracked
+- [x] 9 passing tests
 
 **Deliverables**:
-- [ ] Search message types (+70 lines)
-- [ ] Validation logic
-- [ ] 8 passing tests
+- [x] Updated `src/api/websocket/message_types.rs` (+86 lines)
+- [x] Request/response types (SearchVectorsRequest, SearchVectorsResponse, VectorSearchResult)
+- [x] Validation logic (MAX_SEARCH_K = 100)
+- [x] 9 passing tests
 
 **Estimated Time**: 2 hours
 

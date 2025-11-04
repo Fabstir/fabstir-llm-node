@@ -603,3 +603,89 @@ impl UploadVectorsRequest {
         Ok(())
     }
 }
+
+// ============================================================================
+// Vector Search Messages (Sub-phase 2.2)
+// ============================================================================
+
+/// Maximum number of results to return from search
+pub const MAX_SEARCH_K: usize = 100;
+
+/// Request to search vectors in session storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchVectorsRequest {
+    /// Optional request ID for async correlation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Query vector to search for (384-dimensional)
+    pub query_vector: Vec<f32>,
+
+    /// Number of top results to return (max: MAX_SEARCH_K)
+    pub k: usize,
+
+    /// Optional minimum similarity score threshold (0.0-1.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+
+    /// Optional metadata filter (JSON query object)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_filter: Option<Value>,
+}
+
+/// Response containing search results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchVectorsResponse {
+    /// Optional request ID matching the request
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Search results ordered by descending similarity score
+    pub results: Vec<VectorSearchResult>,
+
+    /// Total number of vectors in storage
+    pub total_vectors: usize,
+
+    /// Search execution time in milliseconds
+    pub search_time_ms: f64,
+}
+
+/// Single vector search result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VectorSearchResult {
+    /// Vector ID
+    pub id: String,
+
+    /// Cosine similarity score (0.0-1.0, higher is better)
+    pub score: f32,
+
+    /// Vector metadata
+    pub metadata: Value,
+}
+
+impl SearchVectorsRequest {
+    /// Validates the search request
+    pub fn validate(&self) -> Result<()> {
+        // Validate k limit
+        if self.k > MAX_SEARCH_K {
+            return Err(anyhow!(
+                "Search k too large: {} (max: {})",
+                self.k,
+                MAX_SEARCH_K
+            ));
+        }
+
+        // Validate query vector dimensions
+        if self.query_vector.len() != 384 {
+            return Err(anyhow!(
+                "Invalid query vector dimensions: expected 384, got {}",
+                self.query_vector.len()
+            ));
+        }
+
+        Ok(())
+    }
+}
