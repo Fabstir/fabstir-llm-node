@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 use crate::config::chains::ChainRegistry;
 use crate::job_processor::Message;
+use crate::rag::session_vector_store::SessionVectorStore;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -94,6 +95,7 @@ pub struct WebSocketSession {
     pub state: SessionState,
     pub messages: Arc<RwLock<Vec<Message>>>,
     pub metadata: Arc<RwLock<HashMap<String, String>>>,
+    pub vector_store: Option<Arc<Mutex<SessionVectorStore>>>,
 }
 
 impl WebSocketSession {
@@ -117,6 +119,7 @@ impl WebSocketSession {
             state: SessionState::Active,
             messages: Arc::new(RwLock::new(Vec::new())),
             metadata: Arc::new(RwLock::new(HashMap::new())),
+            vector_store: None,
         }
     }
 
@@ -227,6 +230,31 @@ impl WebSocketSession {
         self.conversation_history.clear();
         self.total_memory_used = 0;
         self.last_activity = Instant::now();
+
+        // Clear vector store if RAG is enabled
+        if let Some(store) = &self.vector_store {
+            if let Ok(mut store_locked) = store.lock() {
+                store_locked.clear();
+            }
+        }
+    }
+
+    /// Enable RAG functionality for this session
+    ///
+    /// # Arguments
+    /// * `max_vectors` - Maximum number of vectors to store (memory limit)
+    pub fn enable_rag(&mut self, max_vectors: usize) {
+        let store = SessionVectorStore::new(self.id.clone(), max_vectors);
+        self.vector_store = Some(Arc::new(Mutex::new(store)));
+    }
+
+    /// Get the vector store for this session (if RAG enabled)
+    ///
+    /// # Returns
+    /// * `Some(Arc<Mutex<SessionVectorStore>>)` if RAG enabled
+    /// * `None` if RAG not enabled
+    pub fn get_vector_store(&self) -> Option<Arc<Mutex<SessionVectorStore>>> {
+        self.vector_store.clone()
     }
 
     pub fn is_expired(&self) -> bool {
