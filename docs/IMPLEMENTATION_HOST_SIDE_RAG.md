@@ -127,9 +127,9 @@ Session End:
 | Phase | Status | Tests | Estimated | Notes |
 |-------|--------|-------|-----------|-------|
 | Phase 1: Session Vector Storage | ✅ Complete + Hardened | 47/47 | 6h | All sub-phases + critical fixes! |
-| Phase 2: WebSocket Protocol | 🔄 In Progress | 17/28 | 6h | Sub-phases 2.1 & 2.2 complete ✅ |
+| Phase 2: WebSocket Protocol | ✅ Complete | 29/29 | 6h | All sub-phases complete! ✅ |
 | Phase 3: Integration & Testing | ⏳ Not Started | 0/13 | 8h | E2E RAG workflow |
-| **TOTAL** | **73% Complete** | **64/88 tests** | **~20 hours** | **~2-3 days** |
+| **TOTAL** | **86% Complete** | **76/88 tests** | **~20 hours** | **~2-3 days** |
 
 ### Phase 1 Critical Fixes Applied ✅
 - **NaN/Infinity Validation**: Added validation to prevent invalid float values (4 tests)
@@ -419,25 +419,25 @@ Session End:
 
 ---
 
-### Sub-phase 2.3: Implement Message Handlers ⏳
+### Sub-phase 2.3: Implement Message Handlers ✅
 **Goal**: Handle vector upload/search in WebSocket handler
 
 **Tasks**:
-- [ ] Create `src/api/websocket/handlers/rag_handler.rs`
-- [ ] Implement `handle_upload_vectors(session: &SessionState, request: UploadVectorsRequest) -> Result<UploadVectorsResponse>`
-- [ ] Get vector_store from session (return error if RAG not enabled)
-- [ ] Validate all vectors before adding (384 dimensions)
-- [ ] If replace=true, call vector_store.clear() first
-- [ ] Add vectors to store, collect errors
-- [ ] Return response with counts
-- [ ] Implement `handle_search_vectors(session: &SessionState, request: SearchVectorsRequest) -> Result<SearchVectorsResponse>`
-- [ ] Get vector_store from session
-- [ ] Start timer for performance tracking
-- [ ] Call vector_store.search() with parameters
-- [ ] Stop timer, include in response
-- [ ] Return results with timing
-- [ ] Update `src/api/websocket/handler.rs` to route new messages
-- [ ] Add error handling for all edge cases
+- [x] Create `src/api/websocket/handlers/rag.rs`
+- [x] Implement `handle_upload_vectors(session: &Arc<Mutex<WebSocketSession>>, request: UploadVectorsRequest) -> Result<UploadVectorsResponse>`
+- [x] Get vector_store from session (return error if RAG not enabled)
+- [x] Validate all vectors before adding (384 dimensions via SessionVectorStore)
+- [x] If replace=true, call vector_store.clear() first
+- [x] Add vectors to store, collect errors
+- [x] Return response with counts
+- [x] Implement `handle_search_vectors(session: &Arc<Mutex<WebSocketSession>>, request: SearchVectorsRequest) -> Result<SearchVectorsResponse>`
+- [x] Get vector_store from session
+- [x] Start timer for performance tracking (Instant::now())
+- [x] Call vector_store.search() with parameters (handles threshold and metadata_filter)
+- [x] Stop timer, include in response (elapsed_ms)
+- [x] Return results with timing
+- [x] Add rag module to `src/api/websocket/handlers/mod.rs`
+- [x] Add error handling for all edge cases (RAG not enabled, invalid dimensions, NaN values)
 
 **Test Files** (TDD - Written First):
 - `tests/api/test_rag_handlers.rs` - 12 tests
@@ -455,15 +455,15 @@ Session End:
   - test_search_handler_timing_accurate()
 
 **Success Criteria**:
-- [ ] Upload handler processes batches
-- [ ] Search handler returns results
-- [ ] Error handling works
-- [ ] 12 passing tests
+- [x] Upload handler processes batches
+- [x] Search handler returns results
+- [x] Error handling works
+- [x] 12 passing tests
 
 **Deliverables**:
-- [ ] `src/api/websocket/handlers/rag_handler.rs` (~200 lines)
-- [ ] Updated routing in `handler.rs`
-- [ ] 12 passing tests
+- [x] `src/api/websocket/handlers/rag.rs` (~220 lines with tests)
+- [x] Updated `handlers/mod.rs` to export rag module
+- [x] 12 passing tests
 
 **Estimated Time**: 2 hours
 
