@@ -279,6 +279,39 @@ impl SessionStore {
         let sessions = self.sessions.read().await;
         sessions.values().filter(|s| !s.is_expired()).count()
     }
+
+    /// Get or create a session and enable RAG with specified max vectors
+    ///
+    /// This is a convenience method for RAG functionality that:
+    /// 1. Creates session if it doesn't exist
+    /// 2. Enables RAG on the session if not already enabled
+    /// 3. Returns a clone of the session with RAG enabled
+    ///
+    /// The session remains in the store with RAG enabled, and the returned
+    /// clone shares the same vector store Arc.
+    pub async fn get_or_create_rag_session(
+        &mut self,
+        session_id: String,
+        max_vectors: usize,
+    ) -> Result<crate::api::websocket::session::WebSocketSession> {
+        let mut sessions = self.sessions.write().await;
+
+        // Create if doesn't exist
+        if !sessions.contains_key(&session_id) {
+            let sess = crate::api::websocket::session::WebSocketSession::new(session_id.clone());
+            sessions.insert(session_id.clone(), sess);
+        }
+
+        // Get mutable reference and enable RAG
+        let session = sessions.get_mut(&session_id).ok_or_else(|| anyhow!("Session not found"))?;
+
+        if session.get_vector_store().is_none() {
+            session.enable_rag(max_vectors);
+        }
+
+        // Return a clone (Arc is shallow-copied, so vector store is shared)
+        Ok(session.clone())
+    }
 }
 
 // Implement methods that need to work synchronously for compatibility

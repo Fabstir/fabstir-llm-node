@@ -54,6 +54,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health_handler))
+        // Version endpoint
+        .route("/v1/version", get(version_handler))
         // Models endpoint with chain support
         .route("/v1/models", get(models_handler))
         // Chain endpoints
@@ -106,6 +108,10 @@ pub async fn start_server(api_server: ApiServer) -> Result<(), Box<dyn std::erro
 async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     let health = state.api_server.health_check().await;
     axum::response::Json(health)
+}
+
+async fn version_handler(State(_state): State<AppState>) -> impl IntoResponse {
+    axum::response::Json(crate::version::get_version_info())
 }
 
 async fn models_handler(

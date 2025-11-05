@@ -556,6 +556,10 @@ pub struct VectorUpload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadVectorsResponse {
+    /// Message type for client routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
     /// Request ID (if provided in request)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -638,6 +642,10 @@ pub struct SearchVectorsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchVectorsResponse {
+    /// Message type for client routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
     /// Optional request ID matching the request
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
