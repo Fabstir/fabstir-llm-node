@@ -886,6 +886,93 @@ ws.send(JSON.stringify({
 - **Deprecation Warnings**: Plaintext messages log warnings
 - **Default Mode**: SDK Phase 6.2+ uses encryption by default
 
+### RAG (Retrieval-Augmented Generation)
+
+**Status**: Production Ready (v8.3.6+)
+**Feature**: Host-Side RAG with session-scoped vector storage
+
+The WebSocket API supports RAG functionality for document-based context retrieval. Vectors are stored in session memory and automatically cleared on disconnect.
+
+**See**: `docs/RAG_SDK_INTEGRATION.md` for comprehensive integration guide
+
+#### Upload Vectors
+
+Upload document embeddings to session storage for semantic search.
+
+**Request**:
+```json
+{
+  "type": "uploadVectors",
+  "sessionId": "session-123",
+  "requestId": "upload-456",
+  "vectors": [
+    {
+      "id": "chunk-0",
+      "vector": [0.12, 0.45, ..., 0.89],
+      "metadata": {
+        "text": "Machine learning is a subset of AI.",
+        "page": 1,
+        "source": "ml_guide.pdf"
+      }
+    }
+  ],
+  "replace": false
+}
+```
+
+**Response**:
+```json
+{
+  "type": "uploadVectorsResponse",
+  "requestId": "upload-456",
+  "uploaded": 1,
+  "rejected": 0,
+  "errors": []
+}
+```
+
+#### Search Vectors
+
+Search uploaded vectors using semantic similarity.
+
+**Request**:
+```json
+{
+  "type": "searchVectors",
+  "sessionId": "session-123",
+  "requestId": "search-789",
+  "queryVector": [0.23, 0.56, ..., 0.78],
+  "k": 5,
+  "threshold": 0.7
+}
+```
+
+**Response**:
+```json
+{
+  "type": "searchVectorsResponse",
+  "requestId": "search-789",
+  "results": [
+    {
+      "id": "chunk-0",
+      "score": 0.95,
+      "metadata": {
+        "text": "Machine learning is a subset of AI.",
+        "page": 1
+      }
+    }
+  ],
+  "totalVectors": 10,
+  "searchTimeMs": 2.3
+}
+```
+
+**Requirements**:
+- Embeddings must be 384-dimensional (from `POST /v1/embed`)
+- Maximum 100,000 vectors per session
+- Vectors cleared automatically on disconnect
+- Session must be created before upload
+
 ### Simple Inference (No Auth Required)
 
 For basic inference without job management:

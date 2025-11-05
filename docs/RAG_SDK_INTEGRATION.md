@@ -122,7 +122,7 @@ Uploads document vectors to the host's session storage.
 
 ```json
 {
-  "type": "uploadVectorsResult",
+  "type": "uploadVectorsResponse",
   "requestId": "upload-123",
   "uploaded": 2,
   "rejected": 0,
@@ -172,7 +172,7 @@ Searches for relevant chunks using semantic similarity.
 
 ```json
 {
-  "type": "searchVectorsResult",
+  "type": "searchVectorsResponse",
   "requestId": "search-456",
   "results": [
     {
