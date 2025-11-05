@@ -50,6 +50,7 @@ pub fn handle_upload_vectors(
     }
 
     Ok(UploadVectorsResponse {
+        msg_type: "uploadVectorsResponse".to_string(),
         request_id: request.request_id,
         uploaded,
         rejected,
@@ -108,6 +109,7 @@ pub fn handle_search_vectors(
         .collect();
 
     Ok(SearchVectorsResponse {
+        msg_type: "searchVectorsResponse".to_string(),
         request_id: request.request_id,
         results,
         total_vectors,

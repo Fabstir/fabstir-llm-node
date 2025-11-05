@@ -187,6 +187,8 @@ pub struct ApiServer {
     checkpoint_manager: Arc<RwLock<Option<Arc<CheckpointManager>>>>,
     session_key_store: Arc<SessionKeyStore>,
     node_private_key: Option<[u8; 32]>,
+    embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
+    session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
 }
@@ -209,6 +211,11 @@ impl ApiServer {
         let config = ApiConfig::default();
         let addr = "127.0.0.1:0".parse().unwrap();
 
+        let session_store_config = crate::api::websocket::session_store::SessionStoreConfig::default();
+        let session_store = Arc::new(RwLock::new(
+            crate::api::websocket::session_store::SessionStore::new(session_store_config)
+        ));
+
         ApiServer {
             config,
             addr,
@@ -228,6 +235,8 @@ impl ApiServer {
             checkpoint_manager: Arc::new(RwLock::new(None)),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key: None,
+            embedding_model_manager: Arc::new(RwLock::new(None)),
+            session_store,
             shutdown_tx: None,
             listener: None,
         }
@@ -272,6 +281,17 @@ impl ApiServer {
             }
         };
 
+        // Initialize session store for RAG functionality
+        let session_store_config = crate::api::websocket::session_store::SessionStoreConfig {
+            max_sessions: 1000,
+            cleanup_interval_seconds: 300,
+            enable_metrics: true,
+            enable_persistence: false,
+        };
+        let session_store = Arc::new(RwLock::new(
+            crate::api::websocket::session_store::SessionStore::new(session_store_config)
+        ));
+
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
@@ -289,6 +309,8 @@ impl ApiServer {
             checkpoint_manager: Arc::new(RwLock::new(None)),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key,
+            embedding_model_manager: Arc::new(RwLock::new(None)),
+            session_store,
             shutdown_tx: None,
             listener: Some(listener),
             config,
@@ -339,6 +361,8 @@ impl ApiServer {
             checkpoint_manager: self.checkpoint_manager.clone(),
             session_key_store: self.session_key_store.clone(),
             node_private_key: self.node_private_key,
+            embedding_model_manager: self.embedding_model_manager.clone(),
+            session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
         })
@@ -362,6 +386,14 @@ impl ApiServer {
 
     pub async fn get_checkpoint_manager(&self) -> Option<Arc<CheckpointManager>> {
         self.checkpoint_manager.read().await.clone()
+    }
+
+    pub async fn set_embedding_model_manager(&self, manager: Arc<crate::embeddings::EmbeddingModelManager>) {
+        *self.embedding_model_manager.write().await = Some(manager);
+    }
+
+    pub async fn get_embedding_model_manager(&self) -> Option<Arc<crate::embeddings::EmbeddingModelManager>> {
+        self.embedding_model_manager.read().await.clone()
     }
 
     /// Get the session key store for encryption/decryption operations
@@ -822,6 +854,7 @@ impl ApiServer {
             .route("/health", get(health_handler))
             .route("/v1/models", get(models_handler))
             .route("/v1/inference", post(simple_inference_handler))
+            .route("/v1/embed", post(embed_handler_wrapper))
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(CorsLayer::permissive())
@@ -870,6 +903,32 @@ async fn metrics_handler() -> impl IntoResponse {
         )],
         metrics,
     )
+}
+
+// Embedding handler wrapper that converts ApiServer state to AppState
+async fn embed_handler_wrapper(
+    State(server): State<Arc<ApiServer>>,
+    Json(request): Json<crate::api::EmbedRequest>,
+) -> impl IntoResponse {
+    use crate::blockchain::ChainRegistry;
+    use crate::api::http_server::AppState;
+
+    // Create AppState from ApiServer
+    let app_state = AppState {
+        api_server: server.clone(),
+        chain_registry: Arc::new(ChainRegistry::new()),
+        sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        embedding_model_manager: server.embedding_model_manager.clone(),
+    };
+
+    // Call the actual embed_handler
+    match crate::api::embed_handler(axum::extract::State(app_state), Json(request)).await {
+        Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
+        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
+            "error": message
+        }))).into_response(),
+    }
 }
 
 async fn websocket_handler(
@@ -1926,6 +1985,169 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             error_msg.to_string(),
                                         ))
                                         .await;
+                                }
+                            }
+                        }
+                    }
+
+                    // Handle RAG uploadVectors message (Phase 3.4)
+                    if json_msg["type"] == "uploadVectors" {
+                        info!("📤 uploadVectors message received");
+
+                        match serde_json::from_value::<crate::api::websocket::message_types::UploadVectorsRequest>(json_msg.clone()) {
+                            Ok(request) => {
+                                // Get or create session with RAG enabled
+                                let sid = session_id.clone().unwrap_or_else(|| "default-rag-session".to_string());
+                                info!("🔍 Looking up session: {}", sid);
+
+                                // Use the new helper method
+                                let rag_session = {
+                                    let mut store = server.session_store.write().await;
+                                    match store.get_or_create_rag_session(sid.clone(), 100_000).await {
+                                        Ok(sess) => {
+                                            info!("✅ Session ready with RAG enabled: {}", sid);
+                                            sess
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to create RAG session: {}", e);
+                                            let error_msg = json!({
+                                                "type": "error",
+                                                "error": format!("Failed to create RAG session: {}", e)
+                                            });
+                                            if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                };
+
+                                let rag_session_arc = Arc::new(std::sync::Mutex::new(rag_session));
+
+                                // Call the RAG handler
+                                match crate::api::websocket::handlers::rag::handle_upload_vectors(&rag_session_arc, request) {
+                                    Ok(response) => {
+                                        match serde_json::to_string(&response) {
+                                            Ok(response_json) => {
+                                                info!("✅ uploadVectors response: {} uploaded, {} rejected",
+                                                      response.uploaded, response.rejected);
+                                                if socket.send(axum::extract::ws::Message::Text(response_json)).await.is_err() {
+                                                    error!("Failed to send uploadVectors response");
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to serialize uploadVectors response: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("uploadVectors handler error: {}", e);
+                                        let error_msg = json!({
+                                            "type": "error",
+                                            "error": format!("Upload vectors failed: {}", e)
+                                        });
+                                        if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Invalid uploadVectors request: {}", e);
+                                let error_msg = json!({
+                                    "type": "error",
+                                    "error": format!("Invalid uploadVectors request: {}", e)
+                                });
+                                if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Handle RAG searchVectors message (Phase 3.4)
+                    if json_msg["type"] == "searchVectors" {
+                        info!("🔍 searchVectors message received");
+
+                        match serde_json::from_value::<crate::api::websocket::message_types::SearchVectorsRequest>(json_msg.clone()) {
+                            Ok(request) => {
+                                // Get existing session with RAG (should already exist from uploadVectors)
+                                let sid = session_id.clone().unwrap_or_else(|| "default-rag-session".to_string());
+                                info!("🔍 Looking up session for search: {}", sid);
+
+                                // Get session from store
+                                let rag_session = {
+                                    let store = server.session_store.read().await;
+                                    match store.get_session(&sid).await {
+                                        Some(sess) => {
+                                            info!("✅ Found session for search: {}", sid);
+                                            if sess.get_vector_store().is_none() {
+                                                warn!("⚠️  Session {} exists but RAG not enabled!", sid);
+                                                let error_msg = json!({
+                                                    "type": "error",
+                                                    "error": format!("Session {} found but RAG not enabled. Upload vectors first.", sid)
+                                                });
+                                                if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                                    break;
+                                                }
+                                                continue;
+                                            }
+                                            sess
+                                        }
+                                        None => {
+                                            error!("❌ Session {} not found for search!", sid);
+                                            let error_msg = json!({
+                                                "type": "error",
+                                                "error": format!("Session {} not found. Upload vectors first.", sid)
+                                            });
+                                            if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                                break;
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                };
+
+                                let rag_session_arc = Arc::new(std::sync::Mutex::new(rag_session));
+
+                                // Call the RAG handler
+                                match crate::api::websocket::handlers::rag::handle_search_vectors(&rag_session_arc, request) {
+                                    Ok(response) => {
+                                        match serde_json::to_string(&response) {
+                                            Ok(response_json) => {
+                                                info!("✅ searchVectors response: {} results in {:.2}ms",
+                                                      response.results.len(), response.search_time_ms);
+                                                if socket.send(axum::extract::ws::Message::Text(response_json)).await.is_err() {
+                                                    error!("Failed to send searchVectors response");
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to serialize searchVectors response: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("searchVectors handler error: {}", e);
+                                        let error_msg = json!({
+                                            "type": "error",
+                                            "error": format!("Search vectors failed: {}", e)
+                                        });
+                                        if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Invalid searchVectors request: {}", e);
+                                let error_msg = json!({
+                                    "type": "error",
+                                    "error": format!("Invalid searchVectors request: {}", e)
+                                });
+                                if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                    break;
                                 }
                             }
                         }
