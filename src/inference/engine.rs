@@ -65,6 +65,7 @@ pub struct ModelConfig {
     pub gpu_layers: usize,
     pub rope_freq_base: f32,
     pub rope_freq_scale: f32,
+    pub chat_template: Option<crate::inference::ChatTemplate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,7 +271,7 @@ impl LlmEngine {
             }
 
             // Create necessary data before borrowing the model
-            let (prompt_tokens, context_size, eos_token) = {
+            let (prompt_tokens, context_size, eos_token, return_token) = {
                 let model = models
                     .get_mut(&request.model_id)
                     .ok_or_else(|| anyhow!("Model not found in storage"))?;
@@ -282,7 +283,24 @@ impl LlmEngine {
                     .map_err(|e| anyhow!("Failed to tokenize: {:?}", e))?;
 
                 let eos = model.model.token_eos();
-                (tokens_list, model.context_size, eos)
+
+                // Get token ID for "<|return|>" special token (GPT-OSS-20B Harmony format stop token)
+                // Official spec: https://cookbook.openai.com/articles/openai-harmony
+                // <|return|> (200002) is the proper stop token for Harmony format
+                let return_tok = model
+                    .model
+                    .str_to_token("<|return|>", AddBos::Never)
+                    .ok()
+                    .and_then(|tokens| tokens.first().copied())
+                    .unwrap_or_else(|| {
+                        // Fallback: create LlamaToken from known ID for GPT-OSS-20B
+                        use llama_cpp_2::token::LlamaToken;
+                        unsafe { LlamaToken::new(200002) }
+                    });
+
+                tracing::debug!("🎯 Token IDs: eos_token={}, return_token={}", eos, return_tok);
+
+                (tokens_list, model.context_size, eos, return_tok)
             };
 
             // Now work with the model again for context creation and generation
@@ -333,8 +351,11 @@ impl LlmEngine {
 
                 let new_token_id = sampler.sample(&context, -1);
 
-                // Check for EOS
-                if new_token_id == eos_token {
+                tracing::debug!("🔤 Generated token: {} (comparing to eos={}, return={})", new_token_id, eos_token, return_token);
+
+                // Check for EOS or <|return|> token (GPT-OSS-20B Harmony format stop token)
+                if new_token_id == eos_token || new_token_id == return_token {
+                    tracing::debug!("🛑 Stop token detected: {} (eos={}, return={})", new_token_id, eos_token, return_token);
                     break;
                 }
 
