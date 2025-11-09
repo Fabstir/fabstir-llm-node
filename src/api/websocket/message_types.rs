@@ -1,5 +1,6 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -510,5 +511,189 @@ impl ResponseEncryptedPayload {
             aad,
             finish_reason: self.finish_reason.clone(),
         })
+    }
+}
+
+// ============================================================================
+// RAG (Retrieval-Augmented Generation) Message Types - Phase 2
+// ============================================================================
+
+/// Maximum number of vectors allowed per upload batch
+/// Prevents memory exhaustion and ensures reasonable message sizes
+pub const MAX_UPLOAD_BATCH_SIZE: usize = 1000;
+
+/// Request to upload vectors to session storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadVectorsRequest {
+    /// Optional request ID for tracking (client-generated)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Vectors to upload
+    pub vectors: Vec<VectorUpload>,
+
+    /// If true, clear existing vectors before uploading
+    /// If false, append to existing vectors
+    pub replace: bool,
+}
+
+/// Single vector to upload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VectorUpload {
+    /// Unique identifier for this vector
+    pub id: String,
+
+    /// 384-dimensional embedding vector
+    pub vector: Vec<f32>,
+
+    /// JSON metadata associated with this vector
+    pub metadata: Value,
+}
+
+/// Response to vector upload request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadVectorsResponse {
+    /// Message type for client routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
+    /// Request ID (if provided in request)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Number of vectors successfully uploaded
+    pub uploaded: usize,
+
+    /// Number of vectors rejected (validation errors)
+    pub rejected: usize,
+
+    /// Error messages for rejected vectors
+    pub errors: Vec<String>,
+}
+
+impl UploadVectorsRequest {
+    /// Validate the upload request
+    ///
+    /// Checks:
+    /// - Batch size <= MAX_UPLOAD_BATCH_SIZE
+    /// - All vectors have 384 dimensions
+    ///
+    /// Returns Ok(()) if valid, Err with details if invalid
+    pub fn validate(&self) -> Result<()> {
+        // Check batch size
+        if self.vectors.len() > MAX_UPLOAD_BATCH_SIZE {
+            return Err(anyhow!(
+                "Upload batch size too large: {} vectors (max: {})",
+                self.vectors.len(),
+                MAX_UPLOAD_BATCH_SIZE
+            ));
+        }
+
+        // Check vector dimensions
+        for (idx, upload) in self.vectors.iter().enumerate() {
+            if upload.vector.len() != 384 {
+                return Err(anyhow!(
+                    "Vector {} (id: {}): Invalid dimensions: expected 384, got {}",
+                    idx,
+                    upload.id,
+                    upload.vector.len()
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Vector Search Messages (Sub-phase 2.2)
+// ============================================================================
+
+/// Maximum number of results to return from search
+pub const MAX_SEARCH_K: usize = 100;
+
+/// Request to search vectors in session storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchVectorsRequest {
+    /// Optional request ID for async correlation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Query vector to search for (384-dimensional)
+    pub query_vector: Vec<f32>,
+
+    /// Number of top results to return (max: MAX_SEARCH_K)
+    pub k: usize,
+
+    /// Optional minimum similarity score threshold (0.0-1.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f32>,
+
+    /// Optional metadata filter (JSON query object)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_filter: Option<Value>,
+}
+
+/// Response containing search results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchVectorsResponse {
+    /// Message type for client routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
+    /// Optional request ID matching the request
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Search results ordered by descending similarity score
+    pub results: Vec<VectorSearchResult>,
+
+    /// Total number of vectors in storage
+    pub total_vectors: usize,
+
+    /// Search execution time in milliseconds
+    pub search_time_ms: f64,
+}
+
+/// Single vector search result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VectorSearchResult {
+    /// Vector ID
+    pub id: String,
+
+    /// Cosine similarity score (0.0-1.0, higher is better)
+    pub score: f32,
+
+    /// Vector metadata
+    pub metadata: Value,
+}
+
+impl SearchVectorsRequest {
+    /// Validates the search request
+    pub fn validate(&self) -> Result<()> {
+        // Validate k limit
+        if self.k > MAX_SEARCH_K {
+            return Err(anyhow!(
+                "Search k too large: {} (max: {})",
+                self.k,
+                MAX_SEARCH_K
+            ));
+        }
+
+        // Validate query vector dimensions
+        if self.query_vector.len() != 384 {
+            return Err(anyhow!(
+                "Invalid query vector dimensions: expected 384, got {}",
+                self.query_vector.len()
+            ));
+        }
+
+        Ok(())
     }
 }

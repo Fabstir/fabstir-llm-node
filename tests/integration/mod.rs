@@ -23,3 +23,12 @@ pub mod test_proof_dispute;
 
 #[cfg(test)]
 pub mod test_ezkl_end_to_end;
+
+#[cfg(test)]
+pub mod test_embed_e2e;
+
+#[cfg(test)]
+pub mod test_compatibility;
+
+#[cfg(test)]
+pub mod test_rag_e2e;

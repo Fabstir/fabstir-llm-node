@@ -5,6 +5,8 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
+**Version**: v8.3.6 (November 2025)
+
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
 ## Features
@@ -18,6 +20,10 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Streaming Responses**: Real-time result streaming as generated
 - **Chain-Aware Settlement**: Automatic payment settlement on the correct chain
 - **WebSocket API**: Production-ready with compression, rate limiting, and authentication
+- **End-to-End Encryption**: ECDH + XChaCha20-Poly1305 for secure sessions (v8.0.0+)
+- **Zero-Knowledge Proofs**: GPU-accelerated STARK proofs via Risc0 zkVM (v8.1.0+)
+- **Host-Side RAG**: Session-scoped vector storage for document retrieval (v8.3.0+)
+- **Off-Chain Proof Storage**: S5 decentralized storage for proofs (v8.1.2+)
 
 ## Prerequisites
 
@@ -80,6 +86,10 @@ CUDA_VISIBLE_DEVICES=0           # GPU device selection
 # Storage Configuration
 ENHANCED_S5_URL=http://localhost:5522  # Enhanced S5.js endpoint
 VECTOR_DB_URL=http://localhost:8081    # Vector DB endpoint
+
+# Encryption & RAG (v8.0.0+)
+HOST_PRIVATE_KEY=0x...           # Required for encryption and settlements
+SESSION_KEY_TTL_SECONDS=3600     # Session key expiration (default: 1 hour)
 
 # Logging
 RUST_LOG=debug                   # Log level (trace, debug, info, warn, error)
@@ -154,14 +164,18 @@ Once the node is running, it exposes the following endpoints:
 
 ### HTTP Endpoints
 - `GET /health` - Health check
+- `GET /v1/version` - Version information and features
 - `GET /status` - Node status and capabilities
 - `GET /chains` - List supported chains
 - `GET /chain/{chain_id}` - Get specific chain configuration
 - `POST /inference` - Submit inference request (includes chain_id)
+- `POST /v1/embed` - Generate 384D embeddings (for RAG)
 
 ### WebSocket Endpoints
-- `WS /ws` - WebSocket connection for streaming inference
+- `WS /v1/ws` - WebSocket connection for streaming inference
   - Session management with chain tracking
+  - End-to-end encryption support (v8.0.0+)
+  - RAG vector upload/search (v8.3.0+)
   - Automatic settlement on disconnect
   - Message compression support
 
@@ -238,5 +252,7 @@ For issues and questions:
 - [Deployment Guide](docs/DEPLOYMENT.md) - Deploy nodes in production
 - [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
 - [API Documentation](docs/API.md) - Complete API reference
+- [RAG SDK Integration Guide](docs/RAG_SDK_INTEGRATION.md) - RAG implementation for SDK developers
+- [Encryption Security Guide](docs/ENCRYPTION_SECURITY.md) - End-to-end encryption details
 - [Implementation Roadmap](docs/IMPLEMENTATION.md) - Development progress
 - [Multi-Chain Implementation](docs/IMPLEMENTATION-MULTI.md) - Multi-chain feature details

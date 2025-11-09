@@ -6,6 +6,13 @@ use anyhow::Result;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+// ONNX embedding modules (Sub-phase 1.2)
+pub mod model_manager;
+pub mod onnx_model;
+
+pub use model_manager::{EmbeddingModelConfig, EmbeddingModelManager, ModelInfo};
+pub use onnx_model::OnnxEmbeddingModel;
+
 #[derive(Debug, Clone)]
 pub struct EmbeddingConfig {
     pub model: String,

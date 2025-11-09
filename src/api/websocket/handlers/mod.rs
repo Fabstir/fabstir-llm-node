@@ -3,6 +3,7 @@
 pub mod disconnect;
 pub mod inference;
 pub mod prompt;
+pub mod rag;
 pub mod response;
 pub mod session_init;
 pub mod session_resume;

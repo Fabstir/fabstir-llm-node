@@ -321,6 +321,233 @@ wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_
 chown -R fabstir:fabstir /opt/fabstir-node/models
 ```
 
+### 5. Embedding Model Setup (Optional - Zero-Cost Embeddings)
+
+The node supports host-side embedding generation using ONNX models, providing zero-cost embeddings as an alternative to external APIs (OpenAI, Cohere).
+
+#### Download Embedding Models
+
+```bash
+# Automatic download (recommended)
+cd /opt/fabstir-node
+./scripts/download_embedding_model.sh
+
+# Or manual download
+mkdir -p /opt/fabstir-node/models/all-MiniLM-L6-v2-onnx
+cd /opt/fabstir-node/models/all-MiniLM-L6-v2-onnx
+
+# Download ONNX model (~90MB)
+wget -O model.onnx \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/refs%2Fpr%2F21/onnx/model.onnx"
+
+# Download tokenizer (~500KB)
+wget -O tokenizer.json \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/refs%2Fpr%2F21/tokenizer.json"
+
+# Set permissions
+chown -R fabstir:fabstir /opt/fabstir-node/models/all-MiniLM-L6-v2-onnx
+```
+
+#### Configure Environment Variables
+
+Add to your `.env` file:
+
+```bash
+# Embedding model configuration (optional)
+EMBEDDING_MODEL_PATH=/opt/fabstir-node/models/all-MiniLM-L6-v2-onnx/model.onnx
+EMBEDDING_TOKENIZER_PATH=/opt/fabstir-node/models/all-MiniLM-L6-v2-onnx/tokenizer.json
+EMBEDDING_DIMENSIONS=384  # Required for vector DB compatibility
+
+# Enable/disable embedding endpoint
+ENABLE_EMBEDDINGS=true    # Default: true if models found, false otherwise
+```
+
+#### Verify Installation
+
+```bash
+# Test embedding generation
+curl -X POST http://localhost:8080/v1/embed \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": ["Test embedding generation"]
+  }'
+
+# Should return 384-dimensional embedding
+# Response includes: embeddings, model, provider:"host", cost:0.0
+
+# List available embedding models
+curl "http://localhost:8080/v1/models?type=embedding"
+```
+
+#### Memory Requirements
+
+**Embedding models add minimal overhead**:
+- **Model Size**: ~90MB (all-MiniLM-L6-v2)
+- **Runtime Memory**: ~200MB during inference
+- **Total Impact**: <300MB additional RAM
+
+**Combined Requirements** (LLM + Embeddings):
+- TinyLlama + Embeddings: ~1GB total
+- Llama-2-7B + Embeddings: ~4.5GB total
+- Recommended: Add 500MB to existing RAM requirements
+
+#### Docker Configuration for Embeddings
+
+Update `docker-compose.prod.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  fabstir-node:
+    image: fabstir-node:latest
+    container_name: fabstir-llm-node
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    volumes:
+      - ./models:/app/models           # Mount models directory
+      - ./data:/app/data
+      - ./.env:/app/.env
+    environment:
+      - MODEL_PATH=/app/models/llama-2-7b.Q4_K_M.gguf
+      - EMBEDDING_MODEL_PATH=/app/models/all-MiniLM-L6-v2-onnx/model.onnx
+      - EMBEDDING_TOKENIZER_PATH=/app/models/all-MiniLM-L6-v2-onnx/tokenizer.json
+      - EMBEDDING_DIMENSIONS=384
+      - ENABLE_EMBEDDINGS=true
+      - CHAIN_ID=84532
+      - API_PORT=8080
+      - P2P_PORT=9000
+      - HOST_PRIVATE_KEY=${HOST_PRIVATE_KEY}
+    deploy:
+      resources:
+        limits:
+          memory: 8G              # Increase if using large LLM models
+        reservations:
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+```
+
+#### Kubernetes ConfigMap for Embeddings
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fabstir-node-config
+  namespace: fabstir
+data:
+  # LLM Configuration
+  MODEL_PATH: "/models/llama-2-7b.Q4_K_M.gguf"
+  CHAIN_ID: "84532"
+  API_PORT: "8080"
+  P2P_PORT: "9000"
+
+  # Embedding Configuration (NEW)
+  EMBEDDING_MODEL_PATH: "/models/all-MiniLM-L6-v2-onnx/model.onnx"
+  EMBEDDING_TOKENIZER_PATH: "/models/all-MiniLM-L6-v2-onnx/tokenizer.json"
+  EMBEDDING_DIMENSIONS: "384"
+  ENABLE_EMBEDDINGS: "true"
+
+  # Blockchain Configuration
+  RPC_URL: "https://sepolia.base.org"
+  JOB_MARKETPLACE_ADDRESS: "0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E"
+  NODE_REGISTRY_ADDRESS: "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fabstir-models-pvc
+  namespace: fabstir
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi  # Increase for LLM + embedding models
+  storageClassName: fast-ssd
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fabstir-node
+  namespace: fabstir
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fabstir-node
+  template:
+    metadata:
+      labels:
+        app: fabstir-node
+    spec:
+      containers:
+      - name: fabstir-node
+        image: fabstir-node:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9000
+          name: p2p
+        envFrom:
+        - configMapRef:
+            name: fabstir-node-config
+        - secretRef:
+            name: fabstir-node-secrets  # Contains HOST_PRIVATE_KEY
+        volumeMounts:
+        - name: models
+          mountPath: /models
+          readOnly: true  # Models are read-only
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+            nvidia.com/gpu: 1  # Optional GPU support
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: fabstir-models-pvc
+```
+
+#### Production Deployment Checklist
+
+**Before deploying with embeddings**:
+
+- [ ] Download embedding models (automatic script or manual)
+- [ ] Verify model files exist and have correct sizes:
+  - `model.onnx`: ~90MB
+  - `tokenizer.json`: ~500KB
+- [ ] Set environment variables (EMBEDDING_MODEL_PATH, etc.)
+- [ ] Increase memory limits if needed (+500MB)
+- [ ] Test embedding endpoint with curl
+- [ ] Verify 384-dimensional output
+- [ ] Monitor memory usage during first requests
+- [ ] Check logs for model loading confirmation
+
+**Environment Variable Reference**:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `EMBEDDING_MODEL_PATH` | No | Auto-detect | Path to ONNX model file |
+| `EMBEDDING_TOKENIZER_PATH` | No | Auto-detect | Path to tokenizer.json file |
+| `EMBEDDING_DIMENSIONS` | No | 384 | Output dimensions (must be 384) |
+| `ENABLE_EMBEDDINGS` | No | auto | Enable embedding endpoint (true/false/auto) |
+
+**Auto-detection behavior**:
+- If `ENABLE_EMBEDDINGS=auto` (default): Enabled if model files found in `models/all-MiniLM-L6-v2-onnx/`
+- If `ENABLE_EMBEDDINGS=false`: Embedding endpoint returns 503 Service Unavailable
+- If model files missing: Node starts without embedding support (graceful degradation)
+
 ## Monitoring Setup
 
 ### 1. Prometheus Configuration

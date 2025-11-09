@@ -1,16 +1,20 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
+use crate::inference::ChatTemplate;
 use crate::job_processor::Message;
 
 /// Build a prompt with conversation context
-/// Uses a format that works well with the model
+///
+/// Uses MODEL_CHAT_TEMPLATE environment variable to select template.
+/// Supported values: default, llama2, vicuna, harmony, chatml
+/// Defaults to "harmony" if not set (for GPT-OSS-20B compatibility)
 pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
-    // If no context, still format consistently
-    if context.is_empty() {
-        return format!("user: {}\nassistant:", prompt);
-    }
+    // Get template from environment variable
+    let template_name = std::env::var("MODEL_CHAT_TEMPLATE")
+        .unwrap_or_else(|_| "harmony".to_string());
 
-    let mut full_prompt = String::new();
+    let template = ChatTemplate::from_str(&template_name)
+        .unwrap_or(ChatTemplate::Harmony); // Default to Harmony for GPT-OSS-20B
 
     // Take last 10 messages maximum
     let recent_context = if context.len() > 10 {
@@ -19,20 +23,26 @@ pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
         context
     };
 
-    // Format messages with lowercase role names
-    for msg in recent_context {
-        match msg.role.to_lowercase().as_str() {
-            "user" => full_prompt.push_str(&format!("user: {}\n", msg.content)),
-            "assistant" => full_prompt.push_str(&format!("assistant: {}\n", msg.content)),
-            "system" => full_prompt.push_str(&format!("system: {}\n", msg.content)),
-            _ => {}
-        }
-    }
+    // Build message list for template
+    let mut messages: Vec<(String, String)> = recent_context
+        .iter()
+        .map(|msg| (msg.role.clone(), msg.content.clone()))
+        .collect();
 
-    // Add current prompt with clear marker
-    full_prompt.push_str(&format!("user: {}\nassistant:", prompt));
+    // Add current prompt as user message
+    messages.push(("user".to_string(), prompt.to_string()));
 
-    full_prompt
+    // Format using template
+    let formatted = template.format_messages(&messages);
+
+    tracing::debug!(
+        "🎨 Formatted prompt using {} template (context: {} messages):\n{}",
+        template.as_str(),
+        recent_context.len(),
+        formatted
+    );
+
+    formatted
 }
 
 /// Estimate token count for context
@@ -54,10 +64,32 @@ mod tests {
 
     #[test]
     fn test_build_prompt_with_empty_context() {
+        // Set template to default for predictable test output
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "default");
+
         let context = vec![];
         let prompt = "Hello";
         let result = build_prompt_with_context(&context, prompt);
-        assert_eq!(result, "user: Hello\nassistant:");
+
+        // Should contain user message and assistant prompt
+        assert!(result.contains("Hello"));
+        assert!(result.contains("Assistant:"));
+    }
+
+    #[test]
+    fn test_build_prompt_harmony_format() {
+        // Set template to harmony
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+
+        let context = vec![];
+        let prompt = "Hello";
+        let result = build_prompt_with_context(&context, prompt);
+
+        // Should use Harmony format
+        assert!(result.contains("<|im_start|>user"));
+        assert!(result.contains("Hello"));
+        assert!(result.contains("<|im_end|>"));
+        assert!(result.contains("<|im_start|>assistant"));
     }
 
     #[test]
