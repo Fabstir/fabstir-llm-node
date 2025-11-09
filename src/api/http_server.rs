@@ -16,8 +16,8 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::{
-    ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse,
-    InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
+    embed::embed_handler, ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse,
+    ChainsResponse, InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
     SessionInfoResponse, SessionStatus, TotalStatistics,
 };
 use crate::blockchain::{ChainConfig, ChainRegistry};
@@ -25,6 +25,8 @@ use crate::blockchain::{ChainConfig, ChainRegistry};
 #[derive(Deserialize)]
 struct ChainQuery {
     chain_id: Option<u64>,
+    #[serde(rename = "type")]
+    r#type: Option<String>,
 }
 
 #[derive(Clone)]
@@ -33,6 +35,7 @@ pub struct AppState {
     pub chain_registry: Arc<ChainRegistry>,
     pub sessions: Arc<RwLock<HashMap<u64, SessionInfo>>>,
     pub chain_stats: Arc<RwLock<HashMap<u64, ChainStatistics>>>,
+    pub embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
 }
 
 impl AppState {
@@ -42,6 +45,7 @@ impl AppState {
             chain_registry: Arc::new(ChainRegistry::new()),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             chain_stats: Arc::new(RwLock::new(HashMap::new())),
+            embedding_model_manager: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -50,6 +54,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health_handler))
+        // Version endpoint
+        .route("/v1/version", get(version_handler))
         // Models endpoint with chain support
         .route("/v1/models", get(models_handler))
         // Chain endpoints
@@ -63,6 +69,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/session/:session_id/info", get(session_info_handler))
         // Inference endpoint
         .route("/v1/inference", post(inference_handler))
+        // Embedding endpoint
+        .route("/v1/embed", post(embed_handler))
         // WebSocket endpoint
         .route("/v1/ws", get(websocket_handler))
         // Metrics endpoint
@@ -82,6 +90,7 @@ pub async fn start_server(api_server: ApiServer) -> Result<(), Box<dyn std::erro
         chain_registry: Arc::new(ChainRegistry::new()),
         sessions: Arc::new(RwLock::new(HashMap::new())),
         chain_stats: Arc::new(RwLock::new(HashMap::new())),
+        embedding_model_manager: Arc::new(RwLock::new(None)),
     });
 
     let app = create_app(state);
@@ -101,32 +110,76 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     axum::response::Json(health)
 }
 
+async fn version_handler(State(_state): State<AppState>) -> impl IntoResponse {
+    axum::response::Json(crate::version::get_version_info())
+}
+
 async fn models_handler(
     State(state): State<AppState>,
     Query(query): Query<ChainQuery>,
-) -> Result<axum::response::Json<ModelsResponse>, ApiErrorResponse> {
+) -> impl IntoResponse {
     let chain_id = query
         .chain_id
         .unwrap_or_else(|| state.chain_registry.get_default_chain_id());
 
     // Get chain info
-    let chain = state
-        .chain_registry
-        .get_chain(chain_id)
-        .ok_or(ApiError::InvalidRequest("Invalid chain ID".to_string()))?;
+    let chain = match state.chain_registry.get_chain(chain_id) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::response::Json(serde_json::json!({
+                    "error": "Invalid chain ID"
+                })),
+            )
+                .into_response();
+        }
+    };
 
-    // Get models (in real implementation, this would query chain-specific models)
-    let mut response = state
-        .api_server
-        .get_available_models()
-        .await
-        .map_err(|e| ApiErrorResponse(e))?;
+    // Check model type parameter
+    let model_type = query.r#type.as_deref().unwrap_or("inference");
 
-    // Add chain information to response
-    response.chain_id = Some(chain_id);
-    response.chain_name = Some(chain.name.clone());
+    match model_type {
+        "embedding" => {
+            // Get embedding models
+            let manager_guard = state.embedding_model_manager.read().await;
+            let models = if let Some(manager) = manager_guard.as_ref() {
+                manager.list_models()
+            } else {
+                // No embedding models loaded - return empty array
+                Vec::new()
+            };
 
-    Ok(axum::response::Json(response))
+            // Create response with embedding models
+            let response = serde_json::json!({
+                "models": models,
+                "chain_id": chain_id,
+                "chain_name": chain.name,
+            });
+
+            (StatusCode::OK, axum::response::Json(response)).into_response()
+        }
+        "inference" | _ => {
+            // Get inference models (existing behavior)
+            let mut response = match state.api_server.get_available_models().await {
+                Ok(r) => r,
+                Err(_) => {
+                    // No inference models loaded - return empty array
+                    ModelsResponse {
+                        models: Vec::new(),
+                        chain_id: None,
+                        chain_name: None,
+                    }
+                }
+            };
+
+            // Add chain information to response
+            response.chain_id = Some(chain_id);
+            response.chain_name = Some(chain.name.clone());
+
+            (StatusCode::OK, axum::response::Json(response)).into_response()
+        }
+    }
 }
 
 async fn chains_handler(State(state): State<AppState>) -> impl IntoResponse {

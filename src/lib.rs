@@ -26,6 +26,7 @@ pub mod result_submission;
 pub mod results;
 pub mod settlement;
 pub mod storage;
+pub mod rag;
 pub mod utils;
 pub mod vector;
 pub mod version;

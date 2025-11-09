@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 // Export all submodules and their public types
 pub mod cache;
+pub mod chat_template;
 pub mod engine;
 pub mod format;
 pub mod models;
 
 // Re-export main types for convenience
+pub use chat_template::ChatTemplate;
 pub use engine::{
     ChatMessage, EngineCapabilities, EngineConfig, EngineMetrics, InferenceHandle,
     InferenceRequest, InferenceResult, LlmEngine, Model, ModelCapabilities, ModelCapability,

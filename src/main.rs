@@ -136,6 +136,41 @@ async fn main() -> Result<()> {
         })
         .await;
 
+    // Initialize Embedding Model Manager for /v1/embed endpoint
+    println!("🧠 Initializing embedding model manager...");
+
+    // Create default embedding model config for all-MiniLM-L6-v2
+    let embedding_configs = vec![
+        fabstir_llm_node::embeddings::EmbeddingModelConfig {
+            name: "all-MiniLM-L6-v2".to_string(),
+            model_path: "./models/all-MiniLM-L6-v2-onnx/model.onnx".to_string(),
+            tokenizer_path: "./models/all-MiniLM-L6-v2-onnx/tokenizer.json".to_string(),
+            dimensions: 384,
+        },
+    ];
+
+    match fabstir_llm_node::embeddings::EmbeddingModelManager::new(embedding_configs).await {
+        Ok(manager) => {
+            let manager = Arc::new(manager);
+            api_server.set_embedding_model_manager(manager.clone()).await;
+            println!("✅ Embedding model manager initialized");
+
+            // List available models
+            let models = manager.list_models();
+            if !models.is_empty() {
+                println!("   Available embedding models:");
+                for model in models {
+                    println!("     - {} ({}D)", model.name, model.dimensions);
+                }
+            }
+        }
+        Err(e) => {
+            println!("⚠️  Failed to initialize embedding model manager: {}", e);
+            println!("   /v1/embed endpoint will return 503 Service Unavailable");
+            println!("   This is optional - node will continue without embeddings");
+        }
+    }
+
     // Initialize Web3 and CheckpointManager if HOST_PRIVATE_KEY is available
     if let Ok(host_private_key) = env::var("HOST_PRIVATE_KEY") {
         println!("🔗 Initializing Web3 client for checkpoint submission...");

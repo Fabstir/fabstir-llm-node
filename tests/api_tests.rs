@@ -7,5 +7,15 @@ mod api {
     mod test_chain_endpoints;
     mod test_chain_responses;
     mod test_context_handling;
+    mod test_embed_errors;
+    mod test_embed_handler;
+    mod test_embed_module;
+    mod test_embed_request;
+    mod test_embed_response;
+    mod test_models_endpoint;
+    mod test_rag_handlers;
+    mod test_route_registration;
+    mod test_search_vectors_messages;
     mod test_server_crypto;
+    mod test_upload_vectors_messages;
 }

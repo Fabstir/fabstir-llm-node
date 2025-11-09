@@ -31,7 +31,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 axum = { version = "0.7", features = ["ws", "json", "macros"] }
-tower = "0.4"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 hyper = "1.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
@@ -39,10 +39,17 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # LLM Inference  
 llama-cpp-2 = { version = "0.1.55", features = ["cuda"] }
 
-# Model Management  
+# Model Management
 hf-hub = "0.3"
 sha2 = "0.10"
 indicatif = "0.17"
+
+# Embedding dependencies (Sub-phase 1.1 - Host-Side Embeddings)
+# ONNX Runtime for sentence transformer inference (all-MiniLM-L6-v2)
+# Used for /v1/embed endpoint - zero-cost embeddings for SDK clients
+ort = { version = "2.0.0-rc.10", features = ["download-binaries", "cuda"] }
+tokenizers = "0.20"             # HuggingFace tokenizers for text preprocessing
+ndarray = "0.16"                # N-dimensional arrays for tensor operations
 
 # Caching
 lru = "0.12"
@@ -154,3 +161,7 @@ real-ezkl = ["risc0-zkvm", "risc0-build"]
 [[test]]
 name = "performance_tests"
 path = "tests/performance/mod.rs"
+
+[[bench]]
+name = "embed_benchmark"
+harness = false
