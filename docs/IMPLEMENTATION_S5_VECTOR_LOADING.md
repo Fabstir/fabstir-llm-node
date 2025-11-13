@@ -274,45 +274,74 @@ pub struct Vector {
 }
 ```
 
-### Sub-phase 2.3: AES-GCM Decryption
+### Sub-phase 2.3: AES-GCM Decryption ✅
 
 **Goal**: Implement AES-GCM decryption for S5 data (matches SDK encryption)
 
 #### Tasks
-- [ ] Write tests for AES-GCM decryption
-- [ ] Write tests for nonce extraction (12 bytes)
-- [ ] Write tests for ciphertext+tag separation
-- [ ] Write tests for decryption errors (wrong key, corrupted data)
-- [ ] Write tests for UTF-8 conversion after decryption
-- [ ] Implement decrypt_aes_gcm function
-- [ ] Add nonce extraction logic (first 12 bytes)
-- [ ] Add tag verification
-- [ ] Add error handling for decryption failures
-- [ ] Add validation for decrypted JSON format
-- [ ] Document encryption format compatibility
+- [x] Write tests for AES-GCM decryption
+- [x] Write tests for nonce extraction (12 bytes)
+- [x] Write tests for ciphertext+tag separation (implicit in decrypt tests)
+- [x] Write tests for decryption errors (wrong key, corrupted data)
+- [x] Write tests for UTF-8 conversion after decryption
+- [x] Implement decrypt_aes_gcm function
+- [x] Add nonce extraction logic (first 12 bytes)
+- [x] Add tag verification (automatic in AES-GCM)
+- [x] Add error handling for decryption failures
+- [x] Add validation for decrypted JSON format (via convenience wrappers)
+- [x] Document encryption format compatibility
 
 **Test Files:**
-- `tests/crypto/aes_gcm_tests.rs` - AES-GCM decryption tests (max 300 lines)
-  - Test successful decryption
-  - Test wrong key failure
-  - Test corrupted data failure
-  - Test nonce extraction
-  - Test UTF-8 conversion
+- ✅ `tests/crypto/test_aes_gcm.rs` (NEW, 366 lines) - Comprehensive AES-GCM tests
+  - Test successful decryption (plaintext, JSON manifest)
+  - Test wrong key failure (authentication error)
+  - Test corrupted data failure (ciphertext, nonce)
+  - Test nonce extraction (12 bytes from encrypted data)
+  - Test UTF-8 conversion (valid and invalid UTF-8)
+  - Test large chunk decryption (100 vectors with 384D embeddings)
+  - Test Web Crypto API format validation
+  - Test derived key decryption (SHA256 hash of session key)
+  - Test edge cases (too short, empty ciphertext, invalid key size)
+  - 15/15 tests passing
 
 **Implementation Files:**
-- `src/crypto/aes_gcm.rs` (max 250 lines) - AES-GCM decryption utilities
-  ```rust
-  use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-  use aes_gcm::aead::{Aead, Payload};
+- ✅ `src/crypto/aes_gcm.rs` (NEW, 298 lines) - Complete AES-GCM implementation
+  - `decrypt_aes_gcm(encrypted, key)` - Main decryption function
+  - `extract_nonce(encrypted)` - Extract 12-byte nonce
+  - `decrypt_manifest(encrypted, key)` - Convenience wrapper with JSON parsing
+  - `decrypt_chunk(encrypted, key)` - Convenience wrapper for chunks
+  - Format: `[nonce (12 bytes) | ciphertext+tag]` (Web Crypto API standard)
+  - Comprehensive error handling (wrong key, corrupted data, invalid UTF-8)
+  - Documentation with examples
+  - 3 unit tests for basic functionality
 
-  /// Decrypt data encrypted with Web Crypto API's AES-GCM
-  /// Format: [nonce (12 bytes) | ciphertext+tag]
-  pub fn decrypt_aes_gcm(encrypted: &[u8], key: &[u8]) -> Result<String> {
-      // Extract nonce (first 12 bytes)
-      // Decrypt ciphertext+tag with Aes256Gcm
-      // Convert to UTF-8 string
-  }
-  ```
+**Encryption Format** (Web Crypto API standard):
+```rust
+// Encrypted data structure:
+// [nonce (12 bytes) | ciphertext+tag (variable)]
+//
+// - Nonce: 12 bytes (96 bits) - unique per encryption
+// - Ciphertext+Tag: Encrypted data + 16-byte authentication tag
+// - Algorithm: AES-256-GCM
+// - AAD: Empty (no additional authenticated data)
+
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+use aes_gcm::aead::{Aead, Payload};
+
+pub fn decrypt_aes_gcm(encrypted: &[u8], key: &[u8]) -> Result<String> {
+    // 1. Validate inputs (min 12 bytes, 32-byte key)
+    // 2. Extract nonce (first 12 bytes)
+    // 3. Extract ciphertext+tag (remaining bytes)
+    // 4. Create cipher instance
+    // 5. Decrypt and verify authentication tag
+    // 6. Convert to UTF-8 string
+}
+```
+
+**Module Integration:**
+- Added aes_gcm module to src/crypto/mod.rs
+- Exported decrypt_aes_gcm, decrypt_manifest, decrypt_chunk, extract_nonce
+- Added test_aes_gcm module to tests/crypto_tests.rs
 
 ---
 
@@ -833,21 +862,21 @@ End-to-end flows:
 
 ## Progress Tracking
 
-**Overall Progress**: Phase 1 COMPLETE, Phase 2 Sub-phases 2.1 & 2.2 COMPLETE
+**Overall Progress**: Phase 1 COMPLETE, Phase 2 COMPLETE
 
 ### Phase Completion
 - [x] Phase 1: WebSocket Protocol Updates (2/2 sub-phases complete) ✅
   - [x] Sub-phase 1.1: Update Message Types ✅ (7/10 tasks complete, 3 deferred)
   - [x] Sub-phase 1.2: Update Session Store ✅ (9/11 tasks complete, 2 deferred)
-- [⚡] Phase 2: S5 Storage Integration (2/3 sub-phases complete)
+- [x] Phase 2: S5 Storage Integration (3/3 sub-phases complete) ✅
   - [x] Sub-phase 2.1: S5 Client Implementation ✅ (9/12 tasks, 3 deferred to Phase 5)
   - [x] Sub-phase 2.2: Manifest and Chunk Structures ✅ (11/11 tasks complete)
-  - [ ] Sub-phase 2.3: Decryption Integration
+  - [x] Sub-phase 2.3: AES-GCM Decryption ✅ (11/11 tasks complete)
 - [ ] Phase 3: Vector Loading Pipeline (0/2 sub-phases)
 - [ ] Phase 4: Vector Index Building and Search (0/2 sub-phases)
 - [ ] Phase 5: Performance Optimization & Production Hardening (0/4 sub-phases)
 
-**Current Status**: Sub-phase 2.2 COMPLETE - Manifest structures implemented (15/15 tests passing)
+**Current Status**: Phase 2 COMPLETE - AES-GCM decryption implemented (15/15 tests passing)
 
 **Completed in Sub-phase 1.1**:
 - ✅ VectorDatabaseInfo struct with validation
@@ -894,10 +923,28 @@ End-to-end flows:
 - ✅ Helper methods for metadata access
 - ✅ Module exports in src/storage/mod.rs
 
-**Next Step**: Begin Phase 2.3 - AES-GCM Decryption Integration
+**Completed in Sub-phase 2.3**:
+- ✅ AES-GCM decryption implementation (src/crypto/aes_gcm.rs - 298 lines)
+- ✅ decrypt_aes_gcm() - Main decryption function matching Web Crypto API format
+- ✅ extract_nonce() - Extract 12-byte nonce from encrypted data
+- ✅ decrypt_manifest() - Convenience wrapper with JSON parsing for manifests
+- ✅ decrypt_chunk() - Convenience wrapper with JSON parsing for chunks
+- ✅ Web Crypto API format: [nonce (12 bytes) | ciphertext+tag]
+- ✅ Comprehensive error handling:
+  - Wrong key / authentication errors
+  - Corrupted data (ciphertext, nonce)
+  - Invalid UTF-8 in decrypted data
+  - Invalid key size, too-short data
+- ✅ Comprehensive test coverage:
+  - NEW tests: tests/crypto/test_aes_gcm.rs (366 lines, 15/15 passing)
+  - Tests for successful decryption, error cases, UTF-8, large chunks
+- ✅ Module exports in src/crypto/mod.rs
+- ✅ Documentation with format specification and examples
+
+**Next Step**: Begin Phase 3.1 - Vector Loader Implementation
 
 ---
 
 **Document Created**: 2025-11-13
-**Last Updated**: 2025-11-13 (Phase 2 Sub-phases 2.1 & 2.2 COMPLETE)
-**Status**: Phase 1 Complete, Phase 2 Sub-phases 2.1 & 2.2 Complete, Ready for Phase 2.3
+**Last Updated**: 2025-11-13 (Phase 2 COMPLETE - All 3 sub-phases)
+**Status**: Phase 1 & 2 Complete, Ready for Phase 3: Vector Loading Pipeline

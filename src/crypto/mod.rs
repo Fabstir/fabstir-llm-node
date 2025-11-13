@@ -28,6 +28,7 @@
 //! 6. Node stores session key for subsequent message encryption
 //! 7. All messages encrypted with session key using XChaCha20-Poly1305
 
+pub mod aes_gcm;
 pub mod ecdh;
 pub mod encryption;
 pub mod error;
@@ -37,6 +38,7 @@ pub mod session_init;
 pub mod session_keys;
 pub mod signature;
 
+pub use aes_gcm::{decrypt_aes_gcm, decrypt_chunk, decrypt_manifest, extract_nonce};
 pub use ecdh::derive_shared_key;
 pub use encryption::{decrypt_with_aead, encrypt_with_aead};
 pub use error::CryptoError;
