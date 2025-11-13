@@ -187,64 +187,92 @@ pub struct RealS5Backend {
 
 **Note**: The plan's `S5Client` struct already exists as `RealS5Backend` with equivalent functionality. No additional implementation needed for Sub-phase 2.1.
 
-### Sub-phase 2.2: Manifest and Chunk Structures
+### Sub-phase 2.2: Manifest and Chunk Structures ✅
 
 **Goal**: Define data structures for S5 vector storage format
 
 #### Tasks
-- [ ] Write tests for Manifest deserialization
-- [ ] Write tests for ChunkMetadata validation
-- [ ] Write tests for VectorChunk deserialization
-- [ ] Write tests for Vector struct with metadata
-- [ ] Create Manifest struct matching SDK format
-- [ ] Create ChunkMetadata struct
-- [ ] Create VectorChunk struct
-- [ ] Create Vector struct with id, vector, metadata
-- [ ] Add validation for manifest structure
-- [ ] Add validation for chunk IDs
-- [ ] Add validation for vector dimensions
+- [x] Write tests for Manifest deserialization
+- [x] Write tests for ChunkMetadata validation
+- [x] Write tests for VectorChunk deserialization
+- [x] Write tests for Vector struct with metadata
+- [x] Create Manifest struct matching SDK format
+- [x] Create ChunkMetadata struct
+- [x] Create VectorChunk struct
+- [x] Create Vector struct with id, vector, metadata
+- [x] Add validation for manifest structure
+- [x] Add validation for chunk IDs
+- [x] Add validation for vector dimensions
 
 **Test Files:**
-- `tests/storage/manifest_tests.rs` - Manifest structure tests (max 300 lines)
-  - Test manifest JSON parsing
+- ✅ `tests/storage/test_manifest.rs` (NEW, 462 lines) - Comprehensive manifest tests
+  - Test manifest JSON parsing (camelCase from SDK)
   - Test chunk metadata validation
   - Test vector chunk parsing
   - Test dimension validation
+  - Test validation errors (chunk count mismatch, invalid dimensions, etc.)
+  - Test 384-dimensional vectors
+  - Test roundtrip serialization
+  - 15/15 tests passing
 
 **Implementation Files:**
-- `src/storage/manifest.rs` (max 350 lines) - Manifest data structures
-  ```rust
-  #[derive(Deserialize, Debug)]
-  pub struct Manifest {
-      pub name: String,
-      pub owner: String,
-      pub dimensions: usize,
-      pub vector_count: usize,
-      pub chunks: Vec<ChunkMetadata>,
-      // ... other fields from SDK format
-  }
+- ✅ `src/storage/manifest.rs` (NEW, 335 lines) - Complete implementation
+  - Manifest struct with all SDK fields (camelCase serde rename)
+  - ChunkMetadata struct
+  - VectorChunk struct
+  - Vector struct with f32 embeddings
+  - Validation methods:
+    - Manifest::validate() - validates chunk count, dimensions, chunk IDs, vector count
+    - ChunkMetadata::validate() - validates CID and vector count
+    - VectorChunk::validate(dimensions) - validates all vectors have correct dimensions
+    - Vector::validate(dimensions) - validates dimension count, checks for NaN/Infinity
+  - Helper methods for metadata access
+  - 3 unit tests for NaN/Infinity detection
 
-  #[derive(Deserialize, Debug)]
-  pub struct ChunkMetadata {
-      pub chunk_id: usize,
-      pub cid: String,
-      pub vector_count: usize,
-      pub size_bytes: u64,
-  }
+**Implemented Structs**:
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Manifest {
+    pub name: String,
+    pub owner: String,
+    pub description: String,
+    pub dimensions: usize,
+    pub vector_count: usize,
+    pub storage_size_bytes: u64,
+    pub created: i64,
+    pub last_accessed: i64,
+    pub updated: i64,
+    pub chunks: Vec<ChunkMetadata>,
+    pub chunk_count: usize,
+    pub folder_paths: Vec<String>,
+    pub deleted: bool,
+}
 
-  #[derive(Deserialize, Debug)]
-  pub struct VectorChunk {
-      pub chunk_id: usize,
-      pub vectors: Vec<Vector>,
-  }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkMetadata {
+    pub chunk_id: usize,
+    pub cid: String,
+    pub vector_count: usize,
+    pub size_bytes: u64,
+    pub updated_at: i64,
+}
 
-  #[derive(Deserialize, Debug, Clone)]
-  pub struct Vector {
-      pub id: String,
-      pub vector: Vec<f32>,
-      pub metadata: serde_json::Value,
-  }
-  ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VectorChunk {
+    pub chunk_id: usize,
+    pub vectors: Vec<Vector>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vector {
+    pub id: String,
+    pub vector: Vec<f32>,
+    pub metadata: serde_json::Value,
+}
+```
 
 ### Sub-phase 2.3: AES-GCM Decryption
 
@@ -805,21 +833,21 @@ End-to-end flows:
 
 ## Progress Tracking
 
-**Overall Progress**: Phase 1 COMPLETE, Phase 2 Sub-phase 2.1 COMPLETE
+**Overall Progress**: Phase 1 COMPLETE, Phase 2 Sub-phases 2.1 & 2.2 COMPLETE
 
 ### Phase Completion
 - [x] Phase 1: WebSocket Protocol Updates (2/2 sub-phases complete) ✅
   - [x] Sub-phase 1.1: Update Message Types ✅ (7/10 tasks complete, 3 deferred)
   - [x] Sub-phase 1.2: Update Session Store ✅ (9/11 tasks complete, 2 deferred)
-- [⚡] Phase 2: S5 Storage Integration (1/3 sub-phases complete)
+- [⚡] Phase 2: S5 Storage Integration (2/3 sub-phases complete)
   - [x] Sub-phase 2.1: S5 Client Implementation ✅ (9/12 tasks, 3 deferred to Phase 5)
-  - [ ] Sub-phase 2.2: Manifest and Chunk Structures
+  - [x] Sub-phase 2.2: Manifest and Chunk Structures ✅ (11/11 tasks complete)
   - [ ] Sub-phase 2.3: Decryption Integration
 - [ ] Phase 3: Vector Loading Pipeline (0/2 sub-phases)
 - [ ] Phase 4: Vector Index Building and Search (0/2 sub-phases)
 - [ ] Phase 5: Performance Optimization & Production Hardening (0/4 sub-phases)
 
-**Current Status**: Sub-phase 2.1 COMPLETE - Existing S5 infrastructure is sufficient (10/10 new tests passing)
+**Current Status**: Sub-phase 2.2 COMPLETE - Manifest structures implemented (15/15 tests passing)
 
 **Completed in Sub-phase 1.1**:
 - ✅ VectorDatabaseInfo struct with validation
@@ -851,10 +879,25 @@ End-to-end flows:
 - ✅ Tested large file downloads (15MB chunks)
 - ⏭️ DEFERRED to Phase 5: Explicit retry/exponential backoff, progress tracking, download metrics
 
-**Next Step**: Begin Phase 2.2 - Manifest and Chunk Structures
+**Completed in Sub-phase 2.2**:
+- ✅ Manifest struct with all SDK fields (camelCase serde, src/storage/manifest.rs - 335 lines)
+- ✅ ChunkMetadata struct with CID and vector count
+- ✅ VectorChunk struct with vectors array
+- ✅ Vector struct with f32 embeddings and metadata
+- ✅ Comprehensive validation:
+  - Manifest::validate() - chunk count, dimensions, chunk IDs, vector count
+  - Vector::validate() - dimension count, NaN/Infinity detection
+  - VectorChunk::validate() - all vectors validated
+- ✅ Comprehensive test coverage:
+  - NEW tests: tests/storage/test_manifest.rs (462 lines, 15/15 passing)
+  - Tests for deserialization, validation errors, 384D vectors, roundtrip
+- ✅ Helper methods for metadata access
+- ✅ Module exports in src/storage/mod.rs
+
+**Next Step**: Begin Phase 2.3 - AES-GCM Decryption Integration
 
 ---
 
 **Document Created**: 2025-11-13
-**Last Updated**: 2025-11-13 (Phase 2 Sub-phase 2.1 COMPLETE)
-**Status**: Phase 1 Complete, Phase 2 Sub-phase 2.1 Complete, Ready for Phase 2.2
+**Last Updated**: 2025-11-13 (Phase 2 Sub-phases 2.1 & 2.2 COMPLETE)
+**Status**: Phase 1 Complete, Phase 2 Sub-phases 2.1 & 2.2 Complete, Ready for Phase 2.3
