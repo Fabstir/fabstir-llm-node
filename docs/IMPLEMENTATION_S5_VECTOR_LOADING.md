@@ -49,16 +49,16 @@ tokio-stream = "0.1"
 **Goal**: Add `vector_database` field to session_init message types
 
 #### Tasks
-- [ ] Write tests for VectorDatabaseInfo struct serialization/deserialization
-- [ ] Write tests for session_init parsing with optional vector_database field
-- [ ] Write tests for backward compatibility (session_init without vector_database)
-- [ ] Create VectorDatabaseInfo struct in api/websocket/types.rs
-- [ ] Update SessionInitMessage to include Option<VectorDatabaseInfo>
-- [ ] Update EncryptedSessionInitPayload with vector_database field
-- [ ] Update PlaintextSessionInitMessage with vector_database field
-- [ ] Add validation for manifest_path format
-- [ ] Add validation for user_address checksum
-- [ ] Document field in WebSocket protocol docs
+- [x] Write tests for VectorDatabaseInfo struct serialization/deserialization
+- [x] Write tests for session_init parsing with optional vector_database field
+- [x] Write tests for backward compatibility (session_init without vector_database)
+- [x] Create VectorDatabaseInfo struct in api/websocket/types.rs
+- [x] Update SessionInitMessage to include Option<VectorDatabaseInfo>
+- [ ] Update EncryptedSessionInitPayload with vector_database field (deferred to Phase 3)
+- [ ] Update PlaintextSessionInitMessage with vector_database field (deferred to Phase 3)
+- [x] Add validation for manifest_path format
+- [x] Add validation for user_address checksum
+- [ ] Document field in WebSocket protocol docs (deferred to end of Phase 1)
 
 **Test Files:**
 - `tests/api/websocket_protocol_tests.rs` - Protocol message tests (max 400 lines)
@@ -785,19 +785,30 @@ End-to-end flows:
 
 ## Progress Tracking
 
-**Overall Progress**: 0/5 phases complete
+**Overall Progress**: Phase 1 in progress (Sub-phase 1.1 complete)
 
 ### Phase Completion
-- [ ] Phase 1: WebSocket Protocol Updates (0/2 sub-phases)
+- [⚡] Phase 1: WebSocket Protocol Updates (1/2 sub-phases complete)
+  - [x] Sub-phase 1.1: Update Message Types ✅ (7/10 tasks complete, 3 deferred)
+  - [ ] Sub-phase 1.2: Update Session Store
 - [ ] Phase 2: S5 Storage Integration (0/3 sub-phases)
 - [ ] Phase 3: Vector Loading Pipeline (0/2 sub-phases)
 - [ ] Phase 4: Vector Index Building and Search (0/2 sub-phases)
 - [ ] Phase 5: Performance Optimization & Production Hardening (0/4 sub-phases)
 
-**Next Step**: Begin Phase 1.1 - Update Message Types
+**Current Status**: Sub-phase 1.1 complete with all tests passing (13/13)
+
+**Completed in Sub-phase 1.1**:
+- ✅ VectorDatabaseInfo struct with validation
+- ✅ SessionInitMessage updated with optional vector_database field
+- ✅ Comprehensive test suite (10 VectorDatabaseInfo tests + 3 SessionInit tests)
+- ✅ Backward compatibility maintained
+- ✅ Fixed pre-existing ModelConfig issues
+
+**Next Step**: Begin Phase 1.2 - Update Session Store
 
 ---
 
 **Document Created**: 2025-11-13
-**Last Updated**: 2025-11-13
-**Status**: Planning Complete, Ready for Implementation
+**Last Updated**: 2025-11-13 (Sub-phase 1.1 completed)
+**Status**: Phase 1.1 Complete, Ready for Phase 1.2
