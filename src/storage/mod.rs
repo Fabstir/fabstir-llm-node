@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pub mod cbor_compat;
 pub mod enhanced_s5_client;
+pub mod manifest;
 pub mod model_storage;
 pub mod proof_store;
 pub mod result_cache;
@@ -33,3 +34,6 @@ pub use enhanced_s5_client::{EnhancedS5Client, HealthResponse, S5Config, S5File}
 // Re-export proof and result storage types
 pub use proof_store::{ProofStore, ProofStoreStats};
 pub use result_store::{ResultStore, ResultStoreStats};
+
+// Re-export manifest types for S5 vector databases
+pub use manifest::{ChunkMetadata, Manifest, Vector, VectorChunk};
