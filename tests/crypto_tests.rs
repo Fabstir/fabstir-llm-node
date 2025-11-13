@@ -3,6 +3,7 @@
 // tests/crypto_tests.rs - Include all crypto test modules
 
 mod crypto {
+    mod test_aes_gcm;
     mod test_coverage;
     mod test_ecdh;
     mod test_encryption;
