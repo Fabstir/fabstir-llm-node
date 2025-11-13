@@ -171,6 +171,7 @@ fn test_upload_with_metadata() {
 #[test]
 fn test_upload_error_messages_clear() {
     let response = UploadVectorsResponse {
+        msg_type: "uploadVectorsResponse".to_string(),
         request_id: Some("req-456".to_string()),
         uploaded: 3,
         rejected: 2,
@@ -224,6 +225,7 @@ fn test_upload_request_id_preserved() {
 
     // Test response preserves request_id
     let response = UploadVectorsResponse {
+        msg_type: "uploadVectorsResponse".to_string(),
         request_id: Some("custom-req-789".to_string()),
         uploaded: 1,
         rejected: 0,

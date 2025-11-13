@@ -18,4 +18,5 @@ mod api {
     mod test_search_vectors_messages;
     mod test_server_crypto;
     mod test_upload_vectors_messages;
+    mod test_vector_database_info;
 }
