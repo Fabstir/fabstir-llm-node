@@ -1,5 +1,6 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
+use crate::api::websocket::message_types::VectorDatabaseInfo;
 use crate::config::chains::ChainRegistry;
 use crate::job_processor::Message;
 use crate::rag::session_vector_store::SessionVectorStore;
@@ -17,6 +18,24 @@ pub enum SessionState {
     Idle,
     Failed,
     Closed,
+}
+
+/// Status of S5 vector database loading (Sub-phase 1.2)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VectorLoadingStatus {
+    /// Not started (no vector_database provided or not initiated yet)
+    NotStarted,
+    /// Currently loading from S5
+    Loading,
+    /// Successfully loaded
+    Loaded {
+        vector_count: usize,
+        load_time_ms: u64,
+    },
+    /// Failed to load
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +115,13 @@ pub struct WebSocketSession {
     pub messages: Arc<RwLock<Vec<Message>>>,
     pub metadata: Arc<RwLock<HashMap<String, String>>>,
     pub vector_store: Option<Arc<Mutex<SessionVectorStore>>>,
+
+    // S5 Vector Database Loading (Sub-phase 1.2)
+    /// Information about S5 vector database to load for RAG
+    pub vector_database: Option<VectorDatabaseInfo>,
+    /// Status of S5 vector database loading
+    pub vector_loading_status: VectorLoadingStatus,
+    // Note: vector_index will be stored in vector_store once loaded
 }
 
 impl WebSocketSession {
@@ -120,6 +146,8 @@ impl WebSocketSession {
             messages: Arc::new(RwLock::new(Vec::new())),
             metadata: Arc::new(RwLock::new(HashMap::new())),
             vector_store: None,
+            vector_database: None,
+            vector_loading_status: VectorLoadingStatus::NotStarted,
         }
     }
 
@@ -255,6 +283,31 @@ impl WebSocketSession {
     /// * `None` if RAG not enabled
     pub fn get_vector_store(&self) -> Option<Arc<Mutex<SessionVectorStore>>> {
         self.vector_store.clone()
+    }
+
+    /// Set the S5 vector database information for this session
+    ///
+    /// # Arguments
+    /// * `vdb` - Optional VectorDatabaseInfo containing manifest_path and user_address
+    pub fn set_vector_database(&mut self, vdb: Option<VectorDatabaseInfo>) {
+        self.vector_database = vdb;
+    }
+
+    /// Get the S5 vector database information for this session
+    ///
+    /// # Returns
+    /// * `Some(&VectorDatabaseInfo)` if S5 vector database is configured
+    /// * `None` if no S5 vector database configured
+    pub fn get_vector_database_info(&self) -> Option<&VectorDatabaseInfo> {
+        self.vector_database.as_ref()
+    }
+
+    /// Set the S5 vector database loading status
+    ///
+    /// # Arguments
+    /// * `status` - The new VectorLoadingStatus (NotStarted, Loading, Loaded, Error)
+    pub fn set_vector_loading_status(&mut self, status: VectorLoadingStatus) {
+        self.vector_loading_status = status;
     }
 
     pub fn is_expired(&self) -> bool {
