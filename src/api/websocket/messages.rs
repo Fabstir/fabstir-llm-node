@@ -101,6 +101,9 @@ pub struct SessionInitMessage {
     pub host_address: String,
     pub model_id: String,
     pub timestamp: u64,
+    /// Optional S5 vector database to load for RAG (v8.4+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_database: Option<crate::api::websocket::message_types::VectorDatabaseInfo>,
 }
 
 impl SessionInitMessage {
@@ -113,6 +116,7 @@ impl SessionInitMessage {
             host_address: legacy.host_address,
             model_id: legacy.model_id,
             timestamp: legacy.timestamp,
+            vector_database: None, // Legacy messages don't have vector_database
         }
     }
 }

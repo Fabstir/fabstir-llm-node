@@ -697,3 +697,75 @@ impl SearchVectorsRequest {
         Ok(())
     }
 }
+
+// ============================================================================
+// S5 Vector Database Loading Messages (Sub-phase 1.1)
+// ============================================================================
+
+/// Information about an S5-stored vector database to load for RAG
+/// Enables hosts to load pre-existing vector databases from S5 storage
+/// instead of requiring clients to upload vectors via WebSocket for every session
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VectorDatabaseInfo {
+    /// Path to manifest.json in S5 storage
+    /// Format: "home/vector-databases/{userAddress}/{databaseName}/manifest.json"
+    pub manifest_path: String,
+
+    /// Owner's Ethereum address (must match manifest.owner for security)
+    pub user_address: String,
+}
+
+impl VectorDatabaseInfo {
+    /// Validates the vector database info
+    ///
+    /// Checks:
+    /// - manifest_path ends with "manifest.json"
+    /// - user_address is a valid Ethereum address (0x + 40 hex chars)
+    ///
+    /// Returns Ok(()) if valid, Err with details if invalid
+    pub fn validate(&self) -> Result<()> {
+        // Validate manifest_path format
+        if self.manifest_path.is_empty() {
+            return Err(anyhow!("manifest_path cannot be empty"));
+        }
+
+        if !self.manifest_path.ends_with("manifest.json") {
+            return Err(anyhow!(
+                "manifest_path must end with 'manifest.json', got: {}",
+                self.manifest_path
+            ));
+        }
+
+        // Validate user_address format
+        if self.user_address.is_empty() {
+            return Err(anyhow!("user_address cannot be empty"));
+        }
+
+        if !self.user_address.starts_with("0x") {
+            return Err(anyhow!(
+                "user_address must start with '0x', got: {}",
+                self.user_address
+            ));
+        }
+
+        // Check length: 0x + 40 hex characters = 42 total
+        if self.user_address.len() != 42 {
+            return Err(anyhow!(
+                "user_address must be 42 characters (0x + 40 hex), got {} characters",
+                self.user_address.len()
+            ));
+        }
+
+        // Validate hex characters (after 0x prefix)
+        let hex_part = &self.user_address[2..];
+        if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(anyhow!(
+                "user_address contains invalid hex characters: {}",
+                self.user_address
+            ));
+        }
+
+        Ok(())
+    }
+}

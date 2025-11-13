@@ -163,6 +163,7 @@ fn test_search_with_metadata_filter() {
 #[test]
 fn test_search_timing_included() {
     let response = SearchVectorsResponse {
+        msg_type: "searchVectorsResponse".to_string(),
         request_id: Some("req-456".to_string()),
         results: vec![
             VectorSearchResult {
@@ -189,6 +190,7 @@ fn test_search_timing_included() {
 fn test_search_empty_results() {
     // Test response with no results (e.g., all filtered out by threshold)
     let response = SearchVectorsResponse {
+        msg_type: "searchVectorsResponse".to_string(),
         request_id: Some("req-789".to_string()),
         results: vec![], // Empty results
         total_vectors: 100,
