@@ -713,6 +713,569 @@ async fn test_corrupted_manifest() {
 
 ---
 
+## Phase 4.5: Production Error Handling Tests (Phase 8 Integration)
+
+### Test 4.5.1: LoadingError WebSocket Message Delivery
+
+**Objective**: Test that LoadingError messages are delivered via WebSocket with correct error codes
+
+**Test File**: `tests/integration/test_loading_error_messages_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_loading_error_websocket_delivery() {
+    // 1. Create WebSocket connection
+    let (ws_tx, mut ws_rx) = create_test_websocket_connection().await;
+
+    // 2. Send session_init with invalid manifest path
+    let init_msg = SessionInitMessage {
+        vector_database: Some(VectorDatabaseInfo {
+            manifest_path: "home/nonexistent/manifest.json".to_string(),
+            user_address: "0xTEST".to_string(),
+        }),
+        ..Default::default()
+    };
+
+    ws_tx.send(serde_json::to_string(&init_msg).unwrap()).await.unwrap();
+
+    // 3. Expect LoadingError message
+    let timeout_result = tokio::time::timeout(
+        Duration::from_secs(10),
+        wait_for_loading_error(&mut ws_rx)
+    ).await;
+
+    assert!(timeout_result.is_ok());
+    let error_msg = timeout_result.unwrap();
+
+    // 4. Verify error structure
+    assert_eq!(error_msg.msg_type, MessageType::VectorLoadingProgress);
+
+    match error_msg.payload {
+        LoadingProgressMessage::LoadingError { error_code, error } => {
+            assert_eq!(error_code, LoadingErrorCode::ManifestNotFound);
+            assert!(error.contains("not found"));
+            assert!(error.contains("manifest.json"));
+        }
+        _ => panic!("Expected LoadingError message"),
+    }
+}
+```
+
+**Validation**:
+- [ ] LoadingError message delivered via WebSocket
+- [ ] Correct error code (MANIFEST_NOT_FOUND)
+- [ ] User-friendly error message present
+- [ ] Message delivered within timeout (10s)
+
+---
+
+### Test 4.5.2: All 15 Error Code Variants
+
+**Objective**: Test that all 15 LoadingErrorCode variants are properly triggered and delivered
+
+**Test File**: `tests/integration/test_all_error_codes_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_manifest_not_found_error_code() {
+    let result = trigger_vector_loading(
+        "home/nonexistent/manifest.json",
+        "0xTEST"
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::ManifestNotFound);
+}
+
+#[tokio::test]
+async fn test_owner_mismatch_error_code() {
+    // Upload manifest with owner: 0xALICE
+    // Try to load as user: 0xBOB
+    let result = trigger_vector_loading(
+        "home/vector-databases/0xALICE/test-db/manifest.json",
+        "0xBOB"  // Wrong owner
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::OwnerMismatch);
+}
+
+#[tokio::test]
+async fn test_decryption_failed_error_code() {
+    // Use invalid session key (wrong length)
+    let result = trigger_vector_loading_with_key(
+        "home/vector-databases/0xTEST/test-db/manifest.json",
+        "0xTEST",
+        &[0u8; 16]  // Invalid: should be 32 bytes
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::InvalidSessionKey);
+}
+
+#[tokio::test]
+async fn test_timeout_error_code() {
+    // Upload extremely large database
+    // Set short timeout to trigger timeout error
+    let result = trigger_vector_loading_with_timeout(
+        "home/vector-databases/0xTEST/huge-db/manifest.json",
+        "0xTEST",
+        Duration::from_secs(1)  // Too short
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::Timeout);
+}
+
+// Test remaining 11 error codes:
+// - MANIFEST_DOWNLOAD_FAILED
+// - CHUNK_DOWNLOAD_FAILED
+// - DIMENSION_MISMATCH
+// - MEMORY_LIMIT_EXCEEDED
+// - RATE_LIMIT_EXCEEDED
+// - INVALID_PATH
+// - EMPTY_DATABASE
+// - INDEX_BUILD_FAILED
+// - SESSION_NOT_FOUND
+// - INTERNAL_ERROR
+```
+
+**Validation**:
+- [ ] All 15 error codes can be triggered
+- [ ] Each error code maps to correct LoadingErrorCode enum
+- [ ] Error messages are user-friendly
+- [ ] No panics or crashes on any error
+
+---
+
+### Test 4.5.3: Security-Sensitive Error Sanitization
+
+**Objective**: Verify that OwnerMismatch and DecryptionFailed don't leak sensitive data
+
+**Test File**: `tests/integration/test_error_sanitization_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_owner_mismatch_no_address_leak() {
+    // Upload manifest with owner: 0xALICE_FULL_ADDRESS_12345
+    // Try to load as: 0xBOB_FULL_ADDRESS_67890
+
+    let (ws_tx, mut ws_rx) = create_test_websocket_connection().await;
+
+    let init_msg = SessionInitMessage {
+        vector_database: Some(VectorDatabaseInfo {
+            manifest_path: "home/vector-databases/0xALICE.../test-db/manifest.json".to_string(),
+            user_address: "0xBOB...".to_string(),
+        }),
+        ..Default::default()
+    };
+
+    ws_tx.send(serde_json::to_string(&init_msg).unwrap()).await.unwrap();
+
+    let error_msg = wait_for_loading_error(&mut ws_rx).await;
+
+    match error_msg.payload {
+        LoadingProgressMessage::LoadingError { error_code, error } => {
+            assert_eq!(error_code, LoadingErrorCode::OwnerMismatch);
+
+            // Security: Should NOT contain actual addresses
+            assert!(!error.contains("0xALICE"));
+            assert!(!error.contains("0xBOB"));
+            assert!(!error.contains("expected:"));
+            assert!(!error.contains("actual:"));
+
+            // Should contain generic message
+            assert!(error.contains("access") || error.contains("verification"));
+        }
+        _ => panic!("Expected LoadingError"),
+    }
+}
+
+#[tokio::test]
+async fn test_decryption_failed_no_key_leak() {
+    // Try to load with wrong decryption key
+
+    let error_msg = trigger_decryption_error().await;
+
+    match error_msg.payload {
+        LoadingProgressMessage::LoadingError { error_code, error } => {
+            assert_eq!(error_code, LoadingErrorCode::DecryptionFailed);
+
+            // Security: Should NOT contain key details
+            assert!(!error.contains("0x"));
+            assert!(!error.contains("bytes:"));
+            assert!(!error.contains("key:"));
+
+            // Should mention session key generically
+            assert!(error.contains("session key"));
+        }
+        _ => panic!("Expected LoadingError"),
+    }
+}
+```
+
+**Validation**:
+- [ ] OwnerMismatch doesn't expose addresses
+- [ ] DecryptionFailed doesn't expose keys
+- [ ] Error messages still helpful
+- [ ] Security sanitization works end-to-end
+
+---
+
+### Test 4.5.4: Progress Error Notifications During Loading
+
+**Objective**: Test error notifications at different stages of loading process
+
+**Test File**: `tests/integration/test_progress_error_notifications_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_manifest_download_error_during_progress() {
+    let (ws_tx, mut ws_rx) = create_test_websocket_connection().await;
+
+    // Start loading with manifest that will fail to download
+    let init_msg = create_session_init_with_failing_manifest();
+    ws_tx.send(serde_json::to_string(&init_msg).unwrap()).await.unwrap();
+
+    // Expect sequence: session_ready → LoadingError
+    let session_ready = wait_for_message(&mut ws_rx, MessageType::SessionReady).await;
+    assert!(session_ready.is_ok());
+
+    let error_msg = wait_for_loading_error(&mut ws_rx).await;
+
+    match error_msg.payload {
+        LoadingProgressMessage::LoadingError { error_code, .. } => {
+            assert_eq!(error_code, LoadingErrorCode::ManifestDownloadFailed);
+        }
+        _ => panic!("Expected LoadingError"),
+    }
+}
+
+#[tokio::test]
+async fn test_chunk_download_error_mid_loading() {
+    // Upload manifest with 5 chunks, make chunk 3 inaccessible
+
+    let (ws_tx, mut ws_rx) = create_test_websocket_connection().await;
+    let init_msg = create_session_init_with_partial_chunks();
+    ws_tx.send(serde_json::to_string(&init_msg).unwrap()).await.unwrap();
+
+    // Expect sequence:
+    // 1. ManifestDownloaded
+    // 2. ChunkDownloaded (chunk 0)
+    // 3. ChunkDownloaded (chunk 1)
+    // 4. ChunkDownloaded (chunk 2)
+    // 5. LoadingError (chunk 3 failed)
+
+    assert_progress_sequence(&mut ws_rx, vec![
+        LoadingProgressMessage::ManifestDownloaded,
+        LoadingProgressMessage::ChunkDownloaded { chunk_id: 0, total: 5 },
+        LoadingProgressMessage::ChunkDownloaded { chunk_id: 1, total: 5 },
+        LoadingProgressMessage::ChunkDownloaded { chunk_id: 2, total: 5 },
+    ]).await;
+
+    let error_msg = wait_for_loading_error(&mut ws_rx).await;
+    match error_msg.payload {
+        LoadingProgressMessage::LoadingError { error_code, error } => {
+            assert_eq!(error_code, LoadingErrorCode::ChunkDownloadFailed);
+            assert!(error.contains("chunk 3"));
+        }
+        _ => panic!("Expected LoadingError"),
+    }
+}
+
+#[tokio::test]
+async fn test_index_build_error_after_download() {
+    // Upload vectors with mismatched dimensions to trigger index build failure
+
+    let error_msg = trigger_loading_with_invalid_dimensions().await;
+
+    match error_msg.payload {
+        LoadingProgressMessage::LoadingError { error_code, .. } => {
+            assert_eq!(error_code, LoadingErrorCode::IndexBuildFailed);
+        }
+        _ => panic!("Expected LoadingError"),
+    }
+}
+```
+
+**Validation**:
+- [ ] Errors can occur at any loading stage
+- [ ] Progress messages sent before error
+- [ ] Error message includes context (chunk ID, etc.)
+- [ ] Session transitions to Error state
+
+---
+
+### Test 4.5.5: INTERNAL_ERROR Logging and Detection
+
+**Objective**: Test that unexpected errors are logged at WARN level and categorized as INTERNAL_ERROR
+
+**Test File**: `tests/integration/test_internal_error_logging_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_internal_error_logging() {
+    // Set up log capture
+    let log_capture = setup_tracing_subscriber_with_capture();
+
+    // Trigger an unexpected error (e.g., S5 network completely unreachable)
+    let result = trigger_vector_loading_with_network_failure().await;
+
+    assert_loading_error(result, LoadingErrorCode::InternalError);
+
+    // Verify warning was logged
+    let logs = log_capture.get_logs();
+    let warning_logs: Vec<_> = logs.iter()
+        .filter(|log| log.level == Level::WARN)
+        .collect();
+
+    assert!(!warning_logs.is_empty(), "Should have WARN log for INTERNAL_ERROR");
+
+    let internal_error_log = warning_logs.iter()
+        .find(|log| log.message.contains("INTERNAL_ERROR") ||
+                     log.message.contains("Unexpected error"))
+        .expect("Should have INTERNAL_ERROR warning log");
+
+    assert!(internal_error_log.message.contains("investigate if recurring"));
+}
+
+#[tokio::test]
+async fn test_known_errors_debug_level() {
+    let log_capture = setup_tracing_subscriber_with_capture();
+
+    // Trigger a known error (MANIFEST_NOT_FOUND)
+    let result = trigger_vector_loading(
+        "home/nonexistent/manifest.json",
+        "0xTEST"
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::ManifestNotFound);
+
+    // Verify it's logged at DEBUG level (not WARN)
+    let logs = log_capture.get_logs();
+    let warn_logs: Vec<_> = logs.iter()
+        .filter(|log| log.level == Level::WARN &&
+                      log.message.contains("MANIFEST_NOT_FOUND"))
+        .collect();
+
+    assert!(warn_logs.is_empty(), "Known errors should not log at WARN");
+}
+
+#[tokio::test]
+async fn test_timeout_info_level() {
+    let log_capture = setup_tracing_subscriber_with_capture();
+
+    // Trigger timeout
+    let result = trigger_vector_loading_with_timeout(
+        "home/vector-databases/0xTEST/huge-db/manifest.json",
+        "0xTEST",
+        Duration::from_secs(1)
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::Timeout);
+
+    // Verify it's logged at INFO level (expected for large databases)
+    let logs = log_capture.get_logs();
+    let info_logs: Vec<_> = logs.iter()
+        .filter(|log| log.level == Level::INFO &&
+                      (log.message.contains("timeout") ||
+                       log.message.contains("Timeout")))
+        .collect();
+
+    assert!(!info_logs.is_empty(), "Timeout should log at INFO level");
+}
+
+#[tokio::test]
+async fn test_security_errors_warn_level() {
+    let log_capture = setup_tracing_subscriber_with_capture();
+
+    // Trigger security error (OwnerMismatch)
+    let result = trigger_vector_loading(
+        "home/vector-databases/0xALICE/test-db/manifest.json",
+        "0xBOB"
+    ).await;
+
+    assert_loading_error(result, LoadingErrorCode::OwnerMismatch);
+
+    // Verify it's logged at WARN level (security concern)
+    let logs = log_capture.get_logs();
+    let warn_logs: Vec<_> = logs.iter()
+        .filter(|log| log.level == Level::WARN)
+        .collect();
+
+    assert!(!warn_logs.is_empty(), "Security errors should log at WARN");
+}
+```
+
+**Validation**:
+- [ ] INTERNAL_ERROR logs at WARN level
+- [ ] Known errors log at DEBUG level
+- [ ] Timeout logs at INFO level
+- [ ] Security errors log at WARN level
+- [ ] Log messages match TROUBLESHOOTING.md guide
+
+---
+
+### Test 4.5.6: Error Recovery and Retry Scenarios
+
+**Objective**: Test system behavior after errors and during retry attempts
+
+**Test File**: `tests/integration/test_error_recovery_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_session_state_after_loading_error() {
+    let session_store = create_test_session_store().await;
+    let session_id = "test-error-recovery";
+
+    // Initialize session with invalid manifest
+    let init_result = initialize_session_with_vectors(
+        &session_store,
+        session_id,
+        "home/nonexistent/manifest.json",
+        "0xTEST"
+    ).await;
+
+    // Wait for loading to fail
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Verify session is in Error state
+    let session = session_store.get_session(session_id).await.unwrap();
+
+    match session.get_vector_loading_status() {
+        VectorLoadingStatus::Error { error } => {
+            assert!(error.contains("not found") || error.contains("Manifest"));
+        }
+        other => panic!("Expected Error state, got {:?}", other),
+    }
+
+    // Verify vector_index is None
+    assert!(session.get_vector_index().is_none());
+}
+
+#[tokio::test]
+async fn test_retry_after_temporary_failure() {
+    // 1. First attempt: Bridge unavailable
+    let result1 = trigger_vector_loading_without_bridge().await;
+    assert_loading_error(result1, LoadingErrorCode::ManifestDownloadFailed);
+
+    // 2. Start bridge
+    start_s5_bridge().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 3. Second attempt: Should succeed
+    let result2 = trigger_vector_loading_with_bridge().await;
+    assert!(result2.is_ok());
+}
+
+#[tokio::test]
+async fn test_new_session_after_previous_error() {
+    let session_store = create_test_session_store().await;
+
+    // Session 1: Fails with owner mismatch
+    let session_id_1 = "test-session-1";
+    initialize_session_with_vectors(
+        &session_store,
+        session_id_1,
+        "home/vector-databases/0xALICE/test-db/manifest.json",
+        "0xBOB"  // Wrong owner
+    ).await;
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Verify Session 1 is in Error state
+    let session1 = session_store.get_session(session_id_1).await.unwrap();
+    assert!(matches!(
+        session1.get_vector_loading_status(),
+        VectorLoadingStatus::Error { .. }
+    ));
+
+    // Session 2: Succeeds with correct owner
+    let session_id_2 = "test-session-2";
+    initialize_session_with_vectors(
+        &session_store,
+        session_id_2,
+        "home/vector-databases/0xBOB/test-db/manifest.json",
+        "0xBOB"  // Correct owner
+    ).await;
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    // Verify Session 2 is Loaded
+    let session2 = session_store.get_session(session_id_2).await.unwrap();
+    assert!(matches!(
+        session2.get_vector_loading_status(),
+        VectorLoadingStatus::Loaded { .. }
+    ));
+
+    // Verify sessions are isolated
+    assert_ne!(session1.get_vector_loading_status(), session2.get_vector_loading_status());
+}
+```
+
+**Validation**:
+- [ ] Session transitions to Error state on failure
+- [ ] vector_index remains None after error
+- [ ] Retry succeeds after temporary failure resolved
+- [ ] New sessions not affected by previous errors
+- [ ] Multiple sessions with different states coexist
+
+---
+
+### Test 4.5.7: Error Message Consistency Across Layers
+
+**Objective**: Verify error messages are consistent from RAG layer through WebSocket layer
+
+**Test File**: `tests/integration/test_error_consistency_s5.rs`
+
+```rust
+#[tokio::test]
+async fn test_error_conversion_preserves_context() {
+    // Trigger VectorLoadError::ChunkDownloadFailed at RAG layer
+    let rag_error = VectorLoadError::ChunkDownloadFailed {
+        chunk_id: 5,
+        path: "home/vector-databases/0xTEST/test-db/chunk-5.json".to_string(),
+        source: anyhow::anyhow!("Network timeout"),
+    };
+
+    // Convert to VectorLoadingError
+    let ws_error: VectorLoadingError = rag_error.into();
+
+    // Verify error code mapping
+    assert_eq!(ws_error.to_error_code(), LoadingErrorCode::ChunkDownloadFailed);
+
+    // Verify user-friendly message contains context
+    let message = ws_error.user_friendly_message();
+    assert!(message.contains("chunk 5"));
+    assert!(message.contains("S5 network"));
+}
+
+#[tokio::test]
+async fn test_all_vector_load_errors_convert() {
+    // Test that all VectorLoadError variants convert to VectorLoadingError
+    let test_cases = vec![
+        (VectorLoadError::ManifestNotFound("test".into()), LoadingErrorCode::ManifestNotFound),
+        (VectorLoadError::OwnerMismatch { expected: "0xA".into(), actual: "0xB".into() }, LoadingErrorCode::OwnerMismatch),
+        (VectorLoadError::DecryptionFailed(anyhow::anyhow!("test")), LoadingErrorCode::DecryptionFailed),
+        // ... test all 14 variants
+    ];
+
+    for (rag_error, expected_code) in test_cases {
+        let ws_error: VectorLoadingError = rag_error.into();
+        assert_eq!(ws_error.to_error_code(), expected_code);
+
+        // Verify message is user-friendly (not a debug string)
+        let message = ws_error.user_friendly_message();
+        assert!(!message.contains("Error("));
+        assert!(!message.contains("anyhow"));
+    }
+}
+```
+
+**Validation**:
+- [ ] All VectorLoadError variants convert correctly
+- [ ] Error context preserved during conversion
+- [ ] User-friendly messages maintain context
+- [ ] No raw error strings exposed to clients
+
+---
+
 ## Phase 5: Performance Testing
 
 ### Test 5.1: Large Database Loading
@@ -850,7 +1413,10 @@ async fn test_concurrent_session_loading() {
 
 ### Day 4: Error Testing
 - Run Phase 4 tests (error scenarios)
+- Run Phase 4.5 tests (production error handling)
 - Ensure graceful failure handling
+- Test security sanitization
+- Verify context-aware logging
 - Document error patterns
 
 ### Day 5: Performance and Readiness
@@ -893,10 +1459,15 @@ The Enhanced S5.js bridge integration is considered ready for production when:
 2. ✅ All Phase 2 tests pass (Rust integration)
 3. ✅ All Phase 3 tests pass (end-to-end)
 4. ✅ 80%+ of Phase 4 tests pass (error handling)
-5. ✅ Performance targets met in Phase 5
-6. ✅ All Phase 6 checklist items completed
-7. ✅ No critical bugs outstanding
-8. ✅ Documentation complete
+5. ✅ 80%+ of Phase 4.5 tests pass (production error handling - Phase 8 integration)
+   - All 15 error codes tested
+   - Security sanitization verified
+   - Context-aware logging validated
+   - Error recovery scenarios tested
+6. ✅ Performance targets met in Phase 5
+7. ✅ All Phase 6 checklist items completed
+8. ✅ No critical bugs outstanding
+9. ✅ Documentation complete (including TROUBLESHOOTING.md)
 
 ---
 
@@ -955,5 +1526,7 @@ The Enhanced S5.js bridge integration is considered ready for production when:
 
 ---
 
-**Document Status**: Draft - Ready for execution
-**Next Update**: After Phase 1 testing complete
+**Document Status**: Updated - Includes Phase 8 production error handling tests
+**Version**: v8.4.0+ (includes Phase 8 integration)
+**Last Updated**: 2025-11-14
+**Next Update**: After Phase 1-4.5 testing complete
