@@ -235,9 +235,16 @@ impl VectorLoader {
         if let Some(timeout_duration) = self.timeout_duration {
             match timeout(timeout_duration, self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx)).await {
                 Ok(result) => result,
-                Err(_) => Err(VectorLoadError::Timeout {
-                    duration_sec: timeout_duration.as_secs(),
-                }),
+                Err(_) => {
+                    tracing::error!(
+                        manifest_path = %manifest_path,
+                        timeout_sec = timeout_duration.as_secs(),
+                        "❌ Loading operation timed out"
+                    );
+                    Err(VectorLoadError::Timeout {
+                        duration_sec: timeout_duration.as_secs(),
+                    })
+                },
             }
         } else {
             self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx).await
@@ -254,6 +261,12 @@ impl VectorLoader {
     ) -> Result<Vec<Vector>, VectorLoadError> {
         let start_time = Instant::now();
 
+        tracing::info!(
+            manifest_path = %manifest_path,
+            user_address = %user_address,
+            "🚀 Starting S5 vector database loading"
+        );
+
         // 1. Download and decrypt manifest
         let manifest = self
             .download_and_decrypt_manifest(manifest_path, session_key)
@@ -264,12 +277,36 @@ impl VectorLoader {
             let _ = tx.send(LoadProgress::ManifestDownloaded).await;
         }
 
+        tracing::info!(
+            manifest_name = %manifest.name,
+            owner = %manifest.owner,
+            dimensions = manifest.dimensions,
+            vector_count = manifest.vector_count,
+            chunk_count = manifest.chunks.len(),
+            "📦 Manifest downloaded and decrypted"
+        );
+
         // 2. Verify owner
         self.verify_owner(&manifest, user_address)?;
+
+        tracing::debug!(
+            expected_owner = %user_address,
+            actual_owner = %manifest.owner,
+            "✅ Owner verification passed"
+        );
 
         // 3. Check memory limit before loading
         if let Some(limit_mb) = self.memory_limit_mb {
             self.check_memory_limit(&manifest, limit_mb)?;
+            // Calculate estimated memory usage
+            let vector_bytes = manifest.vector_count * manifest.dimensions * 4;
+            let metadata_bytes = manifest.vector_count * 200;
+            let estimated_mb = (vector_bytes + metadata_bytes) / (1024 * 1024);
+            tracing::debug!(
+                estimated_mb,
+                limit_mb,
+                "✅ Memory limit check passed"
+            );
         }
 
         // 4. Check if database is deleted
@@ -305,6 +342,14 @@ impl VectorLoader {
                 .await;
         }
 
+        tracing::info!(
+            manifest_path = %manifest_path,
+            vector_count = vectors.len(),
+            duration_ms,
+            chunk_count = manifest.chunks.len(),
+            "✅ S5 vector database loading complete"
+        );
+
         Ok(vectors)
     }
 
@@ -337,6 +382,12 @@ impl VectorLoader {
                 if let Some(ref metrics) = self.metrics {
                     metrics.record_download(download_start.elapsed()).await;
                 }
+                tracing::debug!(
+                    path = %manifest_path,
+                    duration_ms = download_start.elapsed().as_millis(),
+                    size_bytes = data.len(),
+                    "📥 Manifest downloaded from S5"
+                );
                 data
             }
             Err(e) => {
@@ -344,6 +395,11 @@ impl VectorLoader {
                 if let Some(ref metrics) = self.metrics {
                     metrics.record_download_error().await;
                 }
+                tracing::error!(
+                    path = %manifest_path,
+                    error = %e,
+                    "❌ Failed to download manifest from S5"
+                );
                 return Err(VectorLoadError::ManifestDownloadFailed {
                     path: manifest_path.to_string(),
                     source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
@@ -410,23 +466,53 @@ impl VectorLoader {
 
                     // Download encrypted chunk
                     let chunk_path = format!("{}/chunk-{}.json", base_path, chunk_id);
+                    let chunk_download_start = Instant::now();
                     let encrypted_chunk = s5_client
                         .get(&chunk_path)
                         .await
-                        .map_err(|e| VectorLoadError::ChunkDownloadFailed {
-                            chunk_id,
-                            path: chunk_path.clone(),
-                            source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
+                        .map_err(|e| {
+                            tracing::error!(
+                                chunk_id,
+                                path = %chunk_path,
+                                error = %e,
+                                "❌ Failed to download chunk"
+                            );
+                            VectorLoadError::ChunkDownloadFailed {
+                                chunk_id,
+                                path: chunk_path.clone(),
+                                source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
+                            }
                         })?;
+
+                    tracing::trace!(
+                        chunk_id,
+                        path = %chunk_path,
+                        duration_ms = chunk_download_start.elapsed().as_millis(),
+                        size_bytes = encrypted_chunk.len(),
+                        "📥 Chunk downloaded"
+                    );
 
                     // Decrypt chunk
                     let chunk = decrypt_chunk(&encrypted_chunk, &session_key)
-                        .map_err(|e| VectorLoadError::DecryptionFailed(format!("Chunk {}: {}", chunk_id, e)))?;
+                        .map_err(|e| {
+                            tracing::error!(
+                                chunk_id,
+                                error = %e,
+                                "❌ Failed to decrypt chunk"
+                            );
+                            VectorLoadError::DecryptionFailed(format!("Chunk {}: {}", chunk_id, e))
+                        })?;
 
                     // Validate dimensions
                     if !chunk.vectors.is_empty() {
                         let actual_dimensions = chunk.vectors[0].vector.len();
                         if actual_dimensions != expected_dimensions {
+                            tracing::error!(
+                                chunk_id,
+                                expected = expected_dimensions,
+                                actual = actual_dimensions,
+                                "❌ Dimension mismatch detected"
+                            );
                             return Err(VectorLoadError::DimensionMismatch {
                                 chunk_id,
                                 expected: expected_dimensions,
@@ -437,6 +523,12 @@ impl VectorLoader {
 
                     // Validate vector count
                     if chunk.vectors.len() != expected_vector_count {
+                        tracing::error!(
+                            chunk_id,
+                            expected = expected_vector_count,
+                            actual = chunk.vectors.len(),
+                            "❌ Vector count mismatch detected"
+                        );
                         return Err(VectorLoadError::VectorCountMismatch {
                             chunk_id,
                             expected: expected_vector_count,
@@ -475,13 +567,24 @@ impl VectorLoader {
                     .await;
             }
 
-            tracing::debug!("Loaded chunk {}/{} ({} vectors)", i + 1, total_chunks, all_vectors.len());
+            tracing::debug!(
+                chunk_id = i + 1,
+                total_chunks,
+                vectors_so_far = all_vectors.len(),
+                "✅ Chunk processed"
+            );
         }
 
         // Record total vectors loaded
         if let Some(ref metrics) = self.metrics {
             metrics.record_vectors_loaded(all_vectors.len() as u64).await;
         }
+
+        tracing::info!(
+            total_vectors = all_vectors.len(),
+            total_chunks,
+            "📦 All chunks downloaded and decrypted"
+        );
 
         Ok(all_vectors)
     }
@@ -500,6 +603,11 @@ impl VectorLoader {
         // Note: Tests require case-sensitive comparison, but existing code uses case-insensitive
         // Keep case-insensitive for backward compatibility
         if manifest.owner.to_lowercase() != expected_owner.to_lowercase() {
+            tracing::error!(
+                expected = %expected_owner,
+                actual = %manifest.owner,
+                "❌ Owner verification failed"
+            );
             return Err(VectorLoadError::OwnerMismatch {
                 expected: expected_owner.to_string(),
                 actual: manifest.owner.clone(),
@@ -518,6 +626,13 @@ impl VectorLoader {
         let required_mb = total_bytes / (1024 * 1024);
 
         if required_mb > limit_mb {
+            tracing::error!(
+                required_mb,
+                limit_mb,
+                vector_count = manifest.vector_count,
+                dimensions = manifest.dimensions,
+                "❌ Memory limit would be exceeded"
+            );
             return Err(VectorLoadError::MemoryLimitExceeded {
                 required_mb,
                 limit_mb,
@@ -542,6 +657,12 @@ impl VectorLoader {
 
         // Check if limit exceeded
         if downloads.len() >= rate_limit.max_downloads {
+            tracing::warn!(
+                current = downloads.len(),
+                limit = rate_limit.max_downloads,
+                window_sec = rate_limit.window.as_secs(),
+                "⚠️  Rate limit exceeded"
+            );
             return Err(VectorLoadError::RateLimitExceeded {
                 current: downloads.len(),
                 limit: rate_limit.max_downloads,
