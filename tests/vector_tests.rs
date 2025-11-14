@@ -4,6 +4,7 @@
 mod vector {
     mod test_client;
     mod test_embeddings;
+    mod test_hnsw_index;
     mod test_semantic_cache;
     mod test_storage;
 

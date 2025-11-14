@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pub mod client;
 pub mod embeddings;
+pub mod hnsw;
 pub mod semantic_cache;
 pub mod storage;
 pub mod vector_db_client;
@@ -17,6 +18,9 @@ pub use embeddings::{
     BatchEmbeddingRequest, Embedding, EmbeddingCache, EmbeddingConfig, EmbeddingError,
     EmbeddingGenerator, EmbeddingModel, TokenizerConfig,
 };
+
+// Re-export HNSW index types
+pub use hnsw::{HnswIndex, SearchResult as HnswSearchResult};
 
 // Re-export semantic cache types
 pub use semantic_cache::{
