@@ -17,6 +17,7 @@ mod api {
     mod test_route_registration;
     mod test_search_vectors_messages;
     mod test_server_crypto;
+    mod test_session_init_s5;
     mod test_session_vector_database;
     mod test_upload_vectors_messages;
     mod test_vector_database_info;
