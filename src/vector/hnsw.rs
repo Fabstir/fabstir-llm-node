@@ -79,6 +79,15 @@ pub struct HnswIndex {
     dimensions: usize,
 }
 
+impl std::fmt::Debug for HnswIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HnswIndex")
+            .field("vector_count", &self.id_map.len())
+            .field("dimensions", &self.dimensions)
+            .finish()
+    }
+}
+
 impl HnswIndex {
     /// Build HNSW index from vectors
     ///

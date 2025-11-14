@@ -4,6 +4,7 @@ use crate::api::websocket::message_types::VectorDatabaseInfo;
 use crate::config::chains::ChainRegistry;
 use crate::job_processor::Message;
 use crate::rag::session_vector_store::SessionVectorStore;
+use crate::vector::hnsw::HnswIndex;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -121,7 +122,11 @@ pub struct WebSocketSession {
     pub vector_database: Option<VectorDatabaseInfo>,
     /// Status of S5 vector database loading
     pub vector_loading_status: VectorLoadingStatus,
-    // Note: vector_index will be stored in vector_store once loaded
+
+    // HNSW Index for S5-loaded vectors (Sub-phase 4.2)
+    /// HNSW index built from S5-loaded vectors (when vector_database is provided)
+    /// This is separate from vector_store (for uploaded vectors)
+    pub vector_index: Option<Arc<HnswIndex>>,
 }
 
 impl WebSocketSession {
@@ -148,6 +153,7 @@ impl WebSocketSession {
             vector_store: None,
             vector_database: None,
             vector_loading_status: VectorLoadingStatus::NotStarted,
+            vector_index: None,
         }
     }
 
@@ -308,6 +314,23 @@ impl WebSocketSession {
     /// * `status` - The new VectorLoadingStatus (NotStarted, Loading, Loaded, Error)
     pub fn set_vector_loading_status(&mut self, status: VectorLoadingStatus) {
         self.vector_loading_status = status;
+    }
+
+    /// Get the HNSW index for S5-loaded vectors
+    ///
+    /// # Returns
+    /// * `Some(Arc<HnswIndex>)` if S5 vectors have been loaded and indexed
+    /// * `None` if no S5 vectors loaded or indexing not complete
+    pub fn get_vector_index(&self) -> Option<Arc<HnswIndex>> {
+        self.vector_index.clone()
+    }
+
+    /// Set the HNSW index for S5-loaded vectors
+    ///
+    /// # Arguments
+    /// * `index` - The built HNSW index wrapped in Arc for thread-safe sharing
+    pub fn set_vector_index(&mut self, index: Arc<HnswIndex>) {
+        self.vector_index = Some(index);
     }
 
     pub fn is_expired(&self) -> bool {
