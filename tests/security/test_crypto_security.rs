@@ -74,6 +74,7 @@ fn create_encrypted_session_init(
         session_key: session_key_bytes,
         price_per_token: 1000,
         client_address: String::new(),
+        vector_database: None, // Optional RAG database
     };
 
     // Generate nonce and AAD

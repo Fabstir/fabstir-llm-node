@@ -143,6 +143,242 @@ const initMessage = {
 
 **Note**: `vector_database` is **optional** (v8.4+). When provided, host should load pre-existing vectors from S5 instead of expecting `uploadVectors` messages. See `S5_VECTOR_LOADING.md` for host-side implementation details.
 
+### RAG Support: S5 Vector Database Loading (v8.4+)
+
+The WebSocket protocol now supports **encrypted transmission** of S5 vector database paths for Retrieval-Augmented Generation (RAG) workflows.
+
+#### Encryption Support (v8.4+)
+
+When using encrypted session initialization (ECDH + XChaCha20-Poly1305), the `vector_database` field is automatically encrypted along with other session data:
+
+```typescript
+// Encrypted session_init payload structure
+interface EncryptedSessionPayload {
+  eph_pub: string;        // Client's ephemeral public key (hex)
+  ciphertext: string;     // Encrypted session data including vector_database
+  nonce: string;          // 24-byte nonce (hex)
+  signature: string;      // ECDSA signature for authentication (hex)
+  aad: string;            // Additional authenticated data (hex)
+}
+
+// Decrypted session data includes:
+interface SessionInitData {
+  job_id: string;
+  model_name: string;
+  session_key: string;    // 32-byte hex-encoded session key
+  price_per_token: number;
+  vector_database?: {     // Optional RAG database path
+    manifest_path: string;
+    user_address: string;
+  }
+}
+```
+
+**Security Benefits**:
+- Vector database paths are encrypted end-to-end (ECDH key exchange)
+- Client authentication via ECDSA signature recovery
+- Perfect forward secrecy with ephemeral keys
+- Protected against MITM attacks
+
+See `ENCRYPTION_SECURITY.md` and `SDK_ENCRYPTION_INTEGRATION.md` for full encryption integration details.
+
+#### Vector Database Structure
+
+```typescript
+interface VectorDatabaseInfo {
+  manifest_path: string;  // S5 path to manifest.json
+  user_address: string;   // Ethereum address of database owner
+}
+
+// Example manifest path format:
+// "home/vector-databases/{user_address}/{database_name}/manifest.json"
+// e.g., "home/vector-databases/0xABC123.../my-documents/manifest.json"
+```
+
+#### Loading Status Messages
+
+When a host receives a `session_init` with `vector_database`, it will send loading status updates:
+
+```typescript
+// Loading started
+{
+  type: 'vector_loading_status',
+  session_id: 'uuid',
+  status: 'loading',
+  manifest_path: 'home/vector-databases/0xABC.../my-docs/manifest.json',
+  message: 'Loading vector database...'
+}
+
+// Loading progress (optional, for large databases)
+{
+  type: 'vector_loading_status',
+  session_id: 'uuid',
+  status: 'progress',
+  vectors_loaded: 5000,
+  total_vectors: 10000,
+  percent_complete: 50
+}
+
+// Loading complete
+{
+  type: 'vector_loading_status',
+  session_id: 'uuid',
+  status: 'ready',
+  vectors_loaded: 10000,
+  dimensions: 384,
+  message: 'Vector database loaded successfully'
+}
+```
+
+#### Error Codes for Vector Loading
+
+```typescript
+// Manifest not found on S5 network
+{
+  type: 'error',
+  error_code: 'MANIFEST_NOT_FOUND',
+  message: 'Vector database manifest not found',
+  details: {
+    manifest_path: 'home/vector-databases/0xABC.../my-docs/manifest.json'
+  }
+}
+
+// Ownership verification failed
+{
+  type: 'error',
+  error_code: 'OWNER_MISMATCH',
+  message: 'Client address does not match database owner',
+  details: {
+    expected_owner: '0xABC123...',
+    actual_client: '0xDEF456...'
+  }
+}
+
+// S5 network unreachable
+{
+  type: 'error',
+  error_code: 'S5_NETWORK_ERROR',
+  message: 'Failed to connect to S5 network',
+  details: {
+    s5_endpoint: 'https://s5.vup.cx',
+    error: 'Connection timeout'
+  }
+}
+
+// Invalid manifest format
+{
+  type: 'error',
+  error_code: 'INVALID_MANIFEST',
+  message: 'Vector database manifest has invalid format',
+  details: {
+    expected_fields: ['vectors', 'metadata', 'dimensions']
+  }
+}
+```
+
+#### Backward Compatibility
+
+The `vector_database` field is **fully backward compatible**:
+
+✅ **Old SDKs (without vector_database)**:
+- Can still initialize sessions without this field
+- Existing plaintext and encrypted sessions work unchanged
+- No breaking changes to message format
+
+✅ **New SDKs (with vector_database)**:
+- Hosts on v8.4+ will load vectors from S5
+- Hosts on older versions will ignore the field (no error)
+- Encryption layer handles optional field transparently
+
+**Example: Mixed SDK versions**
+```typescript
+// Old SDK (v8.3 or earlier) - still works
+const oldInitMessage = {
+  type: 'session_init',
+  session_id: generateUUID(),
+  job_id: 12345,
+  model_config: { model: 'llama-2-7b' }
+  // No vector_database field - perfectly valid
+};
+
+// New SDK (v8.4+) - enhanced with RAG
+const newInitMessage = {
+  type: 'session_init',
+  session_id: generateUUID(),
+  job_id: 12345,
+  model_config: { model: 'llama-2-7b' },
+  vector_database: {  // Optional enhancement
+    manifest_path: 'home/vector-databases/0xABC.../my-docs/manifest.json',
+    user_address: '0xABC...'
+  }
+};
+```
+
+#### SDK Integration Example
+
+```typescript
+class RAGEnabledSession {
+  async initializeWithVectorDB(
+    jobId: number,
+    vectorDBPath: string,
+    userAddress: string
+  ) {
+    const ws = new WebSocket('ws://host:8080/v1/ws');
+
+    await this.waitForOpen(ws);
+
+    // Initialize session with vector database
+    const initMessage = {
+      type: 'session_init',
+      session_id: generateUUID(),
+      job_id: jobId,
+      model_config: {
+        model: 'llama-2-7b',
+        max_tokens: 2048
+      },
+      vector_database: {
+        manifest_path: vectorDBPath,
+        user_address: userAddress
+      }
+    };
+
+    ws.send(JSON.stringify(initMessage));
+
+    // Listen for loading status
+    ws.on('message', (data) => {
+      const msg = JSON.parse(data);
+
+      if (msg.type === 'vector_loading_status') {
+        console.log(`Vector DB: ${msg.status} - ${msg.message}`);
+
+        if (msg.status === 'ready') {
+          console.log(`Loaded ${msg.vectors_loaded} vectors (${msg.dimensions}D)`);
+          // Session ready for RAG-enhanced inference
+        }
+      }
+
+      if (msg.type === 'error' && msg.error_code.startsWith('MANIFEST_')) {
+        console.error(`Vector DB error: ${msg.message}`);
+        // Handle vector loading failure
+      }
+    });
+  }
+}
+```
+
+#### Performance Considerations
+
+**Loading Times** (approximate):
+- Small databases (<1K vectors): <100ms
+- Medium databases (1K-10K vectors): 100ms-500ms
+- Large databases (10K-100K vectors): 500ms-2s
+
+**Recommendations**:
+- Show loading progress UI for databases >5K vectors
+- Consider pre-loading vectors before session starts
+- Cache vector databases on host for faster subsequent loads
+- Use compressed manifest formats to reduce S5 download time
+
 #### Session Resume (After Disconnect)
 ```typescript
 const resumeMessage = {
@@ -644,6 +880,10 @@ describe('End-to-End Conversation', () => {
 - `MODEL_UNAVAILABLE`: Model not loaded
 - `CONTEXT_TOO_LARGE`: Exceeds token limit
 - `CIRCUIT_OPEN`: Service temporarily unavailable
+- `MANIFEST_NOT_FOUND`: Vector database manifest not found on S5 (v8.4+)
+- `OWNER_MISMATCH`: Client address does not match database owner (v8.4+)
+- `S5_NETWORK_ERROR`: Failed to connect to S5 network (v8.4+)
+- `INVALID_MANIFEST`: Vector database manifest has invalid format (v8.4+)
 
 ## Current Working Implementation (January 2025)
 

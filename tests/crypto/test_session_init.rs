@@ -487,3 +487,138 @@ fn test_missing_fields_in_payload() {
     let result = decrypt_session_init(&payload, &node_priv_bytes);
     assert!(result.is_err(), "Missing sessionKey field should fail");
 }
+
+#[test]
+fn test_decrypt_with_vector_database() {
+    // Test that vector_database field is properly encrypted and decrypted
+    let node_secret = SecretKey::random(&mut OsRng);
+    let node_priv_bytes = node_secret.to_bytes();
+    let node_public = node_secret.public_key();
+
+    let client_secret = SecretKey::random(&mut OsRng);
+    let client_eph_pub = client_secret.public_key();
+    let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
+
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
+
+    // Create session data WITH vector_database field
+    let session_data = serde_json::json!({
+        "jobId": "test-job-with-vectors",
+        "modelName": "llama-3",
+        "sessionKey": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        "pricePerToken": 2000,
+        "vectorDatabase": {
+            "manifestPath": "home/vector-databases/0xABC123/my-docs/manifest.json",
+            "userAddress": "0xABC123"
+        }
+    });
+    let plaintext = session_data.to_string();
+
+    let nonce = [99u8; 24];
+    let aad = b"session-init-with-vectors";
+    let ciphertext = encrypt_with_aead(plaintext.as_bytes(), &nonce, aad, &shared_key).unwrap();
+
+    let client_signing_key = SigningKey::random(&mut OsRng);
+    let ciphertext_hash = Sha256::digest(&ciphertext);
+    let signature: k256::ecdsa::Signature = client_signing_key.sign(&ciphertext);
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+    sig_bytes[64] = 0;
+
+    let payload = EncryptedSessionPayload {
+        eph_pub: client_eph_pub_bytes.to_vec(),
+        ciphertext,
+        nonce: nonce.to_vec(),
+        signature: sig_bytes.to_vec(),
+        aad: aad.to_vec(),
+    };
+
+    // Decrypt and verify vector_database field
+    let result = decrypt_session_init(&payload, &node_priv_bytes);
+    assert!(result.is_ok(), "Decryption with vector_database should succeed");
+
+    let session_init = result.unwrap();
+    assert_eq!(session_init.job_id, "test-job-with-vectors");
+    assert_eq!(session_init.model_name, "llama-3");
+    assert_eq!(session_init.price_per_token, 2000);
+
+    // Verify vector_database field
+    assert!(
+        session_init.vector_database.is_some(),
+        "vector_database should be present"
+    );
+    let vector_db = session_init.vector_database.unwrap();
+    assert_eq!(
+        vector_db.manifest_path,
+        "home/vector-databases/0xABC123/my-docs/manifest.json"
+    );
+    assert_eq!(vector_db.user_address, "0xABC123");
+}
+
+#[test]
+fn test_decrypt_without_vector_database_backward_compat() {
+    // Test backward compatibility - session data WITHOUT vector_database field
+    let node_secret = SecretKey::random(&mut OsRng);
+    let node_priv_bytes = node_secret.to_bytes();
+    let node_public = node_secret.public_key();
+
+    let client_secret = SecretKey::random(&mut OsRng);
+    let client_eph_pub = client_secret.public_key();
+    let client_eph_pub_bytes = client_eph_pub.to_sec1_bytes();
+
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
+
+    // Create session data WITHOUT vector_database field (old SDK format)
+    let session_data = serde_json::json!({
+        "jobId": "test-job-no-vectors",
+        "modelName": "llama-3",
+        "sessionKey": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "pricePerToken": 1500
+    });
+    let plaintext = session_data.to_string();
+
+    let nonce = [88u8; 24];
+    let aad = b"session-init-no-vectors";
+    let ciphertext = encrypt_with_aead(plaintext.as_bytes(), &nonce, aad, &shared_key).unwrap();
+
+    let client_signing_key = SigningKey::random(&mut OsRng);
+    let ciphertext_hash = Sha256::digest(&ciphertext);
+    let signature: k256::ecdsa::Signature = client_signing_key.sign(&ciphertext);
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+    sig_bytes[64] = 0;
+
+    let payload = EncryptedSessionPayload {
+        eph_pub: client_eph_pub_bytes.to_vec(),
+        ciphertext,
+        nonce: nonce.to_vec(),
+        signature: sig_bytes.to_vec(),
+        aad: aad.to_vec(),
+    };
+
+    // Decrypt and verify - should work without vector_database field
+    let result = decrypt_session_init(&payload, &node_priv_bytes);
+    assert!(
+        result.is_ok(),
+        "Decryption without vector_database should succeed (backward compat)"
+    );
+
+    let session_init = result.unwrap();
+    assert_eq!(session_init.job_id, "test-job-no-vectors");
+    assert_eq!(session_init.model_name, "llama-3");
+    assert_eq!(session_init.price_per_token, 1500);
+
+    // Verify vector_database is None
+    assert!(
+        session_init.vector_database.is_none(),
+        "vector_database should be None for backward compatibility"
+    );
+}

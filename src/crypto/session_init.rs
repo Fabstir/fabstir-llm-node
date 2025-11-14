@@ -6,6 +6,7 @@
 //! Combines ECDH, XChaCha20-Poly1305, and ECDSA signature recovery.
 
 use super::{decrypt_with_aead, derive_shared_key, recover_client_address};
+use crate::api::websocket::message_types::VectorDatabaseInfo;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -38,6 +39,8 @@ pub struct SessionInitData {
     pub price_per_token: u64,
     /// Client's Ethereum address (recovered from signature)
     pub client_address: String,
+    /// Optional S5 vector database information for RAG
+    pub vector_database: Option<VectorDatabaseInfo>,
 }
 
 /// Internal structure for parsing decrypted JSON payload
@@ -48,6 +51,7 @@ struct SessionDataJson {
     model_name: String,
     session_key: String,
     price_per_token: u64,
+    vector_database: Option<VectorDatabaseInfo>,
 }
 
 /// Decrypt and verify encrypted session initialization payload
@@ -150,6 +154,7 @@ pub fn decrypt_session_init(
         session_key,
         price_per_token: session_data.price_per_token,
         client_address,
+        vector_database: session_data.vector_database,
     })
 }
 

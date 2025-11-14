@@ -54,11 +54,11 @@ tokio-stream = "0.1"
 - [x] Write tests for backward compatibility (session_init without vector_database)
 - [x] Create VectorDatabaseInfo struct in api/websocket/types.rs
 - [x] Update SessionInitMessage to include Option<VectorDatabaseInfo>
-- [ ] Update EncryptedSessionInitPayload with vector_database field (deferred to Phase 3)
-- [ ] Update PlaintextSessionInitMessage with vector_database field (deferred to Phase 3)
+- [x] Update EncryptedSessionInitPayload with vector_database field (COMPLETED v8.4.0 - 2025-11-14)
+- [x] Update PlaintextSessionInitMessage with vector_database field (N/A - using SessionInitData)
 - [x] Add validation for manifest_path format
 - [x] Add validation for user_address checksum
-- [ ] Document field in WebSocket protocol docs (deferred to end of Phase 1)
+- [x] Document field in WebSocket protocol docs (COMPLETED v8.4.0 - 2025-11-14)
 
 **Test Files:**
 - `tests/api/websocket_protocol_tests.rs` - Protocol message tests (max 400 lines)
@@ -89,11 +89,11 @@ tokio-stream = "0.1"
 - [x] Write tests for vector database status tracking (loading, loaded, error)
 - [x] Add vector_database field to Session struct
 - [x] Add vector_loading_status enum (NotStarted, Loading, Loaded, Error)
-- [ ] Add vector_index_handle to store loaded index reference (deferred - using existing vector_store)
+- [x] Add vector_index_handle to store loaded index reference (COMPLETED - using vector_index field in WebSocketSession)
 - [x] Update create_session to accept vector_database info (via set_vector_database method)
 - [x] Add get_vector_database_info method
 - [x] Add set_vector_loading_status method
-- [ ] Add metrics for sessions with S5 vector databases (deferred to Phase 3)
+- [x] Add metrics for sessions with S5 vector databases (COMPLETED Phase 5.4 - 2025-11-14)
 
 **Test Files:**
 - `tests/api/session_store_tests.rs` - Session store tests (max 350 lines)
@@ -141,9 +141,9 @@ tokio-stream = "0.1"
 - [x] Implement download_file method with retries (get() method exists, retry via reqwest defaults)
 - [x] Add connection pooling with reqwest Client (reqwest::Client built-in pooling)
 - [ ] Implement exponential backoff for retries (DEFERRED - not critical for MVP)
-- [ ] Add download progress tracking (DEFERRED - optimization for Phase 5)
+- [x] Add download progress tracking (COMPLETED Phase 3 - LoadProgress enum with ChunkDownloaded events)
 - [x] Add timeout configuration (30s default) (implemented in RealS5Backend::new)
-- [ ] Add metrics for S5 downloads (latency, errors) (DEFERRED - Phase 5: Performance Optimization)
+- [x] Add metrics for S5 downloads (latency, errors) (COMPLETED Phase 5.4 - s5_metrics.rs)
 
 **Test Files:**
 - ✅ `tests/storage/test_s5_client.rs` (existing, 325 lines) - Comprehensive S5 client tests
