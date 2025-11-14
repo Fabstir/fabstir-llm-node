@@ -6,6 +6,17 @@
  * Manages S5 P2P client lifecycle, identity, and portal registration
  */
 
+// Polyfill browser APIs for Node.js environment
+import 'fake-indexeddb/auto';
+import { WebSocket } from 'ws';
+import { TextEncoder, TextDecoder } from 'node:util';
+
+// Make browser APIs global for S5.js
+global.WebSocket = WebSocket;
+global.TextEncoder = TextEncoder;
+global.TextDecoder = TextDecoder;
+// Note: global.crypto already exists in Node.js 20+
+
 import { S5 } from '@julesl23/s5js';
 import { bridgeConfig } from './config.js';
 
@@ -47,24 +58,33 @@ export async function initializeS5Client() {
 
       console.log('✅ S5 instance created');
 
-      // Step 2: Recover identity from seed phrase
+      // Step 2: Recover identity from seed phrase (required even for read-only operations)
       if (bridgeConfig.seedPhrase) {
         console.log('🔐 Recovering identity from seed phrase...');
         await s5.recoverIdentityFromSeedPhrase(bridgeConfig.seedPhrase);
         console.log('✅ Identity recovered');
       } else {
-        throw new Error('Seed phrase is required but not configured');
+        console.warn('⚠️  No seed phrase configured - filesystem operations will fail');
       }
 
-      // Step 3: Register with S5 portal
-      console.log(`🌐 Registering with S5 portal: ${bridgeConfig.portalUrl}`);
-      await s5.registerOnNewPortal(bridgeConfig.portalUrl);
-      console.log('✅ Portal registration complete');
+      // Step 3: Register with S5 portal (optional - can fail for download-only mode)
+      if (bridgeConfig.portalUrl && bridgeConfig.registerWithPortal !== false) {
+        try {
+          console.log(`🌐 Attempting portal registration: ${bridgeConfig.portalUrl}`);
+          await s5.registerOnNewPortal(bridgeConfig.portalUrl);
+          console.log('✅ Portal registration complete');
+        } catch (error) {
+          console.warn('⚠️  Portal registration failed (non-fatal for read-only operations)');
+          console.warn(`   Error: ${error.message}`);
+          console.log('📥 Bridge will operate in read-only mode');
+        }
+      }
 
-      // Step 4: Initialize filesystem
-      console.log('📁 Initializing S5 filesystem...');
-      await s5.fs.ensureIdentityInitialized();
-      console.log('✅ Filesystem initialized');
+      // Step 4: Filesystem initialization is OPTIONAL for read-only operations
+      // The fs.get() method should work for reading existing paths without initialization
+      // (ensureIdentityInitialized() creates home/archive directories which requires upload)
+      console.log('📥 Skipping filesystem initialization (not required for read-only operations)');
+      console.log('✅ Bridge ready for downloading existing S5 content');
 
       s5Instance = s5;
       console.log('🎉 Enhanced S5.js client fully initialized');

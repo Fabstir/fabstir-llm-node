@@ -20,12 +20,14 @@
   "author": "Fabstir",
   "license": "BUSL-1.1",
   "dependencies": {
-    "@julesl23/s5js": "beta",
-    "fastify": "^4.25.0",
     "@fastify/cors": "^8.5.0",
+    "@julesl23/s5js": "beta",
     "dotenv": "^16.3.1",
+    "fake-indexeddb": "^6.2.5",
+    "fastify": "^4.25.0",
     "pino": "^8.17.0",
-    "pino-pretty": "^10.3.0"
+    "pino-pretty": "^10.3.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.0"

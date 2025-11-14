@@ -106,6 +106,19 @@ pub struct HealthResponse {
     pub version: String,
 }
 
+/// Health response from Enhanced S5.js bridge service
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeHealthResponse {
+    pub status: String,
+    pub service: String,
+    pub timestamp: String,
+    pub initialized: bool,
+    pub connected: bool,
+    #[serde(rename = "peerCount")]
+    pub peer_count: u32,
+    pub portal: String,
+}
+
 #[derive(Clone)]
 pub struct EnhancedS5Client {
     client: Client,
@@ -151,6 +164,23 @@ impl EnhancedS5Client {
         }
 
         let health: HealthResponse = response.json().await?;
+        Ok(health)
+    }
+
+    /// Check Enhanced S5.js bridge service health
+    pub async fn bridge_health_check(&self) -> Result<BridgeHealthResponse> {
+        let url = format!("{}/health", self.base_url);
+
+        let response = self.client.get(&url).send().await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Bridge health check failed with status: {}",
+                response.status()
+            ));
+        }
+
+        let health: BridgeHealthResponse = response.json().await?;
         Ok(health)
     }
 
