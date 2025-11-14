@@ -448,7 +448,9 @@ impl VectorLoader {
         let rate_limit = self.rate_limit.clone();
 
         // Download and decrypt chunks in parallel
-        let chunk_results: Vec<Result<Vec<Vector>, VectorLoadError>> = stream::iter(manifest.chunks.iter())
+        // Clone chunks to avoid lifetime issues with iterator borrows in async closures
+        let chunks_owned = manifest.chunks.clone();
+        let chunk_results: Vec<Result<Vec<Vector>, VectorLoadError>> = stream::iter(chunks_owned.into_iter())
             .map(|chunk_meta| {
                 let s5_client = s5_client.clone();
                 let session_key = session_key.clone();

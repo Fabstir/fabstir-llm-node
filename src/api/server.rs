@@ -1184,6 +1184,51 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                             .await;
 
                                                         info!("✅ Session key stored for session_id: {}", sid);
+
+                                                        // Handle vector_database if provided (Sub-phase 3.3)
+                                                        if let Some(vdb_info) = session_init_data.vector_database.clone() {
+                                                            info!(
+                                                                "📦 Vector database requested: {}",
+                                                                vdb_info.manifest_path
+                                                            );
+
+                                                            // Get session from store and update it
+                                                            let mut store = server.session_store.write().await;
+                                                            if let Some(mut session) = store.get_session_mut(sid).await {
+                                                                // Store encryption key in session
+                                                                session.encryption_key = Some(extracted_session_key.to_vec());
+
+                                                                // Set vector_database info
+                                                                session.set_vector_database(Some(vdb_info.clone()));
+
+                                                                // Set status to Loading
+                                                                session.set_vector_loading_status(
+                                                                    crate::api::websocket::session::VectorLoadingStatus::Loading
+                                                                );
+
+                                                                // Get cancel_token for background task
+                                                                let cancel_token = session.cancel_token.clone();
+
+                                                                info!("🚀 Spawning async vector loading task for session: {}", sid);
+
+                                                                // Spawn background task
+                                                                let sid_clone = sid.clone();
+                                                                let session_store_clone = server.session_store.clone();
+                                                                let encryption_key_clone = Some(extracted_session_key.to_vec());
+
+                                                                tokio::spawn(async move {
+                                                                    crate::api::websocket::vector_loading::load_vectors_async(
+                                                                        sid_clone,
+                                                                        vdb_info,
+                                                                        session_store_clone,
+                                                                        cancel_token,
+                                                                        encryption_key_clone,
+                                                                    ).await;
+                                                                });
+                                                            } else {
+                                                                warn!("⚠️ Session not found in store: {}", sid);
+                                                            }
+                                                        }
                                                     } else {
                                                         warn!("⚠️ No session_id provided - session key not stored");
                                                     }
