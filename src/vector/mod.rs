@@ -3,6 +3,7 @@
 pub mod client;
 pub mod embeddings;
 pub mod hnsw;
+pub mod index_cache;
 pub mod semantic_cache;
 pub mod storage;
 pub mod vector_db_client;
@@ -21,6 +22,9 @@ pub use embeddings::{
 
 // Re-export HNSW index types
 pub use hnsw::{HnswIndex, SearchResult as HnswSearchResult};
+
+// Re-export index cache types
+pub use index_cache::{CacheMetrics, IndexCache};
 
 // Re-export semantic cache types
 pub use semantic_cache::{
