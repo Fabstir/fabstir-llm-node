@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +129,17 @@ pub struct WebSocketSession {
     /// HNSW index built from S5-loaded vectors (when vector_database is provided)
     /// This is separate from vector_store (for uploaded vectors)
     pub vector_index: Option<Arc<HnswIndex>>,
+
+    // Async Vector Loading Support (Sub-phase 3.3)
+    /// Encryption key for this session (extracted from session_init)
+    /// Used to decrypt vector_database paths if encryption is enabled
+    pub encryption_key: Option<Vec<u8>>,
+    /// Cancellation token for background vector loading task
+    /// Used to gracefully cancel loading when session disconnects
+    pub cancel_token: CancellationToken,
+    /// Message sender for WebSocket communication
+    /// Allows background tasks to send progress updates to client
+    pub tx: Option<UnboundedSender<Message>>,
 }
 
 impl WebSocketSession {
@@ -154,6 +167,9 @@ impl WebSocketSession {
             vector_database: None,
             vector_loading_status: VectorLoadingStatus::NotStarted,
             vector_index: None,
+            encryption_key: None,
+            cancel_token: CancellationToken::new(),
+            tx: None,
         }
     }
 
