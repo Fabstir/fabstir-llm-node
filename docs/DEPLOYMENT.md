@@ -585,6 +585,222 @@ Configure health monitoring:
 curl -f http://localhost:8080/health || exit 1
 ```
 
+### 4. S5 Vector Loading Metrics
+
+The node exposes Prometheus metrics for monitoring S5 vector database loading performance. These metrics are automatically collected when using host-side RAG (Sub-phase 5.4).
+
+**Available Metrics:**
+
+```prometheus
+# Download performance
+s5_download_duration_seconds (histogram)
+  - Tracks S5 download latency
+  - Buckets: 0.1s, 0.5s, 1.0s, 2.0s, 5.0s, 10.0s
+  - Labels: none
+
+s5_download_errors_total (counter)
+  - Total number of S5 download failures
+  - Labels: none
+
+# Vector loading
+s5_vectors_loaded_total (counter)
+  - Total vectors loaded from S5
+  - Labels: none
+
+# Index building
+vector_index_build_duration_seconds (histogram)
+  - Time to build HNSW indexes from loaded vectors
+  - Buckets: 0.01s, 0.05s, 0.1s, 0.5s, 1.0s, 5.0s
+  - Labels: none
+
+# Cache performance
+vector_index_cache_hits_total (counter)
+  - Number of index cache hits
+  - Labels: none
+
+vector_index_cache_misses_total (counter)
+  - Number of index cache misses
+  - Labels: none
+```
+
+**Prometheus Queries:**
+
+```prometheus
+# Average S5 download time (last 5 minutes)
+rate(s5_download_duration_seconds_sum[5m]) / rate(s5_download_duration_seconds_count[5m])
+
+# S5 error rate (last 5 minutes)
+rate(s5_download_errors_total[5m])
+
+# Cache hit rate
+rate(vector_index_cache_hits_total[5m]) /
+  (rate(vector_index_cache_hits_total[5m]) + rate(vector_index_cache_misses_total[5m]))
+
+# P95 download latency
+histogram_quantile(0.95, rate(s5_download_duration_seconds_bucket[5m]))
+
+# P99 download latency
+histogram_quantile(0.99, rate(s5_download_duration_seconds_bucket[5m]))
+
+# Vectors loaded per minute
+rate(s5_vectors_loaded_total[1m]) * 60
+```
+
+**Alert Rules:**
+
+```yaml
+groups:
+  - name: s5_vector_loading
+    rules:
+      - alert: HighS5ErrorRate
+        expr: rate(s5_download_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High S5 download error rate"
+          description: "S5 download error rate is {{ $value }} errors/sec"
+
+      - alert: SlowS5Downloads
+        expr: histogram_quantile(0.95, rate(s5_download_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow S5 downloads"
+          description: "P95 download latency is {{ $value }}s"
+
+      - alert: LowCacheHitRate
+        expr: |
+          rate(vector_index_cache_hits_total[5m]) /
+          (rate(vector_index_cache_hits_total[5m]) + rate(vector_index_cache_misses_total[5m])) < 0.5
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Low index cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }}"
+```
+
+**Grafana Panels:**
+
+```json
+{
+  "panels": [
+    {
+      "title": "S5 Download Latency (P95/P99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(s5_download_duration_seconds_bucket[5m]))",
+          "legendFormat": "P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(s5_download_duration_seconds_bucket[5m]))",
+          "legendFormat": "P99"
+        }
+      ]
+    },
+    {
+      "title": "S5 Error Rate",
+      "targets": [
+        {
+          "expr": "rate(s5_download_errors_total[5m])",
+          "legendFormat": "Errors/sec"
+        }
+      ]
+    },
+    {
+      "title": "Index Cache Hit Rate",
+      "targets": [
+        {
+          "expr": "rate(vector_index_cache_hits_total[5m]) / (rate(vector_index_cache_hits_total[5m]) + rate(vector_index_cache_misses_total[5m]))",
+          "legendFormat": "Hit Rate"
+        }
+      ]
+    },
+    {
+      "title": "Vectors Loaded/Min",
+      "targets": [
+        {
+          "expr": "rate(s5_vectors_loaded_total[1m]) * 60",
+          "legendFormat": "Vectors/min"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Structured Logging:**
+
+The VectorLoader also emits structured logs for monitoring:
+
+```log
+# Loading started
+INFO  🚀 Starting S5 vector database loading manifest_path="home/vector-databases/0xABC/docs/manifest.json" user_address="0xABC..."
+
+# Manifest downloaded
+INFO  📦 Manifest downloaded and decrypted manifest_name="My Docs" owner="0xABC..." dimensions=384 vector_count=10000 chunk_count=10
+
+# Owner verification
+DEBUG ✅ Owner verification passed expected_owner="0xABC..." actual_owner="0xABC..."
+
+# Memory check
+DEBUG ✅ Memory limit check passed estimated_mb=15 limit_mb=100
+
+# Manifest download details
+DEBUG 📥 Manifest downloaded from S5 path="..." duration_ms=234 size_bytes=1024
+
+# Chunk downloads
+TRACE 📥 Chunk downloaded chunk_id=1 path="..." duration_ms=567 size_bytes=102400
+DEBUG ✅ Chunk processed chunk_id=1 total_chunks=10 vectors_so_far=1000
+
+# All chunks complete
+INFO  📦 All chunks downloaded and decrypted total_vectors=10000 total_chunks=10
+
+# Loading complete
+INFO  ✅ S5 vector database loading complete manifest_path="..." vector_count=10000 duration_ms=5234 chunk_count=10
+
+# Errors
+ERROR ❌ Failed to download manifest from S5 path="..." error="..."
+ERROR ❌ Owner verification failed expected="0xABC..." actual="0xDEF..."
+ERROR ❌ Memory limit would be exceeded required_mb=150 limit_mb=100
+WARN  ⚠️  Rate limit exceeded current=10 limit=10 window_sec=60
+ERROR ❌ Loading operation timed out manifest_path="..." timeout_sec=300
+```
+
+**Log Aggregation:**
+
+Configure log shipping to aggregate structured logs:
+
+```bash
+# Fluentd configuration
+<source>
+  @type tail
+  path /var/log/fabstir-node/*.log
+  pos_file /var/log/td-agent/fabstir-node.pos
+  tag fabstir.node
+  <parse>
+    @type json
+  </parse>
+</source>
+
+<filter fabstir.node>
+  @type grep
+  <regexp>
+    key message
+    pattern /S5 vector database loading|Manifest downloaded|Chunk downloaded/
+  </regexp>
+</filter>
+
+<match fabstir.node>
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  index_name fabstir-node
+</match>
+```
+
 ## Backup and Recovery
 
 ### 1. Data Backup

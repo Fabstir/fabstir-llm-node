@@ -1,7 +1,76 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 // src/storage/enhanced_s5_client.rs
-// Phase 4.1.1: Enhanced S5.js with Internal Mock - HTTP Client Implementation
+//!
+//! Enhanced S5.js P2P Bridge Client
+//!
+//! This module provides an HTTP client for connecting to the Enhanced S5.js bridge service.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Rust Node (this) → HTTP API → Enhanced S5.js Bridge → P2P Network (WebSocket)
+//!                                       ↓
+//!                                S5 Portal Gateway (s5.vup.cx)
+//!                                       ↓
+//!                           Decentralized Storage Network
+//! ```
+//!
+//! ## Bridge Service
+//!
+//! The bridge service (`services/s5-bridge/`) runs the Enhanced S5.js SDK (`@julesl23/s5js@beta`)
+//! and exposes a simple HTTP REST API on `localhost:5522` (configurable via ENHANCED_S5_URL).
+//!
+//! **The bridge MUST be running before starting the Rust node.**
+//!
+//! ### Starting the Bridge
+//!
+//! ```bash
+//! # Option 1: Direct start (requires Node.js 20+)
+//! cd services/s5-bridge
+//! npm install
+//! npm start
+//!
+//! # Option 2: Docker
+//! cd services/s5-bridge
+//! docker-compose up -d
+//!
+//! # Option 3: Orchestrated startup (recommended)
+//! ./scripts/start-with-s5-bridge.sh
+//! ```
+//!
+//! ## P2P Network
+//!
+//! The bridge connects to the decentralized S5 network via:
+//! - **WebSocket P2P Peers**: Direct peer-to-peer connections (e.g., `wss://s5.ninja/s5/p2p`)
+//! - **S5 Portal**: Identity registry and gateway (e.g., `https://s5.vup.cx`)
+//! - **Seed Phrase**: User identity recovery (12-word mnemonic)
+//!
+//! There are **NO centralized servers** - all storage is P2P and decentralized.
+//!
+//! ## Configuration
+//!
+//! Set the bridge URL via environment variable:
+//! ```bash
+//! export ENHANCED_S5_URL=http://localhost:5522
+//! ```
+//!
+//! ## Health Checks
+//!
+//! Before starting the node, verify the bridge is healthy:
+//! ```bash
+//! curl http://localhost:5522/health
+//! # Expected: {"status":"healthy","connected":true,...}
+//! ```
+//!
+//! ## See Also
+//!
+//! - Enhanced S5.js SDK: https://github.com/parajbs/s5-network
+//! - Bridge service: `services/s5-bridge/README.md`
+//! - Deployment guide: `docs/ENHANCED_S5_DEPLOYMENT.md`
+//!
+//! Phase 4.1.1: Enhanced S5.js with Internal Mock - HTTP Client Implementation
+//! Phase 6.1: Enhanced S5.js P2P Bridge Service Integration
 
 use anyhow::{anyhow, Result};
 use reqwest::Client;

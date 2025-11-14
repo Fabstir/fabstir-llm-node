@@ -1,0 +1,53 @@
+# Enhanced S5.js Bridge Service Docker Compose
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+
+version: '3.8'
+
+services:
+  s5-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: s5-bridge
+    restart: unless-stopped
+    ports:
+      - "5522:5522"
+    environment:
+      # HTTP Server
+      BRIDGE_PORT: 5522
+      BRIDGE_HOST: 0.0.0.0  # Listen on all interfaces inside container
+
+      # S5 Identity (REQUIRED - set in .env file)
+      S5_SEED_PHRASE: ${S5_SEED_PHRASE:?S5_SEED_PHRASE is required}
+
+      # S5 Network
+      S5_PORTAL_URL: ${S5_PORTAL_URL:-https://s5.vup.cx}
+      S5_INITIAL_PEERS: ${S5_INITIAL_PEERS:-wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PRETTY_LOGS: ${PRETTY_LOGS:-false}
+
+      # Performance
+      REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-30000}
+      MAX_CONTENT_LENGTH: ${MAX_CONTENT_LENGTH:-104857600}
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5522/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+    networks:
+      - s5-network
+
+    # Optional: Mount volume for logs
+    # volumes:
+    #   - ./logs:/app/logs
+
+networks:
+  s5-network:
+    name: s5-network
+    driver: bridge
