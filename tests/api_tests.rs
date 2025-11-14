@@ -23,4 +23,5 @@ mod api {
     mod test_session_vector_database;
     mod test_upload_vectors_messages;
     mod test_vector_database_info;
+    mod test_vector_loading_errors;
 }

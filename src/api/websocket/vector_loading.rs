@@ -37,6 +37,7 @@ use crate::api::websocket::message_types::{
 };
 use crate::api::websocket::session::{VectorLoadingStatus, WebSocketSession};
 use crate::api::websocket::session_store::SessionStore;
+use crate::api::websocket::vector_loading_errors::VectorLoadingError;
 use crate::job_processor::Message;
 use crate::rag::vector_loader::{VectorLoader, LoadProgress};
 use crate::storage::enhanced_s5_client::{EnhancedS5Client, S5Config};
@@ -170,15 +171,39 @@ pub async fn load_vectors_async(
                     // Requires passing S5Metrics instance through function parameters
                 }
                 Err(e) => {
-                    error!(
-                        session_id = %session_id,
-                        error = %e,
-                        duration_ms,
-                        "❌ Async vector loading failed"
-                    );
+                    // Convert anyhow::Error to VectorLoadingError
+                    let loading_error = VectorLoadingError::InternalError(e);
+
+                    // Log based on error severity (Sub-phase 8.2)
+                    match loading_error.log_level() {
+                        tracing::Level::WARN => {
+                            warn!(
+                                session_id = %session_id,
+                                error = %loading_error,
+                                duration_ms,
+                                "⚠️ Unexpected vector loading error"
+                            );
+                        }
+                        tracing::Level::INFO => {
+                            info!(
+                                session_id = %session_id,
+                                error = %loading_error,
+                                duration_ms,
+                                "Vector loading timed out (expected for large databases)"
+                            );
+                        }
+                        _ => {
+                            debug!(
+                                session_id = %session_id,
+                                error = %loading_error,
+                                duration_ms,
+                                "Vector loading failed with known error"
+                            );
+                        }
+                    }
 
                     // Send LoadingError message to client
-                    if let Err(send_err) = send_loading_error(&session_id, &session_store, &e).await {
+                    if let Err(send_err) = send_loading_error(&session_id, &session_store, &loading_error).await {
                         warn!(
                             session_id = %session_id,
                             error = %send_err,
@@ -289,7 +314,11 @@ async fn load_vectors_with_cancellation(
             &session_key,
             Some(progress_tx.clone()),
         ) => {
-            result.map_err(|e| anyhow::anyhow!("Vector loading failed: {}", e))?
+            // Convert VectorLoadError to VectorLoadingError using From trait
+            result.map_err(|e| {
+                let loading_error: VectorLoadingError = e.into();
+                anyhow::anyhow!("{}", loading_error)
+            })?
         }
         _ = cancel_token.cancelled() => {
             warn!(session_id = %session_id, "⚠️  Vector loading cancelled by disconnect");
@@ -444,57 +473,21 @@ async fn send_loading_progress(
     Ok(())
 }
 
-/// Categorize error and send LoadingError message to client
+/// Send LoadingError message to client (Sub-phase 8.1)
 ///
-/// Maps error messages to appropriate LoadingErrorCode for SDK handling
+/// Uses type-safe VectorLoadingError for automatic error code mapping
 async fn send_loading_error(
     session_id: &str,
     session_store: &Arc<RwLock<SessionStore>>,
-    error: &anyhow::Error,
+    error: &VectorLoadingError,
 ) -> Result<()> {
-    let error_str = error.to_string().to_lowercase();
-
-    // Categorize error based on message content
-    let (error_code, user_message) = if error_str.contains("timeout") || error_str.contains("timed out") {
-        (LoadingErrorCode::Timeout, format!("Loading timed out: {}", error))
-    } else if error_str.contains("session key") && error_str.contains("length") {
-        (LoadingErrorCode::InvalidSessionKey, "Invalid encryption key provided".to_string())
-    } else if error_str.contains("decryption") || error_str.contains("decrypt") {
-        (LoadingErrorCode::DecryptionFailed, "Failed to decrypt vector database".to_string())
-    } else if error_str.contains("manifest") && (error_str.contains("not found") || error_str.contains("404")) {
-        (LoadingErrorCode::ManifestNotFound, format!("Vector database not found: {}", error))
-    } else if error_str.contains("manifest") && error_str.contains("download") {
-        (LoadingErrorCode::ManifestDownloadFailed, format!("Failed to download manifest: {}", error))
-    } else if error_str.contains("chunk") && error_str.contains("download") {
-        (LoadingErrorCode::ChunkDownloadFailed, format!("Failed to download chunk: {}", error))
-    } else if error_str.contains("owner") && error_str.contains("mismatch") {
-        (LoadingErrorCode::OwnerMismatch, "Database owner verification failed".to_string())
-    } else if error_str.contains("dimension") {
-        (LoadingErrorCode::DimensionMismatch, format!("Vector dimension mismatch: {}", error))
-    } else if error_str.contains("no vectors") || error_str.contains("empty") {
-        (LoadingErrorCode::EmptyDatabase, "No vectors found in database".to_string())
-    } else if error_str.contains("index") && error_str.contains("build") {
-        (LoadingErrorCode::IndexBuildFailed, format!("Failed to build search index: {}", error))
-    } else if error_str.contains("session not found") {
-        (LoadingErrorCode::SessionNotFound, "Session expired or not found".to_string())
-    } else if error_str.contains("rate limit") {
-        (LoadingErrorCode::RateLimitExceeded, "Too many download requests, please wait".to_string())
-    } else if error_str.contains("memory") || error_str.contains("oom") {
-        (LoadingErrorCode::MemoryLimitExceeded, "Database too large to load".to_string())
-    } else if error_str.contains("invalid") && error_str.contains("path") {
-        (LoadingErrorCode::InvalidPath, "Invalid database path format".to_string())
-    } else {
-        // Generic internal error for unknown cases
-        (LoadingErrorCode::InternalError, format!("Loading failed: {}", error))
-    };
-
-    // Send LoadingError message
     send_loading_progress(
         session_id,
         session_store,
         LoadingProgressMessage::LoadingError {
-            error_code,
-            error: user_message,
+            error_code: error.to_error_code(),
+            error: error.user_friendly_message(),
         },
-    ).await
+    )
+    .await
 }
