@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.3.13-harmony-channels-2025-11-08";
+pub const VERSION: &str = "v8.4.0-s5-vector-loading-2025-11-14";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.3.13";
+pub const VERSION_NUMBER: &str = "8.4.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 3;
+pub const VERSION_MINOR: u32 = 4;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 13;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-11-08";
+pub const BUILD_DATE: &str = "2025-11-14";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -53,6 +53,8 @@ pub const FEATURES: &[&str] = &[
     "cosine-similarity-search",
     "chat-templates",
     "model-specific-formatting",
+    "s5-vector-loading",
+    "encrypted-vector-database-paths",
 ];
 
 /// Supported chain IDs
@@ -63,15 +65,16 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "Patch version bump (v8.3.12 -> v8.3.13) - CORRECT Harmony Format Implementation",
-    "CRITICAL FIX: Implemented PROPER Harmony format per official OpenAI spec",
-    "v8.3.12 was WRONG - used DEFAULT format instead of required Harmony format",
-    "Official spec: https://cookbook.openai.com/articles/openai-harmony",
-    "Added <|channel|>final<|message|> for user-facing responses",
-    "Added 'Reasoning: medium' and channel list to system message",
-    "Fixed stop token: now uses <|return|> (200002) instead of <|end|> (200007)",
-    "Harmony format is REQUIRED per OpenAI: 'will not work correctly otherwise'",
-    "All features from v8.3.11: Risc0 proofs, multi-chain, encryption",
+    "Minor version bump (v8.3.13 -> v8.4.0) - S5 Vector Database Loading with Encryption",
+    "FEATURE: Added vector_database field to encrypted session initialization",
+    "SessionInitData now includes Option<VectorDatabaseInfo> for RAG support",
+    "Encrypted session_init payloads can now transmit S5 vector database paths",
+    "Added comprehensive WebSocket API documentation for vector_database field",
+    "Full backward compatibility: old SDKs without vector_database still work",
+    "New error codes: MANIFEST_NOT_FOUND, OWNER_MISMATCH, S5_NETWORK_ERROR, INVALID_MANIFEST",
+    "Encryption: vector_database paths protected with ECDH + XChaCha20-Poly1305",
+    "Security: client authentication via ECDSA signature recovery",
+    "All features from v8.3.13: Harmony chat template, Risc0 proofs, multi-chain, encryption",
     "No contract changes - fully compatible with v8.2.0+",
 ];
 
@@ -99,8 +102,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 3);
-        assert_eq!(VERSION_PATCH, 13);
+        assert_eq!(VERSION_MINOR, 4);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
@@ -113,20 +116,22 @@ mod tests {
         assert!(FEATURES.contains(&"session-vector-storage"));
         assert!(FEATURES.contains(&"384d-embeddings"));
         assert!(FEATURES.contains(&"chat-templates"));
+        assert!(FEATURES.contains(&"s5-vector-loading"));
+        assert!(FEATURES.contains(&"encrypted-vector-database-paths"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.3.13"));
-        assert!(version.contains("2025-11-08"));
+        assert!(version.contains("8.4.0"));
+        assert!(version.contains("2025-11-14"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.3.13-harmony-channels-2025-11-08");
-        assert_eq!(VERSION_NUMBER, "8.3.13");
-        assert_eq!(BUILD_DATE, "2025-11-08");
+        assert_eq!(VERSION, "v8.4.0-s5-vector-loading-2025-11-14");
+        assert_eq!(VERSION_NUMBER, "8.4.0");
+        assert_eq!(BUILD_DATE, "2025-11-14");
     }
 }
