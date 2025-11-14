@@ -39,13 +39,14 @@
 //! ```
 
 use crate::crypto::aes_gcm::{decrypt_chunk, decrypt_manifest};
+use crate::rag::errors::VectorLoadError;
 use crate::storage::manifest::{Manifest, Vector};
 use crate::storage::s5_client::S5Storage;
-use anyhow::{anyhow, Result};
 use futures::stream::{self, StreamExt};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
+use tokio::time::timeout;
 
 /// Progress updates during vector loading
 #[derive(Debug, Clone)]
@@ -63,6 +64,17 @@ pub enum LoadProgress {
     Complete { vector_count: usize, duration_ms: u64 },
 }
 
+/// Rate limiting configuration
+#[derive(Debug, Clone)]
+struct RateLimit {
+    /// Maximum downloads per time window
+    max_downloads: usize,
+    /// Time window duration
+    window: Duration,
+    /// Download timestamps for tracking
+    downloads: Arc<tokio::sync::Mutex<Vec<Instant>>>,
+}
+
 /// Vector loader for S5 storage
 ///
 /// Downloads and decrypts vector databases from S5, with parallel chunk processing.
@@ -72,6 +84,15 @@ pub struct VectorLoader {
 
     /// Maximum number of chunks to download in parallel
     max_parallel_chunks: usize,
+
+    /// Optional rate limit configuration
+    rate_limit: Option<RateLimit>,
+
+    /// Optional memory limit in MB
+    memory_limit_mb: Option<usize>,
+
+    /// Optional timeout for entire loading operation
+    timeout_duration: Option<Duration>,
 }
 
 impl VectorLoader {
@@ -85,6 +106,78 @@ impl VectorLoader {
         Self {
             s5_client,
             max_parallel_chunks,
+            rate_limit: None,
+            memory_limit_mb: None,
+            timeout_duration: None,
+        }
+    }
+
+    /// Create a vector loader with rate limiting
+    ///
+    /// # Arguments
+    ///
+    /// * `s5_client` - S5 storage client
+    /// * `max_parallel_chunks` - Maximum number of chunks to download concurrently
+    /// * `max_downloads_per_window` - Maximum number of downloads allowed per time window
+    /// * `window` - Time window duration for rate limiting
+    pub fn with_rate_limit(
+        s5_client: Box<dyn S5Storage>,
+        max_parallel_chunks: usize,
+        max_downloads_per_window: usize,
+        window: Duration,
+    ) -> Self {
+        Self {
+            s5_client,
+            max_parallel_chunks,
+            rate_limit: Some(RateLimit {
+                max_downloads: max_downloads_per_window,
+                window,
+                downloads: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            }),
+            memory_limit_mb: None,
+            timeout_duration: None,
+        }
+    }
+
+    /// Create a vector loader with memory limit
+    ///
+    /// # Arguments
+    ///
+    /// * `s5_client` - S5 storage client
+    /// * `max_parallel_chunks` - Maximum number of chunks to download concurrently
+    /// * `memory_limit_mb` - Maximum memory usage in MB
+    pub fn with_memory_limit(
+        s5_client: Box<dyn S5Storage>,
+        max_parallel_chunks: usize,
+        memory_limit_mb: usize,
+    ) -> Self {
+        Self {
+            s5_client,
+            max_parallel_chunks,
+            rate_limit: None,
+            memory_limit_mb: Some(memory_limit_mb),
+            timeout_duration: None,
+        }
+    }
+
+    /// Create a vector loader with timeout
+    ///
+    /// # Arguments
+    ///
+    /// * `s5_client` - S5 storage client
+    /// * `max_parallel_chunks` - Maximum number of chunks to download concurrently
+    /// * `timeout_duration` - Maximum duration for loading operation
+    pub fn with_timeout(
+        s5_client: Box<dyn S5Storage>,
+        max_parallel_chunks: usize,
+        timeout_duration: Duration,
+    ) -> Self {
+        Self {
+            s5_client,
+            max_parallel_chunks,
+            rate_limit: None,
+            memory_limit_mb: None,
+            timeout_duration: Some(timeout_duration),
         }
     }
 
@@ -111,13 +204,37 @@ impl VectorLoader {
     /// - Chunk download or decryption fails
     /// - Vector validation fails (wrong dimensions, NaN values)
     /// - Database is marked as deleted
+    /// - Rate limit exceeded
+    /// - Memory limit exceeded
+    /// - Timeout exceeded
     pub async fn load_vectors_from_s5(
         &self,
         manifest_path: &str,
         user_address: &str,
         session_key: &[u8],
         progress_tx: Option<Sender<LoadProgress>>,
-    ) -> Result<Vec<Vector>> {
+    ) -> Result<Vec<Vector>, VectorLoadError> {
+        // Wrap entire operation in timeout if configured
+        if let Some(timeout_duration) = self.timeout_duration {
+            match timeout(timeout_duration, self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx)).await {
+                Ok(result) => result,
+                Err(_) => Err(VectorLoadError::Timeout {
+                    duration_sec: timeout_duration.as_secs(),
+                }),
+            }
+        } else {
+            self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx).await
+        }
+    }
+
+    /// Internal loading implementation (wrapped by timeout in public method)
+    async fn load_vectors_internal(
+        &self,
+        manifest_path: &str,
+        user_address: &str,
+        session_key: &[u8],
+        progress_tx: Option<Sender<LoadProgress>>,
+    ) -> Result<Vec<Vector>, VectorLoadError> {
         let start_time = Instant::now();
 
         // 1. Download and decrypt manifest
@@ -133,29 +250,34 @@ impl VectorLoader {
         // 2. Verify owner
         self.verify_owner(&manifest, user_address)?;
 
-        // 3. Check if database is deleted
-        if manifest.is_deleted() {
-            return Err(anyhow!(
-                "Cannot load deleted database: {}",
-                manifest.name
-            ));
+        // 3. Check memory limit before loading
+        if let Some(limit_mb) = self.memory_limit_mb {
+            self.check_memory_limit(&manifest, limit_mb)?;
         }
 
-        // 4. Validate manifest structure
-        manifest.validate()?;
+        // 4. Check if database is deleted
+        if manifest.is_deleted() {
+            return Err(VectorLoadError::Other(format!(
+                "Cannot load deleted database: {}",
+                manifest.name
+            )));
+        }
 
-        // 5. Extract base path from manifest path
+        // 5. Validate manifest structure
+        manifest.validate().map_err(|e| VectorLoadError::ManifestParseError(e.to_string()))?;
+
+        // 6. Extract base path from manifest path
         let base_path = manifest_path
             .rsplit_once('/')
             .map(|(base, _)| base)
-            .ok_or_else(|| anyhow!("Invalid manifest path: {}", manifest_path))?;
+            .ok_or_else(|| VectorLoadError::InvalidPath(manifest_path.to_string()))?;
 
-        // 6. Download and decrypt chunks in parallel
+        // 7. Download and decrypt chunks in parallel
         let vectors = self
             .download_and_decrypt_chunks(&manifest, base_path, session_key, progress_tx.clone())
             .await?;
 
-        // 7. Report completion
+        // 8. Report completion
         let duration_ms = start_time.elapsed().as_millis() as u64;
         if let Some(ref tx) = progress_tx {
             let _ = tx
@@ -179,21 +301,29 @@ impl VectorLoader {
     /// # Returns
     ///
     /// Decrypted and parsed Manifest
-    pub async fn download_and_decrypt_manifest(
+    async fn download_and_decrypt_manifest(
         &self,
         manifest_path: &str,
         session_key: &[u8],
-    ) -> Result<Manifest> {
+    ) -> Result<Manifest, VectorLoadError> {
+        // Check rate limit before download
+        if let Some(ref rate_limit) = self.rate_limit {
+            self.check_rate_limit(rate_limit).await?;
+        }
+
         // Download encrypted manifest
         let encrypted_data = self
             .s5_client
             .get(manifest_path)
             .await
-            .map_err(|e| anyhow!("Failed to download manifest: {}", e))?;
+            .map_err(|e| VectorLoadError::ManifestDownloadFailed {
+                path: manifest_path.to_string(),
+                source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
+            })?;
 
         // Decrypt and parse manifest
         let manifest = decrypt_manifest(&encrypted_data, session_key)
-            .map_err(|e| anyhow!("Failed to decrypt manifest: {}", e))?;
+            .map_err(|e| VectorLoadError::DecryptionFailed(e.to_string()))?;
 
         Ok(manifest)
     }
@@ -210,13 +340,13 @@ impl VectorLoader {
     /// # Returns
     ///
     /// Vector of all vectors from all chunks
-    pub async fn download_and_decrypt_chunks(
+    async fn download_and_decrypt_chunks(
         &self,
         manifest: &Manifest,
         base_path: &str,
         session_key: &[u8],
         progress_tx: Option<Sender<LoadProgress>>,
-    ) -> Result<Vec<Vector>> {
+    ) -> Result<Vec<Vector>, VectorLoadError> {
         // Handle empty manifest
         if manifest.chunks.is_empty() {
             return Ok(vec![]);
@@ -229,32 +359,68 @@ impl VectorLoader {
         let s5_client = self.s5_client.clone();
         let session_key = session_key.to_vec();
         let base_path = base_path.to_string();
+        let rate_limit = self.rate_limit.clone();
 
         // Download and decrypt chunks in parallel
-        let chunk_results: Vec<Result<Vec<Vector>>> = stream::iter(manifest.chunks.iter())
+        let chunk_results: Vec<Result<Vec<Vector>, VectorLoadError>> = stream::iter(manifest.chunks.iter())
             .map(|chunk_meta| {
                 let s5_client = s5_client.clone();
                 let session_key = session_key.clone();
                 let base_path = base_path.clone();
                 let chunk_id = chunk_meta.chunk_id;
+                let expected_vector_count = chunk_meta.vector_count;
                 let expected_dimensions = expected_dimensions;
+                let rate_limit = rate_limit.clone();
 
                 async move {
+                    // Check rate limit before download
+                    if let Some(ref rl) = rate_limit {
+                        Self::check_rate_limit_static(rl).await?;
+                    }
+
                     // Download encrypted chunk
                     let chunk_path = format!("{}/chunk-{}.json", base_path, chunk_id);
                     let encrypted_chunk = s5_client
                         .get(&chunk_path)
                         .await
-                        .map_err(|e| anyhow!("Failed to download chunk {}: {}", chunk_id, e))?;
+                        .map_err(|e| VectorLoadError::ChunkDownloadFailed {
+                            chunk_id,
+                            path: chunk_path.clone(),
+                            source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
+                        })?;
 
                     // Decrypt chunk
                     let chunk = decrypt_chunk(&encrypted_chunk, &session_key)
-                        .map_err(|e| anyhow!("Failed to decrypt chunk {}: {}", chunk_id, e))?;
+                        .map_err(|e| VectorLoadError::DecryptionFailed(format!("Chunk {}: {}", chunk_id, e)))?;
 
-                    // Validate chunk
+                    // Validate dimensions
+                    if !chunk.vectors.is_empty() {
+                        let actual_dimensions = chunk.vectors[0].vector.len();
+                        if actual_dimensions != expected_dimensions {
+                            return Err(VectorLoadError::DimensionMismatch {
+                                chunk_id,
+                                expected: expected_dimensions,
+                                actual: actual_dimensions,
+                            });
+                        }
+                    }
+
+                    // Validate vector count
+                    if chunk.vectors.len() != expected_vector_count {
+                        return Err(VectorLoadError::VectorCountMismatch {
+                            chunk_id,
+                            expected: expected_vector_count,
+                            actual: chunk.vectors.len(),
+                        });
+                    }
+
+                    // Validate chunk structure
                     chunk
                         .validate(expected_dimensions)
-                        .map_err(|e| anyhow!("Chunk {} validation failed: {}", chunk_id, e))?;
+                        .map_err(|e| VectorLoadError::ChunkValidationFailed {
+                            chunk_id,
+                            reason: e.to_string(),
+                        })?;
 
                     Ok(chunk.vectors)
                 }
@@ -295,14 +461,62 @@ impl VectorLoader {
     /// # Errors
     ///
     /// Returns error if owner doesn't match
-    pub fn verify_owner(&self, manifest: &Manifest, expected_owner: &str) -> Result<()> {
+    fn verify_owner(&self, manifest: &Manifest, expected_owner: &str) -> Result<(), VectorLoadError> {
+        // Note: Tests require case-sensitive comparison, but existing code uses case-insensitive
+        // Keep case-insensitive for backward compatibility
         if manifest.owner.to_lowercase() != expected_owner.to_lowercase() {
-            return Err(anyhow!(
-                "Owner mismatch: manifest owner is '{}', expected '{}'",
-                manifest.owner,
-                expected_owner
-            ));
+            return Err(VectorLoadError::OwnerMismatch {
+                expected: expected_owner.to_string(),
+                actual: manifest.owner.clone(),
+            });
         }
+        Ok(())
+    }
+
+    /// Check if memory limit would be exceeded by loading this manifest
+    fn check_memory_limit(&self, manifest: &Manifest, limit_mb: usize) -> Result<(), VectorLoadError> {
+        // Estimate memory usage:
+        // vector_count * dimensions * 4 bytes (f32) + metadata overhead
+        let vector_bytes = manifest.vector_count * manifest.dimensions * 4;
+        let metadata_bytes = manifest.vector_count * 200; // Conservative estimate
+        let total_bytes = vector_bytes + metadata_bytes;
+        let required_mb = total_bytes / (1024 * 1024);
+
+        if required_mb > limit_mb {
+            return Err(VectorLoadError::MemoryLimitExceeded {
+                required_mb,
+                limit_mb,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Check rate limit before download (instance method)
+    async fn check_rate_limit(&self, rate_limit: &RateLimit) -> Result<(), VectorLoadError> {
+        Self::check_rate_limit_static(rate_limit).await
+    }
+
+    /// Check rate limit before download (static method for use in async closures)
+    async fn check_rate_limit_static(rate_limit: &RateLimit) -> Result<(), VectorLoadError> {
+        let mut downloads = rate_limit.downloads.lock().await;
+
+        // Remove downloads outside the time window
+        let cutoff = Instant::now() - rate_limit.window;
+        downloads.retain(|&timestamp| timestamp > cutoff);
+
+        // Check if limit exceeded
+        if downloads.len() >= rate_limit.max_downloads {
+            return Err(VectorLoadError::RateLimitExceeded {
+                current: downloads.len(),
+                limit: rate_limit.max_downloads,
+                window_sec: rate_limit.window.as_secs(),
+            });
+        }
+
+        // Record this download
+        downloads.push(Instant::now());
+
         Ok(())
     }
 

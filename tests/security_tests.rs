@@ -8,4 +8,5 @@
 #[cfg(test)]
 mod security {
     mod test_embed_security;
+    mod test_s5_security;
 }
