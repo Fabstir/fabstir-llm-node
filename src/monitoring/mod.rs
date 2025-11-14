@@ -6,6 +6,7 @@ pub mod alerting;
 pub mod dashboards;
 pub mod health_checks;
 pub mod metrics;
+pub mod s5_metrics;
 
 // Re-export main types
 pub use metrics::{
@@ -34,3 +35,5 @@ pub use dashboards::{
     Query, QueryResult, RefreshInterval, StatWidget, TableWidget, TimeRange, Variable,
     Visualization, Widget, WidgetType,
 };
+
+pub use s5_metrics::S5Metrics;

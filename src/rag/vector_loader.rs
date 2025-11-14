@@ -39,6 +39,7 @@
 //! ```
 
 use crate::crypto::aes_gcm::{decrypt_chunk, decrypt_manifest};
+use crate::monitoring::S5Metrics;
 use crate::rag::errors::VectorLoadError;
 use crate::storage::manifest::{Manifest, Vector};
 use crate::storage::s5_client::S5Storage;
@@ -93,6 +94,9 @@ pub struct VectorLoader {
 
     /// Optional timeout for entire loading operation
     timeout_duration: Option<Duration>,
+
+    /// Optional metrics for tracking S5 performance
+    metrics: Option<Arc<S5Metrics>>,
 }
 
 impl VectorLoader {
@@ -109,6 +113,7 @@ impl VectorLoader {
             rate_limit: None,
             memory_limit_mb: None,
             timeout_duration: None,
+            metrics: None,
         }
     }
 
@@ -136,6 +141,7 @@ impl VectorLoader {
             }),
             memory_limit_mb: None,
             timeout_duration: None,
+            metrics: None,
         }
     }
 
@@ -157,6 +163,7 @@ impl VectorLoader {
             rate_limit: None,
             memory_limit_mb: Some(memory_limit_mb),
             timeout_duration: None,
+            metrics: None,
         }
     }
 
@@ -178,7 +185,17 @@ impl VectorLoader {
             rate_limit: None,
             memory_limit_mb: None,
             timeout_duration: Some(timeout_duration),
+            metrics: None,
         }
+    }
+
+    /// Set metrics collector for performance tracking
+    ///
+    /// # Arguments
+    /// * `metrics` - S5Metrics instance for recording performance data
+    pub fn with_metrics(mut self, metrics: Arc<S5Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Load vectors from S5 storage
@@ -306,20 +323,33 @@ impl VectorLoader {
         manifest_path: &str,
         session_key: &[u8],
     ) -> Result<Manifest, VectorLoadError> {
+        let download_start = Instant::now();
+
         // Check rate limit before download
         if let Some(ref rate_limit) = self.rate_limit {
             self.check_rate_limit(rate_limit).await?;
         }
 
         // Download encrypted manifest
-        let encrypted_data = self
-            .s5_client
-            .get(manifest_path)
-            .await
-            .map_err(|e| VectorLoadError::ManifestDownloadFailed {
-                path: manifest_path.to_string(),
-                source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
-            })?;
+        let encrypted_data = match self.s5_client.get(manifest_path).await {
+            Ok(data) => {
+                // Record successful download
+                if let Some(ref metrics) = self.metrics {
+                    metrics.record_download(download_start.elapsed()).await;
+                }
+                data
+            }
+            Err(e) => {
+                // Record download error
+                if let Some(ref metrics) = self.metrics {
+                    metrics.record_download_error().await;
+                }
+                return Err(VectorLoadError::ManifestDownloadFailed {
+                    path: manifest_path.to_string(),
+                    source: Box::new(e) as Box<dyn std::error::Error + Send + Sync>,
+                });
+            }
+        };
 
         // Decrypt and parse manifest
         let manifest = decrypt_manifest(&encrypted_data, session_key)
@@ -446,6 +476,11 @@ impl VectorLoader {
             }
 
             tracing::debug!("Loaded chunk {}/{} ({} vectors)", i + 1, total_chunks, all_vectors.len());
+        }
+
+        // Record total vectors loaded
+        if let Some(ref metrics) = self.metrics {
+            metrics.record_vectors_loaded(all_vectors.len() as u64).await;
         }
 
         Ok(all_vectors)

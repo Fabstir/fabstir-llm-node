@@ -38,6 +38,7 @@
 //! }
 //! ```
 
+use crate::monitoring::S5Metrics;
 use crate::vector::hnsw::HnswIndex;
 use lru::LruCache;
 use std::collections::HashMap;
@@ -95,6 +96,8 @@ pub struct IndexCache {
     max_memory_mb: usize,
     /// Cache metrics
     metrics: CacheMetrics,
+    /// Optional S5 metrics for global monitoring
+    s5_metrics: Option<Arc<S5Metrics>>,
 }
 
 impl IndexCache {
@@ -120,7 +123,17 @@ impl IndexCache {
             ttl,
             max_memory_mb,
             metrics: CacheMetrics::default(),
+            s5_metrics: None,
         }
+    }
+
+    /// Set S5 metrics for global monitoring
+    ///
+    /// # Arguments
+    /// * `metrics` - S5Metrics instance for recording cache performance
+    pub fn with_s5_metrics(mut self, metrics: Arc<S5Metrics>) -> Self {
+        self.s5_metrics = Some(metrics);
+        self
     }
 
     /// Get a cached index by manifest path
@@ -144,15 +157,42 @@ impl IndexCache {
                 self.cache.pop(manifest_path);
                 self.metrics.misses += 1;
                 self.metrics.evictions += 1;
+
+                // Record cache miss in S5 metrics (async)
+                if let Some(ref metrics) = self.s5_metrics {
+                    let metrics = Arc::clone(metrics);
+                    tokio::spawn(async move {
+                        metrics.record_cache_miss().await;
+                    });
+                }
+
                 None
             } else {
                 // Valid - count as hit
                 self.metrics.hits += 1;
+
+                // Record cache hit in S5 metrics (async)
+                if let Some(ref metrics) = self.s5_metrics {
+                    let metrics = Arc::clone(metrics);
+                    tokio::spawn(async move {
+                        metrics.record_cache_hit().await;
+                    });
+                }
+
                 Some(entry.index.clone())
             }
         } else {
             // Not found - count as miss
             self.metrics.misses += 1;
+
+            // Record cache miss in S5 metrics (async)
+            if let Some(ref metrics) = self.s5_metrics {
+                let metrics = Arc::clone(metrics);
+                tokio::spawn(async move {
+                    metrics.record_cache_miss().await;
+                });
+            }
+
             None
         }
     }

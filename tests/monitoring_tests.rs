@@ -3,6 +3,7 @@
 // tests/monitoring_tests.rs - Include all monitoring test modules
 
 mod monitoring {
+    mod s5_metrics_tests;
     mod test_alerting;
     mod test_dashboards;
     mod test_health_checks;
