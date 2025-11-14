@@ -542,6 +542,59 @@ pub fn decrypt_aes_gcm(encrypted: &[u8], key: &[u8]) -> Result<String> {
 
 ---
 
+### Sub-phase 3.3: Async Loading Task with Timeout
+
+**Goal**: Implement non-blocking S5 vector database loading in background task
+
+**Status**: NOT STARTED (deferred from Sub-phase 3.2)
+
+#### Tasks
+- [ ] Write tests for async loading task spawn
+- [ ] Write tests for non-blocking session initialization
+- [ ] Write tests for concurrent sessions (10+ simultaneous S5 loads)
+- [ ] Write tests for loading timeout (5 minutes)
+- [ ] Write tests for session state queries during loading
+- [ ] Write tests for cleanup on task failure
+- [ ] Implement async task spawn in handle_session_init
+- [ ] Add 5-minute timeout wrapper around load_vectors_from_s5
+- [ ] Update VectorLoadingStatus from background task
+- [ ] Store vector index in session on successful load
+- [ ] Send error message to client on load failure
+- [ ] Add task cancellation on session disconnect
+- [ ] Add metrics for loading duration and success rate
+- [ ] Document loading behavior in API.md
+
+**Test Files:**
+- `tests/api/test_async_vector_loading.rs` - Async loading tests (max 450 lines)
+  - Test session_init returns immediately while loading in background
+  - Test status transitions (NotStarted → Loading → Loaded)
+  - Test concurrent sessions don't block each other
+  - Test 5-minute timeout triggers Error status
+  - Test client can query status during loading
+  - Test session disconnect cancels loading task
+  - Test cleanup on task panic/failure
+  - Test metrics collection (duration, success rate)
+
+**Implementation Files:**
+- `src/api/websocket/handlers.rs` (update ~80 lines in handle_session_init)
+
+**Dependencies:**
+- VectorLoader from Sub-phase 3.1 ✅
+- HnswIndex from Sub-phase 4.1 ✅
+- VectorLoadingStatus from Sub-phase 1.2 ✅
+- WebSocketSession from Sub-phase 1.2 ✅
+
+**Acceptance Criteria:**
+- [ ] Session initialization returns immediately (< 100ms)
+- [ ] Loading happens in background without blocking
+- [ ] 10+ concurrent sessions can load simultaneously
+- [ ] 5-minute timeout enforced for slow/stalled loads
+- [ ] Session status correctly reflects Loading → Loaded/Error
+- [ ] Failed tasks don't crash the session
+- [ ] Metrics collected for all loading operations
+
+---
+
 ## Phase 4: Vector Index Building and Search (1 Day)
 
 ### Sub-phase 4.1: HNSW Index Construction ✅
@@ -1076,11 +1129,46 @@ Successfully implemented comprehensive error handling and security infrastructur
 
 ### Configuration
 - [ ] Add S5_PORTAL_URL environment variable (default: https://s5.cx)
-- [ ] Add S5_MAX_PARALLEL_CHUNKS (default: 10)
-- [ ] Add S5_DOWNLOAD_TIMEOUT_SECONDS (default: 30)
-- [ ] Add S5_LOADING_TIMEOUT_MINUTES (default: 5)
-- [ ] Add VECTOR_INDEX_CACHE_SIZE (default: 10)
-- [ ] Add VECTOR_INDEX_CACHE_TTL_HOURS (default: 24)
+- [ ] Add S5_MAX_PARALLEL_CHUNKS environment variable (default: 10)
+  - Controls concurrent chunk downloads in VectorLoader
+  - Range: 1-20 (recommended: 5-10 for optimal throughput)
+  - Higher values increase network utilization but may trigger rate limits
+- [ ] Add S5_DOWNLOAD_TIMEOUT_SECONDS environment variable (default: 30)
+  - Per-file download timeout for S5 client
+  - Applied to manifest.json and each chunk download
+  - Should be > network latency to S5 portal
+- [ ] Add S5_LOADING_TIMEOUT_MINUTES environment variable (default: 5)
+  - Overall timeout for complete vector database loading
+  - Includes manifest download, all chunks, decryption, and index building
+  - Triggers LoadingError with TIMEOUT code if exceeded
+- [ ] Add VECTOR_INDEX_CACHE_SIZE environment variable (default: 10)
+  - Maximum number of HNSW indexes to keep in LRU cache
+  - Each index size depends on vector_count and dimensions
+  - Estimate: 1K vectors (384D) ≈ 10MB, adjust based on available memory
+- [ ] Add VECTOR_INDEX_CACHE_TTL_HOURS environment variable (default: 24)
+  - Time-to-live for cached indexes
+  - Indexes older than TTL are evicted on next access
+  - Recommended: 24-48 hours for frequently accessed databases
+- [ ] Add VECTOR_CACHE_MAX_MEMORY_MB environment variable (default: 1000)
+  - Maximum memory for vector index cache (megabytes)
+  - Cache will evict LRU entries when exceeded
+  - Should be < 50% of total host RAM
+- [ ] Add S5_RATE_LIMIT_REQUESTS environment variable (default: 100)
+  - Maximum S5 downloads per rate limit window
+  - Prevents abuse and S5 portal throttling
+  - Used by VectorLoader::with_rate_limit()
+- [ ] Add S5_RATE_LIMIT_WINDOW_SECONDS environment variable (default: 60)
+  - Time window for rate limiting (sliding window)
+  - Works with S5_RATE_LIMIT_REQUESTS
+  - Example: 100 requests per 60 seconds = ~1.67 req/sec
+- [ ] Add VECTOR_MEMORY_LIMIT_MB environment variable (default: 500)
+  - Maximum memory for a single vector database
+  - Pre-flight check before downloading from S5
+  - Rejects oversized databases with MEMORY_LIMIT_EXCEEDED error
+- [ ] Update .env.example with all S5 configuration variables
+- [ ] Document configuration in docs/DEPLOYMENT.md
+- [ ] Add configuration validation on startup
+- [ ] Log configuration values on startup (sanitized)
 
 ### Deployment
 - [ ] Update Dockerfile with S5 dependencies
@@ -1322,6 +1410,211 @@ Environment variables:
 
 ---
 
+## Phase 7: Real-Time Loading Progress Updates (1 Day)
+
+**Goal**: Provide real-time progress feedback to SDK clients during S5 vector database loading
+
+**Status**: NOT STARTED
+
+**Dependencies**: Phase 3 (VectorLoader), Sub-phase 3.3 (Async Loading Task)
+
+---
+
+### Sub-phase 7.1: Progress Message Types
+
+**Goal**: Define WebSocket message types for loading progress updates
+
+#### Tasks
+- [ ] Write tests for LoadingProgress message serialization
+- [ ] Write tests for all progress event types
+- [ ] Write tests for backward compatibility (clients without progress support)
+- [ ] Create LoadingProgressMessage enum in api/websocket/types.rs
+- [ ] Add ManifestDownloaded event type
+- [ ] Add ChunkDownloaded event type (with progress: current/total)
+- [ ] Add IndexBuilding event type
+- [ ] Add LoadingComplete event type (with vector_count, duration_ms)
+- [ ] Add LoadingError event type (with error message)
+- [ ] Document progress message format in API.md
+- [ ] Document client handling in WEBSOCKET_API_SDK_GUIDE.md
+
+**Test Files:**
+- `tests/api/test_loading_progress_messages.rs` - Progress message tests (max 350 lines)
+  - Test LoadingProgressMessage serialization
+  - Test ManifestDownloaded event
+  - Test ChunkDownloaded with progress tracking
+  - Test IndexBuilding event
+  - Test LoadingComplete with metrics
+  - Test LoadingError with error details
+  - Test backward compatibility (ignore if client doesn't handle)
+
+**Implementation Files:**
+- `src/api/websocket/types.rs` (add ~100 lines)
+
+**Acceptance Criteria:**
+- [ ] All progress message types serialize correctly to JSON
+- [ ] Messages include session_id for client routing
+- [ ] ChunkDownloaded includes accurate progress percentage
+- [ ] LoadingError includes user-friendly error message
+- [ ] Backward compatible with existing clients
+
+---
+
+### Sub-phase 7.2: Progress Channel Integration
+
+**Goal**: Connect VectorLoader progress events to WebSocket message sender
+
+#### Tasks
+- [ ] Write tests for progress channel creation
+- [ ] Write tests for progress event routing to client
+- [ ] Write tests for multiple concurrent sessions (isolated progress)
+- [ ] Write tests for progress channel cleanup on disconnect
+- [ ] Write tests for progress channel errors (channel closed)
+- [ ] Create progress sender in async loading task (Sub-phase 3.3)
+- [ ] Add mpsc channel for LoadProgress events
+- [ ] Pass progress_tx to load_vectors_from_s5
+- [ ] Add progress receiver loop in background task
+- [ ] Convert LoadProgress events to LoadingProgressMessage
+- [ ] Send WebSocket messages for each progress event
+- [ ] Handle client disconnect (stop sending progress)
+- [ ] Add metrics for progress message delivery
+
+**Test Files:**
+- `tests/api/test_progress_channel.rs` - Progress channel tests (max 400 lines)
+  - Test progress channel creation and cleanup
+  - Test manifest download event routing
+  - Test chunk download progress updates (50 chunks)
+  - Test index building notification
+  - Test completion with metrics
+  - Test error event routing
+  - Test concurrent sessions (10 sessions, isolated progress)
+  - Test channel cleanup on disconnect
+
+**Implementation Files:**
+- `src/api/websocket/handlers.rs` (update Sub-phase 3.3 implementation, ~60 lines)
+- `src/rag/vector_loader.rs` (update to send IndexBuilding event, ~20 lines)
+
+**Acceptance Criteria:**
+- [ ] Progress events sent in real-time during loading
+- [ ] ChunkDownloaded updates sent for each chunk (< 100ms latency)
+- [ ] IndexBuilding sent before HNSW construction
+- [ ] LoadingComplete sent with accurate metrics
+- [ ] Progress isolated between concurrent sessions
+- [ ] No memory leaks from abandoned channels
+- [ ] Metrics track message delivery success rate
+
+---
+
+### Sub-phase 7.3: Client Error Notifications
+
+**Goal**: Send detailed error messages to SDK clients on loading failures
+
+#### Tasks
+- [ ] Write tests for all error scenarios
+- [ ] Write tests for error message content (user-friendly)
+- [ ] Write tests for error codes (machine-readable)
+- [ ] Write tests for security errors (sanitized messages)
+- [ ] Update async loading task error handlers (Sub-phase 3.3)
+- [ ] Send LoadingError on timeout (5 minutes)
+- [ ] Send LoadingError on owner mismatch (sanitized address)
+- [ ] Send LoadingError on manifest download failure
+- [ ] Send LoadingError on chunk download failure
+- [ ] Send LoadingError on decryption failure
+- [ ] Send LoadingError on dimension mismatch
+- [ ] Send LoadingError on memory limit exceeded
+- [ ] Add error_code field for SDK error handling
+- [ ] Document error codes in SDK guide
+
+**Test Files:**
+- `tests/api/test_loading_error_notifications.rs` - Error notification tests (max 350 lines)
+  - Test timeout error notification (5 minutes)
+  - Test owner mismatch error (user-friendly message)
+  - Test manifest not found error
+  - Test chunk download failure error
+  - Test decryption failure error (sanitized)
+  - Test dimension mismatch error
+  - Test memory limit error
+  - Test error_code values for SDK parsing
+
+**Implementation Files:**
+- `src/api/websocket/handlers.rs` (update error handlers in Sub-phase 3.3, ~40 lines)
+
+**Error Code Reference:**
+```
+MANIFEST_NOT_FOUND       - S5 path does not exist
+MANIFEST_DOWNLOAD_FAILED - Network error downloading manifest
+CHUNK_DOWNLOAD_FAILED    - Network error downloading chunk
+OWNER_MISMATCH           - manifest.owner != user_address
+DECRYPTION_FAILED        - Invalid session key or corrupted data
+DIMENSION_MISMATCH       - Vector dimensions don't match manifest
+MEMORY_LIMIT_EXCEEDED    - Database too large for configured limit
+RATE_LIMIT_EXCEEDED      - Too many downloads in time window
+TIMEOUT                  - Loading exceeded 5-minute limit
+INVALID_PATH             - manifest_path format invalid
+```
+
+**Acceptance Criteria:**
+- [ ] All error types send LoadingError message
+- [ ] Error messages are user-friendly and actionable
+- [ ] Error codes enable SDK to categorize failures
+- [ ] Security errors don't leak sensitive information
+- [ ] Timeout sends notification before status update
+- [ ] Error notifications include session_id for routing
+
+---
+
+### Sub-phase 7.4: SDK Documentation Updates
+
+**Goal**: Document loading progress protocol for SDK developers
+
+#### Tasks
+- [ ] Update docs/sdk-reference/WEBSOCKET_API_SDK_GUIDE.md
+- [ ] Add section "Vector Database Loading Progress"
+- [ ] Document all LoadingProgressMessage types
+- [ ] Add example SDK code for handling progress
+- [ ] Document error codes and recommended handling
+- [ ] Add sequence diagram for loading flow
+- [ ] Add example: Progress bar in UI
+- [ ] Add example: Retry logic for retryable errors
+- [ ] Document backward compatibility (optional handling)
+- [ ] Add FAQ section for common loading issues
+
+**Documentation Files:**
+- `docs/sdk-reference/WEBSOCKET_API_SDK_GUIDE.md` (add ~400 lines)
+
+**Acceptance Criteria:**
+- [ ] Complete protocol documentation for all message types
+- [ ] Example SDK code provided for common use cases
+- [ ] Error handling guide with retry recommendations
+- [ ] Sequence diagram shows complete flow
+- [ ] Backward compatibility clearly documented
+- [ ] FAQ addresses common developer questions
+
+---
+
+## Progress Tracking - Phase 7
+
+**Overall Progress**: Phase 7 NOT STARTED (0/4 sub-phases complete)
+
+### Phase Completion
+- [ ] Phase 7: Real-Time Loading Progress Updates (0/4 sub-phases)
+  - [ ] Sub-phase 7.1: Progress Message Types
+  - [ ] Sub-phase 7.2: Progress Channel Integration
+  - [ ] Sub-phase 7.3: Client Error Notifications
+  - [ ] Sub-phase 7.4: SDK Documentation Updates
+
+**Dependencies:**
+- Requires Phase 3, Sub-phase 3.3 (Async Loading Task) to be completed first
+- Requires Phase 5, Sub-phase 5.3 (Error Handling) for error types ✅
+- Requires Phase 1, Sub-phase 1.2 (VectorLoadingStatus) for status tracking ✅
+
+**Timeline:** 1 day (8 hours)
+- Sub-phase 7.1: 2 hours (message types)
+- Sub-phase 7.2: 3 hours (channel integration)
+- Sub-phase 7.3: 2 hours (error notifications)
+- Sub-phase 7.4: 1 hour (documentation)
+
+---
+
 ## Known Limitations and Future Work
 
 ### Current Limitations
@@ -1361,7 +1654,7 @@ Environment variables:
 
 ## Progress Tracking
 
-**Overall Progress**: Phases 1-4 COMPLETE ✅, Phase 5 (3/4 sub-phases complete)
+**Overall Progress**: Phases 1-2, 4-6 COMPLETE ✅, Phase 3 (2/3 sub-phases), Phase 5 (3/4 sub-phases), Phase 7 (NOT STARTED)
 
 ### Phase Completion
 - [x] Phase 1: WebSocket Protocol Updates (2/2 sub-phases complete) ✅
@@ -1371,9 +1664,10 @@ Environment variables:
   - [x] Sub-phase 2.1: S5 Client Implementation ✅ (9/12 tasks, 3 deferred to Phase 5)
   - [x] Sub-phase 2.2: Manifest and Chunk Structures ✅ (11/11 tasks complete)
   - [x] Sub-phase 2.3: AES-GCM Decryption ✅ (11/11 tasks complete)
-- [x] Phase 3: Vector Loading Pipeline (2/2 sub-phases complete) ✅
+- [ ] Phase 3: Vector Loading Pipeline (2/3 sub-phases complete)
   - [x] Sub-phase 3.1: Vector Loader Implementation ✅ (15/15 tests passing)
   - [x] Sub-phase 3.2: Integration with Session Initialization ✅ (12/12 tests passing)
+  - [ ] Sub-phase 3.3: Async Loading Task with Timeout (NOT STARTED - deferred)
 - [x] Phase 4: Vector Index Building and Search (2/2 sub-phases complete) ✅
   - [x] Sub-phase 4.1: HNSW Index Construction ✅ (13/13 core tests passing)
   - [x] Sub-phase 4.2: Update searchVectors Handler ✅ (14/14 tests passing)
@@ -1381,11 +1675,17 @@ Environment variables:
   - [x] Sub-phase 5.1: Parallel Chunk Downloads ✅ (Already implemented in Phase 3)
   - [x] Sub-phase 5.2: Index Caching ✅ (18/18 tests passing)
   - [x] Sub-phase 5.3: Error Handling and Security ✅ (13 security tests, comprehensive error types)
+- [x] Phase 6: Enhanced S5.js P2P Integration (COMPLETE) ✅
+- [ ] Phase 7: Real-Time Loading Progress Updates (NOT STARTED)
+  - [ ] Sub-phase 7.1: Progress Message Types
+  - [ ] Sub-phase 7.2: Progress Channel Integration
+  - [ ] Sub-phase 7.3: Client Error Notifications
+  - [ ] Sub-phase 7.4: SDK Documentation Updates
 
-**Current Status**: Phase 5 IN PROGRESS - Performance Optimization (3/4 sub-phases complete, 58/58 tests passing)
-- Sub-phase 5.1: Parallel Chunk Downloads ✅ (already implemented in Phase 3)
-- Sub-phase 5.2: Index Caching ✅ (18/18 tests passing)
-- Sub-phase 5.3: Error Handling and Security ✅ (13 security tests, 3 error module tests)
+**Current Status**: v8.4.0 encryption complete, remaining work in Phase 3.3 and Phase 7
+- Phase 3.3 (Async Loading): NOT STARTED - Required for production (non-blocking session init)
+- Phase 5.4 (Monitoring): IN PROGRESS - 3/4 sub-phases complete, 58/58 tests passing
+- Phase 7 (Progress Updates): NOT STARTED - Required for SDK developer UX (real-time progress messages)
 
 **Completed in Sub-phase 1.1**:
 - ✅ VectorDatabaseInfo struct with validation

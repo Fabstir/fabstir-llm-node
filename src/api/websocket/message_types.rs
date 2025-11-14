@@ -28,6 +28,9 @@ pub enum MessageType {
     EncryptedChunk,
     EncryptedResponse,
 
+    // Vector loading progress (Sub-phase 3.3)
+    VectorLoadingProgress,
+
     // Error and unknown
     Error,
     Unknown,
