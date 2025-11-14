@@ -363,7 +363,17 @@ impl S5Storage for MockS5Backend {
         Self::validate_path(path)?;
 
         let storage = self.storage.lock().await;
-        Ok(storage.contains_key(path))
+
+        // Check if exact path exists
+        if storage.contains_key(path) {
+            return Ok(true);
+        }
+
+        // Check if path is a directory (any stored path starts with this path + "/")
+        let dir_prefix = format!("{}/", path);
+        let is_directory = storage.keys().any(|key| key.starts_with(&dir_prefix));
+
+        Ok(is_directory)
     }
 
     fn clone(&self) -> Box<dyn S5Storage> {
