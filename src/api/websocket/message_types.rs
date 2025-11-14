@@ -719,6 +719,198 @@ pub struct VectorDatabaseInfo {
     pub user_address: String,
 }
 
+// ============================================================================
+// Vector Loading Progress Messages (Sub-phase 7.1)
+// ============================================================================
+
+/// Real-time progress updates for S5 vector database loading
+/// Sent to SDK clients during async loading operations to provide feedback
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoadingProgressMessage {
+    /// Manifest downloaded and parsed successfully
+    ManifestDownloaded,
+
+    /// Chunk downloaded and decrypted
+    ChunkDownloaded {
+        /// Current chunk index (0-based)
+        chunk_id: usize,
+        /// Total number of chunks
+        total: usize,
+    },
+
+    /// Building HNSW index from loaded vectors
+    IndexBuilding,
+
+    /// Loading completed successfully
+    LoadingComplete {
+        /// Total number of vectors loaded
+        vector_count: usize,
+        /// Total loading time in milliseconds
+        duration_ms: u64,
+    },
+
+    /// Loading failed with error
+    LoadingError {
+        /// User-friendly error message
+        error: String,
+    },
+}
+
+impl LoadingProgressMessage {
+    /// Get user-friendly message for this progress event
+    pub fn message(&self) -> String {
+        match self {
+            LoadingProgressMessage::ManifestDownloaded => {
+                "Manifest downloaded, loading chunks...".to_string()
+            }
+            LoadingProgressMessage::ChunkDownloaded { chunk_id, total } => {
+                let percent = ((chunk_id + 1) as f64 / *total as f64 * 100.0) as u32;
+                format!(
+                    "Downloading chunks... {}% ({}/{})",
+                    percent,
+                    chunk_id + 1,
+                    total
+                )
+            }
+            LoadingProgressMessage::IndexBuilding => {
+                "Building search index...".to_string()
+            }
+            LoadingProgressMessage::LoadingComplete { vector_count, duration_ms } => {
+                let duration_secs = *duration_ms as f64 / 1000.0;
+                format!(
+                    "Vector database ready ({} vectors, loaded in {:.2}s)",
+                    vector_count, duration_secs
+                )
+            }
+            LoadingProgressMessage::LoadingError { error } => {
+                format!("Loading failed: {}", error)
+            }
+        }
+    }
+}
+
+/// Custom serialization to include message and computed fields
+impl Serialize for LoadingProgressMessage {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+
+        match self {
+            LoadingProgressMessage::ManifestDownloaded => {
+                map.serialize_entry("event", "manifest_downloaded")?;
+                map.serialize_entry("message", &self.message())?;
+            }
+            LoadingProgressMessage::ChunkDownloaded { chunk_id, total } => {
+                let percent = ((chunk_id + 1) as f64 / *total as f64 * 100.0) as u32;
+                map.serialize_entry("event", "chunk_downloaded")?;
+                map.serialize_entry("chunk_id", chunk_id)?;
+                map.serialize_entry("total", total)?;
+                map.serialize_entry("percent", &percent)?;
+                map.serialize_entry("message", &self.message())?;
+            }
+            LoadingProgressMessage::IndexBuilding => {
+                map.serialize_entry("event", "index_building")?;
+                map.serialize_entry("message", &self.message())?;
+            }
+            LoadingProgressMessage::LoadingComplete { vector_count, duration_ms } => {
+                map.serialize_entry("event", "loading_complete")?;
+                map.serialize_entry("vector_count", vector_count)?;
+                map.serialize_entry("duration_ms", duration_ms)?;
+                map.serialize_entry("message", &self.message())?;
+            }
+            LoadingProgressMessage::LoadingError { error } => {
+                map.serialize_entry("event", "loading_error")?;
+                map.serialize_entry("error", error)?;
+                map.serialize_entry("message", &self.message())?;
+            }
+        }
+
+        map.end()
+    }
+}
+
+/// Custom deserialization for LoadingProgressMessage
+impl<'de> Deserialize<'de> for LoadingProgressMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct LoadingProgressVisitor;
+
+        impl<'de> Visitor<'de> for LoadingProgressVisitor {
+            type Value = LoadingProgressMessage;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a loading progress message")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut event: Option<String> = None;
+                let mut chunk_id: Option<usize> = None;
+                let mut total: Option<usize> = None;
+                let mut vector_count: Option<usize> = None;
+                let mut duration_ms: Option<u64> = None;
+                let mut error: Option<String> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "event" => event = Some(map.next_value()?),
+                        "chunk_id" => chunk_id = Some(map.next_value()?),
+                        "total" => total = Some(map.next_value()?),
+                        "vector_count" => vector_count = Some(map.next_value()?),
+                        "duration_ms" => duration_ms = Some(map.next_value()?),
+                        "error" => error = Some(map.next_value()?),
+                        // Ignore unknown fields (percent, message, etc.)
+                        _ => {
+                            let _: serde_json::Value = map.next_value()?;
+                        }
+                    }
+                }
+
+                let event = event.ok_or_else(|| de::Error::missing_field("event"))?;
+
+                match event.as_str() {
+                    "manifest_downloaded" => Ok(LoadingProgressMessage::ManifestDownloaded),
+                    "chunk_downloaded" => {
+                        let chunk_id = chunk_id.ok_or_else(|| de::Error::missing_field("chunk_id"))?;
+                        let total = total.ok_or_else(|| de::Error::missing_field("total"))?;
+                        Ok(LoadingProgressMessage::ChunkDownloaded { chunk_id, total })
+                    }
+                    "index_building" => Ok(LoadingProgressMessage::IndexBuilding),
+                    "loading_complete" => {
+                        let vector_count = vector_count.ok_or_else(|| de::Error::missing_field("vector_count"))?;
+                        let duration_ms = duration_ms.ok_or_else(|| de::Error::missing_field("duration_ms"))?;
+                        Ok(LoadingProgressMessage::LoadingComplete { vector_count, duration_ms })
+                    }
+                    "loading_error" => {
+                        let error = error.ok_or_else(|| de::Error::missing_field("error"))?;
+                        Ok(LoadingProgressMessage::LoadingError { error })
+                    }
+                    _ => Err(de::Error::unknown_variant(&event, &[
+                        "manifest_downloaded",
+                        "chunk_downloaded",
+                        "index_building",
+                        "loading_complete",
+                        "loading_error",
+                    ])),
+                }
+            }
+        }
+
+        deserializer.deserialize_map(LoadingProgressVisitor)
+    }
+}
+
 impl VectorDatabaseInfo {
     /// Validates the vector database info
     ///

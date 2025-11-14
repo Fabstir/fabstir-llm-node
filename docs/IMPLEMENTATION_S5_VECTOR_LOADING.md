@@ -1420,42 +1420,44 @@ Environment variables:
 
 ---
 
-### Sub-phase 7.1: Progress Message Types
+### Sub-phase 7.1: Progress Message Types ✅ COMPLETE
 
 **Goal**: Define WebSocket message types for loading progress updates
 
 #### Tasks
-- [ ] Write tests for LoadingProgress message serialization
-- [ ] Write tests for all progress event types
-- [ ] Write tests for backward compatibility (clients without progress support)
-- [ ] Create LoadingProgressMessage enum in api/websocket/types.rs
-- [ ] Add ManifestDownloaded event type
-- [ ] Add ChunkDownloaded event type (with progress: current/total)
-- [ ] Add IndexBuilding event type
-- [ ] Add LoadingComplete event type (with vector_count, duration_ms)
-- [ ] Add LoadingError event type (with error message)
-- [ ] Document progress message format in API.md
-- [ ] Document client handling in WEBSOCKET_API_SDK_GUIDE.md
+- [x] Write tests for LoadingProgress message serialization
+- [x] Write tests for all progress event types
+- [x] Write tests for backward compatibility (clients without progress support)
+- [x] Create LoadingProgressMessage enum in api/websocket/message_types.rs
+- [x] Add ManifestDownloaded event type
+- [x] Add ChunkDownloaded event type (with progress: current/total)
+- [x] Add IndexBuilding event type
+- [x] Add LoadingComplete event type (with vector_count, duration_ms)
+- [x] Add LoadingError event type (with error message)
+- [ ] Document progress message format in API.md (deferred to Phase 9)
+- [ ] Document client handling in WEBSOCKET_API_SDK_GUIDE.md (deferred to Phase 9)
 
 **Test Files:**
-- `tests/api/test_loading_progress_messages.rs` - Progress message tests (max 350 lines)
-  - Test LoadingProgressMessage serialization
-  - Test ManifestDownloaded event
-  - Test ChunkDownloaded with progress tracking
-  - Test IndexBuilding event
-  - Test LoadingComplete with metrics
-  - Test LoadingError with error details
-  - Test backward compatibility (ignore if client doesn't handle)
+- `tests/api/test_loading_progress_messages.rs` - Progress message tests (313 lines)
+  - ✅ Test LoadingProgressMessage serialization (18 tests, all passing)
+  - ✅ Test ManifestDownloaded event
+  - ✅ Test ChunkDownloaded with progress tracking
+  - ✅ Test IndexBuilding event
+  - ✅ Test LoadingComplete with metrics
+  - ✅ Test LoadingError with error details
+  - ✅ Test backward compatibility (ignore if client doesn't handle)
 
 **Implementation Files:**
-- `src/api/websocket/types.rs` (add ~100 lines)
+- `src/api/websocket/message_types.rs` (added 191 lines)
+  - Custom Serialize implementation to include computed fields (percent, message)
+  - Custom Deserialize implementation for backward compatibility
 
 **Acceptance Criteria:**
-- [ ] All progress message types serialize correctly to JSON
-- [ ] Messages include session_id for client routing
-- [ ] ChunkDownloaded includes accurate progress percentage
-- [ ] LoadingError includes user-friendly error message
-- [ ] Backward compatible with existing clients
+- [x] All progress message types serialize correctly to JSON
+- [x] Messages include session_id for client routing (via WebSocketMessage wrapper)
+- [x] ChunkDownloaded includes accurate progress percentage
+- [x] LoadingError includes user-friendly error message
+- [x] Backward compatible with existing clients (unknown fields ignored)
 
 ---
 

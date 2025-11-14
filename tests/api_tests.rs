@@ -12,6 +12,7 @@ mod api {
     mod test_embed_module;
     mod test_embed_request;
     mod test_embed_response;
+    mod test_loading_progress_messages;
     mod test_models_endpoint;
     mod test_rag_handlers;
     mod test_route_registration;
