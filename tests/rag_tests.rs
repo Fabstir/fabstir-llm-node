@@ -6,4 +6,5 @@ mod rag {
     mod test_session_vector_store;
     mod test_vector_search;
     mod test_session_integration;
+    mod test_vector_loader;
 }
