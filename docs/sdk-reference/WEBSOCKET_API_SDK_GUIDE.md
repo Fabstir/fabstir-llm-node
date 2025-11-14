@@ -195,83 +195,164 @@ interface VectorDatabaseInfo {
 // e.g., "home/vector-databases/0xABC123.../my-documents/manifest.json"
 ```
 
-#### Loading Status Messages
+#### Real-Time Loading Progress Updates (v8.5+)
 
-When a host receives a `session_init` with `vector_database`, it will send loading status updates:
+When a host receives a `session_init` with `vector_database`, it sends **real-time progress updates** during async S5 loading via the `vector_loading_progress` message type.
 
+**Message Structure:**
 ```typescript
-// Loading started
 {
-  type: 'vector_loading_status',
+  type: 'vector_loading_progress',
   session_id: 'uuid',
-  status: 'loading',
-  manifest_path: 'home/vector-databases/0xABC.../my-docs/manifest.json',
-  message: 'Loading vector database...'
-}
-
-// Loading progress (optional, for large databases)
-{
-  type: 'vector_loading_status',
-  session_id: 'uuid',
-  status: 'progress',
-  vectors_loaded: 5000,
-  total_vectors: 10000,
-  percent_complete: 50
-}
-
-// Loading complete
-{
-  type: 'vector_loading_status',
-  session_id: 'uuid',
-  status: 'ready',
-  vectors_loaded: 10000,
-  dimensions: 384,
-  message: 'Vector database loaded successfully'
+  payload: {
+    event: string,        // Event type (see below)
+    message: string,      // User-friendly message
+    // Additional fields vary by event type
+  }
 }
 ```
 
-#### Error Codes for Vector Loading
+#### Progress Event Types
+
+##### 1. ManifestDownloaded
+Sent when the manifest.json has been successfully downloaded from S5.
 
 ```typescript
-// Manifest not found on S5 network
 {
-  type: 'error',
-  error_code: 'MANIFEST_NOT_FOUND',
-  message: 'Vector database manifest not found',
-  details: {
-    manifest_path: 'home/vector-databases/0xABC.../my-docs/manifest.json'
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'manifest_downloaded',
+    message: 'Manifest downloaded, loading chunks...'
+  }
+}
+```
+
+##### 2. ChunkDownloaded
+Sent after each chunk is downloaded. Provides real-time progress tracking.
+
+```typescript
+{
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'chunk_downloaded',
+    chunk_id: 5,           // 0-indexed chunk number
+    total: 10,             // Total number of chunks
+    percent: 60,           // Progress percentage (calculated: (chunk_id + 1) / total * 100)
+    message: 'Downloading chunks... 60% (6/10)'
+  }
+}
+```
+
+**Note**: For small databases (<1K vectors), chunks may download so quickly that you only see the first and last chunk events.
+
+##### 3. IndexBuilding
+Sent when all chunks have been downloaded and the HNSW search index is being built.
+
+```typescript
+{
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'index_building',
+    message: 'Building search index...'
+  }
+}
+```
+
+**Note**: Index building is usually very fast (<50ms for 10K vectors), so this event may appear briefly.
+
+##### 4. LoadingComplete
+Sent when the vector database is fully loaded and ready for search operations.
+
+```typescript
+{
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'loading_complete',
+    vector_count: 10000,      // Total vectors loaded
+    duration_ms: 1250,        // Total loading time in milliseconds
+    message: 'Vector database ready (10000 vectors, loaded in 1.25s)'
+  }
+}
+```
+
+**After receiving this event**, the session is ready for RAG-enhanced inference. You can start sending `prompt` messages with semantic search support.
+
+##### 5. LoadingError
+Sent when loading fails at any stage. Includes both machine-readable error code and user-friendly message.
+
+```typescript
+{
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'loading_error',
+    error_code: string,       // Machine-readable error code (see Error Codes table)
+    error: string,           // User-friendly error message
+    message: string          // Full message with "Loading failed: " prefix
+  }
+}
+```
+
+#### Error Codes Reference
+
+| Error Code | Description | Recommended Action |
+|------------|-------------|-------------------|
+| `MANIFEST_NOT_FOUND` | Manifest.json not found on S5 network | Verify manifest path and ensure database was uploaded |
+| `MANIFEST_DOWNLOAD_FAILED` | Network error downloading manifest | Retry with exponential backoff (S5 network may be temporarily unavailable) |
+| `CHUNK_DOWNLOAD_FAILED` | Failed to download a specific chunk | Retry with exponential backoff (transient network issue) |
+| `OWNER_MISMATCH` | Client address doesn't match database owner | Verify user_address matches the database owner |
+| `DECRYPTION_FAILED` | Failed to decrypt encrypted chunks | Verify session_key is correct (for encrypted databases) |
+| `DIMENSION_MISMATCH` | Vector dimensions don't match expected size | Database may be corrupted or created with wrong model |
+| `MEMORY_LIMIT_EXCEEDED` | Database too large to load into memory | Use smaller database or request host with more RAM |
+| `RATE_LIMIT_EXCEEDED` | Too many download requests to S5 | Wait and retry (host may have S5 rate limiting) |
+| `TIMEOUT` | Loading exceeded timeout threshold (5 minutes) | Database may be too large, retry or use chunked loading |
+| `INVALID_PATH` | Manifest path format is invalid | Verify path format: `home/vector-databases/{address}/{name}/manifest.json` |
+| `INVALID_SESSION_KEY` | Session key has invalid length/format | Provide 32-byte hex-encoded session key |
+| `EMPTY_DATABASE` | No vectors found in database | Database may be empty or corrupted |
+| `INDEX_BUILD_FAILED` | Failed to build HNSW search index | Database may contain invalid vectors |
+| `SESSION_NOT_FOUND` | Session expired or doesn't exist | Re-initialize session with `session_init` |
+| `INTERNAL_ERROR` | Unexpected internal error | Report to host operator with full error message |
+
+#### Error Examples
+
+```typescript
+// Example 1: Manifest not found
+{
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'loading_error',
+    error_code: 'MANIFEST_NOT_FOUND',
+    error: 'Vector database not found: manifest.json does not exist at specified path',
+    message: 'Loading failed: Vector database not found: manifest.json does not exist at specified path'
   }
 }
 
-// Ownership verification failed
+// Example 2: Chunk download failure (retryable)
 {
-  type: 'error',
-  error_code: 'OWNER_MISMATCH',
-  message: 'Client address does not match database owner',
-  details: {
-    expected_owner: '0xABC123...',
-    actual_client: '0xDEF456...'
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'loading_error',
+    error_code: 'CHUNK_DOWNLOAD_FAILED',
+    error: 'Failed to download chunk: Network timeout after 30s',
+    message: 'Loading failed: Failed to download chunk: Network timeout after 30s'
   }
 }
 
-// S5 network unreachable
+// Example 3: Decryption failure (likely invalid key)
 {
-  type: 'error',
-  error_code: 'S5_NETWORK_ERROR',
-  message: 'Failed to connect to S5 network',
-  details: {
-    s5_endpoint: 'https://s5.vup.cx',
-    error: 'Connection timeout'
-  }
-}
-
-// Invalid manifest format
-{
-  type: 'error',
-  error_code: 'INVALID_MANIFEST',
-  message: 'Vector database manifest has invalid format',
-  details: {
-    expected_fields: ['vectors', 'metadata', 'dimensions']
+  type: 'vector_loading_progress',
+  session_id: 'uuid',
+  payload: {
+    event: 'loading_error',
+    error_code: 'DECRYPTION_FAILED',
+    error: 'Failed to decrypt vector database',
+    message: 'Loading failed: Failed to decrypt vector database'
   }
 }
 ```
@@ -314,15 +395,21 @@ const newInitMessage = {
 };
 ```
 
-#### SDK Integration Example
+#### SDK Integration Examples
+
+##### Example 1: Basic Progress Tracking with UI Updates
 
 ```typescript
 class RAGEnabledSession {
+  private progressCallback?: (progress: LoadingProgress) => void;
+
   async initializeWithVectorDB(
     jobId: number,
     vectorDBPath: string,
-    userAddress: string
+    userAddress: string,
+    onProgress?: (progress: LoadingProgress) => void
   ) {
+    this.progressCallback = onProgress;
     const ws = new WebSocket('ws://host:8080/v1/ws');
 
     await this.waitForOpen(ws);
@@ -344,25 +431,212 @@ class RAGEnabledSession {
 
     ws.send(JSON.stringify(initMessage));
 
-    // Listen for loading status
+    // Listen for loading progress
     ws.on('message', (data) => {
       const msg = JSON.parse(data);
 
-      if (msg.type === 'vector_loading_status') {
-        console.log(`Vector DB: ${msg.status} - ${msg.message}`);
-
-        if (msg.status === 'ready') {
-          console.log(`Loaded ${msg.vectors_loaded} vectors (${msg.dimensions}D)`);
-          // Session ready for RAG-enhanced inference
-        }
-      }
-
-      if (msg.type === 'error' && msg.error_code.startsWith('MANIFEST_')) {
-        console.error(`Vector DB error: ${msg.message}`);
-        // Handle vector loading failure
+      if (msg.type === 'vector_loading_progress') {
+        this.handleLoadingProgress(msg.payload);
       }
     });
   }
+
+  private handleLoadingProgress(payload: any) {
+    switch (payload.event) {
+      case 'manifest_downloaded':
+        console.log('📥 Manifest downloaded');
+        this.progressCallback?.({
+          phase: 'downloading',
+          percent: 10,
+          message: payload.message
+        });
+        break;
+
+      case 'chunk_downloaded':
+        console.log(`📦 Chunk ${payload.chunk_id + 1}/${payload.total} (${payload.percent}%)`);
+        this.progressCallback?.({
+          phase: 'downloading',
+          percent: payload.percent,
+          message: payload.message
+        });
+        break;
+
+      case 'index_building':
+        console.log('🔨 Building search index...');
+        this.progressCallback?.({
+          phase: 'indexing',
+          percent: 95,
+          message: payload.message
+        });
+        break;
+
+      case 'loading_complete':
+        console.log(`✅ Vector database ready! (${payload.vector_count} vectors, ${payload.duration_ms}ms)`);
+        this.progressCallback?.({
+          phase: 'complete',
+          percent: 100,
+          message: payload.message,
+          vectorCount: payload.vector_count,
+          durationMs: payload.duration_ms
+        });
+        // Session ready for RAG-enhanced inference
+        break;
+
+      case 'loading_error':
+        console.error(`❌ Loading failed: ${payload.error_code} - ${payload.error}`);
+        this.progressCallback?.({
+          phase: 'error',
+          percent: 0,
+          message: payload.error,
+          errorCode: payload.error_code
+        });
+        // Handle error (see Example 2 for retry logic)
+        break;
+    }
+  }
+}
+
+interface LoadingProgress {
+  phase: 'downloading' | 'indexing' | 'complete' | 'error';
+  percent: number;
+  message: string;
+  vectorCount?: number;
+  durationMs?: number;
+  errorCode?: string;
+}
+```
+
+##### Example 2: Error Handling with Retry Logic
+
+```typescript
+class RobustRAGSession extends RAGEnabledSession {
+  private maxRetries = 3;
+  private retryDelay = 1000; // Start with 1 second
+
+  async initializeWithVectorDB(
+    jobId: number,
+    vectorDBPath: string,
+    userAddress: string,
+    onProgress?: (progress: LoadingProgress) => void
+  ) {
+    let attempt = 0;
+
+    while (attempt < this.maxRetries) {
+      try {
+        await super.initializeWithVectorDB(jobId, vectorDBPath, userAddress, (progress) => {
+          if (progress.phase === 'error' && this.isRetryableError(progress.errorCode)) {
+            // Will retry after this attempt
+            console.warn(`Retryable error, will retry (attempt ${attempt + 1}/${this.maxRetries})`);
+          } else if (progress.phase === 'error') {
+            // Fatal error, don't retry
+            throw new Error(`Fatal loading error: ${progress.errorCode} - ${progress.message}`);
+          }
+
+          onProgress?.(progress);
+        });
+
+        // Success, exit retry loop
+        break;
+
+      } catch (error) {
+        attempt++;
+
+        if (attempt >= this.maxRetries) {
+          throw new Error(`Failed to load vector database after ${this.maxRetries} attempts: ${error}`);
+        }
+
+        // Exponential backoff
+        const delay = this.retryDelay * Math.pow(2, attempt - 1);
+        console.log(`Retrying in ${delay}ms...`);
+        await this.sleep(delay);
+      }
+    }
+  }
+
+  private isRetryableError(errorCode?: string): boolean {
+    // Transient network errors that should be retried
+    const retryableErrors = [
+      'MANIFEST_DOWNLOAD_FAILED',
+      'CHUNK_DOWNLOAD_FAILED',
+      'RATE_LIMIT_EXCEEDED',
+      'TIMEOUT',
+      'INTERNAL_ERROR'
+    ];
+
+    return errorCode ? retryableErrors.includes(errorCode) : false;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+```
+
+##### Example 3: React UI Component with Progress Bar
+
+```typescript
+import React, { useState, useEffect } from 'react';
+
+function VectorDatabaseLoader({
+  jobId,
+  vectorDBPath,
+  userAddress
+}: VectorDatabaseLoaderProps) {
+  const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const [message, setMessage] = useState('Initializing...');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const session = new RAGEnabledSession();
+
+    session.initializeWithVectorDB(
+      jobId,
+      vectorDBPath,
+      userAddress,
+      (progressData) => {
+        setProgress(progressData.percent);
+        setMessage(progressData.message);
+
+        if (progressData.phase === 'complete') {
+          setLoading(false);
+          console.log(`Loaded ${progressData.vectorCount} vectors in ${progressData.durationMs}ms`);
+        }
+
+        if (progressData.phase === 'error') {
+          setLoading(false);
+          setError(`${progressData.errorCode}: ${progressData.message}`);
+        }
+      }
+    );
+  }, [jobId, vectorDBPath, userAddress]);
+
+  if (error) {
+    return (
+      <div className="error-container">
+        <h3>Failed to Load Vector Database</h3>
+        <p>{error}</p>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <h3>Loading Vector Database</h3>
+        <ProgressBar percent={progress} />
+        <p>{message}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ready-container">
+      <h3>✅ Vector Database Ready</h3>
+      <p>You can now ask questions about your documents</p>
+    </div>
+  );
 }
 ```
 
@@ -378,6 +652,207 @@ class RAGEnabledSession {
 - Consider pre-loading vectors before session starts
 - Cache vector databases on host for faster subsequent loads
 - Use compressed manifest formats to reduce S5 download time
+
+#### Loading Flow Sequence Diagram
+
+```
+Client (SDK)                    Host Node                      S5 Network
+     |                              |                               |
+     |-- session_init (with -------→|                               |
+     |   vector_database)           |                               |
+     |                              |                               |
+     |                              |-- Download manifest.json ---→|
+     |                              |←-- manifest.json --------------|
+     |                              |                               |
+     |←-- manifest_downloaded ------|                               |
+     |    (progress event)          |                               |
+     |                              |                               |
+     |                              |-- Download chunk 0 ----------→|
+     |                              |←-- chunk 0 data ---------------|
+     |←-- chunk_downloaded ---------|                               |
+     |    (chunk_id: 0, total: 5,  |                               |
+     |     percent: 20)             |                               |
+     |                              |                               |
+     |                              |-- Download chunk 1 ----------→|
+     |                              |←-- chunk 1 data ---------------|
+     |←-- chunk_downloaded ---------|                               |
+     |    (chunk_id: 1, total: 5,  |                               |
+     |     percent: 40)             |                               |
+     |                              |                               |
+     |                              |  ... (chunks 2-4) ...         |
+     |                              |                               |
+     |                              |-- Build HNSW index            |
+     |←-- index_building -----------|                               |
+     |                              |                               |
+     |                              |-- Index complete              |
+     |←-- loading_complete ---------|                               |
+     |    (vector_count: 10000,     |                               |
+     |     duration_ms: 1250)       |                               |
+     |                              |                               |
+     |-- prompt (RAG query) -------→|                               |
+     |                              |-- Semantic search             |
+     |                              |-- LLM inference with context  |
+     |←-- response (enhanced) ------|                               |
+```
+
+**Timeline Breakdown** (for 10K vector database):
+1. **0-200ms**: Manifest download from S5
+2. **200-1000ms**: Chunk downloads (5 chunks, ~150ms each)
+3. **1000-1050ms**: HNSW index building (~50ms)
+4. **Total: ~1250ms** (varies based on S5 network speed)
+
+**Error Flow**:
+```
+Client (SDK)                    Host Node                      S5 Network
+     |                              |                               |
+     |-- session_init (with -------→|                               |
+     |   vector_database)           |                               |
+     |                              |                               |
+     |                              |-- Download manifest.json ---→|
+     |                              |←-- 404 Not Found --------------|
+     |                              |                               |
+     |←-- loading_error ------------|                               |
+     |    (error_code:              |                               |
+     |     MANIFEST_NOT_FOUND,      |                               |
+     |     error: "Vector database  |                               |
+     |     not found...")           |                               |
+     |                              |                               |
+     |-- Retry or show error UI     |                               |
+```
+
+#### FAQ: Vector Loading Issues
+
+##### Q1: Why am I getting `MANIFEST_NOT_FOUND` errors?
+
+**A:** This error means the manifest.json file doesn't exist at the specified S5 path. Common causes:
+
+1. **Incorrect path format**: Verify your path follows the format:
+   ```
+   home/vector-databases/{user_address}/{database_name}/manifest.json
+   ```
+
+2. **Database not uploaded yet**: Ensure you've uploaded your vector database to S5 before trying to load it.
+
+3. **S5 propagation delay**: After uploading, wait 5-10 seconds for S5 network propagation.
+
+**Solution**: Double-check the manifest path and verify the file exists on S5.
+
+##### Q2: Loading times out after 5 minutes. What should I do?
+
+**A:** The 5-minute timeout is a safety mechanism. If your database takes longer:
+
+1. **Reduce database size**: Consider chunking your documents or reducing the number of vectors.
+
+2. **Check S5 network status**: Slow loading may indicate S5 network issues. Try again later.
+
+3. **Implement retry logic**: Use exponential backoff (see Example 2 above).
+
+4. **Host memory limits**: Very large databases (>100K vectors) may exceed host memory. Consider using a host with more RAM.
+
+##### Q3: How do I handle `CHUNK_DOWNLOAD_FAILED` errors?
+
+**A:** Chunk download failures are usually transient network issues:
+
+1. **Implement retry logic**: Use exponential backoff (recommended: 3 retries with 1s, 2s, 4s delays).
+
+2. **Check S5 network health**: Visit https://s5.vup.cx to verify S5 network status.
+
+3. **Monitor progress events**: If only some chunks fail, the host will retry automatically up to 3 times.
+
+**Error is retryable**: Yes, automatic retry is recommended.
+
+##### Q4: What does `DECRYPTION_FAILED` mean?
+
+**A:** This error occurs when the host cannot decrypt your encrypted vector database:
+
+1. **Verify session_key**: Ensure the 32-byte hex session key matches the one used to encrypt the database.
+
+2. **Check encryption format**: Verify your database uses XChaCha20-Poly1305 AEAD encryption.
+
+3. **Database corruption**: Re-upload your database and try again.
+
+**Error is retryable**: No, fix the session key or re-upload the database.
+
+##### Q5: Can I cancel loading mid-way?
+
+**A:** Yes, simply close the WebSocket connection. The host will:
+
+1. Stop downloading chunks
+2. Clean up partial loading state
+3. Settle payments via `completeSessionJob()`
+
+No action required from your SDK - cancellation is automatic on disconnect.
+
+##### Q6: Do I need to handle all progress events?
+
+**A:** No, progress events are **optional** for backward compatibility:
+
+- **Minimum**: Only handle `loading_complete` and `loading_error` events
+- **Recommended**: Handle `chunk_downloaded` for progress UI
+- **Full experience**: Handle all 5 event types for detailed user feedback
+
+**Backward compatibility**: Old SDKs that ignore progress events will still work correctly.
+
+##### Q7: How do I know when it's safe to send prompts?
+
+**A:** Wait for the `loading_complete` event before sending prompt messages:
+
+```typescript
+ws.on('message', (data) => {
+  const msg = JSON.parse(data);
+
+  if (msg.type === 'vector_loading_progress' && msg.payload.event === 'loading_complete') {
+    // ✅ Safe to send prompts now
+    const promptMessage = {
+      type: 'prompt',
+      session_id: sessionId,
+      content: 'What is machine learning?'
+    };
+    ws.send(JSON.stringify(promptMessage));
+  }
+});
+```
+
+**Note**: If you send prompts before loading completes, the host will queue them and process after loading finishes (or return an error if loading fails).
+
+##### Q8: What happens if the host disconnects during loading?
+
+**A:** If the host disconnects mid-loading:
+
+1. **WebSocket closes**: Your SDK receives a WebSocket `close` event
+2. **No loading_complete event**: Loading is incomplete
+3. **Automatic payment settlement**: User gets refund for unused tokens
+4. **Retry with different host**: Your SDK should connect to a different host and retry
+
+**Recommendation**: Implement host failover logic in your SDK for production use.
+
+##### Q9: Can I load multiple databases in one session?
+
+**A:** **Not currently supported**. Each session supports one vector database specified in `session_init`.
+
+**Workaround**: Create multiple sessions (one per database) if you need multi-database search.
+
+**Future enhancement**: Multi-database support is planned for v8.6+.
+
+##### Q10: How do I monitor loading performance?
+
+**A:** Use the `loading_complete` event's `duration_ms` field:
+
+```typescript
+if (msg.payload.event === 'loading_complete') {
+  const durationSeconds = msg.payload.duration_ms / 1000;
+  console.log(`Loading took ${durationSeconds}s for ${msg.payload.vector_count} vectors`);
+
+  // Track metrics
+  analytics.track('vector_loading_performance', {
+    vectors: msg.payload.vector_count,
+    duration_ms: msg.payload.duration_ms,
+    vectors_per_second: msg.payload.vector_count / durationSeconds
+  });
+}
+```
+
+**Typical performance**: ~8000 vectors/second for medium databases on good network connections.
 
 #### Session Resume (After Disconnect)
 ```typescript
