@@ -131,7 +131,8 @@ pub async fn load_vectors_async(
                 );
             }
 
-            // TODO: Record timeout metric
+            // TODO: Record timeout metric via S5Metrics::record_loading_timeout()
+            // Requires passing S5Metrics instance through function parameters
         }
 
         // Operation completed (success or error)
@@ -145,7 +146,8 @@ pub async fn load_vectors_async(
                         duration_ms,
                         "✅ Async vector loading completed successfully"
                     );
-                    // TODO: Record success metric
+                    // TODO: Record success metric via S5Metrics::record_loading_success(duration)
+                    // Requires passing S5Metrics instance through function parameters
                 }
                 Err(e) => {
                     error!(
@@ -154,7 +156,8 @@ pub async fn load_vectors_async(
                         duration_ms,
                         "❌ Async vector loading failed"
                     );
-                    // TODO: Record failure metric
+                    // TODO: Record failure metric via S5Metrics::record_loading_failure()
+                    // Requires passing S5Metrics instance through function parameters
                 }
             }
         }

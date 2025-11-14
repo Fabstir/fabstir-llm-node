@@ -2233,6 +2233,16 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
     info!("   Job ID: {:?}", job_id);
     info!("   Chain ID: {:?}", chain_id);
 
+    // Cancel background vector loading task if active (Phase 5)
+    if let Some(sid) = &session_id {
+        let store = server.session_store.read().await;
+        if let Some(session) = store.get_session(sid).await {
+            // Cancel the background task
+            session.cancel_token.cancel();
+            info!("🛑 Cancelled background vector loading task for session: {}", sid);
+        }
+    }
+
     if let Some(jid) = job_id {
         info!("\n🚨 WEBSOCKET DISCONNECTED - STARTING SETTLEMENT PROCESS");
         info!("   Job ID from WebSocket session: {}", jid);
