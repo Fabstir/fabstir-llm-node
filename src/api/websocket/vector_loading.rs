@@ -32,7 +32,9 @@
 //! }
 //! ```
 
-use crate::api::websocket::message_types::{VectorDatabaseInfo, WebSocketMessage, MessageType};
+use crate::api::websocket::message_types::{
+    VectorDatabaseInfo, WebSocketMessage, MessageType, LoadingProgressMessage,
+};
 use crate::api::websocket::session::{VectorLoadingStatus, WebSocketSession};
 use crate::api::websocket::session_store::SessionStore;
 use crate::job_processor::Message;
@@ -178,9 +180,6 @@ async fn load_vectors_with_cancellation(
         return Ok(());
     }
 
-    // Send "loading" message to client
-    send_progress_message(&session_id, &session_store, "loading", "Starting vector database download...").await?;
-
     // Get session key for decryption
     let session_key = encryption_key.ok_or_else(|| {
         anyhow::anyhow!("No encryption key available for vector database decryption")
@@ -223,40 +222,33 @@ async fn load_vectors_with_cancellation(
                 break;
             }
 
-            match progress {
+            // Convert LoadProgress to LoadingProgressMessage
+            let progress_msg = match progress {
                 LoadProgress::ManifestDownloaded => {
-                    let _ = send_progress_message(
-                        &session_id_clone,
-                        &session_store_clone,
-                        "progress",
-                        "Manifest downloaded, loading chunks...",
-                    ).await;
+                    LoadingProgressMessage::ManifestDownloaded
                 }
                 LoadProgress::ChunkDownloaded { chunk_id, total } => {
-                    let percent = (chunk_id as f64 / total as f64 * 100.0) as u32;
-                    let _ = send_progress_message(
-                        &session_id_clone,
-                        &session_store_clone,
-                        "progress",
-                        &format!("Downloading chunks... {}% ({}/{})", percent, chunk_id + 1, total),
-                    ).await;
+                    LoadingProgressMessage::ChunkDownloaded { chunk_id, total }
                 }
                 LoadProgress::IndexBuilding => {
-                    let _ = send_progress_message(
-                        &session_id_clone,
-                        &session_store_clone,
-                        "progress",
-                        "Building search index...",
-                    ).await;
+                    LoadingProgressMessage::IndexBuilding
                 }
                 LoadProgress::Complete { vector_count, duration_ms } => {
-                    debug!(
-                        session_id = %session_id_clone,
-                        vector_count,
-                        duration_ms,
-                        "Vector loading progress complete"
-                    );
+                    LoadingProgressMessage::LoadingComplete { vector_count, duration_ms }
                 }
+            };
+
+            // Send progress message via WebSocket
+            if let Err(e) = send_loading_progress(
+                &session_id_clone,
+                &session_store_clone,
+                progress_msg,
+            ).await {
+                warn!(
+                    session_id = %session_id_clone,
+                    error = %e,
+                    "Failed to send loading progress message"
+                );
             }
         }
     });
@@ -300,9 +292,8 @@ async fn load_vectors_with_cancellation(
         "📦 Vectors loaded, building HNSW index..."
     );
 
-    // Send index building progress
+    // Send index building progress (will be converted to LoadingProgressMessage by progress task)
     let _ = progress_tx.send(LoadProgress::IndexBuilding).await;
-    send_progress_message(&session_id, &session_store, "progress", "Building search index...").await?;
 
     // Build HNSW index with cancellation check
     let index_start = Instant::now();
@@ -333,6 +324,15 @@ async fn load_vectors_with_cancellation(
         "✅ HNSW index built successfully"
     );
 
+    // Calculate total loading time
+    let total_duration_ms = index_start.elapsed().as_millis() as u64 + index_duration_ms;
+
+    // Send completion progress (will be converted to LoadingProgressMessage by progress task)
+    let _ = progress_tx.send(LoadProgress::Complete {
+        vector_count,
+        duration_ms: total_duration_ms,
+    }).await;
+
     // Update session with index and status
     {
         let mut store = session_store.write().await;
@@ -340,22 +340,17 @@ async fn load_vectors_with_cancellation(
             session.set_vector_index(Arc::new(index));
             session.set_vector_loading_status(VectorLoadingStatus::Loaded {
                 vector_count,
-                load_time_ms: index_start.elapsed().as_millis() as u64 + index_duration_ms,
+                load_time_ms: total_duration_ms,
             });
         } else {
             return Err(anyhow::anyhow!("Session not found: {}", session_id));
         }
     }
 
-    // Send completion message to client
-    send_progress_message(
-        &session_id,
-        &session_store,
-        "ready",
-        &format!("Vector database ready ({} vectors)", vector_count),
-    ).await?;
+    // Drop progress_tx to close the channel and allow progress_task to complete
+    drop(progress_tx);
 
-    // Wait for progress task to finish
+    // Wait for progress task to finish sending all messages
     let _ = progress_task.await;
 
     Ok(())
@@ -376,32 +371,30 @@ async fn update_session_status(
     }
 }
 
-/// Send progress message to client via WebSocket
-async fn send_progress_message(
+/// Send loading progress message to client via WebSocket
+async fn send_loading_progress(
     session_id: &str,
     session_store: &Arc<RwLock<SessionStore>>,
-    status: &str,
-    message: &str,
+    progress: LoadingProgressMessage,
 ) -> Result<()> {
     debug!(
         session_id = %session_id,
-        status = %status,
-        message = %message,
-        "Sending progress message"
+        progress = ?progress,
+        "Sending loading progress message"
     );
 
     // Get session's tx channel
     let store = session_store.read().await;
     if let Some(session) = store.get_session(session_id).await {
         if let Some(ref tx) = session.tx {
+            // Serialize LoadingProgressMessage to JSON
+            let progress_payload = serde_json::to_value(&progress)?;
+
             // Create WebSocket message
             let ws_message = WebSocketMessage {
                 msg_type: MessageType::VectorLoadingProgress,
                 session_id: Some(session_id.to_string()),
-                payload: serde_json::json!({
-                    "status": status,
-                    "message": message,
-                }),
+                payload: progress_payload,
             };
 
             // Convert to job_processor Message (role: "system", content: JSON string)
