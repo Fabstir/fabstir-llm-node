@@ -6,7 +6,7 @@
 //! LoadingProgressMessage enum and related types.
 
 use fabstir_llm_node::api::websocket::message_types::{
-    LoadingProgressMessage, MessageType, WebSocketMessage,
+    LoadingProgressMessage, LoadingErrorCode, MessageType, WebSocketMessage,
 };
 use serde_json::json;
 
@@ -202,12 +202,14 @@ fn test_loading_complete_duration_formatting() {
 #[test]
 fn test_loading_error_serialization() {
     let progress = LoadingProgressMessage::LoadingError {
+        error_code: LoadingErrorCode::ChunkDownloadFailed,
         error: "Failed to download chunk 3: Network timeout".to_string(),
     };
 
     let json = serde_json::to_value(&progress).expect("Failed to serialize");
 
     assert_eq!(json["event"], "loading_error");
+    assert_eq!(json["error_code"], "CHUNK_DOWNLOAD_FAILED");
     assert_eq!(json["error"], "Failed to download chunk 3: Network timeout");
     assert_eq!(json["message"], "Loading failed: Failed to download chunk 3: Network timeout");
 }
@@ -216,6 +218,7 @@ fn test_loading_error_serialization() {
 fn test_loading_error_deserialization() {
     let json = json!({
         "event": "loading_error",
+        "error_code": "DECRYPTION_FAILED",
         "error": "Decryption failed: Invalid key",
         "message": "Loading failed: Decryption failed: Invalid key"
     });
@@ -224,7 +227,8 @@ fn test_loading_error_deserialization() {
         serde_json::from_value(json).expect("Failed to deserialize");
 
     match progress {
-        LoadingProgressMessage::LoadingError { error } => {
+        LoadingProgressMessage::LoadingError { error_code, error } => {
+            assert_eq!(error_code, LoadingErrorCode::DecryptionFailed);
             assert_eq!(error, "Decryption failed: Invalid key");
         }
         _ => panic!("Expected LoadingError variant"),
@@ -268,7 +272,10 @@ fn test_all_progress_events_in_websocket_messages() {
         LoadingProgressMessage::ChunkDownloaded { chunk_id: 0, total: 3 },
         LoadingProgressMessage::IndexBuilding,
         LoadingProgressMessage::LoadingComplete { vector_count: 500, duration_ms: 1200 },
-        LoadingProgressMessage::LoadingError { error: "Test error".to_string() },
+        LoadingProgressMessage::LoadingError {
+            error_code: LoadingErrorCode::InternalError,
+            error: "Test error".to_string(),
+        },
     ];
 
     for progress in events {
@@ -368,6 +375,7 @@ fn test_loading_error_user_friendly_messages() {
 
     for (error_msg, expected_in_message) in test_cases {
         let progress = LoadingProgressMessage::LoadingError {
+            error_code: LoadingErrorCode::InternalError,
             error: error_msg.to_string(),
         };
 

@@ -723,6 +723,43 @@ pub struct VectorDatabaseInfo {
 // Vector Loading Progress Messages (Sub-phase 7.1)
 // ============================================================================
 
+/// Error codes for loading failures (Sub-phase 7.3)
+/// Enables SDKs to categorize and handle errors appropriately
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LoadingErrorCode {
+    /// S5 manifest path does not exist
+    ManifestNotFound,
+    /// Network error downloading manifest
+    ManifestDownloadFailed,
+    /// Network error downloading chunk
+    ChunkDownloadFailed,
+    /// manifest.owner != user_address (security)
+    OwnerMismatch,
+    /// Invalid session key or corrupted data
+    DecryptionFailed,
+    /// Vector dimensions don't match manifest
+    DimensionMismatch,
+    /// Database too large for configured limit
+    MemoryLimitExceeded,
+    /// Too many downloads in time window
+    RateLimitExceeded,
+    /// Loading exceeded 5-minute limit
+    Timeout,
+    /// manifest_path format invalid
+    InvalidPath,
+    /// Invalid session key length
+    InvalidSessionKey,
+    /// No vectors in database
+    EmptyDatabase,
+    /// Index building failed
+    IndexBuildFailed,
+    /// Session not found
+    SessionNotFound,
+    /// Unknown/internal error
+    InternalError,
+}
+
 /// Real-time progress updates for S5 vector database loading
 /// Sent to SDK clients during async loading operations to provide feedback
 #[derive(Debug, Clone, PartialEq)]
@@ -751,6 +788,8 @@ pub enum LoadingProgressMessage {
 
     /// Loading failed with error
     LoadingError {
+        /// Machine-readable error code for SDK categorization
+        error_code: LoadingErrorCode,
         /// User-friendly error message
         error: String,
     },
@@ -782,7 +821,7 @@ impl LoadingProgressMessage {
                     vector_count, duration_secs
                 )
             }
-            LoadingProgressMessage::LoadingError { error } => {
+            LoadingProgressMessage::LoadingError { error, .. } => {
                 format!("Loading failed: {}", error)
             }
         }
@@ -822,8 +861,9 @@ impl Serialize for LoadingProgressMessage {
                 map.serialize_entry("duration_ms", duration_ms)?;
                 map.serialize_entry("message", &self.message())?;
             }
-            LoadingProgressMessage::LoadingError { error } => {
+            LoadingProgressMessage::LoadingError { error_code, error } => {
                 map.serialize_entry("event", "loading_error")?;
+                map.serialize_entry("error_code", error_code)?;
                 map.serialize_entry("error", error)?;
                 map.serialize_entry("message", &self.message())?;
             }
@@ -860,6 +900,7 @@ impl<'de> Deserialize<'de> for LoadingProgressMessage {
                 let mut total: Option<usize> = None;
                 let mut vector_count: Option<usize> = None;
                 let mut duration_ms: Option<u64> = None;
+                let mut error_code: Option<LoadingErrorCode> = None;
                 let mut error: Option<String> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
@@ -869,6 +910,7 @@ impl<'de> Deserialize<'de> for LoadingProgressMessage {
                         "total" => total = Some(map.next_value()?),
                         "vector_count" => vector_count = Some(map.next_value()?),
                         "duration_ms" => duration_ms = Some(map.next_value()?),
+                        "error_code" => error_code = Some(map.next_value()?),
                         "error" => error = Some(map.next_value()?),
                         // Ignore unknown fields (percent, message, etc.)
                         _ => {
@@ -893,8 +935,9 @@ impl<'de> Deserialize<'de> for LoadingProgressMessage {
                         Ok(LoadingProgressMessage::LoadingComplete { vector_count, duration_ms })
                     }
                     "loading_error" => {
+                        let error_code = error_code.ok_or_else(|| de::Error::missing_field("error_code"))?;
                         let error = error.ok_or_else(|| de::Error::missing_field("error"))?;
-                        Ok(LoadingProgressMessage::LoadingError { error })
+                        Ok(LoadingProgressMessage::LoadingError { error_code, error })
                     }
                     _ => Err(de::Error::unknown_variant(&event, &[
                         "manifest_downloaded",
