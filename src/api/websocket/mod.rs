@@ -36,3 +36,4 @@ pub mod session_store;
 pub mod storage_trait;
 pub mod transport;
 pub mod vector_loading;
+pub mod vector_loading_errors;

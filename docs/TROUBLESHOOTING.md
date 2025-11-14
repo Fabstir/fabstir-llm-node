@@ -509,6 +509,113 @@ export SESSION_KEY_TTL_SECONDS=1800  # 30 minutes
 - `docs/sdk-reference/NODE_ENCRYPTION_GUIDE.md` - SDK integration
 - `docs/API.md` - Encryption protocol documentation
 
+### 10. Vector Loading Errors
+
+#### Symptoms
+- Vector database fails to load during session initialization
+- Client receives `LoadingError` WebSocket messages
+- Loading progress stops unexpectedly
+- Session remains in "Loading" state indefinitely
+
+#### Causes & Solutions
+
+**INTERNAL_ERROR Monitoring**
+
+**What it means**: An unexpected error occurred during vector loading that doesn't match any known error patterns.
+
+**Why it matters**: `INTERNAL_ERROR` indicates a potential bug or unhandled edge case that should be investigated.
+
+**How to investigate**:
+```bash
+# 1. Check logs for unexpected errors (WARN level)
+grep "Unexpected error categorized as INTERNAL_ERROR" logs/fabstir-llm-node.log
+
+# 2. Look for the error message and context
+grep -A 5 "⚠️ Unexpected" logs/fabstir-llm-node.log
+
+# 3. Check if it's recurring
+grep -c "INTERNAL_ERROR" logs/fabstir-llm-node.log
+
+# 4. Review full error details
+RUST_LOG=debug cargo run --release
+```
+
+**Example log entry**:
+```
+WARN vector_loading: ⚠️ Unexpected error categorized as INTERNAL_ERROR - investigate if recurring
+  session_id="abc123"
+  error="S5 network unreachable: connection timeout"
+  duration_ms=5234
+```
+
+**Action**: If you see recurring INTERNAL_ERROR entries:
+1. Note the error message pattern
+2. Consider adding a specific error variant to `VectorLoadingError` enum
+3. Report the issue with logs at https://github.com/Fabstir/fabstir-llm-node/issues
+
+**Known Error Types (Expected Behavior)**
+
+| Error Code | Log Level | Description | Action |
+|------------|-----------|-------------|--------|
+| `MANIFEST_NOT_FOUND` | DEBUG | Manifest file doesn't exist at S5 path | Verify manifest path and user address |
+| `MANIFEST_DOWNLOAD_FAILED` | DEBUG | Failed to download manifest from S5 | Check S5 portal availability |
+| `CHUNK_DOWNLOAD_FAILED` | DEBUG | Failed to download vector chunk | Retry or check S5 network status |
+| `OWNER_MISMATCH` | WARN | Database owner doesn't match session user | **Security**: User lacks access, check permissions |
+| `DECRYPTION_FAILED` | WARN | Failed to decrypt vector data | **Security**: Invalid session key, check encryption |
+| `DIMENSION_MISMATCH` | DEBUG | Vector dimensions don't match expected | Verify embedding model compatibility |
+| `MEMORY_LIMIT_EXCEEDED` | DEBUG | Database too large for host memory | Reduce database size or increase memory |
+| `RATE_LIMIT_EXCEEDED` | DEBUG | Too many download requests | Wait and retry later |
+| `TIMEOUT` | INFO | Loading timed out after 5 minutes | **Expected** for large databases (>100K vectors) |
+| `INVALID_PATH` | DEBUG | Manifest path has invalid format | Fix path format in session_init |
+| `INVALID_SESSION_KEY` | DEBUG | Session key wrong length | Ensure 32-byte key from ECDH |
+| `EMPTY_DATABASE` | DEBUG | No vectors found in database | Database may be empty or corrupted |
+| `INDEX_BUILD_FAILED` | DEBUG | Failed to build HNSW search index | Check vector data integrity |
+| `SESSION_NOT_FOUND` | DEBUG | Session expired or doesn't exist | Reinitialize session |
+| `INTERNAL_ERROR` | WARN | **Unexpected error** - investigate! | See above for investigation steps |
+
+**Common Solutions**:
+
+```bash
+# Timeout for large databases (EXPECTED):
+# - Increase timeout (requires code change)
+# - Split database into smaller chunks
+# - Use faster S5 portal
+
+# Owner Mismatch (SECURITY):
+# - Verify user address matches database owner
+# - Check WebSocket authentication
+# - Ensure correct wallet/private key
+
+# Decryption Failed (SECURITY):
+# - Verify ECDH key exchange succeeded
+# - Check session key is 32 bytes
+# - Enable debug logging: RUST_LOG=debug
+
+# S5 Download Failures:
+# - Check S5 portal status
+curl https://s5.vup.cx/health
+# - Verify manifest path format
+# - Check network connectivity
+```
+
+**Debug Commands**:
+
+```bash
+# Enable detailed vector loading logs
+RUST_LOG=fabstir_llm_node::api::websocket::vector_loading=debug cargo run --release
+
+# Test vector loading in isolation
+cargo test --test api_tests test_vector_loading -- --nocapture
+
+# Check WebSocket message flow
+cargo test --test api_tests test_loading_progress_messages -- --nocapture
+```
+
+**See Also**:
+- `docs/sdk-reference/S5_VECTOR_LOADING.md` - Vector loading protocol
+- `docs/IMPLEMENTATION_S5_VECTOR_LOADING.md` - Implementation details
+- `src/api/websocket/vector_loading_errors.rs` - Error type definitions
+
 ## Performance Issues
 
 ### High CPU Usage
