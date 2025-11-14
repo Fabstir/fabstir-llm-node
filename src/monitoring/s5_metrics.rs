@@ -12,13 +12,17 @@ use std::time::Duration;
 
 /// S5Metrics structure for tracking S5 vector loading performance
 ///
-/// Tracks six key metrics:
+/// Tracks metrics for vector loading:
 /// - `s5_download_duration_seconds` - Histogram of S5 download times
 /// - `s5_download_errors_total` - Counter of download failures
 /// - `s5_vectors_loaded_total` - Counter of vectors successfully loaded
 /// - `vector_index_build_duration_seconds` - Histogram of index build times
 /// - `vector_index_cache_hits_total` - Counter of cache hits
 /// - `vector_index_cache_misses_total` - Counter of cache misses
+/// - `vector_loading_success_total` - Counter of successful async loading operations (Phase 6)
+/// - `vector_loading_failure_total` - Counter of failed async loading operations (Phase 6)
+/// - `vector_loading_timeout_total` - Counter of timeout events (Phase 6)
+/// - `vector_loading_duration_seconds` - Histogram of total loading times (Phase 6)
 #[derive(Clone)]
 pub struct S5Metrics {
     /// Histogram for S5 download durations
@@ -33,6 +37,14 @@ pub struct S5Metrics {
     pub cache_hits: Arc<Counter>,
     /// Counter for index cache misses
     pub cache_misses: Arc<Counter>,
+    /// Counter for successful async loading operations
+    pub loading_success: Arc<Counter>,
+    /// Counter for failed async loading operations
+    pub loading_failure: Arc<Counter>,
+    /// Counter for timeout events
+    pub loading_timeout: Arc<Counter>,
+    /// Histogram for total async loading durations
+    pub loading_duration: Arc<Histogram>,
 }
 
 impl S5Metrics {
@@ -103,6 +115,35 @@ impl S5Metrics {
             )
             .await?;
 
+        let loading_success = collector
+            .register_counter(
+                "vector_loading_success_total",
+                "Total successful async vector loading operations",
+            )
+            .await?;
+
+        let loading_failure = collector
+            .register_counter(
+                "vector_loading_failure_total",
+                "Total failed async vector loading operations",
+            )
+            .await?;
+
+        let loading_timeout = collector
+            .register_counter(
+                "vector_loading_timeout_total",
+                "Total async vector loading timeout events",
+            )
+            .await?;
+
+        let loading_duration = collector
+            .register_histogram(
+                "vector_loading_duration_seconds",
+                "Total async vector loading duration in seconds",
+                vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0],
+            )
+            .await?;
+
         Ok(Self {
             download_duration,
             download_errors,
@@ -110,6 +151,10 @@ impl S5Metrics {
             index_build_duration,
             cache_hits,
             cache_misses,
+            loading_success,
+            loading_failure,
+            loading_timeout,
+            loading_duration,
         })
     }
 
@@ -167,6 +212,42 @@ impl S5Metrics {
             0.0
         } else {
             hits / total
+        }
+    }
+
+    /// Record successful async vector loading operation
+    ///
+    /// # Arguments
+    /// * `duration` - Total time taken for loading and indexing
+    pub async fn record_loading_success(&self, duration: Duration) {
+        self.loading_success.inc().await;
+        self.loading_duration.observe(duration.as_secs_f64()).await;
+    }
+
+    /// Record failed async vector loading operation
+    pub async fn record_loading_failure(&self) {
+        self.loading_failure.inc().await;
+    }
+
+    /// Record async vector loading timeout event
+    pub async fn record_loading_timeout(&self) {
+        self.loading_timeout.inc().await;
+    }
+
+    /// Get loading success rate
+    ///
+    /// # Returns
+    /// Success rate as a percentage (0.0 to 1.0), or 0.0 if no loading attempts
+    pub async fn get_loading_success_rate(&self) -> f64 {
+        let success = self.loading_success.get().await;
+        let failure = self.loading_failure.get().await;
+        let timeout = self.loading_timeout.get().await;
+        let total = success + failure + timeout;
+
+        if total == 0.0 {
+            0.0
+        } else {
+            success / total
         }
     }
 }
