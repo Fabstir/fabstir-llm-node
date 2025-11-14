@@ -127,38 +127,9 @@ export async function registerRoutes(fastify) {
     }
   });
 
-  // GET /s5/fs/{path}/ - List directory (note trailing slash)
-  // This endpoint lists directory contents
-  fastify.get('/s5/fs/*/', async (request, reply) => {
-    const s5 = getS5Client();
-    if (!s5) {
-      return reply.code(503).send({
-        error: 'S5 client not initialized',
-      });
-    }
-
-    // Extract path from URL (including trailing slash)
-    const path = request.url.replace('/s5/fs/', '');
-
-    try {
-      fastify.log.info({ path }, 'Listing directory from S5');
-
-      const entries = await s5.fs.list(path);
-
-      reply.send({
-        path,
-        entries: entries || [],
-        count: entries ? entries.length : 0,
-      });
-    } catch (error) {
-      fastify.log.error({ path, error: error.message }, 'Failed to list directory');
-      reply.code(500).send({
-        error: 'List failed',
-        path,
-        message: error.message,
-      });
-    }
-  });
+  // NOTE: Directory listing route (/s5/fs/*/) disabled
+  // Wildcard pattern /s5/fs/*/ is invalid in Fastify (wildcard must be last character)
+  // TODO: Implement directory listing with query parameter instead (e.g., /s5/fs/*?list=true)
 
   // Root endpoint
   fastify.get('/', async (request, reply) => {
