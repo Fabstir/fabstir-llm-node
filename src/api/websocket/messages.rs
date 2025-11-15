@@ -349,6 +349,7 @@ mod tests {
             host_address: "0x5aAeb6053f3E94C9b9A09f33669435E7Ef1BeAed".to_string(),
             model_id: "llama-7b".to_string(),
             timestamp: 1640000000,
+            vector_database: None,
         };
 
         assert_eq!(msg.chain_id, Some(84532));

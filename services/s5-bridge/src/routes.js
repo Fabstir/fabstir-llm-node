@@ -41,13 +41,34 @@ export async function registerRoutes(fastify) {
     try {
       fastify.log.info({ path }, 'Downloading file from S5');
 
-      const data = await s5.fs.get(path);
+      const result = await s5.fs.get(path);
+
+      fastify.log.debug({ resultType: typeof result, resultConstructor: result?.constructor?.name }, 'Got result from s5.fs.get()');
+
+      // Handle different return types from s5.fs.get()
+      let data;
+      if (result instanceof Uint8Array) {
+        data = Buffer.from(result);
+      } else if (Buffer.isBuffer(result)) {
+        data = result;
+      } else if (result && result.data) {
+        // If result is an object with .data property
+        data = Buffer.from(result.data);
+      } else if (typeof result === 'string') {
+        data = Buffer.from(result);
+      } else if (ArrayBuffer.isView(result)) {
+        data = Buffer.from(result.buffer, result.byteOffset, result.byteLength);
+      } else {
+        // Last resort - try to convert to buffer
+        fastify.log.warn({ result }, 'Unexpected result type from s5.fs.get()');
+        data = Buffer.from(JSON.stringify(result));
+      }
 
       // Return raw bytes
       reply
         .header('Content-Type', 'application/octet-stream')
         .header('X-S5-Path', path)
-        .send(Buffer.from(data));
+        .send(data);
     } catch (error) {
       fastify.log.error({ path, error: error.message }, 'Failed to download file');
       reply.code(404).send({

@@ -830,7 +830,7 @@ impl S5Storage for EnhancedS5Backend {
 
     fn clone(&self) -> Box<dyn S5Storage> {
         Box::new(EnhancedS5Backend {
-            client: self.client.clone(),
+            client: Clone::clone(&self.client),
         })
     }
 }
