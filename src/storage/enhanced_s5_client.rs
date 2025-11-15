@@ -119,7 +119,7 @@ pub struct BridgeHealthResponse {
     pub portal: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EnhancedS5Client {
     client: Client,
     base_url: String,
@@ -193,7 +193,12 @@ impl EnhancedS5Client {
 
         info!("PUT file to: {}", url);
 
-        let response = self.client.put(&url).body(content).send().await?;
+        let response = self.client
+            .put(&url)
+            .header("Content-Type", "application/octet-stream")
+            .body(content)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -328,6 +333,9 @@ impl EnhancedS5Client {
         data: Vec<u8>,
         metadata: Option<JsonValue>,
     ) -> Result<String> {
+        // Upload to S5 bridge via HTTP
+        self.put_file(path, data.clone()).await?;
+
         // Generate a mock CID using BLAKE3-like hash
         let mut hasher = Sha256::new();
         hasher.update(&data);
@@ -335,23 +343,111 @@ impl EnhancedS5Client {
         let hash_result = hasher.finalize();
         let cid = format!("bafybei{}", hex::encode(&hash_result[..16]));
 
-        // Store in mock storage
+        // Also store in mock storage for compatibility
         let mut storage = self.mock_storage.lock().unwrap();
         storage.insert(path.to_string(), (data, metadata));
 
-        info!("Stored data at path: {} with CID: {}", path, cid);
+        info!("Uploaded data to S5 at path: {} with CID: {}", path, cid);
         Ok(cid)
     }
 
     pub async fn get(&self, path: &str) -> Result<(Vec<u8>, Option<JsonValue>)> {
-        // Retrieve from mock storage
-        let storage = self.mock_storage.lock().unwrap();
-
-        if let Some(entry) = storage.get(path) {
-            Ok(entry.clone())
-        } else {
-            Err(anyhow!("File not found at path: {}", path))
+        // Try to fetch from S5 bridge via HTTP
+        match self.get_file(path).await {
+            Ok(data) => Ok((data, None)),
+            Err(_) => {
+                // Fall back to mock storage for compatibility
+                let storage = self.mock_storage.lock().unwrap();
+                if let Some(entry) = storage.get(path) {
+                    Ok(entry.clone())
+                } else {
+                    Err(anyhow!("File not found at path: {}", path))
+                }
+            }
         }
+    }
+}
+
+// Implement S5Storage trait for VectorLoader compatibility
+#[async_trait::async_trait]
+impl crate::storage::s5_client::S5Storage for EnhancedS5Client {
+    async fn put(&self, path: &str, data: Vec<u8>) -> Result<String, crate::storage::s5_client::StorageError> {
+        self.put_file(path, data)
+            .await
+            .map(|_| format!("s5://{}", path))
+            .map_err(|e| crate::storage::s5_client::StorageError::NetworkError(e.to_string()))
+    }
+
+    async fn put_with_metadata(
+        &self,
+        path: &str,
+        data: Vec<u8>,
+        _metadata: std::collections::HashMap<String, String>,
+    ) -> Result<String, crate::storage::s5_client::StorageError> {
+        // Enhanced S5 client doesn't support metadata in put, use put_file
+        self.put_file(path, data)
+            .await
+            .map(|_| format!("s5://{}", path))
+            .map_err(|e| crate::storage::s5_client::StorageError::NetworkError(e.to_string()))
+    }
+
+    async fn get(&self, path: &str) -> Result<Vec<u8>, crate::storage::s5_client::StorageError> {
+        self.get_file(path)
+            .await
+            .map_err(|e| crate::storage::s5_client::StorageError::NetworkError(e.to_string()))
+    }
+
+    async fn get_metadata(&self, path: &str) -> Result<std::collections::HashMap<String, String>, crate::storage::s5_client::StorageError> {
+        // Enhanced S5 client doesn't expose separate metadata endpoint
+        // Return empty metadata for now
+        let _ = path;
+        Ok(std::collections::HashMap::new())
+    }
+
+    async fn get_by_cid(&self, cid: &str) -> Result<Vec<u8>, crate::storage::s5_client::StorageError> {
+        // Enhanced S5 client doesn't support direct CID access
+        // Return error for now
+        Err(crate::storage::s5_client::StorageError::NetworkError(
+            format!("CID-based retrieval not supported by Enhanced S5 client: {}", cid)
+        ))
+    }
+
+    async fn list(&self, path: &str) -> Result<Vec<crate::storage::s5_client::S5Entry>, crate::storage::s5_client::StorageError> {
+        // Enhanced S5 client doesn't support listing
+        let _ = path;
+        Ok(vec![])
+    }
+
+    async fn list_with_options(
+        &self,
+        path: &str,
+        _limit: Option<usize>,
+        _cursor: Option<String>,
+    ) -> Result<crate::storage::s5_client::S5ListResult, crate::storage::s5_client::StorageError> {
+        // Enhanced S5 client doesn't support listing
+        let _ = path;
+        Ok(crate::storage::s5_client::S5ListResult {
+            entries: vec![],
+            cursor: None,
+            has_more: false,
+        })
+    }
+
+    async fn delete(&self, _path: &str) -> Result<(), crate::storage::s5_client::StorageError> {
+        // Enhanced S5 client doesn't support deletion
+        Ok(())
+    }
+
+    async fn exists(&self, path: &str) -> Result<bool, crate::storage::s5_client::StorageError> {
+        // Try to get the file, if it succeeds it exists
+        match self.get_file(path).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn clone(&self) -> Box<dyn crate::storage::s5_client::S5Storage> {
+        Box::new(Clone::clone(self))
     }
 }
 

@@ -41,6 +41,15 @@ async function createServer() {
     methods: ['GET', 'PUT', 'DELETE', 'HEAD', 'OPTIONS'],
   });
 
+  // Add binary content parser for file uploads
+  fastify.addContentTypeParser(
+    'application/octet-stream',
+    { parseAs: 'buffer' },
+    (req, body, done) => {
+      done(null, body);
+    }
+  );
+
   // Register API routes
   await registerRoutes(fastify);
 

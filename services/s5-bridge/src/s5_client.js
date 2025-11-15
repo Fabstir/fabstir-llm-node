@@ -67,24 +67,41 @@ export async function initializeS5Client() {
         console.warn('⚠️  No seed phrase configured - filesystem operations will fail');
       }
 
-      // Step 3: Register with S5 portal (optional - can fail for download-only mode)
+      // Step 3: Register with S5 portal (check if account exists)
+      let accountReady = false;
       if (bridgeConfig.portalUrl && bridgeConfig.registerWithPortal !== false) {
         try {
           console.log(`🌐 Attempting portal registration: ${bridgeConfig.portalUrl}`);
           await s5.registerOnNewPortal(bridgeConfig.portalUrl);
-          console.log('✅ Portal registration complete');
+          console.log('✅ Portal registration complete (new account)');
+          accountReady = true;
         } catch (error) {
-          console.warn('⚠️  Portal registration failed (non-fatal for read-only operations)');
-          console.warn(`   Error: ${error.message}`);
-          console.log('📥 Bridge will operate in read-only mode');
+          // "User already has an account" means the account is registered - this is SUCCESS!
+          if (error.message && error.message.includes('already has an account')) {
+            console.log('✅ Account already registered on portal (using existing account)');
+            accountReady = true;
+          } else {
+            console.warn('⚠️  Portal registration failed');
+            console.warn(`   Error: ${error.message}`);
+            console.log('📥 Bridge will operate in read-only mode (downloads only)');
+          }
         }
       }
 
-      // Step 4: Filesystem initialization is OPTIONAL for read-only operations
-      // The fs.get() method should work for reading existing paths without initialization
-      // (ensureIdentityInitialized() creates home/archive directories which requires upload)
-      console.log('📥 Skipping filesystem initialization (not required for read-only operations)');
-      console.log('✅ Bridge ready for downloading existing S5 content');
+      // Step 4: Initialize filesystem if account is ready
+      if (accountReady) {
+        console.log('🔧 Initializing filesystem for read/write operations...');
+        try {
+          await s5.fs.ensureIdentityInitialized();
+          console.log('✅ Filesystem initialized - uploads and downloads ready');
+        } catch (fsError) {
+          console.warn('⚠️  Filesystem initialization failed:', fsError.message);
+          console.log('📥 Bridge will operate in read-only mode');
+        }
+      } else {
+        console.log('📥 Skipping filesystem initialization (read-only mode)');
+        console.log('✅ Bridge ready for downloading existing S5 content');
+      }
 
       s5Instance = s5;
       console.log('🎉 Enhanced S5.js client fully initialized');
