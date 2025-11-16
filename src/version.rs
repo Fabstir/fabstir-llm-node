@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.4.0-s5-vector-loading-2025-11-14";
+pub const VERSION: &str = "v8.4.1-s5-integration-tests-2025-11-15";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.4.0";
+pub const VERSION_NUMBER: &str = "8.4.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 4;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-11-14";
+pub const BUILD_DATE: &str = "2025-11-15";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -65,16 +65,17 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "Minor version bump (v8.3.13 -> v8.4.0) - S5 Vector Database Loading with Encryption",
-    "FEATURE: Added vector_database field to encrypted session initialization",
-    "SessionInitData now includes Option<VectorDatabaseInfo> for RAG support",
-    "Encrypted session_init payloads can now transmit S5 vector database paths",
-    "Added comprehensive WebSocket API documentation for vector_database field",
-    "Full backward compatibility: old SDKs without vector_database still work",
-    "New error codes: MANIFEST_NOT_FOUND, OWNER_MISMATCH, S5_NETWORK_ERROR, INVALID_MANIFEST",
-    "Encryption: vector_database paths protected with ECDH + XChaCha20-Poly1305",
-    "Security: client authentication via ECDSA signature recovery",
-    "All features from v8.3.13: Harmony chat template, Risc0 proofs, multi-chain, encryption",
+    "Patch version bump (v8.4.0 -> v8.4.1) - S5 Integration Testing Complete",
+    "TESTING: All 19 S5 vector loading integration tests passing (100%)",
+    "TESTING: Phase 3 E2E tests (7/7), Phase 3.2 Encryption tests (4/4)",
+    "TESTING: Phase 4 Error scenarios (6/6), Phase 4.5 Error handling (5/5)",
+    "ENHANCEMENT: EnhancedS5Client now uses real S5 bridge HTTP API (not just mock storage)",
+    "ENHANCEMENT: 7 new Enhanced S5.js bridge integration tests added",
+    "ENHANCEMENT: Bridge unavailability testing verified (connection failure handling)",
+    "DOCUMENTATION: Updated IMPLEMENTATION_S5_VECTOR_LOADING.md (production-ready status)",
+    "DOCUMENTATION: Updated TESTING_ENHANCED_S5_INTEGRATION.md (19/19 tests passing)",
+    "No breaking changes - fully backward compatible with v8.4.0",
+    "All features from v8.4.0: S5 vector loading, encrypted vector_database paths, RAG support",
     "No contract changes - fully compatible with v8.2.0+",
 ];
 
@@ -103,7 +104,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 4);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
@@ -124,14 +125,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.4.0"));
-        assert!(version.contains("2025-11-14"));
+        assert!(version.contains("8.4.1"));
+        assert!(version.contains("2025-11-15"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.4.0-s5-vector-loading-2025-11-14");
-        assert_eq!(VERSION_NUMBER, "8.4.0");
-        assert_eq!(BUILD_DATE, "2025-11-14");
+        assert_eq!(VERSION, "v8.4.1-s5-integration-tests-2025-11-15");
+        assert_eq!(VERSION_NUMBER, "8.4.1");
+        assert_eq!(BUILD_DATE, "2025-11-15");
     }
 }
