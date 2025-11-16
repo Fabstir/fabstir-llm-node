@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.3.6 (November 2025)
+**Version**: v8.4.1-s5-integration-tests (November 2025)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -24,6 +24,9 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Zero-Knowledge Proofs**: GPU-accelerated STARK proofs via Risc0 zkVM (v8.1.0+)
 - **Host-Side RAG**: Session-scoped vector storage for document retrieval (v8.3.0+)
 - **Off-Chain Proof Storage**: S5 decentralized storage for proofs (v8.1.2+)
+- **S5 Vector Loading**: Load vector databases from S5 decentralized storage (v8.4.0+)
+- **Encrypted Vector Paths**: Support for encrypted vector_database paths in job parameters (v8.4.0+)
+- **Chat Templates**: Model-specific formatting (Harmony, Llama, etc.) (v8.3.13+)
 
 ## Prerequisites
 
@@ -41,12 +44,36 @@ cd fabstir-llm-node
 
 2. Download test model (optional):
 ```bash
-./download_test_model.sh
+./scripts/phase_4_2_2/download_test_model.sh
 ```
 
-3. Build the project:
+3. Download embedding model (required for RAG):
 ```bash
-cargo build --release
+./scripts/download_embedding_model.sh
+```
+
+4. Build the project:
+
+**🚨 CRITICAL: Production builds MUST use the `--features real-ezkl` flag!**
+
+```bash
+# ✅ CORRECT - Production build with REAL Risc0 STARK proofs
+cargo build --release --features real-ezkl -j 4
+
+# ❌ WRONG - Creates binary with MOCK proofs (not production-ready!)
+# cargo build --release
+```
+
+**Why `-j 4`?** Limits parallel jobs to avoid out-of-memory errors during Risc0 compilation.
+
+**How to verify**: After building, check that you have real proofs enabled:
+```bash
+# Check version
+strings target/release/fabstir-llm-node | grep "v8.4"
+
+# During inference, logs should show:
+# ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
+# ❌ NOT "🎭 Generating mock proof" (126 byte mock proofs)
 ```
 
 ## Starting the Node
@@ -99,12 +126,35 @@ RUST_LOG=debug                   # Log level (trace, debug, info, warn, error)
 
 For production deployment:
 ```bash
-# Build optimized binary
-cargo build --release
+# Build optimized binary with REAL proofs (CRITICAL!)
+cargo build --release --features real-ezkl -j 4
+
+# Verify version
+./target/release/fabstir-llm-node --version
 
 # Run the binary directly
 ./target/release/fabstir-llm-node
 ```
+
+**Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
+```bash
+# Extract pre-built binary
+tar -xzf fabstir-llm-node-v8.4.1.tar.gz
+cd fabstir-llm-node-v8.4.1
+./fabstir-llm-node --version
+```
+
+## Smart Contract Configuration
+
+**Single Source of Truth**: All contract addresses are defined in `.env.contracts`
+
+Key contracts (Base Sepolia):
+- **NODE_REGISTRY_FAB_ADDRESS**: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` (Dual pricing support)
+- **JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS**: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (v8.1.2+ hash+CID proof storage)
+- **PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS**: Payment escrow contract
+- **HOST_EARNINGS_ADDRESS**: Host earnings tracker
+
+For host registration and dual pricing details, see `docs/compute-contracts-reference/HOST_REGISTRATION_GUIDE.md`.
 
 ## Project Structure
 
@@ -114,9 +164,15 @@ fabstir-llm-node/
 │   ├── p2p/          # P2P networking layer
 │   ├── inference/    # LLM inference engine
 │   ├── contracts/    # Smart contract integration
+│   ├── blockchain/   # Multi-chain configuration
+│   ├── settlement/   # Payment distribution
+│   ├── crypto/       # End-to-end encryption
+│   ├── rag/          # Session-scoped vector storage
+│   ├── storage/      # S5 storage clients
 │   └── api/          # Client API layer
 ├── tests/            # Comprehensive test suite
 ├── models/           # Model files directory
+├── contracts/        # Contract ABIs
 └── docs/             # Documentation
 ```
 
@@ -125,15 +181,36 @@ fabstir-llm-node/
 ### Running Tests
 
 ```bash
-# Run all tests
-cargo test
+# Critical CI/CD pipeline tests (must pass for deployment)
+cargo test --lib                              # Unit tests
+cargo test --test integration_tests           # Integration tests
+cargo test --test test_host_management        # Host management
+cargo test --test test_job_assignment         # Job assignment
+cargo test --test contracts_tests             # Contract tests
+cargo test --test api_tests                   # API tests
+cargo test --test websocket_tests             # WebSocket tests
 
-# Run specific test module
-cargo test p2p::
+# Module-specific test suites
+cargo test --test crypto_tests                # Encryption tests (111 tests)
+cargo test --test inference_tests             # Inference engine tests
+cargo test --test vector_tests                # Vector/RAG tests
+cargo test --test ezkl_tests                  # Proof generation tests
+cargo test --test settlement_tests            # Payment settlement tests
 
-# Run with output
+# Run specific test function
+cargo test test_function_name -- --exact
+
+# Run with output visible
 cargo test -- --nocapture
+
+# Timeout tests to avoid CPU overload
+timeout 60 cargo test --test integration_tests
 ```
+
+**Known Testing Issues**:
+- CPU Overload: Some tests can consume 100% CPU. Use `timeout` command or run tests individually
+- sccache Issues: If compilation hangs, run `pkill sccache` and `unset RUSTC_WRAPPER`
+- Memory Issues: Contract tests may fail with linker errors due to memory constraints
 
 ### Code Formatting
 
@@ -176,21 +253,51 @@ Once the node is running, it exposes the following endpoints:
   - Session management with chain tracking
   - End-to-end encryption support (v8.0.0+)
   - RAG vector upload/search (v8.3.0+)
+  - S5 vector database loading (v8.4.0+)
+  - Encrypted vector_database path support (v8.4.0+)
   - Automatic settlement on disconnect
   - Message compression support
 
 ## Troubleshooting
 
-### Port Already in Use
+### Build Issues
 
+#### Mock Proofs Instead of Real Proofs
+If you see `🎭 Generating mock proof` in logs instead of `🔐 Generating real Risc0 STARK proof`:
+```bash
+# Rebuild with correct flags
+cargo clean
+cargo build --release --features real-ezkl -j 4
+
+# Verify version
+strings target/release/fabstir-llm-node | grep "v8.4"
+```
+
+#### Out of Memory During Build
+If Risc0 compilation fails with OOM errors:
+```bash
+# Use -j 4 to limit parallel jobs
+cargo build --release --features real-ezkl -j 4
+```
+
+#### sccache Hanging
+If compilation hangs:
+```bash
+pkill sccache
+unset RUSTC_WRAPPER
+cargo build --release --features real-ezkl -j 4
+```
+
+### Runtime Issues
+
+#### Port Already in Use
 If you get a "port already in use" error:
 ```bash
 # Use different ports
 P2P_PORT=9001 API_PORT=8081 cargo run --release
 ```
 
-### CUDA Not Found
-
+#### CUDA Not Found
 If CUDA is not detected but you have a GPU:
 ```bash
 # Verify CUDA installation
@@ -198,11 +305,15 @@ nvidia-smi
 
 # Set CUDA path explicitly
 export CUDA_PATH=/usr/local/cuda
-cargo run --release
+cargo run --release --features real-ezkl
+
+# Check CUDA libraries in binary
+ldd target/release/fabstir-llm-node | grep cuda
 ```
 
-### Model Loading Issues
+### Model Issues
 
+#### Model Loading Failures
 Ensure models are in GGUF format and placed in the correct directory:
 ```bash
 # Check model directory
@@ -210,6 +321,15 @@ ls -la models/
 
 # Verify model format
 file models/your-model.gguf
+```
+
+#### Embedding Model Missing
+For RAG support, the embedding model must be downloaded:
+```bash
+./scripts/download_embedding_model.sh
+
+# Verify installation
+ls -la models/all-MiniLM-L6-v2-onnx/
 ```
 
 ## License & Usage
@@ -248,11 +368,26 @@ For issues and questions:
 
 ## Documentation
 
-- [Multi-Chain Configuration Guide](docs/MULTI_CHAIN_CONFIG.md) - Configure multi-chain support
+### Node Reference
+- [API Documentation](docs/API.md) - Complete API reference including encryption protocol
 - [Deployment Guide](docs/DEPLOYMENT.md) - Deploy nodes in production
 - [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Common issues and solutions
-- [API Documentation](docs/API.md) - Complete API reference
-- [RAG SDK Integration Guide](docs/RAG_SDK_INTEGRATION.md) - RAG implementation for SDK developers
-- [Encryption Security Guide](docs/ENCRYPTION_SECURITY.md) - End-to-end encryption details
-- [Implementation Roadmap](docs/IMPLEMENTATION.md) - Development progress
-- [Multi-Chain Implementation](docs/IMPLEMENTATION-MULTI.md) - Multi-chain feature details
+- [Encryption Security Guide](docs/ENCRYPTION_SECURITY.md) - End-to-end encryption details (v8.0.0+)
+- [Multi-Chain Configuration Guide](docs/MULTI_CHAIN_CONFIG.md) - Configure multi-chain support
+
+### SDK Developer Guides
+- [WebSocket API Integration](docs/sdk-reference/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
+- [S5 Vector Loading](docs/sdk-reference/S5_VECTOR_LOADING.md) - Load vector databases from S5 storage (v8.4.0+)
+- [RAG SDK Integration](docs/RAG_SDK_INTEGRATION.md) - RAG implementation guide
+- [SDK Encryption Integration](docs/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
+
+### Contract Reference
+- [Host Registration Guide](docs/compute-contracts-reference/HOST_REGISTRATION_GUIDE.md) - Dual pricing registration
+- [JobMarketplace Contract](docs/compute-contracts-reference/JobMarketplace.md) - Job marketplace details
+- [S5 Node Integration](docs/compute-contracts-reference/S5_NODE_INTEGRATION_GUIDE.md) - Off-chain proof storage (v8.1.2+)
+
+### Implementation Tracking
+- [Multi-Chain Implementation](docs/IMPLEMENTATION-MULTI.md) - Multi-chain feature progress
+- [Risc0 & S5 Implementation](docs/IMPLEMENTATION-RISC0-2.md) - Zero-knowledge proof tracking
+- [Host-Side RAG Implementation](docs/IMPLEMENTATION_HOST_SIDE_RAG.md) - RAG feature progress
+- [S5 Vector Loading Implementation](docs/IMPLEMENTATION_S5_VECTOR_LOADING.md) - S5 vector loading status (v8.4.0+)
