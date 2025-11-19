@@ -363,7 +363,9 @@ impl VectorLoader {
     /// # Returns
     ///
     /// Decrypted and parsed Manifest
-    async fn download_and_decrypt_manifest(
+    ///
+    /// Made public for testing purposes
+    pub async fn download_and_decrypt_manifest(
         &self,
         manifest_path: &str,
         session_key: &[u8],
@@ -426,7 +428,8 @@ impl VectorLoader {
     /// # Returns
     ///
     /// Vector of all vectors from all chunks
-    async fn download_and_decrypt_chunks(
+    /// Made public for testing purposes
+    pub async fn download_and_decrypt_chunks(
         &self,
         manifest: &Manifest,
         base_path: &str,
@@ -601,7 +604,8 @@ impl VectorLoader {
     /// # Errors
     ///
     /// Returns error if owner doesn't match
-    fn verify_owner(&self, manifest: &Manifest, expected_owner: &str) -> Result<(), VectorLoadError> {
+    /// Made public for testing purposes
+    pub fn verify_owner(&self, manifest: &Manifest, expected_owner: &str) -> Result<(), VectorLoadError> {
         // Note: Tests require case-sensitive comparison, but existing code uses case-insensitive
         // Keep case-insensitive for backward compatibility
         if manifest.owner.to_lowercase() != expected_owner.to_lowercase() {

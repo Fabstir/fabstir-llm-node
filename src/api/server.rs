@@ -1438,35 +1438,65 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     Ok(plaintext_bytes) => {
                                                         // Convert plaintext to string
                                                         match String::from_utf8(plaintext_bytes) {
-                                                            Ok(plaintext_prompt) => {
+                                                            Ok(plaintext_str) => {
                                                                 info!(
-                                                                    "✅ Decrypted prompt: {}",
-                                                                    plaintext_prompt
+                                                                    "✅ Decrypted message: {}",
+                                                                    plaintext_str
                                                                 );
 
-                                                                // Build inference request from decrypted prompt
-                                                                // Reuse the existing inference logic
-                                                                // Extract model from message or use default
-                                                                let model = json_msg
+                                                                // Try to parse decrypted content as JSON (SDK v6.2+)
+                                                                // Falls back to treating it as plain prompt string
+                                                                let decrypted_json: serde_json::Value =
+                                                                    serde_json::from_str(&plaintext_str)
+                                                                        .unwrap_or_else(|_| {
+                                                                            // If not JSON, treat as plain prompt
+                                                                            json!({"prompt": plaintext_str})
+                                                                        });
+
+                                                                // Extract prompt from decrypted JSON or use entire string
+                                                                let plaintext_prompt = decrypted_json
+                                                                    .get("prompt")
+                                                                    .and_then(|v| v.as_str())
+                                                                    .unwrap_or(&plaintext_str)
+                                                                    .to_string();
+
+                                                                // Extract model (priority: decrypted > outer message > default)
+                                                                let model = decrypted_json
                                                                     .get("model")
                                                                     .and_then(|v| v.as_str())
+                                                                    .or_else(|| json_msg.get("model").and_then(|v| v.as_str()))
                                                                     .unwrap_or("tiny-vicuna")
                                                                     .to_string();
 
+                                                                // Extract max_tokens (priority: decrypted > outer message > default)
+                                                                let max_tokens = decrypted_json
+                                                                    .get("max_tokens")
+                                                                    .and_then(|v| v.as_u64())
+                                                                    .or_else(|| json_msg.get("max_tokens").and_then(|v| v.as_u64()))
+                                                                    .unwrap_or(4000);  // Increased default to 4000
+
+                                                                // Extract temperature (priority: decrypted > outer message > default)
+                                                                let temperature = decrypted_json
+                                                                    .get("temperature")
+                                                                    .and_then(|v| v.as_f64())
+                                                                    .or_else(|| json_msg.get("temperature").and_then(|v| v.as_f64()))
+                                                                    .unwrap_or(0.7);
+
+                                                                // Extract stream (priority: decrypted > outer message > default)
+                                                                let stream = decrypted_json
+                                                                    .get("stream")
+                                                                    .and_then(|v| v.as_bool())
+                                                                    .or_else(|| json_msg.get("stream").and_then(|v| v.as_bool()))
+                                                                    .unwrap_or(true);
+
                                                                 let request_value = json!({
-                                                                    "model": model,  // REQUIRED field!
+                                                                    "model": model,
                                                                     "prompt": plaintext_prompt,
                                                                     "job_id": job_id,
                                                                     "session_id": current_session_id,
-                                                                    "max_tokens": json_msg.get("max_tokens")
-                                                                        .and_then(|v| v.as_u64())
-                                                                        .unwrap_or(100),
-                                                                    "temperature": json_msg.get("temperature")
-                                                                        .and_then(|v| v.as_f64())
-                                                                        .unwrap_or(0.7),
-                                                                    "stream": json_msg.get("stream")
-                                                                        .and_then(|v| v.as_bool())
-                                                                        .unwrap_or(true)
+                                                                    "max_tokens": max_tokens,
+                                                                    "temperature": temperature,
+                                                                    "stream": stream
                                                                 });
 
                                                                 // Extract message ID for response correlation
@@ -1904,10 +1934,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             } else {
                                 // Fallback: build request from message fields
                                 json!({
+                                    "model": json_msg["model"].as_str().unwrap_or("tiny-vicuna"),
                                     "prompt": json_msg["prompt"].as_str().unwrap_or(""),
                                     "job_id": job_id,
                                     "session_id": session_id.clone(),
-                                    "max_tokens": json_msg["max_tokens"].as_u64().unwrap_or(100),
+                                    "max_tokens": json_msg["max_tokens"].as_u64().unwrap_or(4000),
                                     "temperature": json_msg["temperature"].as_f64().unwrap_or(0.7),
                                     "stream": json_msg["stream"].as_bool().unwrap_or(true)
                                 })

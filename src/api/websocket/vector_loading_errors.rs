@@ -182,8 +182,8 @@ impl VectorLoadingError {
                 format!("Failed to download chunk {chunk_id} from S5 network")
             }
             Self::OwnerMismatch => {
-                // Sanitized: don't expose addresses
-                "Database owner verification failed - you don't have access to this database"
+                // Sanitized: don't expose addresses or ownership details
+                "Database access denied - you don't have permission to use this resource"
                     .to_string()
             }
             Self::DecryptionFailed => {
