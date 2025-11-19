@@ -48,7 +48,10 @@ impl Default for EngineConfig {
             max_context_length: 4096,
             gpu_layers: 35,
             thread_count: 8,
-            batch_size: 512,
+            batch_size: std::env::var("LLAMA_BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2048),  // Increased default from 512 to 2048
             use_mmap: true,
             use_mlock: false,
             max_concurrent_inferences: 4,
