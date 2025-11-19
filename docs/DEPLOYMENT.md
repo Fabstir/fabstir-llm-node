@@ -321,6 +321,33 @@ wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_
 chown -R fabstir:fabstir /opt/fabstir-node/models
 ```
 
+#### Inference Configuration
+
+Configure inference parameters in your `.env` file:
+
+```bash
+# Batch size for inference (must be >= max prompt length)
+LLAMA_BATCH_SIZE=2048  # Default: 2048
+
+# GPU Configuration Examples:
+# High VRAM (24GB+):  LLAMA_BATCH_SIZE=4096
+# Medium VRAM (8-16GB): LLAMA_BATCH_SIZE=2048 (default)
+# Low VRAM (4-8GB):   LLAMA_BATCH_SIZE=1024
+
+# Model path (optional, defaults to ./models/)
+MODEL_PATH=/opt/fabstir-node/models/llama-2-7b.Q4_K_M.gguf
+
+# GPU selection (optional)
+CUDA_VISIBLE_DEVICES=0  # Use first GPU
+```
+
+**LLAMA_BATCH_SIZE Guidelines**:
+- **Too Small**: Causes `InsufficientSpace` errors if prompt exceeds batch size
+- **Too Large**: Increases VRAM usage, may cause OOM on smaller GPUs
+- **Recommendation**: Set to 2x your expected max prompt length
+- **Minimum**: 512 (for short prompts only)
+- **Maximum**: Limited by GPU VRAM (4096+ on high-end GPUs)
+
 ### 5. Embedding Model Setup (Optional - Zero-Cost Embeddings)
 
 The node supports host-side embedding generation using ONNX models, providing zero-cost embeddings as an alternative to external APIs (OpenAI, Cohere).
