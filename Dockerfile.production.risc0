@@ -1,0 +1,35 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+# Production Dockerfile with Risc0 support
+
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS runtime
+
+# Install runtime dependencies including Risc0 requirements
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    libgomp1 \
+    libssl-dev \
+    libssl3 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy pre-built binary with embedded Risc0 guest program
+COPY target/release/fabstir-llm-node /usr/local/bin/
+
+# Download default model if needed
+RUN mkdir -p /models && \
+    cd /models && \
+    if [ ! -f tiny-vicuna-1b.q4_k_m.gguf ]; then \
+        curl -LO https://huggingface.co/afrideva/Tiny-Vicuna-1B-GGUF/resolve/main/tiny-vicuna-1b.q4_k_m.gguf; \
+    fi
+
+# Set environment to use in-process Risc0 execution
+# Don't set RISC0_PROVER - let it use default in-process execution
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+
+EXPOSE 9001 9002 9003 8080
+
+CMD ["fabstir-llm-node"]
