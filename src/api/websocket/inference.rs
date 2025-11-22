@@ -27,9 +27,15 @@ pub struct InferenceConfig {
 
 impl Default for InferenceConfig {
     fn default() -> Self {
+        // Read context length from environment variable
+        let context_size = std::env::var("MAX_CONTEXT_LENGTH")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(8192);
+
         Self {
             model_path: PathBuf::from("models/tinyllama-1b.Q4_K_M.gguf"),
-            context_size: 2048,
+            context_size,
             max_tokens: 256,
             temperature: 0.7,
             gpu_layers: 35,
@@ -92,13 +98,19 @@ impl InferenceEngine {
         }
 
         // Create base engine config
+        // Read batch size from environment variable
+        let batch_size = std::env::var("LLAMA_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(2048);
+
         let engine_config = EngineConfig {
             models_directory: config.model_path.parent().unwrap().to_path_buf(),
             max_loaded_models: 3,
             max_context_length: config.context_size,
             gpu_layers: config.gpu_layers as usize,
             thread_count: 8,
-            batch_size: 512,
+            batch_size,
             use_mmap: true,
             use_mlock: false,
             max_concurrent_inferences: 4,

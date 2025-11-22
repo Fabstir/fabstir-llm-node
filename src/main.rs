@@ -33,13 +33,26 @@ async fn main() -> Result<()> {
 
     // Configure and initialize inference engine
     println!("🧠 Initializing LLM inference engine...");
+
+    // Read batch size from environment variable
+    let batch_size = env::var("LLAMA_BATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2048);
+
+    // Read max context length from environment variable
+    let max_context_length = env::var("MAX_CONTEXT_LENGTH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8192);
+
     let engine_config = EngineConfig {
         models_directory: PathBuf::from("./models"),
         max_loaded_models: 1,
-        max_context_length: 2048,
+        max_context_length,
         gpu_layers,
         thread_count: 8,
-        batch_size: 512,
+        batch_size,
         use_mmap: true,
         use_mlock: false,
         max_concurrent_inferences: 4,
@@ -58,7 +71,7 @@ async fn main() -> Result<()> {
         let model_config = ModelConfig {
             model_path: model_path_buf,
             model_type: "llama".to_string(),
-            context_size: 2048,
+            context_size: max_context_length,
             gpu_layers,
             rope_freq_base: 10000.0,
             rope_freq_scale: 1.0,
@@ -70,7 +83,8 @@ async fn main() -> Result<()> {
                 model_id = id.clone();
                 println!("✅ Model loaded successfully (ID: {})", id);
                 println!("   GPU layers: {}", gpu_layers);
-                println!("   Context size: 2048 tokens");
+                println!("   Context size: {} tokens", max_context_length);
+                println!("   Batch size: {} tokens", batch_size);
             }
             Err(e) => {
                 eprintln!("❌ Failed to load model: {}", e);
