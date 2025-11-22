@@ -321,8 +321,8 @@ impl LlmEngine {
                 .new_context(&model.backend, ctx_params)
                 .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
 
-            // Create batch
-            let mut batch = LlamaBatch::new(512, 1);
+            // Create batch with configured batch size
+            let mut batch = LlamaBatch::new(self.config.batch_size, 1);
 
             // Add all tokens to batch with only last one requesting logits
             for (i, &token) in prompt_tokens.iter().enumerate() {
