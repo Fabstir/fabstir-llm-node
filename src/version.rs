@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.4.9-stream-end-complete-2025-12-05";
+pub const VERSION: &str = "v8.4.13-context-limit-fix-2025-12-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.4.9";
+pub const VERSION_NUMBER: &str = "8.4.13";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 4;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 9;
+pub const VERSION_PATCH: u32 = 13;
 
 /// Build date
 pub const BUILD_DATE: &str = "2025-12-05";
@@ -69,14 +69,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "Patch version bump (v8.4.8 -> v8.4.9) - Complete Stream End Fix",
-    "CRITICAL FIX: Added stream_end message after encrypted_response for SDK compatibility",
-    "CRITICAL FIX: All streaming paths now send stream_end on completion",
-    "FIX: Added stream_end after all error paths in streaming",
-    "FIX: force_checkpoint spawns immediately without blocking for locks",
-    "All features from v8.4.8: async checkpoints, UTF-8 loop fix",
-    "No breaking changes - fully backward compatible with v8.4.8",
-    "No contract changes - fully compatible with v8.2.0+",
+    "Patch version bump (v8.4.12 -> v8.4.13) - Context Limit Fix",
+    "FIX: Memory cache token limit now matches MAX_CONTEXT_LENGTH (8192 default)",
+    "FIX: Reads MAX_CONTEXT_LENGTH env var for consistent context sizing",
+    "FIX: Long conversations no longer get truncated causing early response termination",
+    "All features from v8.4.12: mobile final chunk, sync checkpoint, payment fix",
+    "No breaking changes - fully backward compatible with v8.4.12",
 ];
 
 /// Get formatted version string for logging
@@ -104,7 +102,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 4);
-        assert_eq!(VERSION_PATCH, 9);
+        assert_eq!(VERSION_PATCH, 13);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
@@ -129,14 +127,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.4.9"));
+        assert!(version.contains("8.4.13"));
         assert!(version.contains("2025-12-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.4.9-stream-end-complete-2025-12-05");
-        assert_eq!(VERSION_NUMBER, "8.4.9");
+        assert_eq!(VERSION, "v8.4.13-context-limit-fix-2025-12-05");
+        assert_eq!(VERSION_NUMBER, "8.4.13");
         assert_eq!(BUILD_DATE, "2025-12-05");
     }
 }
