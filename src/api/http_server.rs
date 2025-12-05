@@ -524,26 +524,23 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                     if let Some(checkpoint_manager) =
                         state.api_server.get_checkpoint_manager().await
                     {
-                        tracing::info!("[HTTP-WS] ✓ Checkpoint manager available, calling complete_session_job...");
-                        if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
-                            tracing::error!(
-                                "[HTTP-WS] ❌ Failed to complete session job {}: {:?}",
-                                job_id,
-                                e
-                            );
-                            tracing::error!(
-                                "[HTTP-WS] ⚠️ Payment settlement may not have occurred!"
-                            );
-                        } else {
-                            tracing::info!(
-                                "[HTTP-WS] ✅ Session job {} completed successfully",
-                                job_id
-                            );
-                            tracing::info!("[HTTP-WS] 💸 Payments should now be distributed to:");
-                            tracing::info!("[HTTP-WS]   - Host earnings (90%)");
-                            tracing::info!("[HTTP-WS]   - Treasury fee (10%)");
-                            tracing::info!("[HTTP-WS]   - User refund (unused tokens)");
-                        }
+                        tracing::info!("[HTTP-WS] ✓ Checkpoint manager available, spawning complete_session_job in background...");
+                        // ASYNC: Spawn session completion in background to avoid blocking response
+                        tokio::spawn(async move {
+                            tracing::info!("[HTTP-WS-BG] 🚀 Starting background session completion for job {}", job_id);
+                            if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
+                                tracing::error!(
+                                    "[HTTP-WS-BG] ❌ Failed to complete session job {}: {:?}",
+                                    job_id,
+                                    e
+                                );
+                            } else {
+                                tracing::info!(
+                                    "[HTTP-WS-BG] ✅ Session job {} completed successfully",
+                                    job_id
+                                );
+                            }
+                        });
                     } else {
                         tracing::error!("[HTTP-WS] ⚠️ NO CHECKPOINT MANAGER AVAILABLE!");
                         tracing::error!(
@@ -578,26 +575,23 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
 
         if let Some(checkpoint_manager) = state.api_server.get_checkpoint_manager().await {
             tracing::info!(
-                "[HTTP-WS-DISCONNECT] ✓ Checkpoint manager available, initiating settlement..."
+                "[HTTP-WS-DISCONNECT] ✓ Checkpoint manager available, spawning settlement in background..."
             );
-            if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
-                tracing::error!(
-                    "[HTTP-WS-DISCONNECT] ❌ CRITICAL: Failed to complete session job {} on disconnect!",
-                    job_id
-                );
-                tracing::error!("[HTTP-WS-DISCONNECT]   Error: {:?}", e);
-                tracing::error!(
-                    "[HTTP-WS-DISCONNECT] ⚠️ PAYMENTS NOT SETTLED - Manual intervention may be required!"
-                );
-            } else {
-                tracing::info!(
-                    "[HTTP-WS-DISCONNECT] ✅ Session job {} completed on disconnect",
-                    job_id
-                );
-                tracing::info!(
-                    "[HTTP-WS-DISCONNECT] 💸 Payments should be distributed despite unexpected disconnect"
-                );
-            }
+            // ASYNC: Spawn session completion in background
+            tokio::spawn(async move {
+                tracing::info!("[HTTP-WS-DISCONNECT-BG] 🚀 Starting background session completion for job {}", job_id);
+                if let Err(e) = checkpoint_manager.complete_session_job(job_id).await {
+                    tracing::error!(
+                        "[HTTP-WS-DISCONNECT-BG] ❌ Failed to complete session job {} on disconnect: {:?}",
+                        job_id, e
+                    );
+                } else {
+                    tracing::info!(
+                        "[HTTP-WS-DISCONNECT-BG] ✅ Session job {} completed on disconnect",
+                        job_id
+                    );
+                }
+            });
         } else {
             tracing::error!("[HTTP-WS-DISCONNECT] ⚠️ CRITICAL: No checkpoint manager available!");
             tracing::error!(

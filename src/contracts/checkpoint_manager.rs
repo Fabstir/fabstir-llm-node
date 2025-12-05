@@ -19,7 +19,7 @@ use crate::storage::s5_client::{S5Client, S5Storage};
 #[cfg(feature = "real-ezkl")]
 use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
 
-const CHECKPOINT_THRESHOLD: u64 = 100; // Submit checkpoint every 100 tokens
+const CHECKPOINT_THRESHOLD: u64 = 1000; // Submit checkpoint every 1000 tokens (production value to minimize streaming pauses)
                                        // Minimum tokens required for checkpoint submission (contract requirement)
 const MIN_PROVEN_TOKENS: u64 = 100;
 
@@ -148,30 +148,50 @@ impl CheckpointManager {
                 job_id, tokens_to_submit
             );
 
-            let submission_result = self.submit_checkpoint(job_id, tokens_to_submit).await;
+            // ASYNC CHECKPOINT SUBMISSION: Spawn background task to avoid blocking streaming
+            // Clone the necessary data for the spawned task
+            let web3_client = self.web3_client.clone();
+            let job_trackers = self.job_trackers.clone();
+            let proof_system_address = self.proof_system_address;
+            let host_address = self.host_address;
+            let s5_storage = self.s5_storage.clone();
 
-            // Update tracker based on result
-            let mut trackers = self.job_trackers.write().await;
-            if let Some(tracker) = trackers.get_mut(&job_id) {
-                tracker.submission_in_progress = false; // Clear the flag
+            tokio::spawn(async move {
+                info!("🚀 [ASYNC] Starting background checkpoint submission for job {}", job_id);
 
-                if let Err(e) = submission_result {
-                    error!("Failed to submit checkpoint for job {}: {}", job_id, e);
-                    // Rollback to previous checkpoint value so we can retry
-                    tracker.last_checkpoint = previous_checkpoint;
-                    warn!(
-                        "Rolled back checkpoint for job {} to {} tokens (will retry on next token)",
-                        job_id, previous_checkpoint
-                    );
-                } else {
-                    // Update timestamp to track when this proof was submitted (for dispute window)
-                    tracker.last_proof_timestamp = Some(std::time::Instant::now());
-                    info!(
-                        "✅ Checkpoint submitted successfully for job {} - dispute window starts now",
-                        job_id
-                    );
+                // Create a temporary checkpoint submitter with cloned data
+                let submission_result = Self::submit_checkpoint_async(
+                    web3_client,
+                    s5_storage,
+                    proof_system_address,
+                    host_address,
+                    job_id,
+                    tokens_to_submit,
+                ).await;
+
+                // Update tracker based on result
+                let mut trackers = job_trackers.write().await;
+                if let Some(tracker) = trackers.get_mut(&job_id) {
+                    tracker.submission_in_progress = false; // Clear the flag
+
+                    if let Err(e) = submission_result {
+                        error!("Failed to submit checkpoint for job {}: {}", job_id, e);
+                        // Rollback to previous checkpoint value so we can retry
+                        tracker.last_checkpoint = previous_checkpoint;
+                        warn!(
+                            "Rolled back checkpoint for job {} to {} tokens (will retry on next token)",
+                            job_id, previous_checkpoint
+                        );
+                    } else {
+                        // Update timestamp to track when this proof was submitted (for dispute window)
+                        tracker.last_proof_timestamp = Some(std::time::Instant::now());
+                        info!(
+                            "✅ [ASYNC] Checkpoint submitted successfully for job {} - dispute window starts now",
+                            job_id
+                        );
+                    }
                 }
-            }
+            });
         } else if tracker.submission_in_progress {
             info!(
                 "Checkpoint submission already in progress for job {} - skipping",
@@ -414,6 +434,208 @@ impl CheckpointManager {
         }
     }
 
+    /// Async checkpoint submission for background tasks (static method)
+    /// This is used by tokio::spawn to submit checkpoints without blocking streaming
+    async fn submit_checkpoint_async(
+        web3_client: Arc<Web3Client>,
+        s5_storage: Box<dyn S5Storage>,
+        proof_system_address: Address,
+        host_address: Address,
+        job_id: u64,
+        tokens_generated: u64,
+    ) -> Result<()> {
+        let tokens_to_submit = tokens_generated;
+
+        info!(
+            "🚀 [ASYNC] Submitting proof of work for job {} with {} tokens...",
+            job_id, tokens_to_submit
+        );
+
+        // Generate STARK proof using Risc0 zkVM (static version)
+        let proof_bytes = Self::generate_proof_static(job_id, tokens_generated, host_address)?;
+
+        info!(
+            "📊 [ASYNC] Proof generated: {} bytes ({:.2} KB)",
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        );
+
+        // Calculate SHA256 hash of proof (v8.1.2)
+        let mut hasher = Sha256::new();
+        hasher.update(&proof_bytes);
+        let proof_hash = hasher.finalize();
+        let proof_hash_bytes: [u8; 32] = proof_hash.into();
+
+        info!("📊 [ASYNC] Proof hash: 0x{}", hex::encode(&proof_hash_bytes));
+
+        // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
+        let proof_cid = Self::upload_proof_to_s5_static(&s5_storage, job_id, &proof_bytes).await?;
+
+        // Encode contract call with hash + CID (NEW v8.1.2 signature)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);
+
+        info!(
+            "📦 [ASYNC] Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
+            data.len(),
+            proof_bytes.len() / 1024
+        );
+
+        // Send transaction - FIRE AND FORGET for non-blocking streaming
+        match web3_client
+            .send_transaction(
+                proof_system_address,
+                U256::zero(), // No ETH value sent
+                Some(data.into()),
+            )
+            .await
+        {
+            Ok(tx_hash) => {
+                info!(
+                    "📤 [ASYNC] Transaction sent for job {} - tx_hash: {:?}",
+                    job_id, tx_hash
+                );
+
+                // FIRE AND FORGET: Don't wait for confirmation to avoid blocking
+                // The transaction is on-chain and will be confirmed eventually
+                // We spawn a background task to log confirmation status
+                let web3_client_clone = web3_client.clone();
+                tokio::spawn(async move {
+                    // Wait for 1 confirmation with short timeout (15s)
+                    match tokio::time::timeout(
+                        Duration::from_secs(15),
+                        web3_client_clone.wait_for_confirmation(tx_hash),
+                    )
+                    .await
+                    {
+                        Ok(Ok(receipt)) => {
+                            if receipt.status == Some(U64::from(1)) {
+                                info!(
+                                    "✅ [ASYNC-BG] Checkpoint confirmed for job {} - tx: {:?}",
+                                    job_id, tx_hash
+                                );
+                            } else {
+                                error!(
+                                    "❌ [ASYNC-BG] Checkpoint FAILED for job {} - tx: {:?}",
+                                    job_id, tx_hash
+                                );
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            warn!("[ASYNC-BG] Receipt error for job {}: {} - tx may still succeed", job_id, e);
+                        }
+                        Err(_) => {
+                            info!("[ASYNC-BG] Confirmation pending for job {} - tx: {:?}", job_id, tx_hash);
+                        }
+                    }
+                });
+
+                Ok(())
+            }
+            Err(e) => {
+                error!("❌ [ASYNC] Failed to send transaction for job {}: {}", job_id, e);
+                Err(anyhow!("Transaction send failed: {}", e))
+            }
+        }
+    }
+
+    /// Static version of generate_proof for async tasks
+    fn generate_proof_static(job_id: u64, tokens_generated: u64, host_address: Address) -> Result<Vec<u8>> {
+        #[cfg(feature = "real-ezkl")]
+        {
+            info!(
+                "🔐 [ASYNC] Generating real Risc0 STARK proof for job {} ({} tokens)",
+                job_id, tokens_generated
+            );
+
+            // Create witness from available data
+            let mut job_id_bytes = [0u8; 32];
+            let job_id_hash = Sha256::digest(job_id.to_le_bytes());
+            job_id_bytes.copy_from_slice(&job_id_hash);
+
+            let model_path =
+                std::env::var("MODEL_PATH").unwrap_or_else(|_| "./models/default.gguf".to_string());
+            let model_hash = Sha256::digest(model_path.as_bytes());
+            let mut model_hash_bytes = [0u8; 32];
+            model_hash_bytes.copy_from_slice(&model_hash);
+
+            let input_data = format!("job_{}:input", job_id);
+            let input_hash = Sha256::digest(input_data.as_bytes());
+            let mut input_hash_bytes = [0u8; 32];
+            input_hash_bytes.copy_from_slice(&input_hash);
+
+            let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
+            let output_hash = Sha256::digest(output_data.as_bytes());
+            let mut output_hash_bytes = [0u8; 32];
+            output_hash_bytes.copy_from_slice(&output_hash);
+
+            let witness = WitnessBuilder::new()
+                .with_job_id(job_id_bytes)
+                .with_model_hash(model_hash_bytes)
+                .with_input_hash(input_hash_bytes)
+                .with_output_hash(output_hash_bytes)
+                .build()
+                .map_err(|e| anyhow!("Failed to build witness: {}", e))?;
+
+            let mut prover = EzklProver::new();
+            let proof_data = prover
+                .generate_proof(&witness)
+                .map_err(|e| anyhow!("Failed to generate proof: {}", e))?;
+
+            info!(
+                "✅ [ASYNC] STARK proof generated: {} bytes ({:.2} KB)",
+                proof_data.proof_bytes.len(),
+                proof_data.proof_bytes.len() as f64 / 1024.0
+            );
+
+            Ok(proof_data.proof_bytes)
+        }
+
+        #[cfg(not(feature = "real-ezkl"))]
+        {
+            warn!("🎭 [ASYNC] Generating mock proof (real-ezkl feature not enabled)");
+            let proof_json = serde_json::json!({
+                "timestamp": chrono::Utc::now().timestamp_millis(),
+                "tokensUsed": tokens_generated,
+                "hostAddress": format!("{:?}", host_address),
+                "jobId": job_id,
+                "mock": true
+            });
+            Ok(proof_json.to_string().into_bytes())
+        }
+    }
+
+    /// Static version of upload_proof_to_s5 for async tasks
+    async fn upload_proof_to_s5_static(
+        s5_storage: &Box<dyn S5Storage>,
+        job_id: u64,
+        proof_bytes: &[u8],
+    ) -> Result<String> {
+        info!(
+            "📤 [ASYNC] Uploading proof to S5 for job {} ({} bytes, {:.2} KB)",
+            job_id,
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        );
+
+        let proof_path = format!("home/proofs/job_{}_proof.bin", job_id);
+
+        let cid = s5_storage
+            .put(&proof_path, proof_bytes.to_vec())
+            .await
+            .map_err(|e| anyhow!("S5 upload failed: {}", e))?;
+
+        info!("✅ [ASYNC] Proof uploaded to S5 successfully");
+        info!("   Path: {}", proof_path);
+        info!("   CID: {}", cid);
+        info!(
+            "   Size: {} bytes ({:.2} KB)",
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        );
+
+        Ok(cid)
+    }
+
     /// Force submit checkpoint for a job when completing session (ignores MIN_PROVEN_TOKENS)
     pub async fn force_checkpoint_on_completion(&self, job_id: u64) -> Result<()> {
         // Use write lock to ensure consistency
@@ -473,27 +695,45 @@ impl CheckpointManager {
 
                 drop(trackers); // Release lock for async operation
 
-                let result = self.submit_checkpoint(job_id, tokens_to_submit).await;
+                // ASYNC CHECKPOINT SUBMISSION: Spawn background task to avoid blocking response
+                let web3_client = self.web3_client.clone();
+                let job_trackers = self.job_trackers.clone();
+                let proof_system_address = self.proof_system_address;
+                let host_address = self.host_address;
+                let s5_storage = self.s5_storage.clone();
 
-                // Update tracker based on result
-                let mut trackers = self.job_trackers.write().await;
-                if let Some(tracker) = trackers.get_mut(&job_id) {
-                    tracker.submission_in_progress = false;
+                tokio::spawn(async move {
+                    info!("🚀 [ASYNC-FINAL] Starting background final checkpoint for job {}", job_id);
 
-                    if let Err(e) = result {
-                        error!("Failed to submit checkpoint for job {}: {}", job_id, e);
-                        // Rollback to previous checkpoint value
-                        tracker.last_checkpoint = previous_checkpoint;
-                        return Err(e);
-                    } else {
-                        // Update timestamp to track when this proof was submitted
-                        tracker.last_proof_timestamp = Some(std::time::Instant::now());
-                        info!(
-                            "✅ Successfully submitted proof of {} new tokens for job {} (total now: {})",
-                            tokens_to_submit, job_id, tracker.tokens_generated
-                        );
+                    let submission_result = Self::submit_checkpoint_async(
+                        web3_client,
+                        s5_storage,
+                        proof_system_address,
+                        host_address,
+                        job_id,
+                        tokens_to_submit,
+                    ).await;
+
+                    // Update tracker based on result
+                    let mut trackers = job_trackers.write().await;
+                    if let Some(tracker) = trackers.get_mut(&job_id) {
+                        tracker.submission_in_progress = false;
+
+                        if let Err(e) = submission_result {
+                            error!("Failed to submit final checkpoint for job {}: {}", job_id, e);
+                            tracker.last_checkpoint = previous_checkpoint;
+                        } else {
+                            tracker.last_proof_timestamp = Some(std::time::Instant::now());
+                            info!(
+                                "✅ [ASYNC-FINAL] Successfully submitted proof of {} tokens for job {}",
+                                tokens_to_submit, job_id
+                            );
+                        }
                     }
-                }
+                });
+
+                // Return immediately - don't wait for blockchain confirmation
+                info!("📤 Final checkpoint spawned for job {} - returning immediately", job_id);
             } else {
                 info!(
                     "⚠️ No new tokens to submit for job {} (0 tokens since last checkpoint)",
@@ -513,76 +753,104 @@ impl CheckpointManager {
     }
 
     /// Force submit checkpoint for a job (e.g., when session ends)
+    /// FULLY ASYNC: Spawns background task immediately without blocking for locks
     pub async fn force_checkpoint(&self, job_id: u64) -> Result<()> {
-        // Use write lock to ensure consistency
-        let mut trackers = self.job_trackers.write().await;
+        // Clone all necessary data BEFORE spawning to avoid blocking
+        let job_trackers = self.job_trackers.clone();
+        let web3_client = self.web3_client.clone();
+        let proof_system_address = self.proof_system_address;
+        let host_address = self.host_address;
+        let s5_storage = self.s5_storage.clone();
 
-        if let Some(tracker) = trackers.get_mut(&job_id) {
-            let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
+        info!("🚀 [FORCE-CHECKPOINT] Spawning background task for job {} (returns immediately)", job_id);
 
-            // Check if submission is already in progress
-            if tracker.submission_in_progress {
-                info!(
-                    "⏸️ Skipping force checkpoint for job {} - submission already in progress",
-                    job_id
-                );
-                return Ok(());
-            }
+        // Spawn the entire force_checkpoint logic in background
+        // This ensures the caller NEVER blocks waiting for locks
+        tokio::spawn(async move {
+            info!("🔄 [FORCE-CHECKPOINT-BG] Starting background force checkpoint for job {}", job_id);
 
-            // Only submit if we have at least MIN_PROVEN_TOKENS since last checkpoint
-            if tokens_since_checkpoint < MIN_PROVEN_TOKENS {
-                if tokens_since_checkpoint > 0 {
+            // Acquire lock inside the spawned task (not blocking caller)
+            let mut trackers = job_trackers.write().await;
+
+            let (tokens_to_submit, previous_checkpoint) = if let Some(tracker) = trackers.get_mut(&job_id) {
+                let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
+
+                // Check if submission is already in progress
+                if tracker.submission_in_progress {
                     info!(
-                        "⏸️ Skipping force checkpoint for job {} - only {} tokens since last checkpoint (minimum: {})",
-                        job_id, tokens_since_checkpoint, MIN_PROVEN_TOKENS
+                        "⏸️ [FORCE-CHECKPOINT-BG] Skipping - submission already in progress for job {}",
+                        job_id
                     );
+                    return;
                 }
-                return Ok(());
-            }
 
-            // We have enough tokens to submit
-            let mut tokens_to_submit = tokens_since_checkpoint; // Submit ONLY the delta, not total
-            let previous_checkpoint = tracker.last_checkpoint;
-            let is_first_checkpoint = previous_checkpoint == 0;
+                // Only submit if we have at least MIN_PROVEN_TOKENS since last checkpoint
+                if tokens_since_checkpoint < MIN_PROVEN_TOKENS {
+                    if tokens_since_checkpoint > 0 {
+                        info!(
+                            "⏸️ [FORCE-CHECKPOINT-BG] Skipping job {} - only {} tokens (minimum: {})",
+                            job_id, tokens_since_checkpoint, MIN_PROVEN_TOKENS
+                        );
+                    }
+                    return;
+                }
 
-            // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-            // This should rarely happen since we only submit when tokens_since_checkpoint >= MIN_PROVEN_TOKENS
-            if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                // We have enough tokens to submit
+                let mut tokens_to_submit = tokens_since_checkpoint;
+                let previous_checkpoint = tracker.last_checkpoint;
+                let is_first_checkpoint = previous_checkpoint == 0;
+
+                // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
+                if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                    info!(
+                        "📝 [FORCE-CHECKPOINT-BG] Padding FIRST checkpoint from {} to {} tokens for job {}",
+                        tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                    );
+                    tokens_to_submit = MIN_PROVEN_TOKENS;
+                }
+
                 info!(
-                    "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
-                    tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                    "📤 [FORCE-CHECKPOINT-BG] Submitting {} new tokens for job {} (total: {})",
+                    tokens_to_submit, job_id, tracker.tokens_generated
                 );
-                tokens_to_submit = MIN_PROVEN_TOKENS;
-            }
 
-            info!(
-                "Force submitting checkpoint for job {} with {} new tokens (total: {})",
-                job_id, tokens_to_submit, tracker.tokens_generated
-            );
+                // Mark as in progress and update checkpoint
+                tracker.submission_in_progress = true;
+                tracker.last_checkpoint = tracker.tokens_generated;
 
-            // Mark as in progress and update checkpoint to reflect total tokens proven
-            tracker.submission_in_progress = true;
-            tracker.last_checkpoint = tracker.tokens_generated; // Update to total after submission
+                (tokens_to_submit, previous_checkpoint)
+            } else {
+                info!("⚠️ [FORCE-CHECKPOINT-BG] No tracker found for job {}", job_id);
+                return;
+            };
 
-            drop(trackers); // Release lock for async operation
+            // Release lock before async operation
+            drop(trackers);
 
-            let result = self.submit_checkpoint(job_id, tokens_to_submit).await;
+            // Submit checkpoint (this is the slow part)
+            let submission_result = Self::submit_checkpoint_async(
+                web3_client,
+                s5_storage,
+                proof_system_address,
+                host_address,
+                job_id,
+                tokens_to_submit,
+            ).await;
 
             // Update tracker based on result
-            let mut trackers = self.job_trackers.write().await;
+            let mut trackers = job_trackers.write().await;
             if let Some(tracker) = trackers.get_mut(&job_id) {
                 tracker.submission_in_progress = false;
 
-                if let Err(e) = result {
-                    // Rollback on error
+                if let Err(e) = submission_result {
+                    error!("❌ [FORCE-CHECKPOINT-BG] Failed for job {}: {}", job_id, e);
                     tracker.last_checkpoint = previous_checkpoint;
-                    return Err(e);
                 } else {
-                    // Update timestamp to track when this proof was submitted
                     tracker.last_proof_timestamp = Some(std::time::Instant::now());
+                    info!("✅ [FORCE-CHECKPOINT-BG] Success for job {}", job_id);
                 }
             }
-        }
+        });
 
         Ok(())
     }

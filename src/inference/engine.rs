@@ -343,6 +343,8 @@ impl LlmEngine {
             let max_tokens = request.max_tokens;
             let mut recent_text = String::new(); // Track recent text for pattern detection
             let mut seen_first_response = false; // Track if we've started generating assistant response
+            let mut consecutive_invalid_utf8 = 0; // Track consecutive invalid UTF-8 tokens to detect stuck loops
+            const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break out if stuck generating invalid tokens
 
             while n_cur < prompt_tokens.len() + max_tokens {
                 // Sample next token using sampler chain
@@ -362,11 +364,25 @@ impl LlmEngine {
                     break;
                 }
 
-                // Convert token to string
-                let token_str = model
-                    .model
-                    .token_to_str(new_token_id, Special::Plaintext)
-                    .map_err(|e| anyhow!("Token to string failed: {:?}", e))?;
+                // Convert token to string - handle invalid UTF-8 gracefully
+                let token_str = match model.model.token_to_str(new_token_id, Special::Plaintext) {
+                    Ok(s) => {
+                        consecutive_invalid_utf8 = 0; // Reset counter on valid token
+                        s
+                    },
+                    Err(_) => {
+                        // Skip tokens that produce invalid UTF-8 (partial multi-byte sequences)
+                        consecutive_invalid_utf8 += 1;
+                        tracing::debug!("⚠️ Skipping token {} - invalid UTF-8 (consecutive: {})", new_token_id, consecutive_invalid_utf8);
+
+                        // Break out if stuck in a loop generating invalid tokens
+                        if consecutive_invalid_utf8 >= MAX_CONSECUTIVE_INVALID {
+                            tracing::warn!("🛑 Breaking out of generation - {} consecutive invalid UTF-8 tokens (model stuck)", consecutive_invalid_utf8);
+                            break;
+                        }
+                        continue;
+                    }
+                };
 
                 // Update recent text buffer (keep last 50 chars for pattern detection)
                 recent_text.push_str(&token_str);

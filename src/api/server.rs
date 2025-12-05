@@ -1681,6 +1681,17 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                     {
                                                                                                         Ok(_) => {
                                                                                                             info!("🏁 Sent final encrypted_response (finish_reason: {})", finish_reason_str);
+
+                                                                                                            // CRITICAL: Also send stream_end for SDK compatibility
+                                                                                                            let mut stream_end_msg = json!({"type": "stream_end"});
+                                                                                                            if let Some(ref msg_id) = message_id {
+                                                                                                                stream_end_msg["id"] = msg_id.clone();
+                                                                                                            }
+                                                                                                            if let Some(ref sid) = current_session_id {
+                                                                                                                stream_end_msg["session_id"] = json!(sid);
+                                                                                                            }
+                                                                                                            let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                                                            info!("🏁 Sent stream_end for SDK compatibility");
                                                                                                         }
                                                                                                         Err(e) => {
                                                                                                             error!("❌ Failed to send final encrypted_response: {}", e);
@@ -1712,6 +1723,12 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                 error_msg.to_string(),
                                                                                             ))
                                                                                             .await;
+                                                                                        // Send stream_end after error
+                                                                                        let mut stream_end_msg = json!({"type": "stream_end"});
+                                                                                        if let Some(ref msg_id) = message_id {
+                                                                                            stream_end_msg["id"] = msg_id.clone();
+                                                                                        }
+                                                                                        let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                                         break;
                                                                                     }
                                                                                 }
@@ -1743,6 +1760,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     ),
                                                                                 )
                                                                                 .await;
+
+                                                                            // CRITICAL: Send stream_end even on error so SDK knows stream is done
+                                                                            let mut stream_end_msg = json!({"type": "stream_end"});
+                                                                            if let Some(ref msg_id) = message_id {
+                                                                                stream_end_msg["id"] = msg_id.clone();
+                                                                            }
+                                                                            let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                         }
                                                                     }
                                                                 }
@@ -2061,6 +2085,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             error_msg.to_string(),
                                         ))
                                         .await;
+
+                                    // CRITICAL: Send stream_end even on error so SDK knows stream is done
+                                    let mut stream_end_msg = json!({"type": "stream_end"});
+                                    if let Some(ref msg_id) = message_id {
+                                        stream_end_msg["id"] = msg_id.clone();
+                                    }
+                                    let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                 }
                             }
                         }
@@ -2284,30 +2315,25 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
         let cm = server.checkpoint_manager.read().await;
         info!("   Checkpoint manager available: {}", cm.is_some());
 
-        if let Some(checkpoint_manager) = cm.as_ref() {
-            info!("✅ Calling complete_session_job for job_id: {}", jid);
+        if let Some(checkpoint_manager) = cm.clone() {
+            info!("✅ Spawning complete_session_job in background for job_id: {}", jid);
+            drop(cm); // Release lock before spawning
 
-            // Log the actual call
-            info!("🔄 Making blockchain call to complete job_id: {}", jid);
+            // ASYNC: Spawn session completion in background to avoid blocking
+            tokio::spawn(async move {
+                info!("[WS-BG] 🚀 Starting background session completion for job_id: {}", jid);
 
-            match checkpoint_manager.complete_session_job(jid).await {
-                Ok(()) => {
-                    info!("💰 Settlement completed successfully for job_id: {}", jid);
-                }
-                Err(e) => {
-                    error!("❌ Failed to complete session job {}: {}", jid, e);
-                    error!("   Error details: {:?}", e);
-                    // Log specific error types for debugging
-                    if e.to_string()
-                        .contains("replacement transaction underpriced")
-                    {
-                        error!("   This is a nonce conflict - transaction was sent too quickly after previous one");
-                    } else if e.to_string().contains("Must wait dispute window") {
-                        error!("   Job is in dispute window - will retry automatically");
+                match checkpoint_manager.complete_session_job(jid).await {
+                    Ok(()) => {
+                        info!("[WS-BG] 💰 Settlement completed successfully for job_id: {}", jid);
+                    }
+                    Err(e) => {
+                        error!("[WS-BG] ❌ Failed to complete session job {}: {}", jid, e);
                     }
                 }
-            }
+            });
         } else {
+            drop(cm);
             warn!("⚠️ No checkpoint manager available for settlement");
             warn!("   This means the node is running without blockchain integration");
             warn!("   Check if RPC_URL and HOST_PRIVATE_KEY are configured");

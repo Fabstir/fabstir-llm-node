@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.4.4-batch-inference-fix-2025-11-21";
+pub const VERSION: &str = "v8.4.9-stream-end-complete-2025-12-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.4.4";
+pub const VERSION_NUMBER: &str = "8.4.9";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 4;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 9;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-11-21";
+pub const BUILD_DATE: &str = "2025-12-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -57,6 +57,8 @@ pub const FEATURES: &[&str] = &[
     "encrypted-vector-database-paths",
     "configurable-batch-size",
     "llama-batch-size-env",
+    "async-checkpoints",
+    "non-blocking-proof-submission",
 ];
 
 /// Supported chain IDs
@@ -67,14 +69,13 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "Patch version bump (v8.4.3 -> v8.4.4) - Fixed ALL Hardcoded Batch/Context Values",
-    "CRITICAL FIX: inference/engine.rs:325 was hardcoding batch creation to 512 during inference",
-    "CRITICAL FIX: api/websocket/inference.rs:101 was hardcoding EngineConfig batch_size to 512",
-    "CRITICAL FIX: api/websocket/inference.rs:32 was hardcoding InferenceConfig context_size to 2048",
-    "COMPREHENSIVE: All 4 locations now read from LLAMA_BATCH_SIZE and MAX_CONTEXT_LENGTH env vars",
-    "This fixes the InsufficientSpace(512) error that persisted in v8.4.3",
-    "No breaking changes - fully backward compatible with v8.4.3",
-    "All features from v8.4.3: Version tracking, S5 vector loading, RAG support",
+    "Patch version bump (v8.4.8 -> v8.4.9) - Complete Stream End Fix",
+    "CRITICAL FIX: Added stream_end message after encrypted_response for SDK compatibility",
+    "CRITICAL FIX: All streaming paths now send stream_end on completion",
+    "FIX: Added stream_end after all error paths in streaming",
+    "FIX: force_checkpoint spawns immediately without blocking for locks",
+    "All features from v8.4.8: async checkpoints, UTF-8 loop fix",
+    "No breaking changes - fully backward compatible with v8.4.8",
     "No contract changes - fully compatible with v8.2.0+",
 ];
 
@@ -103,7 +104,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 4);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_PATCH, 9);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
@@ -120,20 +121,22 @@ mod tests {
         assert!(FEATURES.contains(&"encrypted-vector-database-paths"));
         assert!(FEATURES.contains(&"configurable-batch-size"));
         assert!(FEATURES.contains(&"llama-batch-size-env"));
+        assert!(FEATURES.contains(&"async-checkpoints"));
+        assert!(FEATURES.contains(&"non-blocking-proof-submission"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.4.4"));
-        assert!(version.contains("2025-11-21"));
+        assert!(version.contains("8.4.9"));
+        assert!(version.contains("2025-12-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.4.4-batch-inference-fix-2025-11-21");
-        assert_eq!(VERSION_NUMBER, "8.4.4");
-        assert_eq!(BUILD_DATE, "2025-11-21");
+        assert_eq!(VERSION, "v8.4.9-stream-end-complete-2025-12-05");
+        assert_eq!(VERSION_NUMBER, "8.4.9");
+        assert_eq!(BUILD_DATE, "2025-12-05");
     }
 }
