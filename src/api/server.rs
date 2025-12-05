@@ -1536,35 +1536,12 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 .recv()
                                                                                 .await
                                                                             {
-                                                                                // Track tokens
-                                                                                if let Some(jid) =
-                                                                                    job_id
-                                                                                {
-                                                                                    if response
-                                                                                        .tokens
-                                                                                        > 0
-                                                                                    {
-                                                                                        total_tokens +=
-                                                                                            response
-                                                                                                .tokens
-                                                                                                as u64;
-
-                                                                                        let cm = server
-                                                                                            .checkpoint_manager
-                                                                                            .read()
-                                                                                            .await;
-                                                                                        if let Some(
-                                                                                            checkpoint_manager,
-                                                                                        ) =
-                                                                                            cm.as_ref()
-                                                                                        {
-                                                                                            info!("📊 Tracking {} tokens for job {} in encrypted session", response.tokens, jid);
-                                                                                            let _ = checkpoint_manager.track_tokens(jid, response.tokens as u64, current_session_id.clone()).await;
-                                                                                        }
-                                                                                    }
+                                                                                // Count tokens for logging only - producer already tracks for checkpoints
+                                                                                if response.tokens > 0 {
+                                                                                    total_tokens += response.tokens as u64;
                                                                                 }
 
-                                                                                // Encrypt response chunks with session key (Phase 6.2.1, Sub-phase 5.3)
+                                                                                // Encrypt response chunks with session key
                                                                                 // Generate random 24-byte nonce using CSPRNG
                                                                                 let mut nonce =
                                                                                     [0u8; 24];
@@ -1612,6 +1589,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             ws_msg["session_id"] = json!(sid);
                                                                                         }
 
+                                                                                        // CRITICAL: Add "final": true to last chunk for mobile browser compatibility
+                                                                                        // Mobile browsers buffer small WebSocket messages (<8KB) and may not flush
+                                                                                        // the tiny encrypted_response/stream_end messages
+                                                                                        if response.finish_reason.is_some() {
+                                                                                            ws_msg["final"] = json!(true);
+                                                                                        }
+
                                                                                         // Send encrypted chunk
                                                                                         match socket
                                                                                             .send(
@@ -1622,7 +1606,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             .await
                                                                                         {
                                                                                             Ok(_) => {
-                                                                                                info!("✅ Sent encrypted_chunk {} (tokens: {})", chunk_index, response.tokens);
+                                                                                                if response.finish_reason.is_some() {
+                                                                                                    info!("✅ Sent encrypted_chunk {} (tokens: {}, final: true)", chunk_index, response.tokens);
+                                                                                                } else {
+                                                                                                    info!("✅ Sent encrypted_chunk {} (tokens: {})", chunk_index, response.tokens);
+                                                                                                }
                                                                                             }
                                                                                             Err(e) => {
                                                                                                 error!("❌ Failed to send encrypted_chunk {}: {}", chunk_index, e);
@@ -2001,28 +1989,12 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 .await
                             {
                                 Ok(mut receiver) => {
-                                    let mut total_tokens = 0u64; // Track total tokens for this session
+                                    let mut total_tokens = 0u64;
 
                                     while let Some(response) = receiver.recv().await {
-                                        // CRITICAL FIX: Track tokens for checkpoint/settlement
-                                        if let Some(jid) = job_id {
-                                            if response.tokens > 0 {
-                                                total_tokens += response.tokens as u64;
-
-                                                // Track tokens with checkpoint manager
-                                                let cm = server.checkpoint_manager.read().await;
-                                                if let Some(checkpoint_manager) = cm.as_ref() {
-                                                    info!("📊 Tracking {} tokens for job {} in WebSocket session",
-                                                          response.tokens, jid);
-                                                    let _ = checkpoint_manager
-                                                        .track_tokens(
-                                                            jid,
-                                                            response.tokens as u64,
-                                                            session_id.clone(),
-                                                        )
-                                                        .await;
-                                                }
-                                            }
+                                        // Count tokens for logging - producer already tracks for checkpoints
+                                        if response.tokens > 0 {
+                                            total_tokens += response.tokens as u64;
                                         }
 
                                         let mut ws_msg = json!({

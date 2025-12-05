@@ -7,9 +7,17 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-/// Maximum context window in tokens
-pub const MAX_CONTEXT_TOKENS: usize = 4096;
-const DEFAULT_MAX_CONTEXT_TOKENS: usize = MAX_CONTEXT_TOKENS;
+/// Maximum context window in tokens (matches inference engine default)
+/// Can be overridden via MAX_CONTEXT_LENGTH environment variable
+pub const MAX_CONTEXT_TOKENS: usize = 8192;
+
+/// Get the configured max context tokens from environment or use default
+fn get_max_context_tokens() -> usize {
+    std::env::var("MAX_CONTEXT_LENGTH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(MAX_CONTEXT_TOKENS)
+}
 
 /// In-memory conversation cache (stateless, cleared on disconnect)
 #[derive(Debug, Clone)]
@@ -29,7 +37,7 @@ impl ConversationCache {
             session_id,
             messages: Arc::new(RwLock::new(VecDeque::new())),
             total_tokens: Arc::new(RwLock::new(0)),
-            max_context_tokens: DEFAULT_MAX_CONTEXT_TOKENS,
+            max_context_tokens: get_max_context_tokens(),
             created_at: Instant::now(),
             job_id: Arc::new(RwLock::new(job_id)),
         }
