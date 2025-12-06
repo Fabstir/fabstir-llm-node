@@ -250,13 +250,19 @@ impl LlmEngine {
     pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
         let start_time = Instant::now();
 
+        // v8.4.17: VERBOSE DIAGNOSTIC LOGGING
+        eprintln!("🔥🔥🔥 run_inference CALLED! model_id={}, max_tokens={}, prompt_len={}",
+            request.model_id, request.max_tokens, request.prompt.len());
+
         // Debug log the prompt
         println!("DEBUG: Inference prompt: {:?}", request.prompt);
 
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
+            eprintln!("❌ Model not found in model_info: {}", request.model_id);
             return Err(anyhow!("Model not found: {}", request.model_id));
         }
+        eprintln!("✅ Model found in model_info: {}", request.model_id);
 
         // Update metrics
         *self.inference_count.write().await += 1;
@@ -274,7 +280,7 @@ impl LlmEngine {
             }
 
             // Create necessary data before borrowing the model
-            let (prompt_tokens, context_size, eos_token, return_token) = {
+            let (prompt_tokens, context_size, eos_token, return_token, end_token) = {
                 let model = models
                     .get_mut(&request.model_id)
                     .ok_or_else(|| anyhow!("Model not found in storage"))?;
@@ -301,9 +307,17 @@ impl LlmEngine {
                         unsafe { LlamaToken::new(200002) }
                     });
 
-                tracing::debug!("🎯 Token IDs: eos_token={}, return_token={}", eos, return_tok);
+                // Get token ID for "<|end|>" (Harmony format message end token) (v8.4.14)
+                // This token can cause premature truncation if the model outputs it early
+                let end_tok = model
+                    .model
+                    .str_to_token("<|end|>", AddBos::Never)
+                    .ok()
+                    .and_then(|tokens| tokens.first().copied());
 
-                (tokens_list, model.context_size, eos, return_tok)
+                tracing::debug!("🎯 Token IDs: eos_token={}, return_token={}, end_token={:?}", eos, return_tok, end_tok);
+
+                (tokens_list, model.context_size, eos, return_tok, end_tok)
             };
 
             // Now work with the model again for context creation and generation
@@ -341,10 +355,26 @@ impl LlmEngine {
             let mut token_info_list: Vec<TokenInfo> = Vec::new();
             let mut n_cur = prompt_tokens.len();
             let max_tokens = request.max_tokens;
-            let mut recent_text = String::new(); // Track recent text for pattern detection
-            let mut seen_first_response = false; // Track if we've started generating assistant response
-            let mut consecutive_invalid_utf8 = 0; // Track consecutive invalid UTF-8 tokens to detect stuck loops
-            const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break out if stuck generating invalid tokens
+            let mut consecutive_invalid_utf8 = 0; // Track consecutive invalid UTF-8 tokens
+            const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break if stuck generating invalid tokens
+            let mut stop_reason = "loop_condition"; // v8.4.18: Track why we stopped
+
+            // v8.4.16: Diagnostic logging to track generation limits
+            // Using eprintln! to ensure visibility regardless of log level
+            eprintln!(
+                "🚀 Starting generation: prompt_tokens={}, max_tokens={}, context_size={}, limit={}",
+                prompt_tokens.len(),
+                max_tokens,
+                context_size,
+                prompt_tokens.len() + max_tokens
+            );
+            tracing::info!(
+                "🚀 Starting generation: prompt_tokens={}, max_tokens={}, context_size={}, limit={}",
+                prompt_tokens.len(),
+                max_tokens,
+                context_size,
+                prompt_tokens.len() + max_tokens
+            );
 
             while n_cur < prompt_tokens.len() + max_tokens {
                 // Sample next token using sampler chain
@@ -356,186 +386,60 @@ impl LlmEngine {
 
                 let new_token_id = sampler.sample(&context, -1);
 
-                tracing::debug!("🔤 Generated token: {} (comparing to eos={}, return={})", new_token_id, eos_token, return_token);
+                // v8.4.18: Log every 50 tokens, special tokens, AND tokens 140+ to catch exit
+                let tokens_so_far = n_cur - prompt_tokens.len();
+                let is_special = new_token_id == eos_token || new_token_id == return_token || end_token.map_or(false, |et| new_token_id == et);
+                if tokens_so_far % 50 == 0 || is_special || tokens_so_far >= 140 {
+                    eprintln!("🔤 Token #{}: id={} (eos={}, return={}, end={:?}) SPECIAL={} is_eos={}",
+                        tokens_so_far, new_token_id, eos_token, return_token, end_token, is_special,
+                        new_token_id == eos_token);
+                }
 
-                // Check for EOS or <|return|> token (GPT-OSS-20B Harmony format stop token)
-                if new_token_id == eos_token || new_token_id == return_token {
-                    tracing::debug!("🛑 Stop token detected: {} (eos={}, return={})", new_token_id, eos_token, return_token);
+                // v8.4.14: ONLY stop on EOS token - no early termination
+                // All other stop conditions have been disabled to prevent truncation
+                if new_token_id == eos_token {
+                    stop_reason = "eos_token";
+                    eprintln!("🛑 EOS token detected after {} chars, {} tokens (token_id={}, eos={})",
+                        output.len(), token_info_list.len(), new_token_id, eos_token);
+                    tracing::info!("🛑 EOS token detected after {} chars, {} tokens", output.len(), token_info_list.len());
                     break;
                 }
 
-                // Convert token to string - handle invalid UTF-8 gracefully
-                let token_str = match model.model.token_to_str(new_token_id, Special::Plaintext) {
-                    Ok(s) => {
-                        consecutive_invalid_utf8 = 0; // Reset counter on valid token
-                        s
-                    },
-                    Err(_) => {
-                        // Skip tokens that produce invalid UTF-8 (partial multi-byte sequences)
-                        consecutive_invalid_utf8 += 1;
-                        tracing::debug!("⚠️ Skipping token {} - invalid UTF-8 (consecutive: {})", new_token_id, consecutive_invalid_utf8);
-
-                        // Break out if stuck in a loop generating invalid tokens
-                        if consecutive_invalid_utf8 >= MAX_CONSECUTIVE_INVALID {
-                            tracing::warn!("🛑 Breaking out of generation - {} consecutive invalid UTF-8 tokens (model stuck)", consecutive_invalid_utf8);
-                            break;
-                        }
-                        continue;
-                    }
-                };
-
-                // Update recent text buffer (keep last 50 chars for pattern detection)
-                recent_text.push_str(&token_str);
-                if recent_text.len() > 50 {
-                    recent_text = recent_text.chars().skip(recent_text.len() - 50).collect();
+                // Log but DON'T stop on other special tokens - let model continue
+                if new_token_id == return_token || end_token.map_or(false, |et| new_token_id == et) {
+                    tracing::info!("⏭️ Special token {} detected at {} chars - continuing generation", new_token_id, output.len());
+                    // Don't break - let the model continue
                 }
 
-                // Mark that we've started generating content
-                if !output.is_empty() {
-                    seen_first_response = true;
+                // v8.4.19 FIX: Convert token to string - handle invalid UTF-8 by still advancing model state
+                let token_str_result = model.model.token_to_str(new_token_id, Special::Plaintext);
+
+                let is_valid_utf8 = token_str_result.is_ok();
+                let token_str = token_str_result.unwrap_or_else(|_| String::new());
+
+                if is_valid_utf8 {
+                    consecutive_invalid_utf8 = 0; // Reset counter on valid token
+
+                    // Add valid token to output
+                    output.push_str(&token_str);
+
+                    // Store token info for streaming
+                    token_info_list.push(TokenInfo {
+                        token_id: new_token_id.0 as i32,
+                        text: token_str,
+                        logprob: None,
+                        timestamp: None,
+                    });
+                } else {
+                    // Invalid UTF-8 - don't add to output but MUST advance model state
+                    consecutive_invalid_utf8 += 1;
+                    eprintln!("⚠️ Token {} invalid UTF-8 (consecutive: {}) - skipping from output, advancing model",
+                        new_token_id, consecutive_invalid_utf8);
+                    // DON'T add to token_info_list - we don't want to stream garbage to client
                 }
 
-                // Check for conversation patterns that indicate we should stop
-                // This prevents the model from continuing to generate conversation history
-                // BUT only after we've generated at least some response
-
-                let mut should_stop = false;
-                if output.len() > 5 {
-                    // After we have at least some content
-                    // Check various conversation continuation patterns
-                    let stop_patterns = [
-                        // Our format
-                        "\nUser:",
-                        "\nAssistant:",
-                        ". User:",
-                        ". Assistant:",
-                        // Common continuations
-                        "\nuser:",
-                        "\nassistant:",
-                        // Q&A patterns
-                        "\nQ:",
-                        "\nA:",
-                        ". Q:",
-                        ". A:",
-                    ];
-
-                    // Check if output contains any of these patterns
-                    for pattern in &stop_patterns {
-                        if output.contains(pattern) {
-                            // Find where the pattern starts and truncate there
-                            if let Some(pos) = output.rfind(pattern) {
-                                output.truncate(pos);
-
-                                // Also truncate token_info_list to match
-                                // Count how many tokens to keep
-                                let mut kept_len = 0;
-                                let mut tokens_to_keep = 0;
-                                for (i, token) in token_info_list.iter().enumerate() {
-                                    kept_len += token.text.len();
-                                    if kept_len >= output.len() {
-                                        tokens_to_keep = i + 1;
-                                        break;
-                                    }
-                                }
-                                token_info_list.truncate(tokens_to_keep);
-
-                                // Stop generation completely
-                                should_stop = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if should_stop {
-                    break; // Break from the main generation loop
-                }
-
-                // Pattern 2: Check if we're about to start a conversation turn
-                // (when we have a newline and the current token starts a role)
-                // Only check this after we've generated some response
-                if seen_first_response
-                    && output.len() > 10
-                    && (output.ends_with('\n') || output.ends_with("\n\n"))
-                {
-                    // Check for Vicuna format role markers (uppercase)
-                    if token_str.starts_with("USER")
-                        || token_str.starts_with("ASSISTANT")
-                        || token_str.starts_with("User")
-                        || token_str.starts_with("Assistant")
-                    {
-                        // Don't include this token, stop here
-                        break;
-                    }
-                }
-
-                // Pattern 3: Stop if output is getting repetitive or too long for a single response
-                // This helps when the model starts hallucinating conversations
-                if output.len() > 500 {
-                    // Reasonable response length
-                    // Check if we're starting to repeat conversation patterns
-                    if output.contains("\nuser:") && output.contains("\nassistant:") {
-                        // We already have a full exchange, stop here
-                        break;
-                    }
-                }
-
-                // Additional check: Stop if model starts asking questions
-                // This is a common pattern when models continue conversations
-                if output.len() > 20 {
-                    // Check if we're starting a new question
-                    // Use char_indices to avoid panicking on UTF-8 boundaries
-                    let last_30 = if output.chars().count() > 30 {
-                        // Find the byte index 30 characters from the end
-                        let char_count = output.chars().count();
-                        let start_char_idx = char_count.saturating_sub(30);
-                        output
-                            .char_indices()
-                            .nth(start_char_idx)
-                            .map(|(byte_idx, _)| &output[byte_idx..])
-                            .unwrap_or(&output)
-                    } else {
-                        &output
-                    };
-
-                    // If we just finished a sentence and starting a question
-                    if (last_30.contains(". What ")
-                        || last_30.contains("? What ")
-                        || last_30.contains("! What ")
-                        || last_30.contains("\nWhat "))
-                    {
-                        // Stop before "What"
-                        if let Some(pos) = output.rfind(" What") {
-                            output.truncate(pos);
-                            // Adjust token list
-                            let mut kept_len = 0;
-                            let mut tokens_to_keep = 0;
-                            for (i, token) in token_info_list.iter().enumerate() {
-                                kept_len += token.text.len();
-                                if kept_len >= output.len() {
-                                    tokens_to_keep = i + 1;
-                                    break;
-                                }
-                            }
-                            token_info_list.truncate(tokens_to_keep);
-                            break;
-                        }
-                    }
-                }
-
-                // If we get here, the token is safe to add
-                output.push_str(&token_str);
-
-                // Store token info for streaming
-                // Clone the token_str since we're moving it into TokenInfo
-                token_info_list.push(TokenInfo {
-                    token_id: new_token_id.0 as i32,
-                    text: token_str.clone(),
-                    logprob: None,
-                    timestamp: None,
-                });
-
-                // Add token to batch for next iteration
+                // CRITICAL: Always add token to batch and decode to advance model state
+                // This prevents infinite loops on invalid UTF-8 tokens
                 batch.clear();
                 batch
                     .add(new_token_id, n_cur as i32, &[0], true)
@@ -549,6 +453,24 @@ impl LlmEngine {
 
             let tokens_generated = n_cur - prompt_tokens.len();
             let generation_time = start_time.elapsed();
+
+            // v8.4.18: Log why generation ended with stop_reason
+            eprintln!(
+                "🏁 Generation ended: tokens={}, chars={}, n_cur={}, limit={}, STOP_REASON={}",
+                tokens_generated,
+                output.len(),
+                n_cur,
+                prompt_tokens.len() + max_tokens,
+                stop_reason
+            );
+            tracing::info!(
+                "🏁 Generation ended: tokens_generated={}, output_chars={}, n_cur={}, limit={}, stop_reason={}",
+                tokens_generated,
+                output.len(),
+                n_cur,
+                prompt_tokens.len() + max_tokens,
+                stop_reason
+            );
 
             (output, tokens_generated, generation_time, token_info_list)
         }; // Release the mutex here before any await
@@ -578,15 +500,21 @@ impl LlmEngine {
     }
 
     pub async fn run_inference_stream(&self, request: InferenceRequest) -> Result<TokenStream> {
+        // v8.4.17: VERBOSE LOGGING
+        eprintln!("🔥🔥🔥 run_inference_stream CALLED! model_id={}, max_tokens={}", request.model_id, request.max_tokens);
+
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
+            eprintln!("❌ run_inference_stream: Model not found in model_info: {}", request.model_id);
             return Err(anyhow!("Model not found: {}", request.model_id));
         }
+        eprintln!("✅ run_inference_stream: Model found in model_info");
 
         let (tx, rx) = mpsc::channel(100);
 
         // Check if we have a real model loaded
         let has_real_model = self.models.lock().unwrap().contains_key(&request.model_id);
+        eprintln!("📊 run_inference_stream: has_real_model={}", has_real_model);
 
         if has_real_model {
             // For real models, we need to run synchronously due to !Send constraint
@@ -594,21 +522,27 @@ impl LlmEngine {
             // Make sure stream is false for the actual inference
             let mut inference_request = request;
             inference_request.stream = false;
+            eprintln!("🚀 run_inference_stream: Calling run_inference...");
             let result = self.run_inference(inference_request).await;
+            eprintln!("🏁 run_inference_stream: run_inference returned, result.is_ok={}", result.is_ok());
 
             // Spawn a task to stream the already-generated tokens
             tokio::spawn(async move {
                 match result {
                     Ok(inference_result) => {
+                        eprintln!("📤 Streaming {} tokens from inference_result", inference_result.token_info.len());
                         for token_info in inference_result.token_info {
                             if tx.send(Ok(token_info)).await.is_err() {
+                                eprintln!("❌ Token send failed - receiver dropped");
                                 break;
                             }
                             // Add a small delay to simulate streaming
                             tokio::time::sleep(Duration::from_millis(10)).await;
                         }
+                        eprintln!("✅ All tokens streamed successfully");
                     }
                     Err(e) => {
+                        eprintln!("❌ Inference error in stream: {}", e);
                         let _ = tx.send(Err(e)).await;
                     }
                 }

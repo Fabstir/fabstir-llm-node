@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.4.13-context-limit-fix-2025-12-05";
+pub const VERSION: &str = "v8.4.20-utf8-skip-2025-12-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.4.13";
+pub const VERSION_NUMBER: &str = "8.4.20";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 4;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 13;
+pub const VERSION_PATCH: u32 = 20;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-05";
+pub const BUILD_DATE: &str = "2025-12-06";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -69,12 +69,13 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "Patch version bump (v8.4.12 -> v8.4.13) - Context Limit Fix",
-    "FIX: Memory cache token limit now matches MAX_CONTEXT_LENGTH (8192 default)",
-    "FIX: Reads MAX_CONTEXT_LENGTH env var for consistent context sizing",
-    "FIX: Long conversations no longer get truncated causing early response termination",
-    "All features from v8.4.12: mobile final chunk, sync checkpoint, payment fix",
-    "No breaking changes - fully backward compatible with v8.4.12",
+    "Patch version bump (v8.4.15 -> v8.4.16) - Diagnostic Logging",
+    "DIAG: Added generation start logging (prompt_tokens, max_tokens, context_size, limit)",
+    "DIAG: Added generation end logging (tokens_generated, output_chars, n_cur, limit)",
+    "DIAG: Added periodic token logging (every 50 tokens + special tokens)",
+    "DIAG: Log EOS/return/end token IDs for troubleshooting truncation issues",
+    "All features from v8.4.15: no-early-stop, only EOS token stops generation",
+    "No breaking changes - fully backward compatible with v8.4.15",
 ];
 
 /// Get formatted version string for logging
@@ -102,7 +103,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 4);
-        assert_eq!(VERSION_PATCH, 13);
+        assert_eq!(VERSION_PATCH, 17);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
@@ -127,14 +128,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.4.13"));
-        assert!(version.contains("2025-12-05"));
+        assert!(version.contains("8.4.17"));
+        assert!(version.contains("2025-12-06"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.4.13-context-limit-fix-2025-12-05");
-        assert_eq!(VERSION_NUMBER, "8.4.13");
-        assert_eq!(BUILD_DATE, "2025-12-05");
+        assert_eq!(VERSION, "v8.4.17-verbose-diag-2025-12-06");
+        assert_eq!(VERSION_NUMBER, "8.4.17");
+        assert_eq!(BUILD_DATE, "2025-12-06");
     }
 }
