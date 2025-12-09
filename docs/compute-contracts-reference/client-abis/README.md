@@ -2,46 +2,37 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (October 15, 2025 - v8.1.2 Off-Chain Proof Storage)
+## Current Deployed Contracts (December 9, 2025 - Flexible Pricing)
 
-### JobMarketplaceWithModels (v8.1.2+ Hash+CID)
-- **Address**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E
+### JobMarketplaceWithModels
+- **Address**: 0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1
 - **Network**: Base Sepolia
-- **Deployed**: October 15, 2025
-- **Status**: ✅ LATEST - HASH+CID PROOF STORAGE (v8.1.2+)
+- **Status**: ✅ FLEXIBLE PRICING (December 9, 2025)
 - **Configuration**:
   - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
   - Authorized in HostEarnings: ✅ CONFIRMED
-  - NodeRegistry: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 (8-field struct with dual pricing)
+  - NodeRegistry: 0x48aa4A8047A45862Da8412FAB71ef66C17c7766d (Per-model pricing support)
 - **Key Features**:
-  - 🆕 **Off-Chain Proof Storage**: 221KB STARK proofs stored in S5, only hash+CID on-chain
-  - 🆕 **Transaction Size Reduction**: 737x smaller (221KB → ~300 bytes)
-  - 🆕 **submitProofOfWork**: Accepts SHA256 hash (32 bytes) + S5 CID string instead of full proof
-  - 🆕 **Fits RPC Limits**: ~300 byte transactions fit well within RPC size limits
-  - **DUAL PRICING**: Separate native (ETH/BNB) and stable (USDC) pricing fields
-  - **10,000x Range**: Both native and stable have 10,000x range (MIN to MAX)
-  - **Price Validation**: Validates against correct pricing field based on payment type
-  - **Query Pricing**: Get host pricing for both native and stable tokens
-  - Works with NodeRegistryWithModels 8-field struct (includes both pricing fields)
+  - 🆕 **Per-Model Pricing Support**: Query model-specific pricing with `getModelPricing()`
+  - 🆕 **Model-Aware Sessions**: Create sessions tied to specific models
+  - 🆕 **createSessionJobForModel()**: Native ETH session with model pricing validation
+  - 🆕 **createSessionJobForModelWithToken()**: Token session with model pricing validation
+  - 🆕 **sessionModel mapping**: Track which model is used for each session
+  - 🆕 **100% Backward Compatible**: All existing SDK functions work unchanged
+  - S5 Off-Chain Proof Storage: Full STARK proofs (221KB) stored in S5, only hash + CID on-chain
+  - Transaction Size Reduction: 737x reduction (221KB → 300 bytes)
+  - Cost Reduction: 5000x reduction (~$50 → ~$0.001 per proof)
+  - 18-Field SessionJob Struct: lastProofHash and lastProofCID fields
+  - submitProofOfWork takes 4 params (jobId, tokensClaimed, proofHash, proofCID)
+  - DUAL PRICING: Separate native (ETH/BNB) and stable (USDC) pricing fields
+  - 10,000x Range: Both native and stable have 10,000x range (MIN to MAX)
+  - Price Validation: Validates against correct pricing field based on payment type
+  - Works with NodeRegistryWithModels per-model pricing
   - Wallet-agnostic deposit/withdrawal functions (depositNative, withdrawNative)
   - createSessionFromDeposit for pre-funded session creation
   - Anyone-can-complete pattern for gasless session ending
   - ChainConfig support for multi-chain deployment (ETH on Base, BNB on opBNB)
-  - Enhanced event indexing for better filtering
-  - depositor field tracks who paid (EOA or Smart Account)
-  - Properly calls creditEarnings() for host balance tracking
-  - Validates hosts have supported models
-  - User refunds fixed for session jobs
-  - Treasury fee accumulation for batch withdrawals (90% host / 10% treasury)
-  - Host earnings accumulation WITH PROPER TRACKING
-  - USDC payment settlement with proper split distribution
-  - ETH and USDC payment support fully functional
-  - Direct payment distribution (no external escrow)
-  - Session jobs with proof checkpoints
-  - EZKL proof verification integration
   - MIN_DEPOSIT: 0.0002 ETH or 0.80 USDC minimum
-  - MIN_PROVEN_TOKENS: 100 tokens minimum
-  - Total gas savings: ~80%
 
 ### ModelRegistry (NEW - CORRECTED)
 - **Address**: 0x92b2De840bB2171203011A6dBA928d855cA8183E
@@ -53,28 +44,34 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - SHA256 hash verification for model integrity
   - FAB token voting for community proposals
   - Emergency model deactivation capability
-- **Approved Models** (MVP Testing - ONLY THESE TWO):
+- **Approved Models** (3 models):
   - TinyVicuna-1B-32k (CohereForAI/TinyVicuna-1B-32k-GGUF)
   - TinyLlama-1.1B Chat (TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
+  - OpenAI-GPT-OSS-20B (bartowski/openai_gpt-oss-20b-GGUF) - MXFP4 quantization
 
 ### NodeRegistryWithModels
-- **Address**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 ✅ NEW - Corrected Dual Pricing
-- **Previous**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7 (Incorrect MAX_PRICE_NATIVE - deprecated)
+- **Address**: 0x48aa4A8047A45862Da8412FAB71ef66C17c7766d ✅ NEW - Per-Model Pricing
+- **Previous**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 (Dual pricing only - deprecated)
 - **Network**: Base Sepolia
-- **Status**: ✅ DUAL PRICING WITH 10,000x RANGE
+- **Status**: ✅ PER-MODEL & MULTI-TOKEN PRICING (December 9, 2025)
 - **Stake Required**: 1000 FAB tokens
 - **Key Features**:
-  - 🆕 **Dual Pricing**: Separate minPricePerTokenNative and minPricePerTokenStable fields
-  - 🆕 **Native Pricing Range**: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
-  - 🆕 **Stable Pricing Range**: 10 to 100,000 (0.00001 to 0.1 USDC per token)
-  - 🆕 **Dynamic Pricing Updates**: Separate updatePricingNative() and updatePricingStable() functions
-  - 🆕 **Price Discovery**: Query both native and stable pricing separately
-  - 🆕 **8-Field Node Struct**: Added both pricing fields (getNodeFullInfo returns 8 values)
-  - 🆕 **PricingUpdated Events**: Separate events for native and stable pricing changes
+  - 🆕 **Per-Model Pricing**: Set different prices for different AI models
+  - 🆕 **setModelPricing(bytes32 modelId, uint256 nativePrice, uint256 stablePrice)**: Set model-specific pricing
+  - 🆕 **clearModelPricing(bytes32 modelId)**: Clear model-specific pricing (revert to default)
+  - 🆕 **getModelPricing(address, bytes32, address)**: Query model-specific pricing with fallback
+  - 🆕 **getHostModelPrices(address)**: Batch query all model prices for a host
+  - 🆕 **Multi-Token Support**: Set custom pricing per stablecoin token
+  - 🆕 **setTokenPricing(address token, uint256 price)**: Set token-specific pricing
+  - 🆕 **customTokenPricing mapping**: Per-token price overrides
+  - 🆕 **100% Backward Compatible**: Default pricing still works for existing code
+  - Dual Pricing: Separate minPricePerTokenNative and minPricePerTokenStable fields
+  - Native Pricing Range: 2,272,727,273 to 22,727,272,727,273 wei (~$0.00001 to $0.1 @ $4400 ETH)
+  - Stable Pricing Range: 10 to 100,000 (0.00001 to 0.1 USDC per token)
+  - Dynamic Pricing Updates: Separate updatePricingNative() and updatePricingStable() functions
+  - 8-Field Node Struct: Both pricing fields (getNodeFullInfo returns 8 values)
   - Integrates with ModelRegistry for approved models only
-  - Structured JSON metadata format
   - Tracks which hosts support which models
-  - API endpoint discovery (inherited from previous version)
   - Hosts must register with specific model IDs
 
 ### NodeRegistryFAB (DEPRECATED - Use NodeRegistryWithModels)
@@ -88,15 +85,17 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 ### ProofSystem
 - **Address**: 0x2ACcc60893872A499700908889B38C5420CBcFD1
 - **Network**: Base Sepolia
-- **Purpose**: EZKL proof verification for trustless AI inference
-- **Fixed**: Internal verification function call for USDC sessions
-- **Requirement**: Minimum 64-byte proofs
+- **Status**: ✅ Configured (standby mode for disputes)
+- **Purpose**: RISC0 STARK proof verification for dispute resolution
+- **S5 Integration**: With S5 storage, proofs are verified on-chain only during disputes
+- **Trust Model**: Hash commitment during normal operation, full verification on challenge
+- **Requirement**: Proofs stored in S5 with SHA256 hash on-chain
 
 ### HostEarnings
 - **Address**: 0x908962e8c6CE72610021586f85ebDE09aAc97776
 - **Network**: Base Sepolia
 - **Purpose**: Tracks accumulated earnings for hosts with batch withdrawal support
-- **Authorized Marketplace**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E ✅ LATEST (v8.1.2+ Hash+CID)
+- **Authorized Marketplace**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E ✅ UPDATED (S5 Proof Storage)
 
 ## Model Registry Usage (NEW)
 
@@ -212,7 +211,7 @@ const nodeRegistry = new ethers.Contract(
 );
 
 const marketplace = new ethers.Contract(
-  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',  // v8.1.2+ Hash+CID proof storage
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',  // S5 Proof Storage
   JobMarketplaceABI,
   signer
 );
@@ -292,6 +291,223 @@ console.log('USDC session created with validated stable pricing!');
 **10,000x Range**: Both native and stable pricing have identical 10,000x range (MIN to MAX)
 ```
 
+## S5 Proof Storage Usage (NEW - October 14, 2025)
+
+### The Problem That Was Solved
+
+STARK proofs generated by RISC0 are approximately **221KB in size**, which exceeds the Base Sepolia RPC transaction limit of **128KB**. This caused **100% of proof submissions to fail** with "oversized data" errors, making the entire proof system non-functional.
+
+### The S5 Solution
+
+**NEW Architecture**: Store full proofs in S5 decentralized storage, submit only hash + CID on-chain.
+
+```solidity
+// OLD (Pre-S5) - FAILED due to 221KB > 128KB limit
+function submitProofOfWork(
+    uint256 jobId,
+    bytes calldata ekzlProof,  // ❌ 221KB - exceeds RPC limit
+    uint256 tokensInBatch
+) external
+
+// NEW (S5 Storage) - SUCCESS with 300 bytes
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,       // ✅ 32 bytes - SHA256 hash
+    string calldata proofCID // ✅ S5 CID for retrieval (~50-100 bytes)
+) external
+```
+
+**Benefits**:
+- ✅ Transaction size: 221KB → ~300 bytes (737x reduction)
+- ✅ Storage cost: ~$50 → ~$0.001 per proof (5000x cheaper)
+- ✅ Proof submission success rate: 0% → 100%
+- ✅ Proof integrity: SHA256 hash prevents tampering
+- ✅ Proof availability: S5 decentralized storage ensures retrieval
+
+### For Hosts: S5 Proof Submission Workflow
+
+```javascript
+import JobMarketplaceABI from './JobMarketplaceWithModels-CLIENT-ABI.json';
+import { S5Client } from '@lumeweb/s5-js';
+import crypto from 'crypto';
+import { ethers } from 'ethers';
+
+const s5 = new S5Client('https://s5.lumeweb.com');
+const marketplace = new ethers.Contract(
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',
+  JobMarketplaceABI,
+  signer
+);
+
+// STEP 1: Generate RISC0 STARK proof (221KB) - your existing proof generation
+const proofBytes = await generateRisc0Proof(jobData);
+console.log(`Generated proof: ${proofBytes.length} bytes`);
+
+// STEP 2: Upload proof to S5 decentralized storage
+console.log('📤 Uploading proof to S5...');
+const proofCID = await s5.uploadBlob(proofBytes);
+console.log(`✅ Proof uploaded to S5: CID=${proofCID}`);
+
+// STEP 3: Calculate SHA256 hash of proof
+const proofHash = '0x' + crypto
+    .createHash('sha256')
+    .update(proofBytes)
+    .digest('hex');
+console.log(`📊 Proof hash: ${proofHash}`);
+
+// STEP 4: Submit hash + CID to blockchain (NOT full proof)
+const tx = await marketplace.submitProofOfWork(
+    jobId,
+    tokensClaimed,  // e.g., 1000 tokens
+    proofHash,      // bytes32 - 32 bytes
+    proofCID        // string - S5 CID
+);
+
+await tx.wait();
+console.log('✅ Proof submitted successfully (only hash + CID on-chain)');
+
+// The session's tokensConsumed field is now updated
+// Payment will be calculated on session completion
+```
+
+### Complete Host Integration Example
+
+```javascript
+import { S5Client } from '@lumeweb/s5-js';
+import crypto from 'crypto';
+import { ethers } from 'ethers';
+
+const s5 = new S5Client('https://s5.lumeweb.com');
+const marketplace = new ethers.Contract(
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E',
+  JobMarketplaceABI,
+  signer
+);
+
+// Get session details
+const session = await marketplace.sessionJobs(jobId);
+console.log(`Session price: ${session.pricePerToken} per token`);
+console.log(`Checkpoint interval: ${session.proofInterval}`);
+
+// Track tokens and submit S5 proofs at checkpoints
+let tokenCount = 0;
+for (const prompt of prompts) {
+    const response = await model.generate(prompt);
+    tokenCount += response.tokenCount;
+
+    // Submit proof at checkpoint
+    if (tokenCount >= session.proofInterval) {
+        // Generate STARK proof (221KB)
+        const proof = await generateRisc0Proof(tokenCount);
+
+        // Upload to S5
+        const proofCID = await s5.uploadBlob(proof);
+
+        // Calculate hash
+        const proofHash = '0x' + crypto.createHash('sha256').update(proof).digest('hex');
+
+        // Submit hash + CID (NOT full proof)
+        await marketplace.submitProofOfWork(jobId, tokenCount, proofHash, proofCID);
+        console.log(`✅ Checkpoint: ${tokenCount} tokens verified via S5`);
+
+        tokenCount = 0; // Reset for next batch
+    }
+}
+
+// Submit final proof if any remaining tokens
+if (tokenCount > 0) {
+    const finalProof = await generateRisc0Proof(tokenCount);
+    const proofCID = await s5.uploadBlob(finalProof);
+    const proofHash = '0x' + crypto.createHash('sha256').update(finalProof).digest('hex');
+    await marketplace.submitProofOfWork(jobId, tokenCount, proofHash, proofCID);
+}
+```
+
+### Proof Verification (For Disputes)
+
+```javascript
+import { S5Client } from '@lumeweb/s5-js';
+import crypto from 'crypto';
+
+// In normal operation, proofs are NOT verified on-chain
+// Verification only happens during disputes
+
+async function verifyProofIntegrity(jobId) {
+    const s5 = new S5Client('https://s5.lumeweb.com');
+
+    // 1. Get proof CID and hash from session
+    const session = await marketplace.sessionJobs(jobId);
+    const storedCID = session.lastProofCID;
+    const storedHash = session.lastProofHash;
+
+    console.log(`Stored hash: ${storedHash}`);
+    console.log(`Stored CID: ${storedCID}`);
+
+    // 2. Retrieve proof from S5
+    console.log('📥 Downloading proof from S5...');
+    const retrievedProof = await s5.downloadBlob(storedCID);
+
+    // 3. Calculate hash of retrieved proof
+    const calculatedHash = '0x' + crypto
+        .createHash('sha256')
+        .update(retrievedProof)
+        .digest('hex');
+
+    // 4. Verify integrity
+    if (calculatedHash !== storedHash) {
+        throw new Error('⚠️ Proof integrity check failed!');
+    }
+
+    console.log('✅ Proof integrity verified');
+
+    // 5. Optionally verify proof validity via ProofSystem
+    // (only needed in disputes)
+    // await proofSystem.verifyProof(retrievedProof);
+}
+```
+
+### SessionJob Struct (18 Fields)
+
+With S5 storage, the SessionJob struct has been expanded to 18 fields:
+
+```solidity
+struct SessionJob {
+    address depositor;          // Who created and funded the session
+    address host;               // Assigned host
+    uint256 deposit;            // Total deposit amount
+    uint256 pricePerToken;      // Price per AI token
+    uint256 maxDuration;        // Session timeout
+    uint256 proofInterval;      // Tokens between proofs
+    uint256 tokensConsumed;     // Total tokens consumed (via S5 proofs)
+    uint256 createdAt;          // Creation timestamp
+    bool active;                // Session status
+    string conversationCID;     // IPFS/S5 CID after completion
+    address paymentToken;       // Payment token (0x0 for ETH)
+    uint256 lastProofTimestamp; // Last proof submission time
+    uint256 totalPayment;       // Total paid to host
+    uint256 hostEarnings;       // Host's earnings from session
+    uint256 treasuryFee;        // Treasury fee from session
+    bytes32 modelHash;          // Approved model identifier
+    bytes32 lastProofHash;      // ✅ NEW: SHA256 hash of most recent proof
+    string lastProofCID;        // ✅ NEW: S5 CID for proof retrieval
+}
+```
+
+### Reading Session Data with S5 Fields
+
+```javascript
+const session = await marketplace.sessionJobs(jobId);
+
+// All 18 fields
+console.log('Depositor:', session.depositor);
+console.log('Host:', session.host);
+console.log('Tokens consumed:', session.tokensConsumed);
+console.log('Last proof hash:', session.lastProofHash);    // NEW field
+console.log('Last proof CID:', session.lastProofCID);      // NEW field
+console.log('Active:', session.active);
+```
+
 ## API Discovery Usage
 
 ```javascript
@@ -337,7 +553,7 @@ const provider = new ethers.providers.JsonRpcProvider('https://base-sepolia.g.al
 
 // Create contract instances
 const marketplace = new ethers.Contract(
-  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E', // v8.1.2+ Hash+CID proof storage
+  '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E', // CURRENT deployment with S5 proof storage
   JobMarketplaceABI,
   provider
 );
@@ -396,9 +612,13 @@ const response = await fetch(`${hostApiUrl}/api/v1/inference`, {
 Key functions for session jobs:
 - `createSessionJob()` - Create ETH-based session
 - `createSessionJobWithToken()` - Create token-based session
-- `submitProofOfWork()` - Submit proof with minimum 100 tokens
-- `completeSessionJob()` - Complete and settle payments
+- `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID)` - Submit proof hash + S5 CID (4 params - NEW)
+- `completeSessionJob(jobId, conversationCID)` - Complete and settle payments
 - `triggerSessionTimeout()` - Handle timeout scenarios
+
+**BREAKING CHANGE**: `submitProofOfWork()` now requires S5 proof storage:
+- Old: `submitProofOfWork(jobId, proofBytes, tokensInBatch)` - 3 params ❌ DEPRECATED
+- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID)` - 4 params ✅ CURRENT
 
 ## Treasury Functions
 
@@ -431,29 +651,38 @@ await nodeRegistry.updateApiUrl('http://your-host.com:8080');
 ```
 
 ### For SDK Developers
-Update contract addresses to use v8.1.2+ hash+CID proof storage:
+Update contract addresses and integrate S5 proof storage:
 ```javascript
-const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6'; // Dual pricing support
-const JOB_MARKETPLACE = '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E'; // v8.1.2+ Hash+CID proof storage
+const NODE_REGISTRY = '0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6'; // Dual pricing
+const JOB_MARKETPLACE = '0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E'; // ✅ S5 Proof Storage (Oct 14, 2025)
 const MODEL_REGISTRY = '0x92b2De840bB2171203011A6dBA928d855cA8183E';
 const PROOF_SYSTEM = '0x2ACcc60893872A499700908889B38C5420CBcFD1';
 const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
+
+// IMPORTANT: Install S5 client for proof submission
+// npm install @lumeweb/s5-js
 ```
+
+**Breaking Changes for SDK Integration**:
+1. **submitProofOfWork()** signature changed from 3 to 4 parameters
+2. **SessionJob struct** expanded from 16 to 18 fields (added lastProofHash, lastProofCID)
+3. **S5 client required** for proof upload/retrieval
+4. **SHA256 hashing** required for proof integrity
 
 ## Deprecated Contracts
 
-### JobMarketplaceWithModels (Pre-v8.1.2, Full Proof Submission)
+### JobMarketplaceWithModels (Pre-S5 Storage)
 - **Address**: 0xe169A4B57700080725f9553E3Cc69885fea13629
-- **Deprecated**: October 15, 2025
-- **Reason**: Full 221KB proof submission exceeded RPC transaction size limits (737x larger than needed)
-- **Replacement**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E (v8.1.2+ Hash+CID)
-- **Migration**: Update contract address and use hash+CID proof submission instead of full proof
+- **Deprecated**: October 14, 2025
+- **Reason**: Replaced by S5 proof storage (on-chain proofs exceeded 128KB RPC limit, causing 100% failure rate)
+- **Replacement**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E
+- **Migration Required**: Update to S5 proof submission workflow (4-parameter submitProofOfWork)
 
 ### JobMarketplaceWithModels (Incorrect MAX_PRICE_NATIVE)
 - **Address**: 0x462050a4a551c4292586D9c1DE23e3158a9bF3B3
 - **Deprecated**: January 28, 2025
 - **Reason**: Incorrect MAX_PRICE_NATIVE (only 10x range instead of 10,000x)
-- **Replacement**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E (v8.1.2+ Hash+CID)
+- **Replacement**: 0xe169A4B57700080725f9553E3Cc69885fea13629 (also deprecated - see above)
 
 ### NodeRegistryWithModels (Incorrect MAX_PRICE_NATIVE)
 - **Address**: 0xC8dDD546e0993eEB4Df03591208aEDF6336342D7
@@ -462,4 +691,4 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-October 15, 2025 - v8.1.2 off-chain proof storage with hash+CID submission (737x transaction size reduction)
+October 14, 2025 - S5 off-chain proof storage deployment with hash + CID architecture

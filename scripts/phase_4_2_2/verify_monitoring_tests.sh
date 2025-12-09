@@ -41,7 +41,6 @@ fi
 echo ""
 echo "Total expected tests: 52 (13 per module)"
 echo ""
-echo "Next steps for Claude Code:"
 echo "1. Create src/monitoring/ directory"
 echo "2. Implement modules to make tests pass"
 echo "3. Run ./run_monitoring_tests.sh to verify"

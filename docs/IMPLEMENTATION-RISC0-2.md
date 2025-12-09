@@ -1,6 +1,7 @@
 # IMPLEMENTATION-RISC0-2.md - Off-Chain Proof Storage with S5
 
 ## Overview
+
 Implementation plan for fixing RPC transaction size limit by storing full STARK proofs off-chain in S5 and submitting only proof hash + CID on-chain.
 
 **Timeline**: 4-6 hours total (node) + 2-3 hours (contracts)
@@ -15,16 +16,19 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
 **Discovered**: 2025-10-14 during v8.1.1 deployment
 
 **Issue**: RPC endpoint rejects transactions with STARK proofs
+
 ```
 ❌ Transaction failed: (code: -32000, message: oversized data: transaction size 221715, limit 131072)
 ```
 
 **Root Cause**:
+
 - STARK proofs are ~221KB (216.28 KB measured)
 - RPC transaction limit is 128KB (131,072 bytes)
 - Current code attempts to submit full proof in `submitProofOfWork(uint256 jobId, uint256 tokensClaimed, bytes proof)`
 
 **Impact**:
+
 - ✅ Proof generation working perfectly (v8.1.1)
 - ✅ GPU acceleration functional
 - ❌ Cannot submit proofs to blockchain
@@ -39,6 +43,7 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
 **What needs to change:**
 
 1. **Smart Contract** (`JobMarketplace.sol`):
+
    ```solidity
    // OLD (current)
    function submitProofOfWork(uint256 jobId, uint256 tokensClaimed, bytes calldata proof)
@@ -53,6 +58,7 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
    ```
 
 2. **Node** (`checkpoint_manager.rs`):
+
    - Generate STARK proof (221KB) ✅ Already working
    - Upload proof to S5 → get CID
    - Calculate SHA256 hash of proof
@@ -64,6 +70,7 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
    - Verifies STARK proof cryptographically using Risc0
 
 **Transaction Size**:
+
 - Proof hash: 32 bytes
 - CID string: ~50-100 bytes
 - Function call overhead: ~100 bytes
@@ -74,12 +81,14 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
 ## Implementation Status
 
 ### ✅ Prerequisites Complete
+
 - ✅ STARK proof generation working (v8.1.1)
 - ✅ GPU acceleration functional (RTX 4090: 280ms per proof)
 - ✅ S5 dependency added (`s5 = "0.1"`)
 - ✅ Proof size measured: 221,466 bytes (216.28 KB)
 
 ### ✅ Completed - ALL PHASES COMPLETE! 🎉
+
 - [x] Phase 1: Contract Updates (Contracts Developer) - NEW CONTRACT: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E`
 - [x] Phase 2: Node S5 Integration ✅ **COMPLETE** - Full S5 upload integration working
 - [x] Phase 3: Testing and Deployment ✅ **COMPLETE** - Testnet validation successful!
@@ -89,16 +98,19 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
 ## Implementation Phases
 
 ### Phase 1: Smart Contract Updates (Contracts Developer)
+
 **Timeline**: 2-3 hours
 **Owner**: Contracts developer
 **Goal**: Update JobMarketplace to accept proof hash + CID instead of full proof
 
 ### Phase 2: Node S5 Integration (Node Developer)
+
 **Timeline**: 3-4 hours
-**Owner**: Node developer (Claude)
+**Owner**: Node developer
 **Goal**: Integrate S5 upload and modify checkpoint submission to send hash+CID
 
 ### Phase 3: Testing and Deployment
+
 **Timeline**: 1-2 hours
 **Goal**: End-to-end validation with real proofs on testnet
 
@@ -117,12 +129,14 @@ Implementation plan for fixing RPC transaction size limit by storing full STARK 
 #### Tasks
 
 **Step 1: Update Function Signature**
+
 - [ ] Modify `JobMarketplaceWithModels.sol`
 - [ ] Change signature from `bytes calldata proof` to `bytes32 proofHash, string calldata proofCID`
 - [ ] Update internal storage if needed (store both hash and CID)
 - [ ] Update `ProofSubmitted` event to include CID
 
 **Expected Changes**:
+
 ```solidity
 // contracts/JobMarketplaceWithModels.sol
 
@@ -148,25 +162,30 @@ function submitProofOfWork(
 ```
 
 **Step 2: Update Storage**
+
 - [ ] Add `bytes32 lastProofHash` to SessionJob struct
 - [ ] Add `string lastProofCID` to SessionJob struct
 - [ ] Verify storage layout compatibility
 
 **Step 3: Update Events**
+
 - [ ] Modify `ProofSubmitted` event: add `string proofCID` parameter
 - [ ] Ensure events emit both hash and CID for off-chain indexing
 
 #### Success Criteria
+
 - [ ] Contract compiles without errors
 - [ ] Function signature accepts hash (32 bytes) + CID (string)
 - [ ] Events include both hash and CID
 - [ ] Storage fields added to SessionJob struct
 
 #### Files Modified
+
 - [ ] `contracts/JobMarketplaceWithModels.sol` - Function signature, storage, events
 - [ ] `contracts/IJobMarketplace.sol` - Interface update (if exists)
 
 #### Estimated Time
+
 **~1.5-2 hours** (including testing compilation)
 
 ---
@@ -178,33 +197,39 @@ function submitProofOfWork(
 #### Tasks
 
 **Step 1: Generate ABI**
+
 - [ ] Compile contract with Hardhat/Foundry
 - [ ] Export ABI JSON to `docs/compute-contracts-reference/client-abis/JobMarketplaceWithModels-CLIENT-ABI-v2.json`
 - [ ] Verify ABI includes updated `submitProofOfWork` signature
 
 **Step 2: Deploy to Base Sepolia**
+
 - [ ] Deploy updated contract to Base Sepolia testnet
 - [ ] Record new contract address
 - [ ] Update `.env.contracts` with new address
 - [ ] Update `docs/compute-contracts-reference/JobMarketplace.md` with deployment info
 
 **Step 3: Verify Deployment**
+
 - [ ] Verify contract on BaseScan
 - [ ] Test contract interaction via Etherscan UI
 - [ ] Confirm storage layout correct
 
 #### Success Criteria
+
 - [ ] New ABI generated and saved
 - [ ] Contract deployed to Base Sepolia
 - [ ] Contract verified on BaseScan
 - [ ] New address documented in `.env.contracts`
 
 #### Files Modified
+
 - [ ] `docs/compute-contracts-reference/client-abis/JobMarketplaceWithModels-CLIENT-ABI-v2.json` - New ABI
 - [ ] `.env.contracts` - New JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS
 - [ ] `docs/compute-contracts-reference/JobMarketplace.md` - Deployment history
 
 #### Estimated Time
+
 **~1-1.5 hours** (deployment and verification)
 
 ---
@@ -220,6 +245,7 @@ function submitProofOfWork(
 **Native Rust Client**: Using [s5-rs](https://github.com/s5-dev/s5-rs) for direct S5 network access
 
 **Why s5-rs:**
+
 - ✅ Native Rust library (no HTTP bridge)
 - ✅ Direct P2P connection to S5 network
 - ✅ No external services needed (no ENHANCED_S5_URL)
@@ -228,18 +254,21 @@ function submitProofOfWork(
 - ✅ Automatic content addressing (CID from hash)
 
 **Architecture:**
+
 ```
 Rust Node → s5-rs → S5 P2P Network
           (direct)  (decentralized storage)
 ```
 
 **vs Old Approach:**
+
 ```
 Rust Node → HTTP → Enhanced S5.js → S5 Network
           (complex) (Node.js service)
 ```
 
 **S5 Client Initialization:**
+
 ```rust
 let s5_client = S5Client::builder()
     .initial_peers(vec![
@@ -250,6 +279,7 @@ let s5_client = S5Client::builder()
 ```
 
 **Proof Upload:**
+
 ```rust
 // Upload 221KB proof
 let blob_id = s5_client.upload_blob(&proof_bytes).await?;
@@ -269,15 +299,18 @@ let proof_bytes = s5_client.download_blob(&blob_id).await?;
 #### Tasks
 
 **Step 1: Add s5-rs Dependency**
+
 - [x] Add `s5 = "0.1"` to `Cargo.toml` dependencies (check latest version on crates.io)
 - [x] Verify compilation: `cargo check`
 
 **Step 2: Add S5 Client Field**
+
 - [ ] Modify `CheckpointManager` struct in `src/contracts/checkpoint_manager.rs`
 - [ ] Add `s5_client: s5::S5Client` field
 - [ ] Update constructor to initialize S5 client with peer list
 
 **Expected Changes**:
+
 ```rust
 // src/contracts/checkpoint_manager.rs
 
@@ -316,27 +349,33 @@ impl CheckpointManager {
 ```
 
 **Step 3: Update Constructor Call Sites**
+
 - [ ] Make CheckpointManager::new() async where called
 - [ ] Or keep synchronous constructor and initialize s5_client lazily on first use
 
 **Step 4: Update Tests**
+
 - [ ] For tests, create mock S5Client or use conditional compilation
 - [ ] Verify CheckpointManager initialization
 
 #### Success Criteria
+
 - [ ] s5-rs dependency added and compiles
 - [ ] CheckpointManager has S5Client field
 - [ ] S5 client connects to P2P network (no external services needed)
 - [ ] Tests compile and pass
 
 #### Files Modified
+
 - [ ] `Cargo.toml` - Add s5 dependency
 - [ ] `src/contracts/checkpoint_manager.rs` - Add field, update constructor
 
 #### Estimated Time
+
 **~30 minutes**
 
 #### Notes
+
 - **No environment variables needed** - peer list hardcoded
 - **No external services** - connects directly to S5 P2P network
 - **Native Rust** - better performance than HTTP bridge
@@ -351,11 +390,13 @@ impl CheckpointManager {
 #### Tasks
 
 **Step 1: Add Proof Upload Method**
+
 - [x] Create `upload_proof_to_s5()` method in CheckpointManager
 - [x] Use existing S5Storage trait (MockS5Backend/EnhancedS5Backend)
 - [x] Path-based upload with CID return
 
 **Expected Implementation**:
+
 ```rust
 // src/contracts/checkpoint_manager.rs
 
@@ -383,16 +424,19 @@ impl CheckpointManager {
 ```
 
 **Step 2: Integrate Upload into submit_checkpoint()**
+
 - [x] Call `upload_proof_to_s5()` after `generate_proof()`
 - [x] Keep proof bytes for hash calculation
 - [x] Get CID from upload
 
 **Step 3: Add Error Handling**
+
 - [x] Handle S5 upload failures gracefully (returns Result with error)
 - [x] Log upload status and CID
 - [ ] Retry logic (can be added in future if needed)
 
 **Example with Retry**:
+
 ```rust
 async fn upload_proof_to_s5_with_retry(
     &self,
@@ -424,6 +468,7 @@ async fn upload_proof_to_s5_with_retry(
 ```
 
 #### Success Criteria
+
 - [x] Proof uploads to S5 successfully via existing S5Storage trait
 - [x] CID returned from upload
 - [x] Proof retrievable from S5 by CID (via S5Storage::get_by_cid())
@@ -431,14 +476,17 @@ async fn upload_proof_to_s5_with_retry(
 - [x] No external HTTP services required (uses Mock or Enhanced S5 backend from env)
 
 #### Files Modified
+
 - [x] `src/contracts/checkpoint_manager.rs` - Add upload method, S5Storage field, async constructor
 
 #### Estimated Time
+
 **~45 minutes** (COMPLETED - used existing S5Storage infrastructure)
 
 #### Notes
+
 - **Using existing S5Storage trait** - MockS5Backend for testing, EnhancedS5Backend for production
-- **Path-based storage** - Uses "home/proofs/job_{id}_proof.bin" convention
+- **Path-based storage** - Uses "home/proofs/job\_{id}\_proof.bin" convention
 - **CID generation** - SHA256-based CID returned from put() operation
 
 ---
@@ -450,10 +498,12 @@ async fn upload_proof_to_s5_with_retry(
 #### Tasks
 
 **Step 1: Calculate Proof Hash**
+
 - [x] Add SHA256 hash calculation in `submit_checkpoint()`
 - [x] Hash the proof bytes before upload
 
 **Expected Code**:
+
 ```rust
 // src/contracts/checkpoint_manager.rs
 
@@ -483,10 +533,12 @@ async fn submit_checkpoint(&self, job_id: u64, tokens_generated: u64) -> Result<
 ```
 
 **Step 2: Update encode_checkpoint_call()**
+
 - [x] Modify function signature to accept `proof_hash: [u8; 32]` and `proof_cid: String`
 - [x] Update ABI encoding to match new contract signature
 
 **Expected Implementation**:
+
 ```rust
 // src/contracts/checkpoint_manager.rs
 
@@ -539,11 +591,13 @@ fn encode_checkpoint_call(
 ```
 
 **Step 3: Update Contract Address**
+
 - [x] Read new contract address from chain_config.rs
 - [x] Update `CONTRACT_JOB_MARKETPLACE` environment variable usage
 - [x] Verify address loaded correctly at startup
 
 #### Success Criteria
+
 - [x] Proof hash calculated correctly (32 bytes)
 - [ ] Proof uploaded to S5 (pending - using placeholder CID)
 - [ ] CID obtained from S5 (pending - using placeholder CID)
@@ -551,10 +605,12 @@ fn encode_checkpoint_call(
 - [x] Transaction size < 1KB (well under 128KB limit) - ~300 bytes achieved
 
 #### Files Modified
+
 - [ ] `src/contracts/checkpoint_manager.rs` - Hash calculation, upload integration, encoding update
 - [ ] `.env.contracts` - New contract address (already done in Phase 1.2)
 
 #### Estimated Time
+
 **~1.5 hours**
 
 ---
@@ -566,6 +622,7 @@ fn encode_checkpoint_call(
 #### Tasks
 
 **Step 1: Update Version**
+
 - [x] Update `/workspace/VERSION` to `8.1.2-proof-s5-storage`
 - [x] Update `/workspace/src/version.rs` constants:
   - VERSION → `"v8.1.2-proof-s5-storage-2025-10-15"`
@@ -575,27 +632,32 @@ fn encode_checkpoint_call(
   - Test assertions → Check for `8.1.2`
 
 **Step 2: Build and Verify**
+
 - [x] Build release binary: `cargo check` passed (warnings only, no errors)
 - [x] Verify version in binary: Version constants updated in code
 - [ ] Full release build pending: `RUSTFLAGS="-C target-cpu=native" cargo build --release --features real-ezkl`
 
 **Step 3: Create Tarball**
+
 - [ ] Create tarball: `tar -czf fabstir-llm-node-v8.1.2-proof-s5-storage.tar.gz -C target/release fabstir-llm-node`
 - [ ] Generate checksum: `sha256sum fabstir-llm-node-v8.1.2-proof-s5-storage.tar.gz > fabstir-llm-node-v8.1.2-proof-s5-storage.tar.gz.sha256`
 - [ ] Verify tarball extracts correctly
 
 #### Success Criteria
+
 - [x] Version updated to v8.1.2 in all files
 - [x] Binary compiles successfully (cargo check passes)
 - [x] Version embedded in binary
 - [ ] Tarball created and verified (pending full release build)
 
 #### Files Modified
+
 - [ ] `/workspace/VERSION` - Update version
 - [ ] `/workspace/src/version.rs` - Update all constants
 - [ ] Create tarball files
 
 #### Estimated Time
+
 **~30 minutes** (plus build time ~45 minutes)
 
 ---
@@ -613,31 +675,37 @@ fn encode_checkpoint_call(
 #### Tasks
 
 **Step 1: Test S5 Upload**
+
 - [x] Create test for `upload_proof_to_s5()` method
 - [x] Verify proof uploads successfully
 - [x] Verify CID returned
 - [x] Verify proof retrievable by CID
 
 **Step 2: Test Transaction Encoding**
+
 - [x] Create test for `encode_checkpoint_call()` with hash+CID
 - [x] Verify encoded transaction size < 1KB
 - [x] Verify function selector correct
 - [x] Verify parameters encoded correctly
 
 **Step 3: Integration Test**
+
 - [x] Test full checkpoint flow with mock S5
 - [x] Verify proof generation → S5 upload → hash calculation → encoding
 - [x] Verify transaction would fit within RPC limits
 
 #### Success Criteria
+
 - [x] S5 upload tests pass (3 tests: upload, retrieval, deduplication)
 - [x] Transaction encoding tests pass (3 tests: basic encoding, RPC limits, parameter validation)
 - [x] Integration test passes (full checkpoint flow verified)
 - [x] Transaction size verified < 1KB (196-292 bytes achieved, 971-1129x reduction)
 
 #### Test Results
+
 **File**: `/workspace/tests/s5_proof_storage_tests.rs`
 **Tests**: 10 comprehensive tests, all passing
+
 - ✅ `test_s5_upload_proof()` - Basic S5 upload (221KB proof → CID)
 - ✅ `test_s5_proof_retrieval_by_cid()` - Proof retrieval validation
 - ✅ `test_s5_upload_deduplication()` - Content-addressed storage
@@ -650,12 +718,14 @@ fn encode_checkpoint_call(
 - ✅ `test_quota_limit()` - Quota enforcement validation
 
 **Performance**:
+
 - Transaction size: 196-292 bytes (vs 221,466 byte proof)
 - Size reduction: 971-1129x smaller than full proof
 - RPC headroom: 448x smaller than 128KB limit
 - All tests completed in 0.11s
 
 #### Estimated Time
+
 **~1 hour** (COMPLETED)
 
 ---
@@ -667,17 +737,20 @@ fn encode_checkpoint_call(
 #### Tasks
 
 **Step 1: Update Environment**
+
 - [x] Set `CONTRACT_JOB_MARKETPLACE` to new contract address (`0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E`)
 - [x] Verify `HOST_PRIVATE_KEY` set (`TEST_HOST_1` credentials configured)
 - [x] No S5 configuration needed (MockS5Backend used, EnhancedS5Backend available via env)
 
 **Step 2: Deploy Node**
+
 - [x] Extract v8.1.2 tarball (SHA256: `31b4b28eb07fa761d8edba9af075f4fc230b5e5d47bdc3432a71c29feb23da9f`)
 - [x] Update Docker container with new binary
 - [x] Restart node with HOST_PRIVATE_KEY
 - [x] Verify logs show S5 client initialized: `✅ S5 storage initialized for off-chain proof storage`
 
 **Step 3: Test Checkpoint Submission**
+
 - [x] Create test session job (Job ID: 1 on NEW S5 contract)
 - [x] Generate 14 tokens (padded to 100 for contract minimum)
 - [x] Monitor logs - ALL success messages observed:
@@ -690,6 +763,7 @@ fn encode_checkpoint_call(
   - ✅ `✅ Checkpoint SUCCESS for job 1 - payment distributed (90% host, 10% treasury)`
 
 **Step 4: Verify On-Chain**
+
 - [x] Check transaction on BaseScan: `0xf51b2869505cf4730d2bcead02c27ddb08da62d153d3d411765098a79918c3f6`
 - [x] Verify input data size: **228 bytes** (NOT 221KB!) ✅
 - [x] Verify `ProofSubmitted` event contains:
@@ -700,6 +774,7 @@ fn encode_checkpoint_call(
 - [x] Payment distribution verified: Host (90%), Treasury (10%), User refund
 
 **Step 5: Test Proof Retrieval**
+
 - [x] Proof stored in S5 at CID: `s5://2e44d0b2e97b9856bed9db72724efe85`
 - [x] Path: `home/proofs/job_1_proof.bin`
 - [x] Size: 221,466 bytes (216.28 KB)
@@ -707,6 +782,7 @@ fn encode_checkpoint_call(
 - [ ] Risc0 offline verification (can be done separately)
 
 #### Success Criteria
+
 - [x] Node starts successfully with v8.1.2 ✅
 - [x] Checkpoint submission succeeds ✅
 - [x] Transaction size < 1KB (228 bytes achieved) ✅
@@ -723,6 +799,7 @@ fn encode_checkpoint_call(
 **Test Job**: Job ID 1 (14 tokens generated, padded to 100)
 
 **Checkpoint Transaction**:
+
 - TX Hash: `0xf51b2869505cf4730d2bcead02c27ddb08da62d153d3d411765098a79918c3f6`
 - From: `0x4594F755F593B517Bb3194F4DeC20C48a3f04504` (TEST_HOST_1)
 - Status: ✅ Success
@@ -731,17 +808,20 @@ fn encode_checkpoint_call(
 - Confirmed: 1.1s
 
 **Completion Transaction**:
+
 - TX Hash: `0x8be0a42e1b0416f12b7247603aabccb2eaf8735d217600e7e0ccc55d243fbeb9`
 - Status: ✅ Success
 - Payment Distribution: Host 90%, Treasury 10%, User refunded
 
 **Proof Details**:
+
 - Size: 221,466 bytes (216.28 KB)
 - Hash: `0x2e44d0b2e97b9856bed9db72724efe85b8f35a282a3ca6b1f09b1940370872de`
 - S5 CID: `s5://2e44d0b2e97b9856bed9db72724efe85`
 - Storage Path: `home/proofs/job_1_proof.bin`
 
 **Performance Metrics**:
+
 - Proof generation: ~625ms (Risc0 zkVM with CPU)
 - S5 upload: <100ms
 - Transaction confirmation: 1.1s
@@ -750,6 +830,7 @@ fn encode_checkpoint_call(
 **Key Achievement**: **737x size reduction** - from 221,466 bytes to 228 bytes!
 
 #### Estimated Time
+
 **~1 hour** (COMPLETED)
 
 ---
@@ -757,11 +838,13 @@ fn encode_checkpoint_call(
 ## Success Criteria (Overall)
 
 ### Phase 1: Contract Updates
+
 - [x] Contract accepts `bytes32 proofHash` and `string proofCID` parameters
 - [x] Contract deployed to Base Sepolia
 - [x] New ABI generated and documented
 
 ### Phase 2: Node S5 Integration
+
 - [x] S5Storage dependency added (existing trait from storage module)
 - [x] S5 client integrated into CheckpointManager ✅ COMPLETE
 - [x] S5 storage initialized from environment (Mock or EnhancedS5Backend)
@@ -772,6 +855,7 @@ fn encode_checkpoint_call(
 - [x] No external S5 services required (uses existing storage infrastructure)
 
 ### Phase 3: Testing
+
 - [x] Local tests pass (Sub-phase 3.1 ✅ COMPLETE - 10/10 tests passing)
 - [x] Testnet checkpoint submission succeeds (Sub-phase 3.2 ✅ COMPLETE - Job 1 successful)
 - [x] No RPC size errors (228 bytes transaction, well under 128KB limit)
@@ -782,18 +866,21 @@ fn encode_checkpoint_call(
 ## Files Modified Summary
 
 ### Phase 1: Contract Updates (Contracts Developer)
+
 - [ ] `contracts/JobMarketplaceWithModels.sol` - Function signature, storage, events
 - [ ] `docs/compute-contracts-reference/client-abis/JobMarketplaceWithModels-CLIENT-ABI-v2.json` - New ABI
 - [ ] `.env.contracts` - New contract address
 - [ ] `docs/compute-contracts-reference/JobMarketplace.md` - Deployment docs
 
 ### Phase 2: Node S5 Integration (Node Developer)
+
 - [x] `Cargo.toml` - Add s5-rs dependency
 - [x] `src/contracts/checkpoint_manager.rs` - S5 integration, upload method, encoding update
 - [x] `/workspace/VERSION` - Version bump
 - [x] `/workspace/src/version.rs` - Version constants
 
 ### Phase 3: Testing
+
 - [x] `tests/s5_proof_storage_tests.rs` - Comprehensive S5 proof storage tests (10 tests, all passing)
 
 ---
@@ -811,22 +898,26 @@ If issues arise during deployment:
 ## Notes and Considerations
 
 ### S5 Content Addressing
+
 - **No paths needed**: s5-rs stores blobs by content hash (automatic CID)
 - **Automatic deduplication**: Same proof bytes → same CID
 - **Unique by content**: Different proofs always have different CIDs
 
 ### CID Format
+
 - s5-rs returns CID from `BlobId` (e.g., "u8pDTQHOOY...")
 - Store as string in contract
 - Retrieve proof: `s5_client.download_blob(&blob_id)`
 
 ### Transaction Size
+
 - Proof hash: 32 bytes
 - CID string: ~50-100 bytes
 - Function selector + params: ~100-200 bytes
 - **Total**: ~200-400 bytes (428x smaller than 221KB proof!)
 
 ### Verification Flow
+
 1. Get job proof hash from contract
 2. Get job proof CID from contract events
 3. Parse CID: `let blob_id = BlobId::from_string(&cid)?`
@@ -836,6 +927,7 @@ If issues arise during deployment:
 7. Verify proof: `risc0::verify(proof, public_inputs)`
 
 ### Security Considerations
+
 - ✅ Proof integrity: SHA256 hash prevents tampering
 - ✅ Proof availability: S5 decentralized storage (redundant)
 - ✅ Proof verifiability: Anyone can fetch and verify
@@ -845,20 +937,20 @@ If issues arise during deployment:
 
 ## Timeline Summary
 
-| Phase | Duration | Owner |
-|-------|----------|-------|
-| **Phase 1: Contract Updates** | 2-3 hours | Contracts Developer |
-| Sub-phase 1.1: Update Signature | 1.5-2 hours | Contracts Developer |
-| Sub-phase 1.2: Deploy and ABI | 1-1.5 hours | Contracts Developer |
-| **Phase 2: Node S5 Integration** | 2.5-3 hours | Node Developer |
-| Sub-phase 2.1: Add s5-rs Client | 30 minutes | Node Developer |
-| Sub-phase 2.2: Proof Upload | 45 minutes | Node Developer |
-| Sub-phase 2.3: Update Encoding | 1.5 hours | Node Developer |
-| Sub-phase 2.4: Version & Build | 30 min + build | Node Developer |
-| **Phase 3: Testing** | 1-2 hours | Both |
-| Sub-phase 3.1: Local Tests | 1 hour | Node Developer |
-| Sub-phase 3.2: Testnet Deploy | 1 hour | Both |
-| **TOTAL** | **5.5-8 hours** | (reduced due to s5-rs simplicity) |
+| Phase                            | Duration        | Owner                             |
+| -------------------------------- | --------------- | --------------------------------- |
+| **Phase 1: Contract Updates**    | 2-3 hours       | Contracts Developer               |
+| Sub-phase 1.1: Update Signature  | 1.5-2 hours     | Contracts Developer               |
+| Sub-phase 1.2: Deploy and ABI    | 1-1.5 hours     | Contracts Developer               |
+| **Phase 2: Node S5 Integration** | 2.5-3 hours     | Node Developer                    |
+| Sub-phase 2.1: Add s5-rs Client  | 30 minutes      | Node Developer                    |
+| Sub-phase 2.2: Proof Upload      | 45 minutes      | Node Developer                    |
+| Sub-phase 2.3: Update Encoding   | 1.5 hours       | Node Developer                    |
+| Sub-phase 2.4: Version & Build   | 30 min + build  | Node Developer                    |
+| **Phase 3: Testing**             | 1-2 hours       | Both                              |
+| Sub-phase 3.1: Local Tests       | 1 hour          | Node Developer                    |
+| Sub-phase 3.2: Testnet Deploy    | 1 hour          | Both                              |
+| **TOTAL**                        | **5.5-8 hours** | (reduced due to s5-rs simplicity) |
 
 ---
 
@@ -869,6 +961,7 @@ If issues arise during deployment:
 **Deployed Contract**: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (Base Sepolia)
 
 **✅ Completed**:
+
 - [x] Phase 1: Contract deployed with hash+CID signature
 - [x] Phase 2: Node S5 Integration ✅ **COMPLETE**
   - [x] S5Storage client added to CheckpointManager
@@ -887,10 +980,12 @@ If issues arise during deployment:
   - [x] Full integration test validates complete checkpoint flow
 
 **⏳ Pending**:
+
 - [ ] Sub-phase 3.2: Testnet deployment with real S5 backend
 - [ ] Configure ENHANCED_S5_URL for production S5 backend
 
 **Current Behavior**:
+
 - Node calculates SHA256 hash of proof ✅
 - Node uploads proof to S5 and gets real CID ✅
 - Transaction submitted with hash+CID to new contract ✅
