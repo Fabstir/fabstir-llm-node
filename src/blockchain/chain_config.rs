@@ -44,8 +44,9 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                job_marketplace: "0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E".to_string(),
-                node_registry: "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6".to_string(),
+                // Updated December 9, 2025 for PRICE_PRECISION=1000 support
+                job_marketplace: "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1".to_string(),
+                node_registry: "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d".to_string(),
                 proof_system: "0x2ACcc60893872A499700908889B38C5420CBcFD1".to_string(),
                 host_earnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776".to_string(),
                 model_registry: "0x92b2De840bB2171203011A6dBA928d855cA8183E".to_string(),
@@ -152,6 +153,60 @@ impl Default for ChainRegistry {
 mod tests {
     use super::*;
 
+    // ===========================================
+    // Contract Address Tests (Sub-phase 1.2)
+    // Updated December 9, 2025 for PRICE_PRECISION contracts
+    // ===========================================
+
+    /// New JobMarketplace contract address with PRICE_PRECISION support
+    const NEW_JOB_MARKETPLACE: &str = "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1";
+    /// New NodeRegistry contract address with PRICE_PRECISION support
+    const NEW_NODE_REGISTRY: &str = "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d";
+
+    #[test]
+    fn test_job_marketplace_address_updated() {
+        let config = ChainConfig::base_sepolia();
+        assert_eq!(
+            config.contracts.job_marketplace, NEW_JOB_MARKETPLACE,
+            "JobMarketplace should be updated to new PRICE_PRECISION contract"
+        );
+    }
+
+    #[test]
+    fn test_node_registry_address_updated() {
+        let config = ChainConfig::base_sepolia();
+        assert_eq!(
+            config.contracts.node_registry, NEW_NODE_REGISTRY,
+            "NodeRegistry should be updated to new PRICE_PRECISION contract"
+        );
+    }
+
+    #[test]
+    fn test_job_marketplace_address_valid() {
+        let config = ChainConfig::base_sepolia();
+        let addr = config.get_job_marketplace_address();
+        assert!(addr.is_ok(), "JobMarketplace address should be valid");
+        assert_eq!(
+            addr.unwrap(),
+            Address::from_str(NEW_JOB_MARKETPLACE).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_node_registry_address_valid() {
+        let config = ChainConfig::base_sepolia();
+        let addr = config.get_node_registry_address();
+        assert!(addr.is_ok(), "NodeRegistry address should be valid");
+        assert_eq!(
+            addr.unwrap(),
+            Address::from_str(NEW_NODE_REGISTRY).unwrap()
+        );
+    }
+
+    // ===========================================
+    // Existing Tests (kept for compatibility)
+    // ===========================================
+
     #[test]
     fn test_chain_config_base_sepolia() {
         let config = ChainConfig::base_sepolia();
@@ -172,5 +227,27 @@ mod tests {
 
         // Default chain should be Base Sepolia
         assert_eq!(registry.get_default_chain_id(), 84532);
+    }
+
+    #[test]
+    fn test_other_contracts_unchanged() {
+        let config = ChainConfig::base_sepolia();
+        // These contracts should remain unchanged
+        assert_eq!(
+            config.contracts.proof_system,
+            "0x2ACcc60893872A499700908889B38C5420CBcFD1"
+        );
+        assert_eq!(
+            config.contracts.host_earnings,
+            "0x908962e8c6CE72610021586f85ebDE09aAc97776"
+        );
+        assert_eq!(
+            config.contracts.model_registry,
+            "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+        );
+        assert_eq!(
+            config.contracts.usdc_token,
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        );
     }
 }
