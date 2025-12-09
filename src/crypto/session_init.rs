@@ -35,7 +35,9 @@ pub struct SessionInitData {
     pub model_name: String,
     /// 32-byte session key for subsequent message encryption
     pub session_key: [u8; 32],
-    /// Price per token in wei
+    /// Price per token with PRICE_PRECISION multiplier (1000x).
+    /// To get USD per million tokens, divide by 1000.
+    /// Example: price_per_token=5000 means $5/million tokens.
     pub price_per_token: u64,
     /// Client's Ethereum address (recovered from signature)
     pub client_address: String,
