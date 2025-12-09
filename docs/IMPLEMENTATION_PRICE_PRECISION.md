@@ -51,31 +51,33 @@ host_payment = (tokens_used * price_per_token) / PRICE_PRECISION
 
 ## Phase 1: Pricing Constants & Core Infrastructure (TDD)
 
-### Sub-phase 1.1: Add PRICE_PRECISION Constant and Update Pricing Constants
+### Sub-phase 1.1: Add PRICE_PRECISION Constant and Update Pricing Constants ✅ COMPLETE
 
 **Goal**: Update pricing_constants.rs with PRICE_PRECISION and new MIN/MAX values
 
 #### Tasks
 
-- [ ] Write tests for PRICE_PRECISION constant existence
-- [ ] Write tests for new MIN_PRICE_PER_TOKEN_NATIVE validation (227,273)
-- [ ] Write tests for new MAX_PRICE_PER_TOKEN_NATIVE validation (22,727,272,727,273,000)
-- [ ] Write tests for new MIN_PRICE_PER_TOKEN_STABLE validation (1)
-- [ ] Write tests for new MAX_PRICE_PER_TOKEN_STABLE validation (100,000,000)
-- [ ] Write tests for default price calculations with PRICE_PRECISION
-- [ ] Add PRICE_PRECISION constant (pub const PRICE_PRECISION: u64 = 1000)
-- [ ] Update native::MIN_PRICE_PER_TOKEN to 227,273
-- [ ] Update native::MAX_PRICE_PER_TOKEN to 22,727,272,727,273,000
-- [ ] Update stable::MIN_PRICE_PER_TOKEN to 1
-- [ ] Update stable::MAX_PRICE_PER_TOKEN to 100,000,000
-- [ ] Update default_price() functions with geometric mean of new ranges
-- [ ] Update validate_price() functions with new ranges
-- [ ] Add helper functions: `to_precision_format()` and `from_precision_format()`
+- [x] Write tests for PRICE_PRECISION constant existence
+- [x] Write tests for new MIN_PRICE_PER_TOKEN_NATIVE validation (227,273)
+- [x] Write tests for new MAX_PRICE_PER_TOKEN_NATIVE validation (22,727,272,727,273,000)
+- [x] Write tests for new MIN_PRICE_PER_TOKEN_STABLE validation (1)
+- [x] Write tests for new MAX_PRICE_PER_TOKEN_STABLE validation (100,000,000)
+- [x] Write tests for default price calculations with PRICE_PRECISION
+- [x] Add PRICE_PRECISION constant (pub const PRICE_PRECISION: u64 = 1000)
+- [x] Update native::MIN_PRICE_PER_TOKEN to 227,273
+- [x] Update native::MAX_PRICE_PER_TOKEN to 22,727,272,727,273,000
+- [x] Update stable::MIN_PRICE_PER_TOKEN to 1
+- [x] Update stable::MAX_PRICE_PER_TOKEN to 100,000,000
+- [x] Update default_price() functions with geometric mean of new ranges
+- [x] Update validate_price() functions with new ranges
+- [x] Add helper functions: `to_precision_format()` and `from_precision_format()`
 
 **Files:**
 
 - `src/contracts/pricing_constants.rs` - Update constants and validation
 - Test assertions in `#[cfg(test)]` module
+
+**Test Results:** 20 tests passed (December 9, 2025)
 
 ### Sub-phase 1.2: Update Contract Addresses
 
