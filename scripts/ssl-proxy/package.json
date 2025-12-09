@@ -1,0 +1,19 @@
+{
+  "name": "fabstir-llm-node-ssl-proxy",
+  "version": "1.0.0",
+  "description": "SSL termination proxy for Fabstir LLM Node",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": ["ssl", "proxy", "websocket", "https"],
+  "author": "Fabstir",
+  "license": "BUSL-1.1",
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

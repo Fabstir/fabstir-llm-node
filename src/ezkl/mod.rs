@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
-// src/ezkl/mod.rs - Example structure for Claude Code
+// src/ezkl/mod.rs - Example structure
 
 pub mod batch_proofs;
 pub mod integration;

@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
-// src/models/mod.rs - Example structure for Claude Code
+// src/models/mod.rs
 
 pub mod caching;
 pub mod downloading;
