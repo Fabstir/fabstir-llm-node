@@ -16,8 +16,8 @@ Implementation plan to migrate fabstir-llm-node to the new contract deployment w
 
 | Contract                 | OLD Address                                  | NEW Address                                  |
 | ------------------------ | -------------------------------------------- | -------------------------------------------- |
-| JobMarketplaceWithModels | `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` | `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1` |
-| NodeRegistryWithModels   | `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` | `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d` |
+| JobMarketplaceWithModels | `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` | `0xfD764804C5A5808b79D66746BAF4B65fb4413731` |
+| NodeRegistryWithModels   | `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` | `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` |
 
 ### PRICE_PRECISION Changes
 

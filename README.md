@@ -148,9 +148,9 @@ cd fabstir-llm-node-v8.4.1
 
 **Single Source of Truth**: All contract addresses are defined in `.env.contracts`
 
-Key contracts (Base Sepolia, v8.4.21+ with PRICE_PRECISION=1000):
-- **NODE_REGISTRY_FAB_ADDRESS**: `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d` (Dual pricing + PRICE_PRECISION)
-- **JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS**: `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1` (S5 proofs + PRICE_PRECISION)
+Key contracts (Base Sepolia, v8.4.22+ with PRICE_PRECISION=1000):
+- **NODE_REGISTRY_FAB_ADDRESS**: `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` (Dual pricing + PRICE_PRECISION)
+- **JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS**: `0xfD764804C5A5808b79D66746BAF4B65fb4413731` (S5 proofs + PRICE_PRECISION)
 - **PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS**: Payment escrow contract
 - **HOST_EARNINGS_ADDRESS**: Host earnings tracker
 
