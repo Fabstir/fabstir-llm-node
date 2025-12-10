@@ -2,16 +2,16 @@
 
 This directory contains the Application Binary Interfaces (ABIs) for client integration.
 
-## Current Deployed Contracts (December 9, 2025 - Flexible Pricing)
+## Current Deployed Contracts (December 9, 2025 - PRICE_PRECISION)
 
 ### JobMarketplaceWithModels
-- **Address**: 0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1
+- **Address**: 0xfD764804C5A5808b79D66746BAF4B65fb4413731
 - **Network**: Base Sepolia
-- **Status**: ✅ FLEXIBLE PRICING (December 9, 2025)
+- **Status**: ✅ PRICE_PRECISION=1000 (December 9, 2025)
 - **Configuration**:
   - ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1 ✅ SET
   - Authorized in HostEarnings: ✅ CONFIRMED
-  - NodeRegistry: 0x48aa4A8047A45862Da8412FAB71ef66C17c7766d (Per-model pricing support)
+  - NodeRegistry: 0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999 (PRICE_PRECISION support)
 - **Key Features**:
   - 🆕 **Per-Model Pricing Support**: Query model-specific pricing with `getModelPricing()`
   - 🆕 **Model-Aware Sessions**: Create sessions tied to specific models
@@ -50,10 +50,10 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - OpenAI-GPT-OSS-20B (bartowski/openai_gpt-oss-20b-GGUF) - MXFP4 quantization
 
 ### NodeRegistryWithModels
-- **Address**: 0x48aa4A8047A45862Da8412FAB71ef66C17c7766d ✅ NEW - Per-Model Pricing
-- **Previous**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6 (Dual pricing only - deprecated)
+- **Address**: 0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999 ✅ NEW - PRICE_PRECISION=1000
+- **Previous**: 0x48aa4A8047A45862Da8412FAB71ef66C17c7766d (Without PRICE_PRECISION - deprecated)
 - **Network**: Base Sepolia
-- **Status**: ✅ PER-MODEL & MULTI-TOKEN PRICING (December 9, 2025)
+- **Status**: ✅ PRICE_PRECISION=1000 for sub-$1/million pricing (December 9, 2025)
 - **Stake Required**: 1000 FAB tokens
 - **Key Features**:
   - 🆕 **Per-Model Pricing**: Set different prices for different AI models
@@ -95,7 +95,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 - **Address**: 0x908962e8c6CE72610021586f85ebDE09aAc97776
 - **Network**: Base Sepolia
 - **Purpose**: Tracks accumulated earnings for hosts with batch withdrawal support
-- **Authorized Marketplace**: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E ✅ UPDATED (S5 Proof Storage)
+- **Authorized Marketplace**: 0xfD764804C5A5808b79D66746BAF4B65fb4413731 ✅ UPDATED (PRICE_PRECISION - Dec 9, 2025)
 
 ## Model Registry Usage (NEW)
 
@@ -691,4 +691,18 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-October 14, 2025 - S5 off-chain proof storage deployment with hash + CID architecture
+December 9, 2025 - PRICE_PRECISION=1000 deployment for sub-$1/million token pricing
+
+### PRICE_PRECISION Breaking Change
+
+With PRICE_PRECISION=1000, all prices are now stored with 1000x multiplier:
+
+| USD Price/Million | OLD pricePerToken | NEW pricePerToken |
+|-------------------|-------------------|-------------------|
+| $0.06/million | Not supported | 60 |
+| $0.27/million | Not supported | 270 |
+| $1/million | 1 | 1,000 |
+| $5/million | 5 | 5,000 |
+| $10/million | 10 | 10,000 |
+
+See `/docs/BREAKING_CHANGES.md` for full migration guide.

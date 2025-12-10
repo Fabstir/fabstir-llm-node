@@ -44,9 +44,9 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // Updated December 9, 2025 for PRICE_PRECISION=1000 support
-                job_marketplace: "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1".to_string(),
-                node_registry: "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d".to_string(),
+                // Updated December 9, 2025 for PRICE_PRECISION=1000 support (v8.4.22)
+                job_marketplace: "0xfD764804C5A5808b79D66746BAF4B65fb4413731".to_string(),
+                node_registry: "0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999".to_string(),
                 proof_system: "0x2ACcc60893872A499700908889B38C5420CBcFD1".to_string(),
                 host_earnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776".to_string(),
                 model_registry: "0x92b2De840bB2171203011A6dBA928d855cA8183E".to_string(),

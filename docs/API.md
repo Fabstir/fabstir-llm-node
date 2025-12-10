@@ -2027,17 +2027,17 @@ All contract addresses are defined in the `.env.contracts` file at the repositor
 
 | Contract | Address | Version | Features |
 |----------|---------|---------|----------|
-| **NodeRegistry** | `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d` | v8.4.21+ | Dual pricing + PRICE_PRECISION=1000 |
-| **JobMarketplace** | `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1` | v8.4.21+ | S5 proof storage + PRICE_PRECISION=1000 |
+| **NodeRegistry** | `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` | v8.4.22+ | Dual pricing + PRICE_PRECISION=1000 |
+| **JobMarketplace** | `0xfD764804C5A5808b79D66746BAF4B65fb4413731` | v8.4.22+ | S5 proof storage + PRICE_PRECISION=1000 |
 | **PaymentEscrow** | `PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS` | Current | Payment escrow with earnings tracking |
 | **HostEarnings** | `HOST_EARNINGS_ADDRESS` | Current | Host earnings accumulator (90% share) |
 | **ProofSystem** | `PROOF_SYSTEM_ADDRESS` | Current | Proof verification system |
 | **ReputationSystem** | `REPUTATION_SYSTEM_ADDRESS` | Current | Node reputation tracking |
 
 **Deprecated Addresses** (Do not use):
-- Old NodeRegistry: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` (pre-v8.4.21, no PRICE_PRECISION)
+- Old NodeRegistry: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` (pre-v8.4.22, no PRICE_PRECISION)
 - Old NodeRegistry: `0xC8dDD546e0993eEB4Df03591208aEDF6336342D7` (pre-v7.0.29, no dual pricing)
-- Old JobMarketplace: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (pre-v8.4.21, no PRICE_PRECISION)
+- Old JobMarketplace: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (pre-v8.4.22, no PRICE_PRECISION)
 - Old JobMarketplace (full proof): `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` (pre-v8.1.2)
 - Old JobMarketplace (pre-S5): `0xe169A4B57700080725f9553E3Cc69885fea13629` (pre-v8.1.2)
 
@@ -2049,7 +2049,7 @@ Contract addresses for opBNB Testnet are defined in `.env.contracts` but the cha
 
 #### Contract Features by Version
 
-**NodeRegistry (v8.4.21+)**:
+**NodeRegistry (v8.4.22+)**:
 - Dual pricing: `minPricePerTokenNative` and `minPricePerTokenStable`
 - PRICE_PRECISION=1000 multiplier for sub-$1/million token pricing
 - Pricing validation against contract constants
@@ -2066,9 +2066,9 @@ Contract addresses for opBNB Testnet are defined in `.env.contracts` but the cha
 #### Environment Configuration
 
 ```bash
-# From .env.contracts (v8.4.21+ with PRICE_PRECISION=1000)
-NODE_REGISTRY_FAB_ADDRESS=0x48aa4A8047A45862Da8412FAB71ef66C17c7766d
-JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS=0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1
+# From .env.local.test (v8.4.22+ with PRICE_PRECISION=1000)
+NODE_REGISTRY_FAB_ADDRESS=0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999
+JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS=0xfD764804C5A5808b79D66746BAF4B65fb4413731
 PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS=<from .env.contracts>
 HOST_EARNINGS_ADDRESS=<from .env.contracts>
 
@@ -3634,11 +3634,11 @@ Future versions will maintain backward compatibility where possible. Breaking ch
   - 111 comprehensive tests (87 unit, 14 integration, 10 security)
   - `encrypted_session_init`, `encrypted_message`, `encrypted_chunk` message types
 
-- **v8.4.21** - PRICE_PRECISION Contract Migration (December 2025)
+- **v8.4.22** - PRICE_PRECISION Contract Migration (December 2025)
   - PRICE_PRECISION=1000 multiplier for sub-$1/million token pricing
   - New payment formula: `(tokens * pricePerToken) / 1000`
-  - New JobMarketplace: `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1`
-  - New NodeRegistry: `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d`
+  - New JobMarketplace: `0xfD764804C5A5808b79D66746BAF4B65fb4413731`
+  - New NodeRegistry: `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999`
   - Updated pricing ranges: Native MIN=227,273, Stable MIN=1
   - 76 PRICE_PRECISION-related tests
 
