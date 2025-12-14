@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.4.22-price-precision-2025-12-09";
+pub const VERSION: &str = "v8.5.0-uups-upgradeable-2025-12-14";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.4.22";
+pub const VERSION_NUMBER: &str = "8.5.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 4;
+pub const VERSION_MINOR: u32 = 5;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 22;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-09";
+pub const BUILD_DATE: &str = "2025-12-14";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -33,6 +33,7 @@ pub const FEATURES: &[&str] = &[
     "dual-pricing",
     "native-stable-pricing",
     "price-precision-1000",
+    "uups-upgradeable",
     "end-to-end-encryption",
     "ecdh-key-exchange",
     "xchacha20-poly1305",
@@ -70,12 +71,15 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "BREAKING: Migrated to PRICE_PRECISION=1000 contracts (v8.4.21 -> v8.4.22)",
-    "New JobMarketplace: 0xfD764804C5A5808b79D66746BAF4B65fb4413731",
-    "New NodeRegistry: 0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999",
-    "Payment formula: (tokens * pricePerToken) / 1000",
-    "All pricePerToken values now use 1000x multiplier for sub-$1 pricing support",
-    "See docs/IMPLEMENTATION_PRICE_PRECISION.md for migration details",
+    "BREAKING: Migrated to UUPS Upgradeable proxy contracts (v8.4.22 -> v8.5.0)",
+    "New JobMarketplace (UUPS Proxy): 0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D",
+    "New NodeRegistry (UUPS Proxy): 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+    "New ModelRegistry (UUPS Proxy): 0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
+    "New ProofSystem (UUPS Proxy): 0x5afB91977e69Cc5003288849059bc62d47E7deeb",
+    "New HostEarnings (UUPS Proxy): 0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
+    "Minimum deposits reduced: ETH 0.0001 (~$0.50), USDC 500000 (0.50 USDC)",
+    "ABIs backward compatible - existing function signatures unchanged",
+    "See docs/compute-contracts-reference/MIGRATION-NODE-DEVELOPER.md for migration details",
 ];
 
 /// Get formatted version string for logging
@@ -102,11 +106,12 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 4);
-        assert_eq!(VERSION_PATCH, 22);
+        assert_eq!(VERSION_MINOR, 5);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"price-precision-1000"));
+        assert!(FEATURES.contains(&"uups-upgradeable"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
         assert!(FEATURES.contains(&"encrypted-sessions"));
         assert!(FEATURES.contains(&"gpu-stark-proofs"));
@@ -129,14 +134,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.4.22"));
-        assert!(version.contains("2025-12-09"));
+        assert!(version.contains("8.5.0"));
+        assert!(version.contains("2025-12-14"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.4.22-price-precision-2025-12-09");
-        assert_eq!(VERSION_NUMBER, "8.4.22");
-        assert_eq!(BUILD_DATE, "2025-12-09");
+        assert_eq!(VERSION, "v8.5.0-uups-upgradeable-2025-12-14");
+        assert_eq!(VERSION_NUMBER, "8.5.0");
+        assert_eq!(BUILD_DATE, "2025-12-14");
     }
 }

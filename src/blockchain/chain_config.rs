@@ -44,12 +44,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // Updated December 9, 2025 for PRICE_PRECISION=1000 support (v8.4.22)
-                job_marketplace: "0xfD764804C5A5808b79D66746BAF4B65fb4413731".to_string(),
-                node_registry: "0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999".to_string(),
-                proof_system: "0x2ACcc60893872A499700908889B38C5420CBcFD1".to_string(),
-                host_earnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776".to_string(),
-                model_registry: "0x92b2De840bB2171203011A6dBA928d855cA8183E".to_string(),
+                // Updated December 14, 2025 for UUPS Upgradeable proxy contracts (v8.5.0)
+                job_marketplace: "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D".to_string(),
+                node_registry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22".to_string(),
+                proof_system: "0x5afB91977e69Cc5003288849059bc62d47E7deeb".to_string(),
+                host_earnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0".to_string(),
+                model_registry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2".to_string(),
                 usdc_token: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string(),
             },
             confirmation_blocks: 3,
@@ -155,13 +155,13 @@ mod tests {
 
     // ===========================================
     // Contract Address Tests (Sub-phase 1.2)
-    // Updated December 9, 2025 for PRICE_PRECISION contracts
+    // Updated December 14, 2025 for UUPS Upgradeable proxy contracts
     // ===========================================
 
-    /// New JobMarketplace contract address with PRICE_PRECISION support
-    const NEW_JOB_MARKETPLACE: &str = "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1";
-    /// New NodeRegistry contract address with PRICE_PRECISION support
-    const NEW_NODE_REGISTRY: &str = "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d";
+    /// New JobMarketplace contract address (UUPS Proxy)
+    const NEW_JOB_MARKETPLACE: &str = "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D";
+    /// New NodeRegistry contract address (UUPS Proxy)
+    const NEW_NODE_REGISTRY: &str = "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22";
 
     #[test]
     fn test_job_marketplace_address_updated() {
@@ -230,21 +230,22 @@ mod tests {
     }
 
     #[test]
-    fn test_other_contracts_unchanged() {
+    fn test_other_contracts_updated() {
         let config = ChainConfig::base_sepolia();
-        // These contracts should remain unchanged
+        // All contracts updated to UUPS proxies (December 14, 2025)
         assert_eq!(
             config.contracts.proof_system,
-            "0x2ACcc60893872A499700908889B38C5420CBcFD1"
+            "0x5afB91977e69Cc5003288849059bc62d47E7deeb"
         );
         assert_eq!(
             config.contracts.host_earnings,
-            "0x908962e8c6CE72610021586f85ebDE09aAc97776"
+            "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0"
         );
         assert_eq!(
             config.contracts.model_registry,
-            "0x92b2De840bB2171203011A6dBA928d855cA8183E"
+            "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2"
         );
+        // USDC token address unchanged
         assert_eq!(
             config.contracts.usdc_token,
             "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
