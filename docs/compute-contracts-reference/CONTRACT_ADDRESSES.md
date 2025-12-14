@@ -6,15 +6,16 @@ Last Updated: December 9, 2025
 
 | Chain | Network | Status | Native Token | Contract Address |
 |-------|---------|--------|--------------|------------------|
-| **Base** | Sepolia (Testnet) | ✅ DEPLOYED | ETH | `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1` |
+| **Base** | Sepolia (Testnet) | ✅ DEPLOYED | ETH | `0xfD764804C5A5808b79D66746BAF4B65fb4413731` |
 | **opBNB** | Testnet | ⏳ PLANNED | BNB | Post-MVP deployment |
 | **Base** | Mainnet | ⏳ FUTURE | ETH | TBD |
 | **opBNB** | Mainnet | ⏳ FUTURE | BNB | TBD |
 
-> **🚀 LATEST DEPLOYMENT**: Flexible Pricing (Per-Model & Multi-Token)
+> **🚀 LATEST DEPLOYMENT**: PRICE_PRECISION=1000 + Flexible Pricing (v8.4.22, Dec 9, 2025)
 >
-> - **JobMarketplaceWithModels**: `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1` ✅ NEW - Per-model pricing, model-aware sessions (Dec 9, 2025)
-> - **NodeRegistryWithModels**: `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d` ✅ NEW - Per-model pricing, multi-token support (Dec 9, 2025)
+> - **JobMarketplaceWithModels**: `0xfD764804C5A5808b79D66746BAF4B65fb4413731` ✅ NEW - PRICE_PRECISION=1000 for sub-$1/million token pricing
+> - **NodeRegistryWithModels**: `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` ✅ NEW - PRICE_PRECISION=1000 support
+> - **Payment Formula**: `(tokens * pricePerToken) / 1000` - enables granular pricing
 > - **Features**: Per-model pricing (setModelPricing), multi-token pricing (setTokenPricing), model-aware sessions (createSessionJobForModel), batch price queries (getHostModelPrices)
 > - **New Functions**: `setModelPricing()`, `clearModelPricing()`, `getModelPricing()`, `getHostModelPrices()`, `setTokenPricing()`, `createSessionJobForModel()`, `createSessionJobForModelWithToken()`
 > - **Backward Compatible**: All existing SDK functions work unchanged
@@ -23,8 +24,8 @@ Last Updated: December 9, 2025
 
 | Contract | Address | Description |
 |----------|---------|-------------|
-| **JobMarketplaceWithModels** | `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1` | ✅ ACTIVE - Flexible pricing, model-aware sessions (Dec 9, 2025) |
-| **NodeRegistryWithModels** | `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d` | ✅ ACTIVE - Per-model pricing, multi-token support (Dec 9, 2025) |
+| **JobMarketplaceWithModels** | `0xfD764804C5A5808b79D66746BAF4B65fb4413731` | ✅ ACTIVE - PRICE_PRECISION=1000, S5 proofs (Dec 9, 2025) |
+| **NodeRegistryWithModels** | `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` | ✅ ACTIVE - PRICE_PRECISION=1000, dual pricing (Dec 9, 2025) |
 | **ModelRegistry** | `0x92b2De840bB2171203011A6dBA928d855cA8183E` | Model governance (3 approved models) |
 | **ProofSystem** | `0x2ACcc60893872A499700908889B38C5420CBcFD1` | EZKL proof verification |
 | **HostEarnings** | `0x908962e8c6CE72610021586f85ebDE09aAc97776` | Host earnings accumulation |
@@ -72,8 +73,8 @@ const baseSepoliaConfig = {
   chainId: 84532,
   nativeToken: "ETH",
   contracts: {
-    jobMarketplace: "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1", // Flexible pricing (Dec 9, 2025)
-    nodeRegistry: "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d", // Per-model pricing (Dec 9, 2025)
+    jobMarketplace: "0xfD764804C5A5808b79D66746BAF4B65fb4413731", // PRICE_PRECISION=1000 (Dec 9, 2025)
+    nodeRegistry: "0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999", // PRICE_PRECISION=1000 (Dec 9, 2025)
     modelRegistry: "0x92b2De840bB2171203011A6dBA928d855cA8183E",
     proofSystem: "0x2ACcc60893872A499700908889B38C5420CBcFD1",
     hostEarnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776",

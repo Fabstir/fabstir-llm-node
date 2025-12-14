@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.4.20-utf8-skip-2025-12-06";
+pub const VERSION: &str = "v8.4.22-price-precision-2025-12-09";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.4.20";
+pub const VERSION_NUMBER: &str = "8.4.22";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 4;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 20;
+pub const VERSION_PATCH: u32 = 22;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-06";
+pub const BUILD_DATE: &str = "2025-12-09";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -32,6 +32,7 @@ pub const FEATURES: &[&str] = &[
     "job-auth",
     "dual-pricing",
     "native-stable-pricing",
+    "price-precision-1000",
     "end-to-end-encryption",
     "ecdh-key-exchange",
     "xchacha20-poly1305",
@@ -69,13 +70,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "Patch version bump (v8.4.15 -> v8.4.16) - Diagnostic Logging",
-    "DIAG: Added generation start logging (prompt_tokens, max_tokens, context_size, limit)",
-    "DIAG: Added generation end logging (tokens_generated, output_chars, n_cur, limit)",
-    "DIAG: Added periodic token logging (every 50 tokens + special tokens)",
-    "DIAG: Log EOS/return/end token IDs for troubleshooting truncation issues",
-    "All features from v8.4.15: no-early-stop, only EOS token stops generation",
-    "No breaking changes - fully backward compatible with v8.4.15",
+    "BREAKING: Migrated to PRICE_PRECISION=1000 contracts (v8.4.21 -> v8.4.22)",
+    "New JobMarketplace: 0xfD764804C5A5808b79D66746BAF4B65fb4413731",
+    "New NodeRegistry: 0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999",
+    "Payment formula: (tokens * pricePerToken) / 1000",
+    "All pricePerToken values now use 1000x multiplier for sub-$1 pricing support",
+    "See docs/IMPLEMENTATION_PRICE_PRECISION.md for migration details",
 ];
 
 /// Get formatted version string for logging
@@ -103,9 +103,10 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 4);
-        assert_eq!(VERSION_PATCH, 17);
+        assert_eq!(VERSION_PATCH, 22);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        assert!(FEATURES.contains(&"price-precision-1000"));
         assert!(FEATURES.contains(&"end-to-end-encryption"));
         assert!(FEATURES.contains(&"encrypted-sessions"));
         assert!(FEATURES.contains(&"gpu-stark-proofs"));
@@ -128,14 +129,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.4.17"));
-        assert!(version.contains("2025-12-06"));
+        assert!(version.contains("8.4.22"));
+        assert!(version.contains("2025-12-09"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.4.17-verbose-diag-2025-12-06");
-        assert_eq!(VERSION_NUMBER, "8.4.17");
-        assert_eq!(BUILD_DATE, "2025-12-06");
+        assert_eq!(VERSION, "v8.4.22-price-precision-2025-12-09");
+        assert_eq!(VERSION_NUMBER, "8.4.22");
+        assert_eq!(BUILD_DATE, "2025-12-09");
     }
 }
