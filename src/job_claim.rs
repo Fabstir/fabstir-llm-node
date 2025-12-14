@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
 
+use crate::contracts::pricing_constants::PRICE_PRECISION;
 use crate::contracts::Web3Client;
 use crate::host::registry::HostRegistry;
 use crate::host::selection::{HostSelector, JobRequirements};
@@ -301,9 +302,12 @@ impl JobClaimer {
             return Err(ClaimError::InvalidJob);
         }
 
-        // Check minimum payment per token
-        let payment_per_token = job.payment_amount / U256::from(job.max_tokens);
-        if payment_per_token < self.config.min_payment_per_token {
+        // Check minimum payment per token (with PRICE_PRECISION)
+        // Since maxTokens = (deposit * PRICE_PRECISION) / pricePerToken
+        // Then: pricePerToken = (deposit * PRICE_PRECISION) / maxTokens
+        let price_per_token = (job.payment_amount * U256::from(PRICE_PRECISION))
+            / U256::from(job.max_tokens);
+        if price_per_token < self.config.min_payment_per_token {
             return Err(ClaimError::BelowMinimumThreshold);
         }
 
@@ -562,5 +566,43 @@ impl JobMarketplaceTrait for MockMarketplace {
 
     async fn get_gas_price(&self) -> Result<U256> {
         Ok(U256::from(20_000_000_000u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // PRICE_PRECISION payment validation tests (Sub-phase 3.1)
+    #[test]
+    fn test_price_per_token_calculation_with_precision() {
+        // Test the formula: pricePerToken = (deposit * PRICE_PRECISION) / maxTokens
+        let deposit = U256::from(10_000_000u64); // $10 USDC
+        let max_tokens = 2_000_000u64; // 2 million tokens
+        // Expected: $5/million = 5000 with PRICE_PRECISION
+        let price_per_token = (deposit * U256::from(PRICE_PRECISION)) / U256::from(max_tokens);
+        assert_eq!(price_per_token, U256::from(5000u64));
+    }
+
+    #[test]
+    fn test_sub_dollar_pricing_validation() {
+        // Test budget model: $0.06/million tokens
+        let deposit = U256::from(600_000u64); // $0.60 USDC
+        let max_tokens = 10_000_000u64; // 10 million tokens
+        // Expected: 60 with PRICE_PRECISION ($0.06/million)
+        let price_per_token = (deposit * U256::from(PRICE_PRECISION)) / U256::from(max_tokens);
+        assert_eq!(price_per_token, U256::from(60u64));
+    }
+
+    #[test]
+    fn test_min_payment_threshold_with_precision() {
+        // min_payment_per_token should be in PRICE_PRECISION format
+        // $1/million = 1000 with PRICE_PRECISION
+        let min_threshold = U256::from(1000u64);
+        let deposit = U256::from(5_000_000u64); // $5 USDC
+        let max_tokens = 1_000_000u64; // 1 million tokens
+        let price_per_token = (deposit * U256::from(PRICE_PRECISION)) / U256::from(max_tokens);
+        // $5/million = 5000, should pass threshold of 1000
+        assert!(price_per_token >= min_threshold);
     }
 }

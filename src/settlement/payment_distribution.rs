@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 use super::types::SettlementError;
 use crate::config::chains::ChainRegistry;
+use crate::contracts::pricing_constants::PRICE_PRECISION;
 use anyhow::{anyhow, Result};
 use ethers::types::{Address, U256};
 use serde::{Deserialize, Serialize};
@@ -127,8 +128,11 @@ impl PaymentDistributor {
             SettlementError::UnsupportedChain(chain_id)
         })?;
 
-        // Calculate total payment
-        let total_payment = price_per_token * U256::from(tokens_used);
+        // Calculate total payment with PRICE_PRECISION division
+        // Formula: total_payment = (tokens_used * price_per_token) / PRICE_PRECISION
+        // This accounts for the 1000x multiplier in pricePerToken for sub-$1/million pricing
+        let total_payment =
+            (U256::from(tokens_used) * price_per_token) / U256::from(PRICE_PRECISION);
         info!("[PAYMENT-SPLIT]   Total payment due: {}", total_payment);
 
         // Calculate splits
@@ -210,6 +214,8 @@ impl PaymentDistributor {
     }
 
     /// Calculate refund for a user
+    /// Formula: amount_spent = (tokens_used * price_per_token) / PRICE_PRECISION
+    /// This accounts for the 1000x multiplier in pricePerToken for sub-$1/million pricing
     pub fn calculate_refund(
         &self,
         deposit: U256,
@@ -217,7 +223,9 @@ impl PaymentDistributor {
         max_tokens: u64,
         price_per_token: U256,
     ) -> RefundCalculation {
-        let amount_spent = price_per_token * U256::from(tokens_used);
+        // Apply PRICE_PRECISION division for correct calculation
+        let amount_spent =
+            (U256::from(tokens_used) * price_per_token) / U256::from(PRICE_PRECISION);
         let refund_amount = if deposit > amount_spent {
             deposit - amount_spent
         } else {

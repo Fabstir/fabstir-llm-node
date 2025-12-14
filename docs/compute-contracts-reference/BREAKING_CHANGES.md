@@ -260,8 +260,8 @@ The following contracts have been updated with PRICE_PRECISION:
 
 | Contract | Address (Base Sepolia) | Status |
 |----------|------------------------|--------|
-| NodeRegistryWithModels | TBD | Pending deployment |
-| JobMarketplaceWithModels | TBD | Pending deployment |
+| NodeRegistryWithModels | `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` | ✅ Deployed Dec 9, 2025 |
+| JobMarketplaceWithModels | `0xfD764804C5A5808b79D66746BAF4B65fb4413731` | ✅ Deployed Dec 9, 2025 |
 
 ## Questions?
 

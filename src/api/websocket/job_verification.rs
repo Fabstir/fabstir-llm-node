@@ -11,6 +11,7 @@ use tracing::{debug, error, info, warn};
 
 // Use the existing contracts module
 use crate::contracts::client::Web3Client;
+use crate::contracts::pricing_constants::PRICE_PRECISION;
 
 // Define Job types since they're not in contracts::types yet
 #[derive(Debug, Clone)]
@@ -416,7 +417,10 @@ impl JobVerifier {
             job_id,
             chain_id,
             client_address: format!("{:?}", job.client),
-            payment_amount: job.max_price_per_token.as_u128() * job.max_tokens.as_u128(),
+            // Apply PRICE_PRECISION division for correct payment calculation
+            // Formula: payment_amount = (max_price_per_token * max_tokens) / PRICE_PRECISION
+            payment_amount: (job.max_price_per_token.as_u128() * job.max_tokens.as_u128())
+                / PRICE_PRECISION as u128,
             model_id: job.model_id,
             input_url: job.input_url,
             output_url: if job.output_url.is_empty() {
@@ -476,5 +480,41 @@ impl BlockchainVerifier {
 
         // Mock for now
         Ok(expected_amount > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // PRICE_PRECISION payment amount tests (Sub-phase 3.2)
+    #[test]
+    fn test_payment_amount_with_price_precision() {
+        // Test: payment_amount = (max_price_per_token * max_tokens) / PRICE_PRECISION
+        let max_price_per_token = 5000u128; // $5/million with PRICE_PRECISION
+        let max_tokens = 1_000_000u128; // 1 million tokens
+        let payment_amount = (max_price_per_token * max_tokens) / PRICE_PRECISION as u128;
+        // Expected: (5000 * 1_000_000) / 1000 = 5_000_000 USDC units = $5
+        assert_eq!(payment_amount, 5_000_000);
+    }
+
+    #[test]
+    fn test_payment_amount_sub_dollar_pricing() {
+        // Budget model: $0.06/million tokens
+        let max_price_per_token = 60u128; // 60 with PRICE_PRECISION
+        let max_tokens = 10_000_000u128; // 10 million tokens
+        let payment_amount = (max_price_per_token * max_tokens) / PRICE_PRECISION as u128;
+        // Expected: (60 * 10_000_000) / 1000 = 600_000 USDC units = $0.60
+        assert_eq!(payment_amount, 600_000);
+    }
+
+    #[test]
+    fn test_payment_amount_native_token() {
+        // Native token pricing
+        let max_price_per_token = 2_272_727_273u128; // Default native with PRICE_PRECISION
+        let max_tokens = 1_000_000u128; // 1 million tokens
+        let payment_amount = (max_price_per_token * max_tokens) / PRICE_PRECISION as u128;
+        // Expected: (2_272_727_273 * 1_000_000) / 1000 = 2_272_727_273_000 wei
+        assert_eq!(payment_amount, 2_272_727_273_000);
     }
 }

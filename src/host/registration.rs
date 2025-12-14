@@ -552,4 +552,52 @@ mod tests {
         assert!(U256::from(500000u64) >= min_stake);
         assert!(!(U256::from(100u64) >= min_stake));
     }
+
+    // PRICE_PRECISION Registration Tests (Sub-phase 4.1)
+    #[test]
+    fn test_native_price_validation_with_precision() {
+        use crate::contracts::pricing_constants::PRICE_PRECISION;
+
+        // Test new MIN: 227,273 wei
+        assert!(native::validate_price(U256::from(227_273u64)).is_ok());
+        assert!(native::validate_price(U256::from(227_272u64)).is_err());
+
+        // Test new MAX: 22,727,272,727,273,000 wei
+        assert!(native::validate_price(U256::from(22_727_272_727_273_000u64)).is_ok());
+        assert!(native::validate_price(U256::from(22_727_272_727_273_001u64)).is_err());
+
+        // Test default is in range
+        let default = native::default_price();
+        assert!(native::validate_price(default).is_ok());
+    }
+
+    #[test]
+    fn test_stable_price_validation_with_precision() {
+        use crate::contracts::pricing_constants::PRICE_PRECISION;
+
+        // Test new MIN: 1 (with PRICE_PRECISION = $0.001/million)
+        assert!(stable::validate_price(U256::from(1u64)).is_ok());
+        assert!(stable::validate_price(U256::from(0u64)).is_err());
+
+        // Test new MAX: 100,000,000 (with PRICE_PRECISION = $100,000/million)
+        assert!(stable::validate_price(U256::from(100_000_000u64)).is_ok());
+        assert!(stable::validate_price(U256::from(100_000_001u64)).is_err());
+
+        // Test default is in range
+        let default = stable::default_price();
+        assert!(stable::validate_price(default).is_ok());
+    }
+
+    #[test]
+    fn test_default_prices_with_precision() {
+        use crate::contracts::pricing_constants::PRICE_PRECISION;
+
+        // Native default: geometric mean ≈ 2,272,727,273
+        let native_default = native::default_price();
+        assert_eq!(native_default, U256::from(2_272_727_273u64));
+
+        // Stable default: geometric mean = sqrt(1 * 100_000_000) = 10,000
+        let stable_default = stable::default_price();
+        assert_eq!(stable_default, U256::from(10_000u64));
+    }
 }
