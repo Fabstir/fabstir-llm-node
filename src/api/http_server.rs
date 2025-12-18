@@ -22,6 +22,16 @@ use super::{
 };
 use crate::blockchain::{ChainConfig, ChainRegistry};
 
+/// Sanitize content to ensure valid UTF-8 for WebSocket transmission.
+/// Removes control characters that might corrupt display while preserving
+/// newlines, tabs, and carriage returns for formatting.
+fn sanitize_content(content: &str) -> String {
+    content
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\r' || *c == '\t')
+        .collect()
+}
+
 #[derive(Deserialize)]
 struct ChainQuery {
     chain_id: Option<u64>,
@@ -436,7 +446,7 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                                     while let Some(response) = receiver.recv().await {
                                         let ws_msg = json!({
                                             "type": "stream_chunk",
-                                            "content": response.content,
+                                            "content": sanitize_content(&response.content),
                                             "tokens": response.tokens,
                                             "chain_id": current_chain_id,
                                             "chain_name": chain_name.clone(),
