@@ -5,7 +5,8 @@ use crate::api::websocket::{
     messages::{ConversationMessage, StreamToken},
 };
 use crate::inference::{
-    ChatMessage, EngineConfig, InferenceEngine, InferenceRequest, InferenceResult, ModelConfig,
+    ChatMessage, ChatTemplate, EngineConfig, InferenceEngine, InferenceRequest, InferenceResult,
+    ModelConfig,
 };
 use anyhow::{anyhow, Result};
 use futures::stream::{Stream, StreamExt};
@@ -397,29 +398,25 @@ impl InferenceHandler {
             .collect())
     }
 
-    /// Format prompt for inference engine
+    /// Format prompt for inference engine using ChatTemplate
+    ///
+    /// Uses MODEL_CHAT_TEMPLATE environment variable to select template.
+    /// Defaults to Harmony format for GPT-OSS-20B compatibility.
     fn format_prompt_for_inference(&self, messages: &[ChatMessage]) -> String {
-        let mut prompt = String::new();
+        // Get template from environment or default to Harmony for GPT-OSS-20B
+        let template_name = std::env::var("MODEL_CHAT_TEMPLATE")
+            .unwrap_or_else(|_| "harmony".to_string());
 
-        for message in messages {
-            match message.role.as_str() {
-                "system" => {
-                    prompt.push_str(&format!("System: {}\n\n", message.content));
-                }
-                "user" => {
-                    prompt.push_str(&format!("User: {}\n", message.content));
-                }
-                "assistant" => {
-                    prompt.push_str(&format!("Assistant: {}\n", message.content));
-                }
-                _ => {}
-            }
-        }
+        let template = ChatTemplate::from_str(&template_name)
+            .unwrap_or(ChatTemplate::Harmony);
 
-        // Add prompt for assistant response
-        prompt.push_str("Assistant: ");
+        // Convert ChatMessage to tuple format expected by ChatTemplate
+        let message_tuples: Vec<(String, String)> = messages
+            .iter()
+            .map(|m| (m.role.clone(), m.content.clone()))
+            .collect();
 
-        prompt
+        template.format_messages(&message_tuples)
     }
 }
 

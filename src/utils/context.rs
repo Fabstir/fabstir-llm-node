@@ -85,11 +85,12 @@ mod tests {
         let prompt = "Hello";
         let result = build_prompt_with_context(&context, prompt);
 
-        // Should use Harmony format
-        assert!(result.contains("<|im_start|>user"));
+        // Should use Harmony format (GPT-OSS-20B compatible)
+        // Harmony uses: <|start|>role<|message|>content<|end|>
+        assert!(result.contains("<|start|>user<|message|>"));
         assert!(result.contains("Hello"));
-        assert!(result.contains("<|im_end|>"));
-        assert!(result.contains("<|im_start|>assistant"));
+        assert!(result.contains("<|end|>"));
+        assert!(result.contains("<|start|>assistant"));
     }
 
     #[test]
