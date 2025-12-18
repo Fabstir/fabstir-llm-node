@@ -295,7 +295,8 @@ mod tests {
         assert!(formatted.contains("<|start|>user<|message|>What is the capital of Turkey?<|end|>"));
         assert!(formatted.contains("<|start|>assistant<|message|>Ankara<|end|>"));
         assert!(formatted.contains("<|start|>user<|message|>What is the capital of Australia?<|end|>"));
-        assert!(formatted.ends_with("<|start|>assistant<|message|>"));
+        // Harmony format includes channel specification for assistant responses
+        assert!(formatted.ends_with("<|start|>assistant<|channel|>final<|message|>"));
     }
 
     #[test]
@@ -350,6 +351,7 @@ mod tests {
         assert!(formatted.contains("<|start|>system<|message|>You are ChatGPT"));
         assert!(formatted.contains("Knowledge cutoff: 2024-06"));
         assert!(formatted.contains("<|start|>user<|message|>What is 2+2?<|end|>"));
-        assert!(formatted.ends_with("<|start|>assistant<|message|>"));
+        // Harmony format includes channel specification for assistant responses
+        assert!(formatted.ends_with("<|start|>assistant<|channel|>final<|message|>"));
     }
 }
