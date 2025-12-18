@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.5.0-uups-upgradeable-2025-12-14";
+pub const VERSION: &str = "v8.5.1-uups-upgradeable-2025-12-14";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.5.0";
+pub const VERSION_NUMBER: &str = "8.5.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 5;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2025-12-14";
@@ -107,7 +107,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 5);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"price-precision-1000"));
@@ -134,14 +134,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.5.0"));
+        assert!(version.contains("8.5.1"));
         assert!(version.contains("2025-12-14"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.5.0-uups-upgradeable-2025-12-14");
-        assert_eq!(VERSION_NUMBER, "8.5.0");
+        assert_eq!(VERSION, "v8.5.1-uups-upgradeable-2025-12-14");
+        assert_eq!(VERSION_NUMBER, "8.5.1");
         assert_eq!(BUILD_DATE, "2025-12-14");
     }
 }
