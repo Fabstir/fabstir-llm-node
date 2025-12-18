@@ -433,8 +433,20 @@ impl LlmEngine {
                 } else {
                     // Invalid UTF-8 - don't add to output but MUST advance model state
                     consecutive_invalid_utf8 += 1;
-                    eprintln!("⚠️ Token {} invalid UTF-8 (consecutive: {}) - skipping from output, advancing model",
-                        new_token_id, consecutive_invalid_utf8);
+                    // Enhanced diagnostic logging for debugging corrupted output
+                    eprintln!(
+                        "⚠️ Token {} (0x{:X}) invalid UTF-8 (consecutive: {}) - skipping from output, advancing model. \
+                        Output so far: {} chars, {} valid tokens",
+                        new_token_id, new_token_id.0, consecutive_invalid_utf8,
+                        output.len(), token_info_list.len()
+                    );
+                    tracing::warn!(
+                        token_id = new_token_id.0,
+                        consecutive_invalid = consecutive_invalid_utf8,
+                        output_chars = output.len(),
+                        valid_tokens = token_info_list.len(),
+                        "Invalid UTF-8 token detected - this may indicate chat template mismatch"
+                    );
                     // DON'T add to token_info_list - we don't want to stream garbage to client
                 }
 

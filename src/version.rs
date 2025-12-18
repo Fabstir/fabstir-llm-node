@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.5.1-uups-upgradeable-2025-12-14";
+pub const VERSION: &str = "v8.5.2-harmony-chat-template-2025-12-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.5.1";
+pub const VERSION_NUMBER: &str = "8.5.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 5;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-14";
+pub const BUILD_DATE: &str = "2025-12-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -61,6 +61,9 @@ pub const FEATURES: &[&str] = &[
     "llama-batch-size-env",
     "async-checkpoints",
     "non-blocking-proof-submission",
+    "harmony-chat-template",
+    "gpt-oss-20b-support",
+    "utf8-content-sanitization",
 ];
 
 /// Supported chain IDs
@@ -71,15 +74,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "BREAKING: Migrated to UUPS Upgradeable proxy contracts (v8.4.22 -> v8.5.0)",
-    "New JobMarketplace (UUPS Proxy): 0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D",
-    "New NodeRegistry (UUPS Proxy): 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
-    "New ModelRegistry (UUPS Proxy): 0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
-    "New ProofSystem (UUPS Proxy): 0x5afB91977e69Cc5003288849059bc62d47E7deeb",
-    "New HostEarnings (UUPS Proxy): 0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
-    "Minimum deposits reduced: ETH 0.0001 (~$0.50), USDC 500000 (0.50 USDC)",
-    "ABIs backward compatible - existing function signatures unchanged",
-    "See docs/compute-contracts-reference/MIGRATION-NODE-DEVELOPER.md for migration details",
+    "FIX: WebSocket inference now uses ChatTemplate system for proper prompt formatting",
+    "FIX: GPT-OSS-20B Harmony format now correctly applied via WebSocket API",
+    "FIX: UTF-8 content sanitization prevents corrupted output in WebSocket streams",
+    "FIX: Enhanced diagnostic logging for invalid UTF-8 tokens",
+    "ENV: MODEL_CHAT_TEMPLATE defaults to 'harmony' for GPT-OSS-20B compatibility",
 ];
 
 /// Get formatted version string for logging
@@ -107,7 +106,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 5);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_PATCH, 2);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"price-precision-1000"));
@@ -128,20 +127,23 @@ mod tests {
         assert!(FEATURES.contains(&"llama-batch-size-env"));
         assert!(FEATURES.contains(&"async-checkpoints"));
         assert!(FEATURES.contains(&"non-blocking-proof-submission"));
+        assert!(FEATURES.contains(&"harmony-chat-template"));
+        assert!(FEATURES.contains(&"gpt-oss-20b-support"));
+        assert!(FEATURES.contains(&"utf8-content-sanitization"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.5.1"));
-        assert!(version.contains("2025-12-14"));
+        assert!(version.contains("8.5.2"));
+        assert!(version.contains("2025-12-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.5.1-uups-upgradeable-2025-12-14");
-        assert_eq!(VERSION_NUMBER, "8.5.1");
-        assert_eq!(BUILD_DATE, "2025-12-14");
+        assert_eq!(VERSION, "v8.5.2-harmony-chat-template-2025-12-18");
+        assert_eq!(VERSION_NUMBER, "8.5.2");
+        assert_eq!(BUILD_DATE, "2025-12-18");
     }
 }
