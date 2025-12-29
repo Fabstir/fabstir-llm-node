@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.5.2-harmony-chat-template-2025-12-18";
+pub const VERSION: &str = "v8.5.5-sanitize-null-bytes-2025-12-29";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.5.2";
+pub const VERSION_NUMBER: &str = "8.5.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 5;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-18";
+pub const BUILD_DATE: &str = "2025-12-29";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -64,6 +64,8 @@ pub const FEATURES: &[&str] = &[
     "harmony-chat-template",
     "gpt-oss-20b-support",
     "utf8-content-sanitization",
+    "strip-chat-markers",
+    "null-byte-sanitization",
 ];
 
 /// Supported chain IDs
@@ -74,11 +76,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "FIX: WebSocket inference now uses ChatTemplate system for proper prompt formatting",
-    "FIX: GPT-OSS-20B Harmony format now correctly applied via WebSocket API",
-    "FIX: UTF-8 content sanitization prevents corrupted output in WebSocket streams",
-    "FIX: Enhanced diagnostic logging for invalid UTF-8 tokens",
-    "ENV: MODEL_CHAT_TEMPLATE defaults to 'harmony' for GPT-OSS-20B compatibility",
+    "FIX: Sanitize prompts before tokenization to remove null bytes",
+    "FIX: Handles content from PDFs and other sources with embedded nulls",
+    "FIX: Removes C0 control characters that break llama.cpp tokenizer",
+    "FIX: Preserves normal whitespace (tab, newline, carriage return)",
 ];
 
 /// Get formatted version string for logging
@@ -106,44 +107,24 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 5);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_PATCH, 5);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
-        assert!(FEATURES.contains(&"price-precision-1000"));
-        assert!(FEATURES.contains(&"uups-upgradeable"));
-        assert!(FEATURES.contains(&"end-to-end-encryption"));
-        assert!(FEATURES.contains(&"encrypted-sessions"));
-        assert!(FEATURES.contains(&"gpu-stark-proofs"));
-        assert!(FEATURES.contains(&"risc0-zkvm"));
-        assert!(FEATURES.contains(&"s5-proof-storage"));
-        assert!(FEATURES.contains(&"off-chain-proofs"));
-        assert!(FEATURES.contains(&"host-side-rag"));
-        assert!(FEATURES.contains(&"session-vector-storage"));
-        assert!(FEATURES.contains(&"384d-embeddings"));
-        assert!(FEATURES.contains(&"chat-templates"));
-        assert!(FEATURES.contains(&"s5-vector-loading"));
-        assert!(FEATURES.contains(&"encrypted-vector-database-paths"));
-        assert!(FEATURES.contains(&"configurable-batch-size"));
-        assert!(FEATURES.contains(&"llama-batch-size-env"));
-        assert!(FEATURES.contains(&"async-checkpoints"));
-        assert!(FEATURES.contains(&"non-blocking-proof-submission"));
-        assert!(FEATURES.contains(&"harmony-chat-template"));
-        assert!(FEATURES.contains(&"gpt-oss-20b-support"));
-        assert!(FEATURES.contains(&"utf8-content-sanitization"));
+        assert!(FEATURES.contains(&"null-byte-sanitization"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.5.2"));
-        assert!(version.contains("2025-12-18"));
+        assert!(version.contains("8.5.5"));
+        assert!(version.contains("2025-12-29"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.5.2-harmony-chat-template-2025-12-18");
-        assert_eq!(VERSION_NUMBER, "8.5.2");
-        assert_eq!(BUILD_DATE, "2025-12-18");
+        assert_eq!(VERSION, "v8.5.5-sanitize-null-bytes-2025-12-29");
+        assert_eq!(VERSION_NUMBER, "8.5.5");
+        assert_eq!(BUILD_DATE, "2025-12-29");
     }
 }

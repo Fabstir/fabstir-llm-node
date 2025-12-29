@@ -402,6 +402,9 @@ impl InferenceHandler {
     ///
     /// Uses MODEL_CHAT_TEMPLATE environment variable to select template.
     /// Defaults to Harmony format for GPT-OSS-20B compatibility.
+    ///
+    /// Note: Chat template markers are stripped from message content to prevent
+    /// double-formatting when SDK/client pre-formats messages.
     fn format_prompt_for_inference(&self, messages: &[ChatMessage]) -> String {
         // Get template from environment or default to Harmony for GPT-OSS-20B
         let template_name = std::env::var("MODEL_CHAT_TEMPLATE")
@@ -410,13 +413,78 @@ impl InferenceHandler {
         let template = ChatTemplate::from_str(&template_name)
             .unwrap_or(ChatTemplate::Harmony);
 
-        // Convert ChatMessage to tuple format expected by ChatTemplate
+        // Convert ChatMessage to tuple format, stripping any pre-existing markers
         let message_tuples: Vec<(String, String)> = messages
             .iter()
-            .map(|m| (m.role.clone(), m.content.clone()))
+            .map(|m| {
+                let cleaned = Self::strip_chat_template_markers(&m.content);
+                if cleaned != m.content {
+                    tracing::debug!(
+                        "🔧 WebSocket: Stripped chat markers from {} message (original: {}, cleaned: {})",
+                        m.role, m.content.len(), cleaned.len()
+                    );
+                }
+                (m.role.clone(), cleaned)
+            })
             .collect();
 
         template.format_messages(&message_tuples)
+    }
+
+    /// Strip chat template markers from content to prevent double-formatting
+    fn strip_chat_template_markers(content: &str) -> String {
+        let mut result = content.to_string();
+
+        // Harmony format markers
+        if result.contains("<|start|>") || result.contains("<|message|>") || result.contains("<|end|>") {
+            let patterns = [
+                "<|start|>user<|message|>",
+                "<|start|>assistant<|message|>",
+                "<|start|>system<|message|>",
+                "<|start|>assistant<|channel|>final<|message|>",
+                "<|start|>assistant<|channel|>analysis<|message|>",
+                "<|start|>assistant<|channel|>commentary<|message|>",
+                "<|end|>",
+                "<|start|>",
+                "<|message|>",
+                "<|channel|>final",
+                "<|channel|>analysis",
+                "<|channel|>commentary",
+            ];
+            for pattern in patterns {
+                result = result.replace(pattern, "");
+            }
+            result = result.trim().to_string();
+        }
+
+        // ChatML format markers
+        if result.contains("<|im_start|>") || result.contains("<|im_end|>") {
+            let patterns = [
+                "<|im_start|>user\n",
+                "<|im_start|>assistant\n",
+                "<|im_start|>system\n",
+                "<|im_start|>user",
+                "<|im_start|>assistant",
+                "<|im_start|>system",
+                "<|im_end|>",
+                "<|im_start|>",
+            ];
+            for pattern in patterns {
+                result = result.replace(pattern, "");
+            }
+            result = result.trim().to_string();
+        }
+
+        // Llama2 format markers
+        if result.contains("[INST]") || result.contains("[/INST]") {
+            let patterns = ["[INST]", "[/INST]", "<<SYS>>", "<</SYS>>"];
+            for pattern in patterns {
+                result = result.replace(pattern, "");
+            }
+            result = result.trim().to_string();
+        }
+
+        result
     }
 }
 
