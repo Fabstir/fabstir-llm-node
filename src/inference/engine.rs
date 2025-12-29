@@ -19,6 +19,26 @@ use tokio::sync::{mpsc, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
+/// Sanitize prompt text for tokenization
+///
+/// Removes characters that cause issues with C string handling in llama.cpp:
+/// - Null bytes (\0) - C strings use null as terminator
+/// - Other control characters that may cause issues
+///
+/// This is necessary when prompt content comes from PDFs or other binary sources
+/// that may contain embedded null bytes or invalid Unicode.
+fn sanitize_prompt_for_tokenizer(prompt: &str) -> String {
+    prompt
+        .chars()
+        .filter(|c| {
+            // Remove null bytes (critical - causes NulError)
+            // Remove other C0 control characters except common whitespace
+            // Keep: tab (0x09), newline (0x0A), carriage return (0x0D)
+            *c != '\0' && (*c >= ' ' || *c == '\t' || *c == '\n' || *c == '\r')
+        })
+        .collect()
+}
+
 // Wrapper around the real LLama model
 struct RealLlamaModel {
     backend: LlamaBackend,
@@ -285,10 +305,22 @@ impl LlmEngine {
                     .get_mut(&request.model_id)
                     .ok_or_else(|| anyhow!("Model not found in storage"))?;
 
-                // Tokenize the prompt
+                // Sanitize prompt before tokenization to prevent NulError
+                // Remove null bytes and other problematic characters that break C string handling
+                let sanitized_prompt = sanitize_prompt_for_tokenizer(&request.prompt);
+                if sanitized_prompt.len() != request.prompt.len() {
+                    tracing::warn!(
+                        "🧹 Sanitized prompt: removed {} problematic bytes (original: {}, sanitized: {})",
+                        request.prompt.len() - sanitized_prompt.len(),
+                        request.prompt.len(),
+                        sanitized_prompt.len()
+                    );
+                }
+
+                // Tokenize the sanitized prompt
                 let tokens_list = model
                     .model
-                    .str_to_token(&request.prompt, AddBos::Always)
+                    .str_to_token(&sanitized_prompt, AddBos::Always)
                     .map_err(|e| anyhow!("Failed to tokenize: {:?}", e))?;
 
                 let eos = model.model.token_eos();
@@ -725,4 +757,55 @@ pub enum ModelCapability {
     Instruction,
     Chat,
     Embedding,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_removes_null_bytes() {
+        let input = "Hello\0World";
+        let result = sanitize_prompt_for_tokenizer(input);
+        assert_eq!(result, "HelloWorld");
+        assert!(!result.contains('\0'));
+    }
+
+    #[test]
+    fn test_sanitize_removes_control_characters() {
+        // \x01 through \x1F are control characters (except \t, \n, \r)
+        let input = "Hello\x01\x02\x03World";
+        let result = sanitize_prompt_for_tokenizer(input);
+        assert_eq!(result, "HelloWorld");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_whitespace() {
+        let input = "Hello\tWorld\nNew\rLine";
+        let result = sanitize_prompt_for_tokenizer(input);
+        assert_eq!(result, "Hello\tWorld\nNew\rLine");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_normal_text() {
+        let input = "What is the plot of the movie `Iron Man`?";
+        let result = sanitize_prompt_for_tokenizer(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_sanitize_handles_unicode() {
+        let input = "Hello 世界 🌍";
+        let result = sanitize_prompt_for_tokenizer(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_sanitize_pdf_like_content() {
+        // Simulate content that might come from a PDF with embedded nulls
+        let input = "PDF content\0with\0null\0bytes and normal text";
+        let result = sanitize_prompt_for_tokenizer(input);
+        assert_eq!(result, "PDF contentwithnullbytes and normal text");
+        assert!(!result.contains('\0'));
+    }
 }
