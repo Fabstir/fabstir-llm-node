@@ -32,6 +32,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 axum = { version = "0.7", features = ["ws", "json", "macros"] }
+axum-extra = { version = "0.9", features = ["multipart"] }  # Multipart form handling for image uploads
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 hyper = "1.0"
@@ -44,6 +45,11 @@ llama-cpp-2 = { version = "0.1.55", features = ["cuda"] }
 hf-hub = "0.3"
 sha2 = "0.10"
 indicatif = "0.17"
+
+# Image Processing (Sub-phase 1.1 - CPU-Based Vision)
+# Used for /v1/ocr and /v1/describe-image endpoints
+# Supports PNG, JPG, WebP, GIF loading and preprocessing
+image = "0.25"
 
 # Embedding dependencies (Sub-phase 1.1 - Host-Side Embeddings)
 # ONNX Runtime for sentence transformer inference (all-MiniLM-L6-v2)
