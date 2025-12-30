@@ -920,6 +920,7 @@ async fn embed_handler_wrapper(
         sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
         chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
         embedding_model_manager: server.embedding_model_manager.clone(),
+        vision_model_manager: Arc::new(RwLock::new(None)),
     };
 
     // Call the actual embed_handler
