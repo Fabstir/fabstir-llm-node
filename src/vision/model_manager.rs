@@ -26,7 +26,7 @@ impl Default for VisionModelConfig {
 }
 
 /// Information about a loaded vision model
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct VisionModelInfo {
     /// Model name
     pub name: String,

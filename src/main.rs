@@ -186,6 +186,45 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Initialize Vision Model Manager for /v1/ocr and /v1/describe-image endpoints
+    println!("👁️  Initializing vision model manager...");
+
+    let ocr_model_path = env::var("OCR_MODEL_PATH")
+        .unwrap_or_else(|_| "./models/paddleocr-onnx".to_string());
+    let florence_model_path = env::var("FLORENCE_MODEL_PATH")
+        .unwrap_or_else(|_| "./models/florence-2-onnx".to_string());
+
+    let vision_config = fabstir_llm_node::vision::VisionModelConfig {
+        ocr_model_dir: Some(ocr_model_path),
+        florence_model_dir: Some(florence_model_path),
+    };
+
+    match fabstir_llm_node::vision::VisionModelManager::new(vision_config).await {
+        Ok(manager) => {
+            let manager = Arc::new(manager);
+            api_server.set_vision_model_manager(manager.clone()).await;
+            println!("✅ Vision model manager initialized");
+
+            // List available vision models
+            let models = manager.list_models();
+            if !models.is_empty() {
+                println!("   Available vision models:");
+                for model in models {
+                    let status = if model.available { "✓" } else { "✗" };
+                    println!("     {} {} ({})", status, model.name, model.model_type);
+                }
+            } else {
+                println!("   No vision models loaded");
+                println!("   /v1/ocr and /v1/describe-image will return 503");
+            }
+        }
+        Err(e) => {
+            println!("⚠️  Failed to initialize vision model manager: {}", e);
+            println!("   /v1/ocr and /v1/describe-image endpoints will return 503");
+            println!("   This is optional - node will continue without vision models");
+        }
+    }
+
     // Initialize Web3 and CheckpointManager if HOST_PRIVATE_KEY is available
     if let Ok(host_private_key) = env::var("HOST_PRIVATE_KEY") {
         println!("🔗 Initializing Web3 client for checkpoint submission...");
@@ -255,6 +294,12 @@ async fn main() -> Result<()> {
     println!("  Models:       http://localhost:{}/v1/models", api_port);
     println!(
         "  Inference:    POST http://localhost:{}/v1/inference",
+        api_port
+    );
+    println!("  Embed:        POST http://localhost:{}/v1/embed", api_port);
+    println!("  OCR:          POST http://localhost:{}/v1/ocr", api_port);
+    println!(
+        "  Describe:     POST http://localhost:{}/v1/describe-image",
         api_port
     );
     println!("  WebSocket:    ws://localhost:{}/v1/ws", api_port);

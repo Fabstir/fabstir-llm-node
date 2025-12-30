@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.5.5-sanitize-null-bytes-2025-12-29";
+pub const VERSION: &str = "v8.6.0-image-processing-2025-12-30";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.5.5";
+pub const VERSION_NUMBER: &str = "8.6.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 5;
+pub const VERSION_MINOR: u32 = 6;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-29";
+pub const BUILD_DATE: &str = "2025-12-30";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -66,6 +66,12 @@ pub const FEATURES: &[&str] = &[
     "utf8-content-sanitization",
     "strip-chat-markers",
     "null-byte-sanitization",
+    "cpu-ocr",
+    "paddleocr-onnx",
+    "cpu-vision",
+    "florence-2-onnx",
+    "image-to-text",
+    "image-description",
 ];
 
 /// Supported chain IDs
@@ -76,10 +82,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "FIX: Sanitize prompts before tokenization to remove null bytes",
-    "FIX: Handles content from PDFs and other sources with embedded nulls",
-    "FIX: Removes C0 control characters that break llama.cpp tokenizer",
-    "FIX: Preserves normal whitespace (tab, newline, carriage return)",
+    "FEAT: Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
+    "FEAT: Added POST /v1/describe-image endpoint for image description using Florence-2 (CPU-only)",
+    "FEAT: Added GET /v1/models?type=vision to list available vision models",
+    "FEAT: Added OCR_MODEL_PATH and FLORENCE_MODEL_PATH environment variables",
+    "FEAT: Vision models run on CPU only (no GPU VRAM competition with LLM)",
 ];
 
 /// Get formatted version string for logging
@@ -106,25 +113,26 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 5);
-        assert_eq!(VERSION_PATCH, 5);
+        assert_eq!(VERSION_MINOR, 6);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
-        assert!(FEATURES.contains(&"null-byte-sanitization"));
+        assert!(FEATURES.contains(&"cpu-ocr"));
+        assert!(FEATURES.contains(&"cpu-vision"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.5.5"));
-        assert!(version.contains("2025-12-29"));
+        assert!(version.contains("8.6.0"));
+        assert!(version.contains("2025-12-30"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.5.5-sanitize-null-bytes-2025-12-29");
-        assert_eq!(VERSION_NUMBER, "8.5.5");
-        assert_eq!(BUILD_DATE, "2025-12-29");
+        assert_eq!(VERSION, "v8.6.0-image-processing-2025-12-30");
+        assert_eq!(VERSION_NUMBER, "8.6.0");
+        assert_eq!(BUILD_DATE, "2025-12-30");
     }
 }

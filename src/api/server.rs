@@ -188,6 +188,7 @@ pub struct ApiServer {
     session_key_store: Arc<SessionKeyStore>,
     node_private_key: Option<[u8; 32]>,
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
+    vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -236,6 +237,7 @@ impl ApiServer {
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key: None,
             embedding_model_manager: Arc::new(RwLock::new(None)),
+            vision_model_manager: Arc::new(RwLock::new(None)),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -310,6 +312,7 @@ impl ApiServer {
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key,
             embedding_model_manager: Arc::new(RwLock::new(None)),
+            vision_model_manager: Arc::new(RwLock::new(None)),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -362,6 +365,7 @@ impl ApiServer {
             session_key_store: self.session_key_store.clone(),
             node_private_key: self.node_private_key,
             embedding_model_manager: self.embedding_model_manager.clone(),
+            vision_model_manager: self.vision_model_manager.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -394,6 +398,14 @@ impl ApiServer {
 
     pub async fn get_embedding_model_manager(&self) -> Option<Arc<crate::embeddings::EmbeddingModelManager>> {
         self.embedding_model_manager.read().await.clone()
+    }
+
+    pub async fn set_vision_model_manager(&self, manager: Arc<crate::vision::VisionModelManager>) {
+        *self.vision_model_manager.write().await = Some(manager);
+    }
+
+    pub async fn get_vision_model_manager(&self) -> Option<Arc<crate::vision::VisionModelManager>> {
+        self.vision_model_manager.read().await.clone()
     }
 
     /// Get the session key store for encryption/decryption operations
@@ -920,7 +932,7 @@ async fn embed_handler_wrapper(
         sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
         chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
         embedding_model_manager: server.embedding_model_manager.clone(),
-        vision_model_manager: Arc::new(RwLock::new(None)),
+        vision_model_manager: server.vision_model_manager.clone(),
     };
 
     // Call the actual embed_handler
