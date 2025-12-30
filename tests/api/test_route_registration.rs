@@ -19,6 +19,7 @@ use axum::{
 use fabstir_llm_node::{
     api::http_server::{create_app, AppState},
     embeddings::{EmbeddingModelConfig, EmbeddingModelManager},
+    vision::{VisionModelConfig, VisionModelManager},
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -228,5 +229,184 @@ mod route_registration_tests {
         assert_eq!(models[0].name, "all-MiniLM-L6-v2");
         assert!(models[0].available);
         assert!(models[0].is_default);
+    }
+}
+
+// =============================================================================
+// Vision Route Registration Tests (Sub-phase 6.2)
+// =============================================================================
+
+#[cfg(test)]
+mod vision_route_registration_tests {
+    use super::*;
+
+    /// Test 7: OCR route is registered
+    #[tokio::test]
+    async fn test_ocr_route_registered() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        // Create a POST request to /v1/ocr
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/ocr")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"image": "test", "chainId": 84532}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Route should exist - will return 503 (no vision manager) or 400 (validation error)
+        // but NOT 404 (route not found)
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "OCR route should be registered"
+        );
+    }
+
+    /// Test 8: Describe-image route is registered
+    #[tokio::test]
+    async fn test_describe_image_route_registered() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        // Create a POST request to /v1/describe-image
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/describe-image")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"image": "test", "chainId": 84532}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Route should exist - will return 503 (no vision manager) or 400 (validation error)
+        // but NOT 404 (route not found)
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "Describe-image route should be registered"
+        );
+    }
+
+    /// Test 9: OCR route rejects GET requests
+    #[tokio::test]
+    async fn test_ocr_route_rejects_get() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/ocr")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "GET requests to /v1/ocr should be rejected with 405"
+        );
+    }
+
+    /// Test 10: Describe-image route rejects GET requests
+    #[tokio::test]
+    async fn test_describe_image_route_rejects_get() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/describe-image")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "GET requests to /v1/describe-image should be rejected with 405"
+        );
+    }
+
+    /// Test 11: OCR returns 503 when vision manager not available
+    #[tokio::test]
+    async fn test_ocr_returns_503_without_vision_manager() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        // Minimal valid image (1x1 PNG base64)
+        let tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/ocr")
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{"image": "{}", "format": "png", "language": "en", "chainId": 84532}}"#,
+                tiny_png
+            )))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Should return 503 when vision manager not available"
+        );
+    }
+
+    /// Test 12: Describe-image returns 503 when vision manager not available
+    #[tokio::test]
+    async fn test_describe_image_returns_503_without_vision_manager() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        // Minimal valid image (1x1 PNG base64)
+        let tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/describe-image")
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{"image": "{}", "chainId": 84532}}"#,
+                tiny_png
+            )))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Should return 503 when vision manager not available"
+        );
+    }
+
+    /// Test 13: Models endpoint supports type=vision
+    #[tokio::test]
+    async fn test_models_endpoint_supports_vision_type() {
+        let state = setup_state_without_embeddings();
+        let app = create_app(Arc::new(state));
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/models?type=vision")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Should return 200 OK with empty models array (no vision manager)
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "Models endpoint should support type=vision"
+        );
     }
 }

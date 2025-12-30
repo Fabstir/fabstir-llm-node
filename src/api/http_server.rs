@@ -16,9 +16,10 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::{
-    embed::embed_handler, ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse,
-    ChainsResponse, InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
-    SessionInfoResponse, SessionStatus, TotalStatistics,
+    describe_image::describe_image_handler, embed::embed_handler, ocr::ocr_handler, ApiError,
+    ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse, InferenceRequest,
+    InferenceResponse, ModelInfo, ModelsResponse, SessionInfo, SessionInfoResponse, SessionStatus,
+    TotalStatistics,
 };
 use crate::blockchain::{ChainConfig, ChainRegistry};
 
@@ -83,6 +84,9 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/inference", post(inference_handler))
         // Embedding endpoint
         .route("/v1/embed", post(embed_handler))
+        // Vision endpoints (OCR and image description)
+        .route("/v1/ocr", post(ocr_handler))
+        .route("/v1/describe-image", post(describe_image_handler))
         // WebSocket endpoint
         .route("/v1/ws", get(websocket_handler))
         // Metrics endpoint
@@ -164,6 +168,25 @@ async fn models_handler(
             };
 
             // Create response with embedding models
+            let response = serde_json::json!({
+                "models": models,
+                "chain_id": chain_id,
+                "chain_name": chain.name,
+            });
+
+            (StatusCode::OK, axum::response::Json(response)).into_response()
+        }
+        "vision" => {
+            // Get vision models (OCR and Florence)
+            let manager_guard = state.vision_model_manager.read().await;
+            let models = if let Some(manager) = manager_guard.as_ref() {
+                manager.list_models()
+            } else {
+                // No vision models loaded - return empty array
+                Vec::new()
+            };
+
+            // Create response with vision models
             let response = serde_json::json!({
                 "models": models,
                 "chain_id": chain_id,
