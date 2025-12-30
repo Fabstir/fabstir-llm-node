@@ -30,6 +30,7 @@ pub mod rag;
 pub mod utils;
 pub mod vector;
 pub mod version;
+pub mod vision;
 
 // Re-export main types from new modules
 pub use job_assignment_types::{AssignmentRecord, AssignmentStatus, JobClaimConfig};
