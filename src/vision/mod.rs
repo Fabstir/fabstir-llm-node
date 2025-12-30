@@ -14,4 +14,4 @@ pub mod model_manager;
 pub mod ocr;
 
 pub use image_utils::{decode_base64_image, decode_image_bytes, detect_format, ImageError, ImageInfo};
-pub use model_manager::VisionModelManager;
+pub use model_manager::{VisionModelConfig, VisionModelInfo, VisionModelManager};

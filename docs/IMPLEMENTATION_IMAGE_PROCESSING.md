@@ -2,7 +2,7 @@
 
 ## Status: IN PROGRESS
 
-**Status**: Phases 1-4 COMPLETE (OCR + Florence), Phase 5 - API Handlers (Next)
+**Status**: Phase 5 COMPLETE (All API Handlers), Phase 6 - Integration (Next)
 **Version**: v8.6.0-image-processing (planned)
 **Date Started**: TBD
 **Quality Score**: 0/10
@@ -11,7 +11,7 @@
 - [x] OCR model tests (40 passed, 8 ignored for CI)
 - [x] Florence model tests (39 passed, 9 ignored for CI)
 - [x] Image preprocessing tests (32 tests)
-- [ ] API endpoint tests
+- [x] API endpoint tests (39 tests: 17 OCR, 22 describe-image)
 - [ ] Integration tests
 
 ---
@@ -1088,14 +1088,16 @@ models/florence-2-onnx/
 
 **Goal**: Create model manager to hold OCR and Florence models
 
+**Status**: COMPLETE (2025-12-30)
+
 #### Tasks
-- [ ] Write tests for VisionModelManager initialization
-- [ ] Write tests for model availability checks
-- [ ] Write tests for graceful handling of missing models
-- [ ] Implement `VisionModelManager` struct
-- [ ] Add optional model loading
-- [ ] Add model availability methods
-- [ ] Add list_models method
+- [x] Write tests for VisionModelManager initialization
+- [x] Write tests for model availability checks
+- [x] Write tests for graceful handling of missing models
+- [x] Implement `VisionModelManager` struct
+- [x] Add optional model loading
+- [x] Add model availability methods
+- [x] Add list_models method
 
 **Test Files:**
 - `tests/vision/test_model_manager.rs` (max 250 lines)
@@ -1181,15 +1183,17 @@ models/florence-2-onnx/
 
 **Goal**: Implement POST /v1/ocr HTTP handler
 
+**Status**: COMPLETE (2025-12-30)
+
 #### Tasks
-- [ ] Write tests for OCR handler with JSON request
-- [ ] Write tests for OCR handler with multipart request
-- [ ] Write tests for validation errors
-- [ ] Write tests for model not available error (503)
-- [ ] Write tests for chain context in response
-- [ ] Implement `ocr_handler` function
-- [ ] Add multipart support
-- [ ] Add proper error responses
+- [x] Write tests for OCR handler with JSON request
+- [x] Write tests for OCR handler with multipart request
+- [x] Write tests for validation errors
+- [x] Write tests for model not available error (503)
+- [x] Write tests for chain context in response
+- [x] Implement `ocr_handler` function
+- [x] Add multipart support
+- [x] Add proper error responses
 
 **Test Files:**
 - `tests/api/test_ocr_endpoint.rs` (max 400 lines)
@@ -1275,15 +1279,17 @@ models/florence-2-onnx/
 
 **Goal**: Implement POST /v1/describe-image HTTP handler
 
+**Status**: COMPLETE (2025-12-30)
+
 #### Tasks
-- [ ] Write tests for describe-image handler with JSON request
-- [ ] Write tests for describe-image handler with multipart request
-- [ ] Write tests for detail levels (brief, detailed, comprehensive)
-- [ ] Write tests for custom prompt handling
-- [ ] Write tests for model not available error (503)
-- [ ] Implement `describe_image_handler` function
-- [ ] Add multipart support
-- [ ] Add proper error responses
+- [x] Write tests for describe-image handler with JSON request
+- [x] Write tests for describe-image handler with multipart request
+- [x] Write tests for detail levels (brief, detailed, comprehensive)
+- [x] Write tests for custom prompt handling
+- [x] Write tests for model not available error (503)
+- [x] Implement `describe_image_handler` function
+- [x] Add multipart support
+- [x] Add proper error responses
 
 **Test Files:**
 - `tests/api/test_describe_image_endpoint.rs` (max 400 lines)
