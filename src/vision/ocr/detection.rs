@@ -207,7 +207,14 @@ impl OcrDetectionModel {
             .context("Failed to extract output tensor")?;
 
         let output_shape = output_tensor.shape();
-        debug!("Detection output shape: {:?}", output_shape);
+        info!("Detection output shape: {:?}", output_shape);
+
+        // Log min/max values in output for debugging
+        let (min_val, max_val) = output_tensor.iter().fold(
+            (f32::MAX, f32::MIN),
+            |(min, max), &v| (min.min(v), max.max(v))
+        );
+        info!("Detection output range: min={:.4}, max={:.4}", min_val, max_val);
 
         // Parse detection output into text boxes
         let text_boxes = self.parse_detection_output(output_tensor.view(), shape[2], shape[3])?;

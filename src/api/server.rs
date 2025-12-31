@@ -867,6 +867,8 @@ impl ApiServer {
             .route("/v1/models", get(models_handler))
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/embed", post(embed_handler_wrapper))
+            .route("/v1/ocr", post(ocr_handler_wrapper))
+            .route("/v1/describe-image", post(describe_image_handler_wrapper))
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(CorsLayer::permissive())
@@ -937,6 +939,60 @@ async fn embed_handler_wrapper(
 
     // Call the actual embed_handler
     match crate::api::embed_handler(axum::extract::State(app_state), Json(request)).await {
+        Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
+        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
+            "error": message
+        }))).into_response(),
+    }
+}
+
+// OCR handler wrapper that converts ApiServer state to AppState
+async fn ocr_handler_wrapper(
+    State(server): State<Arc<ApiServer>>,
+    Json(request): Json<crate::api::ocr::OcrRequest>,
+) -> impl IntoResponse {
+    use crate::blockchain::ChainRegistry;
+    use crate::api::http_server::AppState;
+
+    // Create AppState from ApiServer
+    let app_state = AppState {
+        api_server: server.clone(),
+        chain_registry: Arc::new(ChainRegistry::new()),
+        sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        embedding_model_manager: server.embedding_model_manager.clone(),
+        vision_model_manager: server.vision_model_manager.clone(),
+    };
+
+    // Call the actual ocr_handler
+    match crate::api::ocr_handler(axum::extract::State(app_state), Json(request)).await {
+        Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
+        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
+            "error": message
+        }))).into_response(),
+    }
+}
+
+// Describe image handler wrapper that converts ApiServer state to AppState
+async fn describe_image_handler_wrapper(
+    State(server): State<Arc<ApiServer>>,
+    Json(request): Json<crate::api::describe_image::DescribeImageRequest>,
+) -> impl IntoResponse {
+    use crate::blockchain::ChainRegistry;
+    use crate::api::http_server::AppState;
+
+    // Create AppState from ApiServer
+    let app_state = AppState {
+        api_server: server.clone(),
+        chain_registry: Arc::new(ChainRegistry::new()),
+        sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        embedding_model_manager: server.embedding_model_manager.clone(),
+        vision_model_manager: server.vision_model_manager.clone(),
+    };
+
+    // Call the actual describe_image_handler
+    match crate::api::describe_image_handler(axum::extract::State(app_state), Json(request)).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
         Err((status, message)) => (status, axum::response::Json(serde_json::json!({
             "error": message
@@ -2084,13 +2140,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle RAG uploadVectors message (Phase 3.4)
                     if json_msg["type"] == "uploadVectors" {
-                        info!("📤 uploadVectors message received");
+                        info!("📤 uploadVectors message received, WS session_id={:?}", session_id);
 
                         match serde_json::from_value::<crate::api::websocket::message_types::UploadVectorsRequest>(json_msg.clone()) {
                             Ok(request) => {
                                 // Get or create session with RAG enabled
                                 let sid = session_id.clone().unwrap_or_else(|| "default-rag-session".to_string());
-                                info!("🔍 Looking up session: {}", sid);
+                                info!("📤 uploadVectors using session: {} (from WS session_id={:?})", sid, session_id);
 
                                 // Use the new helper method
                                 let rag_session = {
@@ -2160,13 +2216,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle RAG searchVectors message (Phase 3.4)
                     if json_msg["type"] == "searchVectors" {
-                        info!("🔍 searchVectors message received");
+                        info!("🔍 searchVectors message received, WS session_id={:?}", session_id);
 
                         match serde_json::from_value::<crate::api::websocket::message_types::SearchVectorsRequest>(json_msg.clone()) {
                             Ok(request) => {
                                 // Get existing session with RAG (should already exist from uploadVectors)
                                 let sid = session_id.clone().unwrap_or_else(|| "default-rag-session".to_string());
-                                info!("🔍 Looking up session for search: {}", sid);
+                                info!("🔍 searchVectors using session: {} (from WS session_id={:?})", sid, session_id);
 
                                 // Get session from store
                                 let rag_session = {
