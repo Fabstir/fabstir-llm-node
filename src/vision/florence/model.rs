@@ -261,23 +261,30 @@ impl FlorenceModel {
         let start = Instant::now();
 
         let detail_level = DetailLevel::from_str(detail);
-        debug!("Describing image with detail level: {:?}", detail_level);
+        info!("Describing image with detail level: {:?}", detail_level);
 
         // 1. Preprocess image
+        info!("Step 1: Preprocessing image {}x{}", image.width(), image.height());
         let preprocessed = preprocess_for_florence(image);
-        debug!("Preprocessed image shape: {:?}", preprocessed.shape());
+        info!("Preprocessed image shape: {:?}", preprocessed.shape());
 
         // 2. Encode image
+        info!("Step 2: Encoding image...");
         let embeddings = self.encoder.encode(&preprocessed)
             .context("Failed to encode image")?;
-        debug!("Encoded to {} embeddings", embeddings.nrows());
+        info!("Encoded to {} sequences x {} dimensions", embeddings.nrows(), embeddings.ncols());
 
         // 3. Determine prompt
         let generation_prompt = prompt.unwrap_or_else(|| detail_level.prompt_prefix());
+        info!("Step 3: Using prompt: '{}'", generation_prompt);
 
         // 4. Generate description
+        info!("Step 4: Generating text from embeddings...");
         let description = self.decoder.generate(&embeddings, Some(generation_prompt))
             .context("Failed to generate description")?;
+        info!("Generated text: '{}' ({} chars)",
+              if description.len() > 50 { &description[..50] } else { &description },
+              description.len());
 
         let processing_time_ms = start.elapsed().as_millis() as u64;
 

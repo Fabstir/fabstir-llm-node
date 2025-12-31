@@ -8,6 +8,7 @@ use crate::api::websocket::message_types::{
 };
 use crate::api::websocket::session::{VectorLoadingStatus, WebSocketSession};
 use anyhow::{anyhow, Result};
+use tracing::info;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -20,12 +21,21 @@ pub fn handle_upload_vectors(
     request: UploadVectorsRequest,
 ) -> Result<UploadVectorsResponse> {
     // Get vector store from session
-    let vector_store = {
+    let (vector_store, session_id) = {
         let session_lock = session.lock().unwrap();
-        session_lock
-            .get_vector_store()
-            .ok_or_else(|| anyhow!("RAG not enabled for this session"))?
+        let sid = session_lock.id().clone();
+        let vs = session_lock.get_vector_store();
+        info!("📦 handle_upload_vectors: session_id={}, vector_store={}",
+              sid, if vs.is_some() { "Some" } else { "None" });
+        (
+            vs.ok_or_else(|| anyhow!("RAG not enabled for this session"))?,
+            sid,
+        )
     };
+
+    // Log Arc pointer for debugging
+    let arc_ptr = Arc::as_ptr(&vector_store);
+    info!("📦 handle_upload_vectors: Arc ptr={:?}", arc_ptr);
 
     // If replace=true, clear existing vectors first
     if request.replace {
@@ -49,9 +59,26 @@ pub fn handle_upload_vectors(
         }
     }
 
+    // Log final vector count
+    {
+        let store = vector_store.lock().unwrap();
+        info!("📦 handle_upload_vectors: session_id={}, final_count={}, uploaded={}, rejected={}",
+              session_id, store.count(), uploaded, rejected);
+    }
+
+    // Determine status: "success" if all uploaded, "partial" if some rejected, "error" if all failed
+    let status = if rejected == 0 {
+        "success".to_string()
+    } else if uploaded > 0 {
+        "partial".to_string()
+    } else {
+        "error".to_string()
+    };
+
     Ok(UploadVectorsResponse {
         msg_type: "uploadVectorsResponse".to_string(),
         request_id: request.request_id,
+        status,
         uploaded,
         rejected,
         errors,
@@ -73,14 +100,25 @@ pub fn handle_search_vectors(
     let start = Instant::now();
 
     // Check if we have S5-loaded vectors (HNSW index path)
-    let (has_vector_database, vector_loading_status, vector_index) = {
+    let (has_vector_database, vector_loading_status, vector_index, session_id, has_vector_store) = {
         let session_lock = session.lock().unwrap();
+        let sid = session_lock.id().clone();
+        let has_vs = session_lock.get_vector_store().is_some();
+        info!("🔍 handle_search_vectors: session_id={}, has_vector_database={}, has_vector_store={}",
+              sid, session_lock.vector_database.is_some(), has_vs);
         (
             session_lock.vector_database.is_some(),
             session_lock.vector_loading_status.clone(),
             session_lock.get_vector_index(),
+            sid,
+            has_vs,
         )
     };
+
+    // Log if no vector store (helps debug why vectors not found)
+    if !has_vector_store && !has_vector_database {
+        info!("⚠️ handle_search_vectors: session_id={} has NO vector_store and NO vector_database!", session_id);
+    }
 
     // PATH 1: S5-loaded vectors via HNSW index
     if has_vector_database {
@@ -144,10 +182,18 @@ pub fn handle_search_vectors(
     // PATH 2: Uploaded vectors via SessionVectorStore (backward compatibility)
     let vector_store = {
         let session_lock = session.lock().unwrap();
-        session_lock
-            .get_vector_store()
-            .ok_or_else(|| anyhow!("RAG not enabled for this session"))?
+        let vs = session_lock.get_vector_store();
+        info!("🔍 handle_search_vectors PATH 2: session_id={}, vector_store={}",
+              session_id, if vs.is_some() { "Some" } else { "None" });
+        vs.ok_or_else(|| anyhow!("RAG not enabled for this session"))?
     };
+
+    // Log Arc pointer and vector count for debugging
+    let arc_ptr = Arc::as_ptr(&vector_store);
+    {
+        let store = vector_store.lock().unwrap();
+        info!("🔍 handle_search_vectors: Arc ptr={:?}, vector_count={}", arc_ptr, store.count());
+    }
 
     // Perform search
     let search_results = {
@@ -285,5 +331,56 @@ mod tests {
         let result = handle_search_vectors(&session, request);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("RAG not enabled"));
+    }
+
+    /// Test that mimics production behavior:
+    /// - Different Arc<Mutex<WebSocketSession>> for upload and search
+    /// - Verifies vector_store Arc is properly shared between clones
+    #[test]
+    fn test_vector_store_shared_between_session_clones() {
+        // Create a session with RAG enabled
+        let mut session = WebSocketSession::with_config("test-clone".to_string(), SessionConfig::default());
+        session.enable_rag(100);
+
+        // Clone the session (simulating what get_or_create_rag_session returns)
+        let session_clone1 = session.clone();
+
+        // Create DIFFERENT Arc<Mutex> wrappers (simulating production behavior)
+        let arc1 = Arc::new(Mutex::new(session_clone1));
+
+        // Upload vectors using first Arc
+        let upload_req = UploadVectorsRequest {
+            request_id: Some("upload-1".to_string()),
+            vectors: vec![crate::api::websocket::message_types::VectorUpload {
+                id: "shared-doc".to_string(),
+                vector: vec![0.5; 384],
+                metadata: json!({"test": "shared"}),
+            }],
+            replace: false,
+        };
+        let upload_response = handle_upload_vectors(&arc1, upload_req).unwrap();
+        assert_eq!(upload_response.uploaded, 1);
+
+        // Now clone the ORIGINAL session again (simulating what get_session returns)
+        let session_clone2 = session.clone();
+
+        // Create ANOTHER DIFFERENT Arc<Mutex> wrapper
+        let arc2 = Arc::new(Mutex::new(session_clone2));
+
+        // Search using second Arc - should find the vector uploaded through first Arc
+        let search_req = SearchVectorsRequest {
+            request_id: Some("search-1".to_string()),
+            query_vector: vec![0.5; 384],
+            k: 5,
+            threshold: None,
+            metadata_filter: None,
+        };
+        let search_response = handle_search_vectors(&arc2, search_req).unwrap();
+
+        // THIS IS THE KEY ASSERTION: vectors uploaded through arc1 should be found through arc2
+        // because both clones share the same vector_store Arc<Mutex<SessionVectorStore>>
+        assert_eq!(search_response.results.len(), 1, "Should find 1 vector that was uploaded via different Arc");
+        assert_eq!(search_response.total_vectors, 1, "Total vectors should be 1");
+        assert_eq!(search_response.results[0].id, "shared-doc");
     }
 }

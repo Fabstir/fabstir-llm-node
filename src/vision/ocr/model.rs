@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView};
+use std::error::Error;
 use std::path::Path;
 use std::time::Instant;
 use tracing::{debug, info, warn};
@@ -138,9 +139,16 @@ impl PaddleOcrModel {
 
         let det_path = model_dir.join("det_model.onnx");
         let rec_path = model_dir.join("rec_model.onnx");
-        let dict_path = model_dir.join("ppocr_keys_v1.txt");
+
+        // Try to find dictionary file (English or Chinese)
+        let dict_path = if model_dir.join("en_dict.txt").exists() {
+            model_dir.join("en_dict.txt")
+        } else {
+            model_dir.join("ppocr_keys_v1.txt")
+        };
 
         info!("Loading PaddleOCR models from {}", model_dir.display());
+        info!("Using dictionary: {}", dict_path.display());
 
         // Load detection model
         let detector = OcrDetectionModel::new(&det_path)
@@ -207,7 +215,11 @@ impl PaddleOcrModel {
 
         // 2. Detect text boxes
         let text_boxes = self.detector.detect(&det_input)?;
-        debug!("Detected {} text regions", text_boxes.len());
+        info!("🔍 Detection found {} text regions", text_boxes.len());
+        for (i, tb) in text_boxes.iter().enumerate() {
+            info!("  Region {}: x={:.0}, y={:.0}, w={:.0}, h={:.0}, conf={:.2}%",
+                  i, tb.x, tb.y, tb.width, tb.height, tb.confidence * 100.0);
+        }
 
         // 3. For each text box, crop and recognize
         let mut regions = Vec::new();
@@ -254,6 +266,7 @@ impl PaddleOcrModel {
             let rec_input = preprocess_for_recognition(&cropped);
 
             // Recognize text
+            info!("🔤 Recognition input shape: {:?}", rec_input.shape());
             match self.recognizer.recognize(&rec_input) {
                 Ok(recognized) => {
                     // Skip empty results
@@ -280,7 +293,13 @@ impl PaddleOcrModel {
                     });
                 }
                 Err(e) => {
-                    warn!("Recognition failed for region: {}", e);
+                    warn!("Recognition failed for region: {:?}", e);
+                    // Log the full error chain
+                    let mut source = e.source();
+                    while let Some(s) = source {
+                        warn!("  Caused by: {}", s);
+                        source = s.source();
+                    }
                     continue;
                 }
             }

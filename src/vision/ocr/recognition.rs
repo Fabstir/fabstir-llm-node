@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 
 use super::preprocessing::REC_INPUT_HEIGHT;
 
-/// Recognition model input height (fixed)
+/// Recognition model input height (PP-OCRv5 English model uses 48)
 pub const RECOGNITION_INPUT_HEIGHT: u32 = REC_INPUT_HEIGHT; // 48
 
 /// Recognized text with confidence score
@@ -148,6 +148,10 @@ impl OcrRecognitionModel {
             .map(|output| output.name.clone())
             .unwrap_or_else(|| "softmax_0.tmp_0".to_string());
 
+        // Log expected input shape
+        if let Some(input) = session.inputs.first() {
+            info!("Recognition model expected input: {:?}", input.input_type);
+        }
         debug!(
             "Recognition model loaded - input: {}, output: {}",
             input_name, output_name
@@ -204,6 +208,7 @@ impl OcrRecognitionModel {
     ///
     /// # Arguments
     /// - `input`: Preprocessed image tensor of shape [1, 3, 48, W] (NCHW format)
+    ///            Width is dynamic based on text region aspect ratio
     ///
     /// # Returns
     /// - `Result<RecognizedText>`: Recognized text with confidence
@@ -211,12 +216,13 @@ impl OcrRecognitionModel {
     /// # Notes
     /// The input tensor should be preprocessed using `preprocess_for_recognition()`
     pub fn recognize(&self, input: &Array4<f32>) -> Result<RecognizedText> {
-        // Validate input shape
+        // Validate input shape (width is dynamic)
         let shape = input.shape();
-        if shape.len() != 4 || shape[0] != 1 || shape[1] != 3 || shape[2] != 48 {
+        if shape.len() != 4 || shape[0] != 1 || shape[1] != 3 || shape[2] != RECOGNITION_INPUT_HEIGHT as usize || shape[3] < 4 {
             anyhow::bail!(
-                "Invalid input shape: {:?}, expected [1, 3, 48, W]",
-                shape
+                "Invalid input shape: {:?}, expected [1, 3, {}, W>=4]",
+                shape,
+                RECOGNITION_INPUT_HEIGHT
             );
         }
 
@@ -315,7 +321,54 @@ impl OcrRecognitionModel {
             avg_confidence.min(1.0)
         };
 
+        // Post-process: insert spaces at word boundaries for English text
+        let text = Self::insert_word_spaces(&text);
+
         Ok((text, avg_confidence, char_confidences))
+    }
+
+    /// Insert spaces at likely word boundaries in English text
+    ///
+    /// PaddleOCR CTC decoder doesn't output spaces, so we add them heuristically:
+    /// - Before uppercase letters following lowercase (camelCase boundaries)
+    /// - Before digits following letters
+    /// - After common punctuation
+    fn insert_word_spaces(text: &str) -> String {
+        if text.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::with_capacity(text.len() * 2);
+        let chars: Vec<char> = text.chars().collect();
+
+        for i in 0..chars.len() {
+            let c = chars[i];
+
+            if i > 0 {
+                let prev = chars[i - 1];
+
+                // Insert space before uppercase following lowercase (camelCase)
+                if prev.is_ascii_lowercase() && c.is_ascii_uppercase() {
+                    result.push(' ');
+                }
+                // Insert space before digit following letter
+                else if prev.is_ascii_alphabetic() && c.is_ascii_digit() {
+                    result.push(' ');
+                }
+                // Insert space after digit before letter
+                else if prev.is_ascii_digit() && c.is_ascii_alphabetic() {
+                    result.push(' ');
+                }
+                // Insert space after certain punctuation
+                else if (prev == ':' || prev == '.' || prev == ',') && c.is_ascii_alphanumeric() {
+                    result.push(' ');
+                }
+            }
+
+            result.push(c);
+        }
+
+        result
     }
 }
 
@@ -353,6 +406,59 @@ mod tests {
     #[test]
     fn test_recognition_input_height_constant() {
         assert_eq!(RECOGNITION_INPUT_HEIGHT, 48);
+    }
+
+    #[test]
+    fn test_insert_word_spaces_camel_case() {
+        // Test camelCase boundary detection
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("TheToxicAvenger"),
+            "The Toxic Avenger"
+        );
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("DirectedByMaconBlair"),
+            "Directed By Macon Blair"
+        );
+    }
+
+    #[test]
+    fn test_insert_word_spaces_numbers() {
+        // Test number boundaries
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("Film2024Release"),
+            "Film 2024 Release"
+        );
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("Chapter5Section3"),
+            "Chapter 5 Section 3"
+        );
+    }
+
+    #[test]
+    fn test_insert_word_spaces_punctuation() {
+        // Test punctuation spacing
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("Title:TheMovie"),
+            "Title: The Movie"
+        );
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("Rating.8.5Stars"),
+            "Rating. 8. 5 Stars"
+        );
+    }
+
+    #[test]
+    fn test_insert_word_spaces_empty() {
+        assert_eq!(OcrRecognitionModel::insert_word_spaces(""), "");
+    }
+
+    #[test]
+    fn test_insert_word_spaces_already_spaced() {
+        // Should not double-space already spaced text
+        assert_eq!(
+            OcrRecognitionModel::insert_word_spaces("Hello World"),
+            "Hello World"
+        );
     }
 
     #[tokio::test]
@@ -399,8 +505,8 @@ mod tests {
             Err(_) => return, // Skip if model not available
         };
 
-        // Create a simple test input (48 height, variable width)
-        let input = Array4::<f32>::zeros((1, 3, 48, 320));
+        // Create a simple test input (32 height, variable width)
+        let input = Array4::<f32>::zeros((1, 3, 32, 320));
 
         let result = model.recognize(&input);
         assert!(result.is_ok());

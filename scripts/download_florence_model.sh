@@ -16,7 +16,10 @@ NC='\033[0m' # No Color
 
 # Configuration
 MODEL_NAME="florence-2"
-MODEL_DIR="/workspace/models/${MODEL_NAME}-onnx"
+# Get script directory and set model dir relative to project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
+MODEL_DIR="${PROJECT_ROOT}/models/${MODEL_NAME}-onnx"
 # Using HuggingFace ONNX community models
 HUGGINGFACE_BASE="https://huggingface.co/onnx-community/Florence-2-base-ft/resolve/main"
 

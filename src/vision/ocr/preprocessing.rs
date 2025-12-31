@@ -8,7 +8,7 @@ use ndarray::Array4;
 /// Target size for PaddleOCR detection model
 pub const OCR_INPUT_SIZE: u32 = 640;
 
-/// Recognition model input height
+/// Recognition model input height (PP-OCRv5 English model uses 48)
 pub const REC_INPUT_HEIGHT: u32 = 48;
 
 /// Maximum width for recognition model input
@@ -56,17 +56,18 @@ pub fn preprocess_for_detection(image: &DynamicImage) -> Array4<f32> {
 /// Preprocess a cropped text region for recognition
 ///
 /// Steps:
-/// 1. Resize to height 48, variable width (max 320)
-/// 2. Pad if needed to reach target width
-/// 3. Normalize with ImageNet mean/std
-/// 4. Convert to NCHW tensor format [1, 3, 48, W]
+/// 1. Resize to height 32, dynamic width (preserving aspect ratio)
+/// 2. Normalize with ImageNet mean/std
+/// 3. Convert to NCHW tensor format [1, 3, 32, W]
+///
+/// Note: PP-OCRv5 expects dynamic width, no padding needed
 pub fn preprocess_for_recognition(image: &DynamicImage) -> Array4<f32> {
     let (orig_w, orig_h) = image.dimensions();
 
     // Calculate new width while preserving aspect ratio
     let scale = REC_INPUT_HEIGHT as f32 / orig_h as f32;
     let new_width = ((orig_w as f32 * scale).round() as u32).min(REC_MAX_WIDTH);
-    let new_width = new_width.max(1); // Ensure at least 1 pixel width
+    let new_width = new_width.max(4); // Ensure minimum width of 4 pixels
 
     // Resize image
     let resized = image.resize_exact(
@@ -76,27 +77,13 @@ pub fn preprocess_for_recognition(image: &DynamicImage) -> Array4<f32> {
     );
     let rgb = resized.to_rgb8();
 
-    // Create output tensor with padding to max width
-    let output_width = REC_MAX_WIDTH as usize;
+    // Create output tensor with actual width (no padding for PP-OCRv5)
+    let output_width = new_width as usize;
     let mut tensor = Array4::zeros((1, 3, REC_INPUT_HEIGHT as usize, output_width));
 
-    // Fill with padding value first (normalized 128/255 = 0.5)
-    let pad_values: [f32; 3] = [
-        (0.5 - MEAN[0]) / STD[0],
-        (0.5 - MEAN[1]) / STD[1],
-        (0.5 - MEAN[2]) / STD[2],
-    ];
-    for c in 0..3 {
-        for y in 0..REC_INPUT_HEIGHT as usize {
-            for x in 0..output_width {
-                tensor[[0, c, y, x]] = pad_values[c];
-            }
-        }
-    }
-
-    // Fill actual image pixels
+    // Fill tensor with normalized pixel values
     for y in 0..REC_INPUT_HEIGHT as usize {
-        for x in 0..new_width as usize {
+        for x in 0..output_width {
             let pixel = rgb.get_pixel(x as u32, y as u32);
             for c in 0..3 {
                 let normalized = (pixel[c] as f32 / 255.0 - MEAN[c]) / STD[c];
@@ -240,23 +227,30 @@ mod tests {
     fn test_preprocess_for_recognition_shape() {
         let img = DynamicImage::new_rgb8(100, 48);
         let tensor = preprocess_for_recognition(&img);
-        assert_eq!(tensor.shape(), &[1, 3, 48, 320]);
+        // Width is dynamic (aspect ratio preserved), height is 48
+        assert_eq!(tensor.shape()[0], 1);
+        assert_eq!(tensor.shape()[1], 3);
+        assert_eq!(tensor.shape()[2], 48);
+        assert!(tensor.shape()[3] >= 4 && tensor.shape()[3] <= 320);
     }
 
     #[test]
     fn test_preprocess_for_recognition_wide_image() {
-        // Test with very wide image
+        // Test with very wide image - should be clamped to max width 320
         let img = DynamicImage::new_rgb8(1000, 48);
         let tensor = preprocess_for_recognition(&img);
-        assert_eq!(tensor.shape(), &[1, 3, 48, 320]);
+        assert_eq!(tensor.shape()[2], 48);
+        assert_eq!(tensor.shape()[3], 320); // Clamped to max
     }
 
     #[test]
     fn test_preprocess_for_recognition_tall_image() {
-        // Test with tall image that will be scaled
+        // Test with tall image that will be scaled down
         let img = DynamicImage::new_rgb8(100, 96);
         let tensor = preprocess_for_recognition(&img);
-        assert_eq!(tensor.shape(), &[1, 3, 48, 320]);
+        assert_eq!(tensor.shape()[2], 48);
+        // Width = 100 * (48/96) = 50
+        assert_eq!(tensor.shape()[3], 50);
     }
 
     #[test]

@@ -86,10 +86,22 @@ pub async fn describe_image_handler(
     );
 
     // 5. Run Florence description
+    info!(
+        "Running Florence describe: detail={}, prompt={:?}",
+        request.detail,
+        request.prompt.as_deref()
+    );
+
     let description_result = florence_model
         .describe(&image, &request.detail, request.prompt.as_deref())
         .map_err(|e| {
+            // Log full error chain for debugging
             warn!("Florence description failed: {}", e);
+            let mut chain = e.chain();
+            chain.next(); // Skip the first (already logged)
+            for cause in chain {
+                warn!("  Caused by: {}", cause);
+            }
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Description failed: {}", e),

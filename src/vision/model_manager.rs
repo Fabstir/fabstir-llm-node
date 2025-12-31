@@ -19,7 +19,8 @@ pub struct VisionModelConfig {
 impl Default for VisionModelConfig {
     fn default() -> Self {
         Self {
-            ocr_model_dir: Some("./models/paddleocr-onnx".to_string()),
+            // Use English PP-OCRv5 models for better English text recognition
+            ocr_model_dir: Some("./models/paddleocr-english-onnx".to_string()),
             florence_model_dir: Some("./models/florence-2-onnx".to_string()),
         }
     }
