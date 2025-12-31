@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.4.1",
-  "build": "v8.4.1-s5-integration-tests-2025-11-15",
-  "date": "2025-11-15",
+  "version": "8.6.6",
+  "build": "v8.6.6-word-spacing-2025-12-31",
+  "date": "2025-12-31",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -129,13 +129,19 @@ GET /v1/version
     "chat-templates",
     "model-specific-formatting",
     "s5-vector-loading",
-    "encrypted-vector-database-paths"
+    "encrypted-vector-database-paths",
+    "cpu-ocr",
+    "paddleocr-onnx",
+    "cpu-vision",
+    "florence-2-onnx",
+    "image-to-text",
+    "image-description"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
-    "S5 Integration Testing Complete (v8.4.1)",
-    "All 19 S5 vector loading tests passing (100%)",
-    "Enhanced S5.js bridge integration verified"
+    "Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
+    "Added POST /v1/describe-image endpoint for image description using Florence-2",
+    "Added word spacing post-processing for English OCR output (v8.6.6)"
   ]
 }
 ```
@@ -144,7 +150,7 @@ GET /v1/version
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | String | Semantic version number (e.g., "8.4.1") |
+| `version` | String | Semantic version number (e.g., "8.6.6") |
 | `build` | String | Full build string with feature tag and date |
 | `date` | String | Build date (YYYY-MM-DD) |
 | `features` | Array<String> | List of supported features |
@@ -1134,6 +1140,16 @@ Content-Type: application/json
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OCR_MODEL_PATH` | `./models/paddleocr-onnx` | Path to PaddleOCR ONNX models |
+
+#### Notes
+
+- **Word Spacing**: The OCR automatically inserts spaces at word boundaries for English text:
+  - Between lowercase and uppercase letters (e.g., "HelloWorld" → "Hello World")
+  - Between letters and numbers (e.g., "Text123Data" → "Text 123 Data")
+  - After punctuation marks (e.g., "Title:Text" → "Title: Text")
+- **Model**: Uses PP-OCRv5 English ONNX models (detection + recognition)
+- **Input Height**: Recognition model expects 48px height (dynamic width)
+- **CPU-Only**: Runs entirely on CPU to avoid GPU VRAM competition with LLM
 
 ---
 
