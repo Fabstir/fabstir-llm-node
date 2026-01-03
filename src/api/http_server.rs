@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+use axum::extract::DefaultBodyLimit;
 use axum::{
     extract::{Json, Path, Query, State},
     http::{header, StatusCode},
@@ -63,7 +64,18 @@ impl AppState {
     }
 }
 
+/// Maximum body size for vision endpoints (20MB to support ~15MB raw images after base64 encoding)
+const VISION_BODY_LIMIT: usize = 20 * 1024 * 1024;
+
 pub fn create_app(state: Arc<AppState>) -> Router {
+    // Vision endpoints need a higher body limit for large images
+    // Base64 encoding adds ~33% overhead, so 20MB allows ~15MB raw images
+    let vision_routes = Router::new()
+        .route("/ocr", post(ocr_handler))
+        .route("/describe-image", post(describe_image_handler))
+        .layer(DefaultBodyLimit::max(VISION_BODY_LIMIT))
+        .with_state((*state).clone());
+
     Router::new()
         // Health check
         .route("/health", get(health_handler))
@@ -84,9 +96,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/inference", post(inference_handler))
         // Embedding endpoint
         .route("/v1/embed", post(embed_handler))
-        // Vision endpoints (OCR and image description)
-        .route("/v1/ocr", post(ocr_handler))
-        .route("/v1/describe-image", post(describe_image_handler))
+        // Vision endpoints (OCR and image description) with higher body limit
+        .nest("/v1", vision_routes)
         // WebSocket endpoint
         .route("/v1/ws", get(websocket_handler))
         // Metrics endpoint

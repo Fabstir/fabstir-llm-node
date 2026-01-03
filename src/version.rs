@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.6.6-word-spacing-2025-12-31";
+pub const VERSION: &str = "v8.6.18-florence-preprocessing-fix-2026-01-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.6.6";
+pub const VERSION_NUMBER: &str = "8.6.18";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 6;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 6;
+pub const VERSION_PATCH: u32 = 18;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-31";
+pub const BUILD_DATE: &str = "2026-01-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -72,6 +72,7 @@ pub const FEATURES: &[&str] = &[
     "florence-2-onnx",
     "image-to-text",
     "image-description",
+    "vision-20mb-body-limit",
 ];
 
 /// Supported chain IDs
@@ -91,6 +92,16 @@ pub const BREAKING_CHANGES: &[&str] = &[
     "FIX: Switched to English PP-OCRv5 models for accurate English text OCR (v8.6.3)",
     "FIX: Fixed recognition height to 48 (ONNX model requirement) (v8.6.5)",
     "FIX: Added word spacing post-processing for English OCR output (v8.6.6)",
+    "FIX: Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)",
+    "FIX: Added embed_tokens.onnx support for Florence-2 decoder (v8.6.8)",
+    "FIX: Use correct Florence-2 task tokens: <cap> and <dcap> (v8.6.11)",
+    "FIX: Remove trailing EOS from Florence input tokens for autoregressive generation (v8.6.12)",
+    "FIX: Manual task token construction [BOS, <dcap>], debug logging, encoder validation (v8.6.13)",
+    "FIX: Use <cap> token instead of <dcap> - ONNX model handles simple caption better (v8.6.14)",
+    "FIX: Use BOS-only start without task tokens - ONNX export may have broken task token handling (v8.6.15)",
+    "FIX: Use natural language prompts instead of task tokens - 'A photo of', 'The image shows' work correctly (v8.6.16)",
+    "FIX: Add repetition masking to Florence decoder - prevents 'shows shows shows...' loops (v8.6.17)",
+    "FIX: Use ImageNet normalization and CenterCrop for Florence preprocessing (was CLIP/Letterbox) (v8.6.18)",
 ];
 
 /// Get formatted version string for logging
@@ -118,25 +129,26 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 6);
-        assert_eq!(VERSION_PATCH, 6);
+        assert_eq!(VERSION_PATCH, 18);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
         assert!(FEATURES.contains(&"cpu-vision"));
+        assert!(FEATURES.contains(&"vision-20mb-body-limit"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.6.6"));
-        assert!(version.contains("2025-12-31"));
+        assert!(version.contains("8.6.18"));
+        assert!(version.contains("2026-01-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.6.6-word-spacing-2025-12-31");
-        assert_eq!(VERSION_NUMBER, "8.6.6");
-        assert_eq!(BUILD_DATE, "2025-12-31");
+        assert_eq!(VERSION, "v8.6.18-florence-preprocessing-fix-2026-01-03");
+        assert_eq!(VERSION_NUMBER, "8.6.18");
+        assert_eq!(BUILD_DATE, "2026-01-03");
     }
 }
