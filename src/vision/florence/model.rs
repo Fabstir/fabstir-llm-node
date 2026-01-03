@@ -111,11 +111,17 @@ impl DetailLevel {
     }
 
     /// Get the prompt prefix for this detail level
+    ///
+    /// NOTE: Task tokens (<cap>, <dcap>) return "unanswerable" with this ONNX export.
+    /// Natural language prompts work correctly, so we use those instead.
+    /// Tested prompts that work:
+    /// - "A photo of" → "A photo of a man in a suit and tie."
+    /// - "The image shows" → "The image shows a man with a beard..."
     pub fn prompt_prefix(&self) -> &'static str {
         match self {
-            Self::Brief => "Briefly describe this image:",
-            Self::Detailed => "Describe this image in detail:",
-            Self::Comprehensive => "Provide a comprehensive description of this image, including all visible objects, their positions, colors, and the overall scene:",
+            Self::Brief => "A photo of",
+            Self::Detailed => "The image shows",
+            Self::Comprehensive => "This is an image showing",
         }
     }
 }
@@ -419,9 +425,10 @@ mod tests {
 
     #[test]
     fn test_detail_level_prompt_prefix() {
-        assert!(DetailLevel::Brief.prompt_prefix().contains("Briefly"));
-        assert!(DetailLevel::Detailed.prompt_prefix().contains("detail"));
-        assert!(DetailLevel::Comprehensive.prompt_prefix().contains("comprehensive"));
+        // Natural language prompts work better than task tokens with this ONNX export
+        assert_eq!(DetailLevel::Brief.prompt_prefix(), "A photo of");
+        assert_eq!(DetailLevel::Detailed.prompt_prefix(), "The image shows");
+        assert_eq!(DetailLevel::Comprehensive.prompt_prefix(), "This is an image showing");
     }
 
     #[test]

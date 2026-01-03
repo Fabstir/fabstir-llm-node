@@ -8,11 +8,11 @@ use ndarray::Array4;
 /// Target size for Florence-2 vision encoder
 pub const FLORENCE_INPUT_SIZE: u32 = 768;
 
-/// CLIP normalization mean values
-pub const MEAN: [f32; 3] = [0.48145466, 0.4578275, 0.40821073];
+/// ImageNet normalization mean values (Florence-2 uses ImageNet, not CLIP)
+pub const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 
-/// CLIP normalization std values
-pub const STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
+/// ImageNet normalization std values
+pub const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
 /// Preprocessing mode for Florence-2
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,7 +27,8 @@ pub enum ResizeMode {
 
 impl Default for ResizeMode {
     fn default() -> Self {
-        Self::Letterbox
+        // CenterCrop matches Florence-2's expected preprocessing
+        Self::CenterCrop
     }
 }
 
@@ -39,7 +40,8 @@ impl Default for ResizeMode {
 /// 3. Normalize with CLIP mean/std: (pixel/255 - mean) / std
 /// 4. Convert to NCHW tensor format [1, 3, H, W]
 pub fn preprocess_for_florence(image: &DynamicImage) -> Array4<f32> {
-    preprocess_for_florence_with_mode(image, ResizeMode::Letterbox)
+    // CenterCrop matches Florence-2's expected preprocessing (same as Python test)
+    preprocess_for_florence_with_mode(image, ResizeMode::CenterCrop)
 }
 
 /// Preprocess with specified resize mode
@@ -266,10 +268,14 @@ mod tests {
     }
 
     #[test]
-    fn test_clip_normalization_values() {
-        // CLIP uses different normalization than ImageNet
-        assert!(MEAN[0] > 0.4 && MEAN[0] < 0.5);
-        assert!(STD[0] > 0.2 && STD[0] < 0.3);
+    fn test_imagenet_normalization_values() {
+        // Florence-2 uses ImageNet normalization
+        assert!((MEAN[0] - 0.485).abs() < 0.001);
+        assert!((MEAN[1] - 0.456).abs() < 0.001);
+        assert!((MEAN[2] - 0.406).abs() < 0.001);
+        assert!((STD[0] - 0.229).abs() < 0.001);
+        assert!((STD[1] - 0.224).abs() < 0.001);
+        assert!((STD[2] - 0.225).abs() < 0.001);
     }
 
     #[test]
@@ -366,7 +372,8 @@ mod tests {
 
     #[test]
     fn test_default_resize_mode() {
-        assert_eq!(ResizeMode::default(), ResizeMode::Letterbox);
+        // CenterCrop matches Florence-2's expected preprocessing
+        assert_eq!(ResizeMode::default(), ResizeMode::CenterCrop);
     }
 
     #[test]

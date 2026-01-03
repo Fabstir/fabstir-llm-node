@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.6.6",
-  "build": "v8.6.6-word-spacing-2025-12-31",
-  "date": "2025-12-31",
+  "version": "8.6.7",
+  "build": "v8.6.7-vision-body-limit-2026-01-03",
+  "date": "2026-01-03",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -135,13 +135,15 @@ GET /v1/version
     "cpu-vision",
     "florence-2-onnx",
     "image-to-text",
-    "image-description"
+    "image-description",
+    "vision-20mb-body-limit"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
     "Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
     "Added POST /v1/describe-image endpoint for image description using Florence-2",
-    "Added word spacing post-processing for English OCR output (v8.6.6)"
+    "Added word spacing post-processing for English OCR output (v8.6.6)",
+    "Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)"
   ]
 }
 ```
@@ -150,7 +152,7 @@ GET /v1/version
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | String | Semantic version number (e.g., "8.6.6") |
+| `version` | String | Semantic version number (e.g., "8.6.7") |
 | `build` | String | Full build string with feature tag and date |
 | `date` | String | Build date (YYYY-MM-DD) |
 | `features` | Array<String> | List of supported features |
@@ -1150,6 +1152,7 @@ Content-Type: application/json
 - **Model**: Uses PP-OCRv5 English ONNX models (detection + recognition)
 - **Input Height**: Recognition model expects 48px height (dynamic width)
 - **CPU-Only**: Runs entirely on CPU to avoid GPU VRAM competition with LLM
+- **Body Limit**: Maximum request body size is 20MB to support large images (v8.6.7+)
 
 ---
 
@@ -1261,6 +1264,7 @@ Content-Type: application/json
 - Subsequent inferences: 2-5 seconds depending on image size
 - Recommended image size: 512x512 to 1024x1024 pixels
 - Larger images are automatically resized
+- **Body Limit**: Maximum request body size is 20MB to support large images (v8.6.7+)
 
 ---
 

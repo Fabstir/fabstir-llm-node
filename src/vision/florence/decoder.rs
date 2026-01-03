@@ -31,15 +31,12 @@ pub const MAX_TOKENS: usize = 500;
 /// Runs on CPU only to avoid GPU VRAM competition with LLM.
 #[derive(Clone)]
 pub struct FlorenceDecoder {
-    /// ONNX Runtime session (thread-safe)
+    /// ONNX Runtime session for decoder (thread-safe)
     session: Arc<Mutex<Session>>,
+    /// ONNX Runtime session for token embedding (thread-safe)
+    embed_session: Arc<Mutex<Session>>,
     /// Tokenizer for text encoding/decoding
     tokenizer: Arc<Tokenizer>,
-    /// Model input names
-    encoder_hidden_states_name: String,
-    input_ids_name: String,
-    /// Model output name
-    output_name: String,
     /// Maximum tokens to generate
     max_tokens: usize,
     /// Vocabulary size
@@ -47,7 +44,6 @@ pub struct FlorenceDecoder {
     /// Special token IDs
     bos_token_id: u32,
     eos_token_id: u32,
-    pad_token_id: u32,
     /// Whether model is loaded and ready
     is_ready: bool,
 }
@@ -76,10 +72,17 @@ impl FlorenceDecoder {
     /// Returns error if:
     /// - Model file not found
     /// - Tokenizer file not found
+    /// - embed_tokens.onnx not found
     /// - ONNX Runtime initialization fails
     pub async fn new<P: AsRef<Path>>(model_path: P, tokenizer_path: P) -> Result<Self> {
         let model_path = model_path.as_ref();
         let tokenizer_path = tokenizer_path.as_ref();
+
+        // Derive embed_tokens path from model path
+        let embed_path = model_path
+            .parent()
+            .map(|p| p.join("embed_tokens.onnx"))
+            .unwrap_or_else(|| std::path::PathBuf::from("embed_tokens.onnx"));
 
         // Validate paths exist
         if !model_path.exists() {
@@ -92,6 +95,12 @@ impl FlorenceDecoder {
             anyhow::bail!(
                 "Florence tokenizer not found: {}",
                 tokenizer_path.display()
+            );
+        }
+        if !embed_path.exists() {
+            anyhow::bail!(
+                "Florence embed_tokens model not found: {}. Please download it from HuggingFace.",
+                embed_path.display()
             );
         }
 
@@ -107,7 +116,23 @@ impl FlorenceDecoder {
         let vocab_size = tokenizer.get_vocab_size(true);
         info!("Loaded tokenizer with {} tokens", vocab_size);
 
-        // Load ONNX model with CPU-only execution
+        // Load embed_tokens model (converts token IDs to embeddings)
+        info!("Loading embed_tokens from {}", embed_path.display());
+        let embed_session = Session::builder()
+            .context("Failed to create embed session builder")?
+            .with_execution_providers([CPUExecutionProvider::default().build()])
+            .context("Failed to set CPU execution provider for embed")?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .context("Failed to set optimization level for embed")?
+            .with_intra_threads(4)
+            .context("Failed to set intra threads for embed")?
+            .commit_from_file(&embed_path)
+            .context(format!(
+                "Failed to load embed_tokens model from {}",
+                embed_path.display()
+            ))?;
+
+        // Load decoder ONNX model with CPU-only execution
         let session = Session::builder()
             .context("Failed to create session builder")?
             .with_execution_providers([CPUExecutionProvider::default().build()])
@@ -122,32 +147,9 @@ impl FlorenceDecoder {
                 model_path.display()
             ))?;
 
-        // Get input/output names
-        // Decoder typically has: encoder_hidden_states, input_ids, attention_mask
-        let encoder_hidden_states_name = session
-            .inputs
-            .iter()
-            .find(|i| i.name.contains("encoder") || i.name.contains("hidden"))
-            .map(|i| i.name.clone())
-            .unwrap_or_else(|| "encoder_hidden_states".to_string());
-
-        let input_ids_name = session
-            .inputs
-            .iter()
-            .find(|i| i.name.contains("input_ids"))
-            .map(|i| i.name.clone())
-            .unwrap_or_else(|| "input_ids".to_string());
-
-        let output_name = session
-            .outputs
-            .first()
-            .map(|o| o.name.clone())
-            .unwrap_or_else(|| "logits".to_string());
-
-        debug!(
-            "Decoder loaded - inputs: [{}, {}], output: {}",
-            encoder_hidden_states_name, input_ids_name, output_name
-        );
+        // Log decoder inputs for debugging
+        let input_names: Vec<_> = session.inputs.iter().map(|i| &i.name).collect();
+        debug!("Decoder inputs: {:?}", input_names);
 
         // Get special token IDs from tokenizer
         let bos_token_id = tokenizer
@@ -158,29 +160,22 @@ impl FlorenceDecoder {
             .token_to_id("</s>")
             .or_else(|| tokenizer.token_to_id("[SEP]"))
             .unwrap_or(2);
-        let pad_token_id = tokenizer
-            .token_to_id("<pad>")
-            .or_else(|| tokenizer.token_to_id("[PAD]"))
-            .unwrap_or(1);
 
         debug!(
-            "Special tokens - BOS: {}, EOS: {}, PAD: {}",
-            bos_token_id, eos_token_id, pad_token_id
+            "Special tokens - BOS: {}, EOS: {}",
+            bos_token_id, eos_token_id
         );
 
         info!("✅ Florence decoder loaded successfully (CPU-only)");
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
+            embed_session: Arc::new(Mutex::new(embed_session)),
             tokenizer: Arc::new(tokenizer),
-            encoder_hidden_states_name,
-            input_ids_name,
-            output_name,
             max_tokens: DEFAULT_MAX_TOKENS,
             vocab_size,
             bos_token_id,
             eos_token_id,
-            pad_token_id,
             is_ready: true,
         })
     }
@@ -225,33 +220,101 @@ impl FlorenceDecoder {
         image_embeddings: &Array2<f32>,
         prompt: Option<&str>,
     ) -> Result<String> {
-        // Initialize input tokens
-        let mut tokens: Vec<u32> = if let Some(prompt_text) = prompt {
+        // Initialize input tokens with prompt
+        // NOTE: Task tokens (<cap>, <dcap>) produce "unanswerable" with this ONNX export
+        // Natural language prompts like "A photo of" work correctly
+        let mut tokens = vec![self.bos_token_id];
+
+        if let Some(prompt_text) = prompt {
+            // Tokenize the prompt and append (without the auto-added BOS/EOS)
             let encoding = self
                 .tokenizer
-                .encode(prompt_text, true)
-                .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
-            encoding.get_ids().to_vec()
+                .encode(prompt_text, false)
+                .map_err(|e| anyhow::anyhow!("Failed to encode prompt: {}", e))?;
+
+            // Filter out special tokens from the encoding
+            let prompt_tokens: Vec<u32> = encoding
+                .get_ids()
+                .iter()
+                .copied()
+                .filter(|&id| id != self.bos_token_id && id != self.eos_token_id)
+                .collect();
+
+            info!(
+                "Prompt '{}' tokenized to {} tokens: {:?}",
+                prompt_text,
+                prompt_tokens.len(),
+                prompt_tokens
+            );
+            tokens.extend(prompt_tokens);
         } else {
-            vec![self.bos_token_id]
-        };
+            info!("No prompt provided, using BOS-only start");
+        }
+
+        // Log the actual token IDs for debugging
+        info!("Initial tokens: {:?} (len={})", tokens, tokens.len());
+        for (i, &tid) in tokens.iter().enumerate() {
+            let tok_str = self.tokenizer.decode(&[tid], false).unwrap_or_default();
+            info!("  Token {}: ID {} = '{}'", i, tid, tok_str);
+        }
+
+        // Verify encoder output is valid (not all zeros or NaN)
+        let enc_mean: f32 = image_embeddings.iter().sum::<f32>() / image_embeddings.len() as f32;
+        let enc_var: f32 = image_embeddings.iter().map(|x| (x - enc_mean).powi(2)).sum::<f32>() / image_embeddings.len() as f32;
+        info!("Encoder output stats: mean={:.6}, variance={:.6}, shape={:?}", enc_mean, enc_var, image_embeddings.shape());
+
+        if enc_var < 0.001 {
+            warn!("⚠️ Encoder output has very low variance ({:.6}) - image features may be garbage!", enc_var);
+        }
+        if enc_mean.is_nan() || enc_var.is_nan() {
+            warn!("⚠️ Encoder output contains NaN values - model may be corrupted!");
+        }
 
         // Autoregressive generation loop
+        debug!("Starting generation with {} initial tokens, EOS={}", tokens.len(), self.eos_token_id);
         for step in 0..self.max_tokens {
             // Get next token logits
             let logits = self.forward(image_embeddings, &tokens)?;
 
-            // Greedy decoding: select highest probability token
-            let next_token = self.argmax(&logits)?;
+            // Greedy decoding: select highest probability token (mask recent tokens to prevent loops)
+            let next_token = self.argmax(&logits, &tokens)?;
+
+            // Debug: show what token was selected and top logits
+            if step < 5 {
+                let token_text = self.tokenizer.decode(&[next_token], false).unwrap_or_default();
+                info!("Step {}: selected token {} = '{}' (repetition masked)", step, next_token, token_text);
+
+                // Build mask set for display
+                let mask_tokens: std::collections::HashSet<u32> = tokens
+                    .iter()
+                    .rev()
+                    .take(5)
+                    .copied()
+                    .chain(std::iter::once(self.bos_token_id))
+                    .collect();
+
+                // Show top 5 logits (excluding masked tokens)
+                let mut indexed_logits: Vec<(usize, f32)> = logits.iter().enumerate()
+                    .filter(|(i, _)| !mask_tokens.contains(&(*i as u32)))
+                    .map(|(i, &v)| (i, v)).collect();
+                indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                info!("  Top 5 logits (after masking {} tokens):", mask_tokens.len());
+                for (idx, val) in indexed_logits.iter().take(5) {
+                    let tok = self.tokenizer.decode(&[*idx as u32], false).unwrap_or_default();
+                    info!("    ID {:5} = {:>10.4} '{}'", idx, val, tok);
+                }
+            }
 
             // Check for end of sequence
             if next_token == self.eos_token_id {
-                debug!("Generation stopped at EOS after {} tokens", step + 1);
+                info!("Generation stopped at EOS after {} tokens (total {} tokens)", step + 1, tokens.len());
                 break;
             }
 
             tokens.push(next_token);
         }
+
+        debug!("Generation complete: {} total tokens", tokens.len());
 
         // Decode tokens to text
         let output_text = self
@@ -259,18 +322,61 @@ impl FlorenceDecoder {
             .decode(&tokens, true)
             .map_err(|e| anyhow::anyhow!("Decoding failed: {}", e))?;
 
-        // Clean up the output
+        // Clean up the output - remove special tokens and task tokens
         let cleaned = output_text
             .trim()
             .replace("<s>", "")
             .replace("</s>", "")
             .replace("<pad>", "")
+            // Remove Florence-2 task tokens
+            .replace("<cap>", "")
+            .replace("</cap>", "")
+            .replace("<dcap>", "")
+            .replace("</dcap>", "")
+            .replace("<ncap>", "")
+            .replace("</ncap>", "")
             .trim()
             .to_string();
 
         debug!("Generated {} tokens: '{}'", tokens.len(), cleaned);
 
         Ok(cleaned)
+    }
+
+    /// Convert token IDs to embeddings using embed_tokens model
+    fn embed_tokens(&self, input_ids: &[u32]) -> Result<ndarray::Array3<f32>> {
+        let mut embed_session = self.embed_session.lock().unwrap();
+
+        // Prepare input IDs [1, token_len]
+        let token_len = input_ids.len();
+        let mut input_ids_array = ndarray::Array2::<i64>::zeros((1, token_len));
+        for (i, &token) in input_ids.iter().enumerate() {
+            input_ids_array[[0, i]] = token as i64;
+        }
+
+        let input_ids_value = Value::from_array(input_ids_array)
+            .context("Failed to create input IDs tensor for embedding")?;
+
+        let outputs = embed_session
+            .run(ort::inputs!["input_ids" => input_ids_value])
+            .context("embed_tokens inference failed")?;
+
+        // Extract embeddings [1, token_len, 768]
+        let output_tensor = outputs[0]
+            .try_extract_array::<f32>()
+            .context("Failed to extract embeddings tensor")?;
+
+        let shape = output_tensor.shape();
+        let mut embeddings = ndarray::Array3::<f32>::zeros((shape[0], shape[1], shape[2]));
+        for b in 0..shape[0] {
+            for s in 0..shape[1] {
+                for e in 0..shape[2] {
+                    embeddings[[b, s, e]] = output_tensor[IxDyn(&[b, s, e])];
+                }
+            }
+        }
+
+        Ok(embeddings)
     }
 
     /// Run a single forward pass through the decoder
@@ -286,23 +392,28 @@ impl FlorenceDecoder {
             }
         }
 
-        // Prepare input IDs [1, token_len]
-        let token_len = input_ids.len();
-        let mut input_ids_array = ndarray::Array2::<i64>::zeros((1, token_len));
-        for (i, &token) in input_ids.iter().enumerate() {
-            input_ids_array[[0, i]] = token as i64;
-        }
+        // Create encoder attention mask [1, seq_len] - all 1s for valid positions
+        let encoder_attention_mask = ndarray::Array2::<i64>::ones((1, seq_len));
 
-        // Run inference
+        // Convert token IDs to embeddings using embed_tokens model
+        // We need to release the session lock first
+        drop(session);
+        let inputs_embeds = self.embed_tokens(input_ids)?;
+        let mut session = self.session.lock().unwrap();
+
+        // Run decoder inference with all three inputs
         let encoder_value = Value::from_array(encoder_input)
             .context("Failed to create encoder hidden states tensor")?;
-        let input_ids_value = Value::from_array(input_ids_array)
-            .context("Failed to create input IDs tensor")?;
+        let attention_mask_value = Value::from_array(encoder_attention_mask)
+            .context("Failed to create encoder attention mask tensor")?;
+        let inputs_embeds_value = Value::from_array(inputs_embeds)
+            .context("Failed to create inputs_embeds tensor")?;
 
         let outputs = session
             .run(ort::inputs![
-                &self.encoder_hidden_states_name => encoder_value,
-                &self.input_ids_name => input_ids_value
+                "encoder_hidden_states" => encoder_value,
+                "encoder_attention_mask" => attention_mask_value,
+                "inputs_embeds" => inputs_embeds_value
             ])
             .context("Decoder inference failed")?;
 
@@ -343,12 +454,26 @@ impl FlorenceDecoder {
     }
 
     /// Find the index of the maximum value (greedy decoding)
-    fn argmax(&self, logits: &[f32]) -> Result<u32> {
+    /// Masks out BOS token and tokens already in sequence to prevent loops
+    fn argmax(&self, logits: &[f32], existing_tokens: &[u32]) -> Result<u32> {
+        // Create a set of tokens to mask (BOS + recent tokens to prevent repetition)
+        let mask_tokens: std::collections::HashSet<u32> = existing_tokens
+            .iter()
+            .rev()
+            .take(5) // Mask last 5 tokens to prevent short loops
+            .copied()
+            .chain(std::iter::once(self.bos_token_id))
+            .collect();
+
         let (max_idx, _) = logits
             .iter()
             .enumerate()
+            .filter(|(idx, _)| {
+                // Mask out BOS and recent tokens to prevent repetition loops
+                !mask_tokens.contains(&(*idx as u32))
+            })
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .ok_or_else(|| anyhow::anyhow!("Empty logits vector"))?;
+            .ok_or_else(|| anyhow::anyhow!("Empty logits vector after filtering"))?;
 
         Ok(max_idx as u32)
     }
