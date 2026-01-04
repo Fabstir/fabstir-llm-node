@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.6.18-florence-preprocessing-fix-2026-01-03";
+pub const VERSION: &str = "v8.6.19-vision-body-limit-fix-2026-01-04";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.6.18";
+pub const VERSION_NUMBER: &str = "8.6.19";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 6;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 18;
+pub const VERSION_PATCH: u32 = 19;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-03";
+pub const BUILD_DATE: &str = "2026-01-04";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
