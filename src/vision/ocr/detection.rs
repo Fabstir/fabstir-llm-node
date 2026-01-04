@@ -305,7 +305,87 @@ impl OcrDetectionModel {
             }
         });
 
+        // Merge boxes that are on the same horizontal line
+        let text_boxes = Self::merge_horizontal_boxes(text_boxes);
+
         Ok(text_boxes)
+    }
+
+    /// Merge text boxes that are on the same horizontal line
+    ///
+    /// Boxes are considered on the same line if their y-centers are within
+    /// a threshold (half of the average height).
+    fn merge_horizontal_boxes(mut boxes: Vec<TextBox>) -> Vec<TextBox> {
+        if boxes.len() <= 1 {
+            return boxes;
+        }
+
+        // Sort by y-position first
+        boxes.sort_by(|a, b| {
+            a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut merged: Vec<TextBox> = Vec::new();
+        let mut current_line: Vec<TextBox> = vec![boxes.remove(0)];
+
+        for box_item in boxes {
+            let current_y_center = current_line[0].y + current_line[0].height / 2.0;
+            let box_y_center = box_item.y + box_item.height / 2.0;
+            let avg_height = (current_line[0].height + box_item.height) / 2.0;
+
+            // If this box is on the same line (y-centers within half the average height)
+            if (box_y_center - current_y_center).abs() < avg_height * 0.75 {
+                current_line.push(box_item);
+            } else {
+                // Merge current line and start a new one
+                if !current_line.is_empty() {
+                    merged.push(Self::merge_boxes_into_one(current_line));
+                }
+                current_line = vec![box_item];
+            }
+        }
+
+        // Don't forget the last line
+        if !current_line.is_empty() {
+            merged.push(Self::merge_boxes_into_one(current_line));
+        }
+
+        // Sort final result by y-position
+        merged.sort_by(|a, b| {
+            a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        merged
+    }
+
+    /// Merge multiple boxes into a single bounding box
+    fn merge_boxes_into_one(boxes: Vec<TextBox>) -> TextBox {
+        if boxes.len() == 1 {
+            return boxes.into_iter().next().unwrap();
+        }
+
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        let mut total_conf = 0.0;
+
+        for b in &boxes {
+            min_x = min_x.min(b.x);
+            min_y = min_y.min(b.y);
+            max_x = max_x.max(b.x + b.width);
+            max_y = max_y.max(b.y + b.height);
+            total_conf += b.confidence;
+        }
+
+        TextBox {
+            x: min_x,
+            y: min_y,
+            width: max_x - min_x,
+            height: max_y - min_y,
+            confidence: total_conf / boxes.len() as f32,
+            polygon: None,
+        }
     }
 
     /// Simple flood fill to find connected text region
