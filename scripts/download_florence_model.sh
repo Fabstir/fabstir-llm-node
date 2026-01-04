@@ -20,8 +20,8 @@ MODEL_NAME="florence-2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 MODEL_DIR="${PROJECT_ROOT}/models/${MODEL_NAME}-onnx"
-# Using HuggingFace ONNX community models
-HUGGINGFACE_BASE="https://huggingface.co/onnx-community/Florence-2-base-ft/resolve/main"
+# Using HuggingFace ONNX community models - Florence-2-large for better accuracy
+HUGGINGFACE_BASE="https://huggingface.co/onnx-community/Florence-2-large/resolve/main"
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Fabstir LLM Node - Florence-2 Model Setup${NC}"
@@ -30,17 +30,18 @@ echo ""
 echo "This script downloads Florence-2 ONNX models"
 echo "for CPU-based image description and analysis."
 echo ""
-echo -e "${BLUE}Florence-2 is a vision-language model that can:${NC}"
+echo -e "${BLUE}Florence-2-large is a vision-language model that can:${NC}"
 echo "  - Generate image captions"
 echo "  - Describe objects and scenes"
 echo "  - Answer questions about images"
 echo ""
 echo "Models:"
-echo "  - Vision encoder (~450MB)"
-echo "  - Language decoder (~1.2GB)"
+echo "  - Vision encoder (~1.4GB)"
+echo "  - Language decoder (~1.0GB)"
+echo "  - Embed tokens (~200MB)"
 echo "  - Tokenizer (~2MB)"
 echo ""
-echo -e "${YELLOW}Note: Total download ~1.7GB${NC}"
+echo -e "${YELLOW}Note: Total download ~2.6GB${NC}"
 echo "Target: ${MODEL_DIR}"
 echo ""
 
@@ -51,6 +52,7 @@ mkdir -p "${MODEL_DIR}"
 # Check if model already exists
 if [ -f "${MODEL_DIR}/vision_encoder.onnx" ] && \
    [ -f "${MODEL_DIR}/decoder_model.onnx" ] && \
+   [ -f "${MODEL_DIR}/embed_tokens.onnx" ] && \
    [ -f "${MODEL_DIR}/tokenizer.json" ]; then
     echo -e "${GREEN}Model files already exist${NC}"
     echo ""
@@ -89,13 +91,19 @@ download_file() {
 download_file \
     "${HUGGINGFACE_BASE}/onnx/vision_encoder.onnx" \
     "${MODEL_DIR}/vision_encoder.onnx" \
-    "vision encoder (~450MB)"
+    "vision encoder (~1.4GB)"
 
 # Download decoder model
 download_file \
     "${HUGGINGFACE_BASE}/onnx/decoder_model.onnx" \
     "${MODEL_DIR}/decoder_model.onnx" \
-    "language decoder (~1.2GB)"
+    "language decoder (~1.0GB)"
+
+# Download embed tokens model (required for text generation)
+download_file \
+    "${HUGGINGFACE_BASE}/onnx/embed_tokens.onnx" \
+    "${MODEL_DIR}/embed_tokens.onnx" \
+    "embed tokens (~200MB)"
 
 # Download encoder-decoder combined model (if available, for single-pass inference)
 echo -e "${YELLOW}Attempting to download encoder-decoder model (optional)...${NC}"
@@ -154,21 +162,28 @@ echo -e "${YELLOW}Verifying downloads...${NC}"
 
 ENCODER_SIZE=$(stat -f%z "${MODEL_DIR}/vision_encoder.onnx" 2>/dev/null || stat -c%s "${MODEL_DIR}/vision_encoder.onnx" 2>/dev/null)
 DECODER_SIZE=$(stat -f%z "${MODEL_DIR}/decoder_model.onnx" 2>/dev/null || stat -c%s "${MODEL_DIR}/decoder_model.onnx" 2>/dev/null)
+EMBED_SIZE=$(stat -f%z "${MODEL_DIR}/embed_tokens.onnx" 2>/dev/null || stat -c%s "${MODEL_DIR}/embed_tokens.onnx" 2>/dev/null)
 TOKENIZER_SIZE=$(stat -f%z "${MODEL_DIR}/tokenizer.json" 2>/dev/null || stat -c%s "${MODEL_DIR}/tokenizer.json" 2>/dev/null)
 
-# Minimum expected sizes (in bytes)
-MIN_ENCODER_SIZE=100000000   # 100MB minimum
-MIN_DECODER_SIZE=500000000   # 500MB minimum
-MIN_TOKENIZER_SIZE=100000    # 100KB minimum
+# Minimum expected sizes for Florence-2-large (in bytes)
+MIN_ENCODER_SIZE=1000000000   # 1GB minimum (large model is ~1.4GB)
+MIN_DECODER_SIZE=800000000    # 800MB minimum (large model is ~1GB)
+MIN_EMBED_SIZE=150000000      # 150MB minimum (large model is ~200MB)
+MIN_TOKENIZER_SIZE=100000     # 100KB minimum
 
 if [ "$ENCODER_SIZE" -lt "$MIN_ENCODER_SIZE" ]; then
     echo -e "${RED}Warning: Vision encoder seems too small (${ENCODER_SIZE} bytes)${NC}"
-    echo -e "${YELLOW}Expected at least 100MB${NC}"
+    echo -e "${YELLOW}Expected at least 1GB for Florence-2-large${NC}"
 fi
 
 if [ "$DECODER_SIZE" -lt "$MIN_DECODER_SIZE" ]; then
     echo -e "${RED}Warning: Decoder model seems too small (${DECODER_SIZE} bytes)${NC}"
-    echo -e "${YELLOW}Expected at least 500MB${NC}"
+    echo -e "${YELLOW}Expected at least 800MB for Florence-2-large${NC}"
+fi
+
+if [ "$EMBED_SIZE" -lt "$MIN_EMBED_SIZE" ]; then
+    echo -e "${RED}Warning: Embed tokens model seems too small (${EMBED_SIZE} bytes)${NC}"
+    echo -e "${YELLOW}Expected at least 150MB for Florence-2-large${NC}"
 fi
 
 if [ "$TOKENIZER_SIZE" -lt "$MIN_TOKENIZER_SIZE" ]; then
@@ -178,23 +193,25 @@ fi
 echo -e "${GREEN}File sizes:${NC}"
 echo "  vision_encoder.onnx: $(numfmt --to=iec-i --suffix=B $ENCODER_SIZE 2>/dev/null || echo "${ENCODER_SIZE} bytes")"
 echo "  decoder_model.onnx: $(numfmt --to=iec-i --suffix=B $DECODER_SIZE 2>/dev/null || echo "${DECODER_SIZE} bytes")"
+echo "  embed_tokens.onnx: $(numfmt --to=iec-i --suffix=B $EMBED_SIZE 2>/dev/null || echo "${EMBED_SIZE} bytes")"
 echo "  tokenizer.json: $(numfmt --to=iec-i --suffix=B $TOKENIZER_SIZE 2>/dev/null || echo "${TOKENIZER_SIZE} bytes")"
 
 # Calculate total size
-TOTAL_SIZE=$((ENCODER_SIZE + DECODER_SIZE + TOKENIZER_SIZE))
+TOTAL_SIZE=$((ENCODER_SIZE + DECODER_SIZE + EMBED_SIZE + TOKENIZER_SIZE))
 echo "  Total: $(numfmt --to=iec-i --suffix=B $TOTAL_SIZE 2>/dev/null || echo "${TOTAL_SIZE} bytes")"
 
 # Create version file
 cat > "${MODEL_DIR}/VERSION" << EOF
 Florence-2 ONNX Models
-Model: Florence-2-base-ft
+Model: Florence-2-large
 Version: ONNX Community Export
-Vision Encoder: vision_encoder.onnx
-Language Decoder: decoder_model.onnx
+Vision Encoder: vision_encoder.onnx (~1.4GB)
+Language Decoder: decoder_model.onnx (~1.0GB)
+Embed Tokens: embed_tokens.onnx (~200MB)
 Tokenizer: tokenizer.json
 Input Size: 768x768
 Downloaded: $(date)
-Source: https://huggingface.co/onnx-community/Florence-2-base-ft
+Source: https://huggingface.co/onnx-community/Florence-2-large
 EOF
 
 echo ""

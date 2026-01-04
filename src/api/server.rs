@@ -4,7 +4,7 @@ use anyhow::Result;
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        Json, State,
+        DefaultBodyLimit, Json, State,
     },
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -861,14 +861,23 @@ impl ApiServer {
         }
     }
 
+    /// Maximum body size for vision endpoints (20MB to support ~15MB raw images after base64 encoding)
+    const VISION_BODY_LIMIT: usize = 20 * 1024 * 1024;
+
     fn create_router(server: Arc<Self>) -> Router {
+        // Vision routes need higher body limit for large images
+        let vision_routes = Router::new()
+            .route("/ocr", post(ocr_handler_wrapper))
+            .route("/describe-image", post(describe_image_handler_wrapper))
+            .layer(DefaultBodyLimit::max(Self::VISION_BODY_LIMIT))
+            .with_state(server.clone());
+
         Router::new()
             .route("/health", get(health_handler))
             .route("/v1/models", get(models_handler))
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/embed", post(embed_handler_wrapper))
-            .route("/v1/ocr", post(ocr_handler_wrapper))
-            .route("/v1/describe-image", post(describe_image_handler_wrapper))
+            .nest("/v1", vision_routes)
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(CorsLayer::permissive())
