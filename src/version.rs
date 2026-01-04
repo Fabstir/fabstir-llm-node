@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.6.19-vision-body-limit-fix-2026-01-04";
+pub const VERSION: &str = "v8.6.22-ocr-word-segmentation-2026-01-04";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.6.19";
+pub const VERSION_NUMBER: &str = "8.6.22";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 6;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 19;
+pub const VERSION_PATCH: u32 = 22;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-04";
@@ -102,6 +102,10 @@ pub const BREAKING_CHANGES: &[&str] = &[
     "FIX: Use natural language prompts instead of task tokens - 'A photo of', 'The image shows' work correctly (v8.6.16)",
     "FIX: Add repetition masking to Florence decoder - prevents 'shows shows shows...' loops (v8.6.17)",
     "FIX: Use ImageNet normalization and CenterCrop for Florence preprocessing (was CLIP/Letterbox) (v8.6.18)",
+    "FIX: Increased body limit to 20MB for vision endpoints (v8.6.19)",
+    "FIX: Handle data URL prefix (data:image/png;base64,...) in OCR and describe-image endpoints (v8.6.20)",
+    "FIX: Merge fragmented text boxes on same line for better OCR recognition (v8.6.21)",
+    "FIX: Add dictionary-based word segmentation for proper spacing in OCR output (v8.6.22)",
 ];
 
 /// Get formatted version string for logging
@@ -129,7 +133,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 6);
-        assert_eq!(VERSION_PATCH, 18);
+        assert_eq!(VERSION_PATCH, 22);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -141,14 +145,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.6.18"));
-        assert!(version.contains("2026-01-03"));
+        assert!(version.contains("8.6.22"));
+        assert!(version.contains("2026-01-04"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.6.18-florence-preprocessing-fix-2026-01-03");
-        assert_eq!(VERSION_NUMBER, "8.6.18");
-        assert_eq!(BUILD_DATE, "2026-01-03");
+        assert_eq!(VERSION, "v8.6.22-ocr-word-segmentation-2026-01-04");
+        assert_eq!(VERSION_NUMBER, "8.6.22");
+        assert_eq!(BUILD_DATE, "2026-01-04");
     }
 }

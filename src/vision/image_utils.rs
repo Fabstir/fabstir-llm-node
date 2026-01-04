@@ -64,8 +64,19 @@ pub fn decode_base64_image(base64_str: &str) -> Result<(DynamicImage, ImageInfo)
         return Err(ImageError::EmptyData);
     }
 
+    // Strip data URL prefix if present (e.g., "data:image/png;base64,")
+    let base64_data = if base64_str.starts_with("data:") {
+        // Find the comma that separates the prefix from the actual base64 data
+        base64_str
+            .find(',')
+            .map(|pos| &base64_str[pos + 1..])
+            .unwrap_or(base64_str)
+    } else {
+        base64_str
+    };
+
     // Decode base64
-    let bytes = STANDARD.decode(base64_str)?;
+    let bytes = STANDARD.decode(base64_data)?;
 
     // Validate size
     if bytes.len() > MAX_IMAGE_SIZE {
@@ -346,6 +357,29 @@ mod tests {
         assert_eq!(info.width, 1);
         assert_eq!(info.height, 1);
         assert_eq!(info.format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn test_decode_base64_image_with_data_url_prefix() {
+        // Test with data URL prefix (common format from browser/frontend)
+        let with_prefix = format!("data:image/png;base64,{}", TINY_PNG_BASE64);
+        let result = decode_base64_image(&with_prefix);
+        assert!(result.is_ok(), "Failed to decode PNG with data URL prefix: {:?}", result.err());
+
+        let (img, info) = result.unwrap();
+        assert_eq!(info.width, 1);
+        assert_eq!(info.height, 1);
+        assert_eq!(info.format, ImageFormat::Png);
+        assert!(img.width() == 1 && img.height() == 1);
+    }
+
+    #[test]
+    fn test_decode_base64_image_with_jpeg_data_url() {
+        // Test with JPEG data URL prefix
+        let with_prefix = format!("data:image/jpeg;base64,{}", TINY_GIF_BASE64);
+        let result = decode_base64_image(&with_prefix);
+        // Should still decode based on actual bytes, not the claimed MIME type
+        assert!(result.is_ok());
     }
 
     // Test for oversized images (mocked since we can't actually create a 10MB+ base64 in tests)
