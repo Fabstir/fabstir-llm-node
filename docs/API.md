@@ -93,8 +93,8 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.7.4",
-  "build": "v8.7.4-web-search-2026-01-05",
+  "version": "8.7.5",
+  "build": "v8.7.5-web-search-2026-01-05",
   "date": "2026-01-05",
   "features": [
     "multi-chain",
@@ -143,10 +143,13 @@ GET /v1/version
     "bing-search-api",
     "search-caching",
     "search-rate-limiting",
-    "inference-web-search"
+    "inference-web-search",
+    "streaming-web-search",
+    "websocket-web-search"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
+    "FEAT: Web search now works in streaming mode (HTTP streaming and WebSocket) (v8.7.5)",
     "FEAT: Added host-side web search for decentralized AI inference (v8.7.0+)",
     "FEAT: Added POST /v1/search endpoint for direct web search",
     "FEAT: Added web_search, max_searches, search_queries fields to InferenceRequest",
@@ -461,7 +464,7 @@ Content-Type: application/json
 | `job_id` | Integer | No | - | Blockchain job ID for payment |
 | `session_id` | String | No | - | Session identifier |
 | `chain_id` | Integer | No | 84532 | Blockchain network ID (84532 for Base Sepolia, 5611 for opBNB Testnet) |
-| `web_search` | Boolean | No | false | Enable web search before inference (v8.7.0+) |
+| `web_search` | Boolean | No | false | Enable web search before inference. Works with both streaming and non-streaming modes (v8.7.0+, streaming support v8.7.5+) |
 | `max_searches` | Integer | No | 5 | Maximum number of search queries (1-20) |
 | `search_queries` | Array<String> | No | null | Custom search queries (if null, derived from prompt) |
 
@@ -4066,7 +4069,8 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v8.7.4** (Current) - Host-Side Web Search (January 2026)
+- **v8.7.5** (Current) - Streaming Web Search Support (January 2026)
+- **v8.7.4** - Host-Side Web Search, DuckDuckGo User-Agent fix (January 2026)
   - Added host-side web search for decentralized AI inference
   - `POST /v1/search` endpoint for direct web search
   - `web_search`, `max_searches`, `search_queries` fields in InferenceRequest

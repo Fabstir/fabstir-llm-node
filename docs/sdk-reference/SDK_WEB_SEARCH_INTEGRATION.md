@@ -1,12 +1,14 @@
 # SDK Web Search Integration Guide
 
-**Version**: v8.7.0+
+**Version**: v8.7.5+
 **Status**: Production Ready
 **Last Updated**: January 2026
 
 ## Overview
 
 Starting with v8.7.0, Fabstir LLM Nodes support **host-side web search** - a powerful feature that allows hosts to perform web searches on behalf of clients. This enables LLMs to access real-time information without requiring clients to implement search functionality or consume their own bandwidth.
+
+> **v8.7.5 Update**: Web search now works in **all inference modes** - non-streaming HTTP, streaming HTTP, and WebSocket encrypted streaming. Previously, only non-streaming HTTP supported web search.
 
 ### Why Host-Side Web Search?
 
@@ -51,6 +53,8 @@ console.log('Inference search supported:', supportsInferenceSearch);
 const WEB_SEARCH_FEATURES = [
   'host-side-web-search',    // /v1/search endpoint available
   'inference-web-search',    // web_search field in inference
+  'streaming-web-search',    // web_search works with stream=true (v8.7.5+)
+  'websocket-web-search',    // web_search works with WebSocket (v8.7.5+)
   'brave-search-api',        // Brave provider available (if API key set)
   'duckduckgo-fallback',     // DuckDuckGo always available
   'search-caching',          // Results are cached
