@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.4.1",
-  "build": "v8.4.1-s5-integration-tests-2025-11-15",
-  "date": "2025-11-15",
+  "version": "8.6.7",
+  "build": "v8.6.7-vision-body-limit-2026-01-03",
+  "date": "2026-01-03",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -129,13 +129,21 @@ GET /v1/version
     "chat-templates",
     "model-specific-formatting",
     "s5-vector-loading",
-    "encrypted-vector-database-paths"
+    "encrypted-vector-database-paths",
+    "cpu-ocr",
+    "paddleocr-onnx",
+    "cpu-vision",
+    "florence-2-onnx",
+    "image-to-text",
+    "image-description",
+    "vision-20mb-body-limit"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
-    "S5 Integration Testing Complete (v8.4.1)",
-    "All 19 S5 vector loading tests passing (100%)",
-    "Enhanced S5.js bridge integration verified"
+    "Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
+    "Added POST /v1/describe-image endpoint for image description using Florence-2",
+    "Added word spacing post-processing for English OCR output (v8.6.6)",
+    "Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)"
   ]
 }
 ```
@@ -144,7 +152,7 @@ GET /v1/version
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | String | Semantic version number (e.g., "8.4.1") |
+| `version` | String | Semantic version number (e.g., "8.6.7") |
 | `build` | String | Full build string with feature tag and date |
 | `date` | String | Build date (YYYY-MM-DD) |
 | `features` | Array<String> | List of supported features |
@@ -1039,6 +1047,266 @@ If no embedding models are loaded, the endpoint returns an empty array (not an e
 
 - `200 OK` - Successfully retrieved models (even if empty array)
 - `400 Bad Request` - Invalid query parameters
+
+---
+
+### OCR - Extract Text from Images
+
+Extract text from images using PaddleOCR (CPU-based). This endpoint provides optical character recognition without requiring GPU resources.
+
+#### Request
+
+```http
+POST /v1/ocr
+Content-Type: application/json
+```
+
+```json
+{
+  "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+  "format": "png",
+  "language": "en",
+  "chainId": 84532
+}
+```
+
+#### Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `image` | String | Yes | - | Base64-encoded image data |
+| `format` | String | No | "png" | Image format hint: "png", "jpg", "webp", "gif" |
+| `language` | String | No | "en" | OCR language: "en" (English), "ch" (Chinese) |
+| `chainId` | Integer | No | 84532 | Blockchain network ID (84532 or 5611) |
+
+#### Request Validation
+
+- **Image**: Required, non-empty base64 string
+- **Format**: One of "png", "jpg", "jpeg", "webp", "gif"
+- **Language**: One of "en", "ch"
+- **Chain ID**: 84532 (Base Sepolia) or 5611 (opBNB Testnet)
+
+#### Response
+
+```json
+{
+  "text": "Hello World!\nThis is extracted text.",
+  "confidence": 0.95,
+  "regions": [
+    {
+      "text": "Hello World!",
+      "bbox": [10, 20, 200, 50],
+      "confidence": 0.98
+    },
+    {
+      "text": "This is extracted text.",
+      "bbox": [10, 60, 250, 90],
+      "confidence": 0.92
+    }
+  ],
+  "processingTimeMs": 245,
+  "model": "paddleocr",
+  "provider": "host",
+  "chainId": 84532,
+  "chainName": "Base Sepolia",
+  "nativeToken": "ETH"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | String | Full extracted text (newline-separated) |
+| `confidence` | Float | Overall confidence score (0.0-1.0) |
+| `regions` | Array | Individual text regions detected |
+| `regions[].text` | String | Text extracted from this region |
+| `regions[].bbox` | Array<Int> | Bounding box [x, y, width, height] |
+| `regions[].confidence` | Float | Confidence for this region |
+| `processingTimeMs` | Integer | Processing time in milliseconds |
+| `model` | String | Model used ("paddleocr") |
+| `provider` | String | Always "host" for CPU-based OCR |
+| `chainId` | Integer | Chain ID for this request |
+| `chainName` | String | Human-readable chain name |
+| `nativeToken` | String | Native token symbol |
+
+#### Status Codes
+
+- `200 OK` - Successfully extracted text
+- `400 Bad Request` - Invalid request (missing image, invalid format/language)
+- `500 Internal Server Error` - OCR processing failed
+- `503 Service Unavailable` - OCR model not loaded
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OCR_MODEL_PATH` | `./models/paddleocr-onnx` | Path to PaddleOCR ONNX models |
+
+#### Notes
+
+- **Word Spacing**: The OCR automatically inserts spaces at word boundaries for English text:
+  - Between lowercase and uppercase letters (e.g., "HelloWorld" → "Hello World")
+  - Between letters and numbers (e.g., "Text123Data" → "Text 123 Data")
+  - After punctuation marks (e.g., "Title:Text" → "Title: Text")
+- **Model**: Uses PP-OCRv5 English ONNX models (detection + recognition)
+- **Input Height**: Recognition model expects 48px height (dynamic width)
+- **CPU-Only**: Runs entirely on CPU to avoid GPU VRAM competition with LLM
+- **Body Limit**: Maximum request body size is 20MB to support large images (v8.6.7+)
+
+---
+
+### Describe Image - Generate Image Descriptions
+
+Generate natural language descriptions of images using Florence-2 vision model (CPU-based). Provides image captioning and analysis without GPU requirements.
+
+#### Request
+
+```http
+POST /v1/describe-image
+Content-Type: application/json
+```
+
+```json
+{
+  "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+  "format": "png",
+  "detail": "detailed",
+  "prompt": "Describe the main objects in this image",
+  "maxTokens": 150,
+  "chainId": 84532
+}
+```
+
+#### Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `image` | String | Yes | - | Base64-encoded image data |
+| `format` | String | No | "png" | Image format hint: "png", "jpg", "webp", "gif" |
+| `detail` | String | No | "detailed" | Detail level: "brief", "detailed", "comprehensive" |
+| `prompt` | String | No | null | Custom prompt for description |
+| `maxTokens` | Integer | No | 150 | Maximum tokens in response (10-500) |
+| `chainId` | Integer | No | 84532 | Blockchain network ID |
+
+#### Request Validation
+
+- **Image**: Required, non-empty base64 string
+- **Format**: One of "png", "jpg", "jpeg", "webp", "gif"
+- **Detail**: One of "brief", "detailed", "comprehensive"
+- **Max Tokens**: 10-500 range
+- **Chain ID**: 84532 or 5611
+
+#### Detail Levels
+
+| Level | Description | Typical Length |
+|-------|-------------|----------------|
+| `brief` | Single sentence summary | ~20 tokens |
+| `detailed` | Multi-sentence description | ~100 tokens |
+| `comprehensive` | Full analysis with details | ~300 tokens |
+
+#### Response
+
+```json
+{
+  "description": "The image shows a red sports car parked on a city street. The vehicle appears to be a modern design with aerodynamic styling. In the background, there are tall buildings and pedestrians.",
+  "objects": [],
+  "analysis": {
+    "width": 1920,
+    "height": 1080,
+    "dominantColors": ["#FF0000", "#333333", "#FFFFFF"],
+    "sceneType": "urban"
+  },
+  "processingTimeMs": 4523,
+  "model": "florence-2",
+  "provider": "host",
+  "chainId": 84532,
+  "chainName": "Base Sepolia",
+  "nativeToken": "ETH"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | String | Generated text description |
+| `objects` | Array | Detected objects (reserved for future) |
+| `analysis` | Object | Image metadata |
+| `analysis.width` | Integer | Image width in pixels |
+| `analysis.height` | Integer | Image height in pixels |
+| `analysis.dominantColors` | Array<String> | Dominant colors as hex codes |
+| `analysis.sceneType` | String | Scene classification (if available) |
+| `processingTimeMs` | Integer | Processing time in milliseconds |
+| `model` | String | Model used ("florence-2") |
+| `provider` | String | Always "host" |
+| `chainId` | Integer | Chain ID |
+| `chainName` | String | Chain name |
+| `nativeToken` | String | Native token symbol |
+
+#### Status Codes
+
+- `200 OK` - Successfully generated description
+- `400 Bad Request` - Invalid request parameters
+- `500 Internal Server Error` - Description generation failed
+- `503 Service Unavailable` - Florence model not loaded
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLORENCE_MODEL_PATH` | `./models/florence-2-onnx` | Path to Florence-2 ONNX models |
+
+#### Performance Notes
+
+- Florence-2 model loads ~700MB into CPU memory
+- First inference takes ~5 seconds (model warm-up)
+- Subsequent inferences: 2-5 seconds depending on image size
+- Recommended image size: 512x512 to 1024x1024 pixels
+- Larger images are automatically resized
+- **Body Limit**: Maximum request body size is 20MB to support large images (v8.6.7+)
+
+---
+
+### List Vision Models
+
+Discover available vision models (OCR and Florence) on the node.
+
+#### Request
+
+```http
+GET /v1/models?type=vision&chain_id=84532
+```
+
+#### Response
+
+```json
+{
+  "models": [
+    {
+      "name": "paddleocr",
+      "model_type": "ocr",
+      "available": true
+    },
+    {
+      "name": "florence-2",
+      "model_type": "vision",
+      "available": true
+    }
+  ],
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `models` | Array | List of available vision models |
+| `models[].name` | String | Model identifier |
+| `models[].model_type` | String | Type: "ocr" or "vision" |
+| `models[].available` | Boolean | Whether model is loaded |
 
 ---
 
