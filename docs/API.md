@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.6.7",
-  "build": "v8.6.7-vision-body-limit-2026-01-03",
-  "date": "2026-01-03",
+  "version": "8.7.4",
+  "build": "v8.7.4-web-search-2026-01-05",
+  "date": "2026-01-05",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -136,10 +136,26 @@ GET /v1/version
     "florence-2-onnx",
     "image-to-text",
     "image-description",
-    "vision-20mb-body-limit"
+    "vision-20mb-body-limit",
+    "host-side-web-search",
+    "brave-search-api",
+    "duckduckgo-fallback",
+    "bing-search-api",
+    "search-caching",
+    "search-rate-limiting",
+    "inference-web-search"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
+    "FEAT: Added host-side web search for decentralized AI inference (v8.7.0+)",
+    "FEAT: Added POST /v1/search endpoint for direct web search",
+    "FEAT: Added web_search, max_searches, search_queries fields to InferenceRequest",
+    "FEAT: Added web_search_performed, search_queries_count, search_provider to InferenceResponse",
+    "FEAT: Support Brave Search API, Bing Search API, and DuckDuckGo (no API key) providers",
+    "FEAT: Added TTL-based search result caching (default 1 hour)",
+    "FEAT: Added search rate limiting (configurable via SEARCH_RATE_LIMIT_PER_MINUTE)",
+    "FEAT: Added WEB_SEARCH_ENABLED, BRAVE_API_KEY, BING_API_KEY environment variables",
+    "FEAT: Added WebSocket message types: SearchRequest, SearchStarted, SearchResults, SearchError",
     "Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
     "Added POST /v1/describe-image endpoint for image description using Florence-2",
     "Added word spacing post-processing for English OCR output (v8.6.6)",
@@ -425,7 +441,11 @@ Content-Type: application/json
   "stream": false,
   "request_id": "req-12345",
   "chain_id": 84532,
-  "job_id": 123
+  "job_id": 123,
+  "web_search": false,
+  "max_searches": 5,
+  "search_queries": null
+}
 ```
 
 #### Request Parameters
@@ -441,6 +461,9 @@ Content-Type: application/json
 | `job_id` | Integer | No | - | Blockchain job ID for payment |
 | `session_id` | String | No | - | Session identifier |
 | `chain_id` | Integer | No | 84532 | Blockchain network ID (84532 for Base Sepolia, 5611 for opBNB Testnet) |
+| `web_search` | Boolean | No | false | Enable web search before inference (v8.7.0+) |
+| `max_searches` | Integer | No | 5 | Maximum number of search queries (1-20) |
+| `search_queries` | Array<String> | No | null | Custom search queries (if null, derived from prompt) |
 
 #### Non-Streaming Response
 
@@ -453,7 +476,11 @@ Content-Type: application/json
   "request_id": "req-12345",
   "chain_id": 84532,
   "chain_name": "Base Sepolia",
-  "native_token": "ETH"
+  "native_token": "ETH",
+  "web_search_performed": true,
+  "search_queries_count": 1,
+  "search_provider": "duckduckgo"
+}
 ```
 
 #### Streaming Response (SSE)
@@ -488,6 +515,9 @@ data: {"content": "", "tokens": 245, "finish_reason": "complete", "chain_id": 84
 | `chain_id` | Integer | Blockchain network ID used for this request |
 | `chain_name` | String | Human-readable chain name |
 | `native_token` | String | Native token symbol (ETH or BNB) |
+| `web_search_performed` | Boolean | Whether web search was performed (v8.7.0+, null if not requested) |
+| `search_queries_count` | Integer | Number of search queries executed (v8.7.0+, null if not searched) |
+| `search_provider` | String | Search provider used: "brave", "duckduckgo", "bing" (v8.7.0+, null if not searched) |
 
 #### Status Codes
 
@@ -1310,6 +1340,147 @@ GET /v1/models?type=vision&chain_id=84532
 
 ---
 
+### Web Search (v8.7.0+)
+
+**Status**: Production Ready
+**Feature**: Host-side web search for decentralized AI inference
+
+The node provides web search capabilities that allow clients to retrieve real-time information from the web. This enables LLMs to access current data without requiring the client to perform searches directly.
+
+#### Supported Providers
+
+| Provider | API Key Required | Priority | Features |
+|----------|------------------|----------|----------|
+| **Brave** | Yes (`BRAVE_API_KEY`) | 100 (highest) | Best quality, rate-limited API |
+| **Bing** | Yes (`BING_API_KEY`) | 80 | Good quality, Microsoft API |
+| **DuckDuckGo** | No | 50 (fallback) | No API key needed, HTML scraping |
+
+DuckDuckGo is always available as a fallback provider, making web search work out of the box without any configuration.
+
+#### Request
+
+```http
+POST /v1/search
+Content-Type: application/json
+```
+
+```json
+{
+  "query": "What is the capital of France?",
+  "numResults": 5,
+  "chainId": 84532,
+  "requestId": "search-12345"
+}
+```
+
+#### Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | String | Yes | - | Search query (max 500 characters) |
+| `numResults` | Integer | No | 10 | Number of results to return (1-20) |
+| `chainId` | Integer | No | 84532 | Blockchain network ID for billing context |
+| `requestId` | String | No | Auto-generated | Client-provided request ID for tracking |
+
+#### Response
+
+```json
+{
+  "query": "What is the capital of France?",
+  "results": [
+    {
+      "title": "Paris - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Paris",
+      "snippet": "Paris is the capital and most populous city of France, with an estimated population of 2,165,423 residents...",
+      "source": "duckduckgo"
+    },
+    {
+      "title": "Paris | Definition, Map, Population, Facts, & History | Britannica",
+      "url": "https://www.britannica.com/place/Paris",
+      "snippet": "Paris, city and capital of France, located along the Seine River, in the north-central part of the country...",
+      "source": "duckduckgo"
+    }
+  ],
+  "resultCount": 5,
+  "searchTimeMs": 1136,
+  "provider": "duckduckgo",
+  "cached": false,
+  "chainId": 84532,
+  "chainName": "Base Sepolia"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | String | Original search query |
+| `results` | Array | Array of search results |
+| `results[].title` | String | Result title |
+| `results[].url` | String | Result URL |
+| `results[].snippet` | String | Text snippet/description |
+| `results[].source` | String | Provider that returned this result |
+| `results[].published_date` | String | Publication date (if available) |
+| `resultCount` | Integer | Number of results returned |
+| `searchTimeMs` | Integer | Search time in milliseconds |
+| `provider` | String | Search provider used |
+| `cached` | Boolean | Whether result was served from cache |
+| `chainId` | Integer | Chain ID |
+| `chainName` | String | Chain name |
+
+#### Status Codes
+
+- `200 OK` - Search successful
+- `400 Bad Request` - Invalid query or parameters
+- `429 Too Many Requests` - Rate limited
+- `500 Internal Server Error` - Search failed
+- `503 Service Unavailable` - Search disabled or no providers available
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEB_SEARCH_ENABLED` | `true` | Enable/disable web search (enabled by default) |
+| `BRAVE_API_KEY` | - | Brave Search API key (optional) |
+| `BING_API_KEY` | - | Bing Search API key (optional) |
+| `SEARCH_PROVIDER` | `brave` | Preferred provider (brave, bing, duckduckgo) |
+| `SEARCH_CACHE_TTL_SECS` | `3600` | Cache TTL in seconds |
+| `SEARCH_RATE_LIMIT_PER_MINUTE` | `60` | Rate limit per minute |
+| `MAX_SEARCHES_PER_REQUEST` | `20` | Max searches per single request |
+| `MAX_SEARCHES_PER_SESSION` | `200` | Max searches per session |
+
+#### Usage with Inference
+
+Web search can be combined with inference to provide LLMs with real-time information:
+
+```bash
+curl -X POST http://localhost:8080/v1/inference \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "llama-2-7b",
+    "prompt": "What are the latest developments in AI?",
+    "max_tokens": 500,
+    "web_search": true,
+    "max_searches": 3
+  }'
+```
+
+When `web_search: true`, the node:
+1. Extracts search queries from the prompt (or uses `search_queries` if provided)
+2. Performs web searches using the configured provider
+3. Prepends search results to the prompt as context
+4. Runs inference with the enhanced prompt
+5. Returns results with `web_search_performed`, `search_queries_count`, and `search_provider` metadata
+
+#### Caching
+
+Search results are cached with a configurable TTL (default 1 hour):
+- Same query within TTL returns cached results (`cached: true`)
+- Cache is per-query, case-insensitive
+- Cache can be cleared by restarting the node
+
+---
+
 ## WebSocket API (Production Ready - Phases 8.7-8.12)
 
 For real-time bidirectional communication and conversation management, connect via WebSocket. The WebSocket API has been completely rebuilt with production features including stateless memory caching, compression, rate limiting, JWT authentication, Ed25519 signatures, and **automatic payment settlement on disconnect (v5+)**.
@@ -1976,6 +2147,70 @@ The server maintains conversation context in memory during active sessions:
 | `rate_limit` | Server → Client | Rate limit warning |
 | `ping` | Bidirectional | Keep-alive |
 | `pong` | Bidirectional | Keep-alive response |
+| `searchRequest` | Client → Server | Web search request (v8.7.0+) |
+| `searchStarted` | Server → Client | Search started acknowledgment (v8.7.0+) |
+| `searchResults` | Server → Client | Search results (v8.7.0+) |
+| `searchError` | Server → Client | Search error (v8.7.0+) |
+
+#### Web Search Messages (v8.7.0+)
+
+**searchRequest** - Request a web search:
+```json
+{
+  "type": "searchRequest",
+  "query": "latest AI developments",
+  "num_results": 5,
+  "request_id": "search-123"
+}
+```
+
+**searchStarted** - Acknowledgment that search is in progress:
+```json
+{
+  "type": "searchStarted",
+  "query": "latest AI developments",
+  "request_id": "search-123",
+  "provider": "duckduckgo"
+}
+```
+
+**searchResults** - Successful search results:
+```json
+{
+  "type": "searchResults",
+  "query": "latest AI developments",
+  "results": [
+    {
+      "title": "AI News - Latest developments",
+      "url": "https://example.com/ai-news",
+      "snippet": "Recent breakthroughs in artificial intelligence..."
+    }
+  ],
+  "result_count": 5,
+  "search_time_ms": 850,
+  "provider": "duckduckgo",
+  "cached": false,
+  "request_id": "search-123"
+}
+```
+
+**searchError** - Search failure:
+```json
+{
+  "type": "searchError",
+  "error": "Rate limit exceeded",
+  "error_code": "rate_limited",
+  "request_id": "search-123"
+}
+```
+
+Search error codes:
+- `search_disabled` - Web search is disabled on this host
+- `invalid_query` - Query is empty or too long
+- `rate_limited` - Too many requests
+- `provider_error` - Search provider returned an error
+- `timeout` - Search request timed out
+- `no_providers` - No search providers available
 
 ### Error Codes (WebSocket)
 
@@ -3831,7 +4066,27 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v8.4.1** (Current) - S5 Vector Loading Production Ready (November 2025)
+- **v8.7.4** (Current) - Host-Side Web Search (January 2026)
+  - Added host-side web search for decentralized AI inference
+  - `POST /v1/search` endpoint for direct web search
+  - `web_search`, `max_searches`, `search_queries` fields in InferenceRequest
+  - `web_search_performed`, `search_queries_count`, `search_provider` in InferenceResponse
+  - Support for Brave Search API, Bing Search API, and DuckDuckGo (no API key)
+  - DuckDuckGo enabled by default as fallback provider
+  - TTL-based search result caching (default 1 hour)
+  - Search rate limiting (configurable via `SEARCH_RATE_LIMIT_PER_MINUTE`)
+  - WebSocket message types: `searchRequest`, `searchStarted`, `searchResults`, `searchError`
+  - Environment variables: `WEB_SEARCH_ENABLED`, `BRAVE_API_KEY`, `BING_API_KEY`
+
+- **v8.6.22** - OCR Improvements (January 2026)
+  - Improved OCR accuracy with data URL support
+  - Line merging for multi-line text blocks
+  - Word segmentation improvements
+
+- **v8.6.19** - Vision Body Limit (January 2026)
+  - Increased body limit to 20MB for vision endpoints
+
+- **v8.4.1** - S5 Vector Loading Production Ready (November 2025)
   - S5 Integration Testing Complete: All 19 tests passing (100%)
   - Enhanced S5.js bridge integration with real HTTP API
   - `LoadVectorDatabase`, `VectorDatabaseLoaded`, `VectorLoadProgress`, `VectorDatabaseError` message types

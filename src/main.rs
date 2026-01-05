@@ -225,6 +225,30 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Initialize Web Search Service (v8.7.0+)
+    // Enabled by default - DuckDuckGo requires no API key
+    // Set WEB_SEARCH_ENABLED=false to disable
+    println!("🔍 Initializing web search service...");
+    let search_config = fabstir_llm_node::search::SearchConfig::from_env();
+    if search_config.enabled {
+        let search_service = Arc::new(fabstir_llm_node::search::SearchService::new(search_config));
+        // Convert &str to owned Strings before moving the Arc
+        let providers: Vec<String> = search_service
+            .available_providers()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        api_server
+            .set_search_service(search_service)
+            .await;
+        println!("✅ Web search service initialized (enabled by default)");
+        println!("   Available providers: {}", providers.join(", "));
+        println!("   /v1/search endpoint enabled");
+        println!("   Inference with web_search=true is supported");
+    } else {
+        println!("ℹ️  Web search explicitly disabled (WEB_SEARCH_ENABLED=false)");
+    }
+
     // Initialize Web3 and CheckpointManager if HOST_PRIVATE_KEY is available
     if let Ok(host_private_key) = env::var("HOST_PRIVATE_KEY") {
         println!("🔗 Initializing Web3 client for checkpoint submission...");
