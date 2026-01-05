@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+use axum::extract::DefaultBodyLimit;
 use axum::{
     extract::{Json, Path, Query, State},
     http::{header, StatusCode},
@@ -16,9 +17,10 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::{
-    embed::embed_handler, ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse,
-    ChainsResponse, InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
-    SessionInfoResponse, SessionStatus, TotalStatistics,
+    describe_image::describe_image_handler, embed::embed_handler, ocr::ocr_handler, ApiError,
+    ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse, InferenceRequest,
+    InferenceResponse, ModelInfo, ModelsResponse, SessionInfo, SessionInfoResponse, SessionStatus,
+    TotalStatistics,
 };
 use crate::blockchain::{ChainConfig, ChainRegistry};
 
@@ -46,6 +48,7 @@ pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<u64, SessionInfo>>>,
     pub chain_stats: Arc<RwLock<HashMap<u64, ChainStatistics>>>,
     pub embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
+    pub vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
 }
 
 impl AppState {
@@ -56,11 +59,23 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             chain_stats: Arc::new(RwLock::new(HashMap::new())),
             embedding_model_manager: Arc::new(RwLock::new(None)),
+            vision_model_manager: Arc::new(RwLock::new(None)),
         }
     }
 }
 
+/// Maximum body size for vision endpoints (20MB to support ~15MB raw images after base64 encoding)
+const VISION_BODY_LIMIT: usize = 20 * 1024 * 1024;
+
 pub fn create_app(state: Arc<AppState>) -> Router {
+    // Vision endpoints need a higher body limit for large images
+    // Base64 encoding adds ~33% overhead, so 20MB allows ~15MB raw images
+    let vision_routes = Router::new()
+        .route("/ocr", post(ocr_handler))
+        .route("/describe-image", post(describe_image_handler))
+        .layer(DefaultBodyLimit::max(VISION_BODY_LIMIT))
+        .with_state((*state).clone());
+
     Router::new()
         // Health check
         .route("/health", get(health_handler))
@@ -81,6 +96,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/inference", post(inference_handler))
         // Embedding endpoint
         .route("/v1/embed", post(embed_handler))
+        // Vision endpoints (OCR and image description) with higher body limit
+        .nest("/v1", vision_routes)
         // WebSocket endpoint
         .route("/v1/ws", get(websocket_handler))
         // Metrics endpoint
@@ -101,6 +118,7 @@ pub async fn start_server(api_server: ApiServer) -> Result<(), Box<dyn std::erro
         sessions: Arc::new(RwLock::new(HashMap::new())),
         chain_stats: Arc::new(RwLock::new(HashMap::new())),
         embedding_model_manager: Arc::new(RwLock::new(None)),
+        vision_model_manager: Arc::new(RwLock::new(None)),
     });
 
     let app = create_app(state);
@@ -161,6 +179,25 @@ async fn models_handler(
             };
 
             // Create response with embedding models
+            let response = serde_json::json!({
+                "models": models,
+                "chain_id": chain_id,
+                "chain_name": chain.name,
+            });
+
+            (StatusCode::OK, axum::response::Json(response)).into_response()
+        }
+        "vision" => {
+            // Get vision models (OCR and Florence)
+            let manager_guard = state.vision_model_manager.read().await;
+            let models = if let Some(manager) = manager_guard.as_ref() {
+                manager.list_models()
+            } else {
+                // No vision models loaded - return empty array
+                Vec::new()
+            };
+
+            // Create response with vision models
             let response = serde_json::json!({
                 "models": models,
                 "chain_id": chain_id,

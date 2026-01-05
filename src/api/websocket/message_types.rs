@@ -567,6 +567,9 @@ pub struct UploadVectorsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
 
+    /// Status of the upload: "success" if all uploaded, "partial" if some rejected
+    pub status: String,
+
     /// Number of vectors successfully uploaded
     pub uploaded: usize,
 

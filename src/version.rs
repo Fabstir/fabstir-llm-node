@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.5.5-sanitize-null-bytes-2025-12-29";
+pub const VERSION: &str = "v8.6.22-ocr-word-segmentation-2026-01-04";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.5.5";
+pub const VERSION_NUMBER: &str = "8.6.22";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 5;
+pub const VERSION_MINOR: u32 = 6;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 22;
 
 /// Build date
-pub const BUILD_DATE: &str = "2025-12-29";
+pub const BUILD_DATE: &str = "2026-01-04";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -66,6 +66,13 @@ pub const FEATURES: &[&str] = &[
     "utf8-content-sanitization",
     "strip-chat-markers",
     "null-byte-sanitization",
+    "cpu-ocr",
+    "paddleocr-onnx",
+    "cpu-vision",
+    "florence-2-onnx",
+    "image-to-text",
+    "image-description",
+    "vision-20mb-body-limit",
 ];
 
 /// Supported chain IDs
@@ -76,10 +83,29 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
-    "FIX: Sanitize prompts before tokenization to remove null bytes",
-    "FIX: Handles content from PDFs and other sources with embedded nulls",
-    "FIX: Removes C0 control characters that break llama.cpp tokenizer",
-    "FIX: Preserves normal whitespace (tab, newline, carriage return)",
+    "FEAT: Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
+    "FEAT: Added POST /v1/describe-image endpoint for image description using Florence-2 (CPU-only)",
+    "FEAT: Added GET /v1/models?type=vision to list available vision models",
+    "FEAT: Added OCR_MODEL_PATH and FLORENCE_MODEL_PATH environment variables",
+    "FEAT: Vision models run on CPU only (no GPU VRAM competition with LLM)",
+    "FIX: Added vision routes to ApiServer.create_router() (v8.6.1)",
+    "FIX: Switched to English PP-OCRv5 models for accurate English text OCR (v8.6.3)",
+    "FIX: Fixed recognition height to 48 (ONNX model requirement) (v8.6.5)",
+    "FIX: Added word spacing post-processing for English OCR output (v8.6.6)",
+    "FIX: Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)",
+    "FIX: Added embed_tokens.onnx support for Florence-2 decoder (v8.6.8)",
+    "FIX: Use correct Florence-2 task tokens: <cap> and <dcap> (v8.6.11)",
+    "FIX: Remove trailing EOS from Florence input tokens for autoregressive generation (v8.6.12)",
+    "FIX: Manual task token construction [BOS, <dcap>], debug logging, encoder validation (v8.6.13)",
+    "FIX: Use <cap> token instead of <dcap> - ONNX model handles simple caption better (v8.6.14)",
+    "FIX: Use BOS-only start without task tokens - ONNX export may have broken task token handling (v8.6.15)",
+    "FIX: Use natural language prompts instead of task tokens - 'A photo of', 'The image shows' work correctly (v8.6.16)",
+    "FIX: Add repetition masking to Florence decoder - prevents 'shows shows shows...' loops (v8.6.17)",
+    "FIX: Use ImageNet normalization and CenterCrop for Florence preprocessing (was CLIP/Letterbox) (v8.6.18)",
+    "FIX: Increased body limit to 20MB for vision endpoints (v8.6.19)",
+    "FIX: Handle data URL prefix (data:image/png;base64,...) in OCR and describe-image endpoints (v8.6.20)",
+    "FIX: Merge fragmented text boxes on same line for better OCR recognition (v8.6.21)",
+    "FIX: Add dictionary-based word segmentation for proper spacing in OCR output (v8.6.22)",
 ];
 
 /// Get formatted version string for logging
@@ -106,25 +132,27 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 5);
-        assert_eq!(VERSION_PATCH, 5);
+        assert_eq!(VERSION_MINOR, 6);
+        assert_eq!(VERSION_PATCH, 22);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
-        assert!(FEATURES.contains(&"null-byte-sanitization"));
+        assert!(FEATURES.contains(&"cpu-ocr"));
+        assert!(FEATURES.contains(&"cpu-vision"));
+        assert!(FEATURES.contains(&"vision-20mb-body-limit"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.5.5"));
-        assert!(version.contains("2025-12-29"));
+        assert!(version.contains("8.6.22"));
+        assert!(version.contains("2026-01-04"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.5.5-sanitize-null-bytes-2025-12-29");
-        assert_eq!(VERSION_NUMBER, "8.5.5");
-        assert_eq!(BUILD_DATE, "2025-12-29");
+        assert_eq!(VERSION, "v8.6.22-ocr-word-segmentation-2026-01-04");
+        assert_eq!(VERSION_NUMBER, "8.6.22");
+        assert_eq!(BUILD_DATE, "2026-01-04");
     }
 }
