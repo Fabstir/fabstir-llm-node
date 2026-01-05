@@ -31,6 +31,12 @@ pub enum MessageType {
     // Vector loading progress (Sub-phase 3.3)
     VectorLoadingProgress,
 
+    // Web search (v8.7.0+)
+    SearchRequest,
+    SearchStarted,
+    SearchResults,
+    SearchError,
+
     // Error and unknown
     Error,
     Unknown,
@@ -1008,5 +1014,254 @@ impl VectorDatabaseInfo {
         }
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// Web Search Messages (v8.7.0+)
+// ============================================================================
+
+/// Request to perform web search via WebSocket
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchRequest {
+    /// Search query string
+    pub query: String,
+
+    /// Number of results to return (1-20, default 10)
+    #[serde(default = "default_search_num_results")]
+    pub num_results: usize,
+
+    /// Optional request ID for tracking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+fn default_search_num_results() -> usize {
+    10
+}
+
+impl WebSearchRequest {
+    /// Validate the search request
+    pub fn validate(&self) -> Result<()> {
+        if self.query.trim().is_empty() {
+            return Err(anyhow!("Search query cannot be empty"));
+        }
+
+        if self.query.len() > 500 {
+            return Err(anyhow!("Search query too long (max 500 characters)"));
+        }
+
+        if self.num_results < 1 || self.num_results > 20 {
+            return Err(anyhow!("num_results must be between 1 and 20"));
+        }
+
+        Ok(())
+    }
+}
+
+/// Notification that search has started
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchStarted {
+    /// Message type for routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
+    /// Request ID (if provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Search query being performed
+    pub query: String,
+}
+
+impl WebSearchStarted {
+    pub fn new(query: String, request_id: Option<String>) -> Self {
+        Self {
+            msg_type: "search_started".to_string(),
+            request_id,
+            query,
+        }
+    }
+}
+
+/// Search results response via WebSocket
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchResults {
+    /// Message type for routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
+    /// Request ID (if provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Search query that was performed
+    pub query: String,
+
+    /// Search results
+    pub results: Vec<WebSearchResultItem>,
+
+    /// Number of results returned
+    pub result_count: usize,
+
+    /// Search execution time in milliseconds
+    pub search_time_ms: u64,
+
+    /// Search provider used (brave, duckduckgo, bing)
+    pub provider: String,
+
+    /// Whether result was from cache
+    pub cached: bool,
+}
+
+/// Single search result item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchResultItem {
+    /// Page title
+    pub title: String,
+
+    /// Page URL
+    pub url: String,
+
+    /// Result snippet/description
+    pub snippet: String,
+
+    /// Published date (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_date: Option<String>,
+}
+
+/// Search error response via WebSocket
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchError {
+    /// Message type for routing
+    #[serde(rename = "type")]
+    pub msg_type: String,
+
+    /// Request ID (if provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Error message
+    pub error: String,
+
+    /// Error code
+    pub error_code: WebSearchErrorCode,
+}
+
+/// Error codes for web search failures
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WebSearchErrorCode {
+    /// Search service not available on this host
+    SearchDisabled,
+    /// Rate limit exceeded
+    RateLimited,
+    /// Invalid query
+    InvalidQuery,
+    /// All providers failed
+    ProviderUnavailable,
+    /// Search timeout
+    Timeout,
+    /// Internal error
+    InternalError,
+}
+
+impl WebSearchError {
+    pub fn new(error: String, error_code: WebSearchErrorCode, request_id: Option<String>) -> Self {
+        Self {
+            msg_type: "search_error".to_string(),
+            request_id,
+            error,
+            error_code,
+        }
+    }
+
+    pub fn disabled(request_id: Option<String>) -> Self {
+        Self::new(
+            "Web search is disabled on this host".to_string(),
+            WebSearchErrorCode::SearchDisabled,
+            request_id,
+        )
+    }
+
+    pub fn rate_limited(request_id: Option<String>) -> Self {
+        Self::new(
+            "Search rate limit exceeded, try again later".to_string(),
+            WebSearchErrorCode::RateLimited,
+            request_id,
+        )
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn test_web_search_request_validation() {
+        let valid = WebSearchRequest {
+            query: "test query".to_string(),
+            num_results: 10,
+            request_id: None,
+        };
+        assert!(valid.validate().is_ok());
+
+        let empty_query = WebSearchRequest {
+            query: "".to_string(),
+            num_results: 10,
+            request_id: None,
+        };
+        assert!(empty_query.validate().is_err());
+
+        let invalid_count = WebSearchRequest {
+            query: "test".to_string(),
+            num_results: 100,
+            request_id: None,
+        };
+        assert!(invalid_count.validate().is_err());
+    }
+
+    #[test]
+    fn test_web_search_results_serialization() {
+        let results = WebSearchResults {
+            msg_type: "search_results".to_string(),
+            request_id: Some("req-123".to_string()),
+            query: "test query".to_string(),
+            results: vec![WebSearchResultItem {
+                title: "Test Result".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "A test snippet".to_string(),
+                published_date: None,
+            }],
+            result_count: 1,
+            search_time_ms: 150,
+            provider: "duckduckgo".to_string(),
+            cached: false,
+        };
+
+        let json = serde_json::to_value(&results).unwrap();
+        assert_eq!(json["type"], "search_results");
+        assert_eq!(json["resultCount"], 1);
+        assert_eq!(json["provider"], "duckduckgo");
+    }
+
+    #[test]
+    fn test_web_search_error_creation() {
+        let error = WebSearchError::disabled(Some("req-456".to_string()));
+        assert_eq!(error.error_code, WebSearchErrorCode::SearchDisabled);
+        assert!(error.error.contains("disabled"));
+    }
+
+    #[test]
+    fn test_web_search_error_code_serialization() {
+        let code = WebSearchErrorCode::RateLimited;
+        let json = serde_json::to_value(&code).unwrap();
+        assert_eq!(json, "RATE_LIMITED");
     }
 }

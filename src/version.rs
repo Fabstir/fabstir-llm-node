@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.6.22-ocr-word-segmentation-2026-01-04";
+pub const VERSION: &str = "v8.7.5-web-search-2026-01-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.6.22";
+pub const VERSION_NUMBER: &str = "8.7.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 6;
+pub const VERSION_MINOR: u32 = 7;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 22;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-04";
+pub const BUILD_DATE: &str = "2026-01-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -73,6 +73,17 @@ pub const FEATURES: &[&str] = &[
     "image-to-text",
     "image-description",
     "vision-20mb-body-limit",
+    // Web search (v8.7.0+)
+    "host-side-web-search",
+    "brave-search-api",
+    "duckduckgo-fallback",
+    "bing-search-api",
+    "search-caching",
+    "search-rate-limiting",
+    "inference-web-search",
+    // Web search streaming (v8.7.5+)
+    "streaming-web-search",
+    "websocket-web-search",
 ];
 
 /// Supported chain IDs
@@ -83,29 +94,26 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.7.5 - Streaming Web Search
+    "FEAT: Added web search support to streaming inference (HTTP streaming and WebSocket)",
+    "FEAT: WebSocket encrypted sessions now support web_search flag",
+    "FEAT: Search context is prepended to prompt before streaming begins",
+    // v8.7.0 - Web Search
+    "FEAT: Added host-side web search for decentralized AI inference",
+    "FEAT: Added POST /v1/search endpoint for direct web search",
+    "FEAT: Added web_search, max_searches, search_queries fields to InferenceRequest",
+    "FEAT: Added web_search_performed, search_queries_count, search_provider to InferenceResponse",
+    "FEAT: Support Brave Search API, Bing Search API, and DuckDuckGo (no API key) providers",
+    "FEAT: Added TTL-based search result caching (default 15 minutes)",
+    "FEAT: Added search rate limiting (configurable via SEARCH_RATE_LIMIT_PER_MINUTE)",
+    "FEAT: Added WEB_SEARCH_ENABLED, BRAVE_API_KEY, BING_API_KEY environment variables",
+    "FEAT: Added WebSocket message types: SearchRequest, SearchStarted, SearchResults, SearchError",
+    // Previous versions
     "FEAT: Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
     "FEAT: Added POST /v1/describe-image endpoint for image description using Florence-2 (CPU-only)",
     "FEAT: Added GET /v1/models?type=vision to list available vision models",
     "FEAT: Added OCR_MODEL_PATH and FLORENCE_MODEL_PATH environment variables",
     "FEAT: Vision models run on CPU only (no GPU VRAM competition with LLM)",
-    "FIX: Added vision routes to ApiServer.create_router() (v8.6.1)",
-    "FIX: Switched to English PP-OCRv5 models for accurate English text OCR (v8.6.3)",
-    "FIX: Fixed recognition height to 48 (ONNX model requirement) (v8.6.5)",
-    "FIX: Added word spacing post-processing for English OCR output (v8.6.6)",
-    "FIX: Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)",
-    "FIX: Added embed_tokens.onnx support for Florence-2 decoder (v8.6.8)",
-    "FIX: Use correct Florence-2 task tokens: <cap> and <dcap> (v8.6.11)",
-    "FIX: Remove trailing EOS from Florence input tokens for autoregressive generation (v8.6.12)",
-    "FIX: Manual task token construction [BOS, <dcap>], debug logging, encoder validation (v8.6.13)",
-    "FIX: Use <cap> token instead of <dcap> - ONNX model handles simple caption better (v8.6.14)",
-    "FIX: Use BOS-only start without task tokens - ONNX export may have broken task token handling (v8.6.15)",
-    "FIX: Use natural language prompts instead of task tokens - 'A photo of', 'The image shows' work correctly (v8.6.16)",
-    "FIX: Add repetition masking to Florence decoder - prevents 'shows shows shows...' loops (v8.6.17)",
-    "FIX: Use ImageNet normalization and CenterCrop for Florence preprocessing (was CLIP/Letterbox) (v8.6.18)",
-    "FIX: Increased body limit to 20MB for vision endpoints (v8.6.19)",
-    "FIX: Handle data URL prefix (data:image/png;base64,...) in OCR and describe-image endpoints (v8.6.20)",
-    "FIX: Merge fragmented text boxes on same line for better OCR recognition (v8.6.21)",
-    "FIX: Add dictionary-based word segmentation for proper spacing in OCR output (v8.6.22)",
 ];
 
 /// Get formatted version string for logging
@@ -132,27 +140,32 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 6);
-        assert_eq!(VERSION_PATCH, 22);
+        assert_eq!(VERSION_MINOR, 7);
+        assert_eq!(VERSION_PATCH, 5);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
         assert!(FEATURES.contains(&"cpu-vision"));
         assert!(FEATURES.contains(&"vision-20mb-body-limit"));
+        assert!(FEATURES.contains(&"host-side-web-search"));
+        assert!(FEATURES.contains(&"brave-search-api"));
+        assert!(FEATURES.contains(&"inference-web-search"));
+        assert!(FEATURES.contains(&"streaming-web-search"));
+        assert!(FEATURES.contains(&"websocket-web-search"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.6.22"));
-        assert!(version.contains("2026-01-04"));
+        assert!(version.contains("8.7.5"));
+        assert!(version.contains("2026-01-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.6.22-ocr-word-segmentation-2026-01-04");
-        assert_eq!(VERSION_NUMBER, "8.6.22");
-        assert_eq!(BUILD_DATE, "2026-01-04");
+        assert_eq!(VERSION, "v8.7.5-web-search-2026-01-05");
+        assert_eq!(VERSION_NUMBER, "8.7.5");
+        assert_eq!(BUILD_DATE, "2026-01-05");
     }
 }

@@ -17,10 +17,10 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::{
-    describe_image::describe_image_handler, embed::embed_handler, ocr::ocr_handler, ApiError,
-    ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse, InferenceRequest,
-    InferenceResponse, ModelInfo, ModelsResponse, SessionInfo, SessionInfoResponse, SessionStatus,
-    TotalStatistics,
+    describe_image::describe_image_handler, embed::embed_handler, ocr::ocr_handler,
+    search::search_handler, ApiError, ApiServer, ChainInfo, ChainStatistics, ChainStatsResponse,
+    ChainsResponse, InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
+    SessionInfoResponse, SessionStatus, TotalStatistics,
 };
 use crate::blockchain::{ChainConfig, ChainRegistry};
 
@@ -49,6 +49,7 @@ pub struct AppState {
     pub chain_stats: Arc<RwLock<HashMap<u64, ChainStatistics>>>,
     pub embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
     pub vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
+    pub search_service: Arc<RwLock<Option<Arc<crate::search::SearchService>>>>,
 }
 
 impl AppState {
@@ -60,6 +61,7 @@ impl AppState {
             chain_stats: Arc::new(RwLock::new(HashMap::new())),
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
+            search_service: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -96,6 +98,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/v1/inference", post(inference_handler))
         // Embedding endpoint
         .route("/v1/embed", post(embed_handler))
+        // Search endpoint
+        .route("/v1/search", post(search_handler))
         // Vision endpoints (OCR and image description) with higher body limit
         .nest("/v1", vision_routes)
         // WebSocket endpoint
@@ -119,6 +123,7 @@ pub async fn start_server(api_server: ApiServer) -> Result<(), Box<dyn std::erro
         chain_stats: Arc::new(RwLock::new(HashMap::new())),
         embedding_model_manager: Arc::new(RwLock::new(None)),
         vision_model_manager: Arc::new(RwLock::new(None)),
+        search_service: Arc::new(RwLock::new(None)),
     });
 
     let app = create_app(state);
@@ -329,6 +334,71 @@ async fn inference_handler(
         request.chain_id = Some(chain_id);
     }
 
+    // Perform web search if enabled (v8.7.0+)
+    let mut search_metadata: Option<(bool, u32, String)> = None;
+    if request.web_search {
+        if let Some(search_service) = state.search_service.read().await.as_ref() {
+            if search_service.is_enabled() {
+                // Get queries: use provided ones or extract from prompt
+                let queries = request.search_queries.clone().unwrap_or_else(|| {
+                    crate::search::query_extractor::extract_search_queries(
+                        &request.prompt,
+                        request.max_searches.min(20) as usize,
+                    )
+                });
+
+                if !queries.is_empty() {
+                    tracing::info!(
+                        "🔍 Performing web search: {} queries for inference request",
+                        queries.len()
+                    );
+
+                    // Perform searches
+                    let results = search_service
+                        .batch_search(queries.clone(), Some(5))
+                        .await;
+
+                    // Collect successful results
+                    let mut all_results = Vec::new();
+                    let mut provider_used = String::new();
+
+                    for result in results {
+                        if let Ok(response) = result {
+                            if provider_used.is_empty() {
+                                provider_used = response.provider.clone();
+                            }
+                            all_results.extend(response.results);
+                        }
+                    }
+
+                    // Format and prepend to prompt
+                    if !all_results.is_empty() {
+                        let formatted = crate::search::query_extractor::format_results_for_prompt(
+                            &all_results,
+                            10, // Max results to include
+                        );
+
+                        request.prompt = format!(
+                            "{}\n\nUser question: {}",
+                            formatted, request.prompt
+                        );
+
+                        search_metadata = Some((true, queries.len() as u32, provider_used));
+
+                        tracing::info!(
+                            "🔍 Web search complete: {} results injected into prompt",
+                            all_results.len()
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!("Web search requested but search service is disabled");
+            }
+        } else {
+            tracing::debug!("Web search requested but no search service available");
+        }
+    }
+
     if request.stream {
         // Streaming response
         match state
@@ -365,6 +435,14 @@ async fn inference_handler(
                         response.native_token = Some(chain.native_token.symbol.clone());
                     }
                 }
+
+                // Add web search metadata to response (v8.7.0+)
+                if let Some((performed, count, provider)) = search_metadata {
+                    response.web_search_performed = Some(performed);
+                    response.search_queries_count = Some(count);
+                    response.search_provider = Some(provider);
+                }
+
                 axum::response::Json(response).into_response()
             }
             Err(e) => ApiErrorResponse(e).into_response(),

@@ -189,6 +189,7 @@ pub struct ApiServer {
     node_private_key: Option<[u8; 32]>,
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
     vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
+    search_service: Arc<RwLock<Option<Arc<crate::search::SearchService>>>>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -238,6 +239,7 @@ impl ApiServer {
             node_private_key: None,
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
+            search_service: Arc::new(RwLock::new(None)),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -313,6 +315,7 @@ impl ApiServer {
             node_private_key,
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
+            search_service: Arc::new(RwLock::new(None)),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -366,6 +369,7 @@ impl ApiServer {
             node_private_key: self.node_private_key,
             embedding_model_manager: self.embedding_model_manager.clone(),
             vision_model_manager: self.vision_model_manager.clone(),
+            search_service: self.search_service.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -406,6 +410,16 @@ impl ApiServer {
 
     pub async fn get_vision_model_manager(&self) -> Option<Arc<crate::vision::VisionModelManager>> {
         self.vision_model_manager.read().await.clone()
+    }
+
+    /// Set the search service for web search functionality (v8.7.0+)
+    pub async fn set_search_service(&self, service: Arc<crate::search::SearchService>) {
+        *self.search_service.write().await = Some(service);
+    }
+
+    /// Get the search service for web search functionality
+    pub async fn get_search_service(&self) -> Option<Arc<crate::search::SearchService>> {
+        self.search_service.read().await.clone()
     }
 
     /// Get the session key store for encryption/decryption operations
@@ -480,8 +494,84 @@ impl ApiServer {
             }
         };
 
-        // Build prompt (always use the formatter for consistency)
-        let full_prompt = build_prompt_with_context(&request.conversation_context, &request.prompt);
+        // Web search integration (v8.7.0+)
+        let mut search_metadata: Option<(bool, u32, String)> = None;
+        let mut search_context = String::new();
+
+        if request.web_search {
+            info!("Web search requested for inference");
+
+            // Get search service
+            let search_service_guard = self.search_service.read().await;
+            if let Some(search_service) = search_service_guard.as_ref() {
+                if search_service.is_enabled() {
+                    // Extract search queries from request or derive from prompt
+                    let queries = if let Some(ref custom_queries) = request.search_queries {
+                        custom_queries.clone()
+                    } else {
+                        // Use prompt as search query (truncate if too long)
+                        let query = if request.prompt.len() > 200 {
+                            request.prompt.chars().take(200).collect()
+                        } else {
+                            request.prompt.clone()
+                        };
+                        vec![query]
+                    };
+
+                    // Limit number of searches
+                    let max_searches = std::cmp::min(request.max_searches, 20) as usize;
+                    let queries_to_search: Vec<_> = queries.into_iter().take(max_searches).collect();
+                    let queries_count = queries_to_search.len() as u32;
+
+                    // Perform searches and collect results
+                    let mut all_results = Vec::new();
+                    let mut provider_name = String::new();
+
+                    for query in &queries_to_search {
+                        match search_service.search(query, Some(5)).await {
+                            Ok(result) => {
+                                provider_name = result.provider.clone();
+                                for sr in result.results {
+                                    all_results.push(format!(
+                                        "- {} ({}): {}",
+                                        sr.title, sr.url, sr.snippet
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Search failed for query '{}': {}", query, e);
+                            }
+                        }
+                    }
+
+                    if !all_results.is_empty() {
+                        // Format search results as context
+                        search_context = format!(
+                            "\n[Web Search Results]\n{}\n[End Web Search Results]\n\n",
+                            all_results.join("\n")
+                        );
+                        search_metadata = Some((true, queries_count, provider_name));
+                        info!(
+                            "Web search completed: {} results from {} queries",
+                            all_results.len(),
+                            queries_count
+                        );
+                    }
+                } else {
+                    warn!("Web search requested but search service is disabled");
+                }
+            } else {
+                warn!("Web search requested but search service is not available");
+            }
+        }
+
+        // Build prompt with search context (if any) and conversation context
+        let prompt_with_search = if !search_context.is_empty() {
+            format!("{}{}", search_context, request.prompt)
+        } else {
+            request.prompt.clone()
+        };
+        let full_prompt = build_prompt_with_context(&request.conversation_context, &prompt_with_search);
 
         if !request.conversation_context.is_empty() {
             info!(
@@ -514,7 +604,14 @@ impl ApiServer {
             .await
             .map_err(|e| ApiError::InternalError(format!("Inference failed: {}", e)))?;
 
-        // Convert to API response
+        // Convert to API response (include search metadata if search was performed)
+        let (web_search_performed, search_queries_count, search_provider) =
+            if let Some((performed, count, provider)) = search_metadata {
+                (Some(performed), Some(count), Some(provider))
+            } else {
+                (None, None, None)
+            };
+
         let response = InferenceResponse {
             model: request.model.clone(),
             content: result.text,
@@ -527,6 +624,9 @@ impl ApiServer {
             chain_id: request.chain_id,
             chain_name: None,
             native_token: None,
+            web_search_performed,
+            search_queries_count,
+            search_provider,
         };
 
         // Track tokens for checkpoint submission (non-streaming path)
@@ -620,8 +720,78 @@ impl ApiServer {
             }
         };
 
-        // Build prompt (always use the formatter for consistency)
-        let full_prompt = build_prompt_with_context(&request.conversation_context, &request.prompt);
+        // Web search integration for streaming (v8.7.5+)
+        let mut search_context = String::new();
+
+        if request.web_search {
+            info!("🔍 Web search requested for streaming inference");
+
+            // Get search service
+            let search_service_guard = self.search_service.read().await;
+            if let Some(search_service) = search_service_guard.as_ref() {
+                if search_service.is_enabled() {
+                    // Extract search queries from request or derive from prompt
+                    let queries = if let Some(ref custom_queries) = request.search_queries {
+                        custom_queries.clone()
+                    } else {
+                        // Use prompt as search query (truncate if too long)
+                        let query = if request.prompt.len() > 200 {
+                            request.prompt.chars().take(200).collect()
+                        } else {
+                            request.prompt.clone()
+                        };
+                        vec![query]
+                    };
+
+                    // Limit number of searches
+                    let max_searches = std::cmp::min(request.max_searches, 20) as usize;
+                    let queries_to_search: Vec<_> = queries.into_iter().take(max_searches).collect();
+
+                    // Perform searches and collect results
+                    let mut all_results = Vec::new();
+
+                    for query in &queries_to_search {
+                        match search_service.search(query, Some(5)).await {
+                            Ok(result) => {
+                                for sr in result.results {
+                                    all_results.push(format!(
+                                        "- {} ({}): {}",
+                                        sr.title, sr.url, sr.snippet
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Search failed for streaming query '{}': {}", query, e);
+                            }
+                        }
+                    }
+
+                    if !all_results.is_empty() {
+                        // Format search results as context
+                        search_context = format!(
+                            "\n[Web Search Results]\n{}\n[End Web Search Results]\n\n",
+                            all_results.join("\n")
+                        );
+                        info!(
+                            "🔍 Web search completed for streaming: {} results",
+                            all_results.len()
+                        );
+                    }
+                } else {
+                    warn!("🔍 Web search requested but search service is disabled");
+                }
+            } else {
+                warn!("🔍 Web search requested but search service is not available");
+            }
+        }
+
+        // Build prompt with search context (if any) and conversation context
+        let prompt_with_search = if !search_context.is_empty() {
+            format!("{}{}", search_context, request.prompt)
+        } else {
+            request.prompt.clone()
+        };
+        let full_prompt = build_prompt_with_context(&request.conversation_context, &prompt_with_search);
 
         if !request.conversation_context.is_empty() {
             info!(
@@ -877,6 +1047,7 @@ impl ApiServer {
             .route("/v1/models", get(models_handler))
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/embed", post(embed_handler_wrapper))
+            .route("/v1/search", post(search_handler_wrapper))
             .nest("/v1", vision_routes)
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
@@ -944,6 +1115,7 @@ async fn embed_handler_wrapper(
         chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
+        search_service: server.search_service.clone(),
     };
 
     // Call the actual embed_handler
@@ -971,6 +1143,7 @@ async fn ocr_handler_wrapper(
         chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
+        search_service: server.search_service.clone(),
     };
 
     // Call the actual ocr_handler
@@ -998,10 +1171,39 @@ async fn describe_image_handler_wrapper(
         chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
+        search_service: server.search_service.clone(),
     };
 
     // Call the actual describe_image_handler
     match crate::api::describe_image_handler(axum::extract::State(app_state), Json(request)).await {
+        Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
+        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
+            "error": message
+        }))).into_response(),
+    }
+}
+
+// Search handler wrapper that converts ApiServer state to AppState (v8.7.0+)
+async fn search_handler_wrapper(
+    State(server): State<Arc<ApiServer>>,
+    Json(request): Json<crate::api::search::SearchApiRequest>,
+) -> impl IntoResponse {
+    use crate::blockchain::ChainRegistry;
+    use crate::api::http_server::AppState;
+
+    // Create AppState from ApiServer
+    let app_state = AppState {
+        api_server: server.clone(),
+        chain_registry: Arc::new(ChainRegistry::new()),
+        sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        embedding_model_manager: server.embedding_model_manager.clone(),
+        vision_model_manager: server.vision_model_manager.clone(),
+        search_service: server.search_service.clone(),
+    };
+
+    // Call the actual search_handler
+    match crate::api::search::search_handler(axum::extract::State(app_state), Json(request)).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
         Err((status, message)) => (status, axum::response::Json(serde_json::json!({
             "error": message
