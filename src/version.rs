@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.7.6-web-search-2026-01-05";
+pub const VERSION: &str = "v8.7.9-sdk-web-search-2026-01-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.7.6";
+pub const VERSION_NUMBER: &str = "8.7.9";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 7;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 6;
+pub const VERSION_PATCH: u32 = 9;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-05";
@@ -84,6 +84,10 @@ pub const FEATURES: &[&str] = &[
     // Web search streaming (v8.7.5+)
     "streaming-web-search",
     "websocket-web-search",
+    // Auto-detect search intent (v8.7.8+)
+    "auto-search-intent-detection",
+    // SDK web_search field support (v8.7.9+)
+    "sdk-web-search-field",
 ];
 
 /// Supported chain IDs
@@ -94,6 +98,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.7.9 - SDK web_search field support
+    "FEAT: Node now reads web_search, max_searches, search_queries from encrypted message JSON",
+    "FEAT: SDK can explicitly enable web search via web_search: true at message level",
+    // v8.7.8 - Auto-detect search intent
+    "FEAT: Auto-detect search intent from prompt (triggers on 'search for', 'latest', 'current', etc.)",
+    "FEAT: Web search now works without SDK explicitly setting web_search=true",
     // v8.7.5 - Streaming Web Search
     "FEAT: Added web search support to streaming inference (HTTP streaming and WebSocket)",
     "FEAT: WebSocket encrypted sessions now support web_search flag",
@@ -141,7 +151,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 7);
-        assert_eq!(VERSION_PATCH, 6);
+        assert_eq!(VERSION_PATCH, 9);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -152,20 +162,22 @@ mod tests {
         assert!(FEATURES.contains(&"inference-web-search"));
         assert!(FEATURES.contains(&"streaming-web-search"));
         assert!(FEATURES.contains(&"websocket-web-search"));
+        assert!(FEATURES.contains(&"auto-search-intent-detection"));
+        assert!(FEATURES.contains(&"sdk-web-search-field"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.7.6"));
+        assert!(version.contains("8.7.9"));
         assert!(version.contains("2026-01-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.7.6-web-search-2026-01-05");
-        assert_eq!(VERSION_NUMBER, "8.7.6");
+        assert_eq!(VERSION, "v8.7.9-sdk-web-search-2026-01-05");
+        assert_eq!(VERSION_NUMBER, "8.7.9");
         assert_eq!(BUILD_DATE, "2026-01-05");
     }
 }

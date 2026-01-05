@@ -59,17 +59,10 @@ impl CheckpointManager {
             .await
             .map_err(|e| anyhow!("Failed to initialize S5 storage: {}", e))?;
 
-        info!("✅ S5 storage initialized for off-chain proof storage");
-
-        eprintln!(
-            "🏠 CheckpointManager initialized with host address: {:?}",
-            host_address
-        );
-        eprintln!(
-            "📝 CONTRACT VERSION: Using JobMarketplace at {}",
-            job_marketplace_address
-        );
-        eprintln!("🔖 BUILD VERSION: {}", crate::version::VERSION);
+        eprintln!("CheckpointManager initialized:");
+        eprintln!("  Host: {:?}", host_address);
+        eprintln!("  JobMarketplace: {}", job_marketplace_address);
+        eprintln!("  BUILD VERSION: {}", crate::version::VERSION);
 
         Ok(Self {
             web3_client,
@@ -87,15 +80,10 @@ impl CheckpointManager {
         tokens: u64,
         session_id: Option<String>,
     ) -> Result<()> {
-        println!(
-            "🔔 CHECKPOINT MANAGER: track_tokens called for job {} with {} tokens",
-            job_id, tokens
-        );
-
         let mut trackers = self.job_trackers.write().await;
 
         let tracker = trackers.entry(job_id).or_insert_with(|| {
-            info!("Starting token tracking for job {}", job_id);
+            eprintln!("📝 Starting token tracking for job {}", job_id);
             JobTokenTracker {
                 job_id,
                 tokens_generated: 0,
@@ -107,19 +95,13 @@ impl CheckpointManager {
         });
 
         tracker.tokens_generated += tokens;
-        info!(
-            "Generated {} tokens for job {} (total: {}, last checkpoint: {})",
-            tokens, job_id, tracker.tokens_generated, tracker.last_checkpoint
-        );
 
         // Check if we need to submit a checkpoint
         let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
-        println!("🔍 Checkpoint check: job {} has {} total tokens, {} since last checkpoint (threshold: {})",
-                 job_id, tracker.tokens_generated, tokens_since_checkpoint, CHECKPOINT_THRESHOLD);
 
         if tokens_since_checkpoint >= CHECKPOINT_THRESHOLD && !tracker.submission_in_progress {
-            println!(
-                "🚨 TRIGGERING CHECKPOINT for job {} with {} tokens!",
+            info!(
+                "🚨 Checkpoint triggered: job {} at {} tokens",
                 job_id, tracker.tokens_generated
             );
             // CRITICAL FIX: Submit only the DELTA (tokens since last checkpoint), not cumulative total
@@ -192,11 +174,6 @@ impl CheckpointManager {
                     }
                 }
             });
-        } else if tracker.submission_in_progress {
-            info!(
-                "Checkpoint submission already in progress for job {} - skipping",
-                job_id
-            );
         }
 
         Ok(())
@@ -650,12 +627,8 @@ impl CheckpointManager {
         if let Some(tracker) = trackers.get_mut(&job_id) {
             let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
 
-            // Check if submission is already in progress
+            // Skip if submission is already in progress
             if tracker.submission_in_progress {
-                info!(
-                    "⏸️ Skipping force checkpoint for job {} - submission already in progress",
-                    job_id
-                );
                 return Ok(());
             }
 
@@ -779,23 +752,11 @@ impl CheckpointManager {
             let (tokens_to_submit, previous_checkpoint) = if let Some(tracker) = trackers.get_mut(&job_id) {
                 let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
 
-                // Check if submission is already in progress
+                // Skip if submission in progress or not enough tokens
                 if tracker.submission_in_progress {
-                    info!(
-                        "⏸️ [FORCE-CHECKPOINT-BG] Skipping - submission already in progress for job {}",
-                        job_id
-                    );
                     return;
                 }
-
-                // Only submit if we have at least MIN_PROVEN_TOKENS since last checkpoint
                 if tokens_since_checkpoint < MIN_PROVEN_TOKENS {
-                    if tokens_since_checkpoint > 0 {
-                        info!(
-                            "⏸️ [FORCE-CHECKPOINT-BG] Skipping job {} - only {} tokens (minimum: {})",
-                            job_id, tokens_since_checkpoint, MIN_PROVEN_TOKENS
-                        );
-                    }
                     return;
                 }
 

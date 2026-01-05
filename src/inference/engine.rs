@@ -418,16 +418,10 @@ impl LlmEngine {
 
                 let new_token_id = sampler.sample(&context, -1);
 
-                // v8.4.18: Log every 50 tokens, special tokens, AND tokens 140+ to catch exit
                 let tokens_so_far = n_cur - prompt_tokens.len();
                 let is_special = new_token_id == eos_token || new_token_id == return_token || end_token.map_or(false, |et| new_token_id == et);
-                if tokens_so_far % 50 == 0 || is_special || tokens_so_far >= 140 {
-                    eprintln!("🔤 Token #{}: id={} (eos={}, return={}, end={:?}) SPECIAL={} is_eos={}",
-                        tokens_so_far, new_token_id, eos_token, return_token, end_token, is_special,
-                        new_token_id == eos_token);
-                }
 
-                // v8.4.14: ONLY stop on EOS token - no early termination
+                // ONLY stop on EOS token - no early termination
                 // All other stop conditions have been disabled to prevent truncation
                 if new_token_id == eos_token {
                     stop_reason = "eos_token";

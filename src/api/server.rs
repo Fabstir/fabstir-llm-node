@@ -248,10 +248,8 @@ impl ApiServer {
 
     pub async fn new(config: ApiConfig) -> Result<Self> {
         // Version stamp for deployment verification
-        eprintln!("🚀 API SERVER VERSION: {}", crate::version::VERSION);
-        eprintln!("✅ Multi-chain support enabled (Base Sepolia + opBNB Testnet)");
-        eprintln!("✅ Auto-settlement on disconnect enabled");
-        eprintln!("🔍 Enhanced diagnostic logging for settlement debugging");
+        eprintln!("BUILD VERSION: {}", crate::version::VERSION);
+        info!("🚀 API Server {} started", crate::version::VERSION);
 
         // Parse the address
         let addr: SocketAddr = config.listen_addr.parse()?;
@@ -581,8 +579,6 @@ impl ApiServer {
             );
         }
 
-        // DEBUG: Log the actual prompt
-        println!("DEBUG API: Sending prompt to engine: {:?}", full_prompt);
 
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
@@ -630,43 +626,22 @@ impl ApiServer {
         };
 
         // Track tokens for checkpoint submission (non-streaming path)
-        eprintln!("\n🔍 INFERENCE REQUEST RECEIVED:");
-        eprintln!("   request.job_id: {:?}", request.job_id);
-        eprintln!("   request.session_id: {:?}", request.session_id);
-        eprintln!("   request.model: {}", request.model);
-        eprintln!("   tokens to be used: {}", response.tokens_used);
-
         let job_id = request.job_id.or_else(|| {
             request.session_id.as_ref().and_then(|sid| {
-                let parsed = sid.trim_end_matches('n').parse::<u64>().ok();
-                eprintln!("   Parsing session_id '{}' -> job_id: {:?}", sid, parsed);
-                parsed
+                sid.trim_end_matches('n').parse::<u64>().ok()
             })
         });
 
-        eprintln!("   FINAL job_id for tracking: {:?}", job_id);
-
         if let Some(jid) = job_id {
+            info!("📊 Job {} completed: {} tokens", jid, response.tokens_used);
             if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
-                eprintln!(
-                    "📊 HTTP: Tracking {} tokens for job {} (session_id: {:?})",
-                    response.tokens_used, jid, request.session_id
-                );
-                match cm
+                if let Err(e) = cm
                     .track_tokens(jid, response.tokens_used as u64, request.session_id.clone())
                     .await
                 {
-                    Ok(_) => eprintln!("   ✅ Token tracking successful for job {}", jid),
-                    Err(e) => eprintln!("   ❌ Token tracking failed for job {}: {}", jid, e),
+                    warn!("Token tracking failed for job {}: {}", jid, e);
                 }
             } else {
-                eprintln!("❌ CRITICAL: No checkpoint manager available!");
-                eprintln!("   HOST_PRIVATE_KEY probably not set");
-                eprintln!("   Tokens will NOT be tracked for settlement!");
-                eprintln!(
-                    "📊 Using simple token tracker for job {} (no checkpoint manager)",
-                    jid
-                );
                 self.token_tracker
                     .track_tokens(
                         Some(jid),
@@ -675,8 +650,6 @@ impl ApiServer {
                     )
                     .await;
             }
-        } else {
-            eprintln!("⚠️ No job_id available for token tracking in non-streaming request");
         }
 
         // Record success
@@ -721,10 +694,14 @@ impl ApiServer {
         };
 
         // Web search integration for streaming (v8.7.5+)
+        // Auto-detect search intent from prompt if not explicitly requested (v8.7.8+)
         let mut search_context = String::new();
+        let should_search = request.web_search
+            || crate::search::query_extractor::needs_web_search(&request.prompt);
 
-        if request.web_search {
-            info!("🔍 Web search requested for streaming inference");
+        if should_search {
+            info!("🔍 Web search triggered for streaming inference (explicit={}, auto-detected={})",
+                request.web_search, !request.web_search && should_search);
 
             // Get search service
             let search_service_guard = self.search_service.read().await;
@@ -800,11 +777,6 @@ impl ApiServer {
             );
         }
 
-        // DEBUG: Log the actual prompt
-        println!(
-            "DEBUG STREAMING: Sending prompt to engine: {:?}",
-            full_prompt
-        );
 
         // Log the request for debugging
         info!(
@@ -840,28 +812,16 @@ impl ApiServer {
         let (tx, rx) = mpsc::channel(100);
 
         // Clone values for the spawned task
-        // If job_id is not provided but session_id is, try to parse session_id as job_id
+        // Parse job_id from request or session_id (SDK sends "139n" format)
         let job_id = request.job_id.or_else(|| {
             request.session_id.as_ref().and_then(|sid| {
-                // Try to parse session_id as a number (SDK sends it as "139n" or just "139")
-                let parsed = sid.trim_end_matches('n').parse::<u64>().ok();
-                eprintln!(
-                    "DEBUG: Parsing session_id '{}' -> job_id: {:?}",
-                    sid, parsed
-                );
-                parsed
+                sid.trim_end_matches('n').parse::<u64>().ok()
             })
         });
 
-        // Log the job/session tracking
+        // Log job tracking once at start
         if let Some(jid) = job_id {
-            eprintln!("📝 TRACKING TOKENS for job_id/session_id: {}", jid);
-            info!("📝 Tracking tokens for job_id/session_id: {}", jid);
-        } else {
-            eprintln!(
-                "⚠️ NO JOB_ID - session_id: {:?}, job_id: {:?}",
-                request.session_id, request.job_id
-            );
+            info!("📝 Streaming job {} started", jid);
         }
 
         let session_id = request.session_id.clone();
@@ -889,23 +849,15 @@ impl ApiServer {
                             continue;
                         }
 
-                        // Track only non-empty tokens for checkpoint submission
+                        // Track tokens for checkpoint submission (silent - logs only on checkpoint trigger)
                         if let Some(jid) = job_id {
-                            // Use checkpoint manager if available, otherwise use simple token tracker
                             if let Some(cm) = checkpoint_manager.as_ref() {
-                                eprintln!(
-                                    "📊 Calling checkpoint_manager.track_tokens for job {}",
-                                    jid
-                                );
                                 let _ = cm.track_tokens(jid, 1, session_id.clone()).await;
                             } else {
-                                eprintln!("📊 Using simple token tracker (no checkpoint manager) for job {}", jid);
                                 token_tracker
                                     .track_tokens(Some(jid), 1, session_id.clone())
                                     .await;
                             }
-                        } else {
-                            eprintln!("⚠️ No job_id available for token tracking");
                         }
 
                         let response = StreamingResponse {
@@ -938,9 +890,11 @@ impl ApiServer {
                 }
             }
 
-            // Log if we got no tokens
+            // Log completion
             if !got_any_tokens {
                 error!("Stream completed with no tokens generated");
+            } else if let Some(jid) = job_id {
+                eprintln!("✅ Streaming job {} completed: {} tokens", jid, total_tokens);
             }
 
             // Try to submit checkpoint if we have enough tokens
@@ -1281,14 +1235,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             session_id
                         );
 
-                        info!("🎯 WebSocket session_init received:");
-                        info!("   session_id: {:?}", session_id);
-                        info!("   job_id: {:?}", job_id);
-                        info!("   chain_id: {:?}", chain_id);
-
-                        info!("📝 WebSocket session initialized - session_id: {:?}, job_id: {:?}, chain_id: {:?}",
-                              session_id, job_id, chain_id);
-                        info!("🔍 Raw job_id value from message: {:?}", json_msg["job_id"]);
+                        eprintln!("📝 Session init: job={:?} session={:?}", job_id, session_id);
 
                         // CRITICAL: Send response to session_init so SDK doesn't timeout!
                         // Must echo back the 'id' field for request-response correlation
@@ -1311,14 +1258,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             .await
                         {
                             error!("Failed to send session_init response: {}", e);
-                        } else {
-                            info!("✅ Sent session_init_ack response to client");
                         }
                     }
 
-                    // Handle encrypted session initialization (Phase 6.2.1, Sub-phase 6.2)
+                    // Handle encrypted session initialization
                     if json_msg["type"] == "encrypted_session_init" {
-                        info!("🔐 Encrypted session_init received");
 
                         // Extract session_id and chain_id
                         session_id = json_msg["session_id"]
@@ -1424,8 +1368,6 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 &node_private_key,
                                             ) {
                                                 Ok(session_init_data) => {
-                                                    info!("✅ Successfully decrypted session init payload");
-
                                                     // Extract session data
                                                     let extracted_session_key =
                                                         session_init_data.session_key;
@@ -1441,17 +1383,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     job_id =
                                                         extracted_job_id_str.parse::<u64>().ok();
 
-                                                    info!("🔐 Session init data:");
-                                                    info!(
-                                                        "   job_id: {} (parsed to {:?})",
-                                                        extracted_job_id_str, job_id
-                                                    );
-                                                    info!("   model_name: {}", model_name);
-                                                    info!(
-                                                        "   price_per_token: {}",
-                                                        price_per_token
-                                                    );
-                                                    info!("   client_address: {}", client_address);
+                                                    eprintln!("🔐 Encrypted session started: job={:?} session={:?} model={}", job_id, session_id, model_name);
 
                                                     // Store session key in SessionKeyStore
                                                     if let Some(sid) = &session_id {
@@ -1462,8 +1394,6 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 extracted_session_key,
                                                             )
                                                             .await;
-
-                                                        info!("✅ Session key stored for session_id: {}", sid);
 
                                                         // Handle vector_database if provided (Sub-phase 3.3)
                                                         if let Some(vdb_info) = session_init_data.vector_database.clone() {
@@ -1535,8 +1465,6 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         .await
                                                     {
                                                         error!("Failed to send encrypted session_init_ack: {}", e);
-                                                    } else {
-                                                        info!("✅ Sent encrypted session_init_ack to client");
                                                     }
                                                 }
                                                 Err(e) => {
@@ -1644,10 +1572,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         }
                     }
 
-                    // Handle encrypted messages (Phase 6.2.1, Sub-phase 5.2)
+                    // Handle encrypted messages
                     if json_msg["type"] == "encrypted_message" {
-                        info!("🔐 Encrypted message received");
-
                         // Extract session_id
                         let current_session_id = json_msg["session_id"]
                             .as_str()
@@ -1769,15 +1695,41 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                     .or_else(|| json_msg.get("stream").and_then(|v| v.as_bool()))
                                                                     .unwrap_or(true);
 
-                                                                let request_value = json!({
+                                                                // Extract web_search fields from outer message (v8.7.9+)
+                                                                // SDK sends these at message level, not inside encrypted payload
+                                                                let web_search = decrypted_json
+                                                                    .get("web_search")
+                                                                    .and_then(|v| v.as_bool())
+                                                                    .or_else(|| json_msg.get("web_search").and_then(|v| v.as_bool()))
+                                                                    .unwrap_or(false);
+
+                                                                let max_searches = decrypted_json
+                                                                    .get("max_searches")
+                                                                    .and_then(|v| v.as_i64())
+                                                                    .or_else(|| json_msg.get("max_searches").and_then(|v| v.as_i64()))
+                                                                    .unwrap_or(5);
+
+                                                                let search_queries: Option<Vec<String>> = decrypted_json
+                                                                    .get("search_queries")
+                                                                    .or_else(|| json_msg.get("search_queries"))
+                                                                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+                                                                let mut request_value = json!({
                                                                     "model": model,
                                                                     "prompt": plaintext_prompt,
                                                                     "job_id": job_id,
                                                                     "session_id": current_session_id,
                                                                     "max_tokens": max_tokens,
                                                                     "temperature": temperature,
-                                                                    "stream": stream
+                                                                    "stream": stream,
+                                                                    "web_search": web_search,
+                                                                    "max_searches": max_searches
                                                                 });
+
+                                                                // Add search_queries if present
+                                                                if let Some(queries) = search_queries {
+                                                                    request_value["search_queries"] = json!(queries);
+                                                                }
 
                                                                 // Extract message ID for response correlation
                                                                 let message_id =
@@ -1790,12 +1742,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         request_value
                                                                     )
                                                                 {
-                                                                    info!(
-                                                                        "📋 Processing encrypted inference request for job_id: {:?}",
-                                                                        request.job_id
-                                                                    );
-
-                                                                    // Handle streaming inference (same as plaintext)
+                                                                    // Handle streaming inference
                                                                     match server
                                                                         .handle_streaming_request(
                                                                             request,
@@ -1885,15 +1832,9 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             )
                                                                                             .await
                                                                                         {
-                                                                                            Ok(_) => {
-                                                                                                if response.finish_reason.is_some() {
-                                                                                                    info!("✅ Sent encrypted_chunk {} (tokens: {}, final: true)", chunk_index, response.tokens);
-                                                                                                } else {
-                                                                                                    info!("✅ Sent encrypted_chunk {} (tokens: {})", chunk_index, response.tokens);
-                                                                                                }
-                                                                                            }
+                                                                                            Ok(_) => {}
                                                                                             Err(e) => {
-                                                                                                error!("❌ Failed to send encrypted_chunk {}: {}", chunk_index, e);
+                                                                                                error!("Failed to send chunk {}: {}", chunk_index, e);
                                                                                                 break;
                                                                                             }
                                                                                         }
@@ -1948,9 +1889,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                         .await
                                                                                                     {
                                                                                                         Ok(_) => {
-                                                                                                            info!("🏁 Sent final encrypted_response (finish_reason: {})", finish_reason_str);
-
-                                                                                                            // CRITICAL: Also send stream_end for SDK compatibility
+                                                                                                            // Send stream_end for SDK compatibility
                                                                                                             let mut stream_end_msg = json!({"type": "stream_end"});
                                                                                                             if let Some(ref msg_id) = message_id {
                                                                                                                 stream_end_msg["id"] = msg_id.clone();
@@ -1959,7 +1898,6 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                                 stream_end_msg["session_id"] = json!(sid);
                                                                                                             }
                                                                                                             let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
-                                                                                                            info!("🏁 Sent stream_end for SDK compatibility");
                                                                                                         }
                                                                                                         Err(e) => {
                                                                                                             error!("❌ Failed to send final encrypted_response: {}", e);
@@ -2249,18 +2187,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         if let Ok(request) =
                             serde_json::from_value::<InferenceRequest>(request_value)
                         {
-                            // Log job_id for payment tracking visibility
+                            // Update tracked job_id if not already set
                             if let Some(req_job_id) = request.job_id {
-                                info!(
-                                    "📋 Processing inference request for blockchain job_id: {}",
-                                    req_job_id
-                                );
-                                // Update tracked job_id if not already set
                                 if job_id.is_none() {
                                     job_id = Some(req_job_id);
                                 }
-                            } else {
-                                info!("⚠️  No job_id in WebSocket request");
                             }
 
                             // Handle streaming inference
