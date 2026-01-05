@@ -80,8 +80,13 @@ jsonwebtoken = "9.2"
 ipfs-api = "0.17"
 flate2 = "1.0"
 
-# Additional utils  
+# Additional utils
 hex = "0.4"
+url = "2"                       # URL parsing and validation
+
+# Web Search (Sub-phase 1.1 - Host-Side Web Search)
+# Rate limiting for search API requests
+governor = "0.6"
 
 # Result delivery dependencies
 ciborium = "0.2"
