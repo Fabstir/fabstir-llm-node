@@ -2082,6 +2082,1347 @@ This is **unrelated to web search**. It means the job on-chain has a token limit
 
 ---
 
+## Phase 9: Content Fetching (4 hours) 🔧 PENDING
+
+### Problem Statement
+
+Current web search returns **metadata only** (title, URL, snippet/meta description). The LLM cannot answer questions about actual web content because it never sees the content - only links.
+
+**Current behavior:**
+```
+User: "Search for latest news about AI"
+Search returns: BBC News (https://bbc.com/news) - "BBC News brings you coverage..."
+LLM responds: "I can't browse the web, but you can check BBC News..."
+```
+
+**Desired behavior:**
+```
+User: "Search for latest news about AI"
+Search returns: URLs → Node fetches pages → Extracts content
+LLM sees: "OpenAI announced GPT-5 development is underway..."
+LLM responds: "According to recent news, OpenAI announced..."
+```
+
+### Solution Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Search Pipeline (Current)                   │
+│  Query → Search API → URLs + Snippets → Inject into prompt      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Content Fetching (New Phase 9)                 │
+│                                                                  │
+│  URLs from Search                                                │
+│       │                                                          │
+│       ▼                                                          │
+│  ┌─────────────────┐                                            │
+│  │ ContentFetcher  │ ── HTTP GET (parallel, 3 pages max)        │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ ContentExtractor│ ── CSS selectors: article, main, .content  │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ ContentCache    │ ── TTL: 30 minutes, max 500 entries        │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  Actual page content (3000 chars/page, 8000 chars total)        │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      LLM Prompt                                  │
+│  [Web Search Results]                                            │
+│  [1] BBC News - AI Developments                                  │
+│  URL: https://bbc.com/news/ai                                    │
+│  Content:                                                        │
+│  OpenAI announced today that GPT-5 development is underway...   │
+│  ---                                                             │
+│  [2] Reuters - Tech News                                         │
+│  ...                                                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Module Structure
+
+```
+src/search/
+├── mod.rs                    # Add content module export
+├── content/                  # NEW MODULE
+│   ├── mod.rs               # Public exports
+│   ├── fetcher.rs           # HTTP fetching with timeouts
+│   ├── extractor.rs         # HTML → text extraction
+│   ├── cache.rs             # Content caching (30min TTL)
+│   └── config.rs            # ContentFetchConfig
+```
+
+### Dependencies Required
+
+```toml
+# Cargo.toml additions
+scraper = "0.18"              # HTML parsing with CSS selectors
+html-escape = "0.2"           # HTML entity decoding (optional)
+```
+
+**Note**: `reqwest` already present for HTTP requests.
+
+### Environment Variables
+
+```bash
+# Content Fetching Configuration (new)
+CONTENT_FETCH_ENABLED=true              # Enable/disable content fetching
+CONTENT_FETCH_MAX_PAGES=3               # Max pages to fetch per search (1-5)
+CONTENT_FETCH_MAX_CHARS_PER_PAGE=3000   # Max characters per page
+CONTENT_FETCH_MAX_TOTAL_CHARS=8000      # Max total characters for all pages
+CONTENT_FETCH_TIMEOUT_SECS=10           # Total timeout for all fetches
+CONTENT_FETCH_TIMEOUT_PER_PAGE_SECS=5   # Timeout per individual page
+CONTENT_FETCH_CACHE_TTL_SECS=1800       # Cache TTL (30 minutes)
+```
+
+---
+
+### Sub-phase 9.1: Add Dependencies
+
+**Goal**: Add scraper crate for HTML parsing
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Add `scraper = "0.18"` to Cargo.toml
+- [ ] Run `cargo check` to verify dependency compiles
+- [ ] Run `cargo test --lib` to ensure no regressions
+
+**Implementation Files:**
+- `Cargo.toml` - Add dependency
+
+---
+
+### Sub-phase 9.2: Create Module Structure
+
+**Goal**: Create stub files for content fetching module
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Create `src/search/content/mod.rs` with submodule declarations
+- [ ] Create `src/search/content/config.rs` with ContentFetchConfig
+- [ ] Create `src/search/content/fetcher.rs` with ContentFetcher stub
+- [ ] Create `src/search/content/extractor.rs` with extract_main_content stub
+- [ ] Create `src/search/content/cache.rs` with ContentCache stub
+- [ ] Add `pub mod content;` to `src/search/mod.rs`
+- [ ] Run `cargo check` to verify module structure
+
+**Implementation Files:**
+- `src/search/content/mod.rs`:
+  ```rust
+  //! Content fetching module for web search enhancement
+  //!
+  //! Fetches actual page content from search result URLs to provide
+  //! LLM with real information instead of just snippets.
+
+  pub mod config;
+  pub mod fetcher;
+  pub mod extractor;
+  pub mod cache;
+
+  pub use config::ContentFetchConfig;
+  pub use fetcher::ContentFetcher;
+  pub use cache::ContentCache;
+  ```
+
+---
+
+### Sub-phase 9.3: Define Configuration (TDD)
+
+**Goal**: Define content fetch configuration with environment variable loading
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Write test `test_content_fetch_config_defaults` (verify sensible defaults)
+- [ ] Write test `test_content_fetch_config_from_env` (verify env loading)
+- [ ] Write test `test_content_fetch_config_validation` (verify bounds checking)
+- [ ] Implement `ContentFetchConfig` struct
+- [ ] Implement `from_env()` loading function
+- [ ] Implement `validate()` method
+
+**Test File**: `src/search/content/config.rs` (inline tests)
+
+```rust
+//! Configuration for content fetching
+
+use std::env;
+
+#[derive(Debug, Clone)]
+pub struct ContentFetchConfig {
+    /// Enable content fetching (default: true when search enabled)
+    pub enabled: bool,
+    /// Maximum pages to fetch per search (default: 3)
+    pub max_pages: usize,
+    /// Maximum characters per page (default: 3000)
+    pub max_chars_per_page: usize,
+    /// Maximum total characters for all pages (default: 8000)
+    pub max_total_chars: usize,
+    /// Timeout per page fetch in seconds (default: 5)
+    pub timeout_per_page_secs: u64,
+    /// Total timeout for all fetches in seconds (default: 10)
+    pub total_timeout_secs: u64,
+    /// Cache TTL in seconds (default: 1800 = 30 minutes)
+    pub cache_ttl_secs: u64,
+    /// Maximum cache entries (default: 500)
+    pub max_cache_entries: usize,
+}
+
+impl ContentFetchConfig {
+    pub fn from_env() -> Self {
+        Self {
+            enabled: env::var("CONTENT_FETCH_ENABLED")
+                .map(|v| v.to_lowercase() == "true")
+                .unwrap_or(true), // Enabled by default when search is enabled
+            max_pages: env::var("CONTENT_FETCH_MAX_PAGES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3)
+                .min(5), // Cap at 5
+            max_chars_per_page: env::var("CONTENT_FETCH_MAX_CHARS_PER_PAGE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3000),
+            max_total_chars: env::var("CONTENT_FETCH_MAX_TOTAL_CHARS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8000),
+            timeout_per_page_secs: env::var("CONTENT_FETCH_TIMEOUT_PER_PAGE_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5),
+            total_timeout_secs: env::var("CONTENT_FETCH_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            cache_ttl_secs: env::var("CONTENT_FETCH_CACHE_TTL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1800),
+            max_cache_entries: 500,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_pages == 0 {
+            return Err("max_pages must be at least 1".to_string());
+        }
+        if self.max_chars_per_page < 100 {
+            return Err("max_chars_per_page must be at least 100".to_string());
+        }
+        if self.timeout_per_page_secs == 0 {
+            return Err("timeout_per_page_secs must be at least 1".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl Default for ContentFetchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_pages: 3,
+            max_chars_per_page: 3000,
+            max_total_chars: 8000,
+            timeout_per_page_secs: 5,
+            total_timeout_secs: 10,
+            cache_ttl_secs: 1800,
+            max_cache_entries: 500,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_fetch_config_defaults() {
+        let config = ContentFetchConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.max_pages, 3);
+        assert_eq!(config.max_chars_per_page, 3000);
+        assert_eq!(config.max_total_chars, 8000);
+        assert_eq!(config.timeout_per_page_secs, 5);
+        assert_eq!(config.total_timeout_secs, 10);
+        assert_eq!(config.cache_ttl_secs, 1800);
+    }
+
+    #[test]
+    fn test_content_fetch_config_validation() {
+        let mut config = ContentFetchConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.max_pages = 0;
+        assert!(config.validate().is_err());
+
+        config.max_pages = 3;
+        config.max_chars_per_page = 50;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_content_fetch_config_from_env() {
+        // Test that from_env doesn't panic with no env vars
+        let config = ContentFetchConfig::from_env();
+        assert!(config.max_pages <= 5); // Should be capped
+    }
+}
+```
+
+---
+
+### Sub-phase 9.4: Implement Content Extractor (TDD)
+
+**Goal**: Extract main content from HTML using CSS selectors
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Write test `test_extract_article_content` (basic article tag)
+- [ ] Write test `test_extract_main_content` (main tag)
+- [ ] Write test `test_extract_content_with_class` (common content classes)
+- [ ] Write test `test_extract_fallback_body` (fallback to body)
+- [ ] Write test `test_strip_scripts_and_styles` (remove noise)
+- [ ] Write test `test_clean_whitespace` (normalize spacing)
+- [ ] Write test `test_truncate_content` (respect max length)
+- [ ] Implement `extract_main_content()` function
+- [ ] Implement `clean_text()` helper
+- [ ] Implement `truncate_content()` helper
+
+**Test File**: `src/search/content/extractor.rs` (inline tests)
+
+```rust
+//! HTML content extraction
+//!
+//! Extracts main content from web pages using CSS selectors.
+
+use scraper::{Html, Selector};
+
+/// Extract main content from HTML
+///
+/// Tries multiple strategies in order:
+/// 1. <article> tag
+/// 2. <main> tag
+/// 3. [role="main"] attribute
+/// 4. Common content class names (.content, .post-content, .article-body, etc.)
+/// 5. Fallback to <body> with noise removal
+///
+/// # Arguments
+/// * `html` - Raw HTML string
+/// * `max_chars` - Maximum characters to return
+///
+/// # Returns
+/// Extracted text content, cleaned and truncated
+pub fn extract_main_content(html: &str, max_chars: usize) -> String {
+    let document = Html::parse_document(html);
+
+    // Priority order of selectors to try
+    let selectors = [
+        "article",
+        "main",
+        "[role='main']",
+        ".post-content",
+        ".article-content",
+        ".entry-content",
+        ".story-body",        // BBC
+        ".article__body",     // News sites
+        ".content-body",
+        "#article-body",
+        "#content",
+        ".prose",             // Tailwind
+    ];
+
+    for selector_str in selectors {
+        if let Ok(selector) = Selector::parse(selector_str) {
+            if let Some(element) = document.select(&selector).next() {
+                let text = extract_text_from_element(&element);
+                let cleaned = clean_text(&text);
+                if cleaned.len() > 200 {
+                    // Found substantial content
+                    return truncate_content(&cleaned, max_chars);
+                }
+            }
+        }
+    }
+
+    // Fallback: extract from body, removing nav/footer/script
+    extract_body_text(&document, max_chars)
+}
+
+/// Extract text from an HTML element, stripping tags
+fn extract_text_from_element(element: &scraper::ElementRef) -> String {
+    element
+        .text()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Extract text from body, removing common noise elements
+fn extract_body_text(document: &Html, max_chars: usize) -> String {
+    // Try to get body
+    if let Ok(body_selector) = Selector::parse("body") {
+        if let Some(body) = document.select(&body_selector).next() {
+            let text = extract_text_from_element(&body);
+            let cleaned = clean_text(&text);
+            return truncate_content(&cleaned, max_chars);
+        }
+    }
+    String::new()
+}
+
+/// Clean text: normalize whitespace, remove excess blank lines
+fn clean_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
+/// Truncate content to max_chars, preserving word boundaries
+fn truncate_content(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
+        return text.to_string();
+    }
+
+    // Find last space before max_chars
+    let truncated = &text[..max_chars];
+    if let Some(last_space) = truncated.rfind(' ') {
+        format!("{}...", &text[..last_space])
+    } else {
+        format!("{}...", truncated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_HTML_ARTICLE: &str = r#"
+        <!DOCTYPE html>
+        <html>
+        <head><title>Test</title></head>
+        <body>
+            <nav>Navigation links here</nav>
+            <article>
+                <h1>Main Article Title</h1>
+                <p>This is the main content of the article with important information.</p>
+                <p>More substantial content that should be extracted.</p>
+            </article>
+            <footer>Footer content</footer>
+        </body>
+        </html>
+    "#;
+
+    const SAMPLE_HTML_MAIN: &str = r#"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <header>Site Header</header>
+            <main>
+                <h1>Page Title</h1>
+                <p>Main content goes here with detailed information about the topic.</p>
+            </main>
+            <aside>Sidebar content</aside>
+        </body>
+        </html>
+    "#;
+
+    const SAMPLE_HTML_CLASS: &str = r#"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <div class="post-content">
+                <p>Blog post content with enough text to be considered substantial.</p>
+                <p>Additional paragraph with more content for the reader.</p>
+            </div>
+        </body>
+        </html>
+    "#;
+
+    #[test]
+    fn test_extract_article_content() {
+        let content = extract_main_content(SAMPLE_HTML_ARTICLE, 3000);
+        assert!(content.contains("Main Article Title"));
+        assert!(content.contains("main content"));
+        assert!(!content.contains("Navigation"));
+        assert!(!content.contains("Footer"));
+    }
+
+    #[test]
+    fn test_extract_main_content() {
+        let content = extract_main_content(SAMPLE_HTML_MAIN, 3000);
+        assert!(content.contains("Page Title"));
+        assert!(content.contains("Main content"));
+        assert!(!content.contains("Site Header"));
+        assert!(!content.contains("Sidebar"));
+    }
+
+    #[test]
+    fn test_extract_content_with_class() {
+        let content = extract_main_content(SAMPLE_HTML_CLASS, 3000);
+        assert!(content.contains("Blog post content"));
+    }
+
+    #[test]
+    fn test_clean_whitespace() {
+        let dirty = "  Hello   world  \n\n  test  ";
+        let cleaned = clean_text(dirty);
+        assert_eq!(cleaned, "Hello world test");
+    }
+
+    #[test]
+    fn test_truncate_content() {
+        let long_text = "This is a long text that needs to be truncated at word boundary";
+        let truncated = truncate_content(long_text, 30);
+        assert!(truncated.len() <= 33); // 30 + "..."
+        assert!(truncated.ends_with("..."));
+        assert!(!truncated.contains("truncated")); // Word boundary
+    }
+
+    #[test]
+    fn test_truncate_short_content() {
+        let short = "Short text";
+        let result = truncate_content(short, 100);
+        assert_eq!(result, "Short text"); // No truncation needed
+    }
+}
+```
+
+---
+
+### Sub-phase 9.5: Implement Content Cache (TDD)
+
+**Goal**: Cache fetched content to reduce latency and bandwidth
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Write test `test_cache_insert_and_get` (basic operations)
+- [ ] Write test `test_cache_ttl_expiration` (expired entries not returned)
+- [ ] Write test `test_cache_max_entries` (eviction when full)
+- [ ] Write test `test_cache_key_normalization` (URL normalization)
+- [ ] Implement `ContentCache` struct
+- [ ] Implement `get()`, `insert()`, `clear()` methods
+- [ ] Implement TTL checking
+- [ ] Implement LRU-style eviction
+
+**Test File**: `src/search/content/cache.rs` (inline tests)
+
+```rust
+//! Content caching for fetched web pages
+
+use std::collections::HashMap;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
+/// Cached page content
+#[derive(Debug, Clone)]
+pub struct CachedContent {
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    pub fetched_at: Instant,
+}
+
+/// Content cache with TTL-based expiration
+pub struct ContentCache {
+    cache: RwLock<HashMap<String, CachedContent>>,
+    ttl: Duration,
+    max_entries: usize,
+}
+
+impl ContentCache {
+    pub fn new(ttl_secs: u64, max_entries: usize) -> Self {
+        Self {
+            cache: RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(ttl_secs),
+            max_entries,
+        }
+    }
+
+    /// Get cached content if not expired
+    pub fn get(&self, url: &str) -> Option<CachedContent> {
+        let cache = self.cache.read().ok()?;
+        let key = Self::normalize_url(url);
+        let entry = cache.get(&key)?;
+
+        if entry.fetched_at.elapsed() > self.ttl {
+            return None; // Expired
+        }
+
+        Some(entry.clone())
+    }
+
+    /// Insert content into cache
+    pub fn insert(&self, url: &str, title: String, text: String) {
+        let mut cache = match self.cache.write() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        // Evict oldest if at capacity
+        if cache.len() >= self.max_entries {
+            self.evict_oldest(&mut cache);
+        }
+
+        let key = Self::normalize_url(url);
+        cache.insert(key, CachedContent {
+            url: url.to_string(),
+            title,
+            text,
+            fetched_at: Instant::now(),
+        });
+    }
+
+    /// Clear all cached entries
+    pub fn clear(&self) {
+        if let Ok(mut cache) = self.cache.write() {
+            cache.clear();
+        }
+    }
+
+    /// Get cache statistics
+    pub fn stats(&self) -> ContentCacheStats {
+        let cache = self.cache.read().unwrap();
+        let total = cache.len();
+        let expired = cache.values()
+            .filter(|e| e.fetched_at.elapsed() > self.ttl)
+            .count();
+        ContentCacheStats { total, expired, max: self.max_entries }
+    }
+
+    /// Normalize URL for cache key (lowercase, remove trailing slash)
+    fn normalize_url(url: &str) -> String {
+        url.to_lowercase()
+            .trim_end_matches('/')
+            .to_string()
+    }
+
+    fn evict_oldest(&self, cache: &mut HashMap<String, CachedContent>) {
+        if let Some(oldest_key) = cache.iter()
+            .min_by_key(|(_, v)| v.fetched_at)
+            .map(|(k, _)| k.clone())
+        {
+            cache.remove(&oldest_key);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ContentCacheStats {
+    pub total: usize,
+    pub expired: usize,
+    pub max: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread::sleep;
+
+    #[test]
+    fn test_cache_insert_and_get() {
+        let cache = ContentCache::new(3600, 100);
+
+        cache.insert(
+            "https://example.com/page",
+            "Example Title".to_string(),
+            "Example content".to_string(),
+        );
+
+        let result = cache.get("https://example.com/page");
+        assert!(result.is_some());
+
+        let content = result.unwrap();
+        assert_eq!(content.title, "Example Title");
+        assert_eq!(content.text, "Example content");
+    }
+
+    #[test]
+    fn test_cache_ttl_expiration() {
+        let cache = ContentCache::new(1, 100); // 1 second TTL
+
+        cache.insert(
+            "https://example.com/expire",
+            "Title".to_string(),
+            "Content".to_string(),
+        );
+
+        // Should exist immediately
+        assert!(cache.get("https://example.com/expire").is_some());
+
+        // Wait for expiration
+        sleep(Duration::from_secs(2));
+
+        // Should be expired
+        assert!(cache.get("https://example.com/expire").is_none());
+    }
+
+    #[test]
+    fn test_cache_key_normalization() {
+        let cache = ContentCache::new(3600, 100);
+
+        cache.insert(
+            "https://Example.COM/Page/",
+            "Title".to_string(),
+            "Content".to_string(),
+        );
+
+        // Should match with different case/trailing slash
+        assert!(cache.get("https://example.com/page").is_some());
+        assert!(cache.get("HTTPS://EXAMPLE.COM/PAGE/").is_some());
+    }
+
+    #[test]
+    fn test_cache_max_entries() {
+        let cache = ContentCache::new(3600, 3); // Max 3 entries
+
+        for i in 0..5 {
+            cache.insert(
+                &format!("https://example.com/{}", i),
+                format!("Title {}", i),
+                format!("Content {}", i),
+            );
+        }
+
+        let stats = cache.stats();
+        assert!(stats.total <= 3);
+    }
+}
+```
+
+---
+
+### Sub-phase 9.6: Implement Content Fetcher (TDD)
+
+**Goal**: HTTP fetching with parallel requests and timeouts
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Write test `test_fetcher_creation` (verify config applied)
+- [ ] Write test `test_fetch_single_url` (mock server)
+- [ ] Write test `test_fetch_timeout` (respects timeout)
+- [ ] Write test `test_fetch_parallel` (multiple URLs)
+- [ ] Write test `test_fetch_with_cache_hit` (returns cached)
+- [ ] Write test `test_fetch_invalid_url` (graceful error)
+- [ ] Write test `test_is_safe_url` (blocks localhost/private IPs)
+- [ ] Implement `ContentFetcher` struct
+- [ ] Implement `fetch_content()` for single URL
+- [ ] Implement `fetch_multiple()` for parallel fetching
+- [ ] Implement URL safety validation
+- [ ] Implement cache integration
+
+**Test File**: `src/search/content/fetcher.rs` (inline tests)
+
+```rust
+//! HTTP content fetching with parallel requests and timeouts
+
+use std::sync::Arc;
+use std::time::Duration;
+use reqwest::Client;
+use tracing::{debug, warn, info};
+use url::Url;
+
+use super::cache::{ContentCache, CachedContent};
+use super::config::ContentFetchConfig;
+use super::extractor::extract_main_content;
+
+/// Fetched page content
+#[derive(Debug, Clone)]
+pub struct PageContent {
+    pub url: String,
+    pub title: String,
+    pub text: String,
+}
+
+/// Content fetcher with caching and parallel requests
+pub struct ContentFetcher {
+    client: Client,
+    cache: Arc<ContentCache>,
+    config: ContentFetchConfig,
+}
+
+impl ContentFetcher {
+    pub fn new(config: ContentFetchConfig) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(config.timeout_per_page_secs))
+            .user_agent("Mozilla/5.0 (compatible; FabstirBot/1.0; +https://fabstir.com)")
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        let cache = Arc::new(ContentCache::new(
+            config.cache_ttl_secs,
+            config.max_cache_entries,
+        ));
+
+        Self { client, cache, config }
+    }
+
+    /// Fetch content from a single URL
+    pub async fn fetch_content(&self, url: &str) -> Result<PageContent, FetchError> {
+        // Validate URL safety
+        if !Self::is_safe_url(url) {
+            return Err(FetchError::UnsafeUrl(url.to_string()));
+        }
+
+        // Check cache first
+        if let Some(cached) = self.cache.get(url) {
+            debug!("Content cache hit for: {}", url);
+            return Ok(PageContent {
+                url: cached.url,
+                title: cached.title,
+                text: cached.text,
+            });
+        }
+
+        debug!("Fetching content from: {}", url);
+
+        // Fetch page
+        let response = self.client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    FetchError::Timeout(url.to_string())
+                } else {
+                    FetchError::HttpError(e.to_string())
+                }
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(FetchError::HttpStatus(status.as_u16(), url.to_string()));
+        }
+
+        let html = response.text().await
+            .map_err(|e| FetchError::HttpError(e.to_string()))?;
+
+        // Extract content
+        let text = extract_main_content(&html, self.config.max_chars_per_page);
+
+        if text.len() < 100 {
+            return Err(FetchError::NoContent(url.to_string()));
+        }
+
+        // Extract title from HTML
+        let title = Self::extract_title(&html).unwrap_or_else(|| url.to_string());
+
+        // Cache the result
+        self.cache.insert(url, title.clone(), text.clone());
+
+        info!("Fetched {} chars from: {}", text.len(), url);
+
+        Ok(PageContent { url: url.to_string(), title, text })
+    }
+
+    /// Fetch content from multiple URLs in parallel
+    ///
+    /// Returns results in same order as input URLs.
+    /// Failed fetches return Err, but don't stop other fetches.
+    pub async fn fetch_multiple(&self, urls: &[String]) -> Vec<Result<PageContent, FetchError>> {
+        use futures::future::join_all;
+        use tokio::time::timeout;
+
+        let total_timeout = Duration::from_secs(self.config.total_timeout_secs);
+        let max_pages = self.config.max_pages;
+
+        // Limit number of URLs to fetch
+        let urls_to_fetch: Vec<_> = urls.iter().take(max_pages).collect();
+
+        let futures: Vec<_> = urls_to_fetch
+            .iter()
+            .map(|url| self.fetch_content(url))
+            .collect();
+
+        // Apply total timeout to all fetches
+        match timeout(total_timeout, join_all(futures)).await {
+            Ok(results) => results,
+            Err(_) => {
+                warn!("Total fetch timeout exceeded");
+                vec![Err(FetchError::Timeout("total".to_string())); urls_to_fetch.len()]
+            }
+        }
+    }
+
+    /// Check if URL is safe to fetch (not localhost/private IP)
+    fn is_safe_url(url: &str) -> bool {
+        let parsed = match Url::parse(url) {
+            Ok(u) => u,
+            Err(_) => return false,
+        };
+
+        // Only allow http/https
+        if !["http", "https"].contains(&parsed.scheme()) {
+            return false;
+        }
+
+        // Block localhost and private IPs
+        if let Some(host) = parsed.host_str() {
+            let host_lower = host.to_lowercase();
+            if host_lower == "localhost"
+                || host_lower == "127.0.0.1"
+                || host_lower.starts_with("192.168.")
+                || host_lower.starts_with("10.")
+                || host_lower.starts_with("172.16.")
+                || host_lower.starts_with("172.17.")
+                || host_lower.starts_with("172.18.")
+                || host_lower.starts_with("0.0.0.0")
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Extract title from HTML
+    fn extract_title(html: &str) -> Option<String> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let selector = Selector::parse("title").ok()?;
+
+        document.select(&selector)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+    }
+
+    /// Get cache statistics
+    pub fn cache_stats(&self) -> super::cache::ContentCacheStats {
+        self.cache.stats()
+    }
+
+    /// Check if content fetching is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.config.enabled
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum FetchError {
+    Timeout(String),
+    HttpError(String),
+    HttpStatus(u16, String),
+    NoContent(String),
+    UnsafeUrl(String),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout(url) => write!(f, "Timeout fetching: {}", url),
+            Self::HttpError(msg) => write!(f, "HTTP error: {}", msg),
+            Self::HttpStatus(code, url) => write!(f, "HTTP {} for: {}", code, url),
+            Self::NoContent(url) => write!(f, "No content extracted from: {}", url),
+            Self::UnsafeUrl(url) => write!(f, "Unsafe URL blocked: {}", url),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_safe_url() {
+        assert!(ContentFetcher::is_safe_url("https://example.com/page"));
+        assert!(ContentFetcher::is_safe_url("http://bbc.com/news"));
+
+        // Block unsafe URLs
+        assert!(!ContentFetcher::is_safe_url("http://localhost/admin"));
+        assert!(!ContentFetcher::is_safe_url("http://127.0.0.1:8080"));
+        assert!(!ContentFetcher::is_safe_url("http://192.168.1.1/router"));
+        assert!(!ContentFetcher::is_safe_url("http://10.0.0.1/internal"));
+        assert!(!ContentFetcher::is_safe_url("ftp://example.com/file"));
+        assert!(!ContentFetcher::is_safe_url("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn test_extract_title() {
+        let html = "<html><head><title>Test Page Title</title></head><body></body></html>";
+        let title = ContentFetcher::extract_title(html);
+        assert_eq!(title, Some("Test Page Title".to_string()));
+    }
+
+    #[test]
+    fn test_extract_title_missing() {
+        let html = "<html><body>No title here</body></html>";
+        let title = ContentFetcher::extract_title(html);
+        assert!(title.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fetcher_creation() {
+        let config = ContentFetchConfig::default();
+        let fetcher = ContentFetcher::new(config);
+        assert!(fetcher.is_enabled());
+    }
+
+    // Note: Real HTTP tests should use a mock server (wiremock)
+    // or be marked as integration tests that hit real URLs
+}
+```
+
+---
+
+### Sub-phase 9.7: Integrate with Search Service (TDD)
+
+**Goal**: Connect ContentFetcher to SearchService pipeline
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Write test `test_search_with_content_fetch_enabled`
+- [ ] Write test `test_search_with_content_fetch_disabled`
+- [ ] Write test `test_search_content_fallback_to_snippet`
+- [ ] Add `content_fetcher` field to `SearchService`
+- [ ] Modify `search()` to optionally fetch content
+- [ ] Add `search_with_content()` method
+- [ ] Update `format_results_for_prompt()` to include content
+
+**Implementation File**: `src/search/service.rs` (modify)
+
+```rust
+// Add to SearchService struct
+pub struct SearchService {
+    // ... existing fields ...
+    content_fetcher: Option<ContentFetcher>,
+}
+
+impl SearchService {
+    // Add new method
+    pub async fn search_with_content(
+        &self,
+        query: &str,
+        num_results: Option<usize>,
+    ) -> Result<SearchResponseWithContent, SearchError> {
+        // 1. Perform regular search
+        let search_response = self.search(query, num_results).await?;
+
+        // 2. If content fetcher enabled, fetch page content
+        if let Some(ref fetcher) = self.content_fetcher {
+            if fetcher.is_enabled() {
+                let urls: Vec<_> = search_response.results
+                    .iter()
+                    .map(|r| r.url.clone())
+                    .collect();
+
+                let contents = fetcher.fetch_multiple(&urls).await;
+
+                // Combine search results with fetched content
+                let results_with_content: Vec<_> = search_response.results
+                    .into_iter()
+                    .zip(contents.into_iter())
+                    .map(|(result, content)| {
+                        SearchResultWithContent {
+                            title: result.title,
+                            url: result.url,
+                            snippet: result.snippet,
+                            content: content.ok().map(|c| c.text),
+                            source: result.source,
+                        }
+                    })
+                    .collect();
+
+                return Ok(SearchResponseWithContent {
+                    query: search_response.query,
+                    results: results_with_content,
+                    search_time_ms: search_response.search_time_ms,
+                    provider: search_response.provider,
+                    cached: search_response.cached,
+                });
+            }
+        }
+
+        // Content fetching disabled - return snippet only
+        Ok(SearchResponseWithContent {
+            query: search_response.query,
+            results: search_response.results.into_iter().map(|r| {
+                SearchResultWithContent {
+                    title: r.title,
+                    url: r.url,
+                    snippet: r.snippet.clone(),
+                    content: None, // No content fetched
+                    source: r.source,
+                }
+            }).collect(),
+            search_time_ms: search_response.search_time_ms,
+            provider: search_response.provider,
+            cached: search_response.cached,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchResultWithContent {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    pub content: Option<String>, // Actual page content if fetched
+    pub source: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchResponseWithContent {
+    pub query: String,
+    pub results: Vec<SearchResultWithContent>,
+    pub search_time_ms: u64,
+    pub provider: String,
+    pub cached: bool,
+}
+```
+
+---
+
+### Sub-phase 9.8: Update Prompt Formatter
+
+**Goal**: Format search results with content for LLM prompt injection
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Write test `test_format_with_content`
+- [ ] Write test `test_format_fallback_snippet`
+- [ ] Write test `test_format_mixed_content_and_snippet`
+- [ ] Write test `test_format_respects_max_chars`
+- [ ] Update `format_results_for_prompt()` in query_extractor.rs
+- [ ] Add content prioritization (content > snippet)
+
+**Implementation File**: `src/search/query_extractor.rs` (modify)
+
+```rust
+/// Format search results with content for injection into prompt
+///
+/// Uses actual page content when available, falls back to snippet.
+pub fn format_results_with_content(
+    results: &[SearchResultWithContent],
+    max_total_chars: usize,
+) -> String {
+    if results.is_empty() {
+        return String::new();
+    }
+
+    let mut formatted = String::from("[Web Search Results]\n\n");
+    let mut total_chars = 0;
+
+    for (i, result) in results.iter().enumerate() {
+        if total_chars >= max_total_chars {
+            break;
+        }
+
+        formatted.push_str(&format!("[{}] {}\n", i + 1, result.title));
+        formatted.push_str(&format!("URL: {}\n\n", result.url));
+
+        // Use content if available, otherwise snippet
+        let text = if let Some(ref content) = result.content {
+            content.clone()
+        } else {
+            format!("Summary: {}", result.snippet)
+        };
+
+        // Truncate if needed to stay within budget
+        let remaining = max_total_chars.saturating_sub(total_chars);
+        let truncated = if text.len() > remaining {
+            format!("{}...", &text[..remaining.saturating_sub(3)])
+        } else {
+            text
+        };
+
+        formatted.push_str(&truncated);
+        formatted.push_str("\n\n---\n\n");
+        total_chars += truncated.len();
+    }
+
+    formatted.push_str("[End Web Search Results]\n");
+    formatted
+}
+
+#[cfg(test)]
+mod tests {
+    // ... existing tests ...
+
+    #[test]
+    fn test_format_with_content() {
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet".to_string(),
+                content: Some("Full article content with lots of detail...".to_string()),
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content(&results, 10000);
+        assert!(formatted.contains("Full article content"));
+        assert!(!formatted.contains("Short snippet")); // Content takes priority
+    }
+
+    #[test]
+    fn test_format_fallback_snippet() {
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet description".to_string(),
+                content: None, // No content fetched
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content(&results, 10000);
+        assert!(formatted.contains("Short snippet")); // Falls back to snippet
+    }
+}
+```
+
+---
+
+### Sub-phase 9.9: Update API Server Integration
+
+**Goal**: Use content fetching in inference handler
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Update `handle_inference_request()` to use `search_with_content()`
+- [ ] Update `handle_streaming_request()` to use `search_with_content()`
+- [ ] Add logging for content fetch results
+- [ ] Add metrics for content fetch timing
+
+**Implementation File**: `src/api/server.rs` (modify)
+
+Key change: Replace `search_service.search()` with `search_service.search_with_content()` and use new formatter.
+
+---
+
+### Sub-phase 9.10: Update Version and Documentation
+
+**Goal**: Update version to v8.8.0-content-fetch
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Update `/workspace/VERSION` to `8.8.0-content-fetch`
+- [ ] Update `/workspace/src/version.rs`:
+  - [ ] VERSION constant
+  - [ ] VERSION_NUMBER
+  - [ ] VERSION_MINOR to 8
+  - [ ] VERSION_PATCH to 0
+  - [ ] Add feature: "content-fetching"
+  - [ ] Add feature: "html-extraction"
+  - [ ] Add to BREAKING_CHANGES
+- [ ] Update `docs/API.md` with new configuration
+- [ ] Build: `cargo build --release --features real-ezkl -j 4`
+- [ ] Test: `cargo test content`
+
+---
+
+### Sub-phase 9.11: Integration Testing
+
+**Goal**: End-to-end testing of content fetching
+
+**Status**: NOT STARTED
+
+#### Tasks
+- [ ] Run all content tests: `cargo test content`
+- [ ] Run all search tests: `cargo test search`
+- [ ] Manual test with real URLs:
+  ```bash
+  curl -X POST http://localhost:8080/v1/inference \
+    -H 'Content-Type: application/json' \
+    -d '{
+      "prompt": "What is the latest news about AI?",
+      "web_search": true,
+      "stream": false
+    }'
+  ```
+- [ ] Verify logs show content fetch:
+  ```
+  🔍 Web search requested for inference
+  🔍 Fetching content from: https://bbc.com/news/ai
+  🔍 Fetched 2847 chars from: https://bbc.com/news/ai
+  🔍 Web search completed: 3 results with content
+  ```
+- [ ] Verify LLM response uses actual content (not "I can't browse")
+- [ ] Test with WebSocket streaming
+
+---
+
+### Test Summary - Phase 9
+
+| Sub-phase | Test File | Test Count |
+|-----------|-----------|------------|
+| 9.3 | content/config.rs | 3 |
+| 9.4 | content/extractor.rs | 6 |
+| 9.5 | content/cache.rs | 4 |
+| 9.6 | content/fetcher.rs | 5 |
+| 9.7 | service.rs (integration) | 3 |
+| 9.8 | query_extractor.rs | 4 |
+| **Total** | | **~25 tests** |
+
+---
+
+### Performance Targets - Phase 9
+
+| Operation | Target | Notes |
+|-----------|--------|-------|
+| Single page fetch | <3s | Including extraction |
+| 3 pages parallel | <5s | Total with timeout |
+| Cached content | <10ms | Cache hit |
+| Content extraction | <50ms | HTML parsing |
+
+---
+
+### Risk Mitigation - Phase 9
+
+| Risk | Level | Mitigation |
+|------|-------|------------|
+| Slow page loads | Medium | Aggressive timeouts (5s/page, 10s total) |
+| Sites blocking bots | Medium | Fall back to snippet gracefully |
+| JavaScript-only sites | Low | Accept limitation, use snippet |
+| Large pages | Low | Limit fetch size, truncate |
+| SSRF attacks | High | Strict URL validation (no localhost/private) |
+| Prompt injection | Medium | Sanitize content, escape special chars |
+
+---
+
+### Files Created/Modified - Phase 9
+
+| File | Status | Description |
+|------|--------|-------------|
+| `Cargo.toml` | Modified | Add `scraper = "0.18"` |
+| `src/search/mod.rs` | Modified | Add `pub mod content;` |
+| `src/search/content/mod.rs` | **New** | Module exports |
+| `src/search/content/config.rs` | **New** | ContentFetchConfig |
+| `src/search/content/extractor.rs` | **New** | HTML extraction |
+| `src/search/content/cache.rs` | **New** | Content caching |
+| `src/search/content/fetcher.rs` | **New** | HTTP fetching |
+| `src/search/service.rs` | Modified | Add content_fetcher |
+| `src/search/query_extractor.rs` | Modified | Add content formatter |
+| `src/api/server.rs` | Modified | Use search_with_content |
+| `VERSION` | Modified | Update to 8.8.0 |
+| `src/version.rs` | Modified | Update version constants |
+
+---
+
 ## Future Enhancements (Out of Scope)
 
 1. **Search result verification** - Hash results for proof submission
@@ -2089,3 +3430,5 @@ This is **unrelated to web search**. It means the job on-chain has a token limit
 3. **Search history** - Per-session search history for context
 4. **Custom search providers** - Allow hosts to add custom providers
 5. **Search result ranking** - Re-rank results based on relevance
+6. **JavaScript rendering** - Optional headless browser for SPAs (heavy)
+7. **Jina Reader fallback** - External service for failed extractions (privacy tradeoff)

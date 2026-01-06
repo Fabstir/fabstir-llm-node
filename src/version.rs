@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.7.9-sdk-web-search-2026-01-05";
+pub const VERSION: &str = "v8.7.12-search-prompt-v2-2026-01-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.7.9";
+pub const VERSION_NUMBER: &str = "8.7.12";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 7;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 9;
+pub const VERSION_PATCH: u32 = 12;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-05";
+pub const BUILD_DATE: &str = "2026-01-06";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -88,6 +88,12 @@ pub const FEATURES: &[&str] = &[
     "auto-search-intent-detection",
     // SDK web_search field support (v8.7.9+)
     "sdk-web-search-field",
+    // System prompt web search instructions (v8.7.10+)
+    "web-search-system-prompt",
+    // Search query extraction fix (v8.7.11+)
+    "search-query-harmony-cleanup",
+    // Improved search prompt (v8.7.12+)
+    "search-prompt-v2",
 ];
 
 /// Supported chain IDs
@@ -98,6 +104,17 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.7.12 - Improved search prompt
+    "FIX: Stronger system prompt to use [Web Search Results] and never claim 'cannot browse'",
+    "FIX: Removed 'You are ChatGPT' and 'Knowledge cutoff' which confused the model",
+    "FIX: Added explicit numbered instructions for handling search results",
+    // v8.7.11 - Search query extraction fix
+    "FIX: Search queries now extract last user message from Harmony chat format",
+    "FIX: Strips <|start|>, <|end|>, <|message|> markers before sending to search engine",
+    "FIX: Web search no longer returns irrelevant results about GPT-OSS/Harmony documentation",
+    // v8.7.10 - System prompt web search instructions
+    "FEAT: System prompt now instructs model to use [Web Search Results] when provided",
+    "FIX: Model no longer claims 'I cannot browse the web' when search results are available",
     // v8.7.9 - SDK web_search field support
     "FEAT: Node now reads web_search, max_searches, search_queries from encrypted message JSON",
     "FEAT: SDK can explicitly enable web search via web_search: true at message level",
@@ -151,7 +168,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 7);
-        assert_eq!(VERSION_PATCH, 9);
+        assert_eq!(VERSION_PATCH, 12);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -164,20 +181,23 @@ mod tests {
         assert!(FEATURES.contains(&"websocket-web-search"));
         assert!(FEATURES.contains(&"auto-search-intent-detection"));
         assert!(FEATURES.contains(&"sdk-web-search-field"));
+        assert!(FEATURES.contains(&"web-search-system-prompt"));
+        assert!(FEATURES.contains(&"search-query-harmony-cleanup"));
+        assert!(FEATURES.contains(&"search-prompt-v2"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.7.9"));
-        assert!(version.contains("2026-01-05"));
+        assert!(version.contains("8.7.12"));
+        assert!(version.contains("2026-01-06"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.7.9-sdk-web-search-2026-01-05");
-        assert_eq!(VERSION_NUMBER, "8.7.9");
-        assert_eq!(BUILD_DATE, "2026-01-05");
+        assert_eq!(VERSION, "v8.7.12-search-prompt-v2-2026-01-06");
+        assert_eq!(VERSION_NUMBER, "8.7.12");
+        assert_eq!(BUILD_DATE, "2026-01-06");
     }
 }

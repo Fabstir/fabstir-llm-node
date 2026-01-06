@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::handlers::{HealthResponse, ModelInfo, ModelsResponse};
 use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
@@ -503,16 +503,13 @@ impl ApiServer {
             let search_service_guard = self.search_service.read().await;
             if let Some(search_service) = search_service_guard.as_ref() {
                 if search_service.is_enabled() {
-                    // Extract search queries from request or derive from prompt
+                    // Extract search queries from request or derive from prompt (v8.7.11+)
+                    // Use extract_last_user_query to strip Harmony markers and get actual query
                     let queries = if let Some(ref custom_queries) = request.search_queries {
                         custom_queries.clone()
                     } else {
-                        // Use prompt as search query (truncate if too long)
-                        let query = if request.prompt.len() > 200 {
-                            request.prompt.chars().take(200).collect()
-                        } else {
-                            request.prompt.clone()
-                        };
+                        // Extract last user query, stripping Harmony chat markers
+                        let query = crate::search::query_extractor::extract_last_user_query(&request.prompt);
                         vec![query]
                     };
 
@@ -520,6 +517,9 @@ impl ApiServer {
                     let max_searches = std::cmp::min(request.max_searches, 20) as usize;
                     let queries_to_search: Vec<_> = queries.into_iter().take(max_searches).collect();
                     let queries_count = queries_to_search.len() as u32;
+
+                    // Log the actual search query for debugging
+                    debug!("🔍 Search queries (cleaned): {:?}", queries_to_search);
 
                     // Perform searches and collect results
                     let mut all_results = Vec::new();
@@ -707,22 +707,22 @@ impl ApiServer {
             let search_service_guard = self.search_service.read().await;
             if let Some(search_service) = search_service_guard.as_ref() {
                 if search_service.is_enabled() {
-                    // Extract search queries from request or derive from prompt
+                    // Extract search queries from request or derive from prompt (v8.7.11+)
+                    // Use extract_last_user_query to strip Harmony markers and get actual query
                     let queries = if let Some(ref custom_queries) = request.search_queries {
                         custom_queries.clone()
                     } else {
-                        // Use prompt as search query (truncate if too long)
-                        let query = if request.prompt.len() > 200 {
-                            request.prompt.chars().take(200).collect()
-                        } else {
-                            request.prompt.clone()
-                        };
+                        // Extract last user query, stripping Harmony chat markers
+                        let query = crate::search::query_extractor::extract_last_user_query(&request.prompt);
                         vec![query]
                     };
 
                     // Limit number of searches
                     let max_searches = std::cmp::min(request.max_searches, 20) as usize;
                     let queries_to_search: Vec<_> = queries.into_iter().take(max_searches).collect();
+
+                    // Log the actual search query for debugging
+                    debug!("🔍 Search queries (cleaned): {:?}", queries_to_search);
 
                     // Perform searches and collect results
                     let mut all_results = Vec::new();
