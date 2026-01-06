@@ -69,6 +69,60 @@ fn clean_query(query: &str) -> String {
         .to_string()
 }
 
+/// Extract the last user message from a conversation that may contain Harmony chat markers
+/// This ensures we search for what the user actually asked, not the entire conversation
+pub fn extract_last_user_query(message: &str) -> String {
+    // First, try to extract just the last user message from Harmony format
+    // Format: <|start|>user<|message|>actual query<|end|>
+
+    // Find all user messages
+    let mut last_user_content = String::new();
+    let mut search_pos = 0;
+
+    while let Some(start_pos) = message[search_pos..].find("<|start|>user<|message|>") {
+        let abs_start = search_pos + start_pos + "<|start|>user<|message|>".len();
+        if let Some(end_pos) = message[abs_start..].find("<|end|>") {
+            let content = &message[abs_start..abs_start + end_pos];
+            // Keep the last user message (most recent query)
+            last_user_content = content.to_string();
+            search_pos = abs_start + end_pos;
+        } else {
+            // No closing tag, take rest as content
+            last_user_content = message[abs_start..].to_string();
+            break;
+        }
+    }
+
+    // If we found user content, use it; otherwise clean the entire message
+    let query = if !last_user_content.is_empty() {
+        last_user_content
+    } else {
+        // No Harmony markers found, clean the message of any stray markers
+        strip_harmony_markers(message)
+    };
+
+    // Final cleanup
+    clean_query(&query)
+}
+
+/// Strip Harmony chat markers from a string
+fn strip_harmony_markers(text: &str) -> String {
+    text
+        // Remove Harmony format markers
+        .replace("<|start|>", " ")
+        .replace("<|end|>", " ")
+        .replace("<|message|>", " ")
+        .replace("<|channel|>", " ")
+        .replace("system", " ")
+        .replace("user", " ")
+        .replace("assistant", " ")
+        .replace("final", " ")
+        // Clean up multiple spaces
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Check if a message likely needs web search
 ///
 /// Returns true if the message contains indicators that
@@ -259,5 +313,37 @@ mod tests {
         assert!(formatted.contains("Test Title"));
         assert!(formatted.contains("https://example.com"));
         assert!(formatted.contains("[1]"));
+    }
+
+    #[test]
+    fn test_extract_last_user_query_harmony_format() {
+        // Test with Harmony chat markers
+        let message = "<|start|>user<|message|>Search for latest news<|end|>\n<|start|>assistant<|channel|>final<|message|>It looks like...<|end|>\n<|start|>user<|message|>Find the latest news on the BBC website<|end|>";
+        let query = extract_last_user_query(message);
+        assert_eq!(query, "Find the latest news on the BBC website");
+    }
+
+    #[test]
+    fn test_extract_last_user_query_plain_text() {
+        // Test with plain text (no markers)
+        let message = "What is the capital of France?";
+        let query = extract_last_user_query(message);
+        assert!(query.contains("capital of France"));
+    }
+
+    #[test]
+    fn test_extract_last_user_query_single_message() {
+        // Test with single Harmony message
+        let message = "<|start|>user<|message|>Search for BBC news<|end|>";
+        let query = extract_last_user_query(message);
+        assert_eq!(query, "Search for BBC news");
+    }
+
+    #[test]
+    fn test_strip_harmony_markers() {
+        let text = "<|start|>user<|message|>hello world<|end|>";
+        let stripped = strip_harmony_markers(text);
+        assert!(stripped.contains("hello world"));
+        assert!(!stripped.contains("<|"));
     }
 }
