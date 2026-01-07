@@ -501,7 +501,7 @@
       {
         "name": "",
         "type": "address",
-        "internalType": "contract ModelRegistry"
+        "internalType": "contract ModelRegistryUpgradeable"
       }
     ],
     "stateMutability": "view"
