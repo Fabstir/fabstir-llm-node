@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.8.3-content-fetch-2026-01-06";
+pub const VERSION: &str = "v8.9.1-proof-signing-eip191-2026-01-07";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.8.3";
+pub const VERSION_NUMBER: &str = "8.9.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 8;
+pub const VERSION_MINOR: u32 = 9;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-06";
+pub const BUILD_DATE: &str = "2026-01-07";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -99,6 +99,13 @@ pub const FEATURES: &[&str] = &[
     "html-extraction",
     "page-content-cache",
     "parallel-fetch",
+    // Security audit proof signing (v8.9.0+)
+    "proof-signing",
+    "security-audit-compliance",
+    "ecdsa-proof-signatures",
+    "65-byte-signatures",
+    // EIP-191 personal_sign (v8.9.1+)
+    "eip191-personal-sign",
 ];
 
 /// Supported chain IDs
@@ -109,6 +116,14 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.9.1 - EIP-191 Fix
+    "FIX: Proof signatures now use EIP-191 personal_sign prefix (\\x19Ethereum Signed Message:\\n32)",
+    "FIX: Signature now matches contract's ecrecover verification",
+    // v8.9.0 - Security Audit Proof Signing
+    "BREAKING: submitProofOfWork now requires 5th parameter: 65-byte proof signature",
+    "FEAT: Proof signing for security audit compliance - prevents token manipulation",
+    "FEAT: Host wallet cryptographically signs proof data before submission",
+    "FEAT: Signature formula: keccak256(abi.encodePacked(proofHash, hostAddress, tokensClaimed))",
     // v8.8.0 - Content fetching
     "FEAT: Web search now fetches actual page content from URLs, not just snippets",
     "FEAT: HTML content extraction using CSS selectors (article, main, .content, etc.)",
@@ -180,8 +195,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 8);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_MINOR, 9);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -202,20 +217,27 @@ mod tests {
         assert!(FEATURES.contains(&"html-extraction"));
         assert!(FEATURES.contains(&"page-content-cache"));
         assert!(FEATURES.contains(&"parallel-fetch"));
+        // v8.9.0 proof signing features
+        assert!(FEATURES.contains(&"proof-signing"));
+        assert!(FEATURES.contains(&"security-audit-compliance"));
+        assert!(FEATURES.contains(&"ecdsa-proof-signatures"));
+        assert!(FEATURES.contains(&"65-byte-signatures"));
+        // v8.9.1 EIP-191 fix
+        assert!(FEATURES.contains(&"eip191-personal-sign"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.8.3"));
-        assert!(version.contains("2026-01-06"));
+        assert!(version.contains("8.9.1"));
+        assert!(version.contains("2026-01-07"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.8.3-content-fetch-2026-01-06");
-        assert_eq!(VERSION_NUMBER, "8.8.3");
-        assert_eq!(BUILD_DATE, "2026-01-06");
+        assert_eq!(VERSION, "v8.9.1-proof-signing-eip191-2026-01-07");
+        assert_eq!(VERSION_NUMBER, "8.9.1");
+        assert_eq!(BUILD_DATE, "2026-01-07");
     }
 }
