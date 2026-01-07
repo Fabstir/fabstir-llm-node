@@ -105,15 +105,20 @@ pub fn sign_proof_data(
     let data_hash = hash_data(&encoded);
     debug!("Data hash: 0x{}", hex::encode(&data_hash));
 
-    // 3. Sign the hash using ECDSA
+    // 3. Apply EIP-191 prefix for personal_sign compatibility
+    // Contract uses: keccak256("\x19Ethereum Signed Message:\n32" + dataHash)
+    let eth_signed_hash = eip191_hash(&data_hash);
+    debug!("EIP-191 hash: 0x{}", hex::encode(&eth_signed_hash));
+
+    // 4. Sign the EIP-191 prefixed hash using ECDSA
     let signing_key = SigningKey::from_bytes(private_key.into())
         .map_err(|e| anyhow!(ProofSigningError::InvalidPrivateKey(e.to_string())))?;
 
     let (signature, recovery_id) = signing_key
-        .sign_prehash_recoverable(&data_hash)
+        .sign_prehash_recoverable(&eth_signed_hash)
         .map_err(|e| anyhow!(ProofSigningError::SigningFailed(e.to_string())))?;
 
-    // 4. Format as 65-byte signature (r + s + v)
+    // 5. Format as 65-byte signature (r + s + v)
     let mut sig_bytes = [0u8; 65];
     sig_bytes[..64].copy_from_slice(&signature.to_bytes());
     // Ethereum uses v = 27 or 28 (recovery_id + 27)
@@ -152,10 +157,13 @@ pub fn verify_proof_signature(
     let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed);
     let data_hash = hash_data(&encoded);
 
-    // 2. Recover address from signature using existing helper
-    let recovered = crate::crypto::signature::recover_client_address(signature, &data_hash)?;
+    // 2. Apply EIP-191 prefix (same as signing)
+    let eth_signed_hash = eip191_hash(&data_hash);
 
-    // 3. Compare addresses (case-insensitive)
+    // 3. Recover address from signature using existing helper
+    let recovered = crate::crypto::signature::recover_client_address(signature, &eth_signed_hash)?;
+
+    // 4. Compare addresses (case-insensitive)
     let expected = format!("{:?}", host_address).to_lowercase();
     let recovered_lower = recovered.to_lowercase();
 
@@ -190,6 +198,22 @@ fn hash_data(data: &[u8]) -> [u8; 32] {
     let mut hasher = Keccak::v256();
     let mut hash = [0u8; 32];
     hasher.update(data);
+    hasher.finalize(&mut hash);
+    hash
+}
+
+/// Apply EIP-191 prefix for Ethereum personal_sign compatibility
+///
+/// The contract uses ecrecover with:
+///   keccak256("\x19Ethereum Signed Message:\n32" + dataHash)
+///
+/// This matches wallet.signMessage(dataHash) in ethers.js
+fn eip191_hash(data_hash: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Keccak::v256();
+    let mut hash = [0u8; 32];
+    // EIP-191 prefix for 32-byte message
+    hasher.update(b"\x19Ethereum Signed Message:\n32");
+    hasher.update(data_hash);
     hasher.finalize(&mut hash);
     hash
 }
