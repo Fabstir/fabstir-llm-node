@@ -2,7 +2,7 @@
 
 ## Status: IN PROGRESS 🔧
 
-**Status**: Phase 1 Complete ✅ → Ready for Phase 2
+**Status**: Phase 2 Complete ✅ → Ready for Phase 3
 **Version**: v8.9.0-proof-signing
 **Start Date**: 2026-01-06
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -291,14 +291,14 @@ pub fn verify_proof_signature(
 
 **Goal**: Modify `encode_checkpoint_call` to accept signature parameter
 
-**Status**: PENDING
+**Status**: ✅ COMPLETE (2026-01-07)
 
 #### Tasks
-- [ ] Update `encode_checkpoint_call` function signature to add `signature: [u8; 65]`
-- [ ] Add signature parameter to ABI definition (type: `bytes`, position: 4th)
-- [ ] Update token encoding to include signature bytes
-- [ ] Update function documentation
-- [ ] Run `cargo check` to find all callers that need updating
+- [x] Update `encode_checkpoint_call` function signature to add `signature: [u8; 65]`
+- [x] Add signature parameter to ABI definition (type: `bytes`, position: 4th)
+- [x] Update token encoding to include signature bytes
+- [x] Update function documentation
+- [x] Run `cargo check` to find all callers that need updating
 
 **File:** `src/contracts/checkpoint_manager.rs` (lines 1261-1313)
 
@@ -352,15 +352,17 @@ let tokens = vec![
 
 **Goal**: Generate signature before submitting checkpoints
 
-**Status**: PENDING
+**Status**: ✅ COMPLETE (2026-01-07)
 
 #### Tasks
-- [ ] Import `sign_proof_data` in checkpoint_manager.rs
-- [ ] Get host address from wallet in `submit_checkpoint_async`
-- [ ] Generate signature before calling `encode_checkpoint_call`
-- [ ] Update call to pass signature
-- [ ] Add error handling for signing failures
-- [ ] Run `cargo check`
+- [x] Import `sign_proof_data` in checkpoint_manager.rs (via crate::crypto::)
+- [x] Get host address from wallet in `submit_checkpoint_async`
+- [x] Generate signature before calling `encode_checkpoint_call`
+- [x] Update call to pass signature
+- [x] Add error handling for signing failures
+- [x] Run `cargo check`
+
+**Note:** Updated both `submit_checkpoint` (sync) and `submit_checkpoint_async` callers.
 
 **File:** `src/contracts/checkpoint_manager.rs` (modify `submit_checkpoint_async`)
 
@@ -405,19 +407,19 @@ let call_data = encode_checkpoint_call(
 
 **Goal**: Ensure all paths that call `encode_checkpoint_call` pass signature
 
-**Status**: PENDING
+**Status**: ✅ COMPLETE (2026-01-07)
 
 #### Tasks
-- [ ] Search for all usages of `encode_checkpoint_call`
-- [ ] Update `force_checkpoint_sync` if it exists
-- [ ] Update `submit_proof_of_work` if called directly anywhere
-- [ ] Update any test helpers that mock checkpoint calls
-- [ ] Run `cargo test` to verify no compilation errors
+- [x] Search for all usages of `encode_checkpoint_call`
+- [x] Update `submit_checkpoint` (sync version) - line 338
+- [x] Update `submit_checkpoint_async` - line 492
+- [x] No other callers found (no force_checkpoint_sync, no test helpers)
 
-**Locations to check:**
-- `submit_checkpoint_async()` (main path)
-- `force_checkpoint()` (if exists)
-- Any test files that construct checkpoint calls
+**Callers Updated:**
+1. `submit_checkpoint()` at line 338: Added signature generation using `self.host_address`
+2. `submit_checkpoint_async()` at line 492: Added signature generation using `host_address` parameter
+
+**Verification:** `cargo check` passes, 10/10 proof_signer tests passing.
 
 ---
 
