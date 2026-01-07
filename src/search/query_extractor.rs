@@ -225,6 +225,61 @@ pub fn format_results_for_prompt(
     formatted
 }
 
+/// Format search results with content for injection into a prompt (Phase 9)
+///
+/// Uses actual page content when available, falls back to snippet.
+/// This provides the LLM with real web page content instead of just metadata.
+///
+/// # Arguments
+/// * `results` - Search results with content to format
+/// * `max_total_chars` - Maximum total characters for all results
+///
+/// # Returns
+/// Formatted string suitable for prompt injection
+pub fn format_results_with_content_for_prompt(
+    results: &[super::types::SearchResultWithContent],
+    max_total_chars: usize,
+) -> String {
+    if results.is_empty() {
+        return String::new();
+    }
+
+    let mut formatted = String::from("[Web Search Results]\n\n");
+    let mut total_chars = 0;
+
+    for (i, result) in results.iter().enumerate() {
+        if total_chars >= max_total_chars {
+            break;
+        }
+
+        formatted.push_str(&format!("[{}] {}\n", i + 1, result.title));
+        formatted.push_str(&format!("URL: {}\n\n", result.url));
+
+        // Use content if available, otherwise snippet
+        let text = if let Some(ref content) = result.content {
+            content.clone()
+        } else {
+            format!("Summary: {}", result.snippet)
+        };
+
+        // Truncate if needed to stay within budget
+        let remaining = max_total_chars.saturating_sub(total_chars);
+        let truncated = if text.len() > remaining {
+            format!("{}...", &text[..remaining.saturating_sub(3)])
+        } else {
+            text
+        };
+
+        formatted.push_str(&truncated);
+        formatted.push_str("\n\n---\n\n");
+        total_chars += truncated.len();
+    }
+
+    formatted.push_str("[End Web Search Results]\n\n");
+    formatted.push_str("INSTRUCTION: Summarize the key headlines and information from the search results above. Do NOT give generic advice about visiting websites - instead, directly answer using the content provided.\n\n");
+    formatted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,5 +400,74 @@ mod tests {
         let stripped = strip_harmony_markers(text);
         assert!(stripped.contains("hello world"));
         assert!(!stripped.contains("<|"));
+    }
+
+    #[test]
+    fn test_format_with_content() {
+        use super::super::types::SearchResultWithContent;
+
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet".to_string(),
+                content: Some("Full article content with lots of detail about the topic that provides real value to readers.".to_string()),
+                published_date: None,
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content_for_prompt(&results, 10000);
+        assert!(formatted.contains("[Web Search Results]"));
+        assert!(formatted.contains("Full article content"));
+        assert!(!formatted.contains("Short snippet")); // Content takes priority
+        assert!(formatted.contains("[End Web Search Results]"));
+    }
+
+    #[test]
+    fn test_format_fallback_snippet() {
+        use super::super::types::SearchResultWithContent;
+
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet description".to_string(),
+                content: None, // No content fetched
+                published_date: None,
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content_for_prompt(&results, 10000);
+        assert!(formatted.contains("Summary: Short snippet")); // Falls back to snippet
+    }
+
+    #[test]
+    fn test_format_with_content_respects_max_chars() {
+        use super::super::types::SearchResultWithContent;
+
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet".to_string(),
+                content: Some("A".repeat(1000)), // Long content
+                published_date: None,
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content_for_prompt(&results, 100);
+        // Should be truncated
+        assert!(formatted.len() < 500);
+        assert!(formatted.contains("..."));
+    }
+
+    #[test]
+    fn test_format_empty_results_with_content() {
+        let results: Vec<super::super::types::SearchResultWithContent> = vec![];
+        let formatted = format_results_with_content_for_prompt(&results, 10000);
+        assert!(formatted.is_empty());
     }
 }

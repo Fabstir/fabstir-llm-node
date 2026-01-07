@@ -103,6 +103,48 @@ pub struct SearchQuery {
     pub request_id: Option<String>,
 }
 
+/// A search result with optional fetched page content (Phase 9)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResultWithContent {
+    /// Title of the search result
+    pub title: String,
+    /// URL of the search result
+    pub url: String,
+    /// Snippet/description from search (meta description)
+    pub snippet: String,
+    /// Actual page content if fetched (None if fetch failed/disabled)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Published date if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_date: Option<String>,
+    /// Source provider
+    pub source: String,
+}
+
+/// Response from a search operation with content fetching (Phase 9)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResponseWithContent {
+    /// The original search query
+    pub query: String,
+    /// List of search results with content
+    pub results: Vec<SearchResultWithContent>,
+    /// Time taken for the search in milliseconds
+    pub search_time_ms: u64,
+    /// Time taken for content fetching in milliseconds
+    pub content_fetch_time_ms: u64,
+    /// Provider that returned the results
+    pub provider: String,
+    /// Whether the search result was from cache
+    pub cached: bool,
+    /// Number of results returned
+    pub result_count: usize,
+    /// Number of results with content fetched
+    pub content_fetched_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

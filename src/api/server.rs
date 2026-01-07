@@ -521,20 +521,18 @@ impl ApiServer {
                     // Log the actual search query for debugging
                     debug!("🔍 Search queries (cleaned): {:?}", queries_to_search);
 
-                    // Perform searches and collect results
+                    // Perform searches with content fetching (Phase 9)
                     let mut all_results = Vec::new();
                     let mut provider_name = String::new();
+                    let mut content_fetched_count = 0usize;
 
                     for query in &queries_to_search {
-                        match search_service.search(query, Some(5)).await {
+                        // Use search_with_content to fetch actual page content
+                        match search_service.search_with_content(query, Some(5)).await {
                             Ok(result) => {
                                 provider_name = result.provider.clone();
-                                for sr in result.results {
-                                    all_results.push(format!(
-                                        "- {} ({}): {}",
-                                        sr.title, sr.url, sr.snippet
-                                    ));
-                                }
+                                content_fetched_count += result.content_fetched_count;
+                                all_results.extend(result.results);
                             }
                             Err(e) => {
                                 warn!("Search failed for query '{}': {}", query, e);
@@ -543,15 +541,17 @@ impl ApiServer {
                     }
 
                     if !all_results.is_empty() {
-                        // Format search results as context
+                        // Format search results with content (Phase 9)
+                        // Uses actual page content when available, falls back to snippets
                         search_context = format!(
-                            "\n[Web Search Results]\n{}\n[End Web Search Results]\n\n",
-                            all_results.join("\n")
+                            "\n{}\n",
+                            crate::search::query_extractor::format_results_with_content_for_prompt(&all_results, 8000)
                         );
                         search_metadata = Some((true, queries_count, provider_name));
                         info!(
-                            "Web search completed: {} results from {} queries",
+                            "Web search completed: {} results ({} with content) from {} queries",
                             all_results.len(),
+                            content_fetched_count,
                             queries_count
                         );
                     }
@@ -724,18 +724,16 @@ impl ApiServer {
                     // Log the actual search query for debugging
                     debug!("🔍 Search queries (cleaned): {:?}", queries_to_search);
 
-                    // Perform searches and collect results
+                    // Perform searches with content fetching (Phase 9)
                     let mut all_results = Vec::new();
+                    let mut content_fetched_count = 0usize;
 
                     for query in &queries_to_search {
-                        match search_service.search(query, Some(5)).await {
+                        // Use search_with_content to fetch actual page content
+                        match search_service.search_with_content(query, Some(5)).await {
                             Ok(result) => {
-                                for sr in result.results {
-                                    all_results.push(format!(
-                                        "- {} ({}): {}",
-                                        sr.title, sr.url, sr.snippet
-                                    ));
-                                }
+                                content_fetched_count += result.content_fetched_count;
+                                all_results.extend(result.results);
                             }
                             Err(e) => {
                                 warn!("Search failed for streaming query '{}': {}", query, e);
@@ -744,14 +742,15 @@ impl ApiServer {
                     }
 
                     if !all_results.is_empty() {
-                        // Format search results as context
+                        // Format search results with content (Phase 9)
                         search_context = format!(
-                            "\n[Web Search Results]\n{}\n[End Web Search Results]\n\n",
-                            all_results.join("\n")
+                            "\n{}\n",
+                            crate::search::query_extractor::format_results_with_content_for_prompt(&all_results, 8000)
                         );
                         info!(
-                            "🔍 Web search completed for streaming: {} results",
-                            all_results.len()
+                            "🔍 Web search completed for streaming: {} results ({} with content)",
+                            all_results.len(),
+                            content_fetched_count
                         );
                     }
                 } else {
