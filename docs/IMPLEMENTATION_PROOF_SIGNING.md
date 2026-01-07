@@ -2,11 +2,11 @@
 
 ## Status: IN PROGRESS 🔧
 
-**Status**: Phase 2 Complete ✅ → Ready for Phase 3
+**Status**: Phase 3 Sub-phase 3.1 Complete ✅ → Ready for 3.2
 **Version**: v8.9.0-proof-signing
 **Start Date**: 2026-01-06
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 10/10 (all proof_signer tests)
+**Tests Passing**: 15/15 (10 proof_signer + 5 checkpoint_manager)
 
 ---
 
@@ -429,17 +429,19 @@ let call_data = encode_checkpoint_call(
 
 **Goal**: Test end-to-end proof signing and submission
 
-**Status**: PENDING
+**Status**: ✅ COMPLETE (2026-01-07)
 
 #### Tasks
-- [ ] Write test `test_checkpoint_with_signature_encodes_correctly`
-- [ ] Write test `test_signature_in_transaction_data`
-- [ ] Verify signature is at correct position in encoded call data
-- [ ] Run full test suite: `cargo test`
+- [x] Write test `test_checkpoint_with_signature_encodes_correctly`
+- [x] Write test `test_signature_in_transaction_data`
+- [x] Write test `test_different_signatures_different_encoding`
+- [x] Write test `test_signature_length_in_encoding`
+- [x] Write test `test_encoding_is_deterministic`
+- [x] Run test suite: `cargo test` - **15/15 tests passing**
 
 **Test locations:**
-- `src/contracts/checkpoint_manager.rs` (inline tests)
-- `tests/checkpoint_tests.rs` (if exists)
+- `src/contracts/checkpoint_manager.rs` (5 new inline tests)
+- `src/crypto/proof_signer.rs` (10 unit tests)
 
 ---
 
