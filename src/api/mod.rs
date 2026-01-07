@@ -8,6 +8,7 @@ pub mod http_server;
 pub mod ocr;
 pub mod pool;
 pub mod response_formatter;
+pub mod search;
 pub mod server;
 pub mod streaming;
 pub mod token_tracker;
@@ -17,6 +18,7 @@ pub use describe_image::{describe_image_handler, DescribeImageRequest, DescribeI
 pub use embed::{embed_handler, EmbedRequest, EmbedResponse, EmbeddingResult};
 pub use errors::{ApiError, ErrorResponse};
 pub use ocr::{ocr_handler, OcrRequest, OcrResponse};
+pub use search::{search_handler, SearchApiRequest, SearchApiResponse};
 pub use handlers::{
     ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse, HealthResponse,
     InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,

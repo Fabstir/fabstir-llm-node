@@ -22,6 +22,19 @@ pub struct InferenceRequest {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "chainId")]
     pub chain_id: Option<u64>, // Chain ID for multi-chain support (accepts chain_id or chainId)
+    /// Enable web search before inference (v8.7.0+)
+    #[serde(default, alias = "webSearch")]
+    pub web_search: bool,
+    /// Maximum number of searches to perform (default 5, max 20)
+    #[serde(default = "default_max_searches", alias = "maxSearches")]
+    pub max_searches: u32,
+    /// Custom search queries (optional, auto-extracted from prompt if not provided)
+    #[serde(skip_serializing_if = "Option::is_none", alias = "searchQueries")]
+    pub search_queries: Option<Vec<String>>,
+}
+
+fn default_max_searches() -> u32 {
+    5
 }
 
 fn default_temperature() -> f32 {
@@ -41,6 +54,15 @@ pub struct InferenceResponse {
     pub chain_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_token: Option<String>,
+    /// Whether web search was performed (v8.7.0+)
+    #[serde(skip_serializing_if = "Option::is_none", alias = "webSearchPerformed")]
+    pub web_search_performed: Option<bool>,
+    /// Number of search queries executed
+    #[serde(skip_serializing_if = "Option::is_none", alias = "searchQueriesCount")]
+    pub search_queries_count: Option<u32>,
+    /// Search provider used (if search was performed)
+    #[serde(skip_serializing_if = "Option::is_none", alias = "searchProvider")]
+    pub search_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
