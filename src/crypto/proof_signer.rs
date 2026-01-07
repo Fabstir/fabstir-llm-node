@@ -197,8 +197,65 @@ fn hash_data(data: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use k256::ecdsa::{SigningKey, VerifyingKey};
+    use tiny_keccak::{Hasher, Keccak};
 
-    // Test will be implemented in Sub-phase 1.2
+    /// Compute keccak256 hash of data
+    fn keccak256(data: &[u8]) -> [u8; 32] {
+        let mut hasher = Keccak::v256();
+        let mut output = [0u8; 32];
+        hasher.update(data);
+        hasher.finalize(&mut output);
+        output
+    }
+
+    /// Generate a test keypair: (private_key, ethereum_address)
+    ///
+    /// Derives the Ethereum address from the public key using keccak256.
+    fn generate_test_keypair() -> ([u8; 32], Address) {
+        // Use a deterministic key for reproducible tests
+        let private_key_bytes: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+
+        let signing_key = SigningKey::from_bytes((&private_key_bytes).into()).unwrap();
+        let verifying_key = VerifyingKey::from(&signing_key);
+
+        // Get uncompressed public key (65 bytes: 0x04 prefix + 32 bytes X + 32 bytes Y)
+        let public_key_bytes = verifying_key.to_encoded_point(false);
+        let public_key_uncompressed = public_key_bytes.as_bytes();
+
+        // Ethereum address = last 20 bytes of keccak256(public_key[1..65])
+        let hash = keccak256(&public_key_uncompressed[1..]); // Skip 0x04 prefix
+        let address_bytes: [u8; 20] = hash[12..32].try_into().unwrap();
+
+        (private_key_bytes, Address::from(address_bytes))
+    }
+
+    /// Generate a second test keypair for comparison tests
+    fn generate_test_keypair_2() -> ([u8; 32], Address) {
+        let private_key_bytes: [u8; 32] = [
+            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77, 0x88, 0x99,
+        ];
+
+        let signing_key = SigningKey::from_bytes((&private_key_bytes).into()).unwrap();
+        let verifying_key = VerifyingKey::from(&signing_key);
+
+        let public_key_bytes = verifying_key.to_encoded_point(false);
+        let public_key_uncompressed = public_key_bytes.as_bytes();
+
+        let hash = keccak256(&public_key_uncompressed[1..]);
+        let address_bytes: [u8; 20] = hash[12..32].try_into().unwrap();
+
+        (private_key_bytes, Address::from(address_bytes))
+    }
+
+    // === Sub-phase 1.1 Tests ===
+
     #[test]
     fn test_encode_proof_data_length() {
         let proof_hash = [0u8; 32];
@@ -214,5 +271,145 @@ mod tests {
         let data = b"test data";
         let hash = hash_data(data);
         assert_eq!(hash.len(), 32);
+    }
+
+    // === Sub-phase 1.2 Tests (TDD) ===
+
+    #[test]
+    fn test_sign_proof_data_returns_65_bytes() {
+        let (private_key, host_address) = generate_test_keypair();
+        let proof_hash = [0xab; 32];
+        let tokens = 1000u64;
+
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+
+        assert_eq!(signature.len(), 65, "Signature must be exactly 65 bytes");
+    }
+
+    #[test]
+    fn test_sign_proof_data_recoverable_address() {
+        let (private_key, host_address) = generate_test_keypair();
+        let proof_hash = [0xcd; 32];
+        let tokens = 5000u64;
+
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+
+        // Verify the signature using our verify function
+        let is_valid =
+            verify_proof_signature(&signature, proof_hash, host_address, tokens).unwrap();
+
+        assert!(
+            is_valid,
+            "Recovered address should match the signing address"
+        );
+    }
+
+    #[test]
+    fn test_sign_proof_data_different_tokens_different_signature() {
+        let (private_key, host_address) = generate_test_keypair();
+        let proof_hash = [0xef; 32];
+
+        let signature_1000 =
+            sign_proof_data(&private_key, proof_hash, host_address, 1000).unwrap();
+        let signature_2000 =
+            sign_proof_data(&private_key, proof_hash, host_address, 2000).unwrap();
+
+        assert_ne!(
+            signature_1000, signature_2000,
+            "Different token counts must produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_sign_proof_data_different_proof_hash_different_signature() {
+        let (private_key, host_address) = generate_test_keypair();
+        let tokens = 1000u64;
+
+        let proof_hash_1 = [0x11; 32];
+        let proof_hash_2 = [0x22; 32];
+
+        let signature_1 =
+            sign_proof_data(&private_key, proof_hash_1, host_address, tokens).unwrap();
+        let signature_2 =
+            sign_proof_data(&private_key, proof_hash_2, host_address, tokens).unwrap();
+
+        assert_ne!(
+            signature_1, signature_2,
+            "Different proof hashes must produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_sign_proof_data_v_value_is_27_or_28() {
+        let (private_key, host_address) = generate_test_keypair();
+        let proof_hash = [0x99; 32];
+        let tokens = 100u64;
+
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+
+        let v = signature[64];
+        assert!(
+            v == 27 || v == 28,
+            "v value must be 27 or 28 for Ethereum compatibility, got {}",
+            v
+        );
+    }
+
+    #[test]
+    fn test_sign_proof_data_wrong_address_fails_verification() {
+        let (private_key, host_address) = generate_test_keypair();
+        let (_, wrong_address) = generate_test_keypair_2();
+        let proof_hash = [0x55; 32];
+        let tokens = 100u64;
+
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+
+        // Verify with wrong address should fail
+        let is_valid =
+            verify_proof_signature(&signature, proof_hash, wrong_address, tokens).unwrap();
+
+        assert!(
+            !is_valid,
+            "Verification should fail with wrong host address"
+        );
+    }
+
+    #[test]
+    fn test_sign_proof_data_wrong_tokens_fails_verification() {
+        let (private_key, host_address) = generate_test_keypair();
+        let proof_hash = [0x66; 32];
+
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, 1000).unwrap();
+
+        // Verify with wrong token count should fail
+        let is_valid =
+            verify_proof_signature(&signature, proof_hash, host_address, 2000).unwrap();
+
+        assert!(
+            !is_valid,
+            "Verification should fail with wrong token count"
+        );
+    }
+
+    #[test]
+    fn test_encode_proof_data_tokens_big_endian() {
+        let proof_hash = [0u8; 32];
+        let host_address = Address::zero();
+        let tokens = 0x0102030405060708u64;
+
+        let encoded = encode_proof_data(proof_hash, host_address, tokens);
+
+        // Tokens should be in the last 32 bytes, big-endian, zero-padded left
+        // Position: 32 (proof_hash) + 20 (address) = 52, then 32 bytes for tokens
+        let tokens_portion = &encoded[52..84];
+
+        // First 24 bytes should be zeros (padding)
+        assert_eq!(&tokens_portion[0..24], &[0u8; 24]);
+
+        // Last 8 bytes should be the u64 in big-endian
+        assert_eq!(
+            &tokens_portion[24..32],
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        );
     }
 }
