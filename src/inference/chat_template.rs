@@ -162,7 +162,7 @@ impl ChatTemplate {
         if !has_system {
             let current_date = chrono::Local::now().format("%Y-%m-%d");
             prompt.push_str(&format!(
-                "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: {}\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final.<|end|>\n",
+                "<|start|>system<|message|>You are a helpful AI assistant.\nCurrent date: {}\n\nIMPORTANT: When you see [Web Search Results] in the user message, these are REAL search results from the internet. You MUST:\n1. Use this information to answer the user's question\n2. Present the search results as helpful sources\n3. NEVER say \"I cannot browse the web\" - the search has already been done for you\n4. If results are links/descriptions, recommend which sources to visit\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final.<|end|>\n",
                 current_date
             ));
         }
@@ -347,9 +347,11 @@ mod tests {
 
         let formatted = template.format_messages(&messages);
 
-        // Should auto-add system message
-        assert!(formatted.contains("<|start|>system<|message|>You are ChatGPT"));
-        assert!(formatted.contains("Knowledge cutoff: 2024-06"));
+        // Should auto-add system message (v8.7.12+ format)
+        assert!(formatted.contains("<|start|>system<|message|>You are a helpful AI assistant"));
+        assert!(formatted.contains("Current date:"));
+        assert!(formatted.contains("IMPORTANT: When you see [Web Search Results]"));
+        assert!(formatted.contains("NEVER say \"I cannot browse the web\""));
         assert!(formatted.contains("<|start|>user<|message|>What is 2+2?<|end|>"));
         // Harmony format includes channel specification for assistant responses
         assert!(formatted.ends_with("<|start|>assistant<|channel|>final<|message|>"));

@@ -1,0 +1,473 @@
+// Copyright (c) 2025 Fabstir
+// SPDX-License-Identifier: BUSL-1.1
+//! Query extraction from user prompts
+//!
+//! Extracts search queries from user messages for search-augmented inference.
+
+/// Extract potential search queries from a user message
+///
+/// This is a simple heuristic-based extractor. For more sophisticated
+/// extraction, consider using an LLM to generate queries.
+///
+/// # Arguments
+/// * `message` - The user's message
+/// * `max_queries` - Maximum number of queries to extract
+///
+/// # Returns
+/// A vector of search query strings
+pub fn extract_search_queries(message: &str, max_queries: usize) -> Vec<String> {
+    let mut queries = Vec::new();
+
+    // Simple approach: use the message as-is if it looks like a question
+    let trimmed = message.trim();
+
+    if trimmed.is_empty() {
+        return queries;
+    }
+
+    // If message is short enough, use it directly
+    if trimmed.len() <= 100 {
+        queries.push(clean_query(trimmed));
+    } else {
+        // For longer messages, extract key phrases
+        // Split into sentences and use the most relevant ones
+        let sentences: Vec<&str> = trimmed
+            .split(|c| c == '.' || c == '?' || c == '!')
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+
+        for sentence in sentences.iter().take(max_queries) {
+            let query = clean_query(sentence);
+            if !query.is_empty() && query.len() >= 3 {
+                queries.push(query);
+            }
+        }
+    }
+
+    queries.truncate(max_queries);
+    queries
+}
+
+/// Clean a query string for search
+fn clean_query(query: &str) -> String {
+    query
+        .trim()
+        // Remove common question starters that don't help search
+        .trim_start_matches("can you ")
+        .trim_start_matches("could you ")
+        .trim_start_matches("please ")
+        .trim_start_matches("I want to ")
+        .trim_start_matches("I need to ")
+        .trim_start_matches("help me ")
+        .trim_start_matches("tell me ")
+        .trim_start_matches("what is ")
+        .trim_start_matches("what are ")
+        .trim_start_matches("how do I ")
+        .trim_start_matches("how can I ")
+        // Clean up
+        .trim()
+        .to_string()
+}
+
+/// Extract the last user message from a conversation that may contain Harmony chat markers
+/// This ensures we search for what the user actually asked, not the entire conversation
+pub fn extract_last_user_query(message: &str) -> String {
+    // First, try to extract just the last user message from Harmony format
+    // Format: <|start|>user<|message|>actual query<|end|>
+
+    // Find all user messages
+    let mut last_user_content = String::new();
+    let mut search_pos = 0;
+
+    while let Some(start_pos) = message[search_pos..].find("<|start|>user<|message|>") {
+        let abs_start = search_pos + start_pos + "<|start|>user<|message|>".len();
+        if let Some(end_pos) = message[abs_start..].find("<|end|>") {
+            let content = &message[abs_start..abs_start + end_pos];
+            // Keep the last user message (most recent query)
+            last_user_content = content.to_string();
+            search_pos = abs_start + end_pos;
+        } else {
+            // No closing tag, take rest as content
+            last_user_content = message[abs_start..].to_string();
+            break;
+        }
+    }
+
+    // If we found user content, use it; otherwise clean the entire message
+    let query = if !last_user_content.is_empty() {
+        last_user_content
+    } else {
+        // No Harmony markers found, clean the message of any stray markers
+        strip_harmony_markers(message)
+    };
+
+    // Final cleanup
+    clean_query(&query)
+}
+
+/// Strip Harmony chat markers from a string
+fn strip_harmony_markers(text: &str) -> String {
+    text
+        // Remove Harmony format markers
+        .replace("<|start|>", " ")
+        .replace("<|end|>", " ")
+        .replace("<|message|>", " ")
+        .replace("<|channel|>", " ")
+        .replace("system", " ")
+        .replace("user", " ")
+        .replace("assistant", " ")
+        .replace("final", " ")
+        // Clean up multiple spaces
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Check if a message likely needs web search
+///
+/// Returns true if the message contains indicators that
+/// current/recent information would be helpful.
+pub fn needs_web_search(message: &str) -> bool {
+    let lower = message.to_lowercase();
+
+    // Time-sensitive indicators
+    let time_indicators = [
+        "latest",
+        "recent",
+        "current",
+        "today",
+        "this week",
+        "this month",
+        "this year",
+        "2024",
+        "2025",
+        "2026",
+        "now",
+        "right now",
+        "up to date",
+        "up-to-date",
+    ];
+
+    // Action indicators
+    let action_indicators = [
+        "search for",
+        "search the web",
+        "look up",
+        "find out",
+        "google",
+        "search online",
+        "[search]",
+    ];
+
+    // Topic indicators that often need current info
+    let topic_indicators = [
+        "news",
+        "price",
+        "stock",
+        "weather",
+        "score",
+        "result",
+        "election",
+        "update",
+        "release",
+        "announcement",
+    ];
+
+    for indicator in time_indicators.iter() {
+        if lower.contains(indicator) {
+            return true;
+        }
+    }
+
+    for indicator in action_indicators.iter() {
+        if lower.contains(indicator) {
+            return true;
+        }
+    }
+
+    for indicator in topic_indicators.iter() {
+        if lower.contains(indicator) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Format search results for injection into a prompt
+///
+/// # Arguments
+/// * `results` - Search results to format
+/// * `max_results` - Maximum number of results to include
+///
+/// # Returns
+/// Formatted string suitable for prompt injection
+pub fn format_results_for_prompt(
+    results: &[super::types::SearchResult],
+    max_results: usize,
+) -> String {
+    if results.is_empty() {
+        return String::new();
+    }
+
+    let mut formatted = String::from("Web search results:\n\n");
+
+    for (i, result) in results.iter().take(max_results).enumerate() {
+        formatted.push_str(&format!(
+            "[{}] {}\nURL: {}\n{}\n\n",
+            i + 1,
+            result.title,
+            result.url,
+            result.snippet
+        ));
+    }
+
+    formatted
+}
+
+/// Format search results with content for injection into a prompt (Phase 9)
+///
+/// Uses actual page content when available, falls back to snippet.
+/// This provides the LLM with real web page content instead of just metadata.
+///
+/// # Arguments
+/// * `results` - Search results with content to format
+/// * `max_total_chars` - Maximum total characters for all results
+///
+/// # Returns
+/// Formatted string suitable for prompt injection
+pub fn format_results_with_content_for_prompt(
+    results: &[super::types::SearchResultWithContent],
+    max_total_chars: usize,
+) -> String {
+    if results.is_empty() {
+        return String::new();
+    }
+
+    let mut formatted = String::from("[Web Search Results]\n\n");
+    let mut total_chars = 0;
+
+    for (i, result) in results.iter().enumerate() {
+        if total_chars >= max_total_chars {
+            break;
+        }
+
+        formatted.push_str(&format!("[{}] {}\n", i + 1, result.title));
+        formatted.push_str(&format!("URL: {}\n\n", result.url));
+
+        // Use content if available, otherwise snippet
+        let text = if let Some(ref content) = result.content {
+            content.clone()
+        } else {
+            format!("Summary: {}", result.snippet)
+        };
+
+        // Truncate if needed to stay within budget
+        let remaining = max_total_chars.saturating_sub(total_chars);
+        let truncated = if text.len() > remaining {
+            format!("{}...", &text[..remaining.saturating_sub(3)])
+        } else {
+            text
+        };
+
+        formatted.push_str(&truncated);
+        formatted.push_str("\n\n---\n\n");
+        total_chars += truncated.len();
+    }
+
+    formatted.push_str("[End Web Search Results]\n\n");
+    formatted.push_str("INSTRUCTION: Summarize the key headlines and information from the search results above. Do NOT give generic advice about visiting websites - instead, directly answer using the content provided.\n\n");
+    formatted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_simple_query() {
+        let queries = extract_search_queries("What is Rust programming?", 5);
+        assert_eq!(queries.len(), 1);
+        assert!(queries[0].contains("Rust"));
+    }
+
+    #[test]
+    fn test_extract_empty_message() {
+        let queries = extract_search_queries("", 5);
+        assert!(queries.is_empty());
+    }
+
+    #[test]
+    fn test_extract_multiple_sentences() {
+        let message = "What is quantum computing? How does it work? When will it be practical?";
+        let queries = extract_search_queries(message, 5);
+        assert!(queries.len() >= 1);
+    }
+
+    #[test]
+    fn test_extract_max_queries() {
+        let message = "A. B. C. D. E. F.";
+        let queries = extract_search_queries(message, 2);
+        assert!(queries.len() <= 2);
+    }
+
+    #[test]
+    fn test_clean_query() {
+        assert_eq!(clean_query("can you tell me about Rust"), "about Rust");
+        assert_eq!(clean_query("please help me with Python"), "with Python");
+        assert_eq!(clean_query("  spaces  "), "spaces");
+    }
+
+    #[test]
+    fn test_needs_web_search_time() {
+        assert!(needs_web_search("What's the latest news?"));
+        assert!(needs_web_search("Current Bitcoin price"));
+        assert!(needs_web_search("What happened today?"));
+    }
+
+    #[test]
+    fn test_needs_web_search_action() {
+        assert!(needs_web_search("Search for quantum computing"));
+        assert!(needs_web_search("Can you look up this topic?"));
+        assert!(needs_web_search("[search] latest AI news"));
+    }
+
+    #[test]
+    fn test_needs_web_search_topic() {
+        assert!(needs_web_search("What's the weather like?"));
+        assert!(needs_web_search("Stock price of Apple"));
+        assert!(needs_web_search("Latest news about elections"));
+    }
+
+    #[test]
+    fn test_needs_web_search_negative() {
+        assert!(!needs_web_search("Explain how recursion works"));
+        assert!(!needs_web_search("Write a function to sort a list"));
+        assert!(!needs_web_search("What is 2 + 2?"));
+    }
+
+    #[test]
+    fn test_format_results_empty() {
+        let formatted = format_results_for_prompt(&[], 5);
+        assert!(formatted.is_empty());
+    }
+
+    #[test]
+    fn test_format_results() {
+        use super::super::types::SearchResult;
+
+        let results = vec![SearchResult {
+            title: "Test Title".to_string(),
+            url: "https://example.com".to_string(),
+            snippet: "Test snippet".to_string(),
+            published_date: None,
+            source: "test".to_string(),
+        }];
+
+        let formatted = format_results_for_prompt(&results, 5);
+        assert!(formatted.contains("Test Title"));
+        assert!(formatted.contains("https://example.com"));
+        assert!(formatted.contains("[1]"));
+    }
+
+    #[test]
+    fn test_extract_last_user_query_harmony_format() {
+        // Test with Harmony chat markers
+        let message = "<|start|>user<|message|>Search for latest news<|end|>\n<|start|>assistant<|channel|>final<|message|>It looks like...<|end|>\n<|start|>user<|message|>Find the latest news on the BBC website<|end|>";
+        let query = extract_last_user_query(message);
+        assert_eq!(query, "Find the latest news on the BBC website");
+    }
+
+    #[test]
+    fn test_extract_last_user_query_plain_text() {
+        // Test with plain text (no markers)
+        let message = "What is the capital of France?";
+        let query = extract_last_user_query(message);
+        assert!(query.contains("capital of France"));
+    }
+
+    #[test]
+    fn test_extract_last_user_query_single_message() {
+        // Test with single Harmony message
+        let message = "<|start|>user<|message|>Search for BBC news<|end|>";
+        let query = extract_last_user_query(message);
+        assert_eq!(query, "Search for BBC news");
+    }
+
+    #[test]
+    fn test_strip_harmony_markers() {
+        let text = "<|start|>user<|message|>hello world<|end|>";
+        let stripped = strip_harmony_markers(text);
+        assert!(stripped.contains("hello world"));
+        assert!(!stripped.contains("<|"));
+    }
+
+    #[test]
+    fn test_format_with_content() {
+        use super::super::types::SearchResultWithContent;
+
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet".to_string(),
+                content: Some("Full article content with lots of detail about the topic that provides real value to readers.".to_string()),
+                published_date: None,
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content_for_prompt(&results, 10000);
+        assert!(formatted.contains("[Web Search Results]"));
+        assert!(formatted.contains("Full article content"));
+        assert!(!formatted.contains("Short snippet")); // Content takes priority
+        assert!(formatted.contains("[End Web Search Results]"));
+    }
+
+    #[test]
+    fn test_format_fallback_snippet() {
+        use super::super::types::SearchResultWithContent;
+
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet description".to_string(),
+                content: None, // No content fetched
+                published_date: None,
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content_for_prompt(&results, 10000);
+        assert!(formatted.contains("Summary: Short snippet")); // Falls back to snippet
+    }
+
+    #[test]
+    fn test_format_with_content_respects_max_chars() {
+        use super::super::types::SearchResultWithContent;
+
+        let results = vec![
+            SearchResultWithContent {
+                title: "Test Article".to_string(),
+                url: "https://example.com".to_string(),
+                snippet: "Short snippet".to_string(),
+                content: Some("A".repeat(1000)), // Long content
+                published_date: None,
+                source: "test".to_string(),
+            },
+        ];
+
+        let formatted = format_results_with_content_for_prompt(&results, 100);
+        // Should be truncated
+        assert!(formatted.len() < 500);
+        assert!(formatted.contains("..."));
+    }
+
+    #[test]
+    fn test_format_empty_results_with_content() {
+        let results: Vec<super::super::types::SearchResultWithContent> = vec![];
+        let formatted = format_results_with_content_for_prompt(&results, 10000);
+        assert!(formatted.is_empty());
+    }
+}
