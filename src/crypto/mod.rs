@@ -37,6 +37,7 @@ pub mod private_key;
 pub mod session_init;
 pub mod session_keys;
 pub mod signature;
+pub mod proof_signer;
 
 pub use aes_gcm::{decrypt_aes_gcm, decrypt_chunk, decrypt_manifest, extract_nonce};
 pub use ecdh::derive_shared_key;
@@ -46,3 +47,4 @@ pub use private_key::extract_node_private_key;
 pub use session_init::{decrypt_session_init, EncryptedSessionPayload, SessionInitData};
 pub use session_keys::SessionKeyStore;
 pub use signature::recover_client_address;
+pub use proof_signer::sign_proof_data;

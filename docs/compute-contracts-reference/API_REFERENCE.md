@@ -1,6 +1,6 @@
 # Fabstir LLM Marketplace - API Reference
 
-**Last Updated:** December 9, 2025
+**Last Updated:** January 6, 2026
 **Network:** Base Sepolia (Chain ID: 84532)
 **PRICE_PRECISION:** 1000 (all prices multiplied by 1000 for sub-$1/million support)
 
@@ -8,58 +8,71 @@
 
 ## Quick Start
 
-### Contract Addresses
+### Contract Addresses (Upgradeable - UUPS Proxy Pattern)
+
+> **NEW (December 14, 2025):** All contracts have been upgraded to UUPS proxy pattern for future upgradeability. Use the **proxy addresses** for all interactions.
 
 ```javascript
+// UPGRADEABLE CONTRACTS (UUPS Proxies) - Use these addresses
 const contracts = {
-  jobMarketplace: "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1",
-  nodeRegistry: "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d",
-  modelRegistry: "0x92b2De840bB2171203011A6dBA928d855cA8183E",
-  proofSystem: "0x2ACcc60893872A499700908889B38C5420CBcFD1",
-  hostEarnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776",
+  // Proxy addresses (interact with these)
+  jobMarketplace: "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D",
+  nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+  modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
+  proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
+  hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
+
+  // Tokens (unchanged)
   fabToken: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62",
-  usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+};
+
+// Implementation addresses (for verification only)
+const implementations = {
+  jobMarketplace: "0x05c7d3a1b748dEbdbc12dd75D1aC195fb93228a3",
+  nodeRegistry: "0x68298e2b74a106763aC99E3D973E98012dB5c75F",
+  modelRegistry: "0xd7Df5c6D4ffe6961d47753D1dd32f844e0F73f50",
+  proofSystem: "0x83eB050Aa3443a76a4De64aBeD90cA8d525E7A3A",
+  hostEarnings: "0x588c42249F85C6ac4B4E27f97416C0289980aabB"
 };
 ```
 
 ### Approved Models
 
-| Model              | Repo                                   | File                          | Model ID (bytes32)                                                   |
-| ------------------ | -------------------------------------- | ----------------------------- | -------------------------------------------------------------------- |
-| TinyVicuna-1B      | CohereForAI/TinyVicuna-1B-32k-GGUF     | tiny-vicuna-1b.q4_k_m.gguf    | `0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced` |
-| TinyLlama-1.1B     | TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | tinyllama-1b.Q4_K_M.gguf      | `0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca` |
-| OpenAI GPT-OSS-20B | bartowski/openai_gpt-oss-20b-GGUF      | openai_gpt-oss-20b-MXFP4.gguf | `0x7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c` |
+| Model | Repo | File | Model ID (bytes32) |
+|-------|------|------|-------------------|
+| TinyVicuna-1B | CohereForAI/TinyVicuna-1B-32k-GGUF | tiny-vicuna-1b.q4_k_m.gguf | `0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced` |
+| TinyLlama-1.1B | TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | tinyllama-1b.Q4_K_M.gguf | `0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca` |
+| OpenAI GPT-OSS-20B | bartowski/openai_gpt-oss-20b-GGUF | openai_gpt-oss-20b-MXFP4.gguf | `0x7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c` |
 
 ```javascript
 // Model IDs (use these exact values)
-const TINY_VICUNA =
-  "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced";
-const TINY_LLAMA =
-  "0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca";
-const GPT_OSS_20B =
-  "0x7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c";
+const TINY_VICUNA = "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced";
+const TINY_LLAMA = "0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca";
+const GPT_OSS_20B = "0x7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c";
 ```
 
 > **Note:** Model IDs are derived from the model's on-chain registration, not simple keccak256 hashes of names. Always use the exact bytes32 values above.
 
 ---
 
-## NodeRegistryWithModels
+## NodeRegistryWithModels (Upgradeable)
 
 Host registration and pricing management.
 
-**Address:** `0x48aa4A8047A45862Da8412FAB71ef66C17c7766d`
+**Proxy Address:** `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
+**Implementation:** `0x68298e2b74a106763aC99E3D973E98012dB5c75F`
 
 ### Constants
 
-| Constant                     | Value                  | Description                         |
-| ---------------------------- | ---------------------- | ----------------------------------- |
-| `MIN_STAKE`                  | 1000 FAB               | Minimum stake to register           |
-| `PRICE_PRECISION`            | 1000                   | Prices stored with 1000x multiplier |
-| `MIN_PRICE_PER_TOKEN_NATIVE` | 227,273                | ~$0.001/million @ $4400 ETH         |
-| `MAX_PRICE_PER_TOKEN_NATIVE` | 22,727,272,727,273,000 | ~$100,000/million @ $4400 ETH       |
-| `MIN_PRICE_PER_TOKEN_STABLE` | 1                      | $0.001 per million tokens           |
-| `MAX_PRICE_PER_TOKEN_STABLE` | 100,000,000            | $100,000 per million tokens         |
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MIN_STAKE` | 1000 FAB | Minimum stake to register |
+| `PRICE_PRECISION` | 1000 | Prices stored with 1000x multiplier |
+| `MIN_PRICE_PER_TOKEN_NATIVE` | 227,273 | ~$0.001/million @ $4400 ETH |
+| `MAX_PRICE_PER_TOKEN_NATIVE` | 22,727,272,727,273,000 | ~$100,000/million @ $4400 ETH |
+| `MIN_PRICE_PER_TOKEN_STABLE` | 1 | $0.001 per million tokens |
+| `MAX_PRICE_PER_TOKEN_STABLE` | 100,000,000 | $100,000 per million tokens |
 
 > **IMPORTANT: PRICE_PRECISION**
 >
@@ -68,7 +81,6 @@ Host registration and pricing management.
 > **To convert:** `pricePerToken = USD_per_million * 1000`
 >
 > Examples:
->
 > - $0.06/million (Llama 3.2 3B) → `pricePerToken = 60`
 > - $5/million → `pricePerToken = 5000`
 > - $10/million → `pricePerToken = 10000`
@@ -92,19 +104,13 @@ function registerNode(
 ```
 
 **Requirements:**
-
 - Caller must have approved FAB tokens for staking (1000 FAB minimum)
 - All model IDs must be approved in ModelRegistry
 - Prices must be within MIN/MAX ranges
 
 **Example:**
-
 ```javascript
-const nodeRegistry = new ethers.Contract(
-  contracts.nodeRegistry,
-  NodeRegistryABI,
-  signer
-);
+const nodeRegistry = new ethers.Contract(contracts.nodeRegistry, NodeRegistryABI, signer);
 const fabToken = new ethers.Contract(contracts.fabToken, ERC20ABI, signer);
 
 // Approve FAB tokens for staking
@@ -115,28 +121,21 @@ await fabToken.approve(contracts.nodeRegistry, stakeAmount);
 const metadata = JSON.stringify({
   name: "My GPU Node",
   description: "RTX 4090 inference server",
-  location: "US-East",
+  location: "US-East"
 });
 const apiUrl = "https://my-node.example.com/api";
 const modelIds = [TINY_VICUNA, TINY_LLAMA];
 
 // Pricing with PRICE_PRECISION (1000x multiplier)
 // Native: ~$0.013/million @ $4400 ETH
-const nativePrice = 3_000_000; // Use integer, not parseUnits
+const nativePrice = 3_000_000;  // Use integer, not parseUnits
 // Stable: $5/million tokens
-const stablePrice = 5000; // 5 * 1000 = 5000
+const stablePrice = 5000;  // 5 * 1000 = 5000
 
-await nodeRegistry.registerNode(
-  metadata,
-  apiUrl,
-  modelIds,
-  nativePrice,
-  stablePrice
-);
+await nodeRegistry.registerNode(metadata, apiUrl, modelIds, nativePrice, stablePrice);
 ```
 
 **Events:**
-
 ```solidity
 event NodeRegistered(
     address indexed operator,
@@ -185,28 +184,21 @@ function setModelPricing(
 ```
 
 **Requirements:**
-
 - Caller must be registered and active
 - Model must be in caller's supported models
 - Prices must be 0 (use default) or within MIN/MAX ranges
 
 **Example:**
-
 ```javascript
 // Set premium pricing for TinyVicuna model
 // With PRICE_PRECISION=1000, this is $25/million tokens
-const premiumNativePrice = 15_000_000; // ~$0.066/million @ $4400 ETH
-const premiumStablePrice = 25000; // $25/million (25 * 1000)
+const premiumNativePrice = 15_000_000;  // ~$0.066/million @ $4400 ETH
+const premiumStablePrice = 25000;  // $25/million (25 * 1000)
 
-await nodeRegistry.setModelPricing(
-  TINY_VICUNA,
-  premiumNativePrice,
-  premiumStablePrice
-);
+await nodeRegistry.setModelPricing(TINY_VICUNA, premiumNativePrice, premiumStablePrice);
 ```
 
 **Events:**
-
 ```solidity
 event ModelPricingUpdated(
     address indexed operator,
@@ -236,7 +228,6 @@ function setTokenPricing(
 ```
 
 **Events:**
-
 ```solidity
 event TokenPricingUpdated(
     address indexed operator,
@@ -259,7 +250,6 @@ function getNodePricing(
 ```
 
 **Fallback Logic:**
-
 1. If token-specific price is set → return it
 2. Else if token is native → return `minPricePerTokenNative`
 3. Else → return `minPricePerTokenStable`
@@ -277,19 +267,17 @@ function getModelPricing(
 ```
 
 **Fallback Logic:**
-
 1. If model-specific price is set → return it
 2. Else → return default price for that token type
 
 **Example:**
-
 ```javascript
 // Query model pricing before creating session
 const hostAddress = "0x...";
 const modelPrice = await nodeRegistry.getModelPricing(
   hostAddress,
   TINY_VICUNA,
-  ethers.ZeroAddress // Native ETH
+  ethers.ZeroAddress  // Native ETH
 );
 console.log("Min price:", ethers.formatEther(modelPrice), "ETH per token");
 ```
@@ -309,15 +297,11 @@ function getHostModelPrices(address operator) external view returns (
 **Returns effective prices** (model-specific or default fallback).
 
 **Example:**
-
 ```javascript
-const [modelIds, nativePrices, stablePrices] =
-  await nodeRegistry.getHostModelPrices(hostAddress);
+const [modelIds, nativePrices, stablePrices] = await nodeRegistry.getHostModelPrices(hostAddress);
 
 for (let i = 0; i < modelIds.length; i++) {
-  console.log(
-    `Model ${modelIds[i]}: Native=${nativePrices[i]}, Stable=${stablePrices[i]}`
-  );
+  console.log(`Model ${modelIds[i]}: Native=${nativePrices[i]}, Stable=${stablePrices[i]}`);
 }
 ```
 
@@ -372,25 +356,25 @@ function isActiveNode(address operator) external view returns (bool)
 
 ---
 
-## JobMarketplaceWithModels
+## JobMarketplaceWithModels (Upgradeable)
 
 Session management and payments.
 
-**Address:** `0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1`
+**Proxy Address:** `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D`
+**Implementation:** `0x05c7d3a1b748dEbdbc12dd75D1aC195fb93228a3`
 
 ### Constants
 
-| Constant            | Value               | Description                         |
-| ------------------- | ------------------- | ----------------------------------- |
-| `MIN_DEPOSIT`       | 0.0002 ETH          | Minimum ETH deposit                 |
-| `USDC_MIN_DEPOSIT`  | 800,000 (0.80 USDC) | Minimum USDC deposit                |
-| `PRICE_PRECISION`   | 1000                | Prices stored with 1000x multiplier |
-| `FEE_BASIS_POINTS`  | 1000                | 10% platform fee                    |
-| `DISPUTE_WINDOW`    | 30 seconds          | Time for disputes                   |
-| `MIN_PROVEN_TOKENS` | 100                 | Minimum tokens per proof            |
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MIN_DEPOSIT` | 0.0001 ETH (~$0.50) | Minimum ETH deposit |
+| `USDC_MIN_DEPOSIT` | 500,000 (0.50 USDC) | Minimum USDC deposit |
+| `PRICE_PRECISION` | 1000 | Prices stored with 1000x multiplier |
+| `FEE_BASIS_POINTS` | 1000 | 10% platform fee |
+| `DISPUTE_WINDOW` | 30 seconds | Time for disputes |
+| `MIN_PROVEN_TOKENS` | 100 | Minimum tokens per proof |
 
 > **Payment Calculations with PRICE_PRECISION:**
->
 > ```
 > maxTokens = (deposit * PRICE_PRECISION) / pricePerToken
 > hostPayment = (tokensUsed * pricePerToken) / PRICE_PRECISION
@@ -412,32 +396,23 @@ function createSessionJob(
 ```
 
 **Requirements:**
-
-- `msg.value >= MIN_DEPOSIT` (0.0002 ETH)
+- `msg.value >= MIN_DEPOSIT` (0.0001 ETH)
 - `pricePerToken >= host's minPricePerTokenNative`
 - Host must be registered and active
 
 **Example:**
-
 ```javascript
-const marketplace = new ethers.Contract(
-  contracts.jobMarketplace,
-  JobMarketplaceABI,
-  signer
-);
+const marketplace = new ethers.Contract(contracts.jobMarketplace, JobMarketplaceABI, signer);
 
 // Query host pricing first
-const hostPrice = await nodeRegistry.getNodePricing(
-  hostAddress,
-  ethers.ZeroAddress
-);
+const hostPrice = await nodeRegistry.getNodePricing(hostAddress, ethers.ZeroAddress);
 
 // Create session with 0.01 ETH deposit
 const tx = await marketplace.createSessionJob(
   hostAddress,
-  hostPrice, // Must meet host's minimum
-  3600, // 1 hour max duration
-  1000, // Proof every 1000 tokens
+  hostPrice,           // Must meet host's minimum
+  3600,                // 1 hour max duration
+  1000,                // Proof every 1000 tokens
   { value: ethers.parseEther("0.01") }
 );
 
@@ -446,7 +421,6 @@ const sessionId = receipt.logs[0].args.jobId;
 ```
 
 **Events:**
-
 ```solidity
 event SessionJobCreated(
     uint256 indexed jobId,
@@ -471,25 +445,19 @@ function createSessionJobForModel(
 ```
 
 **Requirements:**
-
 - Host must support the specified model
 - `pricePerToken >= host's model-specific minimum (or default fallback)`
 
 **Example:**
-
 ```javascript
 // Query model-specific pricing
-const modelPrice = await nodeRegistry.getModelPricing(
-  hostAddress,
-  TINY_VICUNA,
-  ethers.ZeroAddress
-);
+const modelPrice = await nodeRegistry.getModelPricing(hostAddress, TINY_VICUNA, ethers.ZeroAddress);
 
 // Create model-aware session
 const tx = await marketplace.createSessionJobForModel(
   hostAddress,
-  TINY_VICUNA, // Specific model
-  modelPrice, // Model-specific minimum
+  TINY_VICUNA,         // Specific model
+  modelPrice,          // Model-specific minimum
   3600,
   1000,
   { value: ethers.parseEther("0.01") }
@@ -497,7 +465,6 @@ const tx = await marketplace.createSessionJobForModel(
 ```
 
 **Events:**
-
 ```solidity
 event SessionJobCreatedForModel(
     uint256 indexed jobId,
@@ -524,26 +491,21 @@ function createSessionJobWithToken(
 ```
 
 **Requirements:**
-
 - Token must be accepted (`acceptedTokens[token] == true`)
 - Caller must have approved tokens for transfer
 - `deposit >= tokenMinDeposits[token]`
 - `pricePerToken >= host's minPricePerTokenStable`
 
 **Example:**
-
 ```javascript
 const usdc = new ethers.Contract(contracts.usdcToken, ERC20ABI, signer);
 
 // Approve USDC
-const depositAmount = ethers.parseUnits("10", 6); // 10 USDC
+const depositAmount = ethers.parseUnits("10", 6);  // 10 USDC
 await usdc.approve(contracts.jobMarketplace, depositAmount);
 
 // Query host pricing for USDC
-const hostPrice = await nodeRegistry.getNodePricing(
-  hostAddress,
-  contracts.usdcToken
-);
+const hostPrice = await nodeRegistry.getNodePricing(hostAddress, contracts.usdcToken);
 
 // Create USDC session
 const tx = await marketplace.createSessionJobWithToken(
@@ -576,40 +538,77 @@ function createSessionJobForModelWithToken(
 
 #### `submitProofOfWork`
 
-Submit proof of work for tokens generated.
+Submit signed proof of work for tokens generated.
 
 ```solidity
 function submitProofOfWork(
     uint256 jobId,          // Session ID
     uint256 tokensClaimed,  // Number of tokens in this proof
     bytes32 proofHash,      // SHA256 hash of STARK proof
+    bytes calldata signature,  // Host's ECDSA signature (65 bytes)
     string memory proofCID  // S5 CID where proof is stored
 ) external
 ```
 
 **Requirements:**
-
 - Only the session host can submit proofs
 - `tokensClaimed >= MIN_PROVEN_TOKENS` (100)
+- `signature.length == 65` bytes (r, s, v format)
+- Signature must be from the session host
 - Session must be Active
 
 **Example:**
-
 ```javascript
-// Host submits proof after generating tokens
-const proofHash = ethers.keccak256(proofBytes);
-const proofCID = "bafyreib..."; // S5 storage CID
+import { keccak256, solidityPacked, getBytes } from 'ethers';
 
+// Host submits signed proof after generating tokens
+const proofHash = keccak256(proofBytes);
+const proofCID = "bafyreib...";  // S5 storage CID
+const tokensClaimed = 1000;
+
+// 1. Generate signature
+const dataHash = keccak256(
+  solidityPacked(
+    ['bytes32', 'address', 'uint256'],
+    [proofHash, hostAddress, tokensClaimed]
+  )
+);
+const signature = await hostWallet.signMessage(getBytes(dataHash));
+
+// 2. Submit with signature
 await marketplace.submitProofOfWork(
   sessionId,
-  1000, // 1000 tokens generated
+  tokensClaimed,
   proofHash,
+  signature,
   proofCID
 );
 ```
 
-**Events:**
+#### `getProofSubmission`
 
+Get details of a specific proof submission.
+
+```solidity
+function getProofSubmission(
+    uint256 sessionId,
+    uint256 proofIndex
+) external view returns (
+    bytes32 proofHash,
+    uint256 tokensClaimed,
+    uint256 timestamp,
+    bool verified
+)
+```
+
+**Example:**
+```javascript
+const [proofHash, tokensClaimed, timestamp, verified] =
+  await marketplace.getProofSubmission(sessionId, 0);
+console.log(`Proof verified: ${verified}`);
+```
+
+**Events:**
 ```solidity
 event ProofSubmitted(
     uint256 indexed jobId,
@@ -636,20 +635,17 @@ function completeSessionJob(
 **Can be called by anyone** (enables gasless completion for users).
 
 **Payment Distribution:**
-
 - 90% of earned amount → Host (via HostEarnings)
 - 10% of earned amount → Treasury
 - Remaining deposit → Refunded to user
 
 **Example:**
-
 ```javascript
 // Complete session (usually called by host)
 await marketplace.completeSessionJob(sessionId, "bafyreic...");
 ```
 
 **Events:**
-
 ```solidity
 event SessionCompleted(
     uint256 indexed jobId,
@@ -690,7 +686,6 @@ function sessionJobs(uint256 jobId) external view returns (
 ```
 
 **SessionStatus enum:**
-
 ```solidity
 enum SessionStatus {
     Active,      // 0 - In progress
@@ -797,6 +792,37 @@ Add a new accepted payment token (treasury only).
 function addAcceptedToken(address token, uint256 minDeposit) external
 ```
 
+#### `updateTokenMinDeposit`
+
+Update minimum deposit for an accepted token (treasury or owner only).
+
+```solidity
+function updateTokenMinDeposit(address token, uint256 minDeposit) external
+```
+
+**Requirements:**
+- Caller must be treasury or owner
+- Token must already be accepted
+- minDeposit must be > 0
+
+**Events:**
+```solidity
+event TokenMinDepositUpdated(
+    address indexed token,
+    uint256 oldMinDeposit,
+    uint256 newMinDeposit
+)
+```
+
+**Example:**
+```javascript
+// Update USDC minimum deposit to $0.25
+await marketplace.updateTokenMinDeposit(
+  "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // USDC
+  250000  // 0.25 USDC (6 decimals)
+);
+```
+
 ---
 
 ## Common Workflows
@@ -812,14 +838,14 @@ await nodeRegistry.registerNode(
   JSON.stringify({ name: "My Node", gpu: "RTX 4090" }),
   "https://my-api.com/inference",
   [TINY_VICUNA, TINY_LLAMA],
-  ethers.parseUnits("0.0001", 18), // 0.0001 ETH/token
-  1000 // 0.001 USDC/token
+  ethers.parseUnits("0.0001", 18),  // 0.0001 ETH/token
+  1000                              // 0.001 USDC/token
 );
 
 // 3. Optionally set premium pricing for specific models
 await nodeRegistry.setModelPricing(
   TINY_VICUNA,
-  ethers.parseUnits("0.0005", 18), // 5x for TinyVicuna
+  ethers.parseUnits("0.0005", 18),  // 5x for TinyVicuna
   5000
 );
 ```
@@ -832,11 +858,7 @@ const hosts = await nodeRegistry.getNodesForModel(TINY_VICUNA);
 
 // 2. Query pricing for each host
 for (const host of hosts) {
-  const price = await nodeRegistry.getModelPricing(
-    host,
-    TINY_VICUNA,
-    ethers.ZeroAddress
-  );
+  const price = await nodeRegistry.getModelPricing(host, TINY_VICUNA, ethers.ZeroAddress);
   console.log(`Host ${host}: ${ethers.formatEther(price)} ETH/token`);
 }
 
@@ -860,6 +882,8 @@ const { jobId } = (await tx.wait()).logs[0].args;
 ### 3. Host Inference Flow
 
 ```javascript
+import { keccak256, solidityPacked, getBytes } from 'ethers';
+
 // 1. Listen for new sessions
 marketplace.on("SessionJobCreated", async (jobId, requester, host, deposit) => {
   if (host === myAddress) {
@@ -868,23 +892,29 @@ marketplace.on("SessionJobCreated", async (jobId, requester, host, deposit) => {
   }
 });
 
-// 2. Submit proofs periodically
+// 2. Submit signed proofs periodically
+const tokensClaimed = 1000;
+const proofHash = keccak256(proofBytes);
+
+// Generate host signature
+const dataHash = keccak256(
+  solidityPacked(['bytes32', 'address', 'uint256'], [proofHash, hostAddress, tokensClaimed])
+);
+const signature = await hostWallet.signMessage(getBytes(dataHash));
+
 await marketplace.submitProofOfWork(
   sessionId,
-  1000, // Tokens generated
-  proofHash, // SHA256 of STARK proof
-  "bafyreib..." // S5 CID
+  tokensClaimed,
+  proofHash,
+  signature,        // Host's ECDSA signature
+  "bafyreib..."     // S5 CID
 );
 
 // 3. Complete session when done
 await marketplace.completeSessionJob(sessionId, "bafyreic...");
 
 // 4. Withdraw earnings from HostEarnings contract
-const hostEarningsContract = new ethers.Contract(
-  contracts.hostEarnings,
-  HostEarningsABI,
-  signer
-);
+const hostEarningsContract = new ethers.Contract(contracts.hostEarnings, HostEarningsABI, signer);
 await hostEarningsContract.withdrawNative();
 ```
 
@@ -894,30 +924,30 @@ await hostEarningsContract.withdrawNative();
 
 ### NodeRegistryWithModels Events
 
-| Event                                                                                              | Description              |
-| -------------------------------------------------------------------------------------------------- | ------------------------ |
-| `NodeRegistered(address operator, uint256 stakedAmount, string metadata, bytes32[] models)`        | New host registered      |
-| `NodeUnregistered(address operator, uint256 returnedAmount)`                                       | Host unregistered        |
-| `ModelPricingUpdated(address operator, bytes32 modelId, uint256 nativePrice, uint256 stablePrice)` | Model pricing changed    |
-| `TokenPricingUpdated(address operator, address token, uint256 price)`                              | Token pricing changed    |
-| `PricingUpdated(address operator, uint256 newMinPrice)`                                            | Default pricing changed  |
-| `ModelsUpdated(address operator, bytes32[] newModels)`                                             | Supported models changed |
-| `ApiUrlUpdated(address operator, string newApiUrl)`                                                | API URL changed          |
-| `MetadataUpdated(address operator, string newMetadata)`                                            | Metadata changed         |
+| Event | Description |
+|-------|-------------|
+| `NodeRegistered(address operator, uint256 stakedAmount, string metadata, bytes32[] models)` | New host registered |
+| `NodeUnregistered(address operator, uint256 returnedAmount)` | Host unregistered |
+| `ModelPricingUpdated(address operator, bytes32 modelId, uint256 nativePrice, uint256 stablePrice)` | Model pricing changed |
+| `TokenPricingUpdated(address operator, address token, uint256 price)` | Token pricing changed |
+| `PricingUpdated(address operator, uint256 newMinPrice)` | Default pricing changed |
+| `ModelsUpdated(address operator, bytes32[] newModels)` | Supported models changed |
+| `ApiUrlUpdated(address operator, string newApiUrl)` | API URL changed |
+| `MetadataUpdated(address operator, string newMetadata)` | Metadata changed |
 
 ### JobMarketplaceWithModels Events
 
-| Event                                                                                                                   | Description                 |
-| ----------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| `SessionJobCreated(uint256 jobId, address requester, address host, uint256 deposit)`                                    | Session created             |
-| `SessionJobCreatedForModel(uint256 jobId, address requester, address host, bytes32 modelId, uint256 deposit)`           | Model-aware session created |
-| `ProofSubmitted(uint256 jobId, address host, uint256 tokensClaimed, bytes32 proofHash, string proofCID)`                | Proof of work submitted     |
-| `SessionCompleted(uint256 jobId, address completedBy, uint256 tokensUsed, uint256 paymentAmount, uint256 refundAmount)` | Session completed           |
-| `SessionTimedOut(uint256 jobId, uint256 hostEarnings, uint256 userRefund)`                                              | Session timed out           |
-| `SessionAbandoned(uint256 jobId, uint256 userRefund)`                                                                   | Session abandoned           |
-| `DepositReceived(address account, address token, uint256 amount)`                                                       | Deposit received            |
-| `WithdrawalProcessed(address account, address token, uint256 amount)`                                                   | Withdrawal processed        |
-| `TokenAccepted(address token, uint256 minDeposit)`                                                                      | New token accepted          |
+| Event | Description |
+|-------|-------------|
+| `SessionJobCreated(uint256 jobId, address requester, address host, uint256 deposit)` | Session created |
+| `SessionJobCreatedForModel(uint256 jobId, address requester, address host, bytes32 modelId, uint256 deposit)` | Model-aware session created |
+| `ProofSubmitted(uint256 jobId, address host, uint256 tokensClaimed, bytes32 proofHash, string proofCID)` | Proof of work submitted |
+| `SessionCompleted(uint256 jobId, address completedBy, uint256 tokensUsed, uint256 paymentAmount, uint256 refundAmount)` | Session completed |
+| `SessionTimedOut(uint256 jobId, uint256 hostEarnings, uint256 userRefund)` | Session timed out |
+| `SessionAbandoned(uint256 jobId, uint256 userRefund)` | Session abandoned |
+| `DepositReceived(address account, address token, uint256 amount)` | Deposit received |
+| `WithdrawalProcessed(address account, address token, uint256 amount)` | Withdrawal processed |
+| `TokenAccepted(address token, uint256 minDeposit)` | New token accepted |
 
 ---
 
@@ -925,35 +955,35 @@ await hostEarningsContract.withdrawNative();
 
 ### NodeRegistryWithModels
 
-| Error                          | Cause                               |
-| ------------------------------ | ----------------------------------- |
-| `"Not registered"`             | Caller is not a registered host     |
-| `"Node not active"`            | Host is registered but not active   |
-| `"Model not supported"`        | Model not in host's supported list  |
-| `"Native price below minimum"` | Price < MIN_PRICE_PER_TOKEN_NATIVE  |
-| `"Native price above maximum"` | Price > MAX_PRICE_PER_TOKEN_NATIVE  |
-| `"Stable price below minimum"` | Price < MIN_PRICE_PER_TOKEN_STABLE  |
-| `"Stable price above maximum"` | Price > MAX_PRICE_PER_TOKEN_STABLE  |
-| `"Invalid model"`              | Model not approved in ModelRegistry |
+| Error | Cause |
+|-------|-------|
+| `"Not registered"` | Caller is not a registered host |
+| `"Node not active"` | Host is registered but not active |
+| `"Model not supported"` | Model not in host's supported list |
+| `"Native price below minimum"` | Price < MIN_PRICE_PER_TOKEN_NATIVE |
+| `"Native price above maximum"` | Price > MAX_PRICE_PER_TOKEN_NATIVE |
+| `"Stable price below minimum"` | Price < MIN_PRICE_PER_TOKEN_STABLE |
+| `"Stable price above maximum"` | Price > MAX_PRICE_PER_TOKEN_STABLE |
+| `"Invalid model"` | Model not approved in ModelRegistry |
 
 ### JobMarketplaceWithModels
 
-| Error                                  | Cause                                 |
-| -------------------------------------- | ------------------------------------- |
-| `"Insufficient deposit"`               | Deposit below minimum                 |
-| `"Deposit too large"`                  | Deposit > 1000 ETH                    |
-| `"Invalid price"`                      | pricePerToken is 0                    |
-| `"Invalid duration"`                   | Duration is 0 or > 365 days           |
-| `"Invalid proof interval"`             | proofInterval is 0                    |
-| `"Invalid host"`                       | Host address is zero                  |
-| `"Host does not support model"`        | Host doesn't support requested model  |
+| Error | Cause |
+|-------|-------|
+| `"Insufficient deposit"` | Deposit below minimum |
+| `"Deposit too large"` | Deposit > 1000 ETH |
+| `"Invalid price"` | pricePerToken is 0 |
+| `"Invalid duration"` | Duration is 0 or > 365 days |
+| `"Invalid proof interval"` | proofInterval is 0 |
+| `"Invalid host"` | Host address is zero |
+| `"Host does not support model"` | Host doesn't support requested model |
 | `"Price below host minimum for model"` | Price < host's model-specific minimum |
-| `"Price below host minimum (native)"`  | Price < host's native minimum         |
-| `"Price below host minimum (stable)"`  | Price < host's stable minimum         |
-| `"Token not accepted"`                 | Payment token not in accepted list    |
-| `"Token not configured"`               | Token has no minimum deposit set      |
-| `"Only host can submit proof"`         | Non-host trying to submit proof       |
-| `"Session not active"`                 | Session is not in Active status       |
+| `"Price below host minimum (native)"` | Price < host's native minimum |
+| `"Price below host minimum (stable)"` | Price < host's stable minimum |
+| `"Token not accepted"` | Payment token not in accepted list |
+| `"Token not configured"` | Token has no minimum deposit set |
+| `"Only host can submit proof"` | Non-host trying to submit proof |
+| `"Session not active"` | Session is not in Active status |
 
 ---
 
@@ -976,15 +1006,26 @@ const config = {
   chainId: 84532,
   rpcUrl: "https://sepolia.base.org",
   explorer: "https://sepolia.basescan.org",
+
+  // UPGRADEABLE CONTRACTS (UUPS Proxies) - December 14, 2025
   contracts: {
-    jobMarketplace: "0x0c942eADAF86855F69Ee4fa7f765bc6466f254A1",
-    nodeRegistry: "0x48aa4A8047A45862Da8412FAB71ef66C17c7766d",
-    modelRegistry: "0x92b2De840bB2171203011A6dBA928d855cA8183E",
-    proofSystem: "0x2ACcc60893872A499700908889B38C5420CBcFD1",
-    hostEarnings: "0x908962e8c6CE72610021586f85ebDE09aAc97776",
+    jobMarketplace: "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D",
+    nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+    modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
+    proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
+    hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
     fabToken: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62",
-    usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
   },
+
+  // Implementation addresses (for contract verification)
+  implementations: {
+    jobMarketplace: "0x05c7d3a1b748dEbdbc12dd75D1aC195fb93228a3",
+    nodeRegistry: "0x68298e2b74a106763aC99E3D973E98012dB5c75F",
+    modelRegistry: "0xd7Df5c6D4ffe6961d47753D1dd32f844e0F73f50",
+    proofSystem: "0x83eB050Aa3443a76a4De64aBeD90cA8d525E7A3A",
+    hostEarnings: "0x588c42249F85C6ac4B4E27f97416C0289980aabB"
+  }
 };
 ```
 
@@ -992,4 +1033,5 @@ const config = {
 
 ## Support
 
+- **GitHub Issues**: https://github.com/anthropics/claude-code/issues
 - **Contract Explorer**: https://sepolia.basescan.org
