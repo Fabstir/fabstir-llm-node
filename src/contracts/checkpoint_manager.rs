@@ -317,8 +317,25 @@ impl CheckpointManager {
         // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
         let proof_cid = self.upload_proof_to_s5(job_id, &proof_bytes).await?;
 
-        // Encode contract call with hash + CID (NEW v8.1.2 signature)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);
+        // Generate host signature for security audit compliance (v8.9.0)
+        let private_key = crate::crypto::extract_node_private_key()
+            .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
+        let signature = crate::crypto::sign_proof_data(
+            &private_key,
+            proof_hash_bytes,
+            self.host_address,
+            tokens_to_submit,
+        )
+        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
+
+        info!(
+            "✅ Proof signed by host {:?} (v={})",
+            self.host_address,
+            signature[64]
+        );
+
+        // Encode contract call with hash + signature + CID (v8.9.0)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid);
 
         info!(
             "📦 Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -454,8 +471,25 @@ impl CheckpointManager {
         // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
         let proof_cid = Self::upload_proof_to_s5_static(&s5_storage, job_id, &proof_bytes).await?;
 
-        // Encode contract call with hash + CID (NEW v8.1.2 signature)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);
+        // Generate host signature for security audit compliance (v8.9.0)
+        let private_key = crate::crypto::extract_node_private_key()
+            .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
+        let signature = crate::crypto::sign_proof_data(
+            &private_key,
+            proof_hash_bytes,
+            host_address,
+            tokens_to_submit,
+        )
+        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
+
+        info!(
+            "✅ [ASYNC] Proof signed by host {:?} (v={})",
+            host_address,
+            signature[64]
+        );
+
+        // Encode contract call with hash + signature + CID (v8.9.0)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid);
 
         info!(
             "📦 [ASYNC] Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -1258,18 +1292,20 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
     function.encode_input(&tokens).unwrap()
 }
 
-// ABI encoding helper for submitProofOfWork (v8.1.2 - S5 off-chain storage)
-// NEW: Accepts proof hash + CID instead of full proof bytes
+// ABI encoding helper for submitProofOfWork (v8.9.0 - Security Audit Compliance)
+// Accepts proof hash + host signature + CID for off-chain proof storage
+// BREAKING CHANGE: Now requires 65-byte signature parameter (r + s + v)
 fn encode_checkpoint_call(
     job_id: u64,
     tokens_generated: u64,
     proof_hash: [u8; 32],
+    signature: [u8; 65], // NEW: Host's proof signature for security audit
     proof_cid: String,
 ) -> Vec<u8> {
     use ethers::abi::Function;
 
-    // Define the NEW function signature for submitProofOfWork
-    // Contract now accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, string proofCID)
+    // Define the function signature for submitProofOfWork (v8.9.0)
+    // Contract accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, bytes signature, string proofCID)
     let function = Function {
         name: "submitProofOfWork".to_string(),
         inputs: vec![
@@ -1285,12 +1321,17 @@ fn encode_checkpoint_call(
             },
             ethers::abi::Param {
                 name: "proofHash".to_string(),
-                kind: ethers::abi::ParamType::FixedBytes(32), // NEW: bytes32 instead of bytes
+                kind: ethers::abi::ParamType::FixedBytes(32),
+                internal_type: None,
+            },
+            ethers::abi::Param {
+                name: "signature".to_string(), // NEW: 65-byte ECDSA signature
+                kind: ethers::abi::ParamType::Bytes,
                 internal_type: None,
             },
             ethers::abi::Param {
                 name: "proofCID".to_string(),
-                kind: ethers::abi::ParamType::String, // NEW: S5 CID
+                kind: ethers::abi::ParamType::String,
                 internal_type: None,
             },
         ],
@@ -1299,12 +1340,13 @@ fn encode_checkpoint_call(
         state_mutability: ethers::abi::StateMutability::NonPayable,
     };
 
-    // Encode the function call with hash + CID
+    // Encode the function call with hash + signature + CID
     let tokens = vec![
         Token::Uint(U256::from(job_id)),
         Token::Uint(U256::from(tokens_generated)),
-        Token::FixedBytes(proof_hash.to_vec()), // NEW: 32-byte hash
-        Token::String(proof_cid),               // NEW: S5 CID string
+        Token::FixedBytes(proof_hash.to_vec()),
+        Token::Bytes(signature.to_vec()), // NEW: 65-byte signature
+        Token::String(proof_cid),
     ];
 
     function
