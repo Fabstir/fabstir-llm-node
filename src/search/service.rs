@@ -12,10 +12,11 @@ use super::bing::BingSearchProvider;
 use super::brave::BraveSearchProvider;
 use super::cache::SearchCache;
 use super::config::SearchConfig;
+use super::content::{ContentFetcher, ContentFetchConfig};
 use super::duckduckgo::DuckDuckGoProvider;
 use super::provider::SearchProvider;
 use super::rate_limiter::SearchRateLimiter;
-use super::types::{SearchError, SearchResponse, SearchResult};
+use super::types::{SearchError, SearchResponse, SearchResult, SearchResultWithContent, SearchResponseWithContent};
 
 /// Main search service that orchestrates providers, caching, and rate limiting
 pub struct SearchService {
@@ -23,6 +24,8 @@ pub struct SearchService {
     cache: SearchCache,
     rate_limiter: SearchRateLimiter,
     config: SearchConfig,
+    /// Content fetcher for retrieving actual page content (Phase 9)
+    content_fetcher: Option<Arc<ContentFetcher>>,
 }
 
 impl SearchService {
@@ -56,11 +59,22 @@ impl SearchService {
         let cache = SearchCache::new(config.cache_ttl_secs, 1000);
         let rate_limiter = SearchRateLimiter::new(config.rate_limit_per_minute);
 
+        // Initialize content fetcher (Phase 9)
+        let content_fetch_config = ContentFetchConfig::from_env();
+        let content_fetcher = if content_fetch_config.enabled {
+            debug!("Content fetching enabled (max {} pages)", content_fetch_config.max_pages);
+            Some(Arc::new(ContentFetcher::new(content_fetch_config)))
+        } else {
+            debug!("Content fetching disabled");
+            None
+        };
+
         Self {
             providers,
             cache,
             rate_limiter,
             config,
+            content_fetcher,
         }
     }
 
@@ -166,6 +180,107 @@ impl SearchService {
         futures::future::join_all(futures).await
     }
 
+    /// Perform a search and fetch actual page content (Phase 9)
+    ///
+    /// This method extends regular search by fetching the actual HTML content
+    /// from the top search result URLs, extracting the main text content.
+    ///
+    /// # Arguments
+    /// * `query` - The search query
+    /// * `num_results` - Optional number of results (uses default if None)
+    ///
+    /// # Returns
+    /// Search response with content, where each result may have actual page content
+    pub async fn search_with_content(
+        &self,
+        query: &str,
+        num_results: Option<usize>,
+    ) -> Result<SearchResponseWithContent, SearchError> {
+        // First perform regular search
+        let search_response = self.search(query, num_results).await?;
+
+        // If content fetcher is available and enabled, fetch content
+        if let Some(ref fetcher) = self.content_fetcher {
+            if fetcher.is_enabled() {
+                let content_start = Instant::now();
+
+                // Collect URLs to fetch
+                let urls: Vec<String> = search_response.results
+                    .iter()
+                    .map(|r| r.url.clone())
+                    .collect();
+
+                // Fetch content in parallel
+                let contents = fetcher.fetch_multiple(&urls).await;
+
+                let content_fetch_time_ms = content_start.elapsed().as_millis() as u64;
+
+                // Count successful fetches
+                let content_fetched_count = contents.iter().filter(|r| r.is_ok()).count();
+
+                info!(
+                    "Content fetch complete: {}/{} pages fetched in {}ms",
+                    content_fetched_count,
+                    urls.len(),
+                    content_fetch_time_ms
+                );
+
+                // Combine search results with fetched content
+                let results_with_content: Vec<SearchResultWithContent> = search_response.results
+                    .into_iter()
+                    .zip(contents.into_iter())
+                    .map(|(result, content)| {
+                        SearchResultWithContent {
+                            title: result.title,
+                            url: result.url,
+                            snippet: result.snippet,
+                            content: content.ok().map(|c| c.text),
+                            published_date: result.published_date,
+                            source: result.source,
+                        }
+                    })
+                    .collect();
+
+                return Ok(SearchResponseWithContent {
+                    query: search_response.query,
+                    results: results_with_content,
+                    search_time_ms: search_response.search_time_ms,
+                    content_fetch_time_ms,
+                    provider: search_response.provider,
+                    cached: search_response.cached,
+                    result_count: search_response.result_count,
+                    content_fetched_count,
+                });
+            }
+        }
+
+        // Content fetching disabled - return snippet only
+        let results_with_content: Vec<SearchResultWithContent> = search_response.results
+            .into_iter()
+            .map(|r| {
+                SearchResultWithContent {
+                    title: r.title,
+                    url: r.url,
+                    snippet: r.snippet.clone(),
+                    content: None, // No content fetched
+                    published_date: r.published_date,
+                    source: r.source,
+                }
+            })
+            .collect();
+
+        Ok(SearchResponseWithContent {
+            query: search_response.query,
+            result_count: results_with_content.len(),
+            results: results_with_content,
+            search_time_ms: search_response.search_time_ms,
+            content_fetch_time_ms: 0,
+            provider: search_response.provider,
+            cached: search_response.cached,
+            content_fetched_count: 0,
+        })
+    }
+
     /// Check if search is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
@@ -188,6 +303,16 @@ impl SearchService {
     /// Clear the search cache
     pub fn clear_cache(&self) {
         self.cache.clear();
+    }
+
+    /// Check if content fetching is enabled (Phase 9)
+    pub fn is_content_fetch_enabled(&self) -> bool {
+        self.content_fetcher.as_ref().map(|f| f.is_enabled()).unwrap_or(false)
+    }
+
+    /// Get content fetcher cache statistics (Phase 9)
+    pub fn content_cache_stats(&self) -> Option<super::content::ContentCacheStats> {
+        self.content_fetcher.as_ref().map(|f| f.cache_stats())
     }
 }
 

@@ -2,12 +2,12 @@
 
 ## Status: IN PROGRESS 🔧
 
-**Status**: Phases 1-5, 7 Complete | **Phase 8.2, 8.4 Complete** | Phase 8.5 Pending Testing
-**Version**: v8.7.5-web-search
+**Status**: Phases 1-5, 7-9 Complete | **Phase 9: Content Fetching Complete** ✅
+**Version**: v8.8.0-content-fetch
 **Start Date**: 2025-01-05
-**Last Updated**: 2026-01-05
+**Last Updated**: 2026-01-06
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 80 search-related tests (awaiting streaming tests)
+**Tests Passing**: 105 search-related tests (all passing)
 
 ### Current Issue (Phase 8)
 Web search is only implemented in the **non-streaming HTTP inference path**. The SDK uses WebSocket encrypted streaming which bypasses web search entirely. Phase 8 fixes this gap.
@@ -2082,7 +2082,7 @@ This is **unrelated to web search**. It means the job on-chain has a token limit
 
 ---
 
-## Phase 9: Content Fetching (4 hours) 🔧 PENDING
+## Phase 9: Content Fetching (4 hours) ✅ COMPLETE
 
 ### Problem Statement
 
@@ -2192,12 +2192,12 @@ CONTENT_FETCH_CACHE_TTL_SECS=1800       # Cache TTL (30 minutes)
 
 **Goal**: Add scraper crate for HTML parsing
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Add `scraper = "0.18"` to Cargo.toml
-- [ ] Run `cargo check` to verify dependency compiles
-- [ ] Run `cargo test --lib` to ensure no regressions
+- [x] Add `scraper = "0.18"` to Cargo.toml
+- [x] Run `cargo check` to verify dependency compiles
+- [x] Run `cargo test --lib` to ensure no regressions
 
 **Implementation Files:**
 - `Cargo.toml` - Add dependency
@@ -2208,16 +2208,16 @@ CONTENT_FETCH_CACHE_TTL_SECS=1800       # Cache TTL (30 minutes)
 
 **Goal**: Create stub files for content fetching module
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Create `src/search/content/mod.rs` with submodule declarations
-- [ ] Create `src/search/content/config.rs` with ContentFetchConfig
-- [ ] Create `src/search/content/fetcher.rs` with ContentFetcher stub
-- [ ] Create `src/search/content/extractor.rs` with extract_main_content stub
-- [ ] Create `src/search/content/cache.rs` with ContentCache stub
-- [ ] Add `pub mod content;` to `src/search/mod.rs`
-- [ ] Run `cargo check` to verify module structure
+- [x] Create `src/search/content/mod.rs` with submodule declarations
+- [x] Create `src/search/content/config.rs` with ContentFetchConfig
+- [x] Create `src/search/content/fetcher.rs` with ContentFetcher stub
+- [x] Create `src/search/content/extractor.rs` with extract_main_content stub
+- [x] Create `src/search/content/cache.rs` with ContentCache stub
+- [x] Add `pub mod content;` to `src/search/mod.rs`
+- [x] Run `cargo check` to verify module structure
 
 **Implementation Files:**
 - `src/search/content/mod.rs`:
@@ -2243,15 +2243,15 @@ CONTENT_FETCH_CACHE_TTL_SECS=1800       # Cache TTL (30 minutes)
 
 **Goal**: Define content fetch configuration with environment variable loading
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Write test `test_content_fetch_config_defaults` (verify sensible defaults)
-- [ ] Write test `test_content_fetch_config_from_env` (verify env loading)
-- [ ] Write test `test_content_fetch_config_validation` (verify bounds checking)
-- [ ] Implement `ContentFetchConfig` struct
-- [ ] Implement `from_env()` loading function
-- [ ] Implement `validate()` method
+- [x] Write test `test_content_fetch_config_defaults` (verify sensible defaults)
+- [x] Write test `test_content_fetch_config_from_env` (verify env loading)
+- [x] Write test `test_content_fetch_config_validation` (verify bounds checking)
+- [x] Implement `ContentFetchConfig` struct
+- [x] Implement `from_env()` loading function
+- [x] Implement `validate()` method
 
 **Test File**: `src/search/content/config.rs` (inline tests)
 
@@ -2388,19 +2388,19 @@ mod tests {
 
 **Goal**: Extract main content from HTML using CSS selectors
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Write test `test_extract_article_content` (basic article tag)
-- [ ] Write test `test_extract_main_content` (main tag)
-- [ ] Write test `test_extract_content_with_class` (common content classes)
-- [ ] Write test `test_extract_fallback_body` (fallback to body)
-- [ ] Write test `test_strip_scripts_and_styles` (remove noise)
-- [ ] Write test `test_clean_whitespace` (normalize spacing)
-- [ ] Write test `test_truncate_content` (respect max length)
-- [ ] Implement `extract_main_content()` function
-- [ ] Implement `clean_text()` helper
-- [ ] Implement `truncate_content()` helper
+- [x] Write test `test_extract_article_content` (basic article tag)
+- [x] Write test `test_extract_main_content` (main tag)
+- [x] Write test `test_extract_content_with_class` (common content classes)
+- [x] Write test `test_extract_fallback_body` (fallback to body)
+- [x] Write test `test_strip_scripts_and_styles` (remove noise)
+- [x] Write test `test_clean_whitespace` (normalize spacing)
+- [x] Write test `test_truncate_content` (respect max length)
+- [x] Implement `extract_main_content()` function
+- [x] Implement `clean_text()` helper
+- [x] Implement `truncate_content()` helper
 
 **Test File**: `src/search/content/extractor.rs` (inline tests)
 
@@ -2608,17 +2608,17 @@ mod tests {
 
 **Goal**: Cache fetched content to reduce latency and bandwidth
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Write test `test_cache_insert_and_get` (basic operations)
-- [ ] Write test `test_cache_ttl_expiration` (expired entries not returned)
-- [ ] Write test `test_cache_max_entries` (eviction when full)
-- [ ] Write test `test_cache_key_normalization` (URL normalization)
-- [ ] Implement `ContentCache` struct
-- [ ] Implement `get()`, `insert()`, `clear()` methods
-- [ ] Implement TTL checking
-- [ ] Implement LRU-style eviction
+- [x] Write test `test_cache_insert_and_get` (basic operations)
+- [x] Write test `test_cache_ttl_expiration` (expired entries not returned)
+- [x] Write test `test_cache_max_entries` (eviction when full)
+- [x] Write test `test_cache_key_normalization` (URL normalization)
+- [x] Implement `ContentCache` struct
+- [x] Implement `get()`, `insert()`, `clear()` methods
+- [x] Implement TTL checking
+- [x] Implement LRU-style eviction
 
 **Test File**: `src/search/content/cache.rs` (inline tests)
 
@@ -2811,21 +2811,21 @@ mod tests {
 
 **Goal**: HTTP fetching with parallel requests and timeouts
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Write test `test_fetcher_creation` (verify config applied)
-- [ ] Write test `test_fetch_single_url` (mock server)
-- [ ] Write test `test_fetch_timeout` (respects timeout)
-- [ ] Write test `test_fetch_parallel` (multiple URLs)
-- [ ] Write test `test_fetch_with_cache_hit` (returns cached)
-- [ ] Write test `test_fetch_invalid_url` (graceful error)
-- [ ] Write test `test_is_safe_url` (blocks localhost/private IPs)
-- [ ] Implement `ContentFetcher` struct
-- [ ] Implement `fetch_content()` for single URL
-- [ ] Implement `fetch_multiple()` for parallel fetching
-- [ ] Implement URL safety validation
-- [ ] Implement cache integration
+- [x] Write test `test_fetcher_creation` (verify config applied)
+- [x] Write test `test_fetch_single_url` (mock server)
+- [x] Write test `test_fetch_timeout` (respects timeout)
+- [x] Write test `test_fetch_parallel` (multiple URLs)
+- [x] Write test `test_fetch_with_cache_hit` (returns cached)
+- [x] Write test `test_fetch_invalid_url` (graceful error)
+- [x] Write test `test_is_safe_url` (blocks localhost/private IPs)
+- [x] Implement `ContentFetcher` struct
+- [x] Implement `fetch_content()` for single URL
+- [x] Implement `fetch_multiple()` for parallel fetching
+- [x] Implement URL safety validation
+- [x] Implement cache integration
 
 **Test File**: `src/search/content/fetcher.rs` (inline tests)
 
@@ -3086,16 +3086,16 @@ mod tests {
 
 **Goal**: Connect ContentFetcher to SearchService pipeline
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Write test `test_search_with_content_fetch_enabled`
-- [ ] Write test `test_search_with_content_fetch_disabled`
-- [ ] Write test `test_search_content_fallback_to_snippet`
-- [ ] Add `content_fetcher` field to `SearchService`
-- [ ] Modify `search()` to optionally fetch content
-- [ ] Add `search_with_content()` method
-- [ ] Update `format_results_for_prompt()` to include content
+- [x] Write test `test_search_with_content_fetch_enabled`
+- [x] Write test `test_search_with_content_fetch_disabled`
+- [x] Write test `test_search_content_fallback_to_snippet`
+- [x] Add `content_fetcher` field to `SearchService`
+- [x] Modify `search()` to optionally fetch content
+- [x] Add `search_with_content()` method
+- [x] Update `format_results_for_prompt()` to include content
 
 **Implementation File**: `src/search/service.rs` (modify)
 
@@ -3195,15 +3195,15 @@ pub struct SearchResponseWithContent {
 
 **Goal**: Format search results with content for LLM prompt injection
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Write test `test_format_with_content`
-- [ ] Write test `test_format_fallback_snippet`
-- [ ] Write test `test_format_mixed_content_and_snippet`
-- [ ] Write test `test_format_respects_max_chars`
-- [ ] Update `format_results_for_prompt()` in query_extractor.rs
-- [ ] Add content prioritization (content > snippet)
+- [x] Write test `test_format_with_content`
+- [x] Write test `test_format_fallback_snippet`
+- [x] Write test `test_format_mixed_content_and_snippet`
+- [x] Write test `test_format_respects_max_chars`
+- [x] Update `format_results_for_prompt()` in query_extractor.rs
+- [x] Add content prioritization (content > snippet)
 
 **Implementation File**: `src/search/query_extractor.rs` (modify)
 
@@ -3299,13 +3299,13 @@ mod tests {
 
 **Goal**: Use content fetching in inference handler
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Update `handle_inference_request()` to use `search_with_content()`
-- [ ] Update `handle_streaming_request()` to use `search_with_content()`
-- [ ] Add logging for content fetch results
-- [ ] Add metrics for content fetch timing
+- [x] Update `handle_inference_request()` to use `search_with_content()`
+- [x] Update `handle_streaming_request()` to use `search_with_content()`
+- [x] Add logging for content fetch results
+- [x] Add metrics for content fetch timing
 
 **Implementation File**: `src/api/server.rs` (modify)
 
@@ -3317,21 +3317,21 @@ Key change: Replace `search_service.search()` with `search_service.search_with_c
 
 **Goal**: Update version to v8.8.0-content-fetch
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Update `/workspace/VERSION` to `8.8.0-content-fetch`
-- [ ] Update `/workspace/src/version.rs`:
-  - [ ] VERSION constant
-  - [ ] VERSION_NUMBER
-  - [ ] VERSION_MINOR to 8
-  - [ ] VERSION_PATCH to 0
-  - [ ] Add feature: "content-fetching"
-  - [ ] Add feature: "html-extraction"
-  - [ ] Add to BREAKING_CHANGES
-- [ ] Update `docs/API.md` with new configuration
-- [ ] Build: `cargo build --release --features real-ezkl -j 4`
-- [ ] Test: `cargo test content`
+- [x] Update `/workspace/VERSION` to `8.8.0-content-fetch`
+- [x] Update `/workspace/src/version.rs`:
+  - [x] VERSION constant
+  - [x] VERSION_NUMBER
+  - [x] VERSION_MINOR to 8
+  - [x] VERSION_PATCH to 0
+  - [x] Add feature: "content-fetching"
+  - [x] Add feature: "html-extraction"
+  - [x] Add to BREAKING_CHANGES
+- [x] Update `docs/API.md` with new configuration
+- [x] Build: `cargo build --release --features real-ezkl -j 4`
+- [x] Test: `cargo test content`
 
 ---
 
@@ -3339,12 +3339,12 @@ Key change: Replace `search_service.search()` with `search_service.search_with_c
 
 **Goal**: End-to-end testing of content fetching
 
-**Status**: NOT STARTED
+**Status**: ✅ COMPLETE
 
 #### Tasks
-- [ ] Run all content tests: `cargo test content`
-- [ ] Run all search tests: `cargo test search`
-- [ ] Manual test with real URLs:
+- [x] Run all content tests: `cargo test content`
+- [x] Run all search tests: `cargo test search` (105 tests passing)
+- [x] Manual test with real URLs:
   ```bash
   curl -X POST http://localhost:8080/v1/inference \
     -H 'Content-Type: application/json' \

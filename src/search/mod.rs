@@ -23,8 +23,12 @@ pub mod cache;
 pub mod rate_limiter;
 pub mod service;
 pub mod query_extractor;
+pub mod content;
 
 // Re-export commonly used types
-pub use types::{SearchResult, SearchResponse, SearchError};
+pub use types::{SearchResult, SearchResponse, SearchError, SearchResultWithContent, SearchResponseWithContent};
 pub use config::SearchConfig;
 pub use service::SearchService;
+
+// Re-export content fetching types (Phase 9)
+pub use content::{ContentFetcher, ContentFetchConfig, PageContent, FetchError, ContentCacheStats};

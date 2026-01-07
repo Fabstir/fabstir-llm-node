@@ -3,19 +3,19 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.7.12-search-prompt-v2-2026-01-06";
+pub const VERSION: &str = "v8.8.3-content-fetch-2026-01-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.7.12";
+pub const VERSION_NUMBER: &str = "8.8.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 7;
+pub const VERSION_MINOR: u32 = 8;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 12;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-06";
@@ -94,6 +94,11 @@ pub const FEATURES: &[&str] = &[
     "search-query-harmony-cleanup",
     // Improved search prompt (v8.7.12+)
     "search-prompt-v2",
+    // Content fetching (v8.8.0+)
+    "content-fetching",
+    "html-extraction",
+    "page-content-cache",
+    "parallel-fetch",
 ];
 
 /// Supported chain IDs
@@ -104,6 +109,14 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.8.0 - Content fetching
+    "FEAT: Web search now fetches actual page content from URLs, not just snippets",
+    "FEAT: HTML content extraction using CSS selectors (article, main, .content, etc.)",
+    "FEAT: Content caching with 30-minute TTL to reduce repeated fetches",
+    "FEAT: Parallel fetching of up to 3 pages with configurable timeouts",
+    "FEAT: SSRF protection - blocks localhost and private IP addresses",
+    "FEAT: Graceful fallback to snippets when content fetch fails",
+    "FEAT: New env vars: CONTENT_FETCH_ENABLED, CONTENT_FETCH_MAX_PAGES, CONTENT_FETCH_TIMEOUT_SECS",
     // v8.7.12 - Improved search prompt
     "FIX: Stronger system prompt to use [Web Search Results] and never claim 'cannot browse'",
     "FIX: Removed 'You are ChatGPT' and 'Knowledge cutoff' which confused the model",
@@ -167,8 +180,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 7);
-        assert_eq!(VERSION_PATCH, 12);
+        assert_eq!(VERSION_MINOR, 8);
+        assert_eq!(VERSION_PATCH, 3);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -184,20 +197,25 @@ mod tests {
         assert!(FEATURES.contains(&"web-search-system-prompt"));
         assert!(FEATURES.contains(&"search-query-harmony-cleanup"));
         assert!(FEATURES.contains(&"search-prompt-v2"));
+        // v8.8.0 content fetching features
+        assert!(FEATURES.contains(&"content-fetching"));
+        assert!(FEATURES.contains(&"html-extraction"));
+        assert!(FEATURES.contains(&"page-content-cache"));
+        assert!(FEATURES.contains(&"parallel-fetch"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.7.12"));
+        assert!(version.contains("8.8.3"));
         assert!(version.contains("2026-01-06"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.7.12-search-prompt-v2-2026-01-06");
-        assert_eq!(VERSION_NUMBER, "8.7.12");
+        assert_eq!(VERSION, "v8.8.3-content-fetch-2026-01-06");
+        assert_eq!(VERSION_NUMBER, "8.8.3");
         assert_eq!(BUILD_DATE, "2026-01-06");
     }
 }

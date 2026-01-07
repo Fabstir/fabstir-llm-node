@@ -87,6 +87,8 @@ url = "2"                       # URL parsing and validation
 # Web Search (Sub-phase 1.1 - Host-Side Web Search)
 # Rate limiting for search API requests
 governor = "0.6"
+# HTML parsing for content extraction (Phase 9)
+scraper = "0.18"
 
 # Result delivery dependencies
 ciborium = "0.2"
