@@ -2,11 +2,11 @@
 
 ## Status: IN PROGRESS 🔧
 
-**Status**: Phase 1 Sub-phase 1.1 Complete ✅
+**Status**: Phase 1 Complete ✅ → Ready for Phase 2
 **Version**: v8.9.0-proof-signing
 **Start Date**: 2026-01-06
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 2/2 (encoding and hashing tests)
+**Tests Passing**: 10/10 (all proof_signer tests)
 
 ---
 
@@ -128,18 +128,23 @@ hex = "0.4"  # Hex encoding
 
 **Goal**: Implement the core signing function with tests first
 
-**Status**: PENDING
+**Status**: ✅ COMPLETE (2026-01-07)
 
 #### Tasks
-- [ ] Write test `test_sign_proof_data_returns_65_bytes`
-- [ ] Write test `test_sign_proof_data_recoverable_address`
-- [ ] Write test `test_sign_proof_data_different_tokens_different_signature`
-- [ ] Write test `test_sign_proof_data_different_proof_hash_different_signature`
-- [ ] Write test `test_sign_proof_data_v_value_is_27_or_28`
-- [ ] Implement `encode_proof_data()` helper - packs proofHash + address + tokens
-- [ ] Implement `hash_proof_data()` helper - keccak256 of packed data
-- [ ] Implement `sign_proof_data()` - full signing using k256
-- [ ] Run tests: `cargo test proof_signer`
+- [x] Write test `test_sign_proof_data_returns_65_bytes`
+- [x] Write test `test_sign_proof_data_recoverable_address`
+- [x] Write test `test_sign_proof_data_different_tokens_different_signature`
+- [x] Write test `test_sign_proof_data_different_proof_hash_different_signature`
+- [x] Write test `test_sign_proof_data_v_value_is_27_or_28`
+- [x] Implement `encode_proof_data()` helper - packs proofHash + address + tokens
+- [x] Implement `hash_proof_data()` helper - keccak256 of packed data (named `hash_data`)
+- [x] Implement `sign_proof_data()` - full signing using k256
+- [x] Run tests: `cargo test proof_signer` - **10/10 tests passing**
+
+**Additional Tests Added:**
+- `test_sign_proof_data_wrong_address_fails_verification` - Security test
+- `test_sign_proof_data_wrong_tokens_fails_verification` - Security test
+- `test_encode_proof_data_tokens_big_endian` - Encoding verification
 
 **Test File:** `src/crypto/proof_signer.rs` (inline tests)
 ```rust
@@ -244,14 +249,16 @@ pub fn sign_proof_data(
 
 **Goal**: Add function to verify signature locally (for debugging)
 
-**Status**: PENDING
+**Status**: ✅ COMPLETE (2026-01-07)
 
 #### Tasks
-- [ ] Write test `test_verify_proof_signature_valid`
-- [ ] Write test `test_verify_proof_signature_wrong_address`
-- [ ] Write test `test_verify_proof_signature_wrong_tokens`
-- [ ] Implement `verify_proof_signature()` function
-- [ ] Run tests: `cargo test proof_signer`
+- [x] Write test `test_verify_proof_signature_valid` → `test_sign_proof_data_recoverable_address`
+- [x] Write test `test_verify_proof_signature_wrong_address` → `test_sign_proof_data_wrong_address_fails_verification`
+- [x] Write test `test_verify_proof_signature_wrong_tokens` → `test_sign_proof_data_wrong_tokens_fails_verification`
+- [x] Implement `verify_proof_signature()` function (done in Sub-phase 1.1)
+- [x] Run tests: `cargo test proof_signer` - **10/10 tests passing**
+
+**Note:** Verification helper was implemented ahead of schedule in Sub-phase 1.1, tests added in Sub-phase 1.2.
 
 **Implementation:**
 ```rust
