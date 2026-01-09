@@ -24,6 +24,7 @@ use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use crate::api::token_tracker::TokenTracker;
 use crate::contracts::checkpoint_manager::CheckpointManager;
+use sha2::{Digest, Sha256};
 use crate::crypto::SessionKeyStore;
 use crate::inference::LlmEngine;
 use crate::p2p::Node;
@@ -579,6 +580,27 @@ impl ApiServer {
             );
         }
 
+        // Parse job_id early (needed for prompt hash storage)
+        let job_id = request.job_id.or_else(|| {
+            request.session_id.as_ref().and_then(|sid| {
+                sid.trim_end_matches('n').parse::<u64>().ok()
+            })
+        });
+
+        // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
+        let prompt_hash = {
+            let hash = Sha256::digest(full_prompt.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            hash_bytes
+        };
+
+        // Store prompt hash in checkpoint manager (non-streaming path)
+        if let Some(jid) = job_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                cm.set_prompt_hash(jid, prompt_hash).await;
+            }
+        }
 
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
@@ -610,7 +632,7 @@ impl ApiServer {
 
         let response = InferenceResponse {
             model: request.model.clone(),
-            content: result.text,
+            content: result.text.clone(),
             tokens_used: result.tokens_generated as u32,
             finish_reason: result.finish_reason,
             request_id: request
@@ -625,12 +647,15 @@ impl ApiServer {
             search_provider,
         };
 
-        // Track tokens for checkpoint submission (non-streaming path)
-        let job_id = request.job_id.or_else(|| {
-            request.session_id.as_ref().and_then(|sid| {
-                sid.trim_end_matches('n').parse::<u64>().ok()
-            })
-        });
+        // Phase 4: Store response hash for proof binding (non-streaming path - v8.10.0+)
+        // In non-streaming, we have the complete response immediately
+        if let Some(jid) = job_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                // Append entire response and finalize in one go
+                cm.append_response(jid, &result.text).await;
+                let _ = cm.finalize_response_hash(jid).await;
+            }
+        }
 
         if let Some(jid) = job_id {
             info!("📊 Job {} completed: {} tokens", jid, response.tokens_used);
@@ -776,6 +801,29 @@ impl ApiServer {
             );
         }
 
+        // Parse job_id early (needed for prompt hash storage)
+        // SDK sends "139n" format, so we strip trailing 'n'
+        let job_id = request.job_id.or_else(|| {
+            request.session_id.as_ref().and_then(|sid| {
+                sid.trim_end_matches('n').parse::<u64>().ok()
+            })
+        });
+
+        // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
+        let prompt_hash = {
+            let hash = Sha256::digest(full_prompt.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            hash_bytes
+        };
+
+        // Store prompt hash in checkpoint manager
+        let checkpoint_manager = self.checkpoint_manager.read().await.clone();
+        if let Some(jid) = job_id {
+            if let Some(cm) = checkpoint_manager.as_ref() {
+                cm.set_prompt_hash(jid, prompt_hash).await;
+            }
+        }
 
         // Log the request for debugging
         info!(
@@ -810,14 +858,6 @@ impl ApiServer {
 
         let (tx, rx) = mpsc::channel(100);
 
-        // Clone values for the spawned task
-        // Parse job_id from request or session_id (SDK sends "139n" format)
-        let job_id = request.job_id.or_else(|| {
-            request.session_id.as_ref().and_then(|sid| {
-                sid.trim_end_matches('n').parse::<u64>().ok()
-            })
-        });
-
         // Log job tracking once at start
         if let Some(jid) = job_id {
             info!("📝 Streaming job {} started", jid);
@@ -825,7 +865,6 @@ impl ApiServer {
 
         let session_id = request.session_id.clone();
         let token_tracker = self.token_tracker.clone();
-        let checkpoint_manager = self.checkpoint_manager.read().await.clone();
 
         // Spawn task to convert token stream to streaming responses
         tokio::spawn(async move {
@@ -849,8 +888,11 @@ impl ApiServer {
                         }
 
                         // Track tokens for checkpoint submission (silent - logs only on checkpoint trigger)
+                        // Phase 4: Also append token to response buffer for hash computation (v8.10.0+)
                         if let Some(jid) = job_id {
                             if let Some(cm) = checkpoint_manager.as_ref() {
+                                // Append token to response buffer for proof binding
+                                cm.append_response(jid, &token_info.text).await;
                                 let _ = cm.track_tokens(jid, 1, session_id.clone()).await;
                             } else {
                                 token_tracker
@@ -900,6 +942,8 @@ impl ApiServer {
             // BUT DON'T CLEANUP - the session might continue!
             if let Some(jid) = job_id {
                 if let Some(cm) = checkpoint_manager.as_ref() {
+                    // Phase 4: Finalize response hash before checkpoint (v8.10.0+)
+                    let _ = cm.finalize_response_hash(jid).await;
                     let _ = cm.force_checkpoint(jid).await;
                     // DON'T cleanup here - session continues across multiple prompts!
                     // Cleanup should only happen when websocket disconnects

@@ -1,5 +1,44 @@
 # Client ABIs Changelog
 
+## January 9, 2026 - Security Audit Remediation (CLEAN SLATE)
+
+### ⚠️ NEW PROXY ADDRESS
+**JobMarketplace proxy has changed!** This is a clean slate deployment for security audit compliance.
+
+| Contract | OLD Proxy | NEW Proxy |
+|----------|-----------|-----------|
+| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` |
+
+### Why Clean Slate?
+- Security audit required fresh deployment without legacy state
+- All existing sessions on old contract are invalidated
+- New contract has identical ABI but fresh state
+
+### SDK Migration
+```javascript
+// Update your contract address configuration
+const upgradeableContracts = {
+  // OLD (deprecated): "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D"
+  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E", // NEW
+  // Other addresses unchanged
+  nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+  proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
+};
+```
+
+### Contract Details
+| Contract | Proxy Address | Implementation |
+|----------|---------------|----------------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` |
+
+### Unchanged Contracts
+- NodeRegistry: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` (no change)
+- ProofSystem: `0x5afB91977e69Cc5003288849059bc62d47E7deeb` (no change)
+- HostEarnings: `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` (no change)
+- ModelRegistry: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` (no change)
+
+---
+
 ## January 6, 2026 - Phase 6: ProofSystem Integration (BREAKING CHANGE)
 
 ### ⚠️ SDK BREAKING CHANGE

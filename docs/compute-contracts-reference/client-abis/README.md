@@ -4,14 +4,14 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ---
 
-## UPGRADEABLE CONTRACTS (January 6, 2026 - Security Audit Fixes)
+## UPGRADEABLE CONTRACTS (January 9, 2026 - Security Audit Remediation)
 
 > **🔒 SECURITY UPDATE**: All CRITICAL vulnerabilities from January 2025 audit have been fixed.
 > **RECOMMENDED**: Use these upgradeable contracts for all integrations.
 
 ### JobMarketplaceWithModelsUpgradeable
-- **Proxy Address**: `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D`
-- **Implementation**: `0x05c7d3a1b748dEbdbc12dd75D1aC195fb93228a3` ✅ ProofSystem Integration (Jan 6, 2026)
+- **Proxy Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` ⚠️ NEW (Jan 9, 2026 Clean Slate)
+- **Implementation**: `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` ✅ Security Audit Remediation (Jan 9, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
@@ -80,9 +80,9 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 ### Upgradeable Contracts Configuration
 
 ```javascript
-// Use these addresses for all new integrations
+// Use these addresses for all new integrations (Updated Jan 9, 2026)
 const upgradeableContracts = {
-  jobMarketplace: "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D",
+  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E", // NEW: Jan 9, 2026 Security Audit
   nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
   hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
