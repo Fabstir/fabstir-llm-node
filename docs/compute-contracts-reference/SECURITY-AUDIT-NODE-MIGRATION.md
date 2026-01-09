@@ -150,7 +150,7 @@ class ProofSigner {
 // Usage
 const signer = new ProofSigner(
   process.env.HOST_PRIVATE_KEY!,
-  '0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D',
+  '0x3CaCbf3f448B420918A93a88706B26Ab27a3523E',
   provider
 );
 
@@ -228,7 +228,7 @@ class ProofSigner:
 # Usage
 signer = ProofSigner(
     host_private_key=os.environ['HOST_PRIVATE_KEY'],
-    marketplace_address='0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D',
+    marketplace_address='0x3CaCbf3f448B420918A93a88706B26Ab27a3523E',
     rpc_url='https://sepolia.base.org'
 )
 
@@ -568,7 +568,7 @@ if (signature[64] < 27) {
 ### Proxy Addresses (Use These)
 
 ```
-JobMarketplace: 0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D
+JobMarketplace: 0x3CaCbf3f448B420918A93a88706B26Ab27a3523E
 ProofSystem:    0x5afB91977e69Cc5003288849059bc62d47E7deeb
 NodeRegistry:   0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
 HostEarnings:   0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0

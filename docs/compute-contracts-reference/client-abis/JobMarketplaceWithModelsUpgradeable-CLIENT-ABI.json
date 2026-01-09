@@ -5,40 +5,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "fallback",
-    "stateMutability": "payable"
-  },
-  {
-    "type": "receive",
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "DISPUTE_WINDOW",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "FEE_BASIS_POINTS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "function",
     "name": "MIN_DEPOSIT",
     "inputs": [],
@@ -455,6 +421,32 @@
   },
   {
     "type": "function",
+    "name": "disputeWindow",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "feeBasisPoints",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDepositBalance",
     "inputs": [
       {
@@ -836,11 +828,6 @@
       },
       {
         "name": "depositor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "requester",
         "type": "address",
         "internalType": "address"
       },
@@ -1412,25 +1399,6 @@
   },
   {
     "type": "event",
-    "name": "SessionAbandoned",
-    "inputs": [
-      {
-        "name": "jobId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "userRefund",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "SessionCompleted",
     "inputs": [
       {
@@ -1539,7 +1507,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "requester",
+        "name": "depositor",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1570,7 +1538,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "requester",
+        "name": "depositor",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1813,6 +1781,17 @@
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

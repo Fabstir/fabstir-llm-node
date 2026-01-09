@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.9.1-proof-signing-eip191-2026-01-07";
+pub const VERSION: &str = "v8.10.2-security-audit-remediation-2026-01-09";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.9.1";
+pub const VERSION_NUMBER: &str = "8.10.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 9;
+pub const VERSION_MINOR: u32 = 10;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-07";
+pub const BUILD_DATE: &str = "2026-01-09";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -106,6 +106,12 @@ pub const FEATURES: &[&str] = &[
     "65-byte-signatures",
     // EIP-191 personal_sign (v8.9.1+)
     "eip191-personal-sign",
+    // Content hash binding for proofs (v8.10.0+)
+    "content-hash-binding",
+    "real-prompt-hash",
+    "real-response-hash",
+    "proof-witness-content",
+    "streaming-response-accumulation",
 ];
 
 /// Supported chain IDs
@@ -116,6 +122,18 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.10.2 - Security Audit Remediation (Jan 9, 2026)
+    "CONTRACT: JobMarketplace proxy address changed to 0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",
+    "CONTRACT: Clean slate deployment for security audit compliance",
+    // v8.10.1 - Incremental Content Hash
+    "FIX: Intermediate checkpoints now use partial response hash (not placeholders)",
+    "FEAT: All checkpoints use real content hashes during streaming",
+    // v8.10.0 - Content Hash Binding
+    "FEAT: Proof witness now includes real SHA256 hash of prompt (input_hash)",
+    "FEAT: Proof witness now includes real SHA256 hash of response (output_hash)",
+    "FEAT: Response tokens accumulated during streaming for final hash computation",
+    "FEAT: Backward compatible - falls back to placeholder hashes if content hashes unavailable",
+    "FEAT: Logs indicate whether real or placeholder hashes used in proof generation",
     // v8.9.1 - EIP-191 Fix
     "FIX: Proof signatures now use EIP-191 personal_sign prefix (\\x19Ethereum Signed Message:\\n32)",
     "FIX: Signature now matches contract's ecrecover verification",
@@ -195,8 +213,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 9);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 10);
+        assert_eq!(VERSION_PATCH, 2);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -224,20 +242,26 @@ mod tests {
         assert!(FEATURES.contains(&"65-byte-signatures"));
         // v8.9.1 EIP-191 fix
         assert!(FEATURES.contains(&"eip191-personal-sign"));
+        // v8.10.0 content hash binding features
+        assert!(FEATURES.contains(&"content-hash-binding"));
+        assert!(FEATURES.contains(&"real-prompt-hash"));
+        assert!(FEATURES.contains(&"real-response-hash"));
+        assert!(FEATURES.contains(&"proof-witness-content"));
+        assert!(FEATURES.contains(&"streaming-response-accumulation"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.9.1"));
-        assert!(version.contains("2026-01-07"));
+        assert!(version.contains("8.10.2"));
+        assert!(version.contains("2026-01-09"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.9.1-proof-signing-eip191-2026-01-07");
-        assert_eq!(VERSION_NUMBER, "8.9.1");
-        assert_eq!(BUILD_DATE, "2026-01-07");
+        assert_eq!(VERSION, "v8.10.2-security-audit-remediation-2026-01-09");
+        assert_eq!(VERSION_NUMBER, "8.10.2");
+        assert_eq!(BUILD_DATE, "2026-01-09");
     }
 }

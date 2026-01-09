@@ -359,7 +359,7 @@
   },
   {
     "type": "function",
-    "name": "verifyEKZL",
+    "name": "verifyHostSignature",
     "inputs": [
       {
         "name": "proof",

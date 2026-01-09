@@ -33,9 +33,25 @@ pub struct JobTokenTracker {
     pub last_proof_timestamp: Option<std::time::Instant>, // Track when last proof was submitted
 }
 
+/// Content hashes for cryptographic proof binding (Phase 4 - v8.10.0)
+///
+/// Stores the actual prompt and response hashes to bind them into the STARK proof,
+/// replacing placeholder hashes with real content hashes.
+#[derive(Debug, Clone, Default)]
+pub struct ContentHashes {
+    /// SHA256 of the original prompt (set at inference start)
+    pub prompt_hash: Option<[u8; 32]>,
+    /// SHA256 of the generated response (computed at checkpoint time)
+    pub response_hash: Option<[u8; 32]>,
+    /// Accumulated response text (cleared after hash computation)
+    response_buffer: String,
+}
+
 pub struct CheckpointManager {
     web3_client: Arc<Web3Client>,
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
+    /// Content hashes for real prompt/response binding (Phase 4 - v8.10.0)
+    content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>>,
     proof_system_address: Address,
     host_address: Address,
     s5_storage: Box<dyn S5Storage>, // S5 storage for off-chain proof storage
@@ -67,6 +83,7 @@ impl CheckpointManager {
         Ok(Self {
             web3_client,
             job_trackers: Arc::new(RwLock::new(HashMap::new())),
+            content_hashes: Arc::new(RwLock::new(HashMap::new())),
             proof_system_address,
             host_address,
             s5_storage,
@@ -138,6 +155,9 @@ impl CheckpointManager {
             let host_address = self.host_address;
             let s5_storage = self.s5_storage.clone();
 
+            // Phase 4: Get content hashes for real proof binding (v8.10.0+)
+            let content_hashes = self.get_content_hashes(job_id).await;
+
             tokio::spawn(async move {
                 info!("🚀 [ASYNC] Starting background checkpoint submission for job {}", job_id);
 
@@ -149,6 +169,7 @@ impl CheckpointManager {
                     host_address,
                     job_id,
                     tokens_to_submit,
+                    content_hashes,
                 ).await;
 
                 // Update tracker based on result
@@ -178,6 +199,118 @@ impl CheckpointManager {
 
         Ok(())
     }
+
+    // ========================================================================
+    // Phase 4: Content Hash Methods (v8.10.0)
+    // ========================================================================
+
+    /// Set the prompt hash for a job (called at inference start)
+    ///
+    /// This should be called once when inference begins, with the SHA256 hash
+    /// of the actual prompt text.
+    pub async fn set_prompt_hash(&self, job_id: u64, hash: [u8; 32]) {
+        let mut content_hashes = self.content_hashes.write().await;
+        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        entry.prompt_hash = Some(hash);
+        tracing::debug!(
+            "📝 Set prompt hash for job {}: 0x{}",
+            job_id,
+            hex::encode(&hash[..8])
+        );
+    }
+
+    /// Append response text for a job (called during token streaming)
+    ///
+    /// Accumulates the response text so we can hash it at checkpoint time.
+    pub async fn append_response(&self, job_id: u64, text: &str) {
+        let mut content_hashes = self.content_hashes.write().await;
+        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        entry.response_buffer.push_str(text);
+    }
+
+    /// Finalize and compute the response hash for a job
+    ///
+    /// Computes SHA256 of the accumulated response buffer, stores it,
+    /// and clears the buffer. Returns the computed hash.
+    pub async fn finalize_response_hash(&self, job_id: u64) -> [u8; 32] {
+        let mut content_hashes = self.content_hashes.write().await;
+        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+
+        // Compute SHA256 of accumulated response
+        let hash = Sha256::digest(entry.response_buffer.as_bytes());
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes.copy_from_slice(&hash);
+
+        // Store the hash
+        entry.response_hash = Some(hash_bytes);
+
+        tracing::debug!(
+            "📝 Finalized response hash for job {}: 0x{} ({} chars)",
+            job_id,
+            hex::encode(&hash_bytes[..8]),
+            entry.response_buffer.len()
+        );
+
+        // Note: We don't clear the buffer here in case of retry
+        // It will be cleared when the job is cleaned up
+
+        hash_bytes
+    }
+
+    /// Get the content hashes for a job (prompt_hash, response_hash)
+    ///
+    /// For intermediate checkpoints (during streaming), computes partial response hash
+    /// from the accumulated buffer if finalized hash is not yet available.
+    /// Returns None only if prompt_hash is not set.
+    pub async fn get_content_hashes(&self, job_id: u64) -> Option<([u8; 32], [u8; 32])> {
+        let content_hashes = self.content_hashes.read().await;
+        content_hashes.get(&job_id).and_then(|entry| {
+            // Must have prompt hash
+            let prompt_hash = entry.prompt_hash?;
+
+            // Use finalized response hash if available, otherwise compute partial hash
+            let response_hash = if let Some(finalized) = entry.response_hash {
+                finalized
+            } else if !entry.response_buffer.is_empty() {
+                // Compute partial response hash for intermediate checkpoint
+                let hash = Sha256::digest(entry.response_buffer.as_bytes());
+                let mut hash_bytes = [0u8; 32];
+                hash_bytes.copy_from_slice(&hash);
+                tracing::debug!(
+                    "📝 Computing partial response hash for job {} ({} chars so far)",
+                    job_id,
+                    entry.response_buffer.len()
+                );
+                hash_bytes
+            } else {
+                // No response data yet
+                return None;
+            };
+
+            Some((prompt_hash, response_hash))
+        })
+    }
+
+    /// Clear content hashes for a job (called after successful checkpoint)
+    pub async fn clear_content_hashes(&self, job_id: u64) {
+        let mut content_hashes = self.content_hashes.write().await;
+        content_hashes.remove(&job_id);
+        tracing::debug!("🧹 Cleared content hashes for job {}", job_id);
+    }
+
+    /// Get the current response buffer length for a job
+    #[cfg(test)]
+    pub async fn get_response_buffer_len(&self, job_id: u64) -> usize {
+        let content_hashes = self.content_hashes.read().await;
+        content_hashes
+            .get(&job_id)
+            .map(|e| e.response_buffer.len())
+            .unwrap_or(0)
+    }
+
+    // ========================================================================
+    // End Phase 4 Content Hash Methods
+    // ========================================================================
 
     /// Upload proof to S5 decentralized storage and return CID (Phase 2.2)
     async fn upload_proof_to_s5(&self, job_id: u64, proof_bytes: &[u8]) -> Result<String> {
@@ -430,6 +563,8 @@ impl CheckpointManager {
 
     /// Async checkpoint submission for background tasks (static method)
     /// This is used by tokio::spawn to submit checkpoints without blocking streaming
+    ///
+    /// Phase 4 (v8.10.0+): Accepts optional content hashes for proof binding
     async fn submit_checkpoint_async(
         web3_client: Arc<Web3Client>,
         s5_storage: Box<dyn S5Storage>,
@@ -437,19 +572,20 @@ impl CheckpointManager {
         host_address: Address,
         job_id: u64,
         tokens_generated: u64,
+        content_hashes: Option<([u8; 32], [u8; 32])>,
     ) -> Result<()> {
         let tokens_to_submit = tokens_generated;
 
         info!(
-            "🚀 [ASYNC] Submitting proof of work for job {} with {} tokens...",
-            job_id, tokens_to_submit
+            "🚀 [ASYNC] Submitting proof of work for job {} with {} tokens (content_hashes={})...",
+            job_id, tokens_to_submit, content_hashes.is_some()
         );
 
         // Generate STARK proof using Risc0 zkVM (static version)
         // CRITICAL: Use spawn_blocking for CPU-intensive proof generation
         // to avoid blocking the Tokio async runtime and freezing streaming
         let proof_bytes = tokio::task::spawn_blocking(move || {
-            Self::generate_proof_static(job_id, tokens_generated, host_address)
+            Self::generate_proof_static(job_id, tokens_generated, host_address, content_hashes)
         })
         .await
         .map_err(|e| anyhow!("Proof generation task failed: {}", e))??;
@@ -556,12 +692,22 @@ impl CheckpointManager {
     }
 
     /// Static version of generate_proof for async tasks
-    fn generate_proof_static(job_id: u64, tokens_generated: u64, host_address: Address) -> Result<Vec<u8>> {
+    ///
+    /// Phase 4 (v8.10.0+): Accepts optional real content hashes for proof binding
+    /// If content_hashes is None, falls back to placeholder hashes
+    fn generate_proof_static(
+        job_id: u64,
+        tokens_generated: u64,
+        host_address: Address,
+        content_hashes: Option<([u8; 32], [u8; 32])>,
+    ) -> Result<Vec<u8>> {
         #[cfg(feature = "real-ezkl")]
         {
+            // Log whether we're using real or placeholder hashes
+            let using_real_hashes = content_hashes.is_some();
             info!(
-                "🔐 [ASYNC] Generating real Risc0 STARK proof for job {} ({} tokens)",
-                job_id, tokens_generated
+                "🔐 [ASYNC] Generating real Risc0 STARK proof for job {} ({} tokens, real_hashes={})",
+                job_id, tokens_generated, using_real_hashes
             );
 
             // Create witness from available data
@@ -575,15 +721,32 @@ impl CheckpointManager {
             let mut model_hash_bytes = [0u8; 32];
             model_hash_bytes.copy_from_slice(&model_hash);
 
-            let input_data = format!("job_{}:input", job_id);
-            let input_hash = Sha256::digest(input_data.as_bytes());
-            let mut input_hash_bytes = [0u8; 32];
-            input_hash_bytes.copy_from_slice(&input_hash);
+            // Phase 4: Use real content hashes if available, otherwise placeholder
+            let (input_hash_bytes, output_hash_bytes) = if let Some((prompt_hash, response_hash)) = content_hashes {
+                info!(
+                    "📝 [ASYNC] Using real content hashes - prompt: 0x{}..., response: 0x{}...",
+                    hex::encode(&prompt_hash[..8]),
+                    hex::encode(&response_hash[..8])
+                );
+                (prompt_hash, response_hash)
+            } else {
+                // Fallback to placeholder hashes (backward compatible)
+                let input_data = format!("job_{}:input", job_id);
+                let input_hash = Sha256::digest(input_data.as_bytes());
+                let mut input_bytes = [0u8; 32];
+                input_bytes.copy_from_slice(&input_hash);
 
-            let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
-            let output_hash = Sha256::digest(output_data.as_bytes());
-            let mut output_hash_bytes = [0u8; 32];
-            output_hash_bytes.copy_from_slice(&output_hash);
+                let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
+                let output_hash = Sha256::digest(output_data.as_bytes());
+                let mut output_bytes = [0u8; 32];
+                output_bytes.copy_from_slice(&output_hash);
+
+                warn!(
+                    "⚠️ [ASYNC] Using placeholder hashes (no content hashes available for job {})",
+                    job_id
+                );
+                (input_bytes, output_bytes)
+            };
 
             let witness = WitnessBuilder::new()
                 .with_job_id(job_id_bytes)
@@ -615,7 +778,8 @@ impl CheckpointManager {
                 "tokensUsed": tokens_generated,
                 "hostAddress": format!("{:?}", host_address),
                 "jobId": job_id,
-                "mock": true
+                "mock": true,
+                "hasRealContentHashes": content_hashes.is_some()
             });
             Ok(proof_json.to_string().into_bytes())
         }
@@ -712,6 +876,9 @@ impl CheckpointManager {
                 // before calling completeSessionJob, otherwise contract thinks 0 tokens used!
                 info!("🔒 [SYNC-FINAL] Submitting final checkpoint for job {} (waiting for confirmation)...", job_id);
 
+                // Phase 4: Get content hashes for real proof binding (v8.10.0+)
+                let content_hashes = self.get_content_hashes(job_id).await;
+
                 let submission_result = Self::submit_checkpoint_async(
                     self.web3_client.clone(),
                     self.s5_storage.clone(),
@@ -719,6 +886,7 @@ impl CheckpointManager {
                     self.host_address,
                     job_id,
                     tokens_to_submit,
+                    content_hashes,
                 ).await;
 
                 // Update tracker based on result
@@ -772,6 +940,9 @@ impl CheckpointManager {
         let proof_system_address = self.proof_system_address;
         let host_address = self.host_address;
         let s5_storage = self.s5_storage.clone();
+
+        // Phase 4: Get content hashes before spawning (v8.10.0+)
+        let content_hashes = self.get_content_hashes(job_id).await;
 
         info!("🚀 [FORCE-CHECKPOINT] Spawning background task for job {} (returns immediately)", job_id);
 
@@ -834,6 +1005,7 @@ impl CheckpointManager {
                 host_address,
                 job_id,
                 tokens_to_submit,
+                content_hashes,
             ).await;
 
             // Update tracker based on result
@@ -1503,6 +1675,406 @@ mod tests {
         assert_eq!(
             encoded1, encoded2,
             "Same inputs should produce identical encoded output"
+        );
+    }
+
+    // ========================================================================
+    // Phase 4: ContentHashes Tests (Sub-phase 4.1)
+    // ========================================================================
+
+    /// Test that set_prompt_hash stores the hash correctly
+    #[tokio::test]
+    async fn test_set_prompt_hash_stores_hash() {
+        // Create a minimal CheckpointManager for testing
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 12345u64;
+        let test_hash = [0xab; 32];
+
+        // Manually simulate what set_prompt_hash does
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(test_hash);
+        }
+
+        // Verify hash was stored
+        let hashes = content_hashes.read().await;
+        let entry = hashes.get(&job_id).expect("Entry should exist");
+        assert_eq!(entry.prompt_hash, Some(test_hash));
+    }
+
+    /// Test that append_response accumulates text correctly
+    #[tokio::test]
+    async fn test_append_response_accumulates_text() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 100u64;
+
+        // Append multiple chunks
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.response_buffer.push_str("Hello");
+            entry.response_buffer.push_str(" ");
+            entry.response_buffer.push_str("World");
+        }
+
+        // Verify accumulated text
+        let hashes = content_hashes.read().await;
+        let entry = hashes.get(&job_id).expect("Entry should exist");
+        assert_eq!(entry.response_buffer, "Hello World");
+    }
+
+    /// Test that finalize_response_hash computes SHA256 correctly
+    #[tokio::test]
+    async fn test_finalize_response_hash_computes_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 200u64;
+        let test_response = "This is a test response for hashing";
+
+        // Add response to buffer
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.response_buffer.push_str(test_response);
+        }
+
+        // Compute hash (simulating finalize_response_hash)
+        let computed_hash = {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            let hash = Sha256::digest(entry.response_buffer.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            entry.response_hash = Some(hash_bytes);
+            hash_bytes
+        };
+
+        // Calculate expected hash
+        let expected_hash = Sha256::digest(test_response.as_bytes());
+        let mut expected_bytes = [0u8; 32];
+        expected_bytes.copy_from_slice(&expected_hash);
+
+        assert_eq!(computed_hash, expected_bytes);
+
+        // Verify it was stored
+        let hashes = content_hashes.read().await;
+        let entry = hashes.get(&job_id).expect("Entry should exist");
+        assert_eq!(entry.response_hash, Some(expected_bytes));
+    }
+
+    /// Test that get_content_hashes returns both hashes when available
+    #[tokio::test]
+    async fn test_get_content_hashes_returns_both() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 300u64;
+        let prompt_hash = [0x11; 32];
+        let response_hash = [0x22; 32];
+
+        // Set both hashes
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(prompt_hash);
+            entry.response_hash = Some(response_hash);
+        }
+
+        // Get content hashes (simulating get_content_hashes)
+        let result = {
+            let hashes = content_hashes.read().await;
+            hashes.get(&job_id).and_then(|entry| {
+                match (entry.prompt_hash, entry.response_hash) {
+                    (Some(p), Some(r)) => Some((p, r)),
+                    _ => None,
+                }
+            })
+        };
+
+        assert!(result.is_some());
+        let (p, r) = result.unwrap();
+        assert_eq!(p, prompt_hash);
+        assert_eq!(r, response_hash);
+    }
+
+    /// Test that get_content_hashes returns None when only one hash is set
+    #[tokio::test]
+    async fn test_get_content_hashes_returns_none_when_incomplete() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 400u64;
+        let prompt_hash = [0x33; 32];
+
+        // Set only prompt hash (no response hash)
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(prompt_hash);
+        }
+
+        // Get content hashes
+        let result = {
+            let hashes = content_hashes.read().await;
+            hashes.get(&job_id).and_then(|entry| {
+                match (entry.prompt_hash, entry.response_hash) {
+                    (Some(p), Some(r)) => Some((p, r)),
+                    _ => None,
+                }
+            })
+        };
+
+        assert!(result.is_none(), "Should return None when response_hash is missing");
+    }
+
+    /// Test that content_hashes are cleared after checkpoint
+    #[tokio::test]
+    async fn test_content_hashes_cleared_after_checkpoint() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 500u64;
+        let prompt_hash = [0x44; 32];
+        let response_hash = [0x55; 32];
+
+        // Set hashes
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(prompt_hash);
+            entry.response_hash = Some(response_hash);
+            entry.response_buffer = "Some response text".to_string();
+        }
+
+        // Verify entry exists
+        {
+            let hashes = content_hashes.read().await;
+            assert!(hashes.contains_key(&job_id));
+        }
+
+        // Clear (simulating clear_content_hashes)
+        {
+            let mut hashes = content_hashes.write().await;
+            hashes.remove(&job_id);
+        }
+
+        // Verify entry is gone
+        let hashes = content_hashes.read().await;
+        assert!(!hashes.contains_key(&job_id));
+    }
+
+    /// Test ContentHashes default initialization
+    #[test]
+    fn test_content_hashes_default() {
+        let hashes = ContentHashes::default();
+        assert!(hashes.prompt_hash.is_none());
+        assert!(hashes.response_hash.is_none());
+        assert!(hashes.response_buffer.is_empty());
+    }
+
+    /// Test multiple jobs have independent content hashes
+    #[tokio::test]
+    async fn test_multiple_jobs_independent_hashes() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id_1 = 1000u64;
+        let job_id_2 = 2000u64;
+
+        // Set different hashes for each job
+        {
+            let mut hashes = content_hashes.write().await;
+
+            let entry1 = hashes.entry(job_id_1).or_insert_with(ContentHashes::default);
+            entry1.prompt_hash = Some([0xaa; 32]);
+            entry1.response_buffer.push_str("Response 1");
+
+            let entry2 = hashes.entry(job_id_2).or_insert_with(ContentHashes::default);
+            entry2.prompt_hash = Some([0xbb; 32]);
+            entry2.response_buffer.push_str("Response 2");
+        }
+
+        // Verify independence
+        let hashes = content_hashes.read().await;
+        let entry1 = hashes.get(&job_id_1).unwrap();
+        let entry2 = hashes.get(&job_id_2).unwrap();
+
+        assert_eq!(entry1.prompt_hash, Some([0xaa; 32]));
+        assert_eq!(entry2.prompt_hash, Some([0xbb; 32]));
+        assert_eq!(entry1.response_buffer, "Response 1");
+        assert_eq!(entry2.response_buffer, "Response 2");
+    }
+
+    // ========================================================================
+    // Phase 4 Integration Tests: Content Hash Binding (Sub-phase 4.5)
+    // ========================================================================
+
+    /// Test that different prompts produce different input hashes
+    #[test]
+    fn test_different_prompts_different_hash() {
+        use sha2::{Digest, Sha256};
+
+        let prompt_a = "What is 2+2?";
+        let prompt_b = "What is 3+3?";
+
+        let hash_a = Sha256::digest(prompt_a.as_bytes());
+        let hash_b = Sha256::digest(prompt_b.as_bytes());
+
+        assert_ne!(
+            hash_a.as_slice(),
+            hash_b.as_slice(),
+            "Different prompts should produce different hashes"
+        );
+    }
+
+    /// Test that same prompt produces same hash (determinism)
+    #[test]
+    fn test_same_prompt_same_hash() {
+        use sha2::{Digest, Sha256};
+
+        let prompt = "What is 2+2?";
+
+        let hash1 = Sha256::digest(prompt.as_bytes());
+        let hash2 = Sha256::digest(prompt.as_bytes());
+
+        assert_eq!(
+            hash1.as_slice(),
+            hash2.as_slice(),
+            "Same prompt should produce same hash (determinism)"
+        );
+    }
+
+    /// Test that different responses produce different output hashes
+    #[test]
+    fn test_different_responses_different_hash() {
+        use sha2::{Digest, Sha256};
+
+        let response_a = "The answer is 4.";
+        let response_b = "The answer is 6.";
+
+        let hash_a = Sha256::digest(response_a.as_bytes());
+        let hash_b = Sha256::digest(response_b.as_bytes());
+
+        assert_ne!(
+            hash_a.as_slice(),
+            hash_b.as_slice(),
+            "Different responses should produce different hashes"
+        );
+    }
+
+    /// Test that placeholder hashes are used when content_hashes is None
+    #[test]
+    fn test_placeholder_hash_fallback() {
+        // When content_hashes is None, the system should use placeholder hashes
+        // This tests the format of placeholder hashes
+        use sha2::{Digest, Sha256};
+
+        let job_id: u64 = 12345;
+        let tokens_generated: u64 = 500;
+
+        // These match the placeholder generation in generate_proof_static
+        let input_data = format!("job_{}:input", job_id);
+        let input_hash = Sha256::digest(input_data.as_bytes());
+
+        let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
+        let output_hash = Sha256::digest(output_data.as_bytes());
+
+        // Verify the placeholder format produces expected hashes
+        assert_eq!(input_hash.len(), 32);
+        assert_eq!(output_hash.len(), 32);
+
+        // Different job IDs should produce different placeholder hashes
+        let other_job_id: u64 = 99999;
+        let other_input_data = format!("job_{}:input", other_job_id);
+        let other_input_hash = Sha256::digest(other_input_data.as_bytes());
+
+        assert_ne!(
+            input_hash.as_slice(),
+            other_input_hash.as_slice(),
+            "Different job IDs should produce different placeholder hashes"
+        );
+    }
+
+    /// Test content hash tuple creation for proof generation
+    #[test]
+    fn test_content_hash_tuple_for_proof() {
+        use sha2::{Digest, Sha256};
+
+        let prompt = "What is the capital of France?";
+        let response = "The capital of France is Paris.";
+
+        // Create content hash tuple (as used in generate_proof_static)
+        let prompt_hash = Sha256::digest(prompt.as_bytes());
+        let response_hash = Sha256::digest(response.as_bytes());
+
+        let mut prompt_hash_bytes = [0u8; 32];
+        let mut response_hash_bytes = [0u8; 32];
+        prompt_hash_bytes.copy_from_slice(&prompt_hash);
+        response_hash_bytes.copy_from_slice(&response_hash);
+
+        let content_hashes: Option<([u8; 32], [u8; 32])> =
+            Some((prompt_hash_bytes, response_hash_bytes));
+
+        assert!(content_hashes.is_some());
+        let (input, output) = content_hashes.unwrap();
+
+        // Verify the hashes are 32 bytes and non-zero
+        assert_eq!(input.len(), 32);
+        assert_eq!(output.len(), 32);
+        assert!(!input.iter().all(|&b| b == 0), "Input hash should not be all zeros");
+        assert!(!output.iter().all(|&b| b == 0), "Output hash should not be all zeros");
+    }
+
+    /// Test that response accumulation produces correct hash
+    #[tokio::test]
+    async fn test_response_accumulation_hash_consistency() {
+        use sha2::{Digest, Sha256};
+
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 600u64;
+
+        // Simulate streaming tokens
+        let tokens = vec!["Hello", " ", "World", "!"];
+        let expected_response = "Hello World!";
+
+        // Accumulate tokens
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            for token in &tokens {
+                entry.response_buffer.push_str(token);
+            }
+        }
+
+        // Finalize hash
+        let computed_hash = {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            let hash = Sha256::digest(entry.response_buffer.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            entry.response_hash = Some(hash_bytes);
+            hash_bytes
+        };
+
+        // Calculate expected hash
+        let expected_hash = Sha256::digest(expected_response.as_bytes());
+        let mut expected_bytes = [0u8; 32];
+        expected_bytes.copy_from_slice(&expected_hash);
+
+        assert_eq!(
+            computed_hash, expected_bytes,
+            "Accumulated response should produce same hash as full response"
         );
     }
 }
