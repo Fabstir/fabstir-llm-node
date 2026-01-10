@@ -1280,6 +1280,23 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                         eprintln!("📝 Session init: job={:?} session={:?}", job_id, session_id);
 
+                        // FIX: Create session in session_store (was missing - caused "Session not found" errors)
+                        if let Some(sid) = &session_id {
+                            let mut store = server.session_store.write().await;
+                            match store.create_session_with_chain(
+                                sid.clone(),
+                                crate::api::websocket::session::SessionConfig::default(),
+                                chain_id.unwrap_or(84532), // Default to Base Sepolia
+                            ).await {
+                                Ok(_) => {
+                                    info!("✅ Session created in store: {}", sid);
+                                }
+                                Err(e) => {
+                                    error!("❌ Failed to create session in store: {}", e);
+                                }
+                            }
+                        }
+
                         // CRITICAL: Send response to session_init so SDK doesn't timeout!
                         // Must echo back the 'id' field for request-response correlation
                         let mut response = serde_json::json!({
@@ -1437,6 +1454,24 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 extracted_session_key,
                                                             )
                                                             .await;
+
+                                                        // FIX: Create session in session_store FIRST (was missing - caused "Session not found" errors)
+                                                        {
+                                                            let mut store = server.session_store.write().await;
+                                                            match store.create_session_with_chain(
+                                                                sid.clone(),
+                                                                crate::api::websocket::session::SessionConfig::default(),
+                                                                chain_id.unwrap_or(84532), // Default to Base Sepolia
+                                                            ).await {
+                                                                Ok(_) => {
+                                                                    info!("✅ Encrypted session created in store: {}", sid);
+                                                                }
+                                                                Err(e) => {
+                                                                    // Session might already exist (e.g., reconnection), which is fine
+                                                                    warn!("⚠️ Session creation returned error (may already exist): {}", e);
+                                                                }
+                                                            }
+                                                        }
 
                                                         // Handle vector_database if provided (Sub-phase 3.3)
                                                         if let Some(vdb_info) = session_init_data.vector_database.clone() {
