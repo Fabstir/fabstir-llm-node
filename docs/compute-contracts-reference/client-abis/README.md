@@ -4,14 +4,15 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ---
 
-## UPGRADEABLE CONTRACTS (January 9, 2026 - Security Audit Remediation)
+## UPGRADEABLE CONTRACTS (January 9, 2026 - Clean Slate Deployment)
 
 > **🔒 SECURITY UPDATE**: All CRITICAL vulnerabilities from January 2025 audit have been fixed.
+> **⚠️ ADDRESS CHANGE**: JobMarketplace proxy address changed on January 9, 2026 (clean slate deployment).
 > **RECOMMENDED**: Use these upgradeable contracts for all integrations.
 
 ### JobMarketplaceWithModelsUpgradeable
-- **Proxy Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` ⚠️ NEW (Jan 9, 2026 Clean Slate)
-- **Implementation**: `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` ✅ Security Audit Remediation (Jan 9, 2026)
+- **Proxy Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` ⚠️ NEW (Jan 9, 2026)
+- **Implementation**: `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` ✅ Clean slate (Jan 9, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
@@ -40,7 +41,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ### NodeRegistryWithModelsUpgradeable
 - **Proxy Address**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
-- **Implementation**: `0x68298e2b74a106763aC99E3D973E98012dB5c75F`
+- **Implementation**: `0x4574d6f1D888cF97eBb8E1bb5E02a5A386b6cFA7` ✅ Corrupt node fix (Jan 10, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `NodeRegistryWithModelsUpgradeable-CLIENT-ABI.json`
@@ -48,10 +49,15 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - All features from non-upgradeable version
   - UUPS proxy pattern for future upgrades
   - Owner-only upgrade authorization
+- **New Functions (Jan 10, 2026)**:
+  - `repairCorruptNode(address)` - Owner-only function to fix corrupt node state from upgrades
+  - `unregisterNode()` - Now handles corrupt state gracefully (safety check added)
+- **New Event**:
+  - `CorruptNodeRepaired(address indexed operator, uint256 stakeReturned)`
 
 ### ModelRegistryUpgradeable
 - **Proxy Address**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2`
-- **Implementation**: `0xd7Df5c6D4ffe6961d47753D1dd32f844e0F73f50`
+- **Implementation**: `0x1D31d9688a4ffD2aFE738BC6C9a4cb27C272AA5A`
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `ModelRegistryUpgradeable-CLIENT-ABI.json`
@@ -61,14 +67,14 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ### HostEarningsUpgradeable
 - **Proxy Address**: `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0`
-- **Implementation**: `0x588c42249F85C6ac4B4E27f97416C0289980aabB`
+- **Implementation**: `0x8584AeAC9687613095D13EF7be4dE0A796F84D7a`
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `HostEarningsUpgradeable-CLIENT-ABI.json`
 
 ### ProofSystemUpgradeable
 - **Proxy Address**: `0x5afB91977e69Cc5003288849059bc62d47E7deeb`
-- **Implementation**: `0xf0DA90e1ae1A3aB7b9Da47790Abd73D26b17670F` ✅ Security fixes (Jan 6, 2026)
+- **Implementation**: `0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9` ✅ Security fixes (Jan 9, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `ProofSystemUpgradeable-CLIENT-ABI.json`
@@ -80,9 +86,9 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 ### Upgradeable Contracts Configuration
 
 ```javascript
-// Use these addresses for all new integrations (Updated Jan 9, 2026)
+// Use these addresses for all new integrations (Updated January 9, 2026)
 const upgradeableContracts = {
-  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E", // NEW: Jan 9, 2026 Security Audit
+  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",  // ⚠️ NEW (Jan 9, 2026)
   nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
   hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
@@ -90,6 +96,25 @@ const upgradeableContracts = {
   fabToken: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62",
   usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 };
+```
+
+### Corrupt Node Recovery (January 10, 2026)
+
+If a host has node data but cannot unregister (corrupt state from contract upgrades):
+
+**Option 1: Host calls `unregisterNode()` directly** (safety check now handles corrupt state):
+```javascript
+// Host can now unregister even with corrupt state
+await nodeRegistry.unregisterNode();
+// Stake is returned, node data is cleared
+```
+
+**Option 2: Owner calls `repairCorruptNode()`**:
+```javascript
+// Owner can repair corrupt nodes
+await nodeRegistry.repairCorruptNode(corruptHostAddress);
+// Stake is returned to the host, node data is cleared
+// Emits CorruptNodeRepaired event
 ```
 
 ---
@@ -813,7 +838,12 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-January 6, 2026 - Phase 6: ProofSystem Integration (submitProofOfWork signature changed to 5 params)
+January 10, 2026 - NodeRegistry corrupt node fix (repairCorruptNode + unregisterNode safety check)
+
+### Recent Changes
+- **Jan 10, 2026**: NodeRegistry - Added `repairCorruptNode()` admin function and safety check in `unregisterNode()`
+- **Jan 9, 2026**: Clean slate JobMarketplace deployment - new proxy address `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
+- **Jan 6, 2026**: Phase 6 ProofSystem Integration - submitProofOfWork signature changed to 5 params
 
 ### PRICE_PRECISION Breaking Change
 

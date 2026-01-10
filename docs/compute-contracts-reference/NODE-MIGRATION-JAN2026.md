@@ -609,3 +609,77 @@ async function main() {
 
 main().catch(console.error);
 ```
+
+---
+
+## 8. Corrupt Node Recovery (January 10, 2026)
+
+### Problem
+
+During contract upgrades, some registered hosts ended up in a "corrupt" state where:
+- `nodes[host].active = true`
+- `activeNodesIndex[host] = 0`
+- But the host was NOT in `activeNodesList[]`
+
+This caused `unregisterNode()` to fail or corrupt other nodes' data.
+
+### Solution for Node Operators
+
+**If you cannot unregister your node**, try these options:
+
+**Option 1: Call `unregisterNode()` directly** (safety check now handles corrupt state):
+
+```typescript
+import { ethers, Wallet } from 'ethers';
+import NodeRegistryABI from './NodeRegistryWithModelsUpgradeable-CLIENT-ABI.json';
+
+const provider = new ethers.JsonRpcProvider('https://sepolia.base.org');
+const wallet = new Wallet(process.env.HOST_PRIVATE_KEY!, provider);
+
+const nodeRegistry = new ethers.Contract(
+  '0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22',
+  NodeRegistryABI,
+  wallet
+);
+
+// This now works even with corrupt state
+const tx = await nodeRegistry.unregisterNode();
+await tx.wait();
+console.log('Node unregistered, stake returned');
+```
+
+**Option 2: Contact admin** to call `repairCorruptNode()`:
+
+```bash
+# Admin command to repair corrupt node
+cast send 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 \
+  "repairCorruptNode(address)" \
+  <YOUR_HOST_ADDRESS> \
+  --rpc-url "https://sepolia.base.org" \
+  --private-key $ADMIN_PRIVATE_KEY
+```
+
+### New ABI Entries
+
+```json
+{
+  "name": "repairCorruptNode",
+  "type": "function",
+  "inputs": [{"name": "nodeAddress", "type": "address"}],
+  "stateMutability": "nonpayable"
+}
+
+{
+  "name": "CorruptNodeRepaired",
+  "type": "event",
+  "inputs": [
+    {"name": "operator", "type": "address", "indexed": true},
+    {"name": "stakeReturned", "type": "uint256", "indexed": false}
+  ]
+}
+```
+
+---
+
+**Document Version:** 2.0.0
+**Last Updated:** January 10, 2026
