@@ -56,10 +56,10 @@ pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
     let formatted = template.format_messages(&messages);
 
     tracing::debug!(
-        "🎨 Formatted prompt using {} template (context: {} messages):\n{}",
+        "🎨 Formatted prompt using {} template (context: {} messages, {} chars)",
         template.as_str(),
         recent_context.len(),
-        formatted
+        formatted.len()
     );
 
     formatted
