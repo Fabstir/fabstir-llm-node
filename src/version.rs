@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.10.3-session-store-fix-2026-01-10";
+pub const VERSION: &str = "v8.10.5-remove-sensitive-logs-2026-01-10";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.10.3";
+pub const VERSION_NUMBER: &str = "8.10.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 10;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-10";
@@ -122,6 +122,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.10.5 - Remove Sensitive Logs (Jan 10, 2026)
+    "PRIVACY: Removed logging of decrypted message content",
+    "PRIVACY: Removed verbose diagnostic eprintln! statements from inference engine",
+    "PRIVACY: Log only message lengths, not content",
     // v8.10.3 - Session Store Fix (Jan 10, 2026)
     "FIX: Sessions now created in session_store during session_init and encrypted_session_init",
     "FIX: Resolves 'Session X not found for search' errors in searchVectors and other RAG operations",
@@ -257,14 +261,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.10.3"));
+        assert!(version.contains("8.10.5"));
         assert!(version.contains("2026-01-10"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.10.3-session-store-fix-2026-01-10");
-        assert_eq!(VERSION_NUMBER, "8.10.3");
+        assert_eq!(VERSION, "v8.10.5-remove-sensitive-logs-2026-01-10");
+        assert_eq!(VERSION_NUMBER, "8.10.5");
         assert_eq!(BUILD_DATE, "2026-01-10");
     }
 }

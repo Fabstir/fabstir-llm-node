@@ -1724,8 +1724,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         match String::from_utf8(plaintext_bytes) {
                                                             Ok(plaintext_str) => {
                                                                 info!(
-                                                                    "✅ Decrypted message: {}",
-                                                                    plaintext_str
+                                                                    "✅ Decrypted message ({} chars)",
+                                                                    plaintext_str.len()
                                                                 );
 
                                                                 // Try to parse decrypted content as JSON (SDK v6.2+)

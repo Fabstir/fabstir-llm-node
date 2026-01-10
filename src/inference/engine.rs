@@ -270,19 +270,10 @@ impl LlmEngine {
     pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
         let start_time = Instant::now();
 
-        // v8.4.17: VERBOSE DIAGNOSTIC LOGGING
-        eprintln!("🔥🔥🔥 run_inference CALLED! model_id={}, max_tokens={}, prompt_len={}",
-            request.model_id, request.max_tokens, request.prompt.len());
-
-        // Debug log the prompt
-        println!("DEBUG: Inference prompt: {:?}", request.prompt);
-
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
-            eprintln!("❌ Model not found in model_info: {}", request.model_id);
             return Err(anyhow!("Model not found: {}", request.model_id));
         }
-        eprintln!("✅ Model found in model_info: {}", request.model_id);
 
         // Update metrics
         *self.inference_count.write().await += 1;
@@ -391,15 +382,6 @@ impl LlmEngine {
             const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break if stuck generating invalid tokens
             let mut stop_reason = "loop_condition"; // v8.4.18: Track why we stopped
 
-            // v8.4.16: Diagnostic logging to track generation limits
-            // Using eprintln! to ensure visibility regardless of log level
-            eprintln!(
-                "🚀 Starting generation: prompt_tokens={}, max_tokens={}, context_size={}, limit={}",
-                prompt_tokens.len(),
-                max_tokens,
-                context_size,
-                prompt_tokens.len() + max_tokens
-            );
             tracing::info!(
                 "🚀 Starting generation: prompt_tokens={}, max_tokens={}, context_size={}, limit={}",
                 prompt_tokens.len(),
@@ -425,8 +407,6 @@ impl LlmEngine {
                 // All other stop conditions have been disabled to prevent truncation
                 if new_token_id == eos_token {
                     stop_reason = "eos_token";
-                    eprintln!("🛑 EOS token detected after {} chars, {} tokens (token_id={}, eos={})",
-                        output.len(), token_info_list.len(), new_token_id, eos_token);
                     tracing::info!("🛑 EOS token detected after {} chars, {} tokens", output.len(), token_info_list.len());
                     break;
                 }
@@ -459,13 +439,6 @@ impl LlmEngine {
                 } else {
                     // Invalid UTF-8 - don't add to output but MUST advance model state
                     consecutive_invalid_utf8 += 1;
-                    // Enhanced diagnostic logging for debugging corrupted output
-                    eprintln!(
-                        "⚠️ Token {} (0x{:X}) invalid UTF-8 (consecutive: {}) - skipping from output, advancing model. \
-                        Output so far: {} chars, {} valid tokens",
-                        new_token_id, new_token_id.0, consecutive_invalid_utf8,
-                        output.len(), token_info_list.len()
-                    );
                     tracing::warn!(
                         token_id = new_token_id.0,
                         consecutive_invalid = consecutive_invalid_utf8,
@@ -492,15 +465,6 @@ impl LlmEngine {
             let tokens_generated = n_cur - prompt_tokens.len();
             let generation_time = start_time.elapsed();
 
-            // v8.4.18: Log why generation ended with stop_reason
-            eprintln!(
-                "🏁 Generation ended: tokens={}, chars={}, n_cur={}, limit={}, STOP_REASON={}",
-                tokens_generated,
-                output.len(),
-                n_cur,
-                prompt_tokens.len() + max_tokens,
-                stop_reason
-            );
             tracing::info!(
                 "🏁 Generation ended: tokens_generated={}, output_chars={}, n_cur={}, limit={}, stop_reason={}",
                 tokens_generated,
@@ -538,21 +502,15 @@ impl LlmEngine {
     }
 
     pub async fn run_inference_stream(&self, request: InferenceRequest) -> Result<TokenStream> {
-        // v8.4.17: VERBOSE LOGGING
-        eprintln!("🔥🔥🔥 run_inference_stream CALLED! model_id={}, max_tokens={}", request.model_id, request.max_tokens);
-
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
-            eprintln!("❌ run_inference_stream: Model not found in model_info: {}", request.model_id);
             return Err(anyhow!("Model not found: {}", request.model_id));
         }
-        eprintln!("✅ run_inference_stream: Model found in model_info");
 
         let (tx, rx) = mpsc::channel(100);
 
         // Check if we have a real model loaded
         let has_real_model = self.models.lock().unwrap().contains_key(&request.model_id);
-        eprintln!("📊 run_inference_stream: has_real_model={}", has_real_model);
 
         if has_real_model {
             // For real models, we need to run synchronously due to !Send constraint
@@ -560,27 +518,21 @@ impl LlmEngine {
             // Make sure stream is false for the actual inference
             let mut inference_request = request;
             inference_request.stream = false;
-            eprintln!("🚀 run_inference_stream: Calling run_inference...");
             let result = self.run_inference(inference_request).await;
-            eprintln!("🏁 run_inference_stream: run_inference returned, result.is_ok={}", result.is_ok());
 
             // Spawn a task to stream the already-generated tokens
             tokio::spawn(async move {
                 match result {
                     Ok(inference_result) => {
-                        eprintln!("📤 Streaming {} tokens from inference_result", inference_result.token_info.len());
                         for token_info in inference_result.token_info {
                             if tx.send(Ok(token_info)).await.is_err() {
-                                eprintln!("❌ Token send failed - receiver dropped");
                                 break;
                             }
                             // Add a small delay to simulate streaming
                             tokio::time::sleep(Duration::from_millis(10)).await;
                         }
-                        eprintln!("✅ All tokens streamed successfully");
                     }
                     Err(e) => {
-                        eprintln!("❌ Inference error in stream: {}", e);
                         let _ = tx.send(Err(e)).await;
                     }
                 }
