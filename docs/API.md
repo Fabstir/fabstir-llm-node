@@ -871,7 +871,7 @@ GET /v1/checkpoints/{session_id}
       "proofHash": "0xabcd1234...",
       "proofCid": "bafybeig...",
       "deltaCid": "bafybeih...",
-      "tokenCount": 1000,
+      "tokenRange": [0, 1000],
       "timestamp": 1704067200
     }
   ],
@@ -891,7 +891,7 @@ GET /v1/checkpoints/{session_id}
 | `checkpoints[].proofHash` | String | Keccak256 hash of proof data (matches on-chain) |
 | `checkpoints[].proofCid` | String | S5 CID of full proof data |
 | `checkpoints[].deltaCid` | String | S5 CID of conversation delta JSON |
-| `checkpoints[].tokenCount` | Integer | Total tokens at this checkpoint |
+| `checkpoints[].tokenRange` | [Integer, Integer] | [startToken, endToken] - token range this checkpoint covers |
 | `checkpoints[].timestamp` | Integer | Unix timestamp of checkpoint creation |
 | `messagesSignature` | String | EIP-191 signature over messages JSON |
 | `checkpointsSignature` | String | EIP-191 signature over checkpoints array |
