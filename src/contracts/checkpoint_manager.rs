@@ -1514,6 +1514,18 @@ impl CheckpointManager {
         &self.checkpoint_publisher
     }
 
+    /// Get the host's Ethereum address (lowercase, 0x prefixed)
+    /// Used by HTTP endpoint for checkpoint retrieval path
+    pub fn get_host_address(&self) -> String {
+        format!("{:#x}", self.host_address)
+    }
+
+    /// Get reference to S5 storage for checkpoint retrieval
+    /// Used by HTTP endpoint to fetch checkpoint index from S5
+    pub fn get_s5_storage(&self) -> &dyn S5Storage {
+        self.s5_storage.as_ref()
+    }
+
     /// Track a conversation message for checkpoint publishing
     ///
     /// Call this for each user prompt and assistant response.
@@ -2411,5 +2423,65 @@ mod tests {
         let trackers = job_trackers.read().await;
         let tracker = trackers.get(&job_id).unwrap();
         assert_eq!(tracker.session_id, Some("original-session".to_string()));
+    }
+
+    // ========================================================================
+    // Phase 7.1: Accessor Methods Tests (HTTP Checkpoint Endpoint)
+    // ========================================================================
+
+    /// Test that get_host_address returns lowercase address with 0x prefix
+    #[test]
+    fn test_get_host_address_returns_lowercase() {
+        use ethers::types::Address;
+        use std::str::FromStr;
+
+        // Test addresses with mixed case
+        let test_cases = vec![
+            (
+                "0xABC123DEF456789012345678901234567890ABCD",
+                "0xabc123def456789012345678901234567890abcd",
+            ),
+            (
+                "0x0000000000000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000",
+            ),
+            (
+                "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let address = Address::from_str(input).unwrap();
+            let result = format!("{:#x}", address);
+            assert_eq!(
+                result, expected,
+                "Address {} should format as lowercase {}",
+                input, expected
+            );
+        }
+    }
+
+    /// Test that get_s5_storage returns a valid storage reference
+    /// This test verifies the MockS5Backend works correctly
+    #[tokio::test]
+    async fn test_get_s5_storage_returns_storage() {
+        use crate::storage::s5_client::MockS5Backend;
+        use crate::storage::S5Storage;
+
+        // Create mock storage
+        let mock_storage = MockS5Backend::new();
+
+        // Verify we can call methods on it
+        let test_path = "home/test/data.json";
+        let test_data = b"test content".to_vec();
+
+        // Put data
+        let cid = mock_storage.put(test_path, test_data.clone()).await.unwrap();
+        assert!(!cid.is_empty(), "CID should not be empty");
+
+        // Get data back
+        let retrieved = mock_storage.get(test_path).await.unwrap();
+        assert_eq!(retrieved, test_data, "Retrieved data should match");
     }
 }

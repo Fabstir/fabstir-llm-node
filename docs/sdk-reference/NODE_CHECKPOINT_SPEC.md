@@ -53,7 +53,7 @@ Deltas are stored at S5 CIDs. The CID is recorded in the index.
 home/checkpoints/0xabc123def456789012345678901234567890abcd/123/index.json
 
 # Delta CID (stored separately, referenced in index)
-s5://bafybeig123...  (content-addressed)
+bafybeig123...  (content-addressed, raw CID without prefix)
 ```
 
 **Important**: Host addresses in paths MUST be lowercase.
@@ -125,14 +125,14 @@ The index lists all checkpoints for a session.
     {
       "index": 0,
       "proofHash": "0x1234...",
-      "deltaCID": "s5://bafybeig1...",
+      "deltaCID": "bafybeig1...",
       "tokenRange": [0, 1000],
       "timestamp": 1704844800000
     },
     {
       "index": 1,
       "proofHash": "0x5678...",
-      "deltaCID": "s5://bafybeig2...",
+      "deltaCID": "bafybeig2...",
       "tokenRange": [1000, 2000],
       "timestamp": 1704844860000
     }
@@ -575,12 +575,352 @@ Before submitting a proof, verify:
 
 ---
 
+## HTTP API Endpoint
+
+### Why HTTP Instead of S5 Path
+
+S5's `home/` directory is a **per-user private namespace**. When the SDK queries `home/checkpoints/...`, it accesses *its own* home directory, not the node's. Since deltas are stored in the node's S5 namespace, the SDK cannot directly read them.
+
+**Solution**: The node exposes an HTTP endpoint that returns the checkpoint index. The SDK fetches the index via HTTP, then retrieves deltas from S5 using globally-addressable CIDs.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         HTTP API CHECKPOINT DISCOVERY                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  SDK cannot access node's S5 home/:                                          │
+│  ╔═══════════════════════════════════════════════════════════════════════╗  │
+│  ║  Node's S5 namespace:  home/checkpoints/{host}/{session}/index.json   ║  │
+│  ║  SDK's S5 namespace:   home/checkpoints/{host}/{session}/index.json   ║  │
+│  ║                        ↑                                               ║  │
+│  ║                        Different! Per-user isolation                   ║  │
+│  ╚═══════════════════════════════════════════════════════════════════════╝  │
+│                                                                              │
+│  Solution - HTTP API:                                                        │
+│  ┌────────────┐    HTTP    ┌────────────┐    S5 CID    ┌────────────┐       │
+│  │    SDK     │ ────────► │    Node    │ ◄──────────  │  S5 Delta  │       │
+│  └────────────┘            └────────────┘              └────────────┘       │
+│         │                        │                            ▲             │
+│         │ GET /v1/checkpoints    │ Return index.json          │             │
+│         │     /{sessionId}       │ (from node's home/)        │             │
+│         └────────────────────────┘                            │             │
+│                                                                │             │
+│         │ GET delta by CID (globally addressable)             │             │
+│         └─────────────────────────────────────────────────────┘             │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Endpoint Specification
+
+```
+GET /v1/checkpoints/{sessionId}
+```
+
+| Parameter | Location | Type | Description |
+|-----------|----------|------|-------------|
+| `sessionId` | Path | string | The session ID to fetch checkpoints for |
+
+### Response Format
+
+#### Success (200 OK)
+
+Returns the `CheckpointIndex` JSON object:
+
+```json
+{
+  "sessionId": "123",
+  "hostAddress": "0xabc123def456789012345678901234567890abcd",
+  "checkpoints": [
+    {
+      "index": 0,
+      "proofHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "deltaCID": "bafybeig1xyz789...",
+      "tokenRange": [0, 1000],
+      "timestamp": 1704844800000
+    },
+    {
+      "index": 1,
+      "proofHash": "0x5678abcdef123456789012345678901234567890abcdef1234567890abcdef12",
+      "deltaCID": "bafybeig2abc456...",
+      "tokenRange": [1000, 2000],
+      "timestamp": 1704844860000
+    }
+  ],
+  "hostSignature": "0x1234...abcd"
+}
+```
+
+#### No Checkpoints (404 Not Found)
+
+Returned when no checkpoints exist for the session (session just started or no proofs submitted yet):
+
+```json
+{
+  "error": "NOT_FOUND",
+  "message": "No checkpoints found for session 123"
+}
+```
+
+#### Server Error (500 Internal Server Error)
+
+```json
+{
+  "error": "INTERNAL_ERROR",
+  "message": "Failed to fetch checkpoint index from storage"
+}
+```
+
+### Status Codes
+
+| Code | Meaning | When Returned |
+|------|---------|---------------|
+| 200 | Success | Checkpoint index found and returned |
+| 404 | Not Found | No checkpoints exist for this session |
+| 400 | Bad Request | Invalid session ID format |
+| 500 | Server Error | S5 storage error or internal failure |
+
+### Headers
+
+#### Request Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Accept` | No | Should be `application/json` (default) |
+
+#### Response Headers
+
+| Header | Value | Description |
+|--------|-------|-------------|
+| `Content-Type` | `application/json` | Response is JSON |
+| `Access-Control-Allow-Origin` | `*` | Enable CORS for browser SDK |
+| `Access-Control-Allow-Methods` | `GET, OPTIONS` | Allowed methods |
+| `Access-Control-Allow-Headers` | `Content-Type, Accept` | Allowed headers |
+
+### CORS Support
+
+The endpoint MUST support CORS for browser-based SDK usage:
+
+```
+OPTIONS /v1/checkpoints/{sessionId}
+→ 204 No Content
+   Access-Control-Allow-Origin: *
+   Access-Control-Allow-Methods: GET, OPTIONS
+   Access-Control-Allow-Headers: Content-Type, Accept
+```
+
+### Example Request/Response
+
+#### Request
+
+```bash
+curl -X GET \
+  'http://localhost:8080/v1/checkpoints/123' \
+  -H 'Accept: application/json'
+```
+
+#### Response (Success)
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Access-Control-Allow-Origin: *
+
+{
+  "sessionId": "123",
+  "hostAddress": "0xabc123def456789012345678901234567890abcd",
+  "checkpoints": [
+    {
+      "index": 0,
+      "proofHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "deltaCID": "bafybeig1xyz789abc123def456ghi789jkl012mno345pqr678stu901vwx234",
+      "tokenRange": [0, 1000],
+      "timestamp": 1704844800000
+    }
+  ],
+  "hostSignature": "0x8a9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c00"
+}
+```
+
+#### Response (Not Found)
+
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "error": "NOT_FOUND",
+  "message": "No checkpoints found for session 999"
+}
+```
+
+### Node Implementation Example
+
+```python
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import json
+
+app = FastAPI()
+
+# Enable CORS for browser SDK
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
+)
+
+@app.get("/v1/checkpoints/{session_id}")
+async def get_checkpoints(session_id: str):
+    """
+    Return checkpoint index for a session.
+
+    The index is stored in the node's S5 home directory:
+    home/checkpoints/{hostAddress}/{sessionId}/index.json
+    """
+    try:
+        index_path = f"home/checkpoints/{host_address.lower()}/{session_id}/index.json"
+
+        # Fetch from node's S5 storage
+        index_data = await s5_client.fs.get(index_path)
+
+        if index_data is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "NOT_FOUND",
+                    "message": f"No checkpoints found for session {session_id}"
+                }
+            )
+
+        return index_data
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "NOT_FOUND",
+                "message": f"No checkpoints found for session {session_id}"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "INTERNAL_ERROR",
+                "message": f"Failed to fetch checkpoint index: {str(e)}"
+            }
+        )
+```
+
+---
+
+## SDK HTTP Client Usage
+
+The SDK provides `fetchCheckpointIndexFromNode()` for HTTP-based checkpoint discovery:
+
+```typescript
+import { fetchCheckpointIndexFromNode } from '@fabstir/sdk-core/utils';
+
+// Fetch checkpoint index from node's HTTP API
+const index = await fetchCheckpointIndexFromNode(
+  'http://localhost:8080',  // Node's base URL
+  '123',                     // Session ID
+  10000                      // Timeout in ms (optional, default: 10000)
+);
+
+if (index === null) {
+  console.log('No checkpoints found (404)');
+} else {
+  console.log(`Found ${index.checkpoints.length} checkpoints`);
+
+  // Fetch deltas from S5 using globally-addressable CIDs
+  for (const cp of index.checkpoints) {
+    const delta = await s5Client.get(cp.deltaCID);  // CID is globally addressable
+    console.log(`Delta ${cp.index}: ${delta.messages.length} messages`);
+  }
+}
+```
+
+See `packages/sdk-core/src/utils/checkpoint-http.ts` for implementation.
+
+---
+
+## Implementation Notes (From Node Developer)
+
+### CID Format
+
+Use raw CID without prefix:
+
+| Format | Example | Valid |
+|--------|---------|-------|
+| ✅ Raw CID | `bafybeig123abc456def789...` | Yes |
+| ❌ With prefix | `s5://bafybeig123abc456def789...` | No |
+
+### JSON Key Ordering (CRITICAL for Signatures)
+
+The node serializes JSON with **alphabetically sorted keys**. The SDK MUST do the same when verifying signatures:
+
+```typescript
+// Node produces (keys sorted alphabetically):
+'[{"content":"Hello","role":"user","timestamp":123}]'
+
+// NOT (keys in definition order):
+'[{"role":"user","content":"Hello","timestamp":123}]'
+
+// SDK verification - use sorted keys
+const messagesJson = JSON.stringify(delta.messages, Object.keys(delta.messages[0]).sort());
+// Or use a library like json-stable-stringify
+```
+
+Message object key order: `content`, `metadata` (optional), `role`, `timestamp`
+
+### Signature Verification
+
+```typescript
+import { verifyMessage } from 'ethers';
+
+// Verify delta signature
+const messagesJson = JSON.stringify(delta.messages);  // Already sorted by node
+const recoveredAddress = verifyMessage(messagesJson, delta.hostSignature);
+
+// Case-insensitive comparison
+if (recoveredAddress.toLowerCase() !== hostAddress.toLowerCase()) {
+  throw new Error('Invalid delta signature');
+}
+```
+
+### Proof Hash Matching
+
+Direct comparison works (case-insensitive):
+
+```typescript
+// Both approaches work:
+checkpoint.proofHash.toLowerCase() === onChainProof.proofHash.toLowerCase()
+
+// Or with BigInt comparison (more robust):
+BigInt(checkpoint.proofHash) === BigInt(onChainProof.proofHash)
+```
+
+### Cleanup Policy (TTL)
+
+| Session State | TTL | Rationale |
+|--------------|-----|-----------|
+| Completed | 7 days | Session finished normally, recovery less likely needed |
+| Timeout | 30 days | User may need to recover conversation |
+| Cancelled | Immediate | User explicitly cancelled, no recovery needed |
+
+---
+
 ## Questions?
 
 If you have questions about this specification, please:
 1. Check the SDK implementation in `packages/sdk-core/src/utils/checkpoint-recovery.ts`
-2. Review the test cases in `packages/sdk-core/tests/unit/checkpoint-recovery.test.ts`
-3. Contact the SDK team
+2. Check the HTTP client in `packages/sdk-core/src/utils/checkpoint-http.ts`
+3. Review the test cases in `packages/sdk-core/tests/unit/checkpoint-recovery.test.ts`
+4. Review the HTTP tests in `packages/sdk-core/tests/unit/checkpoint-http.test.ts`
+5. Contact the SDK team
 
 ---
 
@@ -589,3 +929,4 @@ If you have questions about this specification, please:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-01-11 | Initial specification |
+| 1.1.0 | 2026-01-11 | Added HTTP API endpoint specification (Phase 7) |

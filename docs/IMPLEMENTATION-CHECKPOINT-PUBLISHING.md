@@ -1,8 +1,8 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 6 In Progress
+## Status: Phase 7 In Progress
 
-**Status**: Phase 6 In Progress - Testing & Finalization (Sub-phases 6.1, 6.2, 6.3 Complete)
+**Status**: Phase 7 In Progress - HTTP Checkpoint Endpoint for SDK Access
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1523,15 +1523,181 @@ With resumption (GOOD):
 
 **Goal**: Package release binary
 
+**Status**: COMPLETE ✅
+
+#### Tasks
+- [x] Build release: `cargo build --release --features real-ezkl -j 4`
+- [x] Verify version in binary: `v8.11.0-checkpoint-publishing-2026-01-11`
+- [x] Copy binary to root
+- [x] Create tarball with correct structure
+- [x] Verify tarball contents
+- [x] Clean up
+
+**Tarball Created:**
+- Filename: `fabstir-llm-node-v8.11.0-checkpoint-publishing.tar.gz`
+- Size: 557MB (compressed from ~990MB binary)
+- Contents:
+  - `fabstir-llm-node` (at root, not in target/release/)
+  - `scripts/download_florence_model.sh`
+  - `scripts/download_ocr_models.sh`
+  - `scripts/download_embedding_model.sh`
+  - `scripts/setup_models.sh`
+
+---
+
+## Phase 7: HTTP Checkpoint Endpoint (SDK Access)
+
+**Why This Phase Is Needed:**
+
+S5's `home/` directory is a per-user private namespace. When SDK queries `home/checkpoints/...`, it accesses *its own* home directory, not the node's. The HTTP endpoint bridges this gap - SDK fetches index via HTTP, then retrieves deltas from S5 using globally-addressable CIDs.
+
+**Endpoint:** `GET /v1/checkpoints/{sessionId}`
+
+**Responses:**
+- `200 OK` - Return CheckpointIndex JSON
+- `404 Not Found` - No checkpoints exist for session
+- `400 Bad Request` - Invalid session ID format
+- `500 Internal Server Error` - S5 storage error
+
+**CORS:** Already globally configured in http_server.rs (allow all origins/methods/headers).
+
+---
+
+### Sub-phase 7.1: Add CheckpointManager Accessor Methods
+
+**Goal**: Expose host_address and s5_storage from CheckpointManager for HTTP handler
+
+**Status**: COMPLETE ✅
+
+#### Tasks
+- [x] Write test `test_get_host_address_returns_lowercase`
+- [x] Write test `test_get_s5_storage_returns_storage`
+- [x] Implement `get_host_address()` method in CheckpointManager
+- [x] Implement `get_s5_storage()` method in CheckpointManager
+- [x] Run `cargo check` to verify compilation
+- [x] Run tests: `cargo test checkpoint_manager::tests` (4 tests passed)
+
+**Implementation Files:**
+- `src/contracts/checkpoint_manager.rs` (add ~20 lines)
+
+**Code to add:**
+```rust
+impl CheckpointManager {
+    /// Get the host's Ethereum address (lowercase, 0x prefixed)
+    pub fn get_host_address(&self) -> String {
+        format!("{:#x}", self.host_address).to_lowercase()
+    }
+
+    /// Get reference to S5 storage for checkpoint retrieval
+    pub fn get_s5_storage(&self) -> &dyn S5Storage {
+        self.s5_storage.as_ref()
+    }
+}
+```
+
+---
+
+### Sub-phase 7.2: Implement Checkpoint Handler (TDD)
+
+**Goal**: Create HTTP handler with full test coverage
+
 **Status**: PENDING
 
 #### Tasks
-- [ ] Build release: `cargo build --release --features real-ezkl -j 4`
-- [ ] Verify version in binary
-- [ ] Copy binary to root
-- [ ] Create tarball with correct structure
-- [ ] Verify tarball contents
-- [ ] Clean up
+- [ ] Write test `test_checkpoints_handler_returns_index_on_success`
+- [ ] Write test `test_checkpoints_handler_returns_404_when_not_found`
+- [ ] Write test `test_checkpoints_handler_returns_500_on_storage_error`
+- [ ] Implement `checkpoints_handler` function
+- [ ] Run tests: `cargo test checkpoints_handler`
+
+**Implementation Files:**
+- `src/api/http_server.rs` (add ~50 lines for handler)
+- `tests/api/test_checkpoints_endpoint.rs` (new file, ~100 lines)
+
+**Handler Signature:**
+```rust
+async fn checkpoints_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<axum::response::Json<CheckpointIndex>, ApiErrorResponse>
+```
+
+**Logic:**
+1. Get checkpoint_manager from state
+2. Get host_address from checkpoint_manager
+3. Get s5_storage from checkpoint_manager
+4. Build path: `CheckpointIndex::s5_path(&host_address, &session_id)`
+5. Fetch from S5:
+   - Success → deserialize and return 200
+   - NotFound → return 404
+   - Other error → return 500
+
+---
+
+### Sub-phase 7.3: Add Route and Integration
+
+**Goal**: Register route and verify end-to-end
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Add import: `use crate::checkpoint::index::CheckpointIndex;`
+- [ ] Add route: `.route("/v1/checkpoints/:session_id", get(checkpoints_handler))`
+- [ ] Run `cargo check` to verify compilation
+- [ ] Run `cargo build --release`
+- [ ] Manual test with curl (if node running with test data)
+
+**Implementation Files:**
+- `src/api/http_server.rs` (add 2 lines - import + route)
+
+**Route Location:** After line ~96 in create_app()
+```rust
+.route("/v1/checkpoints/:session_id", get(checkpoints_handler))
+```
+
+---
+
+### Sub-phase 7.4: Update Documentation and Version
+
+**Goal**: Document endpoint and bump version
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Add endpoint documentation to `docs/API.md`
+- [ ] Update VERSION file to `8.11.1-checkpoint-http-endpoint`
+- [ ] Update `src/version.rs` with new version constants
+- [ ] Add feature flag: `checkpoint-http-endpoint`
+- [ ] Run version tests: `cargo test version`
+
+**Documentation to add to API.md:**
+```markdown
+### Get Checkpoint Index
+
+Retrieve checkpoint index for SDK conversation recovery.
+
+#### Request
+
+\`\`\`http
+GET /v1/checkpoints/{sessionId}
+\`\`\`
+
+#### Response (200 OK)
+
+\`\`\`json
+{
+  "sessionId": "123",
+  "hostAddress": "0xabc...",
+  "checkpoints": [...],
+  "hostSignature": "0x..."
+}
+\`\`\`
+
+#### Error Responses
+
+- `404 Not Found` - No checkpoints exist
+- `500 Internal Server Error` - S5 storage error
+```
 
 ---
 
@@ -1557,9 +1723,13 @@ With resumption (GOOD):
 | 6 | 6.1 | Integration tests | COMPLETE ✅ |
 | 6 | 6.2 | Update version | COMPLETE ✅ |
 | 6 | 6.3 | Documentation | COMPLETE ✅ |
-| 6 | 6.4 | Create release tarball | PENDING |
+| 6 | 6.4 | Create release tarball | COMPLETE ✅ |
+| 7 | 7.1 | Add CheckpointManager accessor methods | COMPLETE ✅ |
+| 7 | 7.2 | Implement checkpoint handler (TDD) | PENDING |
+| 7 | 7.3 | Add route and integration | PENDING |
+| 7 | 7.4 | Update documentation and version | PENDING |
 
-**Total: 19 sub-phases**
+**Total: 23 sub-phases (20 complete, 3 pending)**
 
 ---
 
