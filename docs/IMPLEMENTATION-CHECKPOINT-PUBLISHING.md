@@ -2,11 +2,11 @@
 
 ## Status: Phase 1 In Progress
 
-**Status**: Sub-phase 1.1 Complete
+**Status**: Sub-phase 1.2 Complete
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 64 checkpoint tests passing
+**Tests Passing**: 68 checkpoint tests passing (delta: 12, index: 12, signer: 10, publisher: 7, cleanup: 9 + existing)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -190,21 +190,21 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 **Goal**: Define CheckpointDelta struct with serialization and signing
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_checkpoint_delta_serialization_camel_case`
-- [ ] Write test `test_checkpoint_message_serialization`
-- [ ] Write test `test_checkpoint_message_partial_field_optional`
-- [ ] Write test `test_delta_messages_json_sorted_keys` ← CRITICAL for SDK
-- [ ] Write test `test_sorted_keys_recursive_nested_objects`
-- [ ] Write test `test_delta_to_json_bytes`
-- [ ] Implement `CheckpointDelta` struct with serde attributes
-- [ ] Implement `CheckpointMessage` struct
-- [ ] Implement `sort_json_keys()` helper for SDK-compatible JSON
-- [ ] Implement `compute_messages_json()` with sorted keys
-- [ ] Implement `to_json_bytes()` for upload
-- [ ] Run tests: `cargo test checkpoint::delta`
+- [x] Write test `test_checkpoint_delta_serialization_camel_case`
+- [x] Write test `test_checkpoint_message_serialization`
+- [x] Write test `test_checkpoint_message_partial_field_optional`
+- [x] Write test `test_delta_messages_json_sorted_keys` ← CRITICAL for SDK
+- [x] Write test `test_sorted_keys_recursive_nested_objects`
+- [x] Write test `test_delta_to_json_bytes`
+- [x] Implement `CheckpointDelta` struct with serde attributes
+- [x] Implement `CheckpointMessage` struct
+- [x] Implement `sort_json_keys()` helper for SDK-compatible JSON
+- [x] Implement `compute_messages_json()` with sorted keys
+- [x] Implement `to_json_bytes()` for upload
+- [x] Run tests: `cargo test checkpoint::delta` (12 tests passing)
 
 **Test Files:**
 - Inline tests in `src/checkpoint/delta.rs` (max 150 lines for tests)

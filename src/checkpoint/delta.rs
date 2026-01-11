@@ -235,4 +235,128 @@ mod tests {
         assert!(json_partial.contains("metadata"));
         assert!(json_partial.contains("partial"));
     }
+
+    #[test]
+    fn test_checkpoint_message_serialization() {
+        // Test full message serialization with all fields
+        let msg = CheckpointMessage {
+            role: "user".to_string(),
+            content: "Hello, world!".to_string(),
+            timestamp: 1704844800000,
+            metadata: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+
+        // Should serialize with camelCase
+        assert!(json.contains("\"role\":\"user\""));
+        assert!(json.contains("\"content\":\"Hello, world!\""));
+        assert!(json.contains("\"timestamp\":1704844800000"));
+        assert!(!json.contains("metadata")); // Should be omitted when None
+
+        // Test deserialization roundtrip
+        let deserialized: CheckpointMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.role, msg.role);
+        assert_eq!(deserialized.content, msg.content);
+        assert_eq!(deserialized.timestamp, msg.timestamp);
+    }
+
+    #[test]
+    fn test_delta_messages_json_sorted_keys() {
+        // CRITICAL: compute_messages_json() must produce alphabetically sorted keys
+        let delta = CheckpointDelta {
+            session_id: "session-123".to_string(),
+            checkpoint_index: 0,
+            proof_hash: "0xabc123".to_string(),
+            start_token: 0,
+            end_token: 500,
+            messages: vec![
+                CheckpointMessage::new_user("Hello".to_string(), 100),
+                CheckpointMessage::new_assistant("Hi there!".to_string(), 200, false),
+            ],
+            host_signature: "0xsig".to_string(),
+        };
+
+        let messages_json = delta.compute_messages_json();
+
+        // Verify compact format (no unnecessary spaces)
+        assert!(!messages_json.contains(": "), "Should be compact without spaces after colons");
+
+        // Verify keys are sorted: content < role < timestamp
+        // For each message, content should appear before role, role before timestamp
+        let first_content = messages_json.find("\"content\"").unwrap();
+        let first_role = messages_json.find("\"role\"").unwrap();
+        let first_timestamp = messages_json.find("\"timestamp\"").unwrap();
+
+        assert!(first_content < first_role, "content should come before role");
+        assert!(first_role < first_timestamp, "role should come before timestamp");
+
+        // Verify it's valid JSON array
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&messages_json).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn test_delta_to_json_bytes() {
+        let delta = CheckpointDelta {
+            session_id: "session-456".to_string(),
+            checkpoint_index: 1,
+            proof_hash: "0xdef789".to_string(),
+            start_token: 500,
+            end_token: 1000,
+            messages: vec![CheckpointMessage::new_user("Test".to_string(), 300)],
+            host_signature: "0xsignature".to_string(),
+        };
+
+        let bytes = delta.to_json_bytes();
+
+        // Should produce valid UTF-8 JSON
+        let json_str = String::from_utf8(bytes.clone()).unwrap();
+
+        // Verify it's valid JSON that can be parsed back
+        let parsed: CheckpointDelta = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.session_id, "session-456");
+        assert_eq!(parsed.checkpoint_index, 1);
+        assert_eq!(parsed.proof_hash, "0xdef789");
+        assert_eq!(parsed.start_token, 500);
+        assert_eq!(parsed.end_token, 1000);
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.host_signature, "0xsignature");
+
+        // Verify keys are sorted in output (checkpointIndex < endToken < hostSignature < ...)
+        let checkpoint_pos = json_str.find("checkpointIndex").unwrap();
+        let end_token_pos = json_str.find("endToken").unwrap();
+        let host_sig_pos = json_str.find("hostSignature").unwrap();
+        let messages_pos = json_str.find("messages").unwrap();
+        let proof_hash_pos = json_str.find("proofHash").unwrap();
+        let session_id_pos = json_str.find("sessionId").unwrap();
+        let start_token_pos = json_str.find("startToken").unwrap();
+
+        // Alphabetical: checkpointIndex < endToken < hostSignature < messages < proofHash < sessionId < startToken
+        assert!(checkpoint_pos < end_token_pos);
+        assert!(end_token_pos < host_sig_pos);
+        assert!(host_sig_pos < messages_pos);
+        assert!(messages_pos < proof_hash_pos);
+        assert!(proof_hash_pos < session_id_pos);
+        assert!(session_id_pos < start_token_pos);
+    }
+
+    #[test]
+    fn test_sorted_keys_with_metadata() {
+        // Test that metadata with partial field is also sorted correctly
+        let msg = CheckpointMessage::new_assistant("Streaming...".to_string(), 500, true);
+        let value = serde_json::to_value(&msg).unwrap();
+        let sorted = sort_json_keys(&value);
+        let json = serde_json::to_string(&sorted).unwrap();
+
+        // Keys: content < metadata < role < timestamp
+        let content_pos = json.find("\"content\"").unwrap();
+        let metadata_pos = json.find("\"metadata\"").unwrap();
+        let role_pos = json.find("\"role\"").unwrap();
+        let timestamp_pos = json.find("\"timestamp\"").unwrap();
+
+        assert!(content_pos < metadata_pos);
+        assert!(metadata_pos < role_pos);
+        assert!(role_pos < timestamp_pos);
+    }
 }
