@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 3 In Progress (Sub-phase 3.2 Complete)
+## Status: Phase 3 Complete
 
-**Status**: Phase 3.2 Complete - submit_checkpoint_async Integration
+**Status**: Phase 3 Complete - CheckpointManager Integration
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 97 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 31, cleanup: 11, checkpoint_manager integration: 5, + existing checkpoint_manager tests)
+**Tests Passing**: 99 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 31, cleanup: 11, checkpoint_manager integration: 7, + existing checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -1189,17 +1189,20 @@ With resumption (GOOD):
 
 **Goal**: Pass session_id through token tracking flow
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Verify `JobTokenTracker.session_id` is populated
-- [ ] Update `track_tokens()` to use session_id
-- [ ] Update async checkpoint call to pass session_id
-- [ ] Run `cargo check`
+- [x] Verify `JobTokenTracker.session_id` is populated on tracker creation
+- [x] Update `track_tokens()` to update session_id if initially None
+- [x] Verify session_id flows from `track_tokens()` to `submit_checkpoint_async()`
+- [x] Add tests:
+  - `test_session_id_updated_when_initially_none`
+  - `test_session_id_not_overwritten_if_already_set`
+- [x] Run `cargo check` and tests - 99 tests passing
 
 **Implementation Files:**
-- `src/contracts/checkpoint_manager.rs` (verify/modify)
-  - Ensure `session_id` flows from `track_tokens()` to `submit_checkpoint_async()`
+- `src/contracts/checkpoint_manager.rs` (modified)
+  - Added logic to update session_id if provided later and not already set
 
 ---
 
