@@ -16,6 +16,9 @@ use super::client::Web3Client;
 // S5 decentralized storage for off-chain proof storage (Phase 2.1)
 use crate::storage::s5_client::{S5Client, S5Storage};
 
+// Checkpoint publishing for conversation recovery (Phase 2/3)
+use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
 #[cfg(feature = "real-ezkl")]
 use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
 
@@ -55,6 +58,8 @@ pub struct CheckpointManager {
     proof_system_address: Address,
     host_address: Address,
     s5_storage: Box<dyn S5Storage>, // S5 storage for off-chain proof storage
+    /// Checkpoint publisher for conversation recovery (Phase 3)
+    checkpoint_publisher: Arc<CheckpointPublisher>,
 }
 
 impl CheckpointManager {
@@ -75,6 +80,9 @@ impl CheckpointManager {
             .await
             .map_err(|e| anyhow!("Failed to initialize S5 storage: {}", e))?;
 
+        // Initialize checkpoint publisher for conversation recovery (Phase 3)
+        let checkpoint_publisher = Arc::new(CheckpointPublisher::new(format!("{:?}", host_address)));
+
         eprintln!("CheckpointManager initialized:");
         eprintln!("  Host: {:?}", host_address);
         eprintln!("  JobMarketplace: {}", job_marketplace_address);
@@ -87,6 +95,7 @@ impl CheckpointManager {
             proof_system_address,
             host_address,
             s5_storage,
+            checkpoint_publisher,
         })
     }
 
@@ -1429,6 +1438,63 @@ impl CheckpointManager {
         if trackers.remove(&job_id).is_some() {
             info!("Cleaned up tracker for job {}", job_id);
         }
+    }
+
+    // ============================================================
+    // Checkpoint Publishing for Conversation Recovery (Phase 3)
+    // ============================================================
+
+    /// Get reference to checkpoint publisher
+    pub fn checkpoint_publisher(&self) -> &Arc<CheckpointPublisher> {
+        &self.checkpoint_publisher
+    }
+
+    /// Track a conversation message for checkpoint publishing
+    ///
+    /// Call this for each user prompt and assistant response.
+    /// Messages are buffered and included in the next checkpoint.
+    ///
+    /// # Arguments
+    /// * `session_id` - Session identifier
+    /// * `role` - "user" or "assistant"
+    /// * `content` - Message content
+    /// * `partial` - True if streaming response is incomplete
+    pub async fn track_conversation_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        partial: bool,
+    ) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = if role == "user" {
+            CheckpointMessage::new_user(content.to_string(), timestamp)
+        } else {
+            CheckpointMessage::new_assistant(content.to_string(), timestamp, partial)
+        };
+
+        self.checkpoint_publisher
+            .buffer_message(session_id, message)
+            .await;
+    }
+
+    /// Initialize checkpoint session (resume from S5 if exists)
+    ///
+    /// Call this when a session starts to check for existing checkpoint index.
+    /// If found, resumes numbering from last checkpoint.
+    pub async fn init_checkpoint_session(&self, session_id: &str) -> Result<()> {
+        self.checkpoint_publisher
+            .init_session(session_id, self.s5_storage.as_ref())
+            .await
+    }
+
+    /// Remove checkpoint session state (cleanup on disconnect)
+    pub async fn cleanup_checkpoint_session(&self, session_id: &str) {
+        self.checkpoint_publisher.remove_session(session_id).await;
     }
 }
 
