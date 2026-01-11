@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.11.1-checkpoint-http-endpoint-2026-01-11";
+pub const VERSION: &str = "v8.11.2-checkpoint-http-endpoint-2026-01-11";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.11.1";
+pub const VERSION_NUMBER: &str = "8.11.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 11;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-11";
@@ -245,7 +245,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 11);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_PATCH, 2);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -294,14 +294,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.11.1"));
+        assert!(version.contains("8.11.2"));
         assert!(version.contains("2026-01-11"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.11.1-checkpoint-http-endpoint-2026-01-11");
-        assert_eq!(VERSION_NUMBER, "8.11.1");
+        assert_eq!(VERSION, "v8.11.2-checkpoint-http-endpoint-2026-01-11");
+        assert_eq!(VERSION_NUMBER, "8.11.2");
         assert_eq!(BUILD_DATE, "2026-01-11");
     }
 
