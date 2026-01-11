@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 2 In Progress
+## Status: Phase 2 Complete
 
-**Status**: Sub-phase 2.3 Complete
+**Status**: Phase 2 Complete
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 87 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 26, cleanup: 11, + contracts::checkpoint_manager tests)
+**Tests Passing**: 92 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 31, cleanup: 11, + contracts::checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -983,16 +983,17 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 **Goal**: Fetch existing checkpoint index from S5 on session resume
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_resume_session_fetches_index_from_s5`
-- [ ] Write test `test_resume_session_continues_checkpoint_numbering`
-- [ ] Write test `test_new_session_starts_at_zero`
-- [ ] Write test `test_resume_handles_missing_index`
-- [ ] Implement `resume_or_create_session()` method
-- [ ] Update `publish_checkpoint()` to use resumed state
-- [ ] Run tests: `cargo test checkpoint::publisher::resume`
+- [x] Write test `test_init_session_fetches_index_from_s5`
+- [x] Write test `test_init_session_continues_checkpoint_numbering`
+- [x] Write test `test_new_session_starts_at_zero`
+- [x] Write test `test_init_session_handles_missing_index`
+- [x] Write test `test_init_session_then_publish_continues_correctly` (integration test)
+- [x] Implement `init_session()` method (done in Sub-phase 2.3)
+- [x] Verify publish_checkpoint() works correctly with resumed state
+- [x] Run tests: `cargo test checkpoint::publisher` (31 tests passing)
 
 **Why This Matters:**
 ```
@@ -1516,7 +1517,7 @@ With resumption (GOOD):
 | 2 | 2.1 | Session state management | COMPLETE ✅ |
 | 2 | 2.2 | S5 upload with retry | COMPLETE ✅ |
 | 2 | 2.3 | Publish checkpoint core logic | COMPLETE ✅ |
-| 2 | 2.4 | Session resumption from S5 | PENDING |
+| 2 | 2.4 | Session resumption from S5 | COMPLETE ✅ |
 | 3 | 3.1 | Add CheckpointPublisher to CheckpointManager | PENDING |
 | 3 | 3.2 | Integrate into submit_checkpoint_async | PENDING |
 | 3 | 3.3 | Add session ID to token tracking | PENDING |

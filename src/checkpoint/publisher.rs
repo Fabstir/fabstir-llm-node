@@ -975,4 +975,192 @@ mod tests {
         let expected_hash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
         assert_eq!(delta.proof_hash, expected_hash);
     }
+
+    // ==================== Session Resumption Tests ====================
+
+    #[tokio::test]
+    async fn test_init_session_fetches_index_from_s5() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostresume".to_string());
+
+        // Pre-populate S5 with an existing index
+        let mut existing_index =
+            CheckpointIndex::new("session-resume".to_string(), "0xhostresume".to_string());
+        existing_index.add_checkpoint(CheckpointEntry::with_timestamp(
+            0,
+            "0xproof1".to_string(),
+            "bafycid1".to_string(),
+            0,
+            1000,
+            1704844800000,
+        ));
+        existing_index.host_signature = "0xsig".to_string();
+
+        let index_path = "home/checkpoints/0xhostresume/session-resume/index.json";
+        let index_bytes = serde_json::to_vec(&existing_index).unwrap();
+        mock.put(index_path, index_bytes).await.unwrap();
+
+        // Initialize session - should fetch existing index
+        let result = publisher.init_session("session-resume", &mock).await;
+        assert!(result.is_ok(), "init_session should succeed");
+
+        // Verify state was loaded from index
+        let state = publisher
+            .get_session_state("session-resume")
+            .await
+            .expect("Session state should exist");
+        assert!(state.index.is_some(), "Index should be loaded");
+        let loaded_index = state.index.unwrap();
+        assert_eq!(loaded_index.checkpoints.len(), 1);
+        assert_eq!(loaded_index.checkpoints[0].proof_hash, "0xproof1");
+    }
+
+    #[tokio::test]
+    async fn test_init_session_continues_checkpoint_numbering() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostcont".to_string());
+
+        // Pre-populate S5 with an index that has 2 checkpoints
+        let mut existing_index =
+            CheckpointIndex::new("session-cont".to_string(), "0xhostcont".to_string());
+        existing_index.add_checkpoint(CheckpointEntry::with_timestamp(
+            0,
+            "0xproof0".to_string(),
+            "bafycid0".to_string(),
+            0,
+            1000,
+            1704844800000,
+        ));
+        existing_index.add_checkpoint(CheckpointEntry::with_timestamp(
+            1,
+            "0xproof1".to_string(),
+            "bafycid1".to_string(),
+            1000,
+            2000,
+            1704844900000,
+        ));
+        existing_index.host_signature = "0xsig".to_string();
+
+        let index_path = "home/checkpoints/0xhostcont/session-cont/index.json";
+        let index_bytes = serde_json::to_vec(&existing_index).unwrap();
+        mock.put(index_path, index_bytes).await.unwrap();
+
+        // Initialize session
+        publisher.init_session("session-cont", &mock).await.unwrap();
+
+        // Verify checkpoint index continues from last
+        let state = publisher.get_session_state("session-cont").await.unwrap();
+        assert_eq!(
+            state.checkpoint_index, 2,
+            "Checkpoint index should continue from 2 (after 0, 1)"
+        );
+        assert_eq!(
+            state.last_checkpoint_tokens, 2000,
+            "Last checkpoint tokens should be 2000"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_new_session_starts_at_zero() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostnew".to_string());
+
+        // Don't pre-populate S5 - this is a new session
+        // Initialize session - should start fresh
+        let result = publisher.init_session("session-new", &mock).await;
+        assert!(result.is_ok(), "init_session should succeed for new session");
+
+        // For a new session, no state is created until buffer_message is called
+        // Verify no error was returned (success means it handled missing index gracefully)
+
+        // Now buffer a message to create the session
+        publisher
+            .buffer_message(
+                "session-new",
+                CheckpointMessage::new_user("First message".to_string(), 100),
+            )
+            .await;
+
+        let state = publisher.get_session_state("session-new").await.unwrap();
+        assert_eq!(state.checkpoint_index, 0, "New session should start at index 0");
+        assert_eq!(state.last_checkpoint_tokens, 0, "New session should have 0 tokens");
+        assert!(state.index.is_none(), "New session should have no preloaded index");
+    }
+
+    #[tokio::test]
+    async fn test_init_session_handles_missing_index() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostmissing".to_string());
+
+        // Don't pre-populate S5 - simulate missing index
+        let result = publisher.init_session("session-missing", &mock).await;
+
+        // Should succeed (not error) when index is missing
+        assert!(
+            result.is_ok(),
+            "init_session should succeed even with missing index"
+        );
+
+        // Session state should not exist yet (no pre-loaded index)
+        let state = publisher.get_session_state("session-missing").await;
+        assert!(
+            state.is_none(),
+            "No session state should be created for missing index"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_session_then_publish_continues_correctly() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostfull".to_string());
+        let private_key = generate_test_private_key();
+
+        // Pre-populate S5 with an index that has 1 checkpoint
+        let mut existing_index =
+            CheckpointIndex::new("session-full".to_string(), "0xhostfull".to_string());
+        existing_index.add_checkpoint(CheckpointEntry::with_timestamp(
+            0,
+            "0xoldproof".to_string(),
+            "bafyoldcid".to_string(),
+            0,
+            1000,
+            1704844800000,
+        ));
+        existing_index.host_signature = "0xoldsig".to_string();
+
+        let index_path = "home/checkpoints/0xhostfull/session-full/index.json";
+        let index_bytes = serde_json::to_vec(&existing_index).unwrap();
+        mock.put(index_path, index_bytes).await.unwrap();
+
+        // Initialize session (resume)
+        publisher.init_session("session-full", &mock).await.unwrap();
+
+        // Buffer a new message
+        publisher
+            .buffer_message(
+                "session-full",
+                CheckpointMessage::new_user("New message after resume".to_string(), 2000),
+            )
+            .await;
+
+        // Publish new checkpoint
+        let proof_hash = [0x77u8; 32];
+        let result = publisher
+            .publish_checkpoint("session-full", proof_hash, 1000, 2000, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok(), "publish_checkpoint should succeed after resume");
+
+        // Verify the new checkpoint was added at index 1 (not 0)
+        let state = publisher.get_session_state("session-full").await.unwrap();
+        assert_eq!(
+            state.checkpoint_index, 2,
+            "After publishing, index should be 2"
+        );
+
+        let index = state.index.unwrap();
+        assert_eq!(index.checkpoints.len(), 2, "Index should have 2 checkpoints");
+        assert_eq!(index.checkpoints[0].index, 0, "First checkpoint should be index 0");
+        assert_eq!(index.checkpoints[1].index, 1, "Second checkpoint should be index 1");
+    }
 }
