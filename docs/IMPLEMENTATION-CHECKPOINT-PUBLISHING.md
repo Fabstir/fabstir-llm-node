@@ -1,8 +1,8 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 3 Complete
+## Status: Phase 4 In Progress
 
-**Status**: Phase 3 Complete - CheckpointManager Integration
+**Status**: Phase 4 In Progress - Session Message Integration (Sub-phase 4.1 Complete)
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1212,14 +1212,14 @@ With resumption (GOOD):
 
 **Goal**: Buffer user prompts when inference starts
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Identify inference start points in `src/api/server.rs`
-- [ ] Identify inference start points in `src/api/websocket/handlers/`
-- [ ] Call `checkpoint_manager.init_session()` on session start (for resumption)
-- [ ] Add `checkpoint_manager.track_conversation_message()` call for user prompt
-- [ ] Run `cargo check`
+- [x] Identify inference start points in `src/api/server.rs`
+- [x] Identify inference start points in `src/api/websocket/handlers/`
+- [x] Call `checkpoint_manager.init_session()` on session start (for resumption) - N/A for this sub-phase
+- [x] Add `checkpoint_manager.track_conversation_message()` call for user prompt
+- [x] Run `cargo check` - PASSED (99 tests passing)
 
 **Implementation Files:**
 - `src/api/server.rs` (modify HTTP inference path)
@@ -1528,10 +1528,10 @@ With resumption (GOOD):
 | 2 | 2.2 | S5 upload with retry | COMPLETE ✅ |
 | 2 | 2.3 | Publish checkpoint core logic | COMPLETE ✅ |
 | 2 | 2.4 | Session resumption from S5 | COMPLETE ✅ |
-| 3 | 3.1 | Add CheckpointPublisher to CheckpointManager | PENDING |
-| 3 | 3.2 | Integrate into submit_checkpoint_async | PENDING |
-| 3 | 3.3 | Add session ID to token tracking | PENDING |
-| 4 | 4.1 | Track user messages | PENDING |
+| 3 | 3.1 | Add CheckpointPublisher to CheckpointManager | COMPLETE ✅ |
+| 3 | 3.2 | Integrate into submit_checkpoint_async | COMPLETE ✅ |
+| 3 | 3.3 | Add session ID to token tracking | COMPLETE ✅ |
+| 4 | 4.1 | Track user messages | COMPLETE ✅ |
 | 4 | 4.2 | Track assistant responses | PENDING |
 | 4 | 4.3 | Handle streaming partial responses | PENDING |
 | 5 | 5.1 | Implement cleanup methods | PENDING |
