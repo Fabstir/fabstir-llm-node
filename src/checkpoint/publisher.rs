@@ -16,9 +16,19 @@
 //! ```
 
 use crate::checkpoint::{CheckpointDelta, CheckpointEntry, CheckpointIndex, CheckpointMessage};
+use crate::storage::S5Storage;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
+use tracing::warn;
+
+/// Maximum number of S5 upload retry attempts
+const MAX_S5_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff (1s, 2s, 4s)
+const S5_RETRY_BASE_DELAY_MS: u64 = 1000;
 
 /// State for tracking checkpoints within a session
 #[derive(Debug, Clone)]
@@ -144,6 +154,52 @@ impl CheckpointPublisher {
         let sessions = self.sessions.read().await;
         sessions.len()
     }
+}
+
+/// Upload data to S5 with exponential backoff retry
+///
+/// Attempts up to MAX_S5_RETRIES times with increasing delays.
+/// Delays follow exponential backoff: 1s, 2s, 4s.
+///
+/// # Arguments
+/// * `s5_storage` - S5 storage backend
+/// * `path` - S5 path to upload to
+/// * `data` - Data bytes to upload
+///
+/// # Returns
+/// CID on success, error after all retries exhausted
+pub async fn upload_with_retry(
+    s5_storage: &dyn S5Storage,
+    path: &str,
+    data: Vec<u8>,
+) -> Result<String> {
+    let mut last_error = None;
+
+    for attempt in 0..MAX_S5_RETRIES {
+        match s5_storage.put(path, data.clone()).await {
+            Ok(cid) => return Ok(cid),
+            Err(e) => {
+                warn!(
+                    "S5 upload attempt {}/{} failed for path '{}': {:?}",
+                    attempt + 1,
+                    MAX_S5_RETRIES,
+                    path,
+                    e
+                );
+                last_error = Some(e);
+                if attempt < MAX_S5_RETRIES - 1 {
+                    let delay_ms = S5_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "S5 upload failed after {} retries: {:?}",
+        MAX_S5_RETRIES,
+        last_error
+    ))
 }
 
 #[cfg(test)]
@@ -339,5 +395,82 @@ mod tests {
         // Buffer more messages for next checkpoint
         state.buffer_message(CheckpointMessage::new_user("Next question".to_string(), 600));
         assert_eq!(state.buffer_size(), 1);
+    }
+
+    // S5 Upload with Retry Tests
+    use crate::storage::s5_client::MockS5Backend;
+    use crate::storage::StorageError;
+
+    #[tokio::test]
+    async fn test_upload_succeeds_first_try() {
+        let mock = MockS5Backend::new();
+        // MockS5Backend requires paths starting with "home/" or "archive/"
+        let result =
+            upload_with_retry(&mock, "home/checkpoints/test", b"test data".to_vec()).await;
+
+        assert!(result.is_ok());
+        let cid = result.unwrap();
+        assert!(!cid.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_upload_retries_on_transient_failure() {
+        let mock = MockS5Backend::new();
+        // Inject a single transient error - mock uses take() so only first attempt fails
+        mock.inject_error(StorageError::NetworkError(
+            "simulated network failure".to_string(),
+        ))
+        .await;
+
+        // First attempt fails, retry should succeed
+        let result =
+            upload_with_retry(&mock, "home/checkpoints/test", b"test data".to_vec()).await;
+
+        // Should succeed on retry
+        assert!(result.is_ok(), "Should succeed after retry");
+        let cid = result.unwrap();
+        assert!(!cid.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_upload_fails_with_invalid_path() {
+        let mock = MockS5Backend::new();
+
+        // MockS5Backend validates paths - this should fail with InvalidPath error
+        let result = upload_with_retry(&mock, "invalid/path", b"test data".to_vec()).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed after 3 retries"));
+    }
+
+    #[tokio::test]
+    async fn test_upload_returns_cid_from_mock() {
+        let mock = MockS5Backend::new();
+
+        // Upload some data (path must start with home/ or archive/)
+        let result = upload_with_retry(
+            &mock,
+            "home/checkpoints/session123/delta.json",
+            b"checkpoint data".to_vec(),
+        )
+        .await;
+        assert!(result.is_ok());
+
+        // Verify we got a CID back (MockS5Backend uses s5:// prefix)
+        let cid = result.unwrap();
+        assert!(cid.starts_with("s5://") || !cid.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_upload_different_paths_succeed() {
+        let mock = MockS5Backend::new();
+
+        // Upload to multiple paths (must start with home/ or archive/)
+        let result1 = upload_with_retry(&mock, "home/path/1", b"data1".to_vec()).await;
+        let result2 = upload_with_retry(&mock, "home/path/2", b"data2".to_vec()).await;
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
     }
 }
