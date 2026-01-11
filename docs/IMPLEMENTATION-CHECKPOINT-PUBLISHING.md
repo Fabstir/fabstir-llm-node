@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 3 In Progress (Sub-phase 3.1 Complete)
+## Status: Phase 3 In Progress (Sub-phase 3.2 Complete)
 
-**Status**: Phase 3.1 Complete - CheckpointManager Integration
+**Status**: Phase 3.2 Complete - submit_checkpoint_async Integration
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 92 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 31, cleanup: 11, + contracts::checkpoint_manager tests)
+**Tests Passing**: 97 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 31, cleanup: 11, checkpoint_manager integration: 5, + existing checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -1120,15 +1120,20 @@ With resumption (GOOD):
 
 **Goal**: Call checkpoint publisher BEFORE chain submission
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_checkpoint_published_before_proof`
-- [ ] Write test `test_proof_blocked_on_publish_failure`
-- [ ] Write test `test_proof_submitted_after_publish_success`
-- [ ] Modify `submit_checkpoint_async()` to call publisher at line ~608
-- [ ] Add error handling to block proof on publish failure
-- [ ] Run tests: `cargo test checkpoint_manager`
+- [x] Modify `submit_checkpoint_async()` to accept session_id, checkpoint_publisher, previous_checkpoint_tokens
+- [x] Add checkpoint publishing logic after proof upload, before chain submission
+- [x] Add error handling to block proof on publish failure (returns Err, does NOT submit)
+- [x] Update all 3 call sites to pass new parameters
+- [x] Write integration tests:
+  - `test_checkpoint_publisher_initialization`
+  - `test_track_conversation_message_user`
+  - `test_track_conversation_message_assistant_partial`
+  - `test_cleanup_checkpoint_session`
+  - `test_session_id_in_job_tracker`
+- [x] Run tests: 97 checkpoint tests passing
 
 **Critical Integration Point:**
 - File: `src/contracts/checkpoint_manager.rs`

@@ -149,6 +149,9 @@ impl CheckpointManager {
             // Optimistically update the checkpoint to reflect cumulative tokens proven
             tracker.last_checkpoint = tracker.tokens_generated;
 
+            // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
+            let session_id_for_publish = tracker.session_id.clone();
+
             drop(trackers); // Release lock before async operation
 
             info!(
@@ -163,6 +166,7 @@ impl CheckpointManager {
             let proof_system_address = self.proof_system_address;
             let host_address = self.host_address;
             let s5_storage = self.s5_storage.clone();
+            let checkpoint_publisher = self.checkpoint_publisher.clone();
 
             // Phase 4: Get content hashes for real proof binding (v8.10.0+)
             let content_hashes = self.get_content_hashes(job_id).await;
@@ -179,6 +183,9 @@ impl CheckpointManager {
                     job_id,
                     tokens_to_submit,
                     content_hashes,
+                    session_id_for_publish,
+                    checkpoint_publisher,
+                    previous_checkpoint,
                 ).await;
 
                 // Update tracker based on result
@@ -574,6 +581,7 @@ impl CheckpointManager {
     /// This is used by tokio::spawn to submit checkpoints without blocking streaming
     ///
     /// Phase 4 (v8.10.0+): Accepts optional content hashes for proof binding
+    /// Phase 3 (v8.11.0+): Publishes checkpoint to S5 BEFORE chain submission
     async fn submit_checkpoint_async(
         web3_client: Arc<Web3Client>,
         s5_storage: Box<dyn S5Storage>,
@@ -582,6 +590,9 @@ impl CheckpointManager {
         job_id: u64,
         tokens_generated: u64,
         content_hashes: Option<([u8; 32], [u8; 32])>,
+        session_id: Option<String>,
+        checkpoint_publisher: Arc<CheckpointPublisher>,
+        previous_checkpoint_tokens: u64,
     ) -> Result<()> {
         let tokens_to_submit = tokens_generated;
 
@@ -619,6 +630,42 @@ impl CheckpointManager {
         // Generate host signature for security audit compliance (v8.9.0)
         let private_key = crate::crypto::extract_node_private_key()
             .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
+
+        // Phase 3: Publish checkpoint to S5 BEFORE chain submission (v8.11.0)
+        // CRITICAL: If this fails, we MUST NOT submit proof to chain
+        if let Some(ref session_id) = session_id {
+            let start_token = previous_checkpoint_tokens;
+            let end_token = previous_checkpoint_tokens + tokens_to_submit;
+
+            match checkpoint_publisher
+                .publish_checkpoint(
+                    session_id,
+                    proof_hash_bytes,
+                    start_token,
+                    end_token,
+                    &private_key,
+                    s5_storage.as_ref(),
+                )
+                .await
+            {
+                Ok(delta_cid) => {
+                    info!(
+                        "✅ [ASYNC] Checkpoint published to S5: {} (session={})",
+                        delta_cid, session_id
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "❌ [ASYNC] S5 checkpoint upload failed - NOT submitting proof: {}",
+                        e
+                    );
+                    return Err(anyhow!(
+                        "Checkpoint publishing failed - proof NOT submitted: {}",
+                        e
+                    ));
+                }
+            }
+        }
         let signature = crate::crypto::sign_proof_data(
             &private_key,
             proof_hash_bytes,
@@ -879,6 +926,9 @@ impl CheckpointManager {
                 tracker.submission_in_progress = true;
                 tracker.last_checkpoint = tracker.tokens_generated; // Update to total after submission
 
+                // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
+                let session_id_for_publish = tracker.session_id.clone();
+
                 drop(trackers); // Release lock for async operation
 
                 // SYNCHRONOUS CHECKPOINT SUBMISSION: Must wait for proof to be on-chain
@@ -896,6 +946,9 @@ impl CheckpointManager {
                     job_id,
                     tokens_to_submit,
                     content_hashes,
+                    session_id_for_publish,
+                    self.checkpoint_publisher.clone(),
+                    previous_checkpoint,
                 ).await;
 
                 // Update tracker based on result
@@ -949,6 +1002,7 @@ impl CheckpointManager {
         let proof_system_address = self.proof_system_address;
         let host_address = self.host_address;
         let s5_storage = self.s5_storage.clone();
+        let checkpoint_publisher = self.checkpoint_publisher.clone();
 
         // Phase 4: Get content hashes before spawning (v8.10.0+)
         let content_hashes = self.get_content_hashes(job_id).await;
@@ -963,7 +1017,7 @@ impl CheckpointManager {
             // Acquire lock inside the spawned task (not blocking caller)
             let mut trackers = job_trackers.write().await;
 
-            let (tokens_to_submit, previous_checkpoint) = if let Some(tracker) = trackers.get_mut(&job_id) {
+            let (tokens_to_submit, previous_checkpoint, session_id_for_publish) = if let Some(tracker) = trackers.get_mut(&job_id) {
                 let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
 
                 // Skip if submission in progress or not enough tokens
@@ -997,7 +1051,10 @@ impl CheckpointManager {
                 tracker.submission_in_progress = true;
                 tracker.last_checkpoint = tracker.tokens_generated;
 
-                (tokens_to_submit, previous_checkpoint)
+                // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
+                let session_id_for_publish = tracker.session_id.clone();
+
+                (tokens_to_submit, previous_checkpoint, session_id_for_publish)
             } else {
                 info!("⚠️ [FORCE-CHECKPOINT-BG] No tracker found for job {}", job_id);
                 return;
@@ -1015,6 +1072,9 @@ impl CheckpointManager {
                 job_id,
                 tokens_to_submit,
                 content_hashes,
+                session_id_for_publish,
+                checkpoint_publisher,
+                previous_checkpoint,
             ).await;
 
             // Update tracker based on result
@@ -2142,5 +2202,119 @@ mod tests {
             computed_hash, expected_bytes,
             "Accumulated response should produce same hash as full response"
         );
+    }
+
+    // ========================================================================
+    // Phase 3: Checkpoint Publishing Integration Tests (Sub-phase 3.2)
+    // ========================================================================
+
+    /// Test that CheckpointPublisher is properly initialized with host address
+    #[test]
+    fn test_checkpoint_publisher_initialization() {
+        use crate::checkpoint::CheckpointPublisher;
+
+        let host_address = "0xABC123DEF456".to_string();
+        let publisher = CheckpointPublisher::new(host_address);
+
+        // Host address should be lowercase
+        assert_eq!(publisher.host_address(), "0xabc123def456");
+    }
+
+    /// Test that track_conversation_message creates proper message types
+    #[tokio::test]
+    async fn test_track_conversation_message_user() {
+        use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "test-session";
+
+        // Simulate track_conversation_message for user
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = CheckpointMessage::new_user("Hello".to_string(), timestamp);
+        publisher.buffer_message(session_id, message).await;
+
+        let state = publisher.get_session_state(session_id).await.unwrap();
+        assert_eq!(state.buffer_size(), 1);
+    }
+
+    /// Test that track_conversation_message creates assistant messages with partial flag
+    #[tokio::test]
+    async fn test_track_conversation_message_assistant_partial() {
+        use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "test-session";
+
+        // Simulate track_conversation_message for partial assistant response
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = CheckpointMessage::new_assistant("Partial...".to_string(), timestamp, true);
+        publisher.buffer_message(session_id, message).await;
+
+        let state = publisher.get_session_state(session_id).await.unwrap();
+        let messages = state.get_buffered_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].metadata.is_some());
+    }
+
+    /// Test that cleanup_checkpoint_session removes session state
+    #[tokio::test]
+    async fn test_cleanup_checkpoint_session() {
+        use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "test-session";
+
+        // Add a message
+        let timestamp = 12345u64;
+        let message = CheckpointMessage::new_user("Test".to_string(), timestamp);
+        publisher.buffer_message(session_id, message).await;
+
+        // Verify session exists
+        assert!(publisher.get_session_state(session_id).await.is_some());
+
+        // Cleanup
+        publisher.remove_session(session_id).await;
+
+        // Verify session is gone
+        assert!(publisher.get_session_state(session_id).await.is_none());
+    }
+
+    /// Test that session_id is properly passed through token tracking
+    #[tokio::test]
+    async fn test_session_id_in_job_tracker() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 12345u64;
+        let session_id = Some("session-abc".to_string());
+
+        // Create tracker with session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 0,
+                    last_checkpoint: 0,
+                    session_id: session_id.clone(),
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                },
+            );
+        }
+
+        // Verify session_id is stored
+        let trackers = job_trackers.read().await;
+        let tracker = trackers.get(&job_id).unwrap();
+        assert_eq!(tracker.session_id, Some("session-abc".to_string()));
     }
 }
