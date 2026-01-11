@@ -46,6 +46,10 @@ pub struct SessionCheckpointState {
 
     /// Cached checkpoint index (for session resumption)
     pub index: Option<CheckpointIndex>,
+
+    /// In-progress streaming response (for partial checkpoints)
+    /// This is accumulated during streaming and included as partial if checkpoint triggers mid-stream
+    pub streaming_response: Option<String>,
 }
 
 impl SessionCheckpointState {
@@ -56,6 +60,7 @@ impl SessionCheckpointState {
             message_buffer: Vec::new(),
             last_checkpoint_tokens: 0,
             index: None,
+            streaming_response: None,
         }
     }
 
@@ -72,6 +77,7 @@ impl SessionCheckpointState {
             message_buffer: Vec::new(),
             last_checkpoint_tokens,
             index: Some(index),
+            streaming_response: None,
         }
     }
 
@@ -98,6 +104,26 @@ impl SessionCheckpointState {
     /// Get current buffer size
     pub fn buffer_size(&self) -> usize {
         self.message_buffer.len()
+    }
+
+    /// Update the streaming response buffer with a new chunk
+    /// Used during streaming inference to accumulate partial response
+    pub fn update_streaming_response(&mut self, chunk: &str) {
+        match &mut self.streaming_response {
+            Some(buffer) => buffer.push_str(chunk),
+            None => self.streaming_response = Some(chunk.to_string()),
+        }
+    }
+
+    /// Clear the streaming response buffer
+    /// Called when response completes (full message is tracked separately)
+    pub fn clear_streaming_response(&mut self) {
+        self.streaming_response = None;
+    }
+
+    /// Get the current streaming response (if any)
+    pub fn get_streaming_response(&self) -> Option<&str> {
+        self.streaming_response.as_deref()
     }
 }
 
@@ -157,6 +183,25 @@ impl CheckpointPublisher {
         sessions.len()
     }
 
+    /// Update streaming response buffer with a new chunk
+    /// Call this during streaming inference to accumulate partial response
+    pub async fn update_streaming_response(&self, session_id: &str, chunk: &str) {
+        let mut sessions = self.sessions.write().await;
+        let state = sessions
+            .entry(session_id.to_string())
+            .or_insert_with(SessionCheckpointState::new);
+        state.update_streaming_response(chunk);
+    }
+
+    /// Clear streaming response buffer
+    /// Call this when response completes (after tracking full message)
+    pub async fn clear_streaming_response(&self, session_id: &str) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(state) = sessions.get_mut(session_id) {
+            state.clear_streaming_response();
+        }
+    }
+
     /// CRITICAL: Publish checkpoint to S5 BEFORE proof submission
     ///
     /// This method MUST be called before submitting proof on-chain.
@@ -190,8 +235,27 @@ impl CheckpointPublisher {
             .entry(session_id.to_string())
             .or_insert_with(SessionCheckpointState::new);
 
-        let messages = state.get_buffered_messages();
+        let mut messages = state.get_buffered_messages();
         let checkpoint_index = state.checkpoint_index;
+
+        // Phase 4.3: Include streaming response as partial message if checkpoint triggers mid-stream
+        if let Some(partial_response) = state.get_streaming_response() {
+            if !partial_response.is_empty() {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                messages.push(CheckpointMessage::new_assistant(
+                    partial_response.to_string(),
+                    timestamp,
+                    true, // partial - response continues in next delta
+                ));
+                info!(
+                    "Including partial streaming response ({} chars) in checkpoint",
+                    partial_response.len()
+                );
+            }
+        }
 
         info!(
             "Publishing checkpoint {} for session {} ({} messages, tokens {}-{})",
@@ -1162,5 +1226,163 @@ mod tests {
         assert_eq!(index.checkpoints.len(), 2, "Index should have 2 checkpoints");
         assert_eq!(index.checkpoints[0].index, 0, "First checkpoint should be index 0");
         assert_eq!(index.checkpoints[1].index, 1, "Second checkpoint should be index 1");
+    }
+
+    // ==================== Streaming Response Tests (Phase 4.3) ====================
+
+    #[test]
+    fn test_update_streaming_response_accumulates() {
+        let mut state = SessionCheckpointState::new();
+        assert!(state.streaming_response.is_none());
+
+        state.update_streaming_response("Hello");
+        assert_eq!(state.get_streaming_response(), Some("Hello"));
+
+        state.update_streaming_response(" World");
+        assert_eq!(state.get_streaming_response(), Some("Hello World"));
+
+        state.update_streaming_response("!");
+        assert_eq!(state.get_streaming_response(), Some("Hello World!"));
+    }
+
+    #[test]
+    fn test_clear_streaming_response() {
+        let mut state = SessionCheckpointState::new();
+        state.update_streaming_response("Some content");
+        assert!(state.get_streaming_response().is_some());
+
+        state.clear_streaming_response();
+        assert!(state.streaming_response.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_publisher_update_streaming_response() {
+        let publisher = CheckpointPublisher::new("0xhost".to_string());
+
+        publisher.update_streaming_response("session-1", "Hello").await;
+        publisher.update_streaming_response("session-1", " World").await;
+
+        let state = publisher.get_session_state("session-1").await.unwrap();
+        assert_eq!(state.get_streaming_response(), Some("Hello World"));
+    }
+
+    #[tokio::test]
+    async fn test_publisher_clear_streaming_response() {
+        let publisher = CheckpointPublisher::new("0xhost".to_string());
+
+        publisher.update_streaming_response("session-1", "Hello").await;
+        publisher.clear_streaming_response("session-1").await;
+
+        let state = publisher.get_session_state("session-1").await.unwrap();
+        assert!(state.get_streaming_response().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_streaming_response_marked_partial() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostpartial".to_string());
+        let private_key = generate_test_private_key();
+
+        // Buffer a user message
+        publisher
+            .buffer_message(
+                "session-partial",
+                CheckpointMessage::new_user("What is 2+2?".to_string(), 100),
+            )
+            .await;
+
+        // Simulate streaming response in progress (not complete)
+        publisher
+            .update_streaming_response("session-partial", "The answer is")
+            .await;
+
+        // Publish checkpoint - should include partial response
+        let proof_hash = [0xAAu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-partial", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify delta includes the partial response
+        let delta_path = "home/checkpoints/0xhostpartial/session-partial/delta_0.json";
+        let stored = mock.get(delta_path).await.unwrap();
+        let delta: CheckpointDelta = serde_json::from_slice(&stored).unwrap();
+
+        // Should have 2 messages: user question + partial assistant response
+        assert_eq!(delta.messages.len(), 2, "Should have user + partial assistant");
+        assert_eq!(delta.messages[0].role, "user");
+        assert_eq!(delta.messages[1].role, "assistant");
+        assert_eq!(delta.messages[1].content, "The answer is");
+
+        // Verify partial flag is set
+        assert!(
+            delta.messages[1].metadata.is_some(),
+            "Partial response should have metadata"
+        );
+        let metadata = delta.messages[1].metadata.as_ref().unwrap();
+        assert_eq!(
+            metadata.partial,
+            Some(true),
+            "Partial flag should be true"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_partial_replaced_on_completion() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostreplace".to_string());
+        let private_key = generate_test_private_key();
+
+        // Buffer a user message
+        publisher
+            .buffer_message(
+                "session-replace",
+                CheckpointMessage::new_user("What is 2+2?".to_string(), 100),
+            )
+            .await;
+
+        // Simulate streaming response in progress
+        publisher
+            .update_streaming_response("session-replace", "The answer")
+            .await;
+
+        // First checkpoint with partial response
+        let proof_hash1 = [0xBBu8; 32];
+        let result1 = publisher
+            .publish_checkpoint("session-replace", proof_hash1, 0, 500, &private_key, &mock)
+            .await;
+        assert!(result1.is_ok());
+
+        // Now response completes - clear streaming buffer and add full message
+        publisher.clear_streaming_response("session-replace").await;
+        publisher
+            .buffer_message(
+                "session-replace",
+                CheckpointMessage::new_assistant("The answer is 4.".to_string(), 200, false),
+            )
+            .await;
+
+        // Second checkpoint with complete response
+        let proof_hash2 = [0xCCu8; 32];
+        let result2 = publisher
+            .publish_checkpoint("session-replace", proof_hash2, 500, 1000, &private_key, &mock)
+            .await;
+        assert!(result2.is_ok());
+
+        // Verify second delta has complete (non-partial) response
+        let delta_path2 = "home/checkpoints/0xhostreplace/session-replace/delta_1.json";
+        let stored2 = mock.get(delta_path2).await.unwrap();
+        let delta2: CheckpointDelta = serde_json::from_slice(&stored2).unwrap();
+
+        assert_eq!(delta2.messages.len(), 1, "Should have 1 complete assistant message");
+        assert_eq!(delta2.messages[0].role, "assistant");
+        assert_eq!(delta2.messages[0].content, "The answer is 4.");
+
+        // Should NOT have partial flag
+        assert!(
+            delta2.messages[0].metadata.is_none(),
+            "Complete response should not have metadata with partial flag"
+        );
     }
 }

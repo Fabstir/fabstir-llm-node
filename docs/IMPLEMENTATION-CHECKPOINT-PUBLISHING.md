@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 4 In Progress
+## Status: Phase 4 Complete
 
-**Status**: Phase 4 In Progress - Session Message Integration (Sub-phases 4.1, 4.2 Complete)
+**Status**: Phase 4 Complete - Session Message Integration
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 99 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 31, cleanup: 11, checkpoint_manager integration: 7, + existing checkpoint_manager tests)
+**Tests Passing**: 105 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 37, cleanup: 11, checkpoint_manager integration: 7, + existing checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -1277,15 +1277,17 @@ With resumption (GOOD):
 
 **Goal**: Mark in-progress responses as partial at checkpoint time
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Add `response_buffer` to checkpoint state per session
-- [ ] On checkpoint trigger: include buffered response with `partial: true`
-- [ ] On response completion: replace partial with full message
-- [ ] Write test `test_streaming_response_marked_partial`
-- [ ] Write test `test_partial_replaced_on_completion`
-- [ ] Run tests: `cargo test checkpoint::streaming`
+- [x] Add `streaming_response: Option<String>` to SessionCheckpointState
+- [x] Add `update_streaming_response()`, `clear_streaming_response()`, `get_streaming_response()` methods
+- [x] Add methods to CheckpointPublisher for managing streaming responses
+- [x] On checkpoint trigger: include buffered response with `partial: true`
+- [x] On response completion: clear streaming buffer (full message tracked separately)
+- [x] Write test `test_streaming_response_marked_partial` - PASSED
+- [x] Write test `test_partial_replaced_on_completion` - PASSED
+- [x] Run tests: 105 checkpoint tests passing (6 new streaming tests)
 
 **Implementation Files:**
 - `src/checkpoint/publisher.rs` (modify)
@@ -1533,7 +1535,7 @@ With resumption (GOOD):
 | 3 | 3.3 | Add session ID to token tracking | COMPLETE ✅ |
 | 4 | 4.1 | Track user messages | COMPLETE ✅ |
 | 4 | 4.2 | Track assistant responses | COMPLETE ✅ |
-| 4 | 4.3 | Handle streaming partial responses | PENDING |
+| 4 | 4.3 | Handle streaming partial responses | COMPLETE ✅ |
 | 5 | 5.1 | Implement cleanup methods | PENDING |
 | 6 | 6.1 | Integration tests | PENDING |
 | 6 | 6.2 | Update version | PENDING |
