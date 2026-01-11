@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 5 Complete
+## Status: Phase 6 In Progress
 
-**Status**: Phase 5 Complete - Cleanup Policy
+**Status**: Phase 6 In Progress - Testing & Finalization (Sub-phase 6.1 Complete)
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 110 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 37, cleanup: 16, checkpoint_manager integration: 7, + existing checkpoint_manager tests)
+**Tests Passing**: 110 unit tests + 8 integration tests = 118 checkpoint tests total
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -1411,15 +1411,19 @@ With resumption (GOOD):
 
 **Goal**: End-to-end checkpoint publishing tests
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_full_checkpoint_flow` - 1000 tokens triggers checkpoint
-- [ ] Write test `test_multiple_checkpoints` - 3000 tokens = 3 checkpoints
-- [ ] Write test `test_checkpoint_recovery_by_sdk` - verify data format
-- [ ] Write test `test_s5_failure_blocks_proof` - no orphaned proofs
-- [ ] Create `tests/checkpoint_tests.rs`
-- [ ] Run tests: `cargo test --test checkpoint_tests`
+- [x] Write test `test_full_checkpoint_flow` - 1000 tokens triggers checkpoint
+- [x] Write test `test_multiple_checkpoints` - 3000 tokens = 3 checkpoints
+- [x] Write test `test_checkpoint_recovery_by_sdk` - verify data format
+- [x] Write test `test_s5_failure_blocks_proof` - no orphaned proofs
+- [x] Write test `test_session_resumption_from_s5` - session continuity
+- [x] Write test `test_cleanup_deletes_all_checkpoint_data` - cleanup integration
+- [x] Write test `test_checkpoint_signatures_verifiable` - EIP-191 format
+- [x] Write test `test_json_keys_alphabetically_sorted` - SDK compatibility
+- [x] Create `tests/checkpoint/test_checkpoint_publishing.rs`
+- [x] Run tests: 8 integration tests passing
 
 **Test Files:**
 - `tests/checkpoint_tests.rs` (max 400 lines)
@@ -1539,7 +1543,7 @@ With resumption (GOOD):
 | 4 | 4.2 | Track assistant responses | COMPLETE ✅ |
 | 4 | 4.3 | Handle streaming partial responses | COMPLETE ✅ |
 | 5 | 5.1 | Implement cleanup methods | COMPLETE ✅ |
-| 6 | 6.1 | Integration tests | PENDING |
+| 6 | 6.1 | Integration tests | COMPLETE ✅ |
 | 6 | 6.2 | Update version | PENDING |
 | 6 | 6.3 | Documentation | PENDING |
 | 6 | 6.4 | Create release tarball | PENDING |
