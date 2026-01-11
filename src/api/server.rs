@@ -602,6 +602,14 @@ impl ApiServer {
             }
         }
 
+        // Phase 3: Track user message for checkpoint publishing (v8.11.0)
+        if let Some(ref session_id) = request.session_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                cm.track_conversation_message(session_id, "user", &request.prompt, false)
+                    .await;
+            }
+        }
+
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
             model_id: model_id.clone(),
@@ -822,6 +830,14 @@ impl ApiServer {
         if let Some(jid) = job_id {
             if let Some(cm) = checkpoint_manager.as_ref() {
                 cm.set_prompt_hash(jid, prompt_hash).await;
+            }
+        }
+
+        // Phase 3: Track user message for checkpoint publishing (v8.11.0)
+        if let Some(ref session_id) = request.session_id {
+            if let Some(cm) = checkpoint_manager.as_ref() {
+                cm.track_conversation_message(session_id, "user", &request.prompt, false)
+                    .await;
             }
         }
 
