@@ -114,11 +114,16 @@ impl CheckpointManager {
                 job_id,
                 tokens_generated: 0,
                 last_checkpoint: 0,
-                session_id,
+                session_id: session_id.clone(),
                 submission_in_progress: false,
                 last_proof_timestamp: None,
             }
         });
+
+        // Update session_id if provided and not already set (Phase 3.3)
+        if tracker.session_id.is_none() && session_id.is_some() {
+            tracker.session_id = session_id;
+        }
 
         tracker.tokens_generated += tokens;
 
@@ -2316,5 +2321,95 @@ mod tests {
         let trackers = job_trackers.read().await;
         let tracker = trackers.get(&job_id).unwrap();
         assert_eq!(tracker.session_id, Some("session-abc".to_string()));
+    }
+
+    /// Test that session_id can be updated if initially None
+    #[tokio::test]
+    async fn test_session_id_updated_when_initially_none() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 99999u64;
+
+        // First: create tracker WITHOUT session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 100,
+                    last_checkpoint: 0,
+                    session_id: None, // Initially None
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                },
+            );
+        }
+
+        // Verify session_id is None
+        {
+            let trackers = job_trackers.read().await;
+            let tracker = trackers.get(&job_id).unwrap();
+            assert!(tracker.session_id.is_none());
+        }
+
+        // Simulate update logic from track_tokens
+        {
+            let mut trackers = job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                let new_session_id = Some("late-session".to_string());
+                if tracker.session_id.is_none() && new_session_id.is_some() {
+                    tracker.session_id = new_session_id;
+                }
+            }
+        }
+
+        // Verify session_id is now set
+        let trackers = job_trackers.read().await;
+        let tracker = trackers.get(&job_id).unwrap();
+        assert_eq!(tracker.session_id, Some("late-session".to_string()));
+    }
+
+    /// Test that session_id is NOT overwritten if already set
+    #[tokio::test]
+    async fn test_session_id_not_overwritten_if_already_set() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 88888u64;
+
+        // Create tracker WITH session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 100,
+                    last_checkpoint: 0,
+                    session_id: Some("original-session".to_string()),
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                },
+            );
+        }
+
+        // Simulate update logic with different session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                let new_session_id = Some("different-session".to_string());
+                // This should NOT update because session_id is already set
+                if tracker.session_id.is_none() && new_session_id.is_some() {
+                    tracker.session_id = new_session_id;
+                }
+            }
+        }
+
+        // Verify session_id is STILL the original
+        let trackers = job_trackers.read().await;
+        let tracker = trackers.get(&job_id).unwrap();
+        assert_eq!(tracker.session_id, Some("original-session".to_string()));
     }
 }
