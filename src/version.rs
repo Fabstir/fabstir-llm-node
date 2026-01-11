@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.11.0-checkpoint-publishing-2026-01-11";
+pub const VERSION: &str = "v8.11.1-checkpoint-http-endpoint-2026-01-11";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.11.0";
+pub const VERSION_NUMBER: &str = "8.11.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 11;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-11";
@@ -121,6 +121,9 @@ pub const FEATURES: &[&str] = &[
     "sorted-json-keys",
     "session-resumption",
     "ttl-cleanup-policy",
+    // HTTP checkpoint endpoint (v8.11.1+)
+    "http-checkpoint-endpoint",
+    "checkpoint-index-api",
 ];
 
 /// Supported chain IDs
@@ -131,6 +134,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.11.1 - HTTP Checkpoint Endpoint (Jan 11, 2026)
+    "FEAT: Added GET /v1/checkpoints/{session_id} HTTP endpoint",
+    "FEAT: SDK can now retrieve checkpoint index without direct S5 access",
+    "FEAT: CheckpointManager accessor methods for host_address and s5_storage",
     // v8.11.0 - Checkpoint Publishing for Conversation Recovery (Jan 11, 2026)
     "FEAT: Checkpoint publishing to S5 for SDK conversation recovery",
     "FEAT: Signed checkpoint deltas with EIP-191 signatures",
@@ -238,7 +245,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 11);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -287,14 +294,20 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.11.0"));
+        assert!(version.contains("8.11.1"));
         assert!(version.contains("2026-01-11"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.11.0-checkpoint-publishing-2026-01-11");
-        assert_eq!(VERSION_NUMBER, "8.11.0");
+        assert_eq!(VERSION, "v8.11.1-checkpoint-http-endpoint-2026-01-11");
+        assert_eq!(VERSION_NUMBER, "8.11.1");
         assert_eq!(BUILD_DATE, "2026-01-11");
+    }
+
+    #[test]
+    fn test_http_checkpoint_features() {
+        assert!(FEATURES.contains(&"http-checkpoint-endpoint"));
+        assert!(FEATURES.contains(&"checkpoint-index-api"));
     }
 }

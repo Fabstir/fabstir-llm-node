@@ -843,6 +843,75 @@ GET /v1/session/{session_id}/info
 
 ---
 
+### Get Checkpoint Index
+
+Retrieve the checkpoint index for a session, enabling SDK conversation recovery after session timeout. The SDK cannot directly access the node's S5 storage, so this endpoint provides HTTP access to checkpoint data.
+
+#### Request
+
+```http
+GET /v1/checkpoints/{session_id}
+```
+
+#### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | String | Yes | Session ID for checkpoint retrieval |
+
+#### Response
+
+```json
+{
+  "sessionId": "abc123",
+  "hostAddress": "0x1234567890abcdef1234567890abcdef12345678",
+  "checkpoints": [
+    {
+      "index": 0,
+      "proofHash": "0xabcd1234...",
+      "proofCid": "bafybeig...",
+      "deltaCid": "bafybeih...",
+      "tokenCount": 1000,
+      "timestamp": 1704067200
+    }
+  ],
+  "messagesSignature": "0x...",
+  "checkpointsSignature": "0x..."
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | String | Session identifier |
+| `hostAddress` | String | Node's Ethereum address (lowercase, 0x-prefixed) |
+| `checkpoints` | Array | List of checkpoint entries |
+| `checkpoints[].index` | Integer | Sequential checkpoint number (0-based) |
+| `checkpoints[].proofHash` | String | Keccak256 hash of proof data (matches on-chain) |
+| `checkpoints[].proofCid` | String | S5 CID of full proof data |
+| `checkpoints[].deltaCid` | String | S5 CID of conversation delta JSON |
+| `checkpoints[].tokenCount` | Integer | Total tokens at this checkpoint |
+| `checkpoints[].timestamp` | Integer | Unix timestamp of checkpoint creation |
+| `messagesSignature` | String | EIP-191 signature over messages JSON |
+| `checkpointsSignature` | String | EIP-191 signature over checkpoints array |
+
+#### Status Codes
+
+- `200 OK` - Successfully retrieved checkpoint index
+- `404 Not Found` - No checkpoints found for session
+- `500 Internal Server Error` - S5 storage or parsing error
+- `503 Service Unavailable` - Checkpoint service not configured
+
+#### Usage Notes
+
+- Checkpoint indices are stored in S5 at `home/checkpoints/{hostAddress}/{sessionId}/index.json`
+- The SDK should verify signatures using the node's public address
+- Delta CIDs can be fetched from S5 to reconstruct conversation history
+- Proof hashes can be verified against on-chain `submitProofOfWork` transactions
+
+---
+
 ### Generate Embeddings
 
 Generate 384-dimensional text embeddings using host-side ONNX models. This endpoint provides **zero-cost embeddings** as an alternative to expensive external APIs (OpenAI, Cohere), enabling efficient vector database operations and semantic search.
