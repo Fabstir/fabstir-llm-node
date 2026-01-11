@@ -1,8 +1,8 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 2 Complete
+## Status: Phase 3 In Progress (Sub-phase 3.1 Complete)
 
-**Status**: Phase 2 Complete
+**Status**: Phase 3.1 Complete - CheckpointManager Integration
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1063,15 +1063,17 @@ With resumption (GOOD):
 
 **Goal**: Integrate CheckpointPublisher into existing CheckpointManager
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Add `checkpoint_publisher: Option<Arc<CheckpointPublisher>>` field to CheckpointManager
-- [ ] Update `CheckpointManager::new()` to create publisher
-- [ ] Add `set_checkpoint_publisher()` method
-- [ ] Add `track_conversation_message()` method
-- [ ] Add `init_session()` method that calls `resume_or_create_session()`
-- [ ] Run `cargo check`
+- [x] Add `checkpoint_publisher: Arc<CheckpointPublisher>` field to CheckpointManager
+- [x] Update `CheckpointManager::new()` to create publisher
+- [x] Add `checkpoint_publisher()` accessor method
+- [x] Add `track_conversation_message()` method
+- [x] Add `init_checkpoint_session()` method that calls publisher's `init_session()`
+- [x] Add `cleanup_checkpoint_session()` method for session cleanup
+- [x] Run `cargo check` - PASSED
+- [x] Run checkpoint tests - 92 tests passing
 
 **Implementation Files:**
 - `src/contracts/checkpoint_manager.rs` (modify - add ~50 lines)
