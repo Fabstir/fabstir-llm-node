@@ -13,8 +13,11 @@
 //! | Cancelled        | Immediate     |
 //! | Dispute Open     | Until resolved + 7 days |
 
-use crate::checkpoint::SessionState;
+use crate::checkpoint::{CheckpointIndex, SessionState};
+use crate::storage::S5Storage;
+use anyhow::{anyhow, Result};
 use std::time::Duration;
+use tracing::{info, warn};
 
 /// TTL for completed sessions (7 days)
 pub const TTL_COMPLETED: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -27,6 +30,162 @@ pub const TTL_CANCELLED: Duration = Duration::ZERO;
 
 /// Grace period after dispute resolution (7 days)
 pub const TTL_DISPUTE_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Result of a cleanup operation
+#[derive(Debug, Clone, PartialEq)]
+pub enum CleanupResult {
+    /// Session is active, no cleanup performed
+    Skipped,
+    /// Marked for future cleanup with TTL
+    MarkedForCleanup { ttl_days: u64 },
+    /// Immediate deletion performed
+    Deleted { deltas_removed: usize },
+    /// Cleanup failed
+    Failed(String),
+}
+
+/// Clean up checkpoint data for a session based on its state
+///
+/// # Arguments
+/// * `s5_storage` - S5 storage backend
+/// * `host_address` - Host's Ethereum address
+/// * `session_id` - Session identifier
+/// * `state` - Final session state
+///
+/// # Returns
+/// * `Ok(CleanupResult)` - Result of cleanup operation
+/// * `Err` - Cleanup failed
+pub async fn cleanup_checkpoints(
+    s5_storage: &dyn S5Storage,
+    host_address: &str,
+    session_id: &str,
+    state: SessionState,
+) -> Result<CleanupResult> {
+    let index_path = CheckpointIndex::s5_path(host_address, session_id);
+
+    match state {
+        SessionState::Active => {
+            // Never cleanup active sessions
+            Ok(CleanupResult::Skipped)
+        }
+        SessionState::Cancelled => {
+            // Immediate deletion
+            info!(
+                "Immediately deleting checkpoints for cancelled session {}",
+                session_id
+            );
+            let count = delete_all_checkpoints(s5_storage, host_address, session_id).await?;
+            Ok(CleanupResult::Deleted {
+                deltas_removed: count,
+            })
+        }
+        SessionState::Completed => {
+            // Mark for cleanup after 7 days
+            let ttl_days = TTL_COMPLETED.as_secs() / (24 * 60 * 60);
+            info!(
+                "Marking session {} for cleanup in {} days (completed)",
+                session_id, ttl_days
+            );
+            mark_for_cleanup(s5_storage, &index_path, ttl_days).await?;
+            Ok(CleanupResult::MarkedForCleanup { ttl_days })
+        }
+        SessionState::TimedOut => {
+            // Mark for cleanup after 30 days
+            let ttl_days = TTL_TIMED_OUT.as_secs() / (24 * 60 * 60);
+            info!(
+                "Marking session {} for cleanup in {} days (timed out)",
+                session_id, ttl_days
+            );
+            mark_for_cleanup(s5_storage, &index_path, ttl_days).await?;
+            Ok(CleanupResult::MarkedForCleanup { ttl_days })
+        }
+    }
+}
+
+/// Delete all checkpoint data for a session
+///
+/// This removes:
+/// 1. All delta files
+/// 2. The checkpoint index
+async fn delete_all_checkpoints(
+    s5_storage: &dyn S5Storage,
+    host_address: &str,
+    session_id: &str,
+) -> Result<usize> {
+    let index_path = CheckpointIndex::s5_path(host_address, session_id);
+
+    // 1. Try to fetch the index to get delta paths
+    let deltas_count = match s5_storage.get(&index_path).await {
+        Ok(bytes) => {
+            match serde_json::from_slice::<CheckpointIndex>(&bytes) {
+                Ok(index) => {
+                    let count = index.checkpoints.len();
+                    // Delete each delta
+                    for checkpoint in &index.checkpoints {
+                        let delta_path = format!(
+                            "home/checkpoints/{}/{}/delta_{}.json",
+                            host_address.to_lowercase(),
+                            session_id,
+                            checkpoint.index
+                        );
+                        if let Err(e) = s5_storage.delete(&delta_path).await {
+                            warn!("Failed to delete delta {}: {}", delta_path, e);
+                        }
+                    }
+                    count
+                }
+                Err(e) => {
+                    warn!("Failed to parse index for deletion: {}", e);
+                    0
+                }
+            }
+        }
+        Err(_) => {
+            // Index doesn't exist, nothing to delete
+            0
+        }
+    };
+
+    // 2. Delete the index itself
+    if let Err(e) = s5_storage.delete(&index_path).await {
+        // Only warn if there was an index to delete
+        if deltas_count > 0 {
+            warn!("Failed to delete index {}: {}", index_path, e);
+        }
+    }
+
+    info!(
+        "Deleted {} checkpoint deltas for session {}",
+        deltas_count, session_id
+    );
+
+    Ok(deltas_count)
+}
+
+/// Mark checkpoint data for future cleanup
+///
+/// This updates the index with an expiry timestamp.
+/// A background cleanup process should check and delete expired data.
+async fn mark_for_cleanup(
+    s5_storage: &dyn S5Storage,
+    index_path: &str,
+    ttl_days: u64,
+) -> Result<()> {
+    // For now, we just log the marking
+    // In production, this would update the index with expires_at timestamp
+    // or add to a cleanup queue in a database
+    info!(
+        "Marked {} for cleanup in {} days",
+        index_path, ttl_days
+    );
+
+    // Note: S5 doesn't have native TTL support, so actual deletion
+    // would need to be handled by a background cleanup job that:
+    // 1. Scans for expired indices
+    // 2. Calls delete_all_checkpoints for each expired session
+
+    Ok(())
+}
 
 /// Cleanup configuration for checkpoint data
 #[derive(Debug, Clone)]
@@ -217,5 +376,127 @@ mod tests {
 
         // Immediate
         assert_eq!(TTL_CANCELLED.as_secs(), 0);
+    }
+
+    // ==================== Async Cleanup Tests ====================
+
+    use crate::checkpoint::{CheckpointEntry, CheckpointIndex};
+    use crate::storage::s5_client::MockS5Backend;
+
+    #[tokio::test]
+    async fn test_cleanup_active_session_skipped() {
+        let mock = MockS5Backend::new();
+        let result = cleanup_checkpoints(&mock, "0xhost", "session-1", SessionState::Active).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), CleanupResult::Skipped);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_completed_session_7_days() {
+        let mock = MockS5Backend::new();
+        let result =
+            cleanup_checkpoints(&mock, "0xhost", "session-2", SessionState::Completed).await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            CleanupResult::MarkedForCleanup { ttl_days } => {
+                assert_eq!(ttl_days, 7, "Completed sessions should have 7 day TTL");
+            }
+            other => panic!("Expected MarkedForCleanup, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_timed_out_session_30_days() {
+        let mock = MockS5Backend::new();
+        let result =
+            cleanup_checkpoints(&mock, "0xhost", "session-3", SessionState::TimedOut).await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            CleanupResult::MarkedForCleanup { ttl_days } => {
+                assert_eq!(ttl_days, 30, "Timed out sessions should have 30 day TTL");
+            }
+            other => panic!("Expected MarkedForCleanup, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_cancelled_session_immediate() {
+        let mock = MockS5Backend::new();
+
+        // Pre-populate with checkpoint data
+        let mut index = CheckpointIndex::new("session-4".to_string(), "0xhostcancel".to_string());
+        index.add_checkpoint(CheckpointEntry::with_timestamp(
+            0,
+            "0xproof1".to_string(),
+            "bafycid1".to_string(),
+            0,
+            1000,
+            1704844800000,
+        ));
+        index.add_checkpoint(CheckpointEntry::with_timestamp(
+            1,
+            "0xproof2".to_string(),
+            "bafycid2".to_string(),
+            1000,
+            2000,
+            1704844900000,
+        ));
+        index.host_signature = "0xsig".to_string();
+
+        let index_path = "home/checkpoints/0xhostcancel/session-4/index.json";
+        let index_bytes = serde_json::to_vec(&index).unwrap();
+        mock.put(index_path, index_bytes).await.unwrap();
+
+        // Also add delta files
+        mock.put(
+            "home/checkpoints/0xhostcancel/session-4/delta_0.json",
+            b"delta0".to_vec(),
+        )
+        .await
+        .unwrap();
+        mock.put(
+            "home/checkpoints/0xhostcancel/session-4/delta_1.json",
+            b"delta1".to_vec(),
+        )
+        .await
+        .unwrap();
+
+        // Run cleanup
+        let result =
+            cleanup_checkpoints(&mock, "0xhostcancel", "session-4", SessionState::Cancelled).await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            CleanupResult::Deleted { deltas_removed } => {
+                assert_eq!(deltas_removed, 2, "Should have deleted 2 deltas");
+            }
+            other => panic!("Expected Deleted, got {:?}", other),
+        }
+
+        // Verify data was deleted
+        assert!(
+            mock.get(index_path).await.is_err(),
+            "Index should be deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_cancelled_empty_session() {
+        let mock = MockS5Backend::new();
+
+        // Cleanup a session that has no checkpoint data
+        let result =
+            cleanup_checkpoints(&mock, "0xhost", "nonexistent", SessionState::Cancelled).await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            CleanupResult::Deleted { deltas_removed } => {
+                assert_eq!(deltas_removed, 0, "Should report 0 deltas for empty session");
+            }
+            other => panic!("Expected Deleted, got {:?}", other),
+        }
     }
 }

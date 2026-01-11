@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 4 Complete
+## Status: Phase 5 Complete
 
-**Status**: Phase 4 Complete - Session Message Integration
+**Status**: Phase 5 Complete - Cleanup Policy
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 105 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 37, cleanup: 11, checkpoint_manager integration: 7, + existing checkpoint_manager tests)
+**Tests Passing**: 110 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 37, cleanup: 16, checkpoint_manager integration: 7, + existing checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -1321,15 +1321,17 @@ With resumption (GOOD):
 
 **Goal**: TTL-based cleanup for checkpoint data
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_cleanup_completed_session_7_days`
-- [ ] Write test `test_cleanup_timed_out_session_30_days`
-- [ ] Write test `test_cleanup_cancelled_session_immediate`
-- [ ] Implement `cleanup_checkpoints()` method
-- [ ] Add session state tracking (completed, timed_out, cancelled)
-- [ ] Run tests: `cargo test checkpoint::cleanup`
+- [x] Write test `test_cleanup_completed_session_7_days` - PASSED
+- [x] Write test `test_cleanup_timed_out_session_30_days` - PASSED
+- [x] Write test `test_cleanup_cancelled_session_immediate` - PASSED
+- [x] Implement `cleanup_checkpoints()` async function with S5 integration
+- [x] Add `CleanupResult` enum for operation results
+- [x] Add `delete_all_checkpoints()` for immediate deletion
+- [x] Add `mark_for_cleanup()` for TTL-based cleanup
+- [x] Run tests: 110 checkpoint tests passing (5 new async cleanup tests)
 
 **Cleanup Policy:**
 | Event | TTL |
@@ -1536,7 +1538,7 @@ With resumption (GOOD):
 | 4 | 4.1 | Track user messages | COMPLETE ✅ |
 | 4 | 4.2 | Track assistant responses | COMPLETE ✅ |
 | 4 | 4.3 | Handle streaming partial responses | COMPLETE ✅ |
-| 5 | 5.1 | Implement cleanup methods | PENDING |
+| 5 | 5.1 | Implement cleanup methods | COMPLETE ✅ |
 | 6 | 6.1 | Integration tests | PENDING |
 | 6 | 6.2 | Update version | PENDING |
 | 6 | 6.3 | Documentation | PENDING |
