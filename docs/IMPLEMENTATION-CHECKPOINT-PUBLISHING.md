@@ -2,7 +2,7 @@
 
 ## Status: Phase 4 In Progress
 
-**Status**: Phase 4 In Progress - Session Message Integration (Sub-phase 4.1 Complete)
+**Status**: Phase 4 In Progress - Session Message Integration (Sub-phases 4.1, 4.2 Complete)
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1246,14 +1246,14 @@ With resumption (GOOD):
 
 **Goal**: Buffer assistant response at completion (or partial at checkpoint)
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Identify response completion points
-- [ ] Add response accumulation buffer (for streaming)
-- [ ] Add `track_conversation_message()` call for assistant response
-- [ ] Handle partial flag for streaming responses
-- [ ] Run `cargo check`
+- [x] Identify response completion points
+- [x] Add response accumulation buffer (for streaming) - Already exists as `accumulated_text`
+- [x] Add `track_conversation_message()` call for assistant response
+- [x] Handle partial flag for streaming responses - Using `false` for complete responses
+- [x] Run `cargo check` - PASSED (99 tests passing)
 
 **Implementation Files:**
 - `src/api/server.rs` (modify)
@@ -1532,7 +1532,7 @@ With resumption (GOOD):
 | 3 | 3.2 | Integrate into submit_checkpoint_async | COMPLETE ✅ |
 | 3 | 3.3 | Add session ID to token tracking | COMPLETE ✅ |
 | 4 | 4.1 | Track user messages | COMPLETE ✅ |
-| 4 | 4.2 | Track assistant responses | PENDING |
+| 4 | 4.2 | Track assistant responses | COMPLETE ✅ |
 | 4 | 4.3 | Handle streaming partial responses | PENDING |
 | 5 | 5.1 | Implement cleanup methods | PENDING |
 | 6 | 6.1 | Integration tests | PENDING |

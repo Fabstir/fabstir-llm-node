@@ -665,6 +665,14 @@ impl ApiServer {
             }
         }
 
+        // Phase 4.2: Track assistant response for checkpoint publishing (v8.11.0)
+        if let Some(ref session_id) = request.session_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                cm.track_conversation_message(session_id, "assistant", &result.text, false)
+                    .await;
+            }
+        }
+
         if let Some(jid) = job_id {
             info!("📊 Job {} completed: {} tokens", jid, response.tokens_used);
             if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
@@ -966,6 +974,14 @@ impl ApiServer {
                 } else {
                     token_tracker.force_checkpoint(jid).await;
                     // DON'T cleanup here either
+                }
+            }
+
+            // Phase 4.2: Track assistant response for checkpoint publishing (v8.11.0)
+            if let Some(ref session_id) = session_id {
+                if let Some(cm) = checkpoint_manager.as_ref() {
+                    cm.track_conversation_message(session_id, "assistant", &accumulated_text, false)
+                        .await;
                 }
             }
 
