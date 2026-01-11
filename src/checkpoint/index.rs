@@ -59,10 +59,11 @@ pub enum SessionState {
 impl CheckpointIndex {
     /// Generate S5 path for checkpoint index
     /// Format: home/checkpoints/{hostAddress}/{sessionId}/index.json
+    /// Note: Host address is kept lowercase with 0x prefix for consistency
     pub fn s5_path(host_address: &str, session_id: &str) -> String {
         format!(
             "home/checkpoints/{}/{}/index.json",
-            host_address.to_lowercase().trim_start_matches("0x"),
+            host_address.to_lowercase(),
             session_id
         )
     }
@@ -167,21 +168,22 @@ mod tests {
     #[test]
     fn test_s5_path_lowercase_address() {
         let path = CheckpointIndex::s5_path("0xABC123DEF", "session-1");
-        assert!(path.contains("abc123def"));
+        assert!(path.contains("0xabc123def"));
         assert!(!path.contains("ABC"));
     }
 
     #[test]
     fn test_s5_path_format() {
         let path = CheckpointIndex::s5_path("0xabc123", "123");
-        assert_eq!(path, "home/checkpoints/abc123/123/index.json");
+        assert_eq!(path, "home/checkpoints/0xabc123/123/index.json");
     }
 
     #[test]
-    fn test_s5_path_strips_0x_prefix() {
+    fn test_s5_path_preserves_0x_prefix() {
+        // Host addresses keep 0x prefix for consistency with delta paths
         let path = CheckpointIndex::s5_path("0xDEADBEEF", "session");
-        assert!(!path.contains("0x"));
-        assert!(path.contains("deadbeef"));
+        assert!(path.contains("0x"), "Path should preserve 0x prefix");
+        assert!(path.contains("0xdeadbeef"), "Path should be lowercase with 0x");
     }
 
     #[test]

@@ -2,11 +2,11 @@
 
 ## Status: Phase 2 In Progress
 
-**Status**: Sub-phase 2.2 Complete
+**Status**: Sub-phase 2.3 Complete
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 78 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 17, cleanup: 11, + contracts::checkpoint_manager tests)
+**Tests Passing**: 87 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 26, cleanup: 11, + contracts::checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -824,21 +824,21 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 **Goal**: Implement the main `publish_checkpoint()` method
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_publish_checkpoint_creates_delta`
-- [ ] Write test `test_publish_checkpoint_signs_messages`
-- [ ] Write test `test_publish_checkpoint_uploads_delta`
-- [ ] Write test `test_publish_checkpoint_updates_index`
-- [ ] Write test `test_publish_checkpoint_signs_index`
-- [ ] Write test `test_publish_checkpoint_uploads_index`
-- [ ] Write test `test_publish_checkpoint_returns_delta_cid`
-- [ ] Write test `test_publish_checkpoint_blocks_on_s5_failure`
-- [ ] Implement `publish_checkpoint()` method
-- [ ] Implement `create_delta()` helper
-- [ ] Implement `update_index()` helper
-- [ ] Run tests: `cargo test checkpoint::publisher::publish`
+- [x] Write test `test_publish_checkpoint_creates_delta`
+- [x] Write test `test_publish_checkpoint_signs_messages`
+- [x] Write test `test_publish_checkpoint_uploads_delta`
+- [x] Write test `test_publish_checkpoint_updates_index`
+- [x] Write test `test_publish_checkpoint_returns_delta_cid`
+- [x] Write test `test_publish_checkpoint_blocks_on_s5_failure`
+- [x] Write test `test_publish_checkpoint_clears_buffer`
+- [x] Write test `test_publish_checkpoint_increments_index`
+- [x] Write test `test_publish_checkpoint_proof_hash_in_delta`
+- [x] Implement `publish_checkpoint()` method with delta creation, signing, and upload
+- [x] Implement `init_session()` method for session resumption
+- [x] Run tests: `cargo test checkpoint::publisher` (26 tests passing)
 
 **Test Files:**
 - Inline tests in `src/checkpoint/publisher.rs` (max 200 lines for publish tests)
@@ -1515,7 +1515,7 @@ With resumption (GOOD):
 | 1 | 1.4 | Implement Checkpoint Signer (TDD) | COMPLETE ✅ |
 | 2 | 2.1 | Session state management | COMPLETE ✅ |
 | 2 | 2.2 | S5 upload with retry | COMPLETE ✅ |
-| 2 | 2.3 | Publish checkpoint core logic | PENDING |
+| 2 | 2.3 | Publish checkpoint core logic | COMPLETE ✅ |
 | 2 | 2.4 | Session resumption from S5 | PENDING |
 | 3 | 3.1 | Add CheckpointPublisher to CheckpointManager | PENDING |
 | 3 | 3.2 | Integrate into submit_checkpoint_async | PENDING |
