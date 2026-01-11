@@ -1,12 +1,12 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: Phase 1 In Progress
+## Status: Phase 2 In Progress
 
-**Status**: Sub-phase 1.2 Complete
+**Status**: Sub-phase 2.1 Complete
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 68 checkpoint tests passing (delta: 12, index: 12, signer: 10, publisher: 7, cleanup: 9 + existing)
+**Tests Passing**: 73 checkpoint tests passing (delta: 12, index: 11, signer: 9, publisher: 12, cleanup: 11, + contracts::checkpoint_manager tests)
 
 **Priority**: Critical for MVP - Enables SDK conversation recovery after session timeout
 
@@ -385,21 +385,21 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 **Goal**: Define CheckpointIndex struct with S5 path generation
 
-**Status**: PENDING
+**Status**: COMPLETE ✅ (implemented in Sub-phase 1.1)
 
 #### Tasks
-- [ ] Write test `test_checkpoint_index_serialization_camel_case`
-- [ ] Write test `test_checkpoint_entry_serialization`
-- [ ] Write test `test_s5_path_lowercase_address`
-- [ ] Write test `test_s5_path_format`
-- [ ] Write test `test_compute_checkpoints_json_deterministic`
-- [ ] Write test `test_session_state_serialization`
-- [ ] Implement `CheckpointIndex` struct
-- [ ] Implement `CheckpointEntry` struct
-- [ ] Implement `SessionState` enum
-- [ ] Implement `s5_path()` static method
-- [ ] Implement `compute_checkpoints_json()` for signing
-- [ ] Run tests: `cargo test checkpoint::index`
+- [x] Write test `test_checkpoint_index_serialization_camel_case`
+- [x] Write test `test_checkpoint_entry_serialization`
+- [x] Write test `test_s5_path_lowercase_address`
+- [x] Write test `test_s5_path_format`
+- [x] Write test `test_compute_checkpoints_json_deterministic`
+- [x] Write test `test_session_state_serialization`
+- [x] Implement `CheckpointIndex` struct
+- [x] Implement `CheckpointEntry` struct
+- [x] Implement `SessionState` enum
+- [x] Implement `s5_path()` static method
+- [x] Implement `compute_checkpoints_json()` for signing
+- [x] Run tests: `cargo test checkpoint::index` (11 tests passing)
 
 **Test Files:**
 - Inline tests in `src/checkpoint/index.rs` (max 150 lines for tests)
@@ -554,18 +554,18 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 **Goal**: EIP-191 signing for checkpoint data
 
-**Status**: PENDING
+**Status**: COMPLETE ✅ (implemented in Sub-phase 1.1)
 
 #### Tasks
-- [ ] Write test `test_sign_messages_returns_65_bytes`
-- [ ] Write test `test_sign_messages_v_27_or_28`
-- [ ] Write test `test_sign_messages_recoverable`
-- [ ] Write test `test_sign_checkpoints_returns_65_bytes`
-- [ ] Write test `test_different_messages_different_signature`
-- [ ] Write test `test_signature_hex_format`
-- [ ] Implement `sign_checkpoint_data()` function
-- [ ] Implement `format_signature_hex()` helper
-- [ ] Run tests: `cargo test checkpoint::signer`
+- [x] Write test `test_sign_messages_returns_65_bytes` (as `test_sign_checkpoint_data_returns_correct_length`)
+- [x] Write test `test_sign_messages_v_27_or_28` (as `test_sign_checkpoint_data_v_27_or_28`)
+- [x] Write test `test_sign_messages_recoverable` (as `test_signature_is_recoverable`)
+- [x] Write test `test_sign_checkpoints_returns_65_bytes` (same function works for both)
+- [x] Write test `test_different_messages_different_signature` (as `test_different_data_different_signature`)
+- [x] Write test `test_signature_hex_format` (covered by length test)
+- [x] Implement `sign_checkpoint_data()` function
+- [x] Implement `format_signature_hex()` helper (as `format_signature()`)
+- [x] Run tests: `cargo test checkpoint::signer` (9 tests passing)
 
 **Test Files:**
 - Inline tests in `src/checkpoint/signer.rs` (max 150 lines for tests)
@@ -684,18 +684,18 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 **Goal**: Track per-session checkpoint state (message buffer, checkpoint index)
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Write test `test_session_state_new`
-- [ ] Write test `test_buffer_message_accumulates`
-- [ ] Write test `test_buffer_message_increments_count`
-- [ ] Write test `test_get_buffered_messages_returns_copy`
-- [ ] Write test `test_clear_buffer_empties_messages`
-- [ ] Write test `test_increment_checkpoint_index`
-- [ ] Implement `SessionCheckpointState` struct
-- [ ] Implement message buffer methods
-- [ ] Run tests: `cargo test checkpoint::publisher::session`
+- [x] Write test `test_session_state_new` (as `test_session_checkpoint_state_new`)
+- [x] Write test `test_buffer_message_accumulates`
+- [x] Write test `test_buffer_message_increments_count`
+- [x] Write test `test_get_buffered_messages_returns_copy`
+- [x] Write test `test_clear_buffer_empties_messages`
+- [x] Write test `test_increment_checkpoint_index`
+- [x] Implement `SessionCheckpointState` struct
+- [x] Implement message buffer methods (get_buffered_messages, clear_buffer, increment_checkpoint_index, buffer_size)
+- [x] Run tests: `cargo test checkpoint::publisher` (12 tests passing)
 
 **Test Files:**
 - Inline tests in `src/checkpoint/publisher.rs` (max 100 lines for session tests)

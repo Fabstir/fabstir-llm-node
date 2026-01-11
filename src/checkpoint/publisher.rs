@@ -62,6 +62,31 @@ impl SessionCheckpointState {
             index: Some(index),
         }
     }
+
+    /// Get a copy of buffered messages
+    pub fn get_buffered_messages(&self) -> Vec<CheckpointMessage> {
+        self.message_buffer.clone()
+    }
+
+    /// Clear the message buffer (after checkpoint published)
+    pub fn clear_buffer(&mut self) {
+        self.message_buffer.clear();
+    }
+
+    /// Increment checkpoint index after successful publish
+    pub fn increment_checkpoint_index(&mut self) {
+        self.checkpoint_index += 1;
+    }
+
+    /// Add a message to the buffer
+    pub fn buffer_message(&mut self, message: CheckpointMessage) {
+        self.message_buffer.push(message);
+    }
+
+    /// Get current buffer size
+    pub fn buffer_size(&self) -> usize {
+        self.message_buffer.len()
+    }
 }
 
 impl Default for SessionCheckpointState {
@@ -232,5 +257,87 @@ mod tests {
             .await;
 
         assert_eq!(publisher.session_count().await, 2);
+    }
+
+    #[test]
+    fn test_get_buffered_messages_returns_copy() {
+        let mut state = SessionCheckpointState::new();
+        state.buffer_message(CheckpointMessage::new_user("Hello".to_string(), 100));
+        state.buffer_message(CheckpointMessage::new_assistant("Hi".to_string(), 200, false));
+
+        let messages = state.get_buffered_messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[1].content, "Hi");
+
+        // Original buffer should still have messages
+        assert_eq!(state.buffer_size(), 2);
+    }
+
+    #[test]
+    fn test_clear_buffer_empties_messages() {
+        let mut state = SessionCheckpointState::new();
+        state.buffer_message(CheckpointMessage::new_user("Hello".to_string(), 100));
+        state.buffer_message(CheckpointMessage::new_user("World".to_string(), 200));
+        assert_eq!(state.buffer_size(), 2);
+
+        state.clear_buffer();
+        assert_eq!(state.buffer_size(), 0);
+        assert!(state.get_buffered_messages().is_empty());
+    }
+
+    #[test]
+    fn test_increment_checkpoint_index() {
+        let mut state = SessionCheckpointState::new();
+        assert_eq!(state.checkpoint_index, 0);
+
+        state.increment_checkpoint_index();
+        assert_eq!(state.checkpoint_index, 1);
+
+        state.increment_checkpoint_index();
+        assert_eq!(state.checkpoint_index, 2);
+    }
+
+    #[test]
+    fn test_buffer_message_increments_count() {
+        let mut state = SessionCheckpointState::new();
+        assert_eq!(state.buffer_size(), 0);
+
+        state.buffer_message(CheckpointMessage::new_user("A".to_string(), 100));
+        assert_eq!(state.buffer_size(), 1);
+
+        state.buffer_message(CheckpointMessage::new_user("B".to_string(), 200));
+        assert_eq!(state.buffer_size(), 2);
+
+        state.buffer_message(CheckpointMessage::new_user("C".to_string(), 300));
+        assert_eq!(state.buffer_size(), 3);
+    }
+
+    #[test]
+    fn test_session_state_workflow() {
+        // Simulate a full checkpoint workflow
+        let mut state = SessionCheckpointState::new();
+
+        // Buffer some messages
+        state.buffer_message(CheckpointMessage::new_user("Question?".to_string(), 100));
+        state.buffer_message(CheckpointMessage::new_assistant("Answer!".to_string(), 200, false));
+
+        // Get messages for checkpoint
+        let messages = state.get_buffered_messages();
+        assert_eq!(messages.len(), 2);
+
+        // Simulate checkpoint published
+        state.clear_buffer();
+        state.increment_checkpoint_index();
+        state.last_checkpoint_tokens = 500;
+
+        // Verify state after checkpoint
+        assert_eq!(state.checkpoint_index, 1);
+        assert_eq!(state.buffer_size(), 0);
+        assert_eq!(state.last_checkpoint_tokens, 500);
+
+        // Buffer more messages for next checkpoint
+        state.buffer_message(CheckpointMessage::new_user("Next question".to_string(), 600));
+        assert_eq!(state.buffer_size(), 1);
     }
 }
