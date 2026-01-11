@@ -2436,6 +2436,386 @@ settings_path = "./ezkl/settings.json"
 
 ---
 
+## Checkpoint Publishing (v8.11.0+)
+
+**Status**: Production Ready - Enables SDK conversation recovery after session timeout
+
+The node publishes signed conversation checkpoints to S5 storage BEFORE submitting proofs on-chain. This enables the SDK to recover conversation state up to the last proven checkpoint when sessions timeout or disconnect unexpectedly.
+
+### Architecture Overview
+
+```
+At each proof submission (~1000 tokens):
+
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ 1. Generate  │ ──► │ 2. Upload    │ ──► │ 3. Update    │
+│    Delta     │     │    to S5     │     │    Index     │
+└──────────────┘     └──────────────┘     └──────────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ 4. Sign with │ ──► │ 5. Submit    │ ──► │ 6. Proof     │
+│    Host Key  │     │    Proof     │     │    Verified  │
+└──────────────┘     └──────────────┘     └──────────────┘
+
+CRITICAL: Steps 1-4 MUST complete BEFORE step 5 (proof submission)
+```
+
+**Key Flow:**
+1. Generate proof data (existing)
+2. Compute proofHash = keccak256(proof_data) (existing)
+3. Upload proof to S5 (existing)
+4. Create delta JSON with messages since last checkpoint ← NEW
+5. Sign delta with EIP-191 ← NEW
+6. Upload delta to S5 ← NEW
+7. Update checkpoint index ← NEW
+8. Sign and upload index ← NEW
+9. Submit proof to chain (existing)
+
+**Critical Requirement**: If S5 upload fails, do NOT submit proof. Retry S5 upload first.
+
+### S5 Path Convention
+
+#### Checkpoint Index Path
+```
+home/checkpoints/{hostAddress}/{sessionId}/index.json
+```
+
+#### Delta Storage
+Deltas are content-addressed. The CID is recorded in the index.
+
+#### Path Examples
+```
+# Index for session 123 from host 0xABC...
+home/checkpoints/0xabc123def456789012345678901234567890abcd/123/index.json
+
+# Delta CID (stored separately, referenced in index)
+bafybeig123...  (content-addressed, raw CID without prefix)
+```
+
+**Important**: Host addresses in paths MUST be lowercase.
+
+### Checkpoint Delta Format
+
+Each delta contains only the NEW messages since the last checkpoint:
+
+```json
+{
+  "sessionId": "123",
+  "checkpointIndex": 0,
+  "proofHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+  "startToken": 0,
+  "endToken": 1000,
+  "messages": [
+    {
+      "content": "Explain quantum computing",
+      "role": "user",
+      "timestamp": 1704844800000
+    },
+    {
+      "content": "Quantum computing uses quantum mechanical phenomena...",
+      "metadata": {
+        "partial": true
+      },
+      "role": "assistant",
+      "timestamp": 1704844805000
+    }
+  ],
+  "hostSignature": "0x..."
+}
+```
+
+#### Delta Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | string | Session ID (matches on-chain session) |
+| `checkpointIndex` | number | 0-based index of this checkpoint |
+| `proofHash` | string | bytes32 keccak256 hash of proof data (matches on-chain) |
+| `startToken` | number | Token count at start of this delta |
+| `endToken` | number | Token count at end of this delta |
+| `messages` | array | Messages added since last checkpoint |
+| `hostSignature` | string | EIP-191 signature of messages array |
+
+#### Message Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | string | "user" or "assistant" |
+| `content` | string | Message content |
+| `timestamp` | number | Unix timestamp in milliseconds |
+| `metadata` | object | Optional. Set `partial: true` if message continues in next delta |
+
+### Checkpoint Index Format
+
+The index lists all checkpoints for a session:
+
+```json
+{
+  "sessionId": "123",
+  "hostAddress": "0xabc123def456789012345678901234567890abcd",
+  "checkpoints": [
+    {
+      "index": 0,
+      "proofHash": "0x1234...",
+      "deltaCID": "bafybeig1...",
+      "tokenRange": [0, 1000],
+      "timestamp": 1704844800000
+    },
+    {
+      "index": 1,
+      "proofHash": "0x5678...",
+      "deltaCID": "bafybeig2...",
+      "tokenRange": [1000, 2000],
+      "timestamp": 1704844860000
+    }
+  ],
+  "hostSignature": "0x..."
+}
+```
+
+#### Index Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | string | Session ID |
+| `hostAddress` | string | Host's Ethereum address (lowercase) |
+| `checkpoints` | array | List of checkpoint entries |
+| `hostSignature` | string | EIP-191 signature of checkpoints array |
+
+#### Checkpoint Entry
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `index` | number | 0-based checkpoint index |
+| `proofHash` | string | bytes32 proof hash (matches on-chain) |
+| `deltaCID` | string | S5 CID where delta is stored (raw, no prefix) |
+| `tokenRange` | [number, number] | [startToken, endToken] tuple |
+| `timestamp` | number | Unix timestamp when checkpoint was created |
+
+### Signature Requirements
+
+**Standard**: EIP-191 (Ethereum Signed Message)
+**Curve**: secp256k1
+**Hash**: keccak256
+
+#### What to Sign
+
+**Delta Signature**: Sign the JSON-stringified messages array with alphabetically sorted keys:
+
+```javascript
+// SDK verification example
+const messages = delta.messages;
+const sortedJson = JSON.stringify(messages, Object.keys(messages[0]).sort());
+const messageHash = ethers.hashMessage(sortedJson);
+const recoveredAddress = ethers.recoverAddress(messageHash, delta.hostSignature);
+assert(recoveredAddress.toLowerCase() === delta.hostAddress.toLowerCase());
+```
+
+**Index Signature**: Sign the JSON-stringified checkpoints array with sorted keys.
+
+#### Signature Format
+- 65 bytes: r (32) + s (32) + v (1)
+- Hex string with 0x prefix: `0x` + 130 hex characters
+- Example: `0x1234...abcd` (132 characters total)
+
+### SDK Compatibility Requirements
+
+These requirements are **essential for signature verification**:
+
+#### 1. JSON Key Ordering (Signature Breaking if Wrong)
+
+The node MUST produce JSON with:
+- Alphabetically sorted keys (recursive)
+- Compact format (no spaces)
+
+```javascript
+// Example - messages array MUST serialize as:
+'[{"content":"Hello","role":"user","timestamp":123}]'
+
+// NOT (wrong key order):
+'[{"role":"user","content":"Hello","timestamp":123}]'
+```
+
+#### 2. Proof Hash Verification
+
+- SDK compares `checkpoint.proofHash === onChainProof.proofHash` (case-insensitive)
+- SDK does NOT recompute hash from proof_data
+- Node must use same hash for both checkpoint and on-chain submission
+
+#### 3. Session Resumption
+
+- Node MUST fetch existing index from S5 on session resume
+- Continue checkpoint numbering from last checkpoint
+- Prevents duplicate checkpoint indices after node restart
+
+#### 4. CID Format
+
+- Use raw CID without prefix: `bafybeig...`
+- NOT: `s5://bafybeig...`
+
+### Cleanup Policy
+
+TTL-based cleanup policy for checkpoint data:
+
+| Session State | TTL | Description |
+|---------------|-----|-------------|
+| `Completed` | 7 days | Successfully completed sessions |
+| `Timeout` | 30 days | Sessions that timed out (may need recovery) |
+| `Cancelled` | Immediate | Cancelled sessions - clean up immediately |
+
+#### Cleanup Operations
+
+The node marks checkpoints for cleanup based on session state. S5 handles actual deletion based on TTL policies.
+
+```rust
+// Internal cleanup flow
+match session_state {
+    SessionState::Completed => {
+        mark_for_cleanup(session_id, Duration::from_days(7));
+    }
+    SessionState::Timeout => {
+        mark_for_cleanup(session_id, Duration::from_days(30));
+    }
+    SessionState::Cancelled => {
+        delete_all_checkpoints(session_id);
+    }
+}
+```
+
+### SDK Conversation Recovery
+
+Example SDK code to recover conversation after session timeout:
+
+```javascript
+async function recoverConversation(sessionId, hostAddress) {
+  // 1. Fetch checkpoint index from S5
+  const indexPath = `home/checkpoints/${hostAddress.toLowerCase()}/${sessionId}/index.json`;
+  const indexData = await s5Client.get(indexPath);
+  const index = JSON.parse(indexData);
+
+  // 2. Verify index signature
+  const checkpointsJson = JSON.stringify(index.checkpoints, Object.keys(index.checkpoints[0]).sort());
+  const recoveredSigner = ethers.verifyMessage(checkpointsJson, index.hostSignature);
+  if (recoveredSigner.toLowerCase() !== hostAddress.toLowerCase()) {
+    throw new Error('Invalid index signature');
+  }
+
+  // 3. Fetch each delta and verify signatures
+  const messages = [];
+  for (const checkpoint of index.checkpoints) {
+    const deltaData = await s5Client.getByCID(checkpoint.deltaCID);
+    const delta = JSON.parse(deltaData);
+
+    // Verify delta signature
+    const messagesJson = JSON.stringify(delta.messages, Object.keys(delta.messages[0]).sort());
+    const deltaSigner = ethers.verifyMessage(messagesJson, delta.hostSignature);
+    if (deltaSigner.toLowerCase() !== hostAddress.toLowerCase()) {
+      throw new Error(`Invalid delta signature for checkpoint ${checkpoint.index}`);
+    }
+
+    // Verify proofHash matches on-chain
+    const onChainProof = await getOnChainProof(sessionId, checkpoint.index);
+    if (delta.proofHash.toLowerCase() !== onChainProof.proofHash.toLowerCase()) {
+      throw new Error(`Proof hash mismatch for checkpoint ${checkpoint.index}`);
+    }
+
+    // Add messages to conversation
+    messages.push(...delta.messages);
+  }
+
+  // 4. Filter out partial messages if needed
+  return messages.filter(m => !m.metadata?.partial);
+}
+```
+
+### Troubleshooting
+
+#### Checkpoint Not Found in S5
+
+**Symptoms:**
+- SDK cannot find checkpoint index at expected path
+- `getCheckpointIndex` returns 404
+
+**Causes:**
+1. Session had no proof submissions (short conversation)
+2. S5 upload failed before proof submission
+3. TTL expired (cleanup occurred)
+
+**Solutions:**
+1. Verify session had at least 1000 tokens (proof threshold)
+2. Check node logs for S5 upload errors
+3. For expired checkpoints, data is no longer recoverable
+
+#### Signature Verification Failed
+
+**Symptoms:**
+- `recoverAddress` returns different address than hostAddress
+- SDK throws "Invalid signature" error
+
+**Causes:**
+1. JSON key ordering mismatch
+2. Incorrect signature format
+3. Different message content during signing
+
+**Solutions:**
+1. Verify node uses alphabetically sorted JSON keys
+2. Check signature is 65 bytes with correct r, s, v encoding
+3. Verify messages array content matches signed data
+
+#### Proof Hash Mismatch
+
+**Symptoms:**
+- `checkpoint.proofHash !== onChainProof.proofHash`
+- SDK throws "Proof hash mismatch" error
+
+**Causes:**
+1. Different proof data used for checkpoint vs on-chain submission
+2. Node submitted proof before checkpoint upload completed
+
+**Solutions:**
+1. This indicates a node bug - proofHash must be identical
+2. Report to node operator for investigation
+
+#### Checkpoint Index Out of Order
+
+**Symptoms:**
+- Missing checkpoint indices (e.g., 0, 1, 3 - missing 2)
+- Duplicate checkpoint indices
+
+**Causes:**
+1. Node restart without session resumption
+2. Concurrent proof submissions
+
+**Solutions:**
+1. Verify node fetches existing index on session resume
+2. Report to node operator
+
+### Log Messages
+
+Watch for these log patterns to monitor checkpoint publishing:
+
+```
+# Successful checkpoint publishing
+✅ Checkpoint delta uploaded: session=123, index=0, cid=bafybeig...
+✅ Checkpoint index updated: session=123, checkpoints=1
+📦 Checkpoint published BEFORE proof submission
+
+# Errors
+❌ S5 upload failed for checkpoint delta - blocking proof submission
+⚠️ Checkpoint publishing failed, retrying (attempt 2/3)
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHECKPOINT_PUBLISH_ENABLED` | `true` | Enable checkpoint publishing |
+| `CHECKPOINT_S5_RETRY_ATTEMPTS` | `3` | S5 upload retry attempts |
+| `CHECKPOINT_S5_RETRY_DELAY_MS` | `1000` | Delay between retries |
+
+---
+
 ## Error Handling
 
 ### Error Response Format

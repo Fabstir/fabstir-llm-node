@@ -2,7 +2,7 @@
 
 ## Status: Phase 6 In Progress
 
-**Status**: Phase 6 In Progress - Testing & Finalization (Sub-phases 6.1, 6.2 Complete)
+**Status**: Phase 6 In Progress - Testing & Finalization (Sub-phases 6.1, 6.2, 6.3 Complete)
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1498,13 +1498,24 @@ With resumption (GOOD):
 
 **Goal**: Update API and deployment docs
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Add checkpoint publishing section to `docs/API.md`
-- [ ] Document S5 path convention
-- [ ] Document cleanup policy
-- [ ] Add troubleshooting section
+- [x] Add checkpoint publishing section to `docs/API.md`
+- [x] Document S5 path convention
+- [x] Document cleanup policy
+- [x] Add troubleshooting section
+
+**Added to `docs/API.md`:**
+- New "Checkpoint Publishing (v8.11.0+)" section (~370 lines)
+- Architecture overview with ASCII diagram
+- S5 path convention documentation
+- Checkpoint delta and index format specifications
+- Signature requirements and SDK compatibility
+- Cleanup policy (7 days completed, 30 days timeout, immediate cancelled)
+- SDK conversation recovery example code
+- Troubleshooting guide for common issues
+- Log message patterns and environment variables
 
 ---
 
@@ -1545,7 +1556,7 @@ With resumption (GOOD):
 | 5 | 5.1 | Implement cleanup methods | COMPLETE ✅ |
 | 6 | 6.1 | Integration tests | COMPLETE ✅ |
 | 6 | 6.2 | Update version | COMPLETE ✅ |
-| 6 | 6.3 | Documentation | PENDING |
+| 6 | 6.3 | Documentation | COMPLETE ✅ |
 | 6 | 6.4 | Create release tarball | PENDING |
 
 **Total: 19 sub-phases**
