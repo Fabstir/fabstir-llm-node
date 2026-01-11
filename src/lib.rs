@@ -3,6 +3,7 @@
 pub mod api;
 pub mod blockchain;
 pub mod cache;
+pub mod checkpoint;
 pub mod cli;
 pub mod config;
 pub mod contracts;
