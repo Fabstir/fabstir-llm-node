@@ -15,14 +15,16 @@
 //! // Now safe to submit proof to chain
 //! ```
 
-use crate::checkpoint::{CheckpointDelta, CheckpointEntry, CheckpointIndex, CheckpointMessage};
+use crate::checkpoint::{
+    sign_checkpoint_data, CheckpointDelta, CheckpointEntry, CheckpointIndex, CheckpointMessage,
+};
 use crate::storage::S5Storage;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::warn;
+use tracing::{error, info, warn};
 
 /// Maximum number of S5 upload retry attempts
 const MAX_S5_RETRIES: u32 = 3;
@@ -153,6 +155,180 @@ impl CheckpointPublisher {
     pub async fn session_count(&self) -> usize {
         let sessions = self.sessions.read().await;
         sessions.len()
+    }
+
+    /// CRITICAL: Publish checkpoint to S5 BEFORE proof submission
+    ///
+    /// This method MUST be called before submitting proof on-chain.
+    /// If this method returns Err, the caller MUST NOT submit the proof.
+    ///
+    /// # Arguments
+    /// * `session_id` - Session identifier
+    /// * `proof_hash` - 32-byte keccak256 hash of proof data
+    /// * `start_token` - Token count at start of this checkpoint
+    /// * `end_token` - Token count at end of this checkpoint
+    /// * `private_key` - 32-byte host private key for signing
+    /// * `s5_storage` - S5 storage backend
+    ///
+    /// # Returns
+    /// * `Ok(delta_cid)` - CID of uploaded delta (raw format without s5:// prefix)
+    /// * `Err` - S5 upload failed, caller must NOT submit proof
+    pub async fn publish_checkpoint(
+        &self,
+        session_id: &str,
+        proof_hash: [u8; 32],
+        start_token: u64,
+        end_token: u64,
+        private_key: &[u8; 32],
+        s5_storage: &dyn S5Storage,
+    ) -> Result<String> {
+        let proof_hash_hex = format!("0x{}", hex::encode(proof_hash));
+
+        // 1. Get session state and messages
+        let mut sessions = self.sessions.write().await;
+        let state = sessions
+            .entry(session_id.to_string())
+            .or_insert_with(SessionCheckpointState::new);
+
+        let messages = state.get_buffered_messages();
+        let checkpoint_index = state.checkpoint_index;
+
+        info!(
+            "Publishing checkpoint {} for session {} ({} messages, tokens {}-{})",
+            checkpoint_index,
+            session_id,
+            messages.len(),
+            start_token,
+            end_token
+        );
+
+        // 2. Create delta and sign messages
+        let mut delta = CheckpointDelta {
+            session_id: session_id.to_string(),
+            checkpoint_index,
+            proof_hash: proof_hash_hex.clone(),
+            start_token,
+            end_token,
+            messages,
+            host_signature: String::new(), // Will be filled after signing
+        };
+
+        // Sign the messages JSON (sorted keys for SDK compatibility)
+        let messages_json = delta.compute_messages_json();
+        let delta_signature = sign_checkpoint_data(private_key, &messages_json)?;
+        delta.host_signature = delta_signature;
+
+        // 3. Upload delta to S5 (with retry)
+        let delta_bytes = delta.to_json_bytes();
+        let delta_path = format!(
+            "home/checkpoints/{}/{}/delta_{}.json",
+            self.host_address, session_id, checkpoint_index
+        );
+
+        let delta_cid = upload_with_retry(s5_storage, &delta_path, delta_bytes)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Delta upload failed for session {} checkpoint {}: {}",
+                    session_id, checkpoint_index, e
+                );
+                anyhow!(
+                    "S5 delta upload failed - NOT submitting proof: {}",
+                    e
+                )
+            })?;
+
+        // Strip s5:// prefix if present (SDK expects raw CID)
+        let delta_cid_raw = delta_cid
+            .strip_prefix("s5://")
+            .unwrap_or(&delta_cid)
+            .to_string();
+
+        info!("Delta uploaded: {}", delta_cid_raw);
+
+        // 4. Update checkpoint index
+        let index = state.index.get_or_insert_with(|| {
+            CheckpointIndex::new(session_id.to_string(), self.host_address.clone())
+        });
+
+        let entry = CheckpointEntry::new(
+            checkpoint_index,
+            proof_hash_hex,
+            delta_cid_raw.clone(),
+            start_token,
+            end_token,
+        );
+        index.add_checkpoint(entry);
+
+        // 5. Sign and upload index
+        let checkpoints_json = index.compute_checkpoints_json();
+        let index_signature = sign_checkpoint_data(private_key, &checkpoints_json)?;
+        index.host_signature = index_signature;
+
+        let index_path = CheckpointIndex::s5_path(&self.host_address, session_id);
+        let index_bytes = index.to_json_bytes();
+
+        upload_with_retry(s5_storage, &index_path, index_bytes)
+            .await
+            .map_err(|e| {
+            error!(
+                "Index upload failed for session {} checkpoint {}: {}",
+                session_id, checkpoint_index, e
+            );
+            anyhow!(
+                "S5 index upload failed - NOT submitting proof: {}",
+                e
+            )
+        })?;
+
+        info!("Index uploaded to {}", index_path);
+
+        // 6. Update state for next checkpoint
+        state.clear_buffer();
+        state.increment_checkpoint_index();
+        state.last_checkpoint_tokens = end_token;
+
+        Ok(delta_cid_raw)
+    }
+
+    /// Initialize or resume a session from S5
+    ///
+    /// Call this when a session starts to check for existing checkpoint index.
+    /// If found, resumes numbering from last checkpoint.
+    pub async fn init_session(
+        &self,
+        session_id: &str,
+        s5_storage: &dyn S5Storage,
+    ) -> Result<()> {
+        let index_path = CheckpointIndex::s5_path(&self.host_address, session_id);
+
+        // Try to fetch existing index from S5
+        match s5_storage.get(&index_path).await {
+            Ok(bytes) => {
+                let existing_index: CheckpointIndex = serde_json::from_slice(&bytes)
+                    .map_err(|e| anyhow!("Failed to parse existing index: {}", e))?;
+
+                info!(
+                    "Resuming session {} from checkpoint {} (last token: {})",
+                    session_id,
+                    existing_index.next_checkpoint_index(),
+                    existing_index
+                        .last_checkpoint()
+                        .map(|c| c.token_range[1])
+                        .unwrap_or(0)
+                );
+
+                let mut sessions = self.sessions.write().await;
+                let state = SessionCheckpointState::from_index(existing_index);
+                sessions.insert(session_id.to_string(), state);
+            }
+            Err(_) => {
+                // No existing index - fresh session
+                info!("Starting fresh session {}", session_id);
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -472,5 +648,331 @@ mod tests {
 
         assert!(result1.is_ok());
         assert!(result2.is_ok());
+    }
+
+    // ==================== Publish Checkpoint Tests ====================
+
+    fn generate_test_private_key() -> [u8; 32] {
+        use k256::ecdsa::SigningKey;
+        use rand::rngs::OsRng;
+        let signing_key = SigningKey::random(&mut OsRng);
+        signing_key.to_bytes().into()
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_creates_delta() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhost123".to_string());
+        let private_key = generate_test_private_key();
+
+        // Buffer some messages
+        publisher
+            .buffer_message(
+                "session-1",
+                CheckpointMessage::new_user("Hello".to_string(), 100),
+            )
+            .await;
+        publisher
+            .buffer_message(
+                "session-1",
+                CheckpointMessage::new_assistant("Hi there!".to_string(), 200, false),
+            )
+            .await;
+
+        // Publish checkpoint
+        let proof_hash = [0x12u8; 32];
+        let result = publisher
+            .publish_checkpoint("session-1", proof_hash, 0, 1000, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok(), "publish_checkpoint should succeed");
+        let cid = result.unwrap();
+        assert!(!cid.is_empty(), "CID should not be empty");
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_signs_messages() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhost456".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-2",
+                CheckpointMessage::new_user("Test message".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0xABu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-2", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify index was updated with a signature
+        let state = publisher.get_session_state("session-2").await.unwrap();
+        assert!(state.index.is_some());
+        let index = state.index.unwrap();
+        assert!(
+            index.host_signature.starts_with("0x"),
+            "Index should have signature"
+        );
+        assert_eq!(
+            index.host_signature.len(),
+            132,
+            "Signature should be 65 bytes (132 hex chars with 0x)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_uploads_delta() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostdelta".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-delta",
+                CheckpointMessage::new_user("Delta test".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0xDEu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-delta", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify delta was uploaded by checking mock's stored data
+        let delta_path = "home/checkpoints/0xhostdelta/session-delta/delta_0.json";
+        let stored = mock.get(delta_path).await;
+        assert!(stored.is_ok(), "Delta should be stored at expected path");
+
+        let stored_bytes = stored.unwrap();
+        let delta: CheckpointDelta = serde_json::from_slice(&stored_bytes).unwrap();
+        assert_eq!(delta.session_id, "session-delta");
+        assert_eq!(delta.checkpoint_index, 0);
+        assert_eq!(delta.messages.len(), 1);
+        assert_eq!(delta.messages[0].content, "Delta test");
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_updates_index() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostindex".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-index",
+                CheckpointMessage::new_user("Index test".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0x11u8; 32];
+        let result = publisher
+            .publish_checkpoint("session-index", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok(), "publish_checkpoint failed: {:?}", result);
+
+        // Verify index was uploaded
+        let index_path = "home/checkpoints/0xhostindex/session-index/index.json";
+        let stored = mock.get(index_path).await;
+        assert!(
+            stored.is_ok(),
+            "Index should be stored at expected path '{}', got error: {:?}",
+            index_path,
+            stored
+        );
+
+        let stored_bytes = stored.unwrap();
+        let index: CheckpointIndex = serde_json::from_slice(&stored_bytes).unwrap();
+        assert_eq!(index.session_id, "session-index");
+        assert_eq!(index.host_address, "0xhostindex");
+        assert_eq!(index.checkpoints.len(), 1);
+        assert_eq!(index.checkpoints[0].index, 0);
+        assert_eq!(index.checkpoints[0].token_range, [0, 500]);
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_returns_delta_cid() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostcid".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-cid",
+                CheckpointMessage::new_user("CID test".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0x22u8; 32];
+        let result = publisher
+            .publish_checkpoint("session-cid", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+        let cid = result.unwrap();
+
+        // CID should not have s5:// prefix (SDK requirement)
+        assert!(
+            !cid.starts_with("s5://"),
+            "CID should not have s5:// prefix"
+        );
+        assert!(!cid.is_empty(), "CID should not be empty");
+
+        // CID should be recorded in the index
+        let state = publisher.get_session_state("session-cid").await.unwrap();
+        let index = state.index.unwrap();
+        assert_eq!(index.checkpoints[0].delta_cid, cid);
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_blocks_on_s5_failure() {
+        let bad_mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostfail".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-fail",
+                CheckpointMessage::new_user("Fail test".to_string(), 100),
+            )
+            .await;
+
+        // Set quota to 0 to make all uploads fail persistently
+        bad_mock.set_quota_limit(0).await;
+
+        let proof_hash = [0x33u8; 32];
+        let result = publisher
+            .publish_checkpoint("session-fail", proof_hash, 0, 500, &private_key, &bad_mock)
+            .await;
+
+        // Should fail and return error
+        assert!(result.is_err(), "Should fail when S5 upload fails");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("NOT submitting proof"),
+            "Error should indicate proof blocked: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_clears_buffer() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostbuffer".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-buffer",
+                CheckpointMessage::new_user("Buffer test".to_string(), 100),
+            )
+            .await;
+
+        // Verify buffer has message before publish
+        let state_before = publisher
+            .get_session_state("session-buffer")
+            .await
+            .unwrap();
+        assert_eq!(state_before.buffer_size(), 1);
+
+        let proof_hash = [0x44u8; 32];
+        let result = publisher
+            .publish_checkpoint("session-buffer", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+        assert!(result.is_ok());
+
+        // Buffer should be cleared after successful publish
+        let state_after = publisher
+            .get_session_state("session-buffer")
+            .await
+            .unwrap();
+        assert_eq!(state_after.buffer_size(), 0, "Buffer should be cleared");
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_increments_index() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostincr".to_string());
+        let private_key = generate_test_private_key();
+
+        // First checkpoint
+        publisher
+            .buffer_message(
+                "session-incr",
+                CheckpointMessage::new_user("First".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash1 = [0x55u8; 32];
+        let result1 = publisher
+            .publish_checkpoint("session-incr", proof_hash1, 0, 500, &private_key, &mock)
+            .await;
+        assert!(result1.is_ok());
+
+        // Second checkpoint
+        publisher
+            .buffer_message(
+                "session-incr",
+                CheckpointMessage::new_user("Second".to_string(), 600),
+            )
+            .await;
+
+        let proof_hash2 = [0x66u8; 32];
+        let result2 = publisher
+            .publish_checkpoint("session-incr", proof_hash2, 500, 1000, &private_key, &mock)
+            .await;
+        assert!(result2.is_ok());
+
+        // Verify checkpoint index was incremented
+        let state = publisher.get_session_state("session-incr").await.unwrap();
+        assert_eq!(
+            state.checkpoint_index, 2,
+            "Checkpoint index should be 2 after two checkpoints"
+        );
+
+        // Verify index has both checkpoints
+        let index = state.index.unwrap();
+        assert_eq!(index.checkpoints.len(), 2);
+        assert_eq!(index.checkpoints[0].index, 0);
+        assert_eq!(index.checkpoints[1].index, 1);
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_proof_hash_in_delta() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostproof".to_string());
+        let private_key = generate_test_private_key();
+
+        publisher
+            .buffer_message(
+                "session-proof",
+                CheckpointMessage::new_user("Proof test".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90,
+                         0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90,
+                         0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90,
+                         0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90];
+
+        let result = publisher
+            .publish_checkpoint("session-proof", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+        assert!(result.is_ok());
+
+        // Verify proof hash is in delta
+        let delta_path = "home/checkpoints/0xhostproof/session-proof/delta_0.json";
+        let stored = mock.get(delta_path).await.unwrap();
+        let delta: CheckpointDelta = serde_json::from_slice(&stored).unwrap();
+
+        let expected_hash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        assert_eq!(delta.proof_hash, expected_hash);
     }
 }
