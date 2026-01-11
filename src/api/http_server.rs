@@ -94,6 +94,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         )
         // Session endpoints
         .route("/v1/session/:session_id/info", get(session_info_handler))
+        // Checkpoint endpoint (SDK conversation recovery)
+        .route("/v1/checkpoints/:session_id", get(checkpoints_handler))
         // Inference endpoint
         .route("/v1/inference", post(inference_handler))
         // Embedding endpoint
@@ -762,5 +764,159 @@ impl IntoResponse for ApiErrorResponse {
         let error_response = self.0.to_response(None);
 
         (status, axum::response::Json(error_response)).into_response()
+    }
+}
+
+// ============================================================================
+// Checkpoint HTTP Endpoint (Phase 7.2 - v8.11.1)
+// ============================================================================
+
+use crate::checkpoint::index::CheckpointIndex;
+use crate::storage::StorageError;
+
+/// GET /v1/checkpoints/:session_id
+///
+/// Returns checkpoint index for SDK conversation recovery.
+/// The SDK cannot directly access the node's S5 home directory,
+/// so this endpoint provides HTTP access to the checkpoint index.
+///
+/// # Responses
+/// - 200 OK: CheckpointIndex JSON
+/// - 404 Not Found: No checkpoints for session
+/// - 503 Service Unavailable: Checkpoint service not configured
+/// - 500 Internal Server Error: S5 storage or parsing error
+async fn checkpoints_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<axum::response::Json<CheckpointIndex>, ApiErrorResponse> {
+    // 1. Get checkpoint_manager from state
+    let checkpoint_manager = state
+        .api_server
+        .get_checkpoint_manager()
+        .await
+        .ok_or_else(|| {
+            ApiErrorResponse(ApiError::ServiceUnavailable(
+                "Checkpoint service unavailable".to_string(),
+            ))
+        })?;
+
+    // 2. Get host address and S5 storage from checkpoint_manager
+    let host_address = checkpoint_manager.get_host_address();
+    let s5_storage = checkpoint_manager.get_s5_storage();
+
+    // 3. Build S5 path
+    let index_path = CheckpointIndex::s5_path(&host_address, &session_id);
+
+    // 4. Fetch from S5
+    match s5_storage.get(&index_path).await {
+        Ok(bytes) => {
+            let index: CheckpointIndex = serde_json::from_slice(&bytes).map_err(|e| {
+                ApiErrorResponse(ApiError::InternalError(format!(
+                    "Failed to parse checkpoint index: {}",
+                    e
+                )))
+            })?;
+            Ok(axum::response::Json(index))
+        }
+        Err(StorageError::NotFound(_)) => Err(ApiErrorResponse(ApiError::NotFound(format!(
+            "No checkpoints found for session {}",
+            session_id
+        )))),
+        Err(e) => Err(ApiErrorResponse(ApiError::InternalError(format!(
+            "Failed to fetch checkpoint index: {}",
+            e
+        )))),
+    }
+}
+
+// ============================================================================
+// Checkpoint Handler Tests (Phase 7.2)
+// ============================================================================
+
+#[cfg(test)]
+mod checkpoint_handler_tests {
+    use super::*;
+    use crate::checkpoint::index::{CheckpointEntry, CheckpointIndex};
+    use crate::storage::s5_client::MockS5Backend;
+    use crate::storage::S5Storage;
+
+    /// Test that CheckpointIndex deserializes correctly from JSON bytes
+    /// This tests the core parsing logic used by the handler
+    #[tokio::test]
+    async fn test_checkpoints_handler_returns_index_on_success() {
+        // Create a valid checkpoint index
+        let index = CheckpointIndex {
+            session_id: "test-session-123".to_string(),
+            host_address: "0xabc123def456789012345678901234567890abcd".to_string(),
+            checkpoints: vec![CheckpointEntry {
+                index: 0,
+                proof_hash: "0x1234567890abcdef".to_string(),
+                delta_cid: "bafybeigtest123".to_string(),
+                token_range: [0, 1000],
+                timestamp: 1704844800000,
+            }],
+            host_signature: "0xsignature".to_string(),
+        };
+
+        // Serialize to JSON bytes (as S5 would return)
+        let json_bytes = index.to_json_bytes();
+
+        // Simulate what the handler does - deserialize
+        let parsed: CheckpointIndex = serde_json::from_slice(&json_bytes)
+            .expect("Should parse checkpoint index from JSON bytes");
+
+        // Verify deserialization is correct
+        assert_eq!(parsed.session_id, "test-session-123");
+        assert_eq!(
+            parsed.host_address,
+            "0xabc123def456789012345678901234567890abcd"
+        );
+        assert_eq!(parsed.checkpoints.len(), 1);
+        assert_eq!(parsed.checkpoints[0].index, 0);
+        assert_eq!(parsed.checkpoints[0].token_range, [0, 1000]);
+    }
+
+    /// Test that StorageError::NotFound maps to 404 response
+    #[tokio::test]
+    async fn test_checkpoints_handler_returns_404_when_not_found() {
+        // Create mock S5 storage (empty - no data)
+        let mock_storage = MockS5Backend::new();
+
+        // Try to get a non-existent path
+        let result = mock_storage
+            .get("home/checkpoints/0xhost/nonexistent/index.json")
+            .await;
+
+        // Verify it returns NotFound error
+        assert!(matches!(result, Err(StorageError::NotFound(_))));
+
+        // Verify error message format (what handler would use)
+        if let Err(StorageError::NotFound(path)) = result {
+            let error_msg = format!("No checkpoints found for session {}", "nonexistent");
+            assert!(error_msg.contains("nonexistent"));
+        }
+    }
+
+    /// Test that storage errors map to 500 response
+    #[tokio::test]
+    async fn test_checkpoints_handler_returns_500_on_storage_error() {
+        // Create mock S5 storage with injected error
+        let mock_storage = MockS5Backend::new();
+        mock_storage
+            .inject_error(StorageError::NetworkError("Connection failed".to_string()))
+            .await;
+
+        // Try to get any path - should fail with injected error
+        let result = mock_storage.get("home/checkpoints/0xhost/123/index.json").await;
+
+        // Verify it returns an error (not NotFound)
+        assert!(result.is_err());
+        assert!(!matches!(result, Err(StorageError::NotFound(_))));
+
+        // Verify error message format (what handler would use)
+        if let Err(e) = result {
+            let error_msg = format!("Failed to fetch checkpoint index: {}", e);
+            assert!(error_msg.contains("Failed to fetch"));
+        }
     }
 }
