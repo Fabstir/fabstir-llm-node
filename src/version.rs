@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.10.5-remove-sensitive-logs-2026-01-10";
+pub const VERSION: &str = "v8.11.0-checkpoint-publishing-2026-01-11";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.10.5";
+pub const VERSION_NUMBER: &str = "8.11.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 10;
+pub const VERSION_MINOR: u32 = 11;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-10";
+pub const BUILD_DATE: &str = "2026-01-11";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -112,6 +112,15 @@ pub const FEATURES: &[&str] = &[
     "real-response-hash",
     "proof-witness-content",
     "streaming-response-accumulation",
+    // Checkpoint publishing for conversation recovery (v8.11.0+)
+    "checkpoint-publishing",
+    "conversation-recovery",
+    "sdk-checkpoint-recovery",
+    "s5-checkpoint-storage",
+    "eip191-checkpoint-signatures",
+    "sorted-json-keys",
+    "session-resumption",
+    "ttl-cleanup-policy",
 ];
 
 /// Supported chain IDs
@@ -122,6 +131,14 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.11.0 - Checkpoint Publishing for Conversation Recovery (Jan 11, 2026)
+    "FEAT: Checkpoint publishing to S5 for SDK conversation recovery",
+    "FEAT: Signed checkpoint deltas with EIP-191 signatures",
+    "FEAT: Checkpoint index with session metadata and proof hashes",
+    "FEAT: Session resumption from existing S5 checkpoint data",
+    "FEAT: TTL-based cleanup policy (7 days completed, 30 days timeout, immediate cancelled)",
+    "FEAT: Streaming partial response support in checkpoints",
+    "FEAT: JSON keys alphabetically sorted for SDK signature verification",
     // v8.10.5 - Remove Sensitive Logs (Jan 10, 2026)
     "PRIVACY: Removed logging of decrypted message content",
     "PRIVACY: Removed verbose diagnostic eprintln! statements from inference engine",
@@ -220,8 +237,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 10);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_MINOR, 11);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -255,20 +272,29 @@ mod tests {
         assert!(FEATURES.contains(&"real-response-hash"));
         assert!(FEATURES.contains(&"proof-witness-content"));
         assert!(FEATURES.contains(&"streaming-response-accumulation"));
+        // v8.11.0 checkpoint publishing features
+        assert!(FEATURES.contains(&"checkpoint-publishing"));
+        assert!(FEATURES.contains(&"conversation-recovery"));
+        assert!(FEATURES.contains(&"sdk-checkpoint-recovery"));
+        assert!(FEATURES.contains(&"s5-checkpoint-storage"));
+        assert!(FEATURES.contains(&"eip191-checkpoint-signatures"));
+        assert!(FEATURES.contains(&"sorted-json-keys"));
+        assert!(FEATURES.contains(&"session-resumption"));
+        assert!(FEATURES.contains(&"ttl-cleanup-policy"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.10.5"));
-        assert!(version.contains("2026-01-10"));
+        assert!(version.contains("8.11.0"));
+        assert!(version.contains("2026-01-11"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.10.5-remove-sensitive-logs-2026-01-10");
-        assert_eq!(VERSION_NUMBER, "8.10.5");
-        assert_eq!(BUILD_DATE, "2026-01-10");
+        assert_eq!(VERSION, "v8.11.0-checkpoint-publishing-2026-01-11");
+        assert_eq!(VERSION_NUMBER, "8.11.0");
+        assert_eq!(BUILD_DATE, "2026-01-11");
     }
 }

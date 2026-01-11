@@ -2,7 +2,7 @@
 
 ## Status: Phase 6 In Progress
 
-**Status**: Phase 6 In Progress - Testing & Finalization (Sub-phase 6.1 Complete)
+**Status**: Phase 6 In Progress - Testing & Finalization (Sub-phases 6.1, 6.2 Complete)
 **Version**: v8.11.0-checkpoint-publishing (target)
 **Start Date**: 2026-01-11
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1460,17 +1460,17 @@ With resumption (GOOD):
 
 **Goal**: Bump version and document feature
 
-**Status**: PENDING
+**Status**: COMPLETE ✅
 
 #### Tasks
-- [ ] Update `VERSION` file to `8.11.0-checkpoint-publishing`
-- [ ] Update `src/version.rs`:
-  - [ ] VERSION constant
-  - [ ] VERSION_NUMBER to "8.11.0"
-  - [ ] Add feature: "checkpoint-publishing"
-  - [ ] Add feature: "conversation-recovery"
-  - [ ] Add BREAKING_CHANGES entry
-- [ ] Run `cargo test version`
+- [x] Update `VERSION` file to `8.11.0-checkpoint-publishing`
+- [x] Update `src/version.rs`:
+  - [x] VERSION constant to "v8.11.0-checkpoint-publishing-2026-01-11"
+  - [x] VERSION_NUMBER to "8.11.0"
+  - [x] VERSION_MINOR to 11, VERSION_PATCH to 0
+  - [x] Add 8 checkpoint publishing features
+  - [x] Add 7 BREAKING_CHANGES entries for v8.11.0
+- [x] Run `cargo test version` - 3 version tests passing
 
 **Implementation Files:**
 - `VERSION`: `8.11.0-checkpoint-publishing`
@@ -1544,7 +1544,7 @@ With resumption (GOOD):
 | 4 | 4.3 | Handle streaming partial responses | COMPLETE ✅ |
 | 5 | 5.1 | Implement cleanup methods | COMPLETE ✅ |
 | 6 | 6.1 | Integration tests | COMPLETE ✅ |
-| 6 | 6.2 | Update version | PENDING |
+| 6 | 6.2 | Update version | COMPLETE ✅ |
 | 6 | 6.3 | Documentation | PENDING |
 | 6 | 6.4 | Create release tarball | PENDING |
 
