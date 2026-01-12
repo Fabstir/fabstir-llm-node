@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.11.2-checkpoint-http-endpoint-2026-01-11";
+pub const VERSION: &str = "v8.11.12-unified-s5-deployment-2026-01-12";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.11.2";
+pub const VERSION_NUMBER: &str = "8.11.12";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 11;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 12;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-11";
+pub const BUILD_DATE: &str = "2026-01-12";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -134,6 +134,54 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.11.12 - Unified S5 Deployment (Jan 12, 2026)
+    "DEPLOY: New unified docker-compose.prod.yml includes S5 bridge + Rust node",
+    "DEPLOY: S5 bridge now starts automatically with docker-compose up",
+    "DEPLOY: Rust node uses ENHANCED_S5_URL=http://s5-bridge:5522 (Docker networking)",
+    "DEPLOY: Tarball now includes services/s5-bridge/ directory",
+    "DEPLOY: New .env.prod.example with all required configuration",
+    // v8.11.11 - S5 Backend Init Logging (Jan 12, 2026)
+    "CRITICAL FIX: Node now logs which S5 backend is used on startup with [S5-INIT] prefix",
+    "CRITICAL FIX: Shows warning if MockS5Backend is used (uploads won't reach network!)",
+    "CRITICAL FIX: Shows ENHANCED_S5_URL env var value when using EnhancedS5Backend",
+    "CRITICAL FIX: MockS5Backend::put() now logs warning for each upload that won't reach network",
+    "DEBUG: Startup clearly shows: 'Using EnhancedS5Backend' or 'Using MockS5Backend'",
+    // v8.11.10 - S5 Debug Logging (Jan 12, 2026)
+    "DEBUG: Added comprehensive S5 upload logging with [S5-UPLOAD], [S5-RUST], [S5-HTTP] prefixes",
+    "DEBUG: S5 bridge now logs portal account status, request IDs, and upload duration",
+    "DEBUG: Rust node logs CID length, networkUploaded flag, and bridge debug info",
+    "FIX: S5 bridge returns HTTP 503 if no portal accounts configured (prevents silent failures)",
+    "FIX: S5 bridge startup now clearly logs whether uploads will go to S5 network",
+    // v8.11.9 - BlobIdentifier CID Format (Jan 12, 2026)
+    "BREAKING: CIDs now use BlobIdentifier format (58-70 chars) instead of raw hash (53 chars)",
+    "FIX: S5 bridge uses BlobIdentifier class with file size for portal compatibility",
+    "FIX: MockS5Backend generates BlobIdentifier CIDs (prefix + multihash + hash + size)",
+    "FIX: is_valid_s5_cid() now accepts 58-70 char BlobIdentifier format",
+    "FIX: Old 53-char raw hash format is DEPRECATED - S5 portals reject it",
+    // v8.11.8 - S5 Advanced API CID Fix (Jan 12, 2026)
+    "FIX: S5 bridge now uses Advanced API (FS5Advanced.pathToCID + formatCID) for proper CIDs",
+    "FIX: MockS5Backend generates S5 CID format (blake3 + base32 = 53 chars) for testing",
+    "FIX: Rust node reads 'cid' field from S5 bridge response (no more manual CID formatting)",
+    "FIX: Removed all IPFS format (bafkrei/bafybei) references - S5 uses simpler raw base32 format",
+    // v8.11.7 - CID Format Fix (Jan 12, 2026)
+    "FIX: deltaCid now returns proper S5 CID format (53 chars: b + 52 base32) instead of raw hex hash",
+    "FIX: S5 uses blake3 hashing (NOT sha256) with raw base32 encoding (NOT IPFS CID structure)",
+    "FIX: CID format is 'b' prefix + 52 lowercase base32 chars = 53 total characters",
+    "FIX: IMPORTANT - S5 does NOT use IPFS format (bafkrei/bafybei are WRONG for S5)",
+    "DEBUG: Added tracing logs to EnhancedS5Backend::put() and put_file() for debugging",
+    // v8.11.6 - S5 Storage Cleanup (Jan 12, 2026)
+    "CLEANUP: Removed RealS5Backend (~285 lines) - redundant with EnhancedS5Backend",
+    "CLEANUP: Removed S5Storage impl from EnhancedS5Client (~82 lines) - all usage goes through EnhancedS5Backend",
+    "CLEANUP: Removed S5ClientConfig struct - only used by deleted RealS5Backend",
+    "CLEANUP: Removed S5Backend::Real variant - not used in production",
+    "ARCH: Now only two S5Storage implementations: MockS5Backend (testing) and EnhancedS5Backend (production)",
+    // v8.11.5 - Real S5 CID Format (Jan 11, 2026)
+    "FIX: deltaCid now returns real S5 CID from bridge (53 char base32 format) instead of fake hex hash",
+    "FIX: S5 put_file() now returns the actual CID from the S5 bridge response",
+    // v8.11.4 - Dead Code Cleanup (Jan 11, 2026)
+    "CLEANUP: Removed ~850 lines of dead code from http_server.rs",
+    "CLEANUP: http_server.rs now only contains AppState struct",
+    "CLEANUP: All HTTP handlers consolidated in server.rs",
     // v8.11.1 - HTTP Checkpoint Endpoint (Jan 11, 2026)
     "FEAT: Added GET /v1/checkpoints/{session_id} HTTP endpoint",
     "FEAT: SDK can now retrieve checkpoint index without direct S5 access",
@@ -245,7 +293,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 11);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_PATCH, 12);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -294,15 +342,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.11.2"));
-        assert!(version.contains("2026-01-11"));
+        assert!(version.contains("8.11.12"));
+        assert!(version.contains("2026-01-12"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.11.2-checkpoint-http-endpoint-2026-01-11");
-        assert_eq!(VERSION_NUMBER, "8.11.2");
-        assert_eq!(BUILD_DATE, "2026-01-11");
+        assert_eq!(VERSION, "v8.11.12-unified-s5-deployment-2026-01-12");
+        assert_eq!(VERSION_NUMBER, "8.11.12");
+        assert_eq!(BUILD_DATE, "2026-01-12");
     }
 
     #[test]

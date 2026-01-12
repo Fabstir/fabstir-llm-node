@@ -18,9 +18,11 @@ global.TextDecoder = TextDecoder;
 // Note: global.crypto already exists in Node.js 20+
 
 import { S5 } from '@julesl23/s5js';
+import { FS5Advanced } from '@julesl23/s5js/advanced';
 import { bridgeConfig } from './config.js';
 
 let s5Instance = null;
+let advancedInstance = null;
 let initializationPromise = null;
 
 /**
@@ -103,7 +105,30 @@ export async function initializeS5Client() {
         console.log('✅ Bridge ready for downloading existing S5 content');
       }
 
+      // CRITICAL: Verify portal accounts are configured for uploads
+      const accountCount = Object.keys(s5.apiWithIdentity?.accountConfigs || {}).length;
+      if (accountCount > 0) {
+        const accountIds = Object.keys(s5.apiWithIdentity.accountConfigs);
+        console.log(`✅ Portal accounts configured: ${accountCount}`);
+        accountIds.forEach(id => console.log(`   - ${id}`));
+        console.log('🌐 Uploads will be stored on S5 network');
+      } else {
+        console.error('🚨 NO PORTAL ACCOUNTS CONFIGURED!');
+        console.error('   Uploads will be stored LOCALLY ONLY, NOT on S5 network.');
+        console.error('   Content will NOT be downloadable by CID.');
+        console.error('   Check S5_SEED_PHRASE and portal registration.');
+      }
+
       s5Instance = s5;
+
+      // Initialize Advanced API for CID operations
+      try {
+        advancedInstance = new FS5Advanced(s5.fs);
+        console.log('✅ Advanced CID API initialized');
+      } catch (advError) {
+        console.warn('⚠️  Failed to initialize Advanced API:', advError.message);
+      }
+
       console.log('🎉 Enhanced S5.js client fully initialized');
 
       return s5;
@@ -124,6 +149,15 @@ export async function initializeS5Client() {
  */
 export function getS5Client() {
   return s5Instance;
+}
+
+/**
+ * Get the FS5Advanced client for CID operations
+ *
+ * @returns {FS5Advanced | null} Advanced client or null if not initialized
+ */
+export function getAdvancedClient() {
+  return advancedInstance;
 }
 
 /**
@@ -176,8 +210,9 @@ export async function shutdownS5Client() {
   if (s5Instance) {
     console.log('🛑 Shutting down S5 client...');
     // Note: Enhanced S5.js may not have explicit shutdown
-    // Clear instance reference
+    // Clear instance references
     s5Instance = null;
+    advancedInstance = null;
     initializationPromise = null;
     console.log('✅ S5 client shutdown complete');
   }

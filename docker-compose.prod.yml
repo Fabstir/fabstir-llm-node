@@ -1,0 +1,101 @@
+# Fabstir LLM Node Production Docker Compose
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Usage:
+#   1. Copy .env.prod.example to .env.prod and configure
+#   2. docker-compose -f docker-compose.prod.yml up -d
+#
+# Required environment variables (in .env.prod):
+#   - S5_SEED_PHRASE: S5 identity seed phrase for storage uploads
+#   - HOST_PRIVATE_KEY: Host wallet private key for settlements
+#
+
+services:
+  # S5 Bridge - Must start first for storage uploads
+  s5-bridge:
+    build:
+      context: ./services/s5-bridge
+      dockerfile: Dockerfile
+    container_name: s5-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BRIDGE_PORT: 5522
+      BRIDGE_HOST: 0.0.0.0
+      S5_SEED_PHRASE: ${S5_SEED_PHRASE:?S5_SEED_PHRASE is required}
+      S5_PORTAL_URL: ${S5_PORTAL_URL:-https://s5.vup.cx}
+      S5_INITIAL_PEERS: ${S5_INITIAL_PEERS:-wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5522/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - fabstir-network
+
+  # Fabstir LLM Node - Main inference service
+  llm-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: llm-node-prod
+    restart: unless-stopped
+    runtime: nvidia
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"      # API port
+      - "9000:9000"      # P2P port
+      - "9001:9001"      # P2P port
+      - "9002:9002"      # P2P port
+    environment:
+      # NVIDIA GPU
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # S5 Storage - connects to s5-bridge service
+      ENHANCED_S5_URL: http://s5-bridge:5522
+
+      # Model configuration
+      MODEL_PATH: ${MODEL_PATH:-/app/models/openai_gpt-oss-20b-MXFP4.gguf}
+      LLAMA_BATCH_SIZE: ${LLAMA_BATCH_SIZE:-2048}
+
+      # Network configuration
+      P2P_PORT: ${P2P_PORT:-9000}
+      API_PORT: ${API_PORT:-8080}
+
+      # Blockchain configuration
+      HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY}
+      CHAIN_ID: ${CHAIN_ID:-84532}
+      RPC_URL: ${RPC_URL}
+
+      # Contract addresses
+      CONTRACT_NODE_REGISTRY: ${CONTRACT_NODE_REGISTRY:-0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22}
+      CONTRACT_JOB_MARKETPLACE: ${CONTRACT_JOB_MARKETPLACE:-0x3CaCbf3f448B420918A93a88706B26Ab27a3523E}
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+
+      # Optional: Web search
+      WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+
+    volumes:
+      # Mount model directory
+      - ${MODELS_DIR:-./models}:/app/models:ro
+      # Mount pre-built binary (from tarball)
+      - ./target/release/fabstir-llm-node:/usr/local/bin/fabstir-llm-node:ro
+    depends_on:
+      s5-bridge:
+        condition: service_healthy
+    networks:
+      - fabstir-network
+
+networks:
+  fabstir-network:
+    name: fabstir-network
+    driver: bridge

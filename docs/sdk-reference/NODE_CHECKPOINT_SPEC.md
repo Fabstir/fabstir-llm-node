@@ -125,14 +125,14 @@ The index lists all checkpoints for a session.
     {
       "index": 0,
       "proofHash": "0x1234...",
-      "deltaCID": "bafybeig1...",
+      "deltaCid": "bafybeig1...",
       "tokenRange": [0, 1000],
       "timestamp": 1704844800000
     },
     {
       "index": 1,
       "proofHash": "0x5678...",
-      "deltaCID": "bafybeig2...",
+      "deltaCid": "bafybeig2...",
       "tokenRange": [1000, 2000],
       "timestamp": 1704844860000
     }
@@ -156,7 +156,7 @@ The index lists all checkpoints for a session.
 |-------|------|-------------|
 | `index` | number | 0-based checkpoint index |
 | `proofHash` | string | bytes32 proof hash (matches on-chain) |
-| `deltaCID` | string | S5 CID where delta is stored |
+| `deltaCid` | string | S5 CID where delta is stored |
 | `tokenRange` | [number, number] | [startToken, endToken] tuple |
 | `timestamp` | number | Unix timestamp when checkpoint was created |
 
@@ -219,7 +219,7 @@ def sign_index(checkpoints, private_key):
 2. Compute proofHash = keccak256(proof_data)
 3. Create delta with messages since last checkpoint
 4. Sign delta
-5. Upload delta to S5 → get deltaCID
+5. Upload delta to S5 → get deltaCid
 6. Update index with new checkpoint entry
 7. Sign index
 8. Upload index to S5
@@ -299,7 +299,7 @@ async def cleanup_checkpoints(s5_client, host_address, session_id):
         # Delete all deltas
         for checkpoint in index.get('checkpoints', []):
             try:
-                await s5_client.fs.delete(checkpoint['deltaCID'])
+                await s5_client.fs.delete(checkpoint['deltaCid'])
             except:
                 pass  # Ignore if already deleted
 
@@ -342,7 +342,7 @@ class CheckpointDelta:
 class CheckpointEntry:
     index: int
     proofHash: str
-    deltaCID: str
+    deltaCid: str
     tokenRange: List[int]
     timestamp: int
 
@@ -384,7 +384,7 @@ class CheckpointPublisher:
         """
         Publish a checkpoint. Call this BEFORE submitting proof to chain.
 
-        Returns: deltaCID
+        Returns: deltaCid
         """
         # 1. Create delta
         messages_dict = [asdict(m) for m in messages]
@@ -453,7 +453,7 @@ class CheckpointPublisher:
         checkpoints.append({
             'index': checkpoint_index,
             'proofHash': proof_hash,
-            'deltaCID': delta_cid,
+            'deltaCid': delta_cid,
             'tokenRange': token_range,
             'timestamp': int(time.time() * 1000)
         })
@@ -517,7 +517,7 @@ async def on_proof_interval(publisher, session_id, messages_since_last, proof_da
    │  2. Upload Delta                  │                    │
    │────────────────►│                 │                    │
    │                 │                 │                    │
-   │  3. deltaCID    │                 │                    │
+   │  3. deltaCid    │                 │                    │
    │◄────────────────│                 │                    │
    │                 │                 │                    │
    │  4. Update Index                  │                    │
@@ -635,14 +635,14 @@ Returns the `CheckpointIndex` JSON object:
     {
       "index": 0,
       "proofHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-      "deltaCID": "bafybeig1xyz789...",
+      "deltaCid": "bafybeig1xyz789...",
       "tokenRange": [0, 1000],
       "timestamp": 1704844800000
     },
     {
       "index": 1,
       "proofHash": "0x5678abcdef123456789012345678901234567890abcdef1234567890abcdef12",
-      "deltaCID": "bafybeig2abc456...",
+      "deltaCid": "bafybeig2abc456...",
       "tokenRange": [1000, 2000],
       "timestamp": 1704844860000
     }
@@ -733,7 +733,7 @@ Access-Control-Allow-Origin: *
     {
       "index": 0,
       "proofHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-      "deltaCID": "bafybeig1xyz789abc123def456ghi789jkl012mno345pqr678stu901vwx234",
+      "deltaCid": "bafybeig1xyz789abc123def456ghi789jkl012mno345pqr678stu901vwx234",
       "tokenRange": [0, 1000],
       "timestamp": 1704844800000
     }
@@ -837,7 +837,7 @@ if (index === null) {
 
   // Fetch deltas from S5 using globally-addressable CIDs
   for (const cp of index.checkpoints) {
-    const delta = await s5Client.get(cp.deltaCID);  // CID is globally addressable
+    const delta = await s5Client.get(cp.deltaCid);  // CID is globally addressable
     console.log(`Delta ${cp.index}: ${delta.messages.length} messages`);
   }
 }

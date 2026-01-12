@@ -13,8 +13,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Copy pre-installed node_modules (s5js not available on npm)
+COPY node_modules/ ./node_modules/
 
 # Copy application code
 COPY src/ ./src/
