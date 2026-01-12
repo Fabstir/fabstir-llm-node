@@ -76,11 +76,83 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 use tracing::{error, info, warn};
+
+/// Check if a string is a valid S5 CID in multibase format
+/// S5 CIDs are raw 32-byte blake3 hashes encoded with multibase:
+/// - base32 with 'b' prefix: 53 characters total (b + 52 chars)
+///
+/// NOTE: S5 does NOT use IPFS CID format. IPFS CIDs include version/codec/multihash
+/// Validate S5 BlobIdentifier CID format
+///
+/// BlobIdentifier format: 58-70 chars (varies by file size encoding)
+/// Structure: 'b' + base32(prefix(2) + multihash(1) + hash(32) + size(1-8))
+/// - prefix: [0x5b, 0x82] (2 bytes)
+/// - multihash: 0x1e (BLAKE3, 1 byte)
+/// - hash: 32 bytes (BLAKE3 hash)
+/// - size: 1-8 bytes (little-endian file size, trailing zeros trimmed)
+///
+/// Total: 36-43 bytes = 58-70 base32 characters with 'b' multibase prefix
+///
+/// NOTE: The old 53-char raw hash format is DEPRECATED - S5 portals reject it.
+fn is_valid_s5_cid(s: &str) -> bool {
+    // Must start with 'b' (base32 multibase prefix)
+    if !s.starts_with('b') {
+        return false;
+    }
+
+    // BlobIdentifier: 58-70 chars (varies by file size encoding)
+    // 36 bytes minimum (1-byte size) = 58 chars
+    // 43 bytes maximum (8-byte size) = 70 chars
+    let len = s.len();
+    if len < 58 || len > 70 {
+        return false;
+    }
+
+    // Valid base32 lowercase chars: a-z, 2-7
+    s[1..].chars().all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
+}
+
+/// Convert a raw hash (hex string) to base32 format for internal reference
+///
+/// DEPRECATED: This produces a 53-char raw hash format, which is NOT a valid
+/// BlobIdentifier CID. S5 portals reject this format. For valid CIDs, use the
+/// BlobIdentifier format returned by the S5 bridge (58-70 chars with file size).
+///
+/// This function is kept for internal hash reference purposes only, NOT for
+/// portal downloads. The output should NOT be passed to `is_valid_s5_cid()`.
+///
+/// Result: 53 chars = 'b' + 52 base32 characters (raw 32-byte hash)
+#[allow(dead_code)]
+fn format_hash_as_cid(hash: &str) -> String {
+    // Check if already a BlobIdentifier CID (58-70 chars)
+    if is_valid_s5_cid(hash) {
+        return hash.to_string();
+    }
+
+    // Decode hex hash to bytes
+    let hash_bytes = match hex::decode(hash) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            // Not valid hex, compute blake3 hash of the string (S5 uses blake3)
+            blake3::hash(hash.as_bytes()).as_bytes().to_vec()
+        }
+    };
+
+    // Ensure exactly 32 bytes
+    let mut normalized_hash = [0u8; 32];
+    let copy_len = std::cmp::min(hash_bytes.len(), 32);
+    normalized_hash[..copy_len].copy_from_slice(&hash_bytes[..copy_len]);
+
+    // Base32 encode raw 32-byte hash with 'b' multibase prefix
+    // Result: 'b' + 52 lowercase base32 chars = 53 total chars
+    // NOTE: This is NOT a valid BlobIdentifier CID (portals reject it)
+    let base32_encoded = data_encoding::BASE32_NOPAD.encode(&normalized_hash).to_lowercase();
+    format!("b{}", base32_encoded)
+}
 
 #[derive(Debug, Clone)]
 pub struct S5Config {
@@ -184,14 +256,22 @@ impl EnhancedS5Client {
         Ok(health)
     }
 
-    pub async fn put_file(&self, path: &str, content: Vec<u8>) -> Result<()> {
+    /// Upload a file to S5 and return the CID
+    /// The S5 bridge returns the CID in the response body as JSON: {"cid": "bafybei..."}
+    pub async fn put_file(&self, path: &str, content: Vec<u8>) -> Result<String> {
+        let content_size = content.len();
         let url = if path.starts_with("/s5/fs") {
             format!("{}{}", self.base_url, path)
         } else {
             format!("{}/s5/fs/{}", self.base_url, path.trim_start_matches('/'))
         };
 
-        info!("PUT file to: {}", url);
+        info!(
+            "📤 [S5-HTTP] PUT request: url='{}', path='{}', size={} bytes",
+            url, path, content_size
+        );
+
+        let start_time = std::time::Instant::now();
 
         let response = self.client
             .put(&url)
@@ -200,16 +280,62 @@ impl EnhancedS5Client {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        let duration_ms = start_time.elapsed().as_millis();
+
+        info!(
+            "📤 [S5-HTTP] Response received: status={}, duration={}ms",
+            status, duration_ms
+        );
+
+        if !status.is_success() {
             let error_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
+            error!(
+                "📤 [S5-HTTP] ❌ PUT FAILED: status={}, path='{}', error='{}'",
+                status, path, error_text
+            );
             return Err(anyhow!("Failed to PUT file: {} - {}", status, error_text));
         }
 
-        Ok(())
+        // Parse the response to get the CID
+        // S5 bridge returns JSON with CID from Advanced API: {"success": true, "path": "...", "cid": "baaa..."}
+        let response_text = response.text().await.unwrap_or_default();
+        info!("📤 [S5-HTTP] Raw response: '{}'", response_text);
+
+        // Try to parse as JSON to extract CID and debug info
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            // Log debug info if present
+            if let Some(debug_info) = json.get("debug") {
+                info!(
+                    "📤 [S5-HTTP] Bridge debug: requestId={}, uploadDurationMs={}, portalAccount={}",
+                    debug_info.get("requestId").and_then(|v| v.as_str()).unwrap_or("?"),
+                    debug_info.get("uploadDurationMs").and_then(|v| v.as_u64()).unwrap_or(0),
+                    debug_info.get("portalAccount").and_then(|v| v.as_str()).unwrap_or("?")
+                );
+            }
+
+            // Check for networkUploaded flag
+            let network_uploaded = json.get("networkUploaded").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            // Check for CID field from S5 Advanced API (formatCID output)
+            if let Some(cid) = json.get("cid").and_then(|v| v.as_str()) {
+                info!(
+                    "📤 [S5-HTTP] ✅ PUT SUCCESS: path='{}', cid='{}', cid_len={}, networkUploaded={}",
+                    path, cid, cid.len(), network_uploaded
+                );
+                return Ok(cid.to_string());
+            }
+        }
+
+        // No CID in response - fail explicitly
+        error!(
+            "📤 [S5-HTTP] ❌ No CID in response: path='{}', response='{}'",
+            path, response_text
+        );
+        Err(anyhow!("S5 bridge did not return CID in response: '{}'. Bridge must use S5 Advanced API (FS5Advanced.pathToCID + formatCID).", response_text))
     }
 
     pub async fn get_file(&self, path: &str) -> Result<Vec<u8>> {
@@ -333,17 +459,10 @@ impl EnhancedS5Client {
         data: Vec<u8>,
         metadata: Option<JsonValue>,
     ) -> Result<String> {
-        // Upload to S5 bridge via HTTP
-        self.put_file(path, data.clone()).await?;
+        // Upload to S5 bridge via HTTP and get the real CID
+        let cid = self.put_file(path, data.clone()).await?;
 
-        // Generate a mock CID using BLAKE3-like hash
-        let mut hasher = Sha256::new();
-        hasher.update(&data);
-        hasher.update(path.as_bytes());
-        let hash_result = hasher.finalize();
-        let cid = format!("bafybei{}", hex::encode(&hash_result[..16]));
-
-        // Also store in mock storage for compatibility
+        // Also store in mock storage for compatibility (for local testing)
         let mut storage = self.mock_storage.lock().unwrap();
         storage.insert(path.to_string(), (data, metadata));
 
@@ -365,89 +484,6 @@ impl EnhancedS5Client {
                 }
             }
         }
-    }
-}
-
-// Implement S5Storage trait for VectorLoader compatibility
-#[async_trait::async_trait]
-impl crate::storage::s5_client::S5Storage for EnhancedS5Client {
-    async fn put(&self, path: &str, data: Vec<u8>) -> Result<String, crate::storage::s5_client::StorageError> {
-        self.put_file(path, data)
-            .await
-            .map(|_| format!("s5://{}", path))
-            .map_err(|e| crate::storage::s5_client::StorageError::NetworkError(e.to_string()))
-    }
-
-    async fn put_with_metadata(
-        &self,
-        path: &str,
-        data: Vec<u8>,
-        _metadata: std::collections::HashMap<String, String>,
-    ) -> Result<String, crate::storage::s5_client::StorageError> {
-        // Enhanced S5 client doesn't support metadata in put, use put_file
-        self.put_file(path, data)
-            .await
-            .map(|_| format!("s5://{}", path))
-            .map_err(|e| crate::storage::s5_client::StorageError::NetworkError(e.to_string()))
-    }
-
-    async fn get(&self, path: &str) -> Result<Vec<u8>, crate::storage::s5_client::StorageError> {
-        self.get_file(path)
-            .await
-            .map_err(|e| crate::storage::s5_client::StorageError::NetworkError(e.to_string()))
-    }
-
-    async fn get_metadata(&self, path: &str) -> Result<std::collections::HashMap<String, String>, crate::storage::s5_client::StorageError> {
-        // Enhanced S5 client doesn't expose separate metadata endpoint
-        // Return empty metadata for now
-        let _ = path;
-        Ok(std::collections::HashMap::new())
-    }
-
-    async fn get_by_cid(&self, cid: &str) -> Result<Vec<u8>, crate::storage::s5_client::StorageError> {
-        // Enhanced S5 client doesn't support direct CID access
-        // Return error for now
-        Err(crate::storage::s5_client::StorageError::NetworkError(
-            format!("CID-based retrieval not supported by Enhanced S5 client: {}", cid)
-        ))
-    }
-
-    async fn list(&self, path: &str) -> Result<Vec<crate::storage::s5_client::S5Entry>, crate::storage::s5_client::StorageError> {
-        // Enhanced S5 client doesn't support listing
-        let _ = path;
-        Ok(vec![])
-    }
-
-    async fn list_with_options(
-        &self,
-        path: &str,
-        _limit: Option<usize>,
-        _cursor: Option<String>,
-    ) -> Result<crate::storage::s5_client::S5ListResult, crate::storage::s5_client::StorageError> {
-        // Enhanced S5 client doesn't support listing
-        let _ = path;
-        Ok(crate::storage::s5_client::S5ListResult {
-            entries: vec![],
-            cursor: None,
-            has_more: false,
-        })
-    }
-
-    async fn delete(&self, _path: &str) -> Result<(), crate::storage::s5_client::StorageError> {
-        // Enhanced S5 client doesn't support deletion
-        Ok(())
-    }
-
-    async fn exists(&self, path: &str) -> Result<bool, crate::storage::s5_client::StorageError> {
-        // Try to get the file, if it succeeds it exists
-        match self.get_file(path).await {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    fn clone(&self) -> Box<dyn crate::storage::s5_client::S5Storage> {
-        Box::new(Clone::clone(self))
     }
 }
 
@@ -488,5 +524,213 @@ mod tests {
             // Just ensure no panic occurs
             let _ = client.exists(path).await;
         }
+    }
+
+    #[test]
+    fn test_format_hash_as_cid() {
+        // Test with typical S5 bridge hash (32 hex chars = 16 bytes)
+        // NOTE: This is DEPRECATED - produces raw hash, NOT BlobIdentifier
+        let hash = "9779e1b4109298dbb9d948b9348e99b9";
+        let cid = format_hash_as_cid(hash);
+
+        println!("Input hash: {}", hash);
+        println!("Output CID: {}", cid);
+        println!("CID length: {}", cid.len());
+
+        // Must start with 'b' (base32 multibase prefix)
+        assert!(
+            cid.starts_with('b'),
+            "CID must start with 'b' prefix, got: {}",
+            cid
+        );
+
+        // Must be exactly 53 characters (raw hash format, NOT BlobIdentifier)
+        assert_eq!(
+            cid.len(),
+            53,
+            "Raw hash must be 53 chars (b + 52 base32), got {}: {}",
+            cid.len(),
+            cid
+        );
+
+        // NOTE: 53-char is NOT a valid BlobIdentifier CID (is_valid_s5_cid returns false)
+        // This is expected - format_hash_as_cid produces deprecated raw hash format
+
+        // Must NOT be raw hex
+        assert!(
+            !cid.chars().all(|c| c.is_ascii_hexdigit()),
+            "CID must not be raw hex: {}",
+            cid
+        );
+
+        // Must NOT be IPFS format
+        assert!(
+            !cid.starts_with("bafkrei"),
+            "CID must NOT be IPFS format (bafkrei), got: {}",
+            cid
+        );
+        assert!(
+            !cid.starts_with("bafybei"),
+            "CID must NOT be IPFS format (bafybei), got: {}",
+            cid
+        );
+    }
+
+    #[test]
+    fn test_format_hash_as_cid_full_hash() {
+        // Test with full 64 char hex hash (32 bytes)
+        // NOTE: This is DEPRECATED - produces raw hash, NOT BlobIdentifier
+        let hash = "9779e1b4109298dbb9d948b9348e99b9f5b821ec99e02c80a1b2c3d4e5f6a7b8";
+        let cid = format_hash_as_cid(hash);
+
+        println!("Input hash: {}", hash);
+        println!("Output CID: {}", cid);
+        println!("CID length: {}", cid.len());
+
+        assert!(cid.starts_with('b'), "CID must start with 'b' prefix");
+        assert_eq!(cid.len(), 53, "Raw hash must be 53 chars");
+
+        // NOTE: 53-char is NOT a valid BlobIdentifier CID (is_valid_s5_cid returns false)
+        // This is expected - format_hash_as_cid produces deprecated raw hash format
+
+        // Must NOT be IPFS format
+        assert!(
+            !cid.starts_with("bafkrei"),
+            "CID must NOT be IPFS format"
+        );
+        assert!(
+            !cid.starts_with("bafybei"),
+            "CID must NOT be IPFS format"
+        );
+    }
+
+    #[test]
+    fn test_valid_blob_identifier_passthrough() {
+        // Already valid BlobIdentifier CID (58-70 chars) should pass through unchanged
+        let valid_cid = "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxy";
+        assert_eq!(valid_cid.len(), 58, "Test CID should be 58 chars");
+        assert!(is_valid_s5_cid(valid_cid), "Should be valid BlobIdentifier");
+        let result = format_hash_as_cid(valid_cid);
+        assert_eq!(
+            result, valid_cid,
+            "Valid BlobIdentifier CID should pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn test_is_valid_s5_cid_blob_identifier_format() {
+        // BlobIdentifier format: 58-70 chars (varies by file size encoding)
+        // Structure: 'b' + base32(prefix(2) + multihash(1) + hash(32) + size(1-8))
+        // Minimum: 36 bytes = 58 chars; Maximum: ~43 bytes = 70 chars
+
+        // Valid BlobIdentifier CID - 58 chars (minimum size, 1-byte file size)
+        let valid_58_char = "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxy";
+        assert_eq!(valid_58_char.len(), 58);
+        assert!(
+            is_valid_s5_cid(valid_58_char),
+            "58-char BlobIdentifier CID should be valid"
+        );
+
+        // Valid BlobIdentifier CID - 59 chars (typical small files)
+        let valid_59_char = "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz";
+        assert_eq!(valid_59_char.len(), 59);
+        assert!(
+            is_valid_s5_cid(valid_59_char),
+            "59-char BlobIdentifier CID should be valid"
+        );
+
+        // Valid BlobIdentifier CID - 62 chars (medium files)
+        let valid_62_char = "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz234";
+        assert_eq!(valid_62_char.len(), 62);
+        assert!(
+            is_valid_s5_cid(valid_62_char),
+            "62-char BlobIdentifier CID should be valid"
+        );
+
+        // Valid BlobIdentifier CID - 70 chars (maximum size, 8-byte file size)
+        let valid_70_char =
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz234567abcde";
+        assert_eq!(valid_70_char.len(), 70);
+        assert!(
+            is_valid_s5_cid(valid_70_char),
+            "70-char BlobIdentifier CID should be valid"
+        );
+    }
+
+    #[test]
+    fn test_reject_old_53_char_raw_hash() {
+        // 53-char raw hash format is DEPRECATED - portals reject it
+        // Only accept BlobIdentifier format (58-70 chars)
+        let old_53_char_cid = "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst";
+        assert_eq!(old_53_char_cid.len(), 53);
+        assert!(
+            !is_valid_s5_cid(old_53_char_cid),
+            "53-char raw hash CID should be REJECTED (portals don't accept it)"
+        );
+    }
+
+    #[test]
+    fn test_is_valid_s5_cid() {
+        // Invalid - IPFS format CIDs (wrong structure, contain 8/9/0/1)
+        // Note: These are 59 chars which is in valid range, but contain invalid base32 chars
+        assert!(
+            !is_valid_s5_cid("bafybeig123abc456def789ghi012jkl345mno678pqr901stu234vwx5"),
+            "IPFS-style CID (bafybei...) should be invalid - contains 8,9,0,1"
+        );
+        assert!(
+            !is_valid_s5_cid("bafkreig123abc456def789ghi012jkl345mno678pqr901stu234vwx5"),
+            "IPFS-style CID (bafkrei...) should be invalid - contains 8,9,0,1"
+        );
+
+        // Invalid - raw hex hashes (wrong chars and wrong length)
+        assert!(
+            !is_valid_s5_cid("9779e1b4109298dbb9d948b9348e99b9"),
+            "Hex hash should be invalid (wrong prefix)"
+        );
+        assert!(
+            !is_valid_s5_cid("f5b821ec99e02c80"),
+            "Short hex should be invalid"
+        );
+        assert!(
+            !is_valid_s5_cid("1234567890abcdef"),
+            "Hex digits only should be invalid"
+        );
+
+        // Invalid - too short (under 58)
+        assert!(!is_valid_s5_cid("babcdef"), "7 chars should be invalid");
+        assert!(
+            !is_valid_s5_cid("babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst"),
+            "53-char raw hash should be invalid (deprecated)"
+        );
+        assert!(
+            !is_valid_s5_cid("babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx"),
+            "57 chars should be invalid (too short)"
+        );
+
+        // Invalid - too long (over 70)
+        assert!(
+            !is_valid_s5_cid(
+                "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz234567abcdef"
+            ),
+            "71 chars should be invalid (too long)"
+        );
+
+        // Invalid - wrong prefix (must start with 'b')
+        assert!(
+            !is_valid_s5_cid("zabcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxy"),
+            "Wrong prefix 'z' should be invalid"
+        );
+
+        // Invalid - uppercase letters (base32 must be lowercase)
+        assert!(
+            !is_valid_s5_cid("bABCDEabcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst"),
+            "Uppercase letters should be invalid"
+        );
+
+        // Invalid - invalid base32 characters (8, 9, 0, 1)
+        assert!(
+            !is_valid_s5_cid("b89010abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst"),
+            "Invalid base32 chars (8,9,0,1) should be invalid"
+        );
     }
 }

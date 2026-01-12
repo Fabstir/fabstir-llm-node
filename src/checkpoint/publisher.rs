@@ -289,11 +289,16 @@ impl CheckpointPublisher {
             self.host_address, session_id, checkpoint_index
         );
 
+        info!(
+            "📤 [CHECKPOINT] Uploading delta: session='{}', checkpoint={}, path='{}', size={} bytes",
+            session_id, checkpoint_index, delta_path, delta_bytes.len()
+        );
+
         let delta_cid = upload_with_retry(s5_storage, &delta_path, delta_bytes)
             .await
             .map_err(|e| {
                 error!(
-                    "Delta upload failed for session {} checkpoint {}: {}",
+                    "📤 [CHECKPOINT] ❌ Delta upload FAILED: session='{}', checkpoint={}, error={}",
                     session_id, checkpoint_index, e
                 );
                 anyhow!(
@@ -308,7 +313,10 @@ impl CheckpointPublisher {
             .unwrap_or(&delta_cid)
             .to_string();
 
-        info!("Delta uploaded: {}", delta_cid_raw);
+        info!(
+            "📤 [CHECKPOINT] ✅ Delta uploaded: session='{}', checkpoint={}, cid='{}', cid_len={}",
+            session_id, checkpoint_index, delta_cid_raw, delta_cid_raw.len()
+        );
 
         // 4. Update checkpoint index
         let index = state.index.get_or_insert_with(|| {
@@ -414,26 +422,59 @@ pub async fn upload_with_retry(
     data: Vec<u8>,
 ) -> Result<String> {
     let mut last_error = None;
+    let data_size = data.len();
+
+    info!(
+        "📤 [S5-RUST] Starting upload: path='{}', size={} bytes",
+        path, data_size
+    );
 
     for attempt in 0..MAX_S5_RETRIES {
+        info!(
+            "📤 [S5-RUST] Upload attempt {}/{} for path '{}'",
+            attempt + 1,
+            MAX_S5_RETRIES,
+            path
+        );
+
+        let start_time = std::time::Instant::now();
+
         match s5_storage.put(path, data.clone()).await {
-            Ok(cid) => return Ok(cid),
+            Ok(cid) => {
+                let duration_ms = start_time.elapsed().as_millis();
+                info!(
+                    "📤 [S5-RUST] ✅ Upload SUCCESS: path='{}', cid='{}', cid_len={}, size={} bytes, duration={}ms",
+                    path, cid, cid.len(), data_size, duration_ms
+                );
+                return Ok(cid);
+            }
             Err(e) => {
+                let duration_ms = start_time.elapsed().as_millis();
                 warn!(
-                    "S5 upload attempt {}/{} failed for path '{}': {:?}",
+                    "📤 [S5-RUST] ❌ Upload attempt {}/{} FAILED for path '{}': {:?} (took {}ms)",
                     attempt + 1,
                     MAX_S5_RETRIES,
                     path,
-                    e
+                    e,
+                    duration_ms
                 );
                 last_error = Some(e);
                 if attempt < MAX_S5_RETRIES - 1 {
                     let delay_ms = S5_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                    info!(
+                        "📤 [S5-RUST] Waiting {}ms before retry...",
+                        delay_ms
+                    );
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
         }
     }
+
+    error!(
+        "📤 [S5-RUST] 🚨 UPLOAD FAILED after {} retries: path='{}', last_error={:?}",
+        MAX_S5_RETRIES, path, last_error
+    );
 
     Err(anyhow!(
         "S5 upload failed after {} retries: {:?}",
@@ -505,7 +546,7 @@ mod tests {
         index.add_checkpoint(CheckpointEntry::with_timestamp(
             0,
             "0x1234".to_string(),
-            "bafybeig123".to_string(),
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst".to_string(),
             0,
             1000,
             1704844800000,
@@ -513,7 +554,7 @@ mod tests {
         index.add_checkpoint(CheckpointEntry::with_timestamp(
             1,
             "0x5678".to_string(),
-            "bafybeig456".to_string(),
+            "b234567abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrst".to_string(),
             1000,
             2500,
             1704844900000,
@@ -889,10 +930,36 @@ mod tests {
         );
         assert!(!cid.is_empty(), "CID should not be empty");
 
+        // CID MUST be in BlobIdentifier format: 58-70 chars (varies by file size)
+        // Old 53-char raw hash format is DEPRECATED - portals reject it
+        // NOTE: S5 does NOT use IPFS format (bafkrei/bafybei)
+        assert!(
+            cid.starts_with('b') && cid.len() >= 58 && cid.len() <= 70,
+            "deltaCid MUST be BlobIdentifier format (58-70 chars), got {} chars: {}",
+            cid.len(),
+            cid
+        );
+        // Must NOT be IPFS format
+        assert!(
+            !cid.starts_with("bafkrei") && !cid.starts_with("bafybei"),
+            "deltaCid MUST NOT be IPFS format (bafkrei/bafybei), got: {}",
+            cid
+        );
+
         // CID should be recorded in the index
         let state = publisher.get_session_state("session-cid").await.unwrap();
         let index = state.index.unwrap();
         assert_eq!(index.checkpoints[0].delta_cid, cid);
+
+        // Verify the checkpoint entry in index also has proper CID format
+        assert!(
+            index.checkpoints[0].delta_cid.starts_with('b')
+                && index.checkpoints[0].delta_cid.len() >= 58
+                && index.checkpoints[0].delta_cid.len() <= 70,
+            "CheckpointEntry.delta_cid MUST be BlobIdentifier format (58-70 chars), got {}: {}",
+            index.checkpoints[0].delta_cid.len(),
+            index.checkpoints[0].delta_cid
+        );
     }
 
     #[tokio::test]

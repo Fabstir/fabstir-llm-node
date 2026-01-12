@@ -4,7 +4,7 @@ use anyhow::Result;
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Json, State,
+        DefaultBodyLimit, Json, Path, State,
     },
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -1073,7 +1073,9 @@ impl ApiServer {
 
         Router::new()
             .route("/health", get(health_handler))
+            .route("/v1/version", get(version_handler))
             .route("/v1/models", get(models_handler))
+            .route("/v1/checkpoints/:session_id", get(checkpoints_handler))
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/embed", post(embed_handler_wrapper))
             .route("/v1/search", post(search_handler_wrapper))
@@ -1094,6 +1096,93 @@ async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoRespon
     match server.get_available_models().await {
         Ok(models) => (StatusCode::OK, axum::response::Json(models)).into_response(),
         Err(e) => ApiServer::error_response(e),
+    }
+}
+
+async fn version_handler() -> impl IntoResponse {
+    axum::response::Json(crate::version::get_version_info())
+}
+
+/// GET /v1/checkpoints/:session_id - Returns checkpoint index for SDK conversation recovery
+async fn checkpoints_handler(
+    State(server): State<Arc<ApiServer>>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    use crate::checkpoint::index::CheckpointIndex;
+
+    tracing::info!("🔍 checkpoints_handler called for session_id: {}", session_id);
+
+    // Get checkpoint_manager from server
+    let checkpoint_manager = match server.get_checkpoint_manager().await {
+        Some(cm) => cm,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::response::Json(serde_json::json!({
+                    "error": "Checkpoint service unavailable"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    // Get host address and S5 storage
+    let host_address = checkpoint_manager.get_host_address();
+    let s5_storage = checkpoint_manager.get_s5_storage();
+
+    // Build S5 path and fetch
+    let index_path = CheckpointIndex::s5_path(&host_address, &session_id);
+    tracing::info!("🔍 Fetching checkpoint index from: {}", index_path);
+
+    match s5_storage.get(&index_path).await {
+        Ok(bytes) => {
+            tracing::info!("🔍 Got {} bytes from S5", bytes.len());
+            match serde_json::from_slice::<CheckpointIndex>(&bytes) {
+                Ok(index) => {
+                    tracing::info!(
+                        "🔍 Returning checkpoint index: sessionId={}, hostAddress={}, checkpoints={}, hostSignature_len={}",
+                        index.session_id,
+                        index.host_address,
+                        index.checkpoints.len(),
+                        index.host_signature.len()
+                    );
+                    let response = serde_json::to_value(&index).unwrap();
+                    tracing::debug!("🔍 Response JSON: {}", serde_json::to_string(&response).unwrap_or_default());
+                    (StatusCode::OK, axum::response::Json(response)).into_response()
+                }
+                Err(e) => {
+                    tracing::error!("🔍 Failed to parse checkpoint index: {}", e);
+                    tracing::error!("🔍 Raw bytes: {}", String::from_utf8_lossy(&bytes));
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::response::Json(serde_json::json!({
+                            "error": format!("Failed to parse checkpoint index: {}", e)
+                        })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(crate::storage::StorageError::NotFound(_)) => {
+            tracing::warn!("🔍 No checkpoints found for session {}", session_id);
+            (
+                StatusCode::NOT_FOUND,
+                axum::response::Json(serde_json::json!({
+                    "error": format!("No checkpoints found for session {}", session_id)
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("🔍 Failed to fetch checkpoint index: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::response::Json(serde_json::json!({
+                    "error": format!("Failed to fetch checkpoint index: {}", e)
+                })),
+            )
+                .into_response()
+        }
     }
 }
 

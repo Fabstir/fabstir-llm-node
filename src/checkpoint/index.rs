@@ -191,13 +191,13 @@ mod tests {
         let entry = CheckpointEntry::new(
             0,
             "0x1234".to_string(),
-            "bafybeig123".to_string(),
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst".to_string(),
             0,
             1000,
         );
         assert_eq!(entry.index, 0);
         assert_eq!(entry.proof_hash, "0x1234");
-        assert_eq!(entry.delta_cid, "bafybeig123");
+        assert_eq!(entry.delta_cid, "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst");
         assert_eq!(entry.token_range, [0, 1000]);
         assert!(entry.timestamp > 0);
     }
@@ -209,7 +209,7 @@ mod tests {
         let entry = CheckpointEntry::with_timestamp(
             0,
             "0x1234".to_string(),
-            "bafybeig123".to_string(),
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst".to_string(),
             0,
             1000,
             1704844800000,
@@ -252,7 +252,7 @@ mod tests {
         let entry = CheckpointEntry::with_timestamp(
             0,
             "0x1234".to_string(),
-            "bafybeig123".to_string(),
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst".to_string(),
             0,
             1000,
             1704844800000,
@@ -290,7 +290,7 @@ mod tests {
         index.add_checkpoint(CheckpointEntry::with_timestamp(
             0,
             "0x1234".to_string(),
-            "bafybeig123".to_string(),
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst".to_string(),
             0,
             1000,
             1704844800000,
