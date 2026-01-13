@@ -10,6 +10,7 @@ use crate::api::websocket::message_types::VectorDatabaseInfo;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tracing::info;
 
 /// Encrypted session initialization payload from client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +129,11 @@ pub fn decrypt_session_init(
 
     let session_data: SessionDataJson = serde_json::from_str(plaintext_str)
         .map_err(|e| anyhow!("Failed to parse session data JSON: {}", e))?;
+
+    // Log whether recovery_public_key was provided (determines checkpoint encryption)
+    if session_data.recovery_public_key.is_some() {
+        info!("🔑 Session init contains recoveryPublicKey - encrypted checkpoints enabled");
+    }
 
     // Step 4: Extract and validate session key (hex-encoded 32 bytes)
     let session_key_hex = session_data

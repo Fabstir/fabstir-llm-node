@@ -1603,7 +1603,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                             if let Some(cm) = server.get_checkpoint_manager().await {
                                                                 cm.set_session_recovery_public_key(sid, recovery_pubkey.clone()).await;
                                                                 info!("🔐 Recovery public key set for session {} (encrypted checkpoints enabled)", sid);
+                                                            } else {
+                                                                warn!("⚠️ Recovery public key provided but checkpoint manager not available");
                                                             }
+                                                        } else {
+                                                            debug!("ℹ️ No recovery public key in session init - checkpoints will be plaintext");
                                                         }
 
                                                         // Handle vector_database if provided (Sub-phase 3.3)
