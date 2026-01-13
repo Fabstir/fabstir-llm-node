@@ -2165,16 +2165,19 @@ pub struct EncryptedCheckpointDelta {
 
 **Goal**: Create checkpoint-specific ECDH key derivation with domain separation
 
-**Status**: PENDING
+**Status**: COMPLETE ✅ (2026-01-13)
 
 #### Tasks
-- [ ] Write test `test_derive_checkpoint_key_32_bytes`
-- [ ] Write test `test_derive_checkpoint_key_deterministic`
-- [ ] Write test `test_derive_checkpoint_key_uses_correct_info_param`
-- [ ] Write test `test_derive_checkpoint_key_different_from_session_key`
-- [ ] Implement `derive_checkpoint_encryption_key()` function
-- [ ] Use HKDF info parameter: `b"checkpoint-delta-encryption-v1"`
-- [ ] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture`
+- [x] Write test `test_derive_checkpoint_key_returns_32_bytes`
+- [x] Write test `test_derive_checkpoint_key_is_deterministic`
+- [x] Write test `test_derive_checkpoint_key_different_inputs_different_outputs`
+- [x] Write test `test_derive_checkpoint_key_rejects_invalid_private_key_size`
+- [x] Write test `test_derive_checkpoint_key_rejects_invalid_public_key_size`
+- [x] Write test `test_derive_checkpoint_key_rejects_invalid_public_key_point`
+- [x] Write test `test_derive_checkpoint_key_uses_checkpoint_info_param`
+- [x] Implement `derive_checkpoint_encryption_key()` function
+- [x] Use HKDF info parameter: `b"checkpoint-delta-encryption-v1"`
+- [x] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture` (7 tests passing)
 
 **Implementation File:** `/workspace/src/checkpoint/encryption.rs`
 
@@ -2225,17 +2228,18 @@ pub fn derive_checkpoint_encryption_key(
 
 **Goal**: Full encryption flow - ephemeral key, ECDH, XChaCha20, signature
 
-**Status**: PENDING
+**Status**: COMPLETE ✅ (2026-01-13)
 
 #### Tasks
-- [ ] Write test `test_encrypt_checkpoint_delta_returns_valid_format`
-- [ ] Write test `test_encrypt_checkpoint_delta_ciphertext_not_empty`
-- [ ] Write test `test_encrypt_checkpoint_delta_nonce_is_24_bytes`
-- [ ] Write test `test_encrypt_checkpoint_delta_signature_is_65_bytes`
-- [ ] Write test `test_encrypt_checkpoint_delta_ephemeral_key_is_33_bytes`
-- [ ] Write test `test_encrypt_different_deltas_different_ciphertext`
-- [ ] Implement `encrypt_checkpoint_delta()` function
-- [ ] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture`
+- [x] Write test `test_encrypt_checkpoint_delta_returns_encrypted_delta`
+- [x] Write test `test_encrypt_checkpoint_delta_has_correct_field_formats`
+- [x] Write test `test_encrypt_checkpoint_delta_validates_structure`
+- [x] Write test `test_encrypt_checkpoint_delta_different_calls_different_ciphertext`
+- [x] Write test `test_encrypt_checkpoint_delta_rejects_invalid_pubkey`
+- [x] Write test `test_encrypt_checkpoint_delta_rejects_invalid_pubkey_point`
+- [x] Write test `test_encrypt_checkpoint_delta_ciphertext_decryptable`
+- [x] Implement `encrypt_checkpoint_delta()` function
+- [x] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture` (22 tests passing)
 
 **Implementation File:** `/workspace/src/checkpoint/encryption.rs`
 
@@ -2310,16 +2314,21 @@ pub fn encrypt_checkpoint_delta(
 
 **Goal**: Add `encrypted` field to checkpoint index entries
 
-**Status**: PENDING
+**Status**: COMPLETE ✅ (2026-01-13)
 
 #### Tasks
-- [ ] Write test `test_checkpoint_entry_encrypted_field_serialization`
-- [ ] Write test `test_checkpoint_entry_encrypted_field_optional`
-- [ ] Write test `test_checkpoint_entry_encrypted_true_when_set`
-- [ ] Add `encrypted: Option<bool>` to `CheckpointEntry` struct
-- [ ] Add `#[serde(skip_serializing_if = "Option::is_none")]` attribute
-- [ ] Update `CheckpointEntry::new()` to accept encrypted parameter
-- [ ] Run tests: `cargo test --lib checkpoint::index -- --nocapture`
+- [x] Write test `test_checkpoint_entry_encrypted_marker_when_true`
+- [x] Write test `test_checkpoint_entry_no_encrypted_marker_when_plaintext`
+- [x] Write test `test_checkpoint_entry_with_timestamp_encrypted`
+- [x] Write test `test_checkpoint_entry_encrypted_deserialization`
+- [x] Write test `test_checkpoint_entry_plaintext_deserialization_backward_compat`
+- [x] Write test `test_checkpoint_entry_encrypted_serialization_camel_case`
+- [x] Add `encrypted: Option<bool>` to `CheckpointEntry` struct
+- [x] Add `#[serde(skip_serializing_if = "Option::is_none")]` attribute
+- [x] Add `CheckpointEntry::new_encrypted()` constructor
+- [x] Add `CheckpointEntry::with_timestamp_encrypted()` constructor
+- [x] Add `CheckpointEntry::is_encrypted()` method
+- [x] Run tests: `cargo test --lib checkpoint::index -- --nocapture` (17 tests passing)
 
 **Implementation File:** `/workspace/src/checkpoint/index.rs`
 
@@ -2347,16 +2356,25 @@ pub struct CheckpointEntry {
 
 **Goal**: Store recovery public key in checkpoint publisher's session state
 
-**Status**: PENDING
+**Status**: COMPLETE ✅ (2026-01-13)
 
 #### Tasks
-- [ ] Write test `test_session_checkpoint_state_stores_recovery_key`
-- [ ] Write test `test_set_recovery_public_key_method`
-- [ ] Write test `test_get_recovery_public_key_method`
-- [ ] Add `recovery_public_key: Option<String>` to `SessionCheckpointState` struct
-- [ ] Add `set_recovery_public_key()` method to `CheckpointPublisher`
-- [ ] Add `get_recovery_public_key()` method to `SessionCheckpointState`
-- [ ] Run tests: `cargo test --lib checkpoint::publisher -- --nocapture`
+- [x] Write test `test_session_state_recovery_key_default_none`
+- [x] Write test `test_session_state_set_recovery_key`
+- [x] Write test `test_session_state_get_recovery_key`
+- [x] Write test `test_session_state_has_recovery_key`
+- [x] Write test `test_session_state_from_index_preserves_recovery_key`
+- [x] Write test `test_publisher_set_recovery_key`
+- [x] Write test `test_publisher_get_recovery_key`
+- [x] Write test `test_publisher_has_recovery_key`
+- [x] Add `recovery_public_key: Option<String>` to `SessionCheckpointState` struct
+- [x] Add `set_recovery_public_key()` method to `SessionCheckpointState`
+- [x] Add `get_recovery_public_key()` method to `SessionCheckpointState`
+- [x] Add `has_recovery_key()` method to `SessionCheckpointState`
+- [x] Add `set_recovery_public_key()` method to `CheckpointPublisher`
+- [x] Add `get_recovery_public_key()` method to `CheckpointPublisher`
+- [x] Add `has_recovery_key()` method to `CheckpointPublisher`
+- [x] Run tests: `cargo test --lib checkpoint::publisher -- --nocapture` (45 tests passing)
 
 **Implementation File:** `/workspace/src/checkpoint/publisher.rs`
 

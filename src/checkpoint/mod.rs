@@ -33,7 +33,7 @@ pub mod signer;
 
 pub use cleanup::{cleanup_checkpoints, CleanupConfig, CleanupResult, CleanupTask};
 pub use delta::{CheckpointDelta, CheckpointMessage, MessageMetadata};
-pub use encryption::EncryptedCheckpointDelta;
+pub use encryption::{encrypt_checkpoint_delta, EncryptedCheckpointDelta};
 pub use index::{CheckpointEntry, CheckpointIndex, SessionState};
 pub use publisher::{CheckpointPublisher, SessionCheckpointState};
 pub use signer::sign_checkpoint_data;

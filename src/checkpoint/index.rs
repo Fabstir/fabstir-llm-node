@@ -44,6 +44,11 @@ pub struct CheckpointEntry {
 
     /// Unix timestamp in milliseconds
     pub timestamp: u64,
+
+    /// True if delta is encrypted (omitted for plaintext/legacy deltas)
+    /// SDK uses this to determine whether decryption is needed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted: Option<bool>,
 }
 
 /// Session state for cleanup policy
@@ -110,7 +115,7 @@ impl CheckpointIndex {
 }
 
 impl CheckpointEntry {
-    /// Create a new checkpoint entry
+    /// Create a new checkpoint entry (plaintext/unencrypted)
     pub fn new(
         index: u32,
         proof_hash: String,
@@ -127,10 +132,32 @@ impl CheckpointEntry {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64,
+            encrypted: None, // Plaintext - omitted in JSON
         }
     }
 
-    /// Create with explicit timestamp (for testing)
+    /// Create a new encrypted checkpoint entry
+    pub fn new_encrypted(
+        index: u32,
+        proof_hash: String,
+        delta_cid: String,
+        start_token: u64,
+        end_token: u64,
+    ) -> Self {
+        Self {
+            index,
+            proof_hash,
+            delta_cid,
+            token_range: [start_token, end_token],
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            encrypted: Some(true),
+        }
+    }
+
+    /// Create with explicit timestamp (for testing, plaintext)
     pub fn with_timestamp(
         index: u32,
         proof_hash: String,
@@ -145,7 +172,32 @@ impl CheckpointEntry {
             delta_cid,
             token_range: [start_token, end_token],
             timestamp,
+            encrypted: None, // Plaintext - omitted in JSON
         }
+    }
+
+    /// Create encrypted entry with explicit timestamp (for testing)
+    pub fn with_timestamp_encrypted(
+        index: u32,
+        proof_hash: String,
+        delta_cid: String,
+        start_token: u64,
+        end_token: u64,
+        timestamp: u64,
+    ) -> Self {
+        Self {
+            index,
+            proof_hash,
+            delta_cid,
+            token_range: [start_token, end_token],
+            timestamp,
+            encrypted: Some(true),
+        }
+    }
+
+    /// Check if this entry is encrypted
+    pub fn is_encrypted(&self) -> bool {
+        self.encrypted == Some(true)
     }
 }
 
@@ -305,5 +357,108 @@ mod tests {
 
         assert!(delta_cid_pos < index_pos);
         assert!(index_pos < proof_hash_pos);
+    }
+
+    // Sub-phase 9.7: encrypted marker tests
+
+    #[test]
+    fn test_checkpoint_entry_encrypted_marker_when_true() {
+        let entry = CheckpointEntry::new_encrypted(
+            0,
+            "0x1234".to_string(),
+            "cidabc123".to_string(),
+            0,
+            1000,
+        );
+
+        assert_eq!(entry.encrypted, Some(true));
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"encrypted\":true"), "Should include encrypted:true");
+    }
+
+    #[test]
+    fn test_checkpoint_entry_no_encrypted_marker_when_plaintext() {
+        // Standard entry (plaintext) should not have encrypted field in JSON
+        let entry = CheckpointEntry::new(
+            0,
+            "0x1234".to_string(),
+            "cidabc123".to_string(),
+            0,
+            1000,
+        );
+
+        assert_eq!(entry.encrypted, None);
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("encrypted"), "Should NOT include encrypted field for plaintext");
+    }
+
+    #[test]
+    fn test_checkpoint_entry_with_timestamp_encrypted() {
+        let entry = CheckpointEntry::with_timestamp_encrypted(
+            1,
+            "0xabcd".to_string(),
+            "cidxyz789".to_string(),
+            1000,
+            2000,
+            1704844800000,
+        );
+
+        assert_eq!(entry.encrypted, Some(true));
+        assert_eq!(entry.index, 1);
+        assert_eq!(entry.timestamp, 1704844800000);
+    }
+
+    #[test]
+    fn test_checkpoint_entry_encrypted_deserialization() {
+        // Test SDK can deserialize encrypted entry
+        let json = r#"{
+            "deltaCid": "cidabc",
+            "encrypted": true,
+            "index": 0,
+            "proofHash": "0x123",
+            "timestamp": 1000,
+            "tokenRange": [0, 500]
+        }"#;
+
+        let entry: CheckpointEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.encrypted, Some(true));
+        assert_eq!(entry.delta_cid, "cidabc");
+    }
+
+    #[test]
+    fn test_checkpoint_entry_plaintext_deserialization_backward_compat() {
+        // Test backward compatibility: old entries without encrypted field
+        let json = r#"{
+            "deltaCid": "cidold",
+            "index": 0,
+            "proofHash": "0x456",
+            "timestamp": 2000,
+            "tokenRange": [0, 1000]
+        }"#;
+
+        let entry: CheckpointEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.encrypted, None);
+        assert_eq!(entry.delta_cid, "cidold");
+    }
+
+    #[test]
+    fn test_checkpoint_entry_encrypted_serialization_camel_case() {
+        let entry = CheckpointEntry::new_encrypted(
+            0,
+            "0x1234".to_string(),
+            "cidtest".to_string(),
+            0,
+            500,
+        );
+
+        let json = serde_json::to_string(&entry).unwrap();
+
+        // Should use camelCase and include encrypted field
+        assert!(json.contains("deltaCid"));
+        assert!(json.contains("proofHash"));
+        assert!(json.contains("tokenRange"));
+        assert!(json.contains("encrypted"));
     }
 }

@@ -50,6 +50,11 @@ pub struct SessionCheckpointState {
     /// In-progress streaming response (for partial checkpoints)
     /// This is accumulated during streaming and included as partial if checkpoint triggers mid-stream
     pub streaming_response: Option<String>,
+
+    /// User's recovery public key for encrypted checkpoints (SDK v1.8.7+)
+    /// Compressed secp256k1 public key (0x-prefixed hex, 68 chars)
+    /// When present, checkpoint deltas are encrypted before S5 upload
+    pub recovery_public_key: Option<String>,
 }
 
 impl SessionCheckpointState {
@@ -61,10 +66,12 @@ impl SessionCheckpointState {
             last_checkpoint_tokens: 0,
             index: None,
             streaming_response: None,
+            recovery_public_key: None,
         }
     }
 
     /// Create state from existing index (session resumption)
+    /// Note: recovery_public_key is not persisted in index, must be set separately
     pub fn from_index(index: CheckpointIndex) -> Self {
         let checkpoint_index = index.next_checkpoint_index();
         let last_checkpoint_tokens = index
@@ -78,7 +85,23 @@ impl SessionCheckpointState {
             last_checkpoint_tokens,
             index: Some(index),
             streaming_response: None,
+            recovery_public_key: None, // Set separately after session init
         }
+    }
+
+    /// Set the recovery public key for encrypted checkpoints
+    pub fn set_recovery_public_key(&mut self, key: Option<String>) {
+        self.recovery_public_key = key;
+    }
+
+    /// Get the recovery public key (if set)
+    pub fn get_recovery_public_key(&self) -> Option<&str> {
+        self.recovery_public_key.as_deref()
+    }
+
+    /// Check if this session has a recovery key (encrypted checkpoints enabled)
+    pub fn has_recovery_key(&self) -> bool {
+        self.recovery_public_key.is_some()
     }
 
     /// Get a copy of buffered messages
@@ -200,6 +223,33 @@ impl CheckpointPublisher {
         if let Some(state) = sessions.get_mut(session_id) {
             state.clear_streaming_response();
         }
+    }
+
+    /// Set the recovery public key for a session (enables encrypted checkpoints)
+    /// Call this during session init when SDK provides recoveryPublicKey
+    pub async fn set_recovery_public_key(&self, session_id: &str, key: String) {
+        let mut sessions = self.sessions.write().await;
+        let state = sessions
+            .entry(session_id.to_string())
+            .or_insert_with(SessionCheckpointState::new);
+        state.set_recovery_public_key(Some(key));
+    }
+
+    /// Get the recovery public key for a session (if set)
+    pub async fn get_recovery_public_key(&self, session_id: &str) -> Option<String> {
+        let sessions = self.sessions.read().await;
+        sessions
+            .get(session_id)
+            .and_then(|s| s.recovery_public_key.clone())
+    }
+
+    /// Check if a session has encrypted checkpoints enabled
+    pub async fn has_recovery_key(&self, session_id: &str) -> bool {
+        let sessions = self.sessions.read().await;
+        sessions
+            .get(session_id)
+            .map(|s| s.has_recovery_key())
+            .unwrap_or(false)
     }
 
     /// CRITICAL: Publish checkpoint to S5 BEFORE proof submission
@@ -1451,5 +1501,89 @@ mod tests {
             delta2.messages[0].metadata.is_none(),
             "Complete response should not have metadata with partial flag"
         );
+    }
+
+    // ==================== Sub-phase 9.8: Recovery Public Key Tests ====================
+
+    const TEST_RECOVERY_PUBKEY: &str =
+        "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
+    #[test]
+    fn test_session_state_recovery_key_default_none() {
+        let state = SessionCheckpointState::new();
+        assert!(state.recovery_public_key.is_none());
+    }
+
+    #[test]
+    fn test_session_state_set_recovery_key() {
+        let mut state = SessionCheckpointState::new();
+        state.set_recovery_public_key(Some(TEST_RECOVERY_PUBKEY.to_string()));
+        assert_eq!(state.recovery_public_key, Some(TEST_RECOVERY_PUBKEY.to_string()));
+    }
+
+    #[test]
+    fn test_session_state_get_recovery_key() {
+        let mut state = SessionCheckpointState::new();
+        assert!(state.get_recovery_public_key().is_none());
+
+        state.set_recovery_public_key(Some(TEST_RECOVERY_PUBKEY.to_string()));
+        assert_eq!(state.get_recovery_public_key(), Some(TEST_RECOVERY_PUBKEY));
+    }
+
+    #[test]
+    fn test_session_state_has_recovery_key() {
+        let mut state = SessionCheckpointState::new();
+        assert!(!state.has_recovery_key());
+
+        state.set_recovery_public_key(Some(TEST_RECOVERY_PUBKEY.to_string()));
+        assert!(state.has_recovery_key());
+    }
+
+    #[test]
+    fn test_session_state_from_index_preserves_recovery_key() {
+        // When resuming from index, recovery key should be None (set separately)
+        let index = CheckpointIndex::new("session".to_string(), "0xhost".to_string());
+        let state = SessionCheckpointState::from_index(index);
+        assert!(state.recovery_public_key.is_none(), "From index should not have recovery key");
+    }
+
+    #[tokio::test]
+    async fn test_publisher_set_recovery_key() {
+        let publisher = CheckpointPublisher::new("0xhost".to_string());
+
+        publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
+
+        let state = publisher.get_session_state("session-1").await.unwrap();
+        assert_eq!(state.recovery_public_key, Some(TEST_RECOVERY_PUBKEY.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_publisher_get_recovery_key() {
+        let publisher = CheckpointPublisher::new("0xhost".to_string());
+
+        // Before setting
+        let key_before = publisher.get_recovery_public_key("session-1").await;
+        assert!(key_before.is_none());
+
+        // After setting
+        publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
+        let key_after = publisher.get_recovery_public_key("session-1").await;
+        assert_eq!(key_after, Some(TEST_RECOVERY_PUBKEY.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_publisher_has_recovery_key() {
+        let publisher = CheckpointPublisher::new("0xhost".to_string());
+
+        // Before setting - session doesn't exist
+        assert!(!publisher.has_recovery_key("session-1").await);
+
+        // Create session without recovery key
+        publisher.buffer_message("session-1", CheckpointMessage::new_user("Hi".to_string(), 100)).await;
+        assert!(!publisher.has_recovery_key("session-1").await);
+
+        // After setting recovery key
+        publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
+        assert!(publisher.has_recovery_key("session-1").await);
     }
 }
