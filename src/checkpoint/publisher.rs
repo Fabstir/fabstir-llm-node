@@ -16,7 +16,8 @@
 //! ```
 
 use crate::checkpoint::{
-    sign_checkpoint_data, CheckpointDelta, CheckpointEntry, CheckpointIndex, CheckpointMessage,
+    encrypt_checkpoint_delta, sign_checkpoint_data, CheckpointDelta, CheckpointEntry,
+    CheckpointIndex, CheckpointMessage,
 };
 use crate::storage::S5Storage;
 use anyhow::{anyhow, Result};
@@ -332,16 +333,40 @@ impl CheckpointPublisher {
         let delta_signature = sign_checkpoint_data(private_key, &messages_json)?;
         delta.host_signature = delta_signature;
 
-        // 3. Upload delta to S5 (with retry)
-        let delta_bytes = delta.to_json_bytes();
+        // 3. Conditionally encrypt delta when recovery_public_key is present
+        let is_encrypted = state.recovery_public_key.is_some();
+        let delta_bytes = if let Some(recovery_pubkey) = &state.recovery_public_key {
+            // Encrypt the delta for privacy-preserving recovery
+            let encrypted_delta = encrypt_checkpoint_delta(&delta, recovery_pubkey, private_key)
+                .map_err(|e| {
+                    error!(
+                        "📤 [CHECKPOINT] ❌ Encryption FAILED: session='{}', checkpoint={}, error={}",
+                        session_id, checkpoint_index, e
+                    );
+                    anyhow!("Checkpoint encryption failed - NOT uploading: {}", e)
+                })?;
+
+            info!(
+                "🔐 [CHECKPOINT] Encrypting checkpoint {} for session {} (recovery key present)",
+                checkpoint_index, session_id
+            );
+
+            serde_json::to_vec_pretty(&encrypted_delta)
+                .map_err(|e| anyhow!("Failed to serialize encrypted delta: {}", e))?
+        } else {
+            // Legacy plaintext mode (no recovery key)
+            delta.to_json_bytes()
+        };
+
+        // 4. Upload delta to S5 (with retry)
         let delta_path = format!(
             "home/checkpoints/{}/{}/delta_{}.json",
             self.host_address, session_id, checkpoint_index
         );
 
         info!(
-            "📤 [CHECKPOINT] Uploading delta: session='{}', checkpoint={}, path='{}', size={} bytes",
-            session_id, checkpoint_index, delta_path, delta_bytes.len()
+            "📤 [CHECKPOINT] Uploading delta: session='{}', checkpoint={}, path='{}', size={} bytes, encrypted={}",
+            session_id, checkpoint_index, delta_path, delta_bytes.len(), is_encrypted
         );
 
         let delta_cid = upload_with_retry(s5_storage, &delta_path, delta_bytes)
@@ -368,18 +393,29 @@ impl CheckpointPublisher {
             session_id, checkpoint_index, delta_cid_raw, delta_cid_raw.len()
         );
 
-        // 4. Update checkpoint index
+        // 5. Update checkpoint index
         let index = state.index.get_or_insert_with(|| {
             CheckpointIndex::new(session_id.to_string(), self.host_address.clone())
         });
 
-        let entry = CheckpointEntry::new(
-            checkpoint_index,
-            proof_hash_hex,
-            delta_cid_raw.clone(),
-            start_token,
-            end_token,
-        );
+        // Use encrypted constructor when encryption is enabled
+        let entry = if is_encrypted {
+            CheckpointEntry::new_encrypted(
+                checkpoint_index,
+                proof_hash_hex,
+                delta_cid_raw.clone(),
+                start_token,
+                end_token,
+            )
+        } else {
+            CheckpointEntry::new(
+                checkpoint_index,
+                proof_hash_hex,
+                delta_cid_raw.clone(),
+                start_token,
+                end_token,
+            )
+        };
         index.add_checkpoint(entry);
 
         // 5. Sign and upload index
@@ -1585,5 +1621,139 @@ mod tests {
         // After setting recovery key
         publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
         assert!(publisher.has_recovery_key("session-1").await);
+    }
+
+    // ==================== Sub-phase 9.9: Encrypted Checkpoint Publishing Tests ====================
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_encrypts_when_recovery_key_present() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostencrypt".to_string());
+        let private_key = generate_test_private_key();
+
+        // Set recovery public key BEFORE buffering messages
+        publisher.set_recovery_public_key("session-encrypt", TEST_RECOVERY_PUBKEY.to_string()).await;
+
+        // Buffer a message
+        publisher
+            .buffer_message(
+                "session-encrypt",
+                CheckpointMessage::new_user("Encrypt me!".to_string(), 100),
+            )
+            .await;
+
+        // Publish checkpoint - should encrypt
+        let proof_hash = [0xEEu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-encrypt", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok(), "publish_checkpoint should succeed: {:?}", result);
+
+        // Verify uploaded delta is encrypted (has "encrypted":true field)
+        let delta_path = "home/checkpoints/0xhostencrypt/session-encrypt/delta_0.json";
+        let stored = mock.get(delta_path).await.unwrap();
+        let stored_str = String::from_utf8(stored).unwrap();
+
+        // Check for encrypted delta format (pretty-printed JSON has spaces)
+        assert!(stored_str.contains("\"encrypted\": true") || stored_str.contains("\"encrypted\":true"),
+                "Delta should be encrypted, got: {}", &stored_str[..stored_str.len().min(200)]);
+        assert!(stored_str.contains("\"ciphertext\""), "Delta should have ciphertext field");
+        assert!(stored_str.contains("\"ephemeralPublicKey\""), "Delta should have ephemeral key");
+        assert!(stored_str.contains("\"nonce\""), "Delta should have nonce");
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_plaintext_when_no_recovery_key() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostplain".to_string());
+        let private_key = generate_test_private_key();
+
+        // Do NOT set recovery key - should publish plaintext
+        publisher
+            .buffer_message(
+                "session-plain",
+                CheckpointMessage::new_user("Plain text!".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0xFFu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-plain", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify uploaded delta is plaintext (has sessionId, messages, etc.)
+        let delta_path = "home/checkpoints/0xhostplain/session-plain/delta_0.json";
+        let stored = mock.get(delta_path).await.unwrap();
+        let stored_str = String::from_utf8(stored).unwrap();
+
+        assert!(stored_str.contains("\"sessionId\""), "Delta should have sessionId (plaintext format)");
+        assert!(stored_str.contains("\"messages\""), "Delta should have messages array (plaintext format)");
+        assert!(stored_str.contains("Plain text!"), "Delta should contain actual message content");
+        assert!(!stored_str.contains("\"ciphertext\""), "Delta should NOT have ciphertext field");
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_sets_encrypted_marker_in_index() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostmarker".to_string());
+        let private_key = generate_test_private_key();
+
+        // Set recovery key - should mark index entry as encrypted
+        publisher.set_recovery_public_key("session-marker", TEST_RECOVERY_PUBKEY.to_string()).await;
+
+        publisher
+            .buffer_message(
+                "session-marker",
+                CheckpointMessage::new_user("Test marker".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0xAAu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-marker", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify index has encrypted marker
+        let index_path = "home/checkpoints/0xhostmarker/session-marker/index.json";
+        let stored = mock.get(index_path).await.unwrap();
+        let stored_str = String::from_utf8(stored).unwrap();
+
+        // Check for encrypted marker (handles both compact and pretty JSON)
+        assert!(stored_str.contains("\"encrypted\": true") || stored_str.contains("\"encrypted\":true"),
+                "Index entry should have encrypted:true marker, got: {}", &stored_str[..stored_str.len().min(300)]);
+    }
+
+    #[tokio::test]
+    async fn test_publish_checkpoint_no_encrypted_marker_for_plaintext() {
+        let mock = MockS5Backend::new();
+        let publisher = CheckpointPublisher::new("0xhostnomark".to_string());
+        let private_key = generate_test_private_key();
+
+        // No recovery key - plaintext
+        publisher
+            .buffer_message(
+                "session-nomark",
+                CheckpointMessage::new_user("No marker".to_string(), 100),
+            )
+            .await;
+
+        let proof_hash = [0xBBu8; 32];
+        let result = publisher
+            .publish_checkpoint("session-nomark", proof_hash, 0, 500, &private_key, &mock)
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify index does NOT have encrypted marker
+        let index_path = "home/checkpoints/0xhostnomark/session-nomark/index.json";
+        let stored = mock.get(index_path).await.unwrap();
+        let stored_str = String::from_utf8(stored).unwrap();
+
+        assert!(!stored_str.contains("\"encrypted\""), "Index entry should NOT have encrypted field for plaintext");
     }
 }
