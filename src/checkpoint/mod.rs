@@ -26,12 +26,14 @@
 
 pub mod cleanup;
 pub mod delta;
+pub mod encryption;
 pub mod index;
 pub mod publisher;
 pub mod signer;
 
 pub use cleanup::{cleanup_checkpoints, CleanupConfig, CleanupResult, CleanupTask};
 pub use delta::{CheckpointDelta, CheckpointMessage, MessageMetadata};
+pub use encryption::EncryptedCheckpointDelta;
 pub use index::{CheckpointEntry, CheckpointIndex, SessionState};
 pub use publisher::{CheckpointPublisher, SessionCheckpointState};
 pub use signer::sign_checkpoint_data;

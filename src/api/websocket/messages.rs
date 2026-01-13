@@ -104,6 +104,10 @@ pub struct SessionInitMessage {
     /// Optional S5 vector database to load for RAG (v8.4+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_database: Option<crate::api::websocket::message_types::VectorDatabaseInfo>,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    /// Compressed secp256k1 public key (33 bytes = 66 hex chars + 0x prefix)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_public_key: Option<String>,
 }
 
 impl SessionInitMessage {
@@ -117,6 +121,7 @@ impl SessionInitMessage {
             model_id: legacy.model_id,
             timestamp: legacy.timestamp,
             vector_database: None, // Legacy messages don't have vector_database
+            recovery_public_key: None, // Legacy messages don't have recovery_public_key
         }
     }
 }
@@ -224,6 +229,10 @@ pub struct SessionInitResponse {
     pub total_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chain_info: Option<ChainInfo>,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    /// Echoed back to confirm it was received
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_public_key: Option<String>,
 }
 
 /// Response for session resume
@@ -350,6 +359,7 @@ mod tests {
             model_id: "llama-7b".to_string(),
             timestamp: 1640000000,
             vector_database: None,
+            recovery_public_key: None,
         };
 
         assert_eq!(msg.chain_id, Some(84532));
@@ -422,5 +432,64 @@ mod tests {
         let chain = response.chain_info.unwrap();
         assert_eq!(chain.chain_id, 84532);
         assert_eq!(chain.native_token, "ETH");
+    }
+
+    // Phase 9 Tests: Encrypted Checkpoint Deltas
+
+    #[test]
+    fn test_session_init_message_with_recovery_public_key() {
+        // Test SessionInitMessage with recovery_public_key (SDK v1.8.7+)
+        let recovery_key = "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+        let msg = SessionInitMessage {
+            job_id: 123,
+            chain_id: Some(84532),
+            user_address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7".to_string(),
+            host_address: "0x5aAeb6053f3E94C9b9A09f33669435E7Ef1BeAed".to_string(),
+            model_id: "llama-7b".to_string(),
+            timestamp: 1640000000,
+            vector_database: None,
+            recovery_public_key: Some(recovery_key.to_string()),
+        };
+
+        assert_eq!(msg.recovery_public_key, Some(recovery_key.to_string()));
+
+        // Test serialization includes recovery_public_key
+        let json_str = serde_json::to_string(&msg).unwrap();
+        let json_val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(json_val["recovery_public_key"], recovery_key);
+    }
+
+    #[test]
+    fn test_session_init_message_without_recovery_public_key_is_none() {
+        // Test backward compatibility - recovery_public_key is optional
+        let json = json!({
+            "job_id": 123,
+            "chain_id": 84532,
+            "user_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7",
+            "host_address": "0x5aAeb6053f3E94C9b9A09f33669435E7Ef1BeAed",
+            "model_id": "llama-7b",
+            "timestamp": 1640000000
+        });
+
+        let msg: SessionInitMessage = serde_json::from_value(json).unwrap();
+        assert!(msg.recovery_public_key.is_none());
+    }
+
+    #[test]
+    fn test_session_init_message_recovery_key_not_serialized_when_none() {
+        // Test that recovery_public_key is omitted from JSON when None
+        let msg = SessionInitMessage {
+            job_id: 123,
+            chain_id: Some(84532),
+            user_address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb7".to_string(),
+            host_address: "0x5aAeb6053f3E94C9b9A09f33669435E7Ef1BeAed".to_string(),
+            model_id: "llama-7b".to_string(),
+            timestamp: 1640000000,
+            vector_database: None,
+            recovery_public_key: None,
+        };
+
+        let json_str = serde_json::to_string(&msg).unwrap();
+        assert!(!json_str.contains("recovery_public_key"));
     }
 }
