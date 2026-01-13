@@ -1,9 +1,9 @@
 # IMPLEMENTATION - Checkpoint Publishing for Conversation Recovery
 
-## Status: IMPLEMENTATION COMPLETE ✅ - E2E VERIFIED
+## Status: PHASE 9 IN PROGRESS - Encrypted Checkpoint Deltas
 
-**Status**: All Phases Complete - SDK E2E Recovery Verified
-**Version**: v8.11.12-checkpoint-publishing-2026-01-12
+**Status**: Phase 9 - Encrypted Checkpoint Deltas (Privacy Enhancement)
+**Version**: v8.12.0-encrypted-checkpoint-deltas-2026-01-13
 **Start Date**: 2026-01-11
 **Completion Date**: 2026-01-12
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
@@ -1946,6 +1946,654 @@ cargo build --release -j 4
 
 ---
 
+## Phase 9: Encrypted Checkpoint Deltas (Privacy Enhancement)
+
+**Why This Phase Is Needed:**
+
+Sessions use E2E encryption (SDK Phase 6.2), but checkpoint deltas were previously saved as **plaintext** to S5. This leaks conversation content to anyone who knows the CID.
+
+**Spec Location**: `/workspace/docs/sdk-reference/NODE_CHECKPOINT_SPEC.md` (lines 944-1657)
+
+```
+Previous Flow (Privacy Leak):
+────────────────────────────
+1. User sends encrypted prompt → Host decrypts → LLM processes
+2. Host generates response → Encrypts → Sends to user
+3. Host saves checkpoint delta with PLAINTEXT messages to S5 ⚠️
+4. Anyone with CID can read conversation content
+
+Fixed Flow (Private):
+─────────────────────
+1. User provides recoveryPublicKey in session init (SDK v1.8.7+)
+2. Host generates ephemeral keypair for forward secrecy
+3. Host does ECDH + HKDF to derive encryption key
+4. Host encrypts delta with XChaCha20-Poly1305
+5. Host signs ciphertext with EIP-191
+6. Host uploads encrypted delta to S5
+7. Only user with matching private key can decrypt during recovery
+```
+
+**Encrypted Delta Format:**
+```json
+{
+  "encrypted": true,
+  "version": 1,
+  "userRecoveryPubKey": "0x02abc123def456789...",
+  "ephemeralPublicKey": "0x03xyz789abc456def...",
+  "nonce": "f47ac10b58cc4372a5670e02b2c3d4e5f67890abcdef1234",
+  "ciphertext": "a1b2c3d4e5f6...",
+  "hostSignature": "0x1234...abcd"
+}
+```
+
+**Backward Compatibility:**
+| Scenario | Behavior |
+|----------|----------|
+| `recoveryPublicKey` present | Encrypt deltas with user's key |
+| `recoveryPublicKey` absent | Plaintext deltas (legacy SDKs) |
+| Encryption fails | **DO NOT** fall back to plaintext - block proof submission |
+
+**Existing Reusable Infrastructure:**
+| Component | File | Function | Reusability |
+|-----------|------|----------|-------------|
+| ECDH | `src/crypto/ecdh.rs` | `derive_shared_key()` | Pattern - need custom info param |
+| XChaCha20-Poly1305 | `src/crypto/encryption.rs` | `encrypt_with_aead()` | Direct |
+| EIP-191 Signing | `src/checkpoint/signer.rs` | `sign_checkpoint_data()` | Direct |
+| Session Keys | `src/crypto/session_keys.rs` | `SessionKeyStore` | Pattern |
+
+---
+
+### Sub-phase 9.1: Extract recoveryPublicKey from Session Init
+
+**Goal**: Add recoveryPublicKey field to session init payload parsing and storage
+
+**Status**: COMPLETE ✅
+
+#### Tasks
+- [x] Write test `test_session_init_message_with_recovery_public_key`
+- [x] Write test `test_session_init_message_without_recovery_public_key_is_none`
+- [x] Write test `test_session_init_message_recovery_key_not_serialized_when_none`
+- [x] Add `recovery_public_key: Option<String>` to `SessionInitMessage` struct
+- [x] Add `#[serde(skip_serializing_if = "Option::is_none")]` attribute
+- [x] Update `from_legacy()` to set `recovery_public_key: None`
+- [x] Run tests: `cargo test --lib "test_session_init_message" -- --nocapture` (3 passed)
+
+**Implementation File:** `/workspace/src/api/websocket/messages.rs`
+
+**Current `SessionInitMessage` struct (line ~100):**
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionInitMessage {
+    pub job_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+    pub user_address: String,
+    pub host_address: String,
+    pub model_id: String,
+    pub timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_database: Option<VectorDatabaseInfo>,
+}
+```
+
+**Add field:**
+```rust
+    /// User's recovery public key for checkpoint encryption (SDK v1.8.7+)
+    /// Compressed secp256k1 public key (33 bytes = 66 hex chars + 0x prefix)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_public_key: Option<String>,
+```
+
+---
+
+### Sub-phase 9.2: Add recoveryPublicKey to SessionContext
+
+**Goal**: Store recoveryPublicKey in session context for use during checkpoint publishing
+
+**Status**: COMPLETE ✅
+
+#### Tasks
+- [x] Write test `test_session_context_stores_recovery_public_key`
+- [x] Write test `test_session_context_recovery_key_is_optional`
+- [x] Write test `test_session_context_new_with_recovery_key_none`
+- [x] Add `recovery_public_key: Option<String>` to `SessionContext` struct
+- [x] Add `new_with_recovery_key()` method to accept optional recovery_public_key
+- [x] Update `new()` to delegate to `new_with_recovery_key()` with None
+- [x] Run tests: `cargo test --lib "test_session_context" -- --nocapture` (4 passed)
+
+**Implementation File:** `/workspace/src/api/websocket/session_context.rs`
+
+**Current `SessionContext` struct (line ~15):**
+```rust
+#[derive(Debug, Clone)]
+pub struct SessionContext {
+    pub session_id: String,
+    pub job_id: u64,
+    pub chain_id: u64,
+    pub chain_info: ChainInfo,
+    pub is_active: bool,
+    pub created_at: u64,
+}
+```
+
+**Add field:**
+```rust
+    /// User's recovery public key for encrypted checkpoint deltas
+    pub recovery_public_key: Option<String>,
+```
+
+---
+
+### Sub-phase 9.3: Update Session Init Handler
+
+**Goal**: Extract recoveryPublicKey from incoming payload and pass through to response
+
+**Status**: COMPLETE ✅
+
+#### Tasks
+- [x] Write test `test_session_init_with_recovery_public_key`
+- [x] Write test `test_session_init_without_recovery_key_is_backwards_compatible`
+- [x] Add `recovery_public_key: Option<String>` to `SessionInitResponse` struct
+- [x] Add `handle_session_init_with_recovery_key()` method
+- [x] Update `handle_session_init_with_chain()` to delegate with None
+- [x] Run tests: `cargo test --lib "test_session_init" -- --nocapture` (6 passed)
+
+**Implementation File:** `/workspace/src/api/websocket/handlers/session_init.rs`
+
+**Location:** Line ~45-80 in `handle_session_init_with_chain()`
+
+---
+
+### Sub-phase 9.4: Create EncryptedCheckpointDelta Struct
+
+**Goal**: Define the encrypted delta format matching the spec
+
+**Status**: COMPLETE ✅
+
+#### Tasks
+- [x] Write test `test_encrypted_checkpoint_delta_serialization_camel_case`
+- [x] Write test `test_encrypted_checkpoint_delta_all_fields_present`
+- [x] Write test `test_encrypted_checkpoint_delta_to_json_bytes`
+- [x] Write test `test_encrypted_checkpoint_delta_deserialization`
+- [x] Write test `test_encrypted_checkpoint_delta_validation_pass`
+- [x] Write test `test_encrypted_checkpoint_delta_validation_bad_encrypted_flag`
+- [x] Write test `test_encrypted_checkpoint_delta_validation_bad_nonce_length`
+- [x] Write test `test_encrypted_checkpoint_delta_validation_empty_ciphertext`
+- [x] Create `src/checkpoint/encryption.rs` file
+- [x] Add `pub mod encryption;` to `src/checkpoint/mod.rs`
+- [x] Implement `EncryptedCheckpointDelta` struct with serde `rename_all = "camelCase"`
+- [x] Implement `new()`, `to_json_bytes()`, and `validate()` methods
+- [x] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture` (8 passed)
+
+**Implementation File:** `/workspace/src/checkpoint/encryption.rs` (NEW)
+
+**Struct definition:**
+```rust
+use serde::{Deserialize, Serialize};
+
+/// Encrypted checkpoint delta for SDK recovery
+/// Only the user with the matching private key can decrypt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptedCheckpointDelta {
+    /// Always true for encrypted deltas
+    pub encrypted: bool,
+
+    /// Encryption version (currently 1)
+    pub version: u8,
+
+    /// User's recovery public key (echoed back for verification)
+    pub user_recovery_pub_key: String,
+
+    /// Host's ephemeral public key for ECDH (compressed, 33 bytes)
+    pub ephemeral_public_key: String,
+
+    /// 24-byte random nonce for XChaCha20 (hex, 48 chars)
+    pub nonce: String,
+
+    /// Encrypted CheckpointDelta JSON (hex)
+    pub ciphertext: String,
+
+    /// EIP-191 signature over keccak256(ciphertext)
+    pub host_signature: String,
+}
+```
+
+---
+
+### Sub-phase 9.5: Implement ECDH with Custom HKDF Info Parameter
+
+**Goal**: Create checkpoint-specific ECDH key derivation with domain separation
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Write test `test_derive_checkpoint_key_32_bytes`
+- [ ] Write test `test_derive_checkpoint_key_deterministic`
+- [ ] Write test `test_derive_checkpoint_key_uses_correct_info_param`
+- [ ] Write test `test_derive_checkpoint_key_different_from_session_key`
+- [ ] Implement `derive_checkpoint_encryption_key()` function
+- [ ] Use HKDF info parameter: `b"checkpoint-delta-encryption-v1"`
+- [ ] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture`
+
+**Implementation File:** `/workspace/src/checkpoint/encryption.rs`
+
+**Function signature:**
+```rust
+use anyhow::Result;
+use hkdf::Hkdf;
+use k256::{ecdh::diffie_hellman, PublicKey, SecretKey};
+use sha2::Sha256;
+
+/// HKDF info parameter for checkpoint encryption domain separation
+const CHECKPOINT_HKDF_INFO: &[u8] = b"checkpoint-delta-encryption-v1";
+
+/// Derive encryption key for checkpoint delta using ECDH + HKDF
+///
+/// # Arguments
+/// * `ephemeral_private` - Host's ephemeral private key (32 bytes)
+/// * `user_recovery_pubkey` - User's recovery public key (33 bytes compressed)
+///
+/// # Returns
+/// 32-byte encryption key for XChaCha20-Poly1305
+pub fn derive_checkpoint_encryption_key(
+    ephemeral_private: &[u8; 32],
+    user_recovery_pubkey: &[u8],
+) -> Result<[u8; 32]> {
+    // 1. Parse keys
+    let secret_key = SecretKey::from_slice(ephemeral_private)?;
+    let public_key = PublicKey::from_sec1_bytes(user_recovery_pubkey)?;
+
+    // 2. ECDH: shared_point = user_pubkey * ephemeral_private
+    let shared_secret = diffie_hellman(
+        secret_key.to_nonzero_scalar(),
+        public_key.as_affine(),
+    );
+
+    // 3. HKDF with checkpoint-specific info parameter
+    let hkdf = Hkdf::<Sha256>::new(None, shared_secret.raw_secret_bytes());
+    let mut encryption_key = [0u8; 32];
+    hkdf.expand(CHECKPOINT_HKDF_INFO, &mut encryption_key)?;
+
+    Ok(encryption_key)
+}
+```
+
+---
+
+### Sub-phase 9.6: Implement encrypt_checkpoint_delta Function
+
+**Goal**: Full encryption flow - ephemeral key, ECDH, XChaCha20, signature
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Write test `test_encrypt_checkpoint_delta_returns_valid_format`
+- [ ] Write test `test_encrypt_checkpoint_delta_ciphertext_not_empty`
+- [ ] Write test `test_encrypt_checkpoint_delta_nonce_is_24_bytes`
+- [ ] Write test `test_encrypt_checkpoint_delta_signature_is_65_bytes`
+- [ ] Write test `test_encrypt_checkpoint_delta_ephemeral_key_is_33_bytes`
+- [ ] Write test `test_encrypt_different_deltas_different_ciphertext`
+- [ ] Implement `encrypt_checkpoint_delta()` function
+- [ ] Run tests: `cargo test --lib checkpoint::encryption -- --nocapture`
+
+**Implementation File:** `/workspace/src/checkpoint/encryption.rs`
+
+**Function signature:**
+```rust
+use crate::checkpoint::CheckpointDelta;
+use crate::crypto::encryption::encrypt_with_aead;
+use k256::ecdsa::SigningKey;
+use rand::rngs::OsRng;
+
+/// Encrypt a checkpoint delta for the user
+///
+/// # Arguments
+/// * `delta` - Plaintext checkpoint delta (already signed)
+/// * `user_recovery_pubkey` - User's recovery public key (0x-prefixed hex)
+/// * `host_private_key` - Host's private key for signing ciphertext
+///
+/// # Returns
+/// EncryptedCheckpointDelta ready for S5 upload
+///
+/// # Security
+/// - Generates fresh ephemeral keypair (forward secrecy)
+/// - Uses random 24-byte nonce (unique per encryption)
+/// - Signs ciphertext with host key (authenticity)
+pub fn encrypt_checkpoint_delta(
+    delta: &CheckpointDelta,
+    user_recovery_pubkey: &str,
+    host_private_key: &[u8; 32],
+) -> Result<EncryptedCheckpointDelta> {
+    // 1. Generate ephemeral keypair
+    let ephemeral_secret = SigningKey::random(&mut OsRng);
+    let ephemeral_public = ephemeral_secret.verifying_key();
+
+    // 2. Parse user's recovery public key
+    let user_pubkey_bytes = hex::decode(user_recovery_pubkey.trim_start_matches("0x"))?;
+
+    // 3. Derive encryption key via ECDH + HKDF
+    let encryption_key = derive_checkpoint_encryption_key(
+        &ephemeral_secret.to_bytes().into(),
+        &user_pubkey_bytes,
+    )?;
+
+    // 4. Serialize delta to JSON (sorted keys for determinism)
+    let plaintext = delta.to_json_bytes();
+
+    // 5. Generate random 24-byte nonce
+    let nonce: [u8; 24] = rand::random();
+
+    // 6. Encrypt with XChaCha20-Poly1305
+    let ciphertext = encrypt_with_aead(&plaintext, &nonce, &[], &encryption_key)?;
+
+    // 7. Sign keccak256(ciphertext) with host key
+    let ciphertext_hash = keccak256(&ciphertext);
+    let signature = sign_checkpoint_data(host_private_key, &hex::encode(ciphertext_hash))?;
+
+    // 8. Build encrypted delta
+    Ok(EncryptedCheckpointDelta {
+        encrypted: true,
+        version: 1,
+        user_recovery_pub_key: user_recovery_pubkey.to_string(),
+        ephemeral_public_key: format!("0x{}", hex::encode(ephemeral_public.to_sec1_bytes())),
+        nonce: hex::encode(nonce),
+        ciphertext: hex::encode(ciphertext),
+        host_signature: signature,
+    })
+}
+```
+
+---
+
+### Sub-phase 9.7: Add encrypted Marker to CheckpointEntry
+
+**Goal**: Add `encrypted` field to checkpoint index entries
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Write test `test_checkpoint_entry_encrypted_field_serialization`
+- [ ] Write test `test_checkpoint_entry_encrypted_field_optional`
+- [ ] Write test `test_checkpoint_entry_encrypted_true_when_set`
+- [ ] Add `encrypted: Option<bool>` to `CheckpointEntry` struct
+- [ ] Add `#[serde(skip_serializing_if = "Option::is_none")]` attribute
+- [ ] Update `CheckpointEntry::new()` to accept encrypted parameter
+- [ ] Run tests: `cargo test --lib checkpoint::index -- --nocapture`
+
+**Implementation File:** `/workspace/src/checkpoint/index.rs`
+
+**Current `CheckpointEntry` struct:**
+```rust
+pub struct CheckpointEntry {
+    pub index: u32,
+    pub proof_hash: String,
+    pub delta_cid: String,
+    pub token_range: [u64; 2],
+    pub timestamp: u64,
+}
+```
+
+**Add field:**
+```rust
+    /// True if delta is encrypted (SDK v1.8.7+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted: Option<bool>,
+```
+
+---
+
+### Sub-phase 9.8: Add recoveryPublicKey to SessionCheckpointState
+
+**Goal**: Store recovery public key in checkpoint publisher's session state
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Write test `test_session_checkpoint_state_stores_recovery_key`
+- [ ] Write test `test_set_recovery_public_key_method`
+- [ ] Write test `test_get_recovery_public_key_method`
+- [ ] Add `recovery_public_key: Option<String>` to `SessionCheckpointState` struct
+- [ ] Add `set_recovery_public_key()` method to `CheckpointPublisher`
+- [ ] Add `get_recovery_public_key()` method to `SessionCheckpointState`
+- [ ] Run tests: `cargo test --lib checkpoint::publisher -- --nocapture`
+
+**Implementation File:** `/workspace/src/checkpoint/publisher.rs`
+
+**Current `SessionCheckpointState` struct:**
+```rust
+pub struct SessionCheckpointState {
+    pub checkpoint_index: u32,
+    pub message_buffer: Vec<CheckpointMessage>,
+    pub last_checkpoint_tokens: u64,
+    pub index: Option<CheckpointIndex>,
+    pub streaming_response: Option<String>,
+}
+```
+
+**Add field:**
+```rust
+    /// User's recovery public key for encrypted deltas (SDK v1.8.7+)
+    pub recovery_public_key: Option<String>,
+```
+
+**Add to CheckpointPublisher:**
+```rust
+/// Set the recovery public key for a session
+pub async fn set_recovery_public_key(&self, session_id: &str, pubkey: String) {
+    let mut sessions = self.sessions.write().await;
+    let state = sessions
+        .entry(session_id.to_string())
+        .or_insert_with(SessionCheckpointState::new);
+    state.recovery_public_key = Some(pubkey);
+}
+```
+
+---
+
+### Sub-phase 9.9: Integrate Encryption into publish_checkpoint
+
+**Goal**: Conditionally encrypt deltas when recovery public key is present
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Write test `test_publish_checkpoint_encrypts_when_recovery_key_present`
+- [ ] Write test `test_publish_checkpoint_plaintext_when_no_recovery_key`
+- [ ] Write test `test_publish_checkpoint_sets_encrypted_marker_in_index`
+- [ ] Write test `test_publish_checkpoint_blocks_on_encryption_failure`
+- [ ] Modify `publish_checkpoint()` to check for recovery_public_key
+- [ ] Call `encrypt_checkpoint_delta()` when key is present
+- [ ] Upload encrypted delta instead of plaintext
+- [ ] Set `encrypted: true` in CheckpointEntry
+- [ ] Run tests: `cargo test --lib checkpoint::publisher -- --nocapture`
+
+**Implementation File:** `/workspace/src/checkpoint/publisher.rs`
+
+**Location:** In `publish_checkpoint()` method, after delta creation and before upload
+
+**Code to add:**
+```rust
+// Check if encryption is enabled for this session
+let delta_bytes = if let Some(recovery_pubkey) = &state.recovery_public_key {
+    // Encrypt the delta
+    let encrypted_delta = crate::checkpoint::encryption::encrypt_checkpoint_delta(
+        &delta,
+        recovery_pubkey,
+        private_key,
+    ).map_err(|e| {
+        error!("Checkpoint encryption failed - NOT uploading: {}", e);
+        anyhow!("Checkpoint encryption failed: {}", e)
+    })?;
+
+    info!("Encrypting checkpoint {} for session {}", checkpoint_index, session_id);
+    serde_json::to_vec_pretty(&encrypted_delta)?
+} else {
+    // Legacy plaintext mode
+    delta.to_json_bytes()
+};
+
+// ... upload delta_bytes ...
+
+// Set encrypted marker in index entry
+let encrypted_marker = state.recovery_public_key.is_some();
+let entry = CheckpointEntry::new_with_encryption(
+    checkpoint_index,
+    proof_hash_hex,
+    delta_cid.clone(),
+    start_token,
+    end_token,
+    encrypted_marker,
+);
+```
+
+---
+
+### Sub-phase 9.10: Wire Up Session Init to Checkpoint Publisher
+
+**Goal**: Connect session init handler to set recovery public key in publisher
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Write integration test `test_session_init_sets_recovery_key_in_publisher`
+- [ ] Write integration test `test_full_encrypted_checkpoint_flow`
+- [ ] Update session init handler to call `checkpoint_publisher.set_recovery_public_key()`
+- [ ] Ensure recovery key is set before any checkpoints are published
+- [ ] Run tests: `cargo test --lib -- --nocapture`
+
+**Implementation Files:**
+- `/workspace/src/api/websocket/handlers/session_init.rs`
+- `/workspace/src/api/server.rs` (if HTTP session init exists)
+
+**Code to add in session init handler:**
+```rust
+// Set recovery public key in checkpoint publisher (if provided)
+if let Some(recovery_pubkey) = &session_init.recovery_public_key {
+    if let Some(checkpoint_publisher) = &checkpoint_manager.checkpoint_publisher {
+        checkpoint_publisher
+            .set_recovery_public_key(&session_id, recovery_pubkey.clone())
+            .await;
+        info!("Recovery public key set for session {} (encrypted checkpoints enabled)", session_id);
+    }
+}
+```
+
+---
+
+### Sub-phase 9.11: Update Version and Documentation
+
+**Goal**: Bump version and update tracking document
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Update `VERSION` file to `8.12.0-encrypted-checkpoint-deltas`
+- [ ] Update `src/version.rs`:
+  - [ ] VERSION to `v8.12.0-encrypted-checkpoint-deltas-2026-01-XX`
+  - [ ] VERSION_NUMBER to `8.12.0`
+  - [ ] VERSION_MINOR to 12, VERSION_PATCH to 0
+  - [ ] Add feature: `encrypted-checkpoint-deltas`
+  - [ ] Add BREAKING_CHANGES entry for v8.12.0
+- [ ] Update test assertions in version.rs
+- [ ] Run tests: `cargo test --lib version -- --nocapture`
+- [ ] Mark all Phase 9 tasks as complete in this document
+
+**Implementation Files:**
+- `/workspace/VERSION`
+- `/workspace/src/version.rs`
+
+---
+
+### Sub-phase 9.12: Build, Test, and Verify
+
+**Goal**: Full test suite and release build
+
+**Status**: PENDING
+
+#### Tasks
+- [ ] Run full checkpoint tests: `cargo test --lib checkpoint -- --nocapture`
+- [ ] Run full crypto tests: `cargo test --lib crypto -- --nocapture`
+- [ ] Run WebSocket tests: `cargo test --lib websocket -- --nocapture`
+- [ ] Run full test suite: `cargo test --lib -- --nocapture`
+- [ ] Build release: `cargo build --release -j 4`
+- [ ] Verify encrypted checkpoint flow in logs
+- [ ] Create tarball (optional): `fabstir-llm-node-v8.12.0-encrypted-checkpoint-deltas.tar.gz`
+
+**Verification:**
+```bash
+# 1. Run encryption module tests
+cargo test --lib checkpoint::encryption -- --nocapture
+
+# 2. Run full checkpoint tests
+cargo test --lib checkpoint -- --nocapture
+
+# 3. Run all tests
+cargo test --lib -- --nocapture
+
+# 4. Build release
+cargo build --release -j 4
+
+# 5. Check for encrypted checkpoint logs
+# Should see: "Encrypting checkpoint X for session Y"
+# Should see: "encrypted: true" in checkpoint index
+```
+
+**Expected Log Patterns:**
+- `🔐 Recovery public key set for session X (encrypted checkpoints enabled)`
+- `🔐 Encrypting checkpoint 0 for session X`
+- `✅ Encrypted checkpoint published: CID`
+
+---
+
+### Phase 9 Security Properties
+
+| Property | How Achieved |
+|----------|--------------|
+| **Confidentiality** | XChaCha20-Poly1305 with ECDH-derived key |
+| **Forward Secrecy** | Ephemeral keypair per checkpoint |
+| **Authenticity** | Poly1305 MAC + host signature over ciphertext |
+| **Integrity** | AEAD (Authenticated Encryption with Associated Data) |
+| **User-Only Access** | Only user has private key for recoveryPublicKey |
+| **No Plaintext Fallback** | Encryption failure blocks proof submission |
+
+---
+
+### Phase 9 Error Handling
+
+If encryption fails:
+1. Log the error with details
+2. **DO NOT** fall back to plaintext (security violation)
+3. **DO NOT** submit proof to chain (checkpoint not recoverable)
+4. Return error to caller to block proof submission
+
+```rust
+// WRONG - Security violation!
+match encrypt_checkpoint_delta(...) {
+    Ok(encrypted) => upload(encrypted),
+    Err(_) => upload(plaintext_delta),  // ❌ NEVER DO THIS
+}
+
+// CORRECT - Block on failure
+let encrypted_delta = encrypt_checkpoint_delta(...)?;  // ✅ Propagate error
+upload(encrypted_delta)
+```
+
+---
+
+### Phase 9 File Size Constraints
+
+| File | Max Lines |
+|------|-----------|
+| `src/checkpoint/encryption.rs` | 300 |
+| `src/api/websocket/messages.rs` | +20 lines |
+| `src/api/websocket/session_context.rs` | +10 lines |
+| `src/api/websocket/handlers/session_init.rs` | +30 lines |
+| `src/checkpoint/index.rs` | +15 lines |
+| `src/checkpoint/publisher.rs` | +50 lines |
+
+---
+
 ## Summary
 
 | Phase | Sub-phase | Description | Status |
@@ -1978,8 +2626,20 @@ cargo build --release -j 4
 | 8 | 8.3 | MockS5Backend - Generate BlobIdentifier CIDs | COMPLETE ✅ |
 | 8 | 8.4 | Update Tests - Fix 53-char Assertions | COMPLETE ✅ |
 | 8 | 8.5 | Build, Test, and Verify | COMPLETE ✅ |
+| 9 | 9.1 | Extract recoveryPublicKey from Session Init | COMPLETE ✅ |
+| 9 | 9.2 | Add recoveryPublicKey to SessionContext | COMPLETE ✅ |
+| 9 | 9.3 | Update Session Init Handler | COMPLETE ✅ |
+| 9 | 9.4 | Create EncryptedCheckpointDelta Struct | COMPLETE ✅ |
+| 9 | 9.5 | Implement ECDH with Custom HKDF Info | PENDING |
+| 9 | 9.6 | Implement encrypt_checkpoint_delta Function | PENDING |
+| 9 | 9.7 | Add encrypted Marker to CheckpointEntry | PENDING |
+| 9 | 9.8 | Add recoveryPublicKey to SessionCheckpointState | PENDING |
+| 9 | 9.9 | Integrate Encryption into publish_checkpoint | PENDING |
+| 9 | 9.10 | Wire Up Session Init to Checkpoint Publisher | PENDING |
+| 9 | 9.11 | Update Version and Documentation | PENDING |
+| 9 | 9.12 | Build, Test, and Verify | PENDING |
 
-**Total: 28 sub-phases (28 complete, 0 pending) - ALL PHASES COMPLETE ✅**
+**Total: 40 sub-phases (32 complete, 8 pending) - PHASE 9 IN PROGRESS**
 
 **E2E Verification by SDK Developer (2026-01-12):**
 ```
