@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.12.0-encrypted-checkpoint-deltas-2026-01-13";
+pub const VERSION: &str = "v8.12.1-checkpoint-bugfixes-2026-01-13";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.12.0";
+pub const VERSION_NUMBER: &str = "8.12.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 12;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-13";
@@ -132,6 +132,8 @@ pub const FEATURES: &[&str] = &[
     "recovery-public-key",
     "forward-secrecy-checkpoints",
     "ephemeral-keypairs",
+    "harmony-message-parsing",
+    "clean-checkpoint-messages",
 ];
 
 /// Supported chain IDs
@@ -142,6 +144,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.12.1 - Checkpoint Bug Fixes (Jan 13, 2026)
+    "FIX: Checkpoint messages now properly parsed from Harmony format (no more raw tags)",
+    "FIX: recoveryPublicKey from session init now properly wired to checkpoint encryption",
+    "FEAT: New harmony.rs module parses Harmony-formatted prompts into clean messages",
+    "FEAT: extract_last_user_message() extracts just the last user message for checkpoints",
     // v8.12.0 - Encrypted Checkpoint Deltas (Jan 13, 2026)
     "FEAT: Checkpoint deltas can now be encrypted using user's recovery public key",
     "FEAT: ECDH key exchange with ephemeral keypairs for forward secrecy",
@@ -309,7 +316,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 12);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -366,14 +373,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.12.0"));
+        assert!(version.contains("8.12.1"));
         assert!(version.contains("2026-01-13"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.12.0-encrypted-checkpoint-deltas-2026-01-13");
-        assert_eq!(VERSION_NUMBER, "8.12.0");
+        assert_eq!(VERSION, "v8.12.1-checkpoint-bugfixes-2026-01-13");
+        assert_eq!(VERSION_NUMBER, "8.12.1");
         assert_eq!(BUILD_DATE, "2026-01-13");
     }
 
@@ -388,5 +395,11 @@ mod tests {
         assert!(FEATURES.contains(&"encrypted-checkpoint-deltas"));
         assert!(FEATURES.contains(&"checkpoint-encryption"));
         assert!(FEATURES.contains(&"recovery-public-key"));
+    }
+
+    #[test]
+    fn test_harmony_parsing_features() {
+        assert!(FEATURES.contains(&"harmony-message-parsing"));
+        assert!(FEATURES.contains(&"clean-checkpoint-messages"));
     }
 }

@@ -43,6 +43,9 @@ pub struct SessionInitData {
     pub client_address: String,
     /// Optional S5 vector database information for RAG
     pub vector_database: Option<VectorDatabaseInfo>,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    /// Compressed secp256k1 public key (33 bytes = 66 hex chars + 0x prefix)
+    pub recovery_public_key: Option<String>,
 }
 
 /// Internal structure for parsing decrypted JSON payload
@@ -54,6 +57,8 @@ struct SessionDataJson {
     session_key: String,
     price_per_token: u64,
     vector_database: Option<VectorDatabaseInfo>,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    recovery_public_key: Option<String>,
 }
 
 /// Decrypt and verify encrypted session initialization payload
@@ -157,6 +162,7 @@ pub fn decrypt_session_init(
         price_per_token: session_data.price_per_token,
         client_address,
         vector_database: session_data.vector_database,
+        recovery_public_key: session_data.recovery_public_key,
     })
 }
 

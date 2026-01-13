@@ -603,9 +603,11 @@ impl ApiServer {
         }
 
         // Phase 3: Track user message for checkpoint publishing (v8.11.0)
+        // Extract just the last user message from Harmony format (v8.12.0 - Bug fix)
         if let Some(ref session_id) = request.session_id {
             if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
-                cm.track_conversation_message(session_id, "user", &request.prompt, false)
+                let user_content = crate::checkpoint::extract_last_user_message(&request.prompt);
+                cm.track_conversation_message(session_id, "user", &user_content, false)
                     .await;
             }
         }
@@ -842,9 +844,11 @@ impl ApiServer {
         }
 
         // Phase 3: Track user message for checkpoint publishing (v8.11.0)
+        // Extract just the last user message from Harmony format (v8.12.0 - Bug fix)
         if let Some(ref session_id) = request.session_id {
             if let Some(cm) = checkpoint_manager.as_ref() {
-                cm.track_conversation_message(session_id, "user", &request.prompt, false)
+                let user_content = crate::checkpoint::extract_last_user_message(&request.prompt);
+                cm.track_conversation_message(session_id, "user", &user_content, false)
                     .await;
             }
         }
@@ -1591,6 +1595,14 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                     // Session might already exist (e.g., reconnection), which is fine
                                                                     warn!("⚠️ Session creation returned error (may already exist): {}", e);
                                                                 }
+                                                            }
+                                                        }
+
+                                                        // Set recovery public key in checkpoint manager (for encrypted checkpoint deltas)
+                                                        if let Some(recovery_pubkey) = &session_init_data.recovery_public_key {
+                                                            if let Some(cm) = server.get_checkpoint_manager().await {
+                                                                cm.set_session_recovery_public_key(sid, recovery_pubkey.clone()).await;
+                                                                info!("🔐 Recovery public key set for session {} (encrypted checkpoints enabled)", sid);
                                                             }
                                                         }
 
