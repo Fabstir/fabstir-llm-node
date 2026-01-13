@@ -3,13 +3,26 @@
 ## Status: PHASE 9 COMPLETE ✅ - Encrypted Checkpoint Deltas
 
 **Status**: Phase 9 - Encrypted Checkpoint Deltas (Privacy Enhancement) - **COMPLETE**
-**Version**: v8.12.0-encrypted-checkpoint-deltas-2026-01-13
+**Version**: v8.12.2-crypto-params-fix-2026-01-13
 **Start Date**: 2026-01-11
 **Completion Date**: 2026-01-13
 **Approach**: Strict TDD bounded autonomy - one sub-phase at a time
-**Tests Passing**: 156 checkpoint + 12 version + 738 total = comprehensive test coverage
+**Tests Passing**: 156 checkpoint + 23 encryption + 12 version + 738 total = comprehensive test coverage
 
-**E2E Verification (2026-01-12):**
+**E2E Encrypted Recovery Verification (2026-01-13, Session 48):**
+- ✅ 4 messages recovered from 2 encrypted checkpoints
+- ✅ 1672 tokens recovered
+- ✅ encrypted=true, SDK decryption successful
+- ✅ SDK v1.8.7+ with recoveryPublicKey support
+- ✅ BlobIdentifier CIDs (59-65 chars) working correctly
+- ✅ ECDH + XChaCha20-Poly1305 encryption verified end-to-end
+
+**Bug Fixes (v8.12.1 - v8.12.2):**
+- ✅ v8.12.1: Fixed Harmony format parsing (clean messages in checkpoints)
+- ✅ v8.12.1: Wired recoveryPublicKey from session init to encryption
+- ✅ v8.12.2: Fixed ECDH key derivation (sha256(x_coordinate) before HKDF)
+
+**Previous E2E Verification (2026-01-12):**
 - ✅ 4 messages recovered from 2 checkpoints
 - ✅ 1563 tokens recovered
 - ✅ SDK v1.8.6 released with full checkpoint support

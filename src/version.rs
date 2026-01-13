@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.12.1-checkpoint-bugfixes-2026-01-13";
+pub const VERSION: &str = "v8.12.3-production-cleanup-2026-01-13";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.12.1";
+pub const VERSION_NUMBER: &str = "8.12.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 12;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-01-13";
@@ -134,6 +134,9 @@ pub const FEATURES: &[&str] = &[
     "ephemeral-keypairs",
     "harmony-message-parsing",
     "clean-checkpoint-messages",
+    // Crypto params fix (v8.12.2)
+    "sdk-compatible-ecdh",
+    "sha256-shared-secret",
 ];
 
 /// Supported chain IDs
@@ -144,6 +147,14 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.12.3 - Production Cleanup (Jan 13, 2026)
+    "CLEANUP: Removed verbose debug logging from session_init (no more raw JSON in logs)",
+    "PRIVACY: Session init no longer logs potentially sensitive decrypted payload data",
+    // v8.12.2 - Crypto Params Fix (Jan 13, 2026)
+    "FIX: ECDH key derivation now matches SDK spec - sha256(x_coordinate) before HKDF",
+    "FIX: SDK can now decrypt encrypted checkpoint deltas (Poly1305 auth succeeds)",
+    "CRYPTO: shared_secret = sha256(ecdh_result.x_coordinate) [was: raw x_coordinate]",
+    "TEST: Added test_sdk_compatible_key_derivation() to verify crypto compatibility",
     // v8.12.1 - Checkpoint Bug Fixes (Jan 13, 2026)
     "FIX: Checkpoint messages now properly parsed from Harmony format (no more raw tags)",
     "FIX: recoveryPublicKey from session init now properly wired to checkpoint encryption",
@@ -316,7 +327,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 12);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_PATCH, 3);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -373,15 +384,21 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.12.1"));
+        assert!(version.contains("8.12.3"));
         assert!(version.contains("2026-01-13"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.12.1-checkpoint-bugfixes-2026-01-13");
-        assert_eq!(VERSION_NUMBER, "8.12.1");
+        assert_eq!(VERSION, "v8.12.3-production-cleanup-2026-01-13");
+        assert_eq!(VERSION_NUMBER, "8.12.3");
         assert_eq!(BUILD_DATE, "2026-01-13");
+    }
+
+    #[test]
+    fn test_crypto_params_fix_features() {
+        assert!(FEATURES.contains(&"sdk-compatible-ecdh"));
+        assert!(FEATURES.contains(&"sha256-shared-secret"));
     }
 
     #[test]

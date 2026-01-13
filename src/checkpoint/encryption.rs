@@ -37,7 +37,7 @@ use k256::{
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use tiny_keccak::{Hasher, Keccak};
 
 /// HKDF info parameter for checkpoint encryption domain separation
@@ -96,10 +96,16 @@ pub fn derive_checkpoint_encryption_key(
     };
 
     // 3. Perform ECDH: shared_point = user_pub * ephemeral_private
-    let shared_secret = diffie_hellman(secret_key.to_nonzero_scalar(), user_pub.as_affine());
+    let ecdh_result = diffie_hellman(secret_key.to_nonzero_scalar(), user_pub.as_affine());
 
-    // 4. Derive encryption key using HKDF-SHA256 with checkpoint-specific info
-    let hkdf = Hkdf::<Sha256>::new(None, shared_secret.raw_secret_bytes());
+    // 4. Hash the x-coordinate with SHA256 (SDK compatibility requirement)
+    // SDK expects: shared_secret = sha256(shared_point.x)
+    let x_coordinate = ecdh_result.raw_secret_bytes();
+    let shared_secret = Sha256::digest(x_coordinate);
+
+    // 5. Derive encryption key using HKDF-SHA256 with checkpoint-specific info
+    // HKDF with salt=None (which HKDF treats as all-zeros salt)
+    let hkdf = Hkdf::<Sha256>::new(None, &shared_secret);
     let mut encryption_key = [0u8; 32];
     hkdf.expand(CHECKPOINT_HKDF_INFO, &mut encryption_key)
         .map_err(|e| anyhow!("HKDF key derivation failed: {}", e))?;
@@ -755,7 +761,9 @@ mod tests {
     #[test]
     fn test_encrypt_checkpoint_delta_ciphertext_decryptable() {
         // Verify that ciphertext can be decrypted with the correct shared key
+        // This simulates SDK-side decryption using the same crypto parameters
         use chacha20poly1305::{XChaCha20Poly1305, aead::{Aead, KeyInit}};
+        use sha2::Digest;
 
         let delta = create_test_delta();
         let host_key = generate_test_host_key();
@@ -765,8 +773,8 @@ mod tests {
         // Get ephemeral public key
         let ephemeral_pubkey_bytes = hex::decode(&encrypted.ephemeral_public_key[2..]).unwrap();
 
-        // Derive the same shared key from user's perspective
-        // User would use their private key (2) with ephemeral public key
+        // Derive the same shared key from user's perspective (SDK-side decryption)
+        // User would use their private key (2) with host's ephemeral public key
         let user_private: [u8; 32] = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -774,9 +782,10 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
         ];
 
+        // Use the same derivation as the node (which now includes SHA256 step)
         let shared_key = derive_checkpoint_encryption_key(&user_private, &ephemeral_pubkey_bytes).unwrap();
 
-        // Decrypt
+        // Decrypt using XChaCha20-Poly1305
         let cipher = XChaCha20Poly1305::new_from_slice(&shared_key).unwrap();
         let nonce_bytes = hex::decode(&encrypted.nonce).unwrap();
         let ciphertext_bytes = hex::decode(&encrypted.ciphertext).unwrap();
@@ -791,5 +800,48 @@ mod tests {
         // Verify it's the delta
         assert!(parsed.get("sessionId").is_some());
         assert_eq!(parsed["sessionId"].as_str().unwrap(), "test-session-123");
+    }
+
+    #[test]
+    fn test_sdk_compatible_key_derivation() {
+        // Test that our key derivation matches SDK's expected flow:
+        // 1. ECDH: user_private × ephemeral_public = shared_point
+        // 2. shared_secret = sha256(shared_point.x)
+        // 3. HKDF(ikm=shared_secret, salt=None, info="checkpoint-delta-encryption-v1")
+        use sha2::Digest;
+
+        // Well-known test vectors
+        let ephemeral_private: [u8; 32] = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        ];
+
+        // Public key for private key = 2
+        let user_pubkey: [u8; 33] = TEST_USER_RECOVERY_PUBKEY_BYTES;
+
+        // Our function should now produce a key that includes the SHA256 step
+        let key = derive_checkpoint_encryption_key(&ephemeral_private, &user_pubkey).unwrap();
+
+        // Key should be 32 bytes
+        assert_eq!(key.len(), 32);
+
+        // Verify manual computation matches:
+        // 1. ECDH
+        let secret = SecretKey::from_slice(&ephemeral_private).unwrap();
+        let pubkey = PublicKey::from_sec1_bytes(&user_pubkey).unwrap();
+        let ecdh = k256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), pubkey.as_affine());
+
+        // 2. SHA256(x-coordinate)
+        let x_coord = ecdh.raw_secret_bytes();
+        let shared_secret = sha2::Sha256::digest(x_coord);
+
+        // 3. HKDF with checkpoint info
+        let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(None, &shared_secret);
+        let mut expected_key = [0u8; 32];
+        hkdf.expand(CHECKPOINT_HKDF_INFO, &mut expected_key).unwrap();
+
+        assert_eq!(key, expected_key, "Key derivation should match SDK's expected flow");
     }
 }
