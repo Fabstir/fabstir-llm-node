@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.11.12-unified-s5-deployment-2026-01-12";
+pub const VERSION: &str = "v8.12.0-encrypted-checkpoint-deltas-2026-01-13";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.11.12";
+pub const VERSION_NUMBER: &str = "8.12.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 11;
+pub const VERSION_MINOR: u32 = 12;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 12;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-12";
+pub const BUILD_DATE: &str = "2026-01-13";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -124,6 +124,14 @@ pub const FEATURES: &[&str] = &[
     // HTTP checkpoint endpoint (v8.11.1+)
     "http-checkpoint-endpoint",
     "checkpoint-index-api",
+    // Encrypted checkpoint deltas (v8.12.0+)
+    "encrypted-checkpoint-deltas",
+    "checkpoint-encryption",
+    "ecdh-checkpoint-keys",
+    "xchacha20-checkpoint-encryption",
+    "recovery-public-key",
+    "forward-secrecy-checkpoints",
+    "ephemeral-keypairs",
 ];
 
 /// Supported chain IDs
@@ -134,6 +142,14 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.12.0 - Encrypted Checkpoint Deltas (Jan 13, 2026)
+    "FEAT: Checkpoint deltas can now be encrypted using user's recovery public key",
+    "FEAT: ECDH key exchange with ephemeral keypairs for forward secrecy",
+    "FEAT: XChaCha20-Poly1305 authenticated encryption for checkpoint content",
+    "FEAT: Session init accepts optional recoveryPublicKey from SDK v1.8.7+",
+    "FEAT: CheckpointEntry has optional 'encrypted' marker for SDK detection",
+    "FEAT: Backward compatible - plaintext deltas when no recovery key provided",
+    "PRIVACY: Only user with matching private key can decrypt checkpoint content",
     // v8.11.12 - Unified S5 Deployment (Jan 12, 2026)
     "DEPLOY: New unified docker-compose.prod.yml includes S5 bridge + Rust node",
     "DEPLOY: S5 bridge now starts automatically with docker-compose up",
@@ -292,8 +308,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 11);
-        assert_eq!(VERSION_PATCH, 12);
+        assert_eq!(VERSION_MINOR, 12);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -336,26 +352,41 @@ mod tests {
         assert!(FEATURES.contains(&"sorted-json-keys"));
         assert!(FEATURES.contains(&"session-resumption"));
         assert!(FEATURES.contains(&"ttl-cleanup-policy"));
+        // v8.12.0 encrypted checkpoint deltas features
+        assert!(FEATURES.contains(&"encrypted-checkpoint-deltas"));
+        assert!(FEATURES.contains(&"checkpoint-encryption"));
+        assert!(FEATURES.contains(&"ecdh-checkpoint-keys"));
+        assert!(FEATURES.contains(&"xchacha20-checkpoint-encryption"));
+        assert!(FEATURES.contains(&"recovery-public-key"));
+        assert!(FEATURES.contains(&"forward-secrecy-checkpoints"));
+        assert!(FEATURES.contains(&"ephemeral-keypairs"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.11.12"));
-        assert!(version.contains("2026-01-12"));
+        assert!(version.contains("8.12.0"));
+        assert!(version.contains("2026-01-13"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.11.12-unified-s5-deployment-2026-01-12");
-        assert_eq!(VERSION_NUMBER, "8.11.12");
-        assert_eq!(BUILD_DATE, "2026-01-12");
+        assert_eq!(VERSION, "v8.12.0-encrypted-checkpoint-deltas-2026-01-13");
+        assert_eq!(VERSION_NUMBER, "8.12.0");
+        assert_eq!(BUILD_DATE, "2026-01-13");
     }
 
     #[test]
     fn test_http_checkpoint_features() {
         assert!(FEATURES.contains(&"http-checkpoint-endpoint"));
         assert!(FEATURES.contains(&"checkpoint-index-api"));
+    }
+
+    #[test]
+    fn test_encrypted_checkpoint_features() {
+        assert!(FEATURES.contains(&"encrypted-checkpoint-deltas"));
+        assert!(FEATURES.contains(&"checkpoint-encryption"));
+        assert!(FEATURES.contains(&"recovery-public-key"));
     }
 }

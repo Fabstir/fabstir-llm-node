@@ -1514,6 +1514,29 @@ impl CheckpointManager {
         &self.checkpoint_publisher
     }
 
+    /// Set the recovery public key for a session (enables encrypted checkpoints)
+    ///
+    /// Call this during session initialization when the SDK provides a recoveryPublicKey.
+    /// Once set, all subsequent checkpoints for this session will be encrypted.
+    ///
+    /// # Arguments
+    /// * `session_id` - Session identifier
+    /// * `recovery_public_key` - User's recovery public key (0x-prefixed hex, compressed secp256k1)
+    pub async fn set_session_recovery_public_key(&self, session_id: &str, recovery_public_key: String) {
+        self.checkpoint_publisher
+            .set_recovery_public_key(session_id, recovery_public_key)
+            .await;
+        info!(
+            "🔐 Recovery public key set for session {} (encrypted checkpoints enabled)",
+            session_id
+        );
+    }
+
+    /// Check if a session has encrypted checkpoints enabled
+    pub async fn has_session_recovery_key(&self, session_id: &str) -> bool {
+        self.checkpoint_publisher.has_recovery_key(session_id).await
+    }
+
     /// Get the host's Ethereum address (lowercase, 0x prefixed)
     /// Used by HTTP endpoint for checkpoint retrieval path
     pub fn get_host_address(&self) -> String {
@@ -2483,5 +2506,58 @@ mod tests {
         // Get data back
         let retrieved = mock_storage.get(test_path).await.unwrap();
         assert_eq!(retrieved, test_data, "Retrieved data should match");
+    }
+
+    // Sub-phase 9.10: Recovery Public Key Integration Tests
+
+    #[tokio::test]
+    async fn test_set_session_recovery_public_key() {
+        use crate::checkpoint::CheckpointPublisher;
+        use std::sync::Arc;
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "session-recovery";
+        let recovery_key = "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
+        // Before setting - no recovery key
+        assert!(!publisher.has_recovery_key(session_id).await);
+
+        // Set recovery key
+        publisher
+            .set_recovery_public_key(session_id, recovery_key.to_string())
+            .await;
+
+        // After setting - has recovery key
+        assert!(publisher.has_recovery_key(session_id).await);
+
+        // Verify key value
+        let stored_key = publisher.get_recovery_public_key(session_id).await;
+        assert_eq!(stored_key, Some(recovery_key.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_has_session_recovery_key() {
+        use crate::checkpoint::CheckpointPublisher;
+        use std::sync::Arc;
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+
+        // Session without recovery key
+        publisher
+            .buffer_message(
+                "session-no-key",
+                crate::checkpoint::CheckpointMessage::new_user("test".to_string(), 100),
+            )
+            .await;
+        assert!(!publisher.has_recovery_key("session-no-key").await);
+
+        // Session with recovery key
+        publisher
+            .set_recovery_public_key(
+                "session-with-key",
+                "0x02abc123".to_string(),
+            )
+            .await;
+        assert!(publisher.has_recovery_key("session-with-key").await);
     }
 }
