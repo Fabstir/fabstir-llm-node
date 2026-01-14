@@ -58,6 +58,19 @@
   },
   {
     "type": "function",
+    "name": "USDC_MAX_DEPOSIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "USDC_MIN_DEPOSIT",
     "inputs": [],
     "outputs": [
@@ -131,6 +144,11 @@
       },
       {
         "name": "minDeposit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxDeposit",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -571,6 +589,11 @@
         "name": "verified",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "deltaCID",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "stateMutability": "view"
@@ -995,10 +1018,34 @@
         "name": "proofCID",
         "type": "string",
         "internalType": "string"
+      },
+      {
+        "name": "deltaCID",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "tokenMaxDeposits",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1062,6 +1109,24 @@
     "type": "function",
     "name": "unpause",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "updateTokenMaxDeposit",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxDeposit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -1393,6 +1458,12 @@
         "type": "string",
         "indexed": false,
         "internalType": "string"
+      },
+      {
+        "name": "deltaCID",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false
@@ -1601,6 +1672,37 @@
       },
       {
         "name": "minDeposit",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxDeposit",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TokenMaxDepositUpdated",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "oldMaxDeposit",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newMaxDeposit",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

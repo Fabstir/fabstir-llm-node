@@ -1,5 +1,160 @@
 # Client ABIs Changelog
 
+## January 14, 2026 - deltaCID Support for Proof Submissions (BREAKING CHANGE)
+
+### ⚠️ SDK BREAKING CHANGE
+**`submitProofOfWork` signature changed from 5 to 6 parameters**
+
+A new `deltaCID` parameter has been added to track delta CIDs for incremental proof storage.
+
+**Old signature (no longer works):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,
+    string calldata proofCID
+)
+```
+
+**New signature (required):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,
+    string calldata proofCID,
+    string calldata deltaCID  // NEW: Delta CID for incremental storage
+)
+```
+
+### Additional Breaking Changes
+
+**`getProofSubmission` returns 5 values instead of 4:**
+```solidity
+// Old (4 values)
+(bytes32 proofHash, uint256 tokensClaimed, uint256 timestamp, bool verified)
+
+// New (5 values)
+(bytes32 proofHash, uint256 tokensClaimed, uint256 timestamp, bool verified, string deltaCID)
+```
+
+**`ProofSubmitted` event has new field:**
+```solidity
+// Old
+event ProofSubmitted(uint256 indexed jobId, address indexed host, uint256 tokensClaimed, bytes32 proofHash, string proofCID);
+
+// New
+event ProofSubmitted(uint256 indexed jobId, address indexed host, uint256 tokensClaimed, bytes32 proofHash, string proofCID, string deltaCID);
+```
+
+### SDK Migration Guide
+```javascript
+// OLD (no longer works):
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID);
+
+// NEW (required):
+const deltaCID = "QmDeltaCID..."; // or "" if no delta
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
+
+// Reading proofs - OLD (4 values):
+const [proofHash, tokens, timestamp, verified] = await marketplace.getProofSubmission(sessionId, 0);
+
+// Reading proofs - NEW (5 values):
+const [proofHash, tokens, timestamp, verified, deltaCID] = await marketplace.getProofSubmission(sessionId, 0);
+```
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` |
+
+### ProofSubmission Struct Change
+```solidity
+struct ProofSubmission {
+    bytes32 proofHash;
+    uint256 tokensClaimed;
+    uint256 timestamp;
+    bool verified;
+    string deltaCID;  // NEW field
+}
+```
+
+### What is deltaCID?
+- Used for incremental/delta proof storage on decentralized networks
+- Allows tracking changes between consecutive proofs
+- Pass empty string `""` if not using delta storage
+
+---
+
+## January 11, 2026 - ModelRegistry Voting Improvements (Phase 14-15)
+
+### Security Audit Remediation
+Implements voting mechanism improvements from the January 2026 security audit.
+
+### Phase 14: Anti-Sniping Vote Extension
+Prevents whale attacks where large votes arrive at the last minute:
+- If a large vote (≥10,000 FAB) arrives in the last 4 hours, voting extends by 1 day
+- Maximum 3 extensions per proposal
+- Cumulative late votes trigger extension
+
+**New Constants:**
+```solidity
+uint256 public constant EXTENSION_THRESHOLD = 10000 * 10**18;  // 10k FAB
+uint256 public constant EXTENSION_WINDOW = 4 hours;
+uint256 public constant EXTENSION_DURATION = 1 days;
+uint256 public constant MAX_EXTENSIONS = 3;
+```
+
+**New Event:**
+```solidity
+event VotingExtended(bytes32 indexed modelId, uint256 newEndTime, uint8 extensionCount);
+```
+
+**Struct Changes (ModelProposal):**
+- Added `endTime` (uint256) - Dynamic end time for voting
+- Added `extensionCount` (uint8) - Number of extensions applied
+
+### Phase 15: Re-proposal Cooldown System
+Allows rejected models to be re-proposed after a cooldown:
+- 30-day cooldown after a proposal is executed (approved or rejected)
+- Old proposal data is cleared when re-proposing
+
+**New Constant:**
+```solidity
+uint256 public constant REPROPOSAL_COOLDOWN = 30 days;
+```
+
+**New State Variable:**
+```solidity
+mapping(bytes32 => uint256) public lastProposalExecutionTime;
+```
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` |
+
+### ABI Changes
+**Added to ModelRegistry:**
+- `EXTENSION_THRESHOLD()` - Constant (10k FAB)
+- `EXTENSION_WINDOW()` - Constant (4 hours)
+- `EXTENSION_DURATION()` - Constant (1 day)
+- `MAX_EXTENSIONS()` - Constant (3)
+- `REPROPOSAL_COOLDOWN()` - Constant (30 days)
+- `lateVotes(bytes32)` - Mapping for cumulative late votes
+- `lastProposalExecutionTime(bytes32)` - Mapping for cooldown tracking
+- `VotingExtended` event
+
+### No SDK Breaking Changes
+- All existing functions work as before
+- `proposals(bytes32)` now returns 9 fields instead of 7 (added `endTime`, `extensionCount`)
+- Voting and proposal creation work identically
+
+---
+
 ## January 10, 2026 - NodeRegistry Corrupt Node Fix
 
 ### Bug Fix
