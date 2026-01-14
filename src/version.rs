@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.12.3-production-cleanup-2026-01-13";
+pub const VERSION: &str = "v8.12.4-delta-cid-on-chain-2026-01-14";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.12.3";
+pub const VERSION_NUMBER: &str = "8.12.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 12;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-13";
+pub const BUILD_DATE: &str = "2026-01-14";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -137,6 +137,10 @@ pub const FEATURES: &[&str] = &[
     // Crypto params fix (v8.12.2)
     "sdk-compatible-ecdh",
     "sha256-shared-secret",
+    // deltaCID on-chain support (v8.12.4)
+    "delta-cid-on-chain",
+    "checkpoint-blockchain-events",
+    "decentralized-checkpoint-recovery",
 ];
 
 /// Supported chain IDs
@@ -147,6 +151,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.12.4 - deltaCID On-Chain Support (Jan 14, 2026)
+    "FEAT: submitProofOfWork now includes 6th parameter: deltaCID",
+    "FEAT: deltaCID stored on-chain for decentralized checkpoint recovery",
+    "FEAT: ProofSubmitted event now emits deltaCID for SDK querying",
+    "BREAKING: Contract ABI change - 6th string parameter added to submitProofOfWork",
     // v8.12.3 - Production Cleanup (Jan 13, 2026)
     "CLEANUP: Removed verbose debug logging from session_init (no more raw JSON in logs)",
     "PRIVACY: Session init no longer logs potentially sensitive decrypted payload data",
@@ -327,7 +336,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 12);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_PATCH, 4);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -378,21 +387,25 @@ mod tests {
         assert!(FEATURES.contains(&"recovery-public-key"));
         assert!(FEATURES.contains(&"forward-secrecy-checkpoints"));
         assert!(FEATURES.contains(&"ephemeral-keypairs"));
+        // v8.12.4 deltaCID on-chain features
+        assert!(FEATURES.contains(&"delta-cid-on-chain"));
+        assert!(FEATURES.contains(&"checkpoint-blockchain-events"));
+        assert!(FEATURES.contains(&"decentralized-checkpoint-recovery"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.12.3"));
-        assert!(version.contains("2026-01-13"));
+        assert!(version.contains("8.12.4"));
+        assert!(version.contains("2026-01-14"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.12.3-production-cleanup-2026-01-13");
-        assert_eq!(VERSION_NUMBER, "8.12.3");
-        assert_eq!(BUILD_DATE, "2026-01-13");
+        assert_eq!(VERSION, "v8.12.4-delta-cid-on-chain-2026-01-14");
+        assert_eq!(VERSION_NUMBER, "8.12.4");
+        assert_eq!(BUILD_DATE, "2026-01-14");
     }
 
     #[test]

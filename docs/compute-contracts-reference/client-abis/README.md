@@ -11,8 +11,8 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 > **RECOMMENDED**: Use these upgradeable contracts for all integrations.
 
 ### JobMarketplaceWithModelsUpgradeable
-- **Proxy Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` ⚠️ NEW (Jan 9, 2026)
-- **Implementation**: `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` ✅ Clean slate (Jan 9, 2026)
+- **Proxy Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
+- **Implementation**: `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` ✅ deltaCID support (Jan 14, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
@@ -35,8 +35,12 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - NEW: `getTotalBalanceNative(address)` - View total balance (withdrawable + locked)
   - NEW: `getTotalBalanceToken(address, address)` - View total token balance
   - NEW: `getProofSubmission(uint256 sessionId, uint256 proofIndex)` - View proof details including verified flag
-- **Breaking Change (Jan 6, 2026)**:
-  - `submitProofOfWork` now requires 5 parameters (added `bytes calldata signature`)
+- **Breaking Change (Jan 14, 2026)**:
+  - `submitProofOfWork` now requires 6 parameters (added `string calldata deltaCID`)
+  - `getProofSubmission` now returns 5 values (added `deltaCID`)
+  - `ProofSubmitted` event now includes `deltaCID` field
+- **Previous Breaking Change (Jan 6, 2026)**:
+  - `submitProofOfWork` added `bytes calldata signature` parameter
   - Hosts must sign their proofs with ECDSA for verification
 
 ### NodeRegistryWithModelsUpgradeable
@@ -57,13 +61,20 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ### ModelRegistryUpgradeable
 - **Proxy Address**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2`
-- **Implementation**: `0x1D31d9688a4ffD2aFE738BC6C9a4cb27C272AA5A`
+- **Implementation**: `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` ✅ Voting improvements (Jan 11, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `ModelRegistryUpgradeable-CLIENT-ABI.json`
 - **Approved Models** (2 models):
   - TinyVicuna-1B-32k (CohereForAI/TinyVicuna-1B-32k-GGUF)
   - TinyLlama-1.1B Chat (TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
+- **New Features (Jan 11, 2026) - Security Audit Remediation**:
+  - **Anti-Sniping Vote Extension**: Large votes (≥10k FAB) in last 4 hours extend voting by 1 day (max 3 extensions)
+  - **Re-proposal Cooldown**: Rejected models can be re-proposed after 30 days
+  - New constants: `EXTENSION_THRESHOLD`, `EXTENSION_WINDOW`, `EXTENSION_DURATION`, `MAX_EXTENSIONS`, `REPROPOSAL_COOLDOWN`
+  - New mappings: `lateVotes(bytes32)`, `lastProposalExecutionTime(bytes32)`
+  - New event: `VotingExtended(bytes32 indexed modelId, uint256 newEndTime, uint8 extensionCount)`
+  - `ModelProposal` struct now has `endTime` and `extensionCount` fields
 
 ### HostEarningsUpgradeable
 - **Proxy Address**: `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0`
@@ -733,14 +744,18 @@ const response = await fetch(`${hostApiUrl}/api/v1/inference`, {
 Key functions for session jobs:
 - `createSessionJob()` - Create ETH-based session
 - `createSessionJobWithToken()` - Create token-based session
-- `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID)` - Submit signed proof (5 params)
-- `getProofSubmission(sessionId, proofIndex)` - Get proof details with verified status
+- `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - Submit signed proof (6 params)
+- `getProofSubmission(sessionId, proofIndex)` - Get proof details (returns 5 values including deltaCID)
 - `completeSessionJob(jobId, conversationCID)` - Complete and settle payments
 - `triggerSessionTimeout()` - Handle timeout scenarios
 
-**BREAKING CHANGE (Jan 6, 2026)**: `submitProofOfWork()` now requires host signature:
-- Old: `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID)` - 4 params ❌ DEPRECATED
-- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID)` - 5 params ✅ CURRENT
+**BREAKING CHANGE (Jan 14, 2026)**: `submitProofOfWork()` now includes deltaCID:
+- Old: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID)` - 5 params ❌ DEPRECATED
+- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - 6 params ✅ CURRENT
+
+**BREAKING CHANGE (Jan 14, 2026)**: `getProofSubmission()` return value changed:
+- Old: Returns 4 values `(proofHash, tokensClaimed, timestamp, verified)`
+- New: Returns 5 values `(proofHash, tokensClaimed, timestamp, verified, deltaCID)` ✅ CURRENT
 
 ```javascript
 // Generate signature for proof submission
@@ -749,7 +764,10 @@ const dataHash = keccak256(
   solidityPacked(['bytes32', 'address', 'uint256'], [proofHash, hostAddress, tokensClaimed])
 );
 const signature = await hostWallet.signMessage(getBytes(dataHash));
-await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID);
+
+// deltaCID is optional - use empty string if not tracking deltas
+const deltaCID = "QmDeltaCID123"; // or "" if not using delta tracking
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
 ```
 
 ## Treasury Functions
@@ -838,9 +856,10 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-January 10, 2026 - NodeRegistry corrupt node fix (repairCorruptNode + unregisterNode safety check)
+January 14, 2026 - deltaCID support for proof submissions
 
 ### Recent Changes
+- **Jan 14, 2026**: deltaCID support - `submitProofOfWork` now 6 params, `getProofSubmission` returns 5 values
 - **Jan 10, 2026**: NodeRegistry - Added `repairCorruptNode()` admin function and safety check in `unregisterNode()`
 - **Jan 9, 2026**: Clean slate JobMarketplace deployment - new proxy address `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
 - **Jan 6, 2026**: Phase 6 ProofSystem Integration - submitProofOfWork signature changed to 5 params
