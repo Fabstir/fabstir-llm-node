@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 use async_trait::async_trait;
+use data_encoding::BASE32_NOPAD;
 use reqwest;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
@@ -32,7 +32,6 @@ pub enum StorageError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum S5Backend {
     Mock,
-    Real { portal_url: String },
     EnhancedS5 { base_url: String },
 }
 
@@ -42,13 +41,6 @@ pub struct S5StorageConfig {
     pub api_key: Option<String>,
     pub cache_ttl_seconds: u64,
     pub max_retries: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct S5ClientConfig {
-    pub portal_url: String,
-    pub api_key: Option<String>,
-    pub timeout_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -151,11 +143,42 @@ impl MockS5Backend {
         Ok(())
     }
 
+    /// Generate S5 BlobIdentifier format CID
+    ///
+    /// BlobIdentifier format is REQUIRED by S5 portals for downloads.
+    /// Structure: prefix(2) + multihash(1) + hash(32) + size(1-8) = 36-43 bytes
+    /// Base32 encoded: 58-70 chars with 'b' multibase prefix
+    ///
+    /// Old 53-char raw hash format is DEPRECATED - portals reject it.
     fn generate_cid(data: &[u8]) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        let hash = format!("{:x}", hasher.finalize());
-        format!("s5://{}", &hash[0..32])
+        // S5 uses blake3 for hashing
+        let hash = blake3::hash(data);
+        let hash_bytes = hash.as_bytes();
+        let size = data.len() as u64;
+
+        // Build BlobIdentifier bytes
+        // Capacity: 2 (prefix) + 1 (multihash) + 32 (hash) + 8 (max size) = 43 bytes
+        let mut blob_bytes = Vec::with_capacity(43);
+
+        // S5 blob identifier prefix bytes
+        blob_bytes.extend_from_slice(&[0x5b, 0x82]);
+
+        // BLAKE3 multihash code
+        blob_bytes.push(0x1e);
+
+        // 32-byte BLAKE3 hash
+        blob_bytes.extend_from_slice(hash_bytes);
+
+        // Little-endian size encoding (trim trailing zeros for compactness)
+        let mut size_bytes = size.to_le_bytes().to_vec();
+        while size_bytes.len() > 1 && size_bytes.last() == Some(&0) {
+            size_bytes.pop();
+        }
+        blob_bytes.extend_from_slice(&size_bytes);
+
+        // Base32 encode with 'b' multibase prefix
+        let base32_encoded = BASE32_NOPAD.encode(&blob_bytes).to_lowercase();
+        format!("b{}", base32_encoded)
     }
 
     async fn check_quota(&self, data_size: u64) -> Result<(), StorageError> {
@@ -185,6 +208,12 @@ impl S5Storage for MockS5Backend {
         self.check_injected_error().await?;
         Self::validate_path(path)?;
         self.check_quota(data.len() as u64).await?;
+
+        // WARN: Mock storage is being used - data stays in memory only!
+        tracing::warn!(
+            "🎭 [S5-MOCK] MockS5Backend::put() - path='{}', size={} bytes - DATA NOT UPLOADED TO S5 NETWORK!",
+            path, data.len()
+        );
 
         let cid = Self::generate_cid(&data);
         let entry = MockEntry {
@@ -395,293 +424,6 @@ impl S5Storage for MockS5Backend {
     }
 }
 
-#[derive(Debug)]
-pub struct RealS5Backend {
-    client: reqwest::Client,
-    portal_url: String,
-    api_key: Option<String>,
-}
-
-impl RealS5Backend {
-    pub fn new(config: S5ClientConfig) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-            .build()
-            .unwrap();
-
-        Self {
-            client,
-            portal_url: config.portal_url,
-            api_key: config.api_key,
-        }
-    }
-
-    fn validate_path(path: &str) -> Result<(), StorageError> {
-        MockS5Backend::validate_path(path)
-    }
-
-    async fn make_request(
-        &self,
-        method: reqwest::Method,
-        url: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<reqwest::Response, StorageError> {
-        let mut request_builder = self.client.request(method, url);
-
-        if let Some(api_key) = &self.api_key {
-            request_builder =
-                request_builder.header("Authorization", format!("Bearer {}", api_key));
-        }
-
-        if let Some(body) = body {
-            request_builder = request_builder.body(body);
-        }
-
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| StorageError::NetworkError(e.to_string()))?;
-
-        if response.status().is_server_error() {
-            return Err(StorageError::ServerError(format!(
-                "Server error: {}",
-                response.status()
-            )));
-        }
-
-        Ok(response)
-    }
-}
-
-#[async_trait]
-impl S5Storage for RealS5Backend {
-    async fn put(&self, path: &str, data: Vec<u8>) -> Result<String, StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/upload/{}", self.portal_url, path);
-        let response = self
-            .make_request(reqwest::Method::POST, &url, Some(data))
-            .await?;
-
-        if response.status().is_success() {
-            let result: serde_json::Value = response
-                .json()
-                .await
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-
-            Ok(result["cid"].as_str().unwrap_or("").to_string())
-        } else {
-            Err(StorageError::ServerError(format!(
-                "Upload failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn put_with_metadata(
-        &self,
-        path: &str,
-        data: Vec<u8>,
-        metadata: HashMap<String, String>,
-    ) -> Result<String, StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/upload/{}", self.portal_url, path);
-        let mut request_builder = self.client.post(&url);
-
-        if let Some(api_key) = &self.api_key {
-            request_builder =
-                request_builder.header("Authorization", format!("Bearer {}", api_key));
-        }
-
-        // Add metadata as headers
-        for (key, value) in metadata {
-            request_builder = request_builder.header(format!("X-S5-Meta-{}", key), value);
-        }
-
-        let response = request_builder
-            .body(data)
-            .send()
-            .await
-            .map_err(|e| StorageError::NetworkError(e.to_string()))?;
-
-        if response.status().is_success() {
-            let result: serde_json::Value = response
-                .json()
-                .await
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-
-            Ok(result["cid"].as_str().unwrap_or("").to_string())
-        } else {
-            Err(StorageError::ServerError(format!(
-                "Upload failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn get(&self, path: &str) -> Result<Vec<u8>, StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/download/{}", self.portal_url, path);
-        let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-
-        if response.status().is_success() {
-            let data = response
-                .bytes()
-                .await
-                .map_err(|e| StorageError::NetworkError(e.to_string()))?;
-            Ok(data.to_vec())
-        } else if response.status() == reqwest::StatusCode::NOT_FOUND {
-            Err(StorageError::NotFound(path.to_string()))
-        } else {
-            Err(StorageError::ServerError(format!(
-                "Download failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn get_metadata(&self, path: &str) -> Result<HashMap<String, String>, StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/metadata/{}", self.portal_url, path);
-        let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-
-        if response.status().is_success() {
-            let metadata: HashMap<String, String> = response
-                .json()
-                .await
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            Ok(metadata)
-        } else if response.status() == reqwest::StatusCode::NOT_FOUND {
-            Err(StorageError::NotFound(path.to_string()))
-        } else {
-            Err(StorageError::ServerError(format!(
-                "Metadata retrieval failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn get_by_cid(&self, cid: &str) -> Result<Vec<u8>, StorageError> {
-        let url = format!("{}/api/s5/cid/{}", self.portal_url, cid);
-        let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-
-        if response.status().is_success() {
-            let data = response
-                .bytes()
-                .await
-                .map_err(|e| StorageError::NetworkError(e.to_string()))?;
-            Ok(data.to_vec())
-        } else if response.status() == reqwest::StatusCode::NOT_FOUND {
-            Err(StorageError::NotFound(cid.to_string()))
-        } else {
-            Err(StorageError::ServerError(format!(
-                "CID retrieval failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn list(&self, path: &str) -> Result<Vec<S5Entry>, StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/list/{}", self.portal_url, path);
-        let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-
-        if response.status().is_success() {
-            let entries: Vec<S5Entry> = response
-                .json()
-                .await
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            Ok(entries)
-        } else {
-            Err(StorageError::ServerError(format!(
-                "List failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn list_with_options(
-        &self,
-        path: &str,
-        limit: Option<usize>,
-        cursor: Option<String>,
-    ) -> Result<S5ListResult, StorageError> {
-        Self::validate_path(path)?;
-
-        let mut url = format!("{}/api/s5/list/{}", self.portal_url, path);
-        let mut query_params = Vec::new();
-
-        if let Some(limit) = limit {
-            query_params.push(format!("limit={}", limit));
-        }
-
-        if let Some(cursor) = cursor {
-            query_params.push(format!("cursor={}", cursor));
-        }
-
-        if !query_params.is_empty() {
-            url.push('?');
-            url.push_str(&query_params.join("&"));
-        }
-
-        let response = self.make_request(reqwest::Method::GET, &url, None).await?;
-
-        if response.status().is_success() {
-            let result: S5ListResult = response
-                .json()
-                .await
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            Ok(result)
-        } else {
-            Err(StorageError::ServerError(format!(
-                "List failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn delete(&self, path: &str) -> Result<(), StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/delete/{}", self.portal_url, path);
-        let response = self
-            .make_request(reqwest::Method::DELETE, &url, None)
-            .await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else if response.status() == reqwest::StatusCode::NOT_FOUND {
-            Err(StorageError::NotFound(path.to_string()))
-        } else {
-            Err(StorageError::ServerError(format!(
-                "Delete failed: {}",
-                response.status()
-            )))
-        }
-    }
-
-    async fn exists(&self, path: &str) -> Result<bool, StorageError> {
-        Self::validate_path(path)?;
-
-        let url = format!("{}/api/s5/exists/{}", self.portal_url, path);
-        let response = self.make_request(reqwest::Method::HEAD, &url, None).await?;
-
-        Ok(response.status().is_success())
-    }
-
-    fn clone(&self) -> Box<dyn S5Storage> {
-        Box::new(RealS5Backend {
-            client: self.client.clone(),
-            portal_url: self.portal_url.clone(),
-            api_key: self.api_key.clone(),
-        })
-    }
-}
-
 // Enhanced S5 Backend Implementation
 pub struct EnhancedS5Backend {
     client: super::enhanced_s5_client::EnhancedS5Client,
@@ -700,27 +442,25 @@ impl EnhancedS5Backend {
         // The test paths don't follow the home/archive convention
         Ok(clean_path.to_string())
     }
-
-    fn generate_cid(data: &[u8]) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        let hash = format!("{:x}", hasher.finalize());
-        format!("s5://{}", &hash[0..32])
-    }
 }
 
 #[async_trait]
 impl S5Storage for EnhancedS5Backend {
     async fn put(&self, path: &str, data: Vec<u8>) -> Result<String, StorageError> {
         let clean_path = Self::validate_path(path)?;
+        let data_len = data.len();
 
-        self.client
-            .put_file(&clean_path, data.clone())
+        tracing::info!("🔵 EnhancedS5Backend::put called: path={}, size={}", clean_path, data_len);
+
+        // put_file now returns the real CID from the S5 bridge
+        let cid = self.client
+            .put_file(&clean_path, data)
             .await
             .map_err(|e| StorageError::ServerError(e.to_string()))?;
 
-        // Generate a CID for the data
-        Ok(Self::generate_cid(&data))
+        tracing::info!("🔵 EnhancedS5Backend::put returned CID: {}", cid);
+
+        Ok(cid)
     }
 
     async fn put_with_metadata(
@@ -841,14 +581,6 @@ impl S5Client {
     pub async fn create(config: S5StorageConfig) -> Result<Box<dyn S5Storage>, StorageError> {
         match config.backend {
             S5Backend::Mock => Ok(Box::new(MockS5Backend::new())),
-            S5Backend::Real { portal_url } => {
-                let client_config = S5ClientConfig {
-                    portal_url,
-                    api_key: config.api_key,
-                    timeout_seconds: 30,
-                };
-                Ok(Box::new(RealS5Backend::new(client_config)))
-            }
             S5Backend::EnhancedS5 { base_url } => {
                 // Use EnhancedS5 backend when configured
                 if let Ok(enhanced_client) =
@@ -866,6 +598,14 @@ impl S5Client {
     pub async fn create_from_env() -> Result<Box<dyn S5Storage>, StorageError> {
         // Check for ENHANCED_S5_URL environment variable
         if let Ok(enhanced_url) = std::env::var("ENHANCED_S5_URL") {
+            tracing::info!(
+                "🌐 [S5-INIT] Using EnhancedS5Backend with URL: {}",
+                enhanced_url
+            );
+            eprintln!(
+                "🌐 [S5-INIT] Using EnhancedS5Backend with URL: {}",
+                enhanced_url
+            );
             let config = S5StorageConfig {
                 backend: S5Backend::EnhancedS5 {
                     base_url: enhanced_url,
@@ -877,7 +617,16 @@ impl S5Client {
             return Self::create(config).await;
         }
 
-        // Default to mock backend
+        // Default to mock backend - WARN that uploads won't reach network!
+        tracing::warn!(
+            "🚨 [S5-INIT] ENHANCED_S5_URL not set! Using MockS5Backend - uploads will NOT reach S5 network!"
+        );
+        eprintln!(
+            "🚨 [S5-INIT] ENHANCED_S5_URL not set! Using MockS5Backend - uploads will NOT reach S5 network!"
+        );
+        eprintln!(
+            "🚨 [S5-INIT] Set ENHANCED_S5_URL=http://localhost:5522 to use real S5 storage"
+        );
         let config = S5StorageConfig {
             backend: S5Backend::Mock,
             api_key: None,
@@ -885,5 +634,159 @@ impl S5Client {
             max_retries: 3,
         };
         Self::create(config).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to validate S5 BlobIdentifier CID format
+    /// BlobIdentifier: 58-70 chars (varies by file size encoding)
+    /// Structure: 'b' + base32(prefix(2) + multihash(1) + hash(32) + size(1-8))
+    fn is_valid_blob_identifier_cid(cid: &str) -> bool {
+        // Must start with 'b' (base32 multibase prefix)
+        if !cid.starts_with('b') {
+            return false;
+        }
+        // BlobIdentifier: 58-70 chars
+        let len = cid.len();
+        if len < 58 || len > 70 {
+            return false;
+        }
+        // Rest must be valid base32 lowercase: a-z, 2-7
+        cid[1..].chars().all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
+    }
+
+    #[test]
+    fn test_mock_s5_generate_cid_returns_blob_identifier_format() {
+        // Test that MockS5Backend generates BlobIdentifier format CIDs
+        // BlobIdentifier includes file size and is REQUIRED by S5 portals
+        let test_data = b"test checkpoint delta content";
+        let cid = MockS5Backend::generate_cid(test_data);
+
+        println!("Generated CID: {}", cid);
+        println!("CID length: {}", cid.len());
+        println!("Data size: {} bytes", test_data.len());
+
+        // MUST start with 'b' (base32 multibase prefix)
+        assert!(
+            cid.starts_with('b'),
+            "deltaCid MUST start with 'b' prefix for base32 encoding, got: {}",
+            cid
+        );
+
+        // MUST be 58-70 characters (BlobIdentifier format, varies by file size)
+        assert!(
+            cid.len() >= 58 && cid.len() <= 70,
+            "BlobIdentifier CID MUST be 58-70 chars, got {} chars: {}",
+            cid.len(),
+            cid
+        );
+
+        // MUST be valid BlobIdentifier format
+        assert!(
+            is_valid_blob_identifier_cid(&cid),
+            "deltaCid MUST be valid BlobIdentifier format (58-70 base32), got: {}",
+            cid
+        );
+
+        // MUST NOT be hex
+        assert!(
+            !cid.chars().skip(1).all(|c| c.is_ascii_hexdigit()),
+            "deltaCid MUST NOT be hex hash, got: {}",
+            cid
+        );
+
+        // MUST NOT contain s5:// prefix
+        assert!(
+            !cid.contains("s5://"),
+            "deltaCid MUST NOT contain s5:// prefix, got: {}",
+            cid
+        );
+
+        // MUST NOT be IPFS format (bafkrei, bafybei, etc.)
+        assert!(
+            !cid.starts_with("bafkrei") && !cid.starts_with("bafybei"),
+            "deltaCid MUST NOT be IPFS format (bafkrei/bafybei). Got: {}",
+            cid
+        );
+
+        // MUST NOT be old 53-char raw hash format (portals reject it)
+        assert_ne!(
+            cid.len(),
+            53,
+            "deltaCid MUST NOT be old 53-char raw hash format. Got: {}",
+            cid
+        );
+
+        println!(
+            "SUCCESS: deltaCid is valid BlobIdentifier format: {} ({} chars)",
+            cid,
+            cid.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_s5_put_returns_blob_identifier_format() {
+        // Test the full S5Storage::put() flow returns BlobIdentifier format
+        let mock = MockS5Backend::new();
+        let test_data = b"checkpoint delta JSON content".to_vec();
+        let data_size = test_data.len();
+
+        let cid = mock
+            .put("home/checkpoints/test/delta_0.json", test_data)
+            .await
+            .unwrap();
+
+        println!("MockS5Backend::put() returned CID: {}", cid);
+        println!("CID length: {}", cid.len());
+        println!("Data size: {} bytes", data_size);
+
+        // Verify format is BlobIdentifier (58-70 chars, NOT old 53-char raw hash)
+        assert!(
+            is_valid_blob_identifier_cid(&cid),
+            "S5Storage::put() MUST return valid BlobIdentifier CID (58-70 chars), got {} chars: {}",
+            cid.len(),
+            cid
+        );
+
+        // MUST NOT be IPFS format
+        assert!(
+            !cid.starts_with("bafkrei") && !cid.starts_with("bafybei"),
+            "S5Storage::put() MUST NOT return IPFS format, got: {}",
+            cid
+        );
+
+        // MUST NOT be old 53-char raw hash format
+        assert_ne!(
+            cid.len(),
+            53,
+            "S5Storage::put() MUST NOT return old 53-char format. Got: {}",
+            cid
+        );
+
+        println!(
+            "SUCCESS: S5Storage::put() returns BlobIdentifier format: {} ({} chars)",
+            cid,
+            cid.len()
+        );
+    }
+
+    #[test]
+    fn test_s5_cid_deterministic() {
+        // Same data should produce same CID
+        let data = b"deterministic test data";
+        let cid1 = MockS5Backend::generate_cid(data);
+        let cid2 = MockS5Backend::generate_cid(data);
+        assert_eq!(cid1, cid2, "CID generation must be deterministic");
+    }
+
+    #[test]
+    fn test_s5_cid_different_data() {
+        // Different data should produce different CIDs
+        let cid1 = MockS5Backend::generate_cid(b"data1");
+        let cid2 = MockS5Backend::generate_cid(b"data2");
+        assert_ne!(cid1, cid2, "Different data must produce different CIDs");
     }
 }

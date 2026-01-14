@@ -15,7 +15,7 @@ pub use cbor_compat::{
 };
 
 pub use s5_client::{
-    S5Backend, S5Client, S5ClientConfig, S5Entry, S5EntryType, S5ListResult, S5Storage,
+    S5Backend, S5Client, S5Entry, S5EntryType, S5ListResult, S5Storage,
     S5StorageConfig, StorageError,
 };
 

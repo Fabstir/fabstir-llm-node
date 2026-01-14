@@ -36,7 +36,7 @@ impl SessionInitHandler {
             .await
     }
 
-    /// Handle session initialization with chain support
+    /// Handle session initialization with chain support (backward compatible)
     pub async fn handle_session_init_with_chain(
         &self,
         session_id: &str,
@@ -44,9 +44,42 @@ impl SessionInitHandler {
         conversation_context: Vec<ConversationMessage>,
         chain_id: Option<u64>,
     ) -> Result<SessionInitResponse> {
+        self.handle_session_init_with_recovery_key(
+            session_id,
+            job_id,
+            conversation_context,
+            chain_id,
+            None,
+        )
+        .await
+    }
+
+    /// Handle session initialization with chain and recovery public key support
+    ///
+    /// # Arguments
+    /// * `session_id` - Unique session identifier
+    /// * `job_id` - Job ID from blockchain
+    /// * `conversation_context` - Optional conversation context to restore
+    /// * `chain_id` - Optional chain ID for multi-chain support
+    /// * `recovery_public_key` - Optional recovery public key for encrypted checkpoints (SDK v1.8.7+)
+    pub async fn handle_session_init_with_recovery_key(
+        &self,
+        session_id: &str,
+        job_id: u64,
+        conversation_context: Vec<ConversationMessage>,
+        chain_id: Option<u64>,
+        recovery_public_key: Option<String>,
+    ) -> Result<SessionInitResponse> {
         info!(
-            "Initializing session {} with job_id {} on chain {:?}",
-            session_id, job_id, chain_id
+            "Initializing session {} with job_id {} on chain {:?}{}",
+            session_id,
+            job_id,
+            chain_id,
+            if recovery_public_key.is_some() {
+                " (encrypted checkpoints enabled)"
+            } else {
+                ""
+            }
         );
 
         // Validate job_id
@@ -94,6 +127,7 @@ impl SessionInitHandler {
             message_count: cache.message_count().await,
             total_tokens,
             chain_info,
+            recovery_public_key,
         })
     }
 
@@ -206,5 +240,47 @@ mod tests {
         handler.cleanup_session("temp-session").await;
 
         assert!(!handler.session_exists("temp-session").await);
+    }
+
+    // Phase 9 Tests: Recovery Public Key Support
+
+    #[tokio::test]
+    async fn test_session_init_with_recovery_public_key() {
+        let handler = SessionInitHandler::new();
+        let recovery_key = "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
+        let result = handler
+            .handle_session_init_with_recovery_key(
+                "recovery-session",
+                789,
+                vec![],
+                Some(84532),
+                Some(recovery_key.to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.session_id, "recovery-session");
+        assert_eq!(result.job_id, 789);
+        assert_eq!(result.recovery_public_key, Some(recovery_key.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_session_init_without_recovery_key_is_backwards_compatible() {
+        let handler = SessionInitHandler::new();
+
+        let result = handler
+            .handle_session_init_with_recovery_key(
+                "no-recovery-session",
+                101,
+                vec![],
+                Some(84532),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.session_id, "no-recovery-session");
+        assert!(result.recovery_public_key.is_none());
     }
 }

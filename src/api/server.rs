@@ -4,7 +4,7 @@ use anyhow::Result;
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Json, State,
+        DefaultBodyLimit, Json, Path, State,
     },
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -24,6 +24,7 @@ use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use crate::api::token_tracker::TokenTracker;
 use crate::contracts::checkpoint_manager::CheckpointManager;
+use sha2::{Digest, Sha256};
 use crate::crypto::SessionKeyStore;
 use crate::inference::LlmEngine;
 use crate::p2p::Node;
@@ -579,6 +580,37 @@ impl ApiServer {
             );
         }
 
+        // Parse job_id early (needed for prompt hash storage)
+        let job_id = request.job_id.or_else(|| {
+            request.session_id.as_ref().and_then(|sid| {
+                sid.trim_end_matches('n').parse::<u64>().ok()
+            })
+        });
+
+        // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
+        let prompt_hash = {
+            let hash = Sha256::digest(full_prompt.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            hash_bytes
+        };
+
+        // Store prompt hash in checkpoint manager (non-streaming path)
+        if let Some(jid) = job_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                cm.set_prompt_hash(jid, prompt_hash).await;
+            }
+        }
+
+        // Phase 3: Track user message for checkpoint publishing (v8.11.0)
+        // Extract just the last user message from Harmony format (v8.12.0 - Bug fix)
+        if let Some(ref session_id) = request.session_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                let user_content = crate::checkpoint::extract_last_user_message(&request.prompt);
+                cm.track_conversation_message(session_id, "user", &user_content, false)
+                    .await;
+            }
+        }
 
         // Create inference request for the engine
         let engine_request = crate::inference::InferenceRequest {
@@ -610,7 +642,7 @@ impl ApiServer {
 
         let response = InferenceResponse {
             model: request.model.clone(),
-            content: result.text,
+            content: result.text.clone(),
             tokens_used: result.tokens_generated as u32,
             finish_reason: result.finish_reason,
             request_id: request
@@ -625,12 +657,23 @@ impl ApiServer {
             search_provider,
         };
 
-        // Track tokens for checkpoint submission (non-streaming path)
-        let job_id = request.job_id.or_else(|| {
-            request.session_id.as_ref().and_then(|sid| {
-                sid.trim_end_matches('n').parse::<u64>().ok()
-            })
-        });
+        // Phase 4: Store response hash for proof binding (non-streaming path - v8.10.0+)
+        // In non-streaming, we have the complete response immediately
+        if let Some(jid) = job_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                // Append entire response and finalize in one go
+                cm.append_response(jid, &result.text).await;
+                let _ = cm.finalize_response_hash(jid).await;
+            }
+        }
+
+        // Phase 4.2: Track assistant response for checkpoint publishing (v8.11.0)
+        if let Some(ref session_id) = request.session_id {
+            if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
+                cm.track_conversation_message(session_id, "assistant", &result.text, false)
+                    .await;
+            }
+        }
 
         if let Some(jid) = job_id {
             info!("📊 Job {} completed: {} tokens", jid, response.tokens_used);
@@ -776,6 +819,39 @@ impl ApiServer {
             );
         }
 
+        // Parse job_id early (needed for prompt hash storage)
+        // SDK sends "139n" format, so we strip trailing 'n'
+        let job_id = request.job_id.or_else(|| {
+            request.session_id.as_ref().and_then(|sid| {
+                sid.trim_end_matches('n').parse::<u64>().ok()
+            })
+        });
+
+        // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
+        let prompt_hash = {
+            let hash = Sha256::digest(full_prompt.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            hash_bytes
+        };
+
+        // Store prompt hash in checkpoint manager
+        let checkpoint_manager = self.checkpoint_manager.read().await.clone();
+        if let Some(jid) = job_id {
+            if let Some(cm) = checkpoint_manager.as_ref() {
+                cm.set_prompt_hash(jid, prompt_hash).await;
+            }
+        }
+
+        // Phase 3: Track user message for checkpoint publishing (v8.11.0)
+        // Extract just the last user message from Harmony format (v8.12.0 - Bug fix)
+        if let Some(ref session_id) = request.session_id {
+            if let Some(cm) = checkpoint_manager.as_ref() {
+                let user_content = crate::checkpoint::extract_last_user_message(&request.prompt);
+                cm.track_conversation_message(session_id, "user", &user_content, false)
+                    .await;
+            }
+        }
 
         // Log the request for debugging
         info!(
@@ -810,14 +886,6 @@ impl ApiServer {
 
         let (tx, rx) = mpsc::channel(100);
 
-        // Clone values for the spawned task
-        // Parse job_id from request or session_id (SDK sends "139n" format)
-        let job_id = request.job_id.or_else(|| {
-            request.session_id.as_ref().and_then(|sid| {
-                sid.trim_end_matches('n').parse::<u64>().ok()
-            })
-        });
-
         // Log job tracking once at start
         if let Some(jid) = job_id {
             info!("📝 Streaming job {} started", jid);
@@ -825,7 +893,6 @@ impl ApiServer {
 
         let session_id = request.session_id.clone();
         let token_tracker = self.token_tracker.clone();
-        let checkpoint_manager = self.checkpoint_manager.read().await.clone();
 
         // Spawn task to convert token stream to streaming responses
         tokio::spawn(async move {
@@ -849,8 +916,11 @@ impl ApiServer {
                         }
 
                         // Track tokens for checkpoint submission (silent - logs only on checkpoint trigger)
+                        // Phase 4: Also append token to response buffer for hash computation (v8.10.0+)
                         if let Some(jid) = job_id {
                             if let Some(cm) = checkpoint_manager.as_ref() {
+                                // Append token to response buffer for proof binding
+                                cm.append_response(jid, &token_info.text).await;
                                 let _ = cm.track_tokens(jid, 1, session_id.clone()).await;
                             } else {
                                 token_tracker
@@ -900,12 +970,22 @@ impl ApiServer {
             // BUT DON'T CLEANUP - the session might continue!
             if let Some(jid) = job_id {
                 if let Some(cm) = checkpoint_manager.as_ref() {
+                    // Phase 4: Finalize response hash before checkpoint (v8.10.0+)
+                    let _ = cm.finalize_response_hash(jid).await;
                     let _ = cm.force_checkpoint(jid).await;
                     // DON'T cleanup here - session continues across multiple prompts!
                     // Cleanup should only happen when websocket disconnects
                 } else {
                     token_tracker.force_checkpoint(jid).await;
                     // DON'T cleanup here either
+                }
+            }
+
+            // Phase 4.2: Track assistant response for checkpoint publishing (v8.11.0)
+            if let Some(ref session_id) = session_id {
+                if let Some(cm) = checkpoint_manager.as_ref() {
+                    cm.track_conversation_message(session_id, "assistant", &accumulated_text, false)
+                        .await;
                 }
             }
 
@@ -997,7 +1077,9 @@ impl ApiServer {
 
         Router::new()
             .route("/health", get(health_handler))
+            .route("/v1/version", get(version_handler))
             .route("/v1/models", get(models_handler))
+            .route("/v1/checkpoints/:session_id", get(checkpoints_handler))
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/embed", post(embed_handler_wrapper))
             .route("/v1/search", post(search_handler_wrapper))
@@ -1018,6 +1100,93 @@ async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoRespon
     match server.get_available_models().await {
         Ok(models) => (StatusCode::OK, axum::response::Json(models)).into_response(),
         Err(e) => ApiServer::error_response(e),
+    }
+}
+
+async fn version_handler() -> impl IntoResponse {
+    axum::response::Json(crate::version::get_version_info())
+}
+
+/// GET /v1/checkpoints/:session_id - Returns checkpoint index for SDK conversation recovery
+async fn checkpoints_handler(
+    State(server): State<Arc<ApiServer>>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    use crate::checkpoint::index::CheckpointIndex;
+
+    tracing::info!("🔍 checkpoints_handler called for session_id: {}", session_id);
+
+    // Get checkpoint_manager from server
+    let checkpoint_manager = match server.get_checkpoint_manager().await {
+        Some(cm) => cm,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::response::Json(serde_json::json!({
+                    "error": "Checkpoint service unavailable"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    // Get host address and S5 storage
+    let host_address = checkpoint_manager.get_host_address();
+    let s5_storage = checkpoint_manager.get_s5_storage();
+
+    // Build S5 path and fetch
+    let index_path = CheckpointIndex::s5_path(&host_address, &session_id);
+    tracing::info!("🔍 Fetching checkpoint index from: {}", index_path);
+
+    match s5_storage.get(&index_path).await {
+        Ok(bytes) => {
+            tracing::info!("🔍 Got {} bytes from S5", bytes.len());
+            match serde_json::from_slice::<CheckpointIndex>(&bytes) {
+                Ok(index) => {
+                    tracing::info!(
+                        "🔍 Returning checkpoint index: sessionId={}, hostAddress={}, checkpoints={}, hostSignature_len={}",
+                        index.session_id,
+                        index.host_address,
+                        index.checkpoints.len(),
+                        index.host_signature.len()
+                    );
+                    let response = serde_json::to_value(&index).unwrap();
+                    tracing::debug!("🔍 Response JSON: {}", serde_json::to_string(&response).unwrap_or_default());
+                    (StatusCode::OK, axum::response::Json(response)).into_response()
+                }
+                Err(e) => {
+                    tracing::error!("🔍 Failed to parse checkpoint index: {}", e);
+                    tracing::error!("🔍 Raw bytes: {}", String::from_utf8_lossy(&bytes));
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::response::Json(serde_json::json!({
+                            "error": format!("Failed to parse checkpoint index: {}", e)
+                        })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(crate::storage::StorageError::NotFound(_)) => {
+            tracing::warn!("🔍 No checkpoints found for session {}", session_id);
+            (
+                StatusCode::NOT_FOUND,
+                axum::response::Json(serde_json::json!({
+                    "error": format!("No checkpoints found for session {}", session_id)
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("🔍 Failed to fetch checkpoint index: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::response::Json(serde_json::json!({
+                    "error": format!("Failed to fetch checkpoint index: {}", e)
+                })),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1236,6 +1405,23 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                         eprintln!("📝 Session init: job={:?} session={:?}", job_id, session_id);
 
+                        // FIX: Create session in session_store (was missing - caused "Session not found" errors)
+                        if let Some(sid) = &session_id {
+                            let mut store = server.session_store.write().await;
+                            match store.create_session_with_chain(
+                                sid.clone(),
+                                crate::api::websocket::session::SessionConfig::default(),
+                                chain_id.unwrap_or(84532), // Default to Base Sepolia
+                            ).await {
+                                Ok(_) => {
+                                    info!("✅ Session created in store: {}", sid);
+                                }
+                                Err(e) => {
+                                    error!("❌ Failed to create session in store: {}", e);
+                                }
+                            }
+                        }
+
                         // CRITICAL: Send response to session_init so SDK doesn't timeout!
                         // Must echo back the 'id' field for request-response correlation
                         let mut response = serde_json::json!({
@@ -1393,6 +1579,36 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 extracted_session_key,
                                                             )
                                                             .await;
+
+                                                        // FIX: Create session in session_store FIRST (was missing - caused "Session not found" errors)
+                                                        {
+                                                            let mut store = server.session_store.write().await;
+                                                            match store.create_session_with_chain(
+                                                                sid.clone(),
+                                                                crate::api::websocket::session::SessionConfig::default(),
+                                                                chain_id.unwrap_or(84532), // Default to Base Sepolia
+                                                            ).await {
+                                                                Ok(_) => {
+                                                                    info!("✅ Encrypted session created in store: {}", sid);
+                                                                }
+                                                                Err(e) => {
+                                                                    // Session might already exist (e.g., reconnection), which is fine
+                                                                    warn!("⚠️ Session creation returned error (may already exist): {}", e);
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Set recovery public key in checkpoint manager (for encrypted checkpoint deltas)
+                                                        if let Some(recovery_pubkey) = &session_init_data.recovery_public_key {
+                                                            if let Some(cm) = server.get_checkpoint_manager().await {
+                                                                cm.set_session_recovery_public_key(sid, recovery_pubkey.clone()).await;
+                                                                info!("🔐 Recovery public key set for session {} (encrypted checkpoints enabled)", sid);
+                                                            } else {
+                                                                warn!("⚠️ Recovery public key provided but checkpoint manager not available");
+                                                            }
+                                                        } else {
+                                                            debug!("ℹ️ No recovery public key in session init - checkpoints will be plaintext");
+                                                        }
 
                                                         // Handle vector_database if provided (Sub-phase 3.3)
                                                         if let Some(vdb_info) = session_init_data.vector_database.clone() {
@@ -1645,8 +1861,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         match String::from_utf8(plaintext_bytes) {
                                                             Ok(plaintext_str) => {
                                                                 info!(
-                                                                    "✅ Decrypted message: {}",
-                                                                    plaintext_str
+                                                                    "✅ Decrypted message ({} chars)",
+                                                                    plaintext_str.len()
                                                                 );
 
                                                                 // Try to parse decrypted content as JSON (SDK v6.2+)

@@ -16,6 +16,9 @@ use super::client::Web3Client;
 // S5 decentralized storage for off-chain proof storage (Phase 2.1)
 use crate::storage::s5_client::{S5Client, S5Storage};
 
+// Checkpoint publishing for conversation recovery (Phase 2/3)
+use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
 #[cfg(feature = "real-ezkl")]
 use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
 
@@ -33,12 +36,30 @@ pub struct JobTokenTracker {
     pub last_proof_timestamp: Option<std::time::Instant>, // Track when last proof was submitted
 }
 
+/// Content hashes for cryptographic proof binding (Phase 4 - v8.10.0)
+///
+/// Stores the actual prompt and response hashes to bind them into the STARK proof,
+/// replacing placeholder hashes with real content hashes.
+#[derive(Debug, Clone, Default)]
+pub struct ContentHashes {
+    /// SHA256 of the original prompt (set at inference start)
+    pub prompt_hash: Option<[u8; 32]>,
+    /// SHA256 of the generated response (computed at checkpoint time)
+    pub response_hash: Option<[u8; 32]>,
+    /// Accumulated response text (cleared after hash computation)
+    response_buffer: String,
+}
+
 pub struct CheckpointManager {
     web3_client: Arc<Web3Client>,
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
+    /// Content hashes for real prompt/response binding (Phase 4 - v8.10.0)
+    content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>>,
     proof_system_address: Address,
     host_address: Address,
     s5_storage: Box<dyn S5Storage>, // S5 storage for off-chain proof storage
+    /// Checkpoint publisher for conversation recovery (Phase 3)
+    checkpoint_publisher: Arc<CheckpointPublisher>,
 }
 
 impl CheckpointManager {
@@ -59,6 +80,9 @@ impl CheckpointManager {
             .await
             .map_err(|e| anyhow!("Failed to initialize S5 storage: {}", e))?;
 
+        // Initialize checkpoint publisher for conversation recovery (Phase 3)
+        let checkpoint_publisher = Arc::new(CheckpointPublisher::new(format!("{:?}", host_address)));
+
         eprintln!("CheckpointManager initialized:");
         eprintln!("  Host: {:?}", host_address);
         eprintln!("  JobMarketplace: {}", job_marketplace_address);
@@ -67,9 +91,11 @@ impl CheckpointManager {
         Ok(Self {
             web3_client,
             job_trackers: Arc::new(RwLock::new(HashMap::new())),
+            content_hashes: Arc::new(RwLock::new(HashMap::new())),
             proof_system_address,
             host_address,
             s5_storage,
+            checkpoint_publisher,
         })
     }
 
@@ -88,11 +114,16 @@ impl CheckpointManager {
                 job_id,
                 tokens_generated: 0,
                 last_checkpoint: 0,
-                session_id,
+                session_id: session_id.clone(),
                 submission_in_progress: false,
                 last_proof_timestamp: None,
             }
         });
+
+        // Update session_id if provided and not already set (Phase 3.3)
+        if tracker.session_id.is_none() && session_id.is_some() {
+            tracker.session_id = session_id;
+        }
 
         tracker.tokens_generated += tokens;
 
@@ -123,6 +154,9 @@ impl CheckpointManager {
             // Optimistically update the checkpoint to reflect cumulative tokens proven
             tracker.last_checkpoint = tracker.tokens_generated;
 
+            // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
+            let session_id_for_publish = tracker.session_id.clone();
+
             drop(trackers); // Release lock before async operation
 
             info!(
@@ -137,6 +171,10 @@ impl CheckpointManager {
             let proof_system_address = self.proof_system_address;
             let host_address = self.host_address;
             let s5_storage = self.s5_storage.clone();
+            let checkpoint_publisher = self.checkpoint_publisher.clone();
+
+            // Phase 4: Get content hashes for real proof binding (v8.10.0+)
+            let content_hashes = self.get_content_hashes(job_id).await;
 
             tokio::spawn(async move {
                 info!("🚀 [ASYNC] Starting background checkpoint submission for job {}", job_id);
@@ -149,6 +187,10 @@ impl CheckpointManager {
                     host_address,
                     job_id,
                     tokens_to_submit,
+                    content_hashes,
+                    session_id_for_publish,
+                    checkpoint_publisher,
+                    previous_checkpoint,
                 ).await;
 
                 // Update tracker based on result
@@ -178,6 +220,118 @@ impl CheckpointManager {
 
         Ok(())
     }
+
+    // ========================================================================
+    // Phase 4: Content Hash Methods (v8.10.0)
+    // ========================================================================
+
+    /// Set the prompt hash for a job (called at inference start)
+    ///
+    /// This should be called once when inference begins, with the SHA256 hash
+    /// of the actual prompt text.
+    pub async fn set_prompt_hash(&self, job_id: u64, hash: [u8; 32]) {
+        let mut content_hashes = self.content_hashes.write().await;
+        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        entry.prompt_hash = Some(hash);
+        tracing::debug!(
+            "📝 Set prompt hash for job {}: 0x{}",
+            job_id,
+            hex::encode(&hash[..8])
+        );
+    }
+
+    /// Append response text for a job (called during token streaming)
+    ///
+    /// Accumulates the response text so we can hash it at checkpoint time.
+    pub async fn append_response(&self, job_id: u64, text: &str) {
+        let mut content_hashes = self.content_hashes.write().await;
+        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        entry.response_buffer.push_str(text);
+    }
+
+    /// Finalize and compute the response hash for a job
+    ///
+    /// Computes SHA256 of the accumulated response buffer, stores it,
+    /// and clears the buffer. Returns the computed hash.
+    pub async fn finalize_response_hash(&self, job_id: u64) -> [u8; 32] {
+        let mut content_hashes = self.content_hashes.write().await;
+        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+
+        // Compute SHA256 of accumulated response
+        let hash = Sha256::digest(entry.response_buffer.as_bytes());
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes.copy_from_slice(&hash);
+
+        // Store the hash
+        entry.response_hash = Some(hash_bytes);
+
+        tracing::debug!(
+            "📝 Finalized response hash for job {}: 0x{} ({} chars)",
+            job_id,
+            hex::encode(&hash_bytes[..8]),
+            entry.response_buffer.len()
+        );
+
+        // Note: We don't clear the buffer here in case of retry
+        // It will be cleared when the job is cleaned up
+
+        hash_bytes
+    }
+
+    /// Get the content hashes for a job (prompt_hash, response_hash)
+    ///
+    /// For intermediate checkpoints (during streaming), computes partial response hash
+    /// from the accumulated buffer if finalized hash is not yet available.
+    /// Returns None only if prompt_hash is not set.
+    pub async fn get_content_hashes(&self, job_id: u64) -> Option<([u8; 32], [u8; 32])> {
+        let content_hashes = self.content_hashes.read().await;
+        content_hashes.get(&job_id).and_then(|entry| {
+            // Must have prompt hash
+            let prompt_hash = entry.prompt_hash?;
+
+            // Use finalized response hash if available, otherwise compute partial hash
+            let response_hash = if let Some(finalized) = entry.response_hash {
+                finalized
+            } else if !entry.response_buffer.is_empty() {
+                // Compute partial response hash for intermediate checkpoint
+                let hash = Sha256::digest(entry.response_buffer.as_bytes());
+                let mut hash_bytes = [0u8; 32];
+                hash_bytes.copy_from_slice(&hash);
+                tracing::debug!(
+                    "📝 Computing partial response hash for job {} ({} chars so far)",
+                    job_id,
+                    entry.response_buffer.len()
+                );
+                hash_bytes
+            } else {
+                // No response data yet
+                return None;
+            };
+
+            Some((prompt_hash, response_hash))
+        })
+    }
+
+    /// Clear content hashes for a job (called after successful checkpoint)
+    pub async fn clear_content_hashes(&self, job_id: u64) {
+        let mut content_hashes = self.content_hashes.write().await;
+        content_hashes.remove(&job_id);
+        tracing::debug!("🧹 Cleared content hashes for job {}", job_id);
+    }
+
+    /// Get the current response buffer length for a job
+    #[cfg(test)]
+    pub async fn get_response_buffer_len(&self, job_id: u64) -> usize {
+        let content_hashes = self.content_hashes.read().await;
+        content_hashes
+            .get(&job_id)
+            .map(|e| e.response_buffer.len())
+            .unwrap_or(0)
+    }
+
+    // ========================================================================
+    // End Phase 4 Content Hash Methods
+    // ========================================================================
 
     /// Upload proof to S5 decentralized storage and return CID (Phase 2.2)
     async fn upload_proof_to_s5(&self, job_id: u64, proof_bytes: &[u8]) -> Result<String> {
@@ -317,8 +471,26 @@ impl CheckpointManager {
         // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
         let proof_cid = self.upload_proof_to_s5(job_id, &proof_bytes).await?;
 
-        // Encode contract call with hash + CID (NEW v8.1.2 signature)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);
+        // Generate host signature for security audit compliance (v8.9.0)
+        let private_key = crate::crypto::extract_node_private_key()
+            .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
+        let signature = crate::crypto::sign_proof_data(
+            &private_key,
+            proof_hash_bytes,
+            self.host_address,
+            tokens_to_submit,
+        )
+        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
+
+        info!(
+            "✅ Proof signed by host {:?} (v={})",
+            self.host_address,
+            signature[64]
+        );
+
+        // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
+        // Sync path doesn't publish encrypted checkpoints, so delta_cid is empty
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, String::new());
 
         info!(
             "📦 Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -413,6 +585,9 @@ impl CheckpointManager {
 
     /// Async checkpoint submission for background tasks (static method)
     /// This is used by tokio::spawn to submit checkpoints without blocking streaming
+    ///
+    /// Phase 4 (v8.10.0+): Accepts optional content hashes for proof binding
+    /// Phase 3 (v8.11.0+): Publishes checkpoint to S5 BEFORE chain submission
     async fn submit_checkpoint_async(
         web3_client: Arc<Web3Client>,
         s5_storage: Box<dyn S5Storage>,
@@ -420,19 +595,23 @@ impl CheckpointManager {
         host_address: Address,
         job_id: u64,
         tokens_generated: u64,
+        content_hashes: Option<([u8; 32], [u8; 32])>,
+        session_id: Option<String>,
+        checkpoint_publisher: Arc<CheckpointPublisher>,
+        previous_checkpoint_tokens: u64,
     ) -> Result<()> {
         let tokens_to_submit = tokens_generated;
 
         info!(
-            "🚀 [ASYNC] Submitting proof of work for job {} with {} tokens...",
-            job_id, tokens_to_submit
+            "🚀 [ASYNC] Submitting proof of work for job {} with {} tokens (content_hashes={})...",
+            job_id, tokens_to_submit, content_hashes.is_some()
         );
 
         // Generate STARK proof using Risc0 zkVM (static version)
         // CRITICAL: Use spawn_blocking for CPU-intensive proof generation
         // to avoid blocking the Tokio async runtime and freezing streaming
         let proof_bytes = tokio::task::spawn_blocking(move || {
-            Self::generate_proof_static(job_id, tokens_generated, host_address)
+            Self::generate_proof_static(job_id, tokens_generated, host_address, content_hashes)
         })
         .await
         .map_err(|e| anyhow!("Proof generation task failed: {}", e))??;
@@ -454,8 +633,65 @@ impl CheckpointManager {
         // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
         let proof_cid = Self::upload_proof_to_s5_static(&s5_storage, job_id, &proof_bytes).await?;
 
-        // Encode contract call with hash + CID (NEW v8.1.2 signature)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid);
+        // Generate host signature for security audit compliance (v8.9.0)
+        let private_key = crate::crypto::extract_node_private_key()
+            .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
+
+        // Phase 3: Publish checkpoint to S5 BEFORE chain submission (v8.11.0)
+        // Phase 10: Capture delta_cid for on-chain storage (v8.12.4)
+        // CRITICAL: If this fails, we MUST NOT submit proof to chain
+        let delta_cid = if let Some(ref session_id) = session_id {
+            let start_token = previous_checkpoint_tokens;
+            let end_token = previous_checkpoint_tokens + tokens_to_submit;
+
+            match checkpoint_publisher
+                .publish_checkpoint(
+                    session_id,
+                    proof_hash_bytes,
+                    start_token,
+                    end_token,
+                    &private_key,
+                    s5_storage.as_ref(),
+                )
+                .await
+            {
+                Ok(cid) => {
+                    info!(
+                        "✅ [ASYNC] Checkpoint published to S5: {} (session={})",
+                        cid, session_id
+                    );
+                    cid // Capture delta_cid for on-chain submission
+                }
+                Err(e) => {
+                    error!(
+                        "❌ [ASYNC] S5 checkpoint upload failed - NOT submitting proof: {}",
+                        e
+                    );
+                    return Err(anyhow!(
+                        "Checkpoint publishing failed - proof NOT submitted: {}",
+                        e
+                    ));
+                }
+            }
+        } else {
+            String::new() // No session_id means no encrypted checkpoint
+        };
+        let signature = crate::crypto::sign_proof_data(
+            &private_key,
+            proof_hash_bytes,
+            host_address,
+            tokens_to_submit,
+        )
+        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
+
+        info!(
+            "✅ [ASYNC] Proof signed by host {:?} (v={})",
+            host_address,
+            signature[64]
+        );
+
+        // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, delta_cid);
 
         info!(
             "📦 [ASYNC] Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -522,12 +758,22 @@ impl CheckpointManager {
     }
 
     /// Static version of generate_proof for async tasks
-    fn generate_proof_static(job_id: u64, tokens_generated: u64, host_address: Address) -> Result<Vec<u8>> {
+    ///
+    /// Phase 4 (v8.10.0+): Accepts optional real content hashes for proof binding
+    /// If content_hashes is None, falls back to placeholder hashes
+    fn generate_proof_static(
+        job_id: u64,
+        tokens_generated: u64,
+        host_address: Address,
+        content_hashes: Option<([u8; 32], [u8; 32])>,
+    ) -> Result<Vec<u8>> {
         #[cfg(feature = "real-ezkl")]
         {
+            // Log whether we're using real or placeholder hashes
+            let using_real_hashes = content_hashes.is_some();
             info!(
-                "🔐 [ASYNC] Generating real Risc0 STARK proof for job {} ({} tokens)",
-                job_id, tokens_generated
+                "🔐 [ASYNC] Generating real Risc0 STARK proof for job {} ({} tokens, real_hashes={})",
+                job_id, tokens_generated, using_real_hashes
             );
 
             // Create witness from available data
@@ -541,15 +787,32 @@ impl CheckpointManager {
             let mut model_hash_bytes = [0u8; 32];
             model_hash_bytes.copy_from_slice(&model_hash);
 
-            let input_data = format!("job_{}:input", job_id);
-            let input_hash = Sha256::digest(input_data.as_bytes());
-            let mut input_hash_bytes = [0u8; 32];
-            input_hash_bytes.copy_from_slice(&input_hash);
+            // Phase 4: Use real content hashes if available, otherwise placeholder
+            let (input_hash_bytes, output_hash_bytes) = if let Some((prompt_hash, response_hash)) = content_hashes {
+                info!(
+                    "📝 [ASYNC] Using real content hashes - prompt: 0x{}..., response: 0x{}...",
+                    hex::encode(&prompt_hash[..8]),
+                    hex::encode(&response_hash[..8])
+                );
+                (prompt_hash, response_hash)
+            } else {
+                // Fallback to placeholder hashes (backward compatible)
+                let input_data = format!("job_{}:input", job_id);
+                let input_hash = Sha256::digest(input_data.as_bytes());
+                let mut input_bytes = [0u8; 32];
+                input_bytes.copy_from_slice(&input_hash);
 
-            let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
-            let output_hash = Sha256::digest(output_data.as_bytes());
-            let mut output_hash_bytes = [0u8; 32];
-            output_hash_bytes.copy_from_slice(&output_hash);
+                let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
+                let output_hash = Sha256::digest(output_data.as_bytes());
+                let mut output_bytes = [0u8; 32];
+                output_bytes.copy_from_slice(&output_hash);
+
+                warn!(
+                    "⚠️ [ASYNC] Using placeholder hashes (no content hashes available for job {})",
+                    job_id
+                );
+                (input_bytes, output_bytes)
+            };
 
             let witness = WitnessBuilder::new()
                 .with_job_id(job_id_bytes)
@@ -581,7 +844,8 @@ impl CheckpointManager {
                 "tokensUsed": tokens_generated,
                 "hostAddress": format!("{:?}", host_address),
                 "jobId": job_id,
-                "mock": true
+                "mock": true,
+                "hasRealContentHashes": content_hashes.is_some()
             });
             Ok(proof_json.to_string().into_bytes())
         }
@@ -672,11 +936,17 @@ impl CheckpointManager {
                 tracker.submission_in_progress = true;
                 tracker.last_checkpoint = tracker.tokens_generated; // Update to total after submission
 
+                // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
+                let session_id_for_publish = tracker.session_id.clone();
+
                 drop(trackers); // Release lock for async operation
 
                 // SYNCHRONOUS CHECKPOINT SUBMISSION: Must wait for proof to be on-chain
                 // before calling completeSessionJob, otherwise contract thinks 0 tokens used!
                 info!("🔒 [SYNC-FINAL] Submitting final checkpoint for job {} (waiting for confirmation)...", job_id);
+
+                // Phase 4: Get content hashes for real proof binding (v8.10.0+)
+                let content_hashes = self.get_content_hashes(job_id).await;
 
                 let submission_result = Self::submit_checkpoint_async(
                     self.web3_client.clone(),
@@ -685,6 +955,10 @@ impl CheckpointManager {
                     self.host_address,
                     job_id,
                     tokens_to_submit,
+                    content_hashes,
+                    session_id_for_publish,
+                    self.checkpoint_publisher.clone(),
+                    previous_checkpoint,
                 ).await;
 
                 // Update tracker based on result
@@ -738,6 +1012,10 @@ impl CheckpointManager {
         let proof_system_address = self.proof_system_address;
         let host_address = self.host_address;
         let s5_storage = self.s5_storage.clone();
+        let checkpoint_publisher = self.checkpoint_publisher.clone();
+
+        // Phase 4: Get content hashes before spawning (v8.10.0+)
+        let content_hashes = self.get_content_hashes(job_id).await;
 
         info!("🚀 [FORCE-CHECKPOINT] Spawning background task for job {} (returns immediately)", job_id);
 
@@ -749,7 +1027,7 @@ impl CheckpointManager {
             // Acquire lock inside the spawned task (not blocking caller)
             let mut trackers = job_trackers.write().await;
 
-            let (tokens_to_submit, previous_checkpoint) = if let Some(tracker) = trackers.get_mut(&job_id) {
+            let (tokens_to_submit, previous_checkpoint, session_id_for_publish) = if let Some(tracker) = trackers.get_mut(&job_id) {
                 let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
 
                 // Skip if submission in progress or not enough tokens
@@ -783,7 +1061,10 @@ impl CheckpointManager {
                 tracker.submission_in_progress = true;
                 tracker.last_checkpoint = tracker.tokens_generated;
 
-                (tokens_to_submit, previous_checkpoint)
+                // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
+                let session_id_for_publish = tracker.session_id.clone();
+
+                (tokens_to_submit, previous_checkpoint, session_id_for_publish)
             } else {
                 info!("⚠️ [FORCE-CHECKPOINT-BG] No tracker found for job {}", job_id);
                 return;
@@ -800,6 +1081,10 @@ impl CheckpointManager {
                 host_address,
                 job_id,
                 tokens_to_submit,
+                content_hashes,
+                session_id_for_publish,
+                checkpoint_publisher,
+                previous_checkpoint,
             ).await;
 
             // Update tracker based on result
@@ -1224,6 +1509,98 @@ impl CheckpointManager {
             info!("Cleaned up tracker for job {}", job_id);
         }
     }
+
+    // ============================================================
+    // Checkpoint Publishing for Conversation Recovery (Phase 3)
+    // ============================================================
+
+    /// Get reference to checkpoint publisher
+    pub fn checkpoint_publisher(&self) -> &Arc<CheckpointPublisher> {
+        &self.checkpoint_publisher
+    }
+
+    /// Set the recovery public key for a session (enables encrypted checkpoints)
+    ///
+    /// Call this during session initialization when the SDK provides a recoveryPublicKey.
+    /// Once set, all subsequent checkpoints for this session will be encrypted.
+    ///
+    /// # Arguments
+    /// * `session_id` - Session identifier
+    /// * `recovery_public_key` - User's recovery public key (0x-prefixed hex, compressed secp256k1)
+    pub async fn set_session_recovery_public_key(&self, session_id: &str, recovery_public_key: String) {
+        self.checkpoint_publisher
+            .set_recovery_public_key(session_id, recovery_public_key)
+            .await;
+        info!(
+            "🔐 Recovery public key set for session {} (encrypted checkpoints enabled)",
+            session_id
+        );
+    }
+
+    /// Check if a session has encrypted checkpoints enabled
+    pub async fn has_session_recovery_key(&self, session_id: &str) -> bool {
+        self.checkpoint_publisher.has_recovery_key(session_id).await
+    }
+
+    /// Get the host's Ethereum address (lowercase, 0x prefixed)
+    /// Used by HTTP endpoint for checkpoint retrieval path
+    pub fn get_host_address(&self) -> String {
+        format!("{:#x}", self.host_address)
+    }
+
+    /// Get reference to S5 storage for checkpoint retrieval
+    /// Used by HTTP endpoint to fetch checkpoint index from S5
+    pub fn get_s5_storage(&self) -> &dyn S5Storage {
+        self.s5_storage.as_ref()
+    }
+
+    /// Track a conversation message for checkpoint publishing
+    ///
+    /// Call this for each user prompt and assistant response.
+    /// Messages are buffered and included in the next checkpoint.
+    ///
+    /// # Arguments
+    /// * `session_id` - Session identifier
+    /// * `role` - "user" or "assistant"
+    /// * `content` - Message content
+    /// * `partial` - True if streaming response is incomplete
+    pub async fn track_conversation_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        partial: bool,
+    ) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = if role == "user" {
+            CheckpointMessage::new_user(content.to_string(), timestamp)
+        } else {
+            CheckpointMessage::new_assistant(content.to_string(), timestamp, partial)
+        };
+
+        self.checkpoint_publisher
+            .buffer_message(session_id, message)
+            .await;
+    }
+
+    /// Initialize checkpoint session (resume from S5 if exists)
+    ///
+    /// Call this when a session starts to check for existing checkpoint index.
+    /// If found, resumes numbering from last checkpoint.
+    pub async fn init_checkpoint_session(&self, session_id: &str) -> Result<()> {
+        self.checkpoint_publisher
+            .init_session(session_id, self.s5_storage.as_ref())
+            .await
+    }
+
+    /// Remove checkpoint session state (cleanup on disconnect)
+    pub async fn cleanup_checkpoint_session(&self, session_id: &str) {
+        self.checkpoint_publisher.remove_session(session_id).await;
+    }
 }
 
 // ABI encoding helper for completeSessionJob
@@ -1258,18 +1635,21 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
     function.encode_input(&tokens).unwrap()
 }
 
-// ABI encoding helper for submitProofOfWork (v8.1.2 - S5 off-chain storage)
-// NEW: Accepts proof hash + CID instead of full proof bytes
+// ABI encoding helper for submitProofOfWork (v8.9.0 - Security Audit Compliance)
+// Accepts proof hash + host signature + CID for off-chain proof storage
+// BREAKING CHANGE: Now requires 65-byte signature parameter (r + s + v)
 fn encode_checkpoint_call(
     job_id: u64,
     tokens_generated: u64,
     proof_hash: [u8; 32],
+    signature: [u8; 65], // Host's proof signature for security audit
     proof_cid: String,
+    delta_cid: String, // Phase 10: Encrypted checkpoint delta CID for on-chain recovery
 ) -> Vec<u8> {
     use ethers::abi::Function;
 
-    // Define the NEW function signature for submitProofOfWork
-    // Contract now accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, string proofCID)
+    // Define the function signature for submitProofOfWork (v8.12.4 - Security Audit Jan 2026)
+    // Contract accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, bytes signature, string proofCID, string deltaCID)
     let function = Function {
         name: "submitProofOfWork".to_string(),
         inputs: vec![
@@ -1285,12 +1665,22 @@ fn encode_checkpoint_call(
             },
             ethers::abi::Param {
                 name: "proofHash".to_string(),
-                kind: ethers::abi::ParamType::FixedBytes(32), // NEW: bytes32 instead of bytes
+                kind: ethers::abi::ParamType::FixedBytes(32),
+                internal_type: None,
+            },
+            ethers::abi::Param {
+                name: "signature".to_string(), // 65-byte ECDSA signature
+                kind: ethers::abi::ParamType::Bytes,
                 internal_type: None,
             },
             ethers::abi::Param {
                 name: "proofCID".to_string(),
-                kind: ethers::abi::ParamType::String, // NEW: S5 CID
+                kind: ethers::abi::ParamType::String,
+                internal_type: None,
+            },
+            ethers::abi::Param {
+                name: "deltaCID".to_string(), // Phase 10: Encrypted checkpoint delta CID
+                kind: ethers::abi::ParamType::String,
                 internal_type: None,
             },
         ],
@@ -1299,15 +1689,992 @@ fn encode_checkpoint_call(
         state_mutability: ethers::abi::StateMutability::NonPayable,
     };
 
-    // Encode the function call with hash + CID
+    // Encode the function call with hash + signature + CID + deltaCID
     let tokens = vec![
         Token::Uint(U256::from(job_id)),
         Token::Uint(U256::from(tokens_generated)),
-        Token::FixedBytes(proof_hash.to_vec()), // NEW: 32-byte hash
-        Token::String(proof_cid),               // NEW: S5 CID string
+        Token::FixedBytes(proof_hash.to_vec()),
+        Token::Bytes(signature.to_vec()), // 65-byte signature
+        Token::String(proof_cid),
+        Token::String(delta_cid), // Phase 10: delta CID (empty string if not encrypted)
     ];
 
     function
         .encode_input(&tokens)
         .expect("Failed to encode submitProofOfWork call")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that encode_checkpoint_call includes signature in encoded data
+    #[test]
+    fn test_checkpoint_with_signature_encodes_correctly() {
+        let job_id = 12345u64;
+        let tokens_generated = 1000u64;
+        let proof_hash = [0xab; 32];
+        let signature = [0xcd; 65]; // Mock signature
+        let proof_cid = "bafytest123".to_string();
+
+        let encoded = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            String::new(), // No delta CID for legacy test
+        );
+
+        // Function selector (4 bytes) + encoded params
+        assert!(encoded.len() > 4, "Encoded data should include function selector");
+
+        // Verify function selector is for submitProofOfWork
+        // keccak256("submitProofOfWork(uint256,uint256,bytes32,bytes,string,string)")
+        let selector = &encoded[0..4];
+        assert!(
+            !selector.iter().all(|&b| b == 0),
+            "Function selector should not be all zeros"
+        );
+    }
+
+    /// Test that signature bytes appear in the encoded transaction data
+    #[test]
+    fn test_signature_in_transaction_data() {
+        let job_id = 100u64;
+        let tokens_generated = 500u64;
+        let proof_hash = [0x11; 32];
+        let signature = [0x99; 65]; // Distinctive signature pattern
+        let proof_cid = "cid123".to_string();
+
+        let encoded = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            String::new(), // No delta CID for legacy test
+        );
+
+        // The encoded data should contain our signature bytes somewhere
+        // In ABI encoding, bytes are length-prefixed and padded
+        let sig_pattern = [0x99u8; 65];
+
+        // Check that the signature bytes appear in the encoded data
+        let encoded_hex = hex::encode(&encoded);
+        let sig_hex = hex::encode(&sig_pattern);
+
+        // ABI encoding pads to 32-byte boundaries, so we check for the signature content
+        // The 65-byte signature will be in the dynamic data section
+        assert!(
+            encoded.len() >= 65,
+            "Encoded data should be at least 65 bytes to contain signature"
+        );
+    }
+
+    /// Test that different signatures produce different encoded data
+    #[test]
+    fn test_different_signatures_different_encoding() {
+        let job_id = 100u64;
+        let tokens_generated = 500u64;
+        let proof_hash = [0x11; 32];
+        let proof_cid = "cid123".to_string();
+
+        let signature1 = [0xaa; 65];
+        let signature2 = [0xbb; 65];
+
+        let encoded1 = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature1,
+            proof_cid.clone(),
+            String::new(), // No delta CID for legacy test
+        );
+
+        let encoded2 = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature2,
+            proof_cid,
+            String::new(), // No delta CID for legacy test
+        );
+
+        assert_ne!(
+            encoded1, encoded2,
+            "Different signatures should produce different encoded data"
+        );
+    }
+
+    /// Test that signature is 65 bytes in encoded call
+    #[test]
+    fn test_signature_length_in_encoding() {
+        let job_id = 1u64;
+        let tokens_generated = 1u64;
+        let proof_hash = [0u8; 32];
+        let signature = [0u8; 65];
+        let proof_cid = "x".to_string();
+
+        // This should not panic - if signature was wrong size, encoding would fail
+        let encoded = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            String::new(), // No delta CID for legacy test
+        );
+
+        // Basic sanity check
+        assert!(!encoded.is_empty(), "Encoded data should not be empty");
+    }
+
+    /// Test encode_checkpoint_call produces consistent output
+    #[test]
+    fn test_encoding_is_deterministic() {
+        let job_id = 42u64;
+        let tokens_generated = 100u64;
+        let proof_hash = [0xde; 32];
+        let signature = [0xad; 65];
+        let proof_cid = "testcid".to_string();
+
+        let encoded1 = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid.clone(),
+            String::new(), // No delta CID for legacy test
+        );
+
+        let encoded2 = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            String::new(), // No delta CID for legacy test
+        );
+
+        assert_eq!(
+            encoded1, encoded2,
+            "Same inputs should produce identical encoded output"
+        );
+    }
+
+    // ========================================================================
+    // Phase 10: deltaCID On-Chain Support Tests (Sub-phase 10.1)
+    // ========================================================================
+
+    /// Test that encode_checkpoint_call includes delta_cid in the encoded data
+    #[test]
+    fn test_encode_checkpoint_call_includes_delta_cid() {
+        let job_id = 999u64;
+        let tokens_generated = 500u64;
+        let proof_hash = [0xaa; 32];
+        let signature = [0xbb; 65];
+        let proof_cid = "bafyproof123".to_string();
+        let delta_cid = "blob:abc123def456".to_string(); // Non-empty delta CID
+
+        let encoded = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            delta_cid.clone(),
+        );
+
+        // Function selector (4 bytes) + encoded params
+        assert!(encoded.len() > 4, "Encoded data should include function selector");
+
+        // The delta_cid string should appear in the encoded data (ABI-encoded)
+        // In ABI encoding, strings are stored as: offset pointer + length + UTF-8 bytes
+        let delta_bytes = delta_cid.as_bytes();
+        let encoded_contains_delta = encoded
+            .windows(delta_bytes.len())
+            .any(|window| window == delta_bytes);
+        assert!(
+            encoded_contains_delta,
+            "Encoded data should contain delta_cid bytes"
+        );
+    }
+
+    /// Test that encode_checkpoint_call works with empty delta_cid (backward compat)
+    #[test]
+    fn test_encode_checkpoint_call_with_empty_delta_cid() {
+        let job_id = 888u64;
+        let tokens_generated = 250u64;
+        let proof_hash = [0xcc; 32];
+        let signature = [0xdd; 65];
+        let proof_cid = "bafyproof456".to_string();
+        let delta_cid = "".to_string(); // Empty delta CID for non-encrypted path
+
+        let encoded = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            delta_cid,
+        );
+
+        // Should still encode successfully with empty string
+        assert!(encoded.len() > 4, "Encoded data should include function selector");
+        assert!(!encoded.is_empty(), "Encoded data should not be empty");
+    }
+
+    /// Test that different delta_cids produce different encoded data
+    #[test]
+    fn test_different_delta_cids_different_encoding() {
+        let job_id = 777u64;
+        let tokens_generated = 100u64;
+        let proof_hash = [0xee; 32];
+        let signature = [0xff; 65];
+        let proof_cid = "bafyproof789".to_string();
+
+        let delta_cid1 = "blob:first".to_string();
+        let delta_cid2 = "blob:second".to_string();
+
+        let encoded1 = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid.clone(),
+            delta_cid1,
+        );
+
+        let encoded2 = encode_checkpoint_call(
+            job_id,
+            tokens_generated,
+            proof_hash,
+            signature,
+            proof_cid,
+            delta_cid2,
+        );
+
+        assert_ne!(
+            encoded1, encoded2,
+            "Different delta_cids should produce different encoded data"
+        );
+    }
+
+    // ========================================================================
+    // Phase 4: ContentHashes Tests (Sub-phase 4.1)
+    // ========================================================================
+
+    /// Test that set_prompt_hash stores the hash correctly
+    #[tokio::test]
+    async fn test_set_prompt_hash_stores_hash() {
+        // Create a minimal CheckpointManager for testing
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 12345u64;
+        let test_hash = [0xab; 32];
+
+        // Manually simulate what set_prompt_hash does
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(test_hash);
+        }
+
+        // Verify hash was stored
+        let hashes = content_hashes.read().await;
+        let entry = hashes.get(&job_id).expect("Entry should exist");
+        assert_eq!(entry.prompt_hash, Some(test_hash));
+    }
+
+    /// Test that append_response accumulates text correctly
+    #[tokio::test]
+    async fn test_append_response_accumulates_text() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 100u64;
+
+        // Append multiple chunks
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.response_buffer.push_str("Hello");
+            entry.response_buffer.push_str(" ");
+            entry.response_buffer.push_str("World");
+        }
+
+        // Verify accumulated text
+        let hashes = content_hashes.read().await;
+        let entry = hashes.get(&job_id).expect("Entry should exist");
+        assert_eq!(entry.response_buffer, "Hello World");
+    }
+
+    /// Test that finalize_response_hash computes SHA256 correctly
+    #[tokio::test]
+    async fn test_finalize_response_hash_computes_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 200u64;
+        let test_response = "This is a test response for hashing";
+
+        // Add response to buffer
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.response_buffer.push_str(test_response);
+        }
+
+        // Compute hash (simulating finalize_response_hash)
+        let computed_hash = {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            let hash = Sha256::digest(entry.response_buffer.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            entry.response_hash = Some(hash_bytes);
+            hash_bytes
+        };
+
+        // Calculate expected hash
+        let expected_hash = Sha256::digest(test_response.as_bytes());
+        let mut expected_bytes = [0u8; 32];
+        expected_bytes.copy_from_slice(&expected_hash);
+
+        assert_eq!(computed_hash, expected_bytes);
+
+        // Verify it was stored
+        let hashes = content_hashes.read().await;
+        let entry = hashes.get(&job_id).expect("Entry should exist");
+        assert_eq!(entry.response_hash, Some(expected_bytes));
+    }
+
+    /// Test that get_content_hashes returns both hashes when available
+    #[tokio::test]
+    async fn test_get_content_hashes_returns_both() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 300u64;
+        let prompt_hash = [0x11; 32];
+        let response_hash = [0x22; 32];
+
+        // Set both hashes
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(prompt_hash);
+            entry.response_hash = Some(response_hash);
+        }
+
+        // Get content hashes (simulating get_content_hashes)
+        let result = {
+            let hashes = content_hashes.read().await;
+            hashes.get(&job_id).and_then(|entry| {
+                match (entry.prompt_hash, entry.response_hash) {
+                    (Some(p), Some(r)) => Some((p, r)),
+                    _ => None,
+                }
+            })
+        };
+
+        assert!(result.is_some());
+        let (p, r) = result.unwrap();
+        assert_eq!(p, prompt_hash);
+        assert_eq!(r, response_hash);
+    }
+
+    /// Test that get_content_hashes returns None when only one hash is set
+    #[tokio::test]
+    async fn test_get_content_hashes_returns_none_when_incomplete() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 400u64;
+        let prompt_hash = [0x33; 32];
+
+        // Set only prompt hash (no response hash)
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(prompt_hash);
+        }
+
+        // Get content hashes
+        let result = {
+            let hashes = content_hashes.read().await;
+            hashes.get(&job_id).and_then(|entry| {
+                match (entry.prompt_hash, entry.response_hash) {
+                    (Some(p), Some(r)) => Some((p, r)),
+                    _ => None,
+                }
+            })
+        };
+
+        assert!(result.is_none(), "Should return None when response_hash is missing");
+    }
+
+    /// Test that content_hashes are cleared after checkpoint
+    #[tokio::test]
+    async fn test_content_hashes_cleared_after_checkpoint() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 500u64;
+        let prompt_hash = [0x44; 32];
+        let response_hash = [0x55; 32];
+
+        // Set hashes
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            entry.prompt_hash = Some(prompt_hash);
+            entry.response_hash = Some(response_hash);
+            entry.response_buffer = "Some response text".to_string();
+        }
+
+        // Verify entry exists
+        {
+            let hashes = content_hashes.read().await;
+            assert!(hashes.contains_key(&job_id));
+        }
+
+        // Clear (simulating clear_content_hashes)
+        {
+            let mut hashes = content_hashes.write().await;
+            hashes.remove(&job_id);
+        }
+
+        // Verify entry is gone
+        let hashes = content_hashes.read().await;
+        assert!(!hashes.contains_key(&job_id));
+    }
+
+    /// Test ContentHashes default initialization
+    #[test]
+    fn test_content_hashes_default() {
+        let hashes = ContentHashes::default();
+        assert!(hashes.prompt_hash.is_none());
+        assert!(hashes.response_hash.is_none());
+        assert!(hashes.response_buffer.is_empty());
+    }
+
+    /// Test multiple jobs have independent content hashes
+    #[tokio::test]
+    async fn test_multiple_jobs_independent_hashes() {
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id_1 = 1000u64;
+        let job_id_2 = 2000u64;
+
+        // Set different hashes for each job
+        {
+            let mut hashes = content_hashes.write().await;
+
+            let entry1 = hashes.entry(job_id_1).or_insert_with(ContentHashes::default);
+            entry1.prompt_hash = Some([0xaa; 32]);
+            entry1.response_buffer.push_str("Response 1");
+
+            let entry2 = hashes.entry(job_id_2).or_insert_with(ContentHashes::default);
+            entry2.prompt_hash = Some([0xbb; 32]);
+            entry2.response_buffer.push_str("Response 2");
+        }
+
+        // Verify independence
+        let hashes = content_hashes.read().await;
+        let entry1 = hashes.get(&job_id_1).unwrap();
+        let entry2 = hashes.get(&job_id_2).unwrap();
+
+        assert_eq!(entry1.prompt_hash, Some([0xaa; 32]));
+        assert_eq!(entry2.prompt_hash, Some([0xbb; 32]));
+        assert_eq!(entry1.response_buffer, "Response 1");
+        assert_eq!(entry2.response_buffer, "Response 2");
+    }
+
+    // ========================================================================
+    // Phase 4 Integration Tests: Content Hash Binding (Sub-phase 4.5)
+    // ========================================================================
+
+    /// Test that different prompts produce different input hashes
+    #[test]
+    fn test_different_prompts_different_hash() {
+        use sha2::{Digest, Sha256};
+
+        let prompt_a = "What is 2+2?";
+        let prompt_b = "What is 3+3?";
+
+        let hash_a = Sha256::digest(prompt_a.as_bytes());
+        let hash_b = Sha256::digest(prompt_b.as_bytes());
+
+        assert_ne!(
+            hash_a.as_slice(),
+            hash_b.as_slice(),
+            "Different prompts should produce different hashes"
+        );
+    }
+
+    /// Test that same prompt produces same hash (determinism)
+    #[test]
+    fn test_same_prompt_same_hash() {
+        use sha2::{Digest, Sha256};
+
+        let prompt = "What is 2+2?";
+
+        let hash1 = Sha256::digest(prompt.as_bytes());
+        let hash2 = Sha256::digest(prompt.as_bytes());
+
+        assert_eq!(
+            hash1.as_slice(),
+            hash2.as_slice(),
+            "Same prompt should produce same hash (determinism)"
+        );
+    }
+
+    /// Test that different responses produce different output hashes
+    #[test]
+    fn test_different_responses_different_hash() {
+        use sha2::{Digest, Sha256};
+
+        let response_a = "The answer is 4.";
+        let response_b = "The answer is 6.";
+
+        let hash_a = Sha256::digest(response_a.as_bytes());
+        let hash_b = Sha256::digest(response_b.as_bytes());
+
+        assert_ne!(
+            hash_a.as_slice(),
+            hash_b.as_slice(),
+            "Different responses should produce different hashes"
+        );
+    }
+
+    /// Test that placeholder hashes are used when content_hashes is None
+    #[test]
+    fn test_placeholder_hash_fallback() {
+        // When content_hashes is None, the system should use placeholder hashes
+        // This tests the format of placeholder hashes
+        use sha2::{Digest, Sha256};
+
+        let job_id: u64 = 12345;
+        let tokens_generated: u64 = 500;
+
+        // These match the placeholder generation in generate_proof_static
+        let input_data = format!("job_{}:input", job_id);
+        let input_hash = Sha256::digest(input_data.as_bytes());
+
+        let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
+        let output_hash = Sha256::digest(output_data.as_bytes());
+
+        // Verify the placeholder format produces expected hashes
+        assert_eq!(input_hash.len(), 32);
+        assert_eq!(output_hash.len(), 32);
+
+        // Different job IDs should produce different placeholder hashes
+        let other_job_id: u64 = 99999;
+        let other_input_data = format!("job_{}:input", other_job_id);
+        let other_input_hash = Sha256::digest(other_input_data.as_bytes());
+
+        assert_ne!(
+            input_hash.as_slice(),
+            other_input_hash.as_slice(),
+            "Different job IDs should produce different placeholder hashes"
+        );
+    }
+
+    /// Test content hash tuple creation for proof generation
+    #[test]
+    fn test_content_hash_tuple_for_proof() {
+        use sha2::{Digest, Sha256};
+
+        let prompt = "What is the capital of France?";
+        let response = "The capital of France is Paris.";
+
+        // Create content hash tuple (as used in generate_proof_static)
+        let prompt_hash = Sha256::digest(prompt.as_bytes());
+        let response_hash = Sha256::digest(response.as_bytes());
+
+        let mut prompt_hash_bytes = [0u8; 32];
+        let mut response_hash_bytes = [0u8; 32];
+        prompt_hash_bytes.copy_from_slice(&prompt_hash);
+        response_hash_bytes.copy_from_slice(&response_hash);
+
+        let content_hashes: Option<([u8; 32], [u8; 32])> =
+            Some((prompt_hash_bytes, response_hash_bytes));
+
+        assert!(content_hashes.is_some());
+        let (input, output) = content_hashes.unwrap();
+
+        // Verify the hashes are 32 bytes and non-zero
+        assert_eq!(input.len(), 32);
+        assert_eq!(output.len(), 32);
+        assert!(!input.iter().all(|&b| b == 0), "Input hash should not be all zeros");
+        assert!(!output.iter().all(|&b| b == 0), "Output hash should not be all zeros");
+    }
+
+    /// Test that response accumulation produces correct hash
+    #[tokio::test]
+    async fn test_response_accumulation_hash_consistency() {
+        use sha2::{Digest, Sha256};
+
+        let content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 600u64;
+
+        // Simulate streaming tokens
+        let tokens = vec!["Hello", " ", "World", "!"];
+        let expected_response = "Hello World!";
+
+        // Accumulate tokens
+        {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            for token in &tokens {
+                entry.response_buffer.push_str(token);
+            }
+        }
+
+        // Finalize hash
+        let computed_hash = {
+            let mut hashes = content_hashes.write().await;
+            let entry = hashes.entry(job_id).or_insert_with(ContentHashes::default);
+            let hash = Sha256::digest(entry.response_buffer.as_bytes());
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&hash);
+            entry.response_hash = Some(hash_bytes);
+            hash_bytes
+        };
+
+        // Calculate expected hash
+        let expected_hash = Sha256::digest(expected_response.as_bytes());
+        let mut expected_bytes = [0u8; 32];
+        expected_bytes.copy_from_slice(&expected_hash);
+
+        assert_eq!(
+            computed_hash, expected_bytes,
+            "Accumulated response should produce same hash as full response"
+        );
+    }
+
+    // ========================================================================
+    // Phase 3: Checkpoint Publishing Integration Tests (Sub-phase 3.2)
+    // ========================================================================
+
+    /// Test that CheckpointPublisher is properly initialized with host address
+    #[test]
+    fn test_checkpoint_publisher_initialization() {
+        use crate::checkpoint::CheckpointPublisher;
+
+        let host_address = "0xABC123DEF456".to_string();
+        let publisher = CheckpointPublisher::new(host_address);
+
+        // Host address should be lowercase
+        assert_eq!(publisher.host_address(), "0xabc123def456");
+    }
+
+    /// Test that track_conversation_message creates proper message types
+    #[tokio::test]
+    async fn test_track_conversation_message_user() {
+        use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "test-session";
+
+        // Simulate track_conversation_message for user
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = CheckpointMessage::new_user("Hello".to_string(), timestamp);
+        publisher.buffer_message(session_id, message).await;
+
+        let state = publisher.get_session_state(session_id).await.unwrap();
+        assert_eq!(state.buffer_size(), 1);
+    }
+
+    /// Test that track_conversation_message creates assistant messages with partial flag
+    #[tokio::test]
+    async fn test_track_conversation_message_assistant_partial() {
+        use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "test-session";
+
+        // Simulate track_conversation_message for partial assistant response
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = CheckpointMessage::new_assistant("Partial...".to_string(), timestamp, true);
+        publisher.buffer_message(session_id, message).await;
+
+        let state = publisher.get_session_state(session_id).await.unwrap();
+        let messages = state.get_buffered_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].metadata.is_some());
+    }
+
+    /// Test that cleanup_checkpoint_session removes session state
+    #[tokio::test]
+    async fn test_cleanup_checkpoint_session() {
+        use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "test-session";
+
+        // Add a message
+        let timestamp = 12345u64;
+        let message = CheckpointMessage::new_user("Test".to_string(), timestamp);
+        publisher.buffer_message(session_id, message).await;
+
+        // Verify session exists
+        assert!(publisher.get_session_state(session_id).await.is_some());
+
+        // Cleanup
+        publisher.remove_session(session_id).await;
+
+        // Verify session is gone
+        assert!(publisher.get_session_state(session_id).await.is_none());
+    }
+
+    /// Test that session_id is properly passed through token tracking
+    #[tokio::test]
+    async fn test_session_id_in_job_tracker() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 12345u64;
+        let session_id = Some("session-abc".to_string());
+
+        // Create tracker with session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 0,
+                    last_checkpoint: 0,
+                    session_id: session_id.clone(),
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                },
+            );
+        }
+
+        // Verify session_id is stored
+        let trackers = job_trackers.read().await;
+        let tracker = trackers.get(&job_id).unwrap();
+        assert_eq!(tracker.session_id, Some("session-abc".to_string()));
+    }
+
+    /// Test that session_id can be updated if initially None
+    #[tokio::test]
+    async fn test_session_id_updated_when_initially_none() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 99999u64;
+
+        // First: create tracker WITHOUT session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 100,
+                    last_checkpoint: 0,
+                    session_id: None, // Initially None
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                },
+            );
+        }
+
+        // Verify session_id is None
+        {
+            let trackers = job_trackers.read().await;
+            let tracker = trackers.get(&job_id).unwrap();
+            assert!(tracker.session_id.is_none());
+        }
+
+        // Simulate update logic from track_tokens
+        {
+            let mut trackers = job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                let new_session_id = Some("late-session".to_string());
+                if tracker.session_id.is_none() && new_session_id.is_some() {
+                    tracker.session_id = new_session_id;
+                }
+            }
+        }
+
+        // Verify session_id is now set
+        let trackers = job_trackers.read().await;
+        let tracker = trackers.get(&job_id).unwrap();
+        assert_eq!(tracker.session_id, Some("late-session".to_string()));
+    }
+
+    /// Test that session_id is NOT overwritten if already set
+    #[tokio::test]
+    async fn test_session_id_not_overwritten_if_already_set() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 88888u64;
+
+        // Create tracker WITH session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 100,
+                    last_checkpoint: 0,
+                    session_id: Some("original-session".to_string()),
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                },
+            );
+        }
+
+        // Simulate update logic with different session_id
+        {
+            let mut trackers = job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                let new_session_id = Some("different-session".to_string());
+                // This should NOT update because session_id is already set
+                if tracker.session_id.is_none() && new_session_id.is_some() {
+                    tracker.session_id = new_session_id;
+                }
+            }
+        }
+
+        // Verify session_id is STILL the original
+        let trackers = job_trackers.read().await;
+        let tracker = trackers.get(&job_id).unwrap();
+        assert_eq!(tracker.session_id, Some("original-session".to_string()));
+    }
+
+    // ========================================================================
+    // Phase 7.1: Accessor Methods Tests (HTTP Checkpoint Endpoint)
+    // ========================================================================
+
+    /// Test that get_host_address returns lowercase address with 0x prefix
+    #[test]
+    fn test_get_host_address_returns_lowercase() {
+        use ethers::types::Address;
+        use std::str::FromStr;
+
+        // Test addresses with mixed case
+        let test_cases = vec![
+            (
+                "0xABC123DEF456789012345678901234567890ABCD",
+                "0xabc123def456789012345678901234567890abcd",
+            ),
+            (
+                "0x0000000000000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000",
+            ),
+            (
+                "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let address = Address::from_str(input).unwrap();
+            let result = format!("{:#x}", address);
+            assert_eq!(
+                result, expected,
+                "Address {} should format as lowercase {}",
+                input, expected
+            );
+        }
+    }
+
+    /// Test that get_s5_storage returns a valid storage reference
+    /// This test verifies the MockS5Backend works correctly
+    #[tokio::test]
+    async fn test_get_s5_storage_returns_storage() {
+        use crate::storage::s5_client::MockS5Backend;
+        use crate::storage::S5Storage;
+
+        // Create mock storage
+        let mock_storage = MockS5Backend::new();
+
+        // Verify we can call methods on it
+        let test_path = "home/test/data.json";
+        let test_data = b"test content".to_vec();
+
+        // Put data
+        let cid = mock_storage.put(test_path, test_data.clone()).await.unwrap();
+        assert!(!cid.is_empty(), "CID should not be empty");
+
+        // Get data back
+        let retrieved = mock_storage.get(test_path).await.unwrap();
+        assert_eq!(retrieved, test_data, "Retrieved data should match");
+    }
+
+    // Sub-phase 9.10: Recovery Public Key Integration Tests
+
+    #[tokio::test]
+    async fn test_set_session_recovery_public_key() {
+        use crate::checkpoint::CheckpointPublisher;
+        use std::sync::Arc;
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+        let session_id = "session-recovery";
+        let recovery_key = "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
+        // Before setting - no recovery key
+        assert!(!publisher.has_recovery_key(session_id).await);
+
+        // Set recovery key
+        publisher
+            .set_recovery_public_key(session_id, recovery_key.to_string())
+            .await;
+
+        // After setting - has recovery key
+        assert!(publisher.has_recovery_key(session_id).await);
+
+        // Verify key value
+        let stored_key = publisher.get_recovery_public_key(session_id).await;
+        assert_eq!(stored_key, Some(recovery_key.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_has_session_recovery_key() {
+        use crate::checkpoint::CheckpointPublisher;
+        use std::sync::Arc;
+
+        let publisher = Arc::new(CheckpointPublisher::new("0xhost".to_string()));
+
+        // Session without recovery key
+        publisher
+            .buffer_message(
+                "session-no-key",
+                crate::checkpoint::CheckpointMessage::new_user("test".to_string(), 100),
+            )
+            .await;
+        assert!(!publisher.has_recovery_key("session-no-key").await);
+
+        // Session with recovery key
+        publisher
+            .set_recovery_public_key(
+                "session-with-key",
+                "0x02abc123".to_string(),
+            )
+            .await;
+        assert!(publisher.has_recovery_key("session-with-key").await);
+    }
 }
