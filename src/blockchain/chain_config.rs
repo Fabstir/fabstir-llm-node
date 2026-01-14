@@ -44,8 +44,8 @@ impl ChainConfig {
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // Updated December 14, 2025 for UUPS Upgradeable proxy contracts (v8.5.0)
-                job_marketplace: "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D".to_string(),
+                // Updated January 9, 2026 for Security Audit Remediation (clean slate deployment)
+                job_marketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E".to_string(),
                 node_registry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22".to_string(),
                 proof_system: "0x5afB91977e69Cc5003288849059bc62d47E7deeb".to_string(),
                 host_earnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0".to_string(),
@@ -155,11 +155,11 @@ mod tests {
 
     // ===========================================
     // Contract Address Tests (Sub-phase 1.2)
-    // Updated December 14, 2025 for UUPS Upgradeable proxy contracts
+    // Updated January 9, 2026 for Security Audit Remediation (clean slate deployment)
     // ===========================================
 
-    /// New JobMarketplace contract address (UUPS Proxy)
-    const NEW_JOB_MARKETPLACE: &str = "0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D";
+    /// New JobMarketplace contract address (UUPS Proxy - Jan 9, 2026 Security Audit)
+    const NEW_JOB_MARKETPLACE: &str = "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E";
     /// New NodeRegistry contract address (UUPS Proxy)
     const NEW_NODE_REGISTRY: &str = "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22";
 
@@ -168,7 +168,7 @@ mod tests {
         let config = ChainConfig::base_sepolia();
         assert_eq!(
             config.contracts.job_marketplace, NEW_JOB_MARKETPLACE,
-            "JobMarketplace should be updated to new PRICE_PRECISION contract"
+            "JobMarketplace should be updated to Jan 9, 2026 security audit contract"
         );
     }
 

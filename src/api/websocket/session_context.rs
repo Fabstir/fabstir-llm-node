@@ -15,11 +15,23 @@ pub struct SessionContext {
     pub chain_info: ChainInfo,
     pub is_active: bool,
     pub created_at: u64,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    pub recovery_public_key: Option<String>,
 }
 
 impl SessionContext {
-    /// Create new session context with chain info
+    /// Create new session context with chain info (backward compatible)
     pub fn new(session_id: String, job_id: u64, chain_id: u64) -> Self {
+        Self::new_with_recovery_key(session_id, job_id, chain_id, None)
+    }
+
+    /// Create new session context with optional recovery public key
+    pub fn new_with_recovery_key(
+        session_id: String,
+        job_id: u64,
+        chain_id: u64,
+        recovery_public_key: Option<String>,
+    ) -> Self {
         let chain_info = Self::get_chain_info(chain_id);
 
         Self {
@@ -29,6 +41,7 @@ impl SessionContext {
             chain_info,
             is_active: true,
             created_at: chrono::Utc::now().timestamp() as u64,
+            recovery_public_key,
         }
     }
 
@@ -260,5 +273,44 @@ mod tests {
         let stats = manager.get_chain_statistics().await;
         assert_eq!(stats.get(&84532), Some(&2));
         assert_eq!(stats.get(&5611), Some(&1));
+    }
+
+    // Phase 9 Tests: Encrypted Checkpoint Deltas
+
+    #[tokio::test]
+    async fn test_session_context_stores_recovery_public_key() {
+        let recovery_key = "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+        let context = SessionContext::new_with_recovery_key(
+            "test-session".to_string(),
+            100,
+            84532,
+            Some(recovery_key.to_string()),
+        );
+
+        assert_eq!(context.recovery_public_key, Some(recovery_key.to_string()));
+        assert_eq!(context.session_id, "test-session");
+        assert_eq!(context.job_id, 100);
+        assert_eq!(context.chain_id, 84532);
+    }
+
+    #[tokio::test]
+    async fn test_session_context_recovery_key_is_optional() {
+        // Test without recovery key (backward compatibility)
+        let context = SessionContext::new("no-key-session".to_string(), 200, 84532);
+
+        assert!(context.recovery_public_key.is_none());
+        assert_eq!(context.session_id, "no-key-session");
+    }
+
+    #[tokio::test]
+    async fn test_session_context_new_with_recovery_key_none() {
+        let context = SessionContext::new_with_recovery_key(
+            "test-session".to_string(),
+            100,
+            84532,
+            None,
+        );
+
+        assert!(context.recovery_public_key.is_none());
     }
 }

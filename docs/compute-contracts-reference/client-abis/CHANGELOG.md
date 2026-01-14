@@ -1,47 +1,425 @@
 # Client ABIs Changelog
 
-## January 12, 2025 - API Discovery Update
+## January 14, 2026 - deltaCID Support for Proof Submissions (BREAKING CHANGE)
 
-### Updated Files
-- `NodeRegistryFAB-CLIENT-ABI.json` - Added API discovery functions
-- `JobMarketplaceFABWithS5Deploy-CLIENT-ABI.json` - New marketplace ABI compatible with 5-field Node struct
-- `DEPLOYMENT_INFO.json` - Updated with new contract addresses and migration notes
-- `README.md` - Added API discovery usage examples and migration guide
+### ⚠️ SDK BREAKING CHANGE
+**`submitProofOfWork` signature changed from 5 to 6 parameters**
 
-### New Contract Addresses
-- **NodeRegistryFAB**: `0x2B745E45818e1dE570f253259dc46b91A82E3204` (was `0x87516C13Ea2f99de598665e14cab64E191A0f8c4`)
-- **JobMarketplaceFABWithS5Deploy**: `0x3B632813c3e31D94Fd552b4aE387DD321eec67Ba` (was `0x55A702Ab5034810F5B9720Fe15f83CFcf914F56b`)
+A new `deltaCID` parameter has been added to track delta CIDs for incremental proof storage.
 
-### New Functions Added to NodeRegistryFAB
-- `registerNodeWithUrl(string metadata, string apiUrl)` - Register with API endpoint
-- `updateApiUrl(string newApiUrl)` - Update host's API endpoint
-- `getNodeApiUrl(address operator)` - Get host's API URL
-- `getNodeFullInfo(address operator)` - Returns (operator, stakedAmount, active, metadata, apiUrl)
+**Old signature (no longer works):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,
+    string calldata proofCID
+)
+```
 
-### Breaking Changes
-- NodeRegistry `nodes()` function now returns 5 fields instead of 4
-- All JobMarketplace contracts must be updated to handle the 5-field struct
+**New signature (required):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,
+    string calldata proofCID,
+    string calldata deltaCID  // NEW: Delta CID for incremental storage
+)
+```
+
+### Additional Breaking Changes
+
+**`getProofSubmission` returns 5 values instead of 4:**
+```solidity
+// Old (4 values)
+(bytes32 proofHash, uint256 tokensClaimed, uint256 timestamp, bool verified)
+
+// New (5 values)
+(bytes32 proofHash, uint256 tokensClaimed, uint256 timestamp, bool verified, string deltaCID)
+```
+
+**`ProofSubmitted` event has new field:**
+```solidity
+// Old
+event ProofSubmitted(uint256 indexed jobId, address indexed host, uint256 tokensClaimed, bytes32 proofHash, string proofCID);
+
+// New
+event ProofSubmitted(uint256 indexed jobId, address indexed host, uint256 tokensClaimed, bytes32 proofHash, string proofCID, string deltaCID);
+```
+
+### SDK Migration Guide
+```javascript
+// OLD (no longer works):
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID);
+
+// NEW (required):
+const deltaCID = "QmDeltaCID..."; // or "" if no delta
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
+
+// Reading proofs - OLD (4 values):
+const [proofHash, tokens, timestamp, verified] = await marketplace.getProofSubmission(sessionId, 0);
+
+// Reading proofs - NEW (5 values):
+const [proofHash, tokens, timestamp, verified, deltaCID] = await marketplace.getProofSubmission(sessionId, 0);
+```
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` |
+
+### ProofSubmission Struct Change
+```solidity
+struct ProofSubmission {
+    bytes32 proofHash;
+    uint256 tokensClaimed;
+    uint256 timestamp;
+    bool verified;
+    string deltaCID;  // NEW field
+}
+```
+
+### What is deltaCID?
+- Used for incremental/delta proof storage on decentralized networks
+- Allows tracking changes between consecutive proofs
+- Pass empty string `""` if not using delta storage
+
+---
+
+## January 11, 2026 - ModelRegistry Voting Improvements (Phase 14-15)
+
+### Security Audit Remediation
+Implements voting mechanism improvements from the January 2026 security audit.
+
+### Phase 14: Anti-Sniping Vote Extension
+Prevents whale attacks where large votes arrive at the last minute:
+- If a large vote (≥10,000 FAB) arrives in the last 4 hours, voting extends by 1 day
+- Maximum 3 extensions per proposal
+- Cumulative late votes trigger extension
+
+**New Constants:**
+```solidity
+uint256 public constant EXTENSION_THRESHOLD = 10000 * 10**18;  // 10k FAB
+uint256 public constant EXTENSION_WINDOW = 4 hours;
+uint256 public constant EXTENSION_DURATION = 1 days;
+uint256 public constant MAX_EXTENSIONS = 3;
+```
+
+**New Event:**
+```solidity
+event VotingExtended(bytes32 indexed modelId, uint256 newEndTime, uint8 extensionCount);
+```
+
+**Struct Changes (ModelProposal):**
+- Added `endTime` (uint256) - Dynamic end time for voting
+- Added `extensionCount` (uint8) - Number of extensions applied
+
+### Phase 15: Re-proposal Cooldown System
+Allows rejected models to be re-proposed after a cooldown:
+- 30-day cooldown after a proposal is executed (approved or rejected)
+- Old proposal data is cleared when re-proposing
+
+**New Constant:**
+```solidity
+uint256 public constant REPROPOSAL_COOLDOWN = 30 days;
+```
+
+**New State Variable:**
+```solidity
+mapping(bytes32 => uint256) public lastProposalExecutionTime;
+```
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` |
+
+### ABI Changes
+**Added to ModelRegistry:**
+- `EXTENSION_THRESHOLD()` - Constant (10k FAB)
+- `EXTENSION_WINDOW()` - Constant (4 hours)
+- `EXTENSION_DURATION()` - Constant (1 day)
+- `MAX_EXTENSIONS()` - Constant (3)
+- `REPROPOSAL_COOLDOWN()` - Constant (30 days)
+- `lateVotes(bytes32)` - Mapping for cumulative late votes
+- `lastProposalExecutionTime(bytes32)` - Mapping for cooldown tracking
+- `VotingExtended` event
+
+### No SDK Breaking Changes
+- All existing functions work as before
+- `proposals(bytes32)` now returns 9 fields instead of 7 (added `endTime`, `extensionCount`)
+- Voting and proposal creation work identically
+
+---
+
+## January 10, 2026 - NodeRegistry Corrupt Node Fix
+
+### Bug Fix
+Fixed an edge case where hosts registered during contract upgrades could end up in a "corrupt" state:
+- `nodes[host].active = true`
+- `activeNodesIndex[host] = 0`
+- But host NOT in `activeNodesList[]`
+
+This caused `unregisterNode()` to fail or corrupt other nodes' data.
+
+### Changes
+
+**New Admin Function:**
+```solidity
+function repairCorruptNode(address nodeAddress) external onlyOwner
+```
+- Owner-only function to clean up corrupt node state
+- Returns staked FAB tokens to the host
+- Emits `CorruptNodeRepaired(address operator, uint256 stakeReturned)`
+
+**Safety Check in `unregisterNode()`:**
+- Now detects and handles corrupt state gracefully
+- Hosts can unregister even with corrupt state
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0x4574d6f1D888cF97eBb8E1bb5E02a5A386b6cFA7` |
+
+### Corrupt Host Repaired
+- Host `0x048afA7126A3B684832886b78e7cC1Dd4019557E` fixed
+- 1000 FAB stake returned
+
+### ABI Changes
+**Added to NodeRegistry:**
+- `repairCorruptNode(address)` - Owner-only repair function
+- `CorruptNodeRepaired` event
+
+### No SDK Breaking Changes
+- `unregisterNode()` works as before (now handles edge cases)
+- New function is admin-only
+
+---
+
+## January 9, 2026 - Clean Slate JobMarketplace Deployment
+
+### ⚠️ PROXY ADDRESS CHANGED
+**JobMarketplace proxy address has changed** due to clean slate deployment (removed deprecated storage slots for gas optimization).
+
+| Contract | Old Proxy | New Proxy |
+|----------|-----------|-----------|
+| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` |
+
+### Implementation Addresses (January 9, 2026)
+| Contract | Proxy | Implementation |
+|----------|-------|----------------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` |
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xb85424dd91D4ae0C6945e512bfDdF8a494299115` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x1D31d9688a4ffD2aFE738BC6C9a4cb27C272AA5A` |
+| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9` |
+| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | `0x8584AeAC9687613095D13EF7be4dE0A796F84D7a` |
+
+### SDK Migration Required
+Update your configuration to use the new JobMarketplace proxy address:
+```javascript
+const CONTRACTS = {
+  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",  // ⚠️ CHANGED
+  nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+  // ... other addresses unchanged
+};
+```
+
+### Technical Details
+- Solidity upgraded to ^0.8.24 (compiled with 0.8.30)
+- Using OpenZeppelin's ReentrancyGuardTransient (~4,900 gas savings)
+- Requires EIP-1153 (transient storage) - supported on Base since March 2024
+
+---
+
+## January 6, 2026 - Phase 6: ProofSystem Integration (BREAKING CHANGE)
+
+### ⚠️ SDK BREAKING CHANGE
+**`submitProofOfWork` signature changed from 4 to 5 parameters**
+
+The ProofSystem's signature verification is now enforced. Hosts must sign their proofs.
+
+**Old signature (no longer works):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    string calldata proofCID
+)
+```
+
+**New signature (required):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,  // NEW: 65 bytes (r, s, v)
+    string calldata proofCID
+)
+```
+
+### SDK Migration Guide
+```javascript
+// OLD (no longer works):
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID);
+
+// NEW (required):
+// 1. Generate proofHash (hash of work done)
+const proofHash = keccak256(workData);
+
+// 2. Sign the proof data
+const dataHash = keccak256(
+  solidityPacked(['bytes32', 'address', 'uint256'], [proofHash, hostAddress, tokensClaimed])
+);
+const signature = await hostWallet.signMessage(getBytes(dataHash));
+
+// 3. Submit with signature
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID);
+```
+
+### New Implementation Deployed
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` | `0x05c7d3a1b748dEbdbc12dd75D1aC195fb93228a3` |
+
+### New View Function
+- `getProofSubmission(uint256 sessionId, uint256 proofIndex)` - Returns proof details including `verified` flag
+
+### What the Signature Proves
+- The host authorized this specific proof
+- The host claims exactly N tokens
+- Non-repudiation (host signed it)
+
+---
+
+## January 6, 2026 - Security Audit Remediation
+
+### Security Fixes Applied
+All CRITICAL and MEDIUM vulnerabilities from the January 2025 security audit have been fixed:
+
+| Issue | Severity | Status |
+|-------|----------|--------|
+| recordVerifiedProof front-running | CRITICAL | ✅ Fixed - Access control added |
+| Missing host validation | CRITICAL | ✅ Fixed - NodeRegistry query |
+| withdrawNative double-spend | CRITICAL | ✅ Fixed - Deposit tracking |
+| Unreachable claimWithProof | MEDIUM | ✅ Fixed - Removed dead code |
+
+### Implementation Upgrades (UUPS)
+Proxies upgraded to new implementations with security fixes:
+
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0xf0DA90e1ae1A3aB7b9Da47790Abd73D26b17670F` |
+| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` | `0xfa6F48eced34294B4FCe3Ae6Bb78d22858AfEe8B` |
+
+### ABI Changes
+
+**Removed from JobMarketplace (legacy dead code):**
+- `claimWithProof()` function
+- `JobPosted`, `JobClaimed`, `JobCompleted` events
+- `Job`, `JobStatus`, `JobType`, `JobDetails`, `JobRequirements` types
+
+**Added to JobMarketplace:**
+- `getLockedBalanceNative(address)` - View locked funds in active sessions
+- `getLockedBalanceToken(address, address)` - View locked token funds
+- `getTotalBalanceNative(address)` - View total balance (withdrawable + locked)
+- `getTotalBalanceToken(address, address)` - View total token balance
+
+**Added to ProofSystem:**
+- `setAuthorizedCaller(address, bool)` - Owner sets authorized callers
+- `authorizedCallers(address)` - Check if address is authorized
+- `AuthorizedCallerUpdated` event
+
+### No SDK Breaking Changes
+- **Proxy addresses unchanged** - Use same addresses as before
+- **submitProofOfWork unchanged** - Same 4-parameter signature
+- **Session flow unchanged** - createSessionJob, submitProofOfWork, completeSessionJob
+
+### Migration Notes
+- No SDK code changes required for existing integrations
+- New view functions available for balance transparency
+- Hosts must be registered in NodeRegistry (was always required for sessions to work)
+
+---
+
+## December 14, 2025 - UUPS Upgradeable Migration + Minimum Deposit Reduction
+
+### Major Changes
+- **All contracts migrated to UUPS Upgradeable pattern**
+- **Minimum deposits reduced to ~$0.50**
+- **Old non-upgradeable ABIs removed**
+
+### Current ABIs (Upgradeable Only)
+- `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
+- `NodeRegistryWithModelsUpgradeable-CLIENT-ABI.json`
+- `ModelRegistryUpgradeable-CLIENT-ABI.json`
+- `HostEarningsUpgradeable-CLIENT-ABI.json`
+- `ProofSystemUpgradeable-CLIENT-ABI.json`
+
+### New Contract Addresses (UUPS Proxies)
+| Contract | Proxy Address | Implementation |
+|----------|---------------|----------------|
+| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` | `0xe0ee96FC4Cc7a05a6e9d5191d070c5d1d13f143F` |
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0x68298e2b74a106763aC99E3D973E98012dB5c75F` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0xd7Df5c6D4ffe6961d47753D1dd32f844e0F73f50` |
+| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0x83eB050Aa3443a76a4De64aBeD90cA8d525E7A3A` |
+| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | `0x588c42249F85C6ac4B4E27f97416C0289980aabB` |
+
+### Minimum Deposits (Reduced)
+| Payment Type | Old Value | New Value |
+|--------------|-----------|-----------|
+| ETH | 0.0002 ETH (~$0.88) | 0.0001 ETH (~$0.50) |
+| USDC | 800000 ($0.80) | 500000 ($0.50) |
+
+### New Functions Added to JobMarketplace
+- `updateTokenMinDeposit(address token, uint256 minDeposit)` - Admin function to update minimum deposits
+- `pause()` / `unpause()` - Emergency pause functionality
+
+### New Events Added to JobMarketplace
+- `TokenMinDepositUpdated(address indexed token, uint256 oldMinDeposit, uint256 newMinDeposit)`
+- `ContractPaused(address indexed by)`
+- `ContractUnpaused(address indexed by)`
+
+### Removed ABIs (Deprecated)
+The following non-upgradeable ABIs have been removed:
+- `HostEarnings-CLIENT-ABI.json`
+- `JobMarketplaceWithModels-CLIENT-ABI.json`
+- `ModelRegistry-CLIENT-ABI.json`
+- `NodeRegistryWithModels-CLIENT-ABI.json`
+- `ProofSystem-CLIENT-ABI.json`
 
 ### Migration Required
-1. **SDK Developers**: Update to new contract addresses
-2. **Existing Hosts**: Call `updateApiUrl()` to add your API endpoint
-3. **Client Applications**: Use new discovery functions instead of hardcoded URLs
+1. **Update all contract addresses** to use proxy addresses above
+2. **Update ABIs** to use `*Upgradeable-CLIENT-ABI.json` files
+3. **Update minimum deposit checks** (now $0.50 instead of $0.80)
 
-### Benefits
-- Automatic host endpoint discovery
-- No more hardcoded API URLs
-- Dynamic endpoint updates without re-registration
-- Improved decentralization
+---
 
-## January 5, 2025 - Treasury Accumulation
+## December 10, 2025 - Rate Limit Fix (2000 tokens/sec)
 
-### Features Added
-- Treasury fee accumulation for gas savings
-- Batch withdrawal functions
-- Emergency withdrawal with accumulation protection
+### Changes
+- Increased proof submission rate limit from 200 to 2000 tokens/sec
+- Supports high-speed inference on small models (RTX 4090: 800-1500 tok/sec)
 
-## January 4, 2025 - ProofSystem Fix
+---
 
-### Issues Fixed
-- Internal verification function call for USDC sessions
-- Minimum 64-byte proof requirement enforced
+## October 14, 2025 - S5 Proof Storage
+
+### Changes
+- Moved STARK proofs to S5 decentralized storage
+- On-chain: only hash + CID (300 bytes vs 221KB)
+- `submitProofOfWork` signature changed to 4 parameters
+
+---
+
+## September 2025 - Initial Release
+
+### Features
+- Session-based streaming payments
+- FAB token staking for hosts
+- USDC/ETH payment support
+- Model governance via ModelRegistry

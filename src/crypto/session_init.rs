@@ -10,6 +10,7 @@ use crate::api::websocket::message_types::VectorDatabaseInfo;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tracing::info;
 
 /// Encrypted session initialization payload from client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +44,9 @@ pub struct SessionInitData {
     pub client_address: String,
     /// Optional S5 vector database information for RAG
     pub vector_database: Option<VectorDatabaseInfo>,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    /// Compressed secp256k1 public key (33 bytes = 66 hex chars + 0x prefix)
+    pub recovery_public_key: Option<String>,
 }
 
 /// Internal structure for parsing decrypted JSON payload
@@ -54,6 +58,8 @@ struct SessionDataJson {
     session_key: String,
     price_per_token: u64,
     vector_database: Option<VectorDatabaseInfo>,
+    /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
+    recovery_public_key: Option<String>,
 }
 
 /// Decrypt and verify encrypted session initialization payload
@@ -124,6 +130,11 @@ pub fn decrypt_session_init(
     let session_data: SessionDataJson = serde_json::from_str(plaintext_str)
         .map_err(|e| anyhow!("Failed to parse session data JSON: {}", e))?;
 
+    // Log whether recovery_public_key was provided (determines checkpoint encryption)
+    if session_data.recovery_public_key.is_some() {
+        info!("🔑 Session init contains recoveryPublicKey - encrypted checkpoints enabled");
+    }
+
     // Step 4: Extract and validate session key (hex-encoded 32 bytes)
     let session_key_hex = session_data
         .session_key
@@ -157,6 +168,7 @@ pub fn decrypt_session_init(
         price_per_token: session_data.price_per_token,
         client_address,
         vector_database: session_data.vector_database,
+        recovery_public_key: session_data.recovery_public_key,
     })
 }
 

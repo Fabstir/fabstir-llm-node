@@ -145,6 +145,7 @@ dotenv = "0.15"
 # CPU proving is stable and reliable, just slightly slower than GPU
 # System falls back to mock implementation when real-ezkl feature is disabled
 risc0-zkvm = { version = "3.0", features = ["prove"], optional = true }
+data-encoding = "2.10.0"
 
 # Legacy EZKL dependencies (kept for reference, not used)
 # ezkl = { git = "https://github.com/zkonduit/ezkl", rev = "40ce9df", optional = true }

@@ -1,0 +1,25 @@
+# S5 Bridge Service - Run alongside your existing LLM node setup
+# Usage: docker-compose -f docker-compose.s5-bridge.yml up -d
+
+services:
+  s5-bridge:
+    build:
+      context: ./services/s5-bridge
+      dockerfile: Dockerfile
+    container_name: s5-bridge
+    restart: unless-stopped
+    ports:
+      - "5522:5522"
+    environment:
+      BRIDGE_PORT: 5522
+      BRIDGE_HOST: 0.0.0.0
+      S5_SEED_PHRASE: ${S5_SEED_PHRASE:?Set S5_SEED_PHRASE in environment}
+      S5_PORTAL_URL: https://s5.vup.cx
+      S5_INITIAL_PEERS: wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p
+      LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5522/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
