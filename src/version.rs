@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.12.4-delta-cid-on-chain-2026-01-14";
+pub const VERSION: &str = "v8.12.5-s5-portal-migration-2026-01-23";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.12.4";
+pub const VERSION_NUMBER: &str = "8.12.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 12;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-14";
+pub const BUILD_DATE: &str = "2026-01-23";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -141,6 +141,9 @@ pub const FEATURES: &[&str] = &[
     "delta-cid-on-chain",
     "checkpoint-blockchain-events",
     "decentralized-checkpoint-recovery",
+    // S5 portal migration (v8.12.5)
+    "platformless-ai-s5-portal",
+    "sia-decentralized-storage",
 ];
 
 /// Supported chain IDs
@@ -151,6 +154,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.12.5 - S5 Portal Migration (Jan 23, 2026)
+    "CONFIG: Default S5 portal changed from s5.vup.cx to s5.platformlessai.ai",
+    "CONFIG: S5 storage backend now uses Sia decentralized storage",
+    "CONFIG: Updated default P2P peers to node.sfive.net, s5.garden, s5.vup.cx",
+    "DEPLOY: Existing hosts must restart S5 bridge to use new portal",
     // v8.12.4 - deltaCID On-Chain Support (Jan 14, 2026)
     "FEAT: submitProofOfWork now includes 6th parameter: deltaCID",
     "FEAT: deltaCID stored on-chain for decentralized checkpoint recovery",
@@ -336,7 +344,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 12);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_PATCH, 5);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -397,15 +405,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.12.4"));
-        assert!(version.contains("2026-01-14"));
+        assert!(version.contains("8.12.5"));
+        assert!(version.contains("2026-01-23"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.12.4-delta-cid-on-chain-2026-01-14");
-        assert_eq!(VERSION_NUMBER, "8.12.4");
-        assert_eq!(BUILD_DATE, "2026-01-14");
+        assert_eq!(VERSION, "v8.12.5-s5-portal-migration-2026-01-23");
+        assert_eq!(VERSION_NUMBER, "8.12.5");
+        assert_eq!(BUILD_DATE, "2026-01-23");
     }
 
     #[test]
@@ -431,5 +439,11 @@ mod tests {
     fn test_harmony_parsing_features() {
         assert!(FEATURES.contains(&"harmony-message-parsing"));
         assert!(FEATURES.contains(&"clean-checkpoint-messages"));
+    }
+
+    #[test]
+    fn test_s5_portal_migration_features() {
+        assert!(FEATURES.contains(&"platformless-ai-s5-portal"));
+        assert!(FEATURES.contains(&"sia-decentralized-storage"));
     }
 }

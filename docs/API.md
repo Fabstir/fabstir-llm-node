@@ -2402,7 +2402,7 @@ function submitProofOfWork(
 ```javascript
 // Retrieve full proof from S5 for verification
 const proofCID = "z5bmX7Kd9...";
-const s5Url = `https://s5.vup.cx/s5/blob/${proofCID}`;
+const s5Url = `https://s5.platformlessai.ai/s5/blob/${proofCID}`;
 const proofBytes = await fetch(s5Url).then(r => r.arrayBuffer());
 
 // Verify hash matches on-chain submission
@@ -2418,7 +2418,7 @@ Clients can verify proofs by retrieving them from S5 and checking the hash:
 // Example verification (client-side)
 async function verifyProof(jobId, proofHash, proofCID) {
   // 1. Retrieve proof from S5
-  const s5Url = `https://s5.vup.cx/s5/blob/${proofCID}`;
+  const s5Url = `https://s5.platformlessai.ai/s5/blob/${proofCID}`;
   const proofBytes = await fetch(s5Url).then(r => r.arrayBuffer());
 
   // 2. Verify hash matches on-chain submission

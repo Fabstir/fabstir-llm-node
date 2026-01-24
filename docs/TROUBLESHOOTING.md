@@ -593,7 +593,7 @@ WARN vector_loading: ⚠️ Unexpected error categorized as INTERNAL_ERROR - inv
 
 # S5 Download Failures:
 # - Check S5 portal status
-curl https://s5.vup.cx/health
+curl https://s5.platformlessai.ai/s5/version
 # - Verify manifest path format
 # - Check network connectivity
 ```

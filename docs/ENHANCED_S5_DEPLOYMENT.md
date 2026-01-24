@@ -81,7 +81,7 @@ Expected output:
 📋 Bridge Configuration:
    Host: localhost
    Port: 5522
-   Portal: https://s5.vup.cx
+   Portal: https://s5.platformlessai.ai
    Peers: 1 configured
    Identity: ✅ Configured
    ...
@@ -91,7 +91,7 @@ Expected output:
 ✅ S5 instance created
 🔐 Recovering identity from seed phrase...
 ✅ Identity recovered
-🌐 Registering with S5 portal: https://s5.vup.cx
+🌐 Registering with S5 portal: https://s5.platformlessai.ai
 ✅ Portal registration complete
 📁 Initializing S5 filesystem...
 ✅ Filesystem initialized
@@ -117,7 +117,7 @@ Expected:
   "initialized": true,
   "connected": true,
   "peerCount": 1,
-  "portal": "https://s5.vup.cx"
+  "portal": "https://s5.platformlessai.ai"
 }
 ```
 
@@ -265,8 +265,8 @@ For daemon mode:
 | `BRIDGE_PORT` | `5522` | HTTP server port |
 | `BRIDGE_HOST` | `localhost` | Bind address (localhost for security) |
 | `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase |
-| `S5_PORTAL_URL` | `https://s5.vup.cx` | S5 portal gateway URL |
-| `S5_INITIAL_PEERS` | `wss://...s5.ninja/s5/p2p` | WebSocket P2P peers (comma-separated) |
+| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL |
+| `S5_INITIAL_PEERS` | `wss://...node.sfive.net/s5/p2p,...` | WebSocket P2P peers (comma-separated) |
 | `LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `PRETTY_LOGS` | `true` | Enable pretty-printed logs (false in production) |
 | `REQUEST_TIMEOUT_MS` | `30000` | Request timeout (30 seconds) |
@@ -405,11 +405,11 @@ journalctl -u s5-bridge | grep "fully initialized"
 1. **Network connectivity issues**
    ```bash
    # Test peer connectivity
-   curl -I https://s5.ninja
+   curl -I https://node.sfive.net
    # Should return 200 OK
 
    # Test WebSocket (requires wscat)
-   wscat -c wss://s5.ninja/s5/p2p
+   wscat -c wss://node.sfive.net/s5/p2p
    ```
 
 2. **Firewall blocking WebSocket**
@@ -440,14 +440,14 @@ journalctl -u s5-bridge | grep "fully initialized"
 1. **Portal unreachable**
    ```bash
    # Test portal
-   curl https://s5.vup.cx
+   curl https://s5.platformlessai.ai
    ```
 
 2. **Invalid portal URL**
    ```bash
    # Check URL format
    echo $S5_PORTAL_URL
-   # Should be: https://s5.vup.cx
+   # Should be: https://s5.platformlessai.ai
    ```
 
 3. **Seed phrase invalid**
