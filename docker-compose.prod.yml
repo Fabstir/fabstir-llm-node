@@ -25,8 +25,8 @@ services:
       BRIDGE_PORT: 5522
       BRIDGE_HOST: 0.0.0.0
       S5_SEED_PHRASE: ${S5_SEED_PHRASE:?S5_SEED_PHRASE is required}
-      S5_PORTAL_URL: ${S5_PORTAL_URL:-https://s5.vup.cx}
-      S5_INITIAL_PEERS: ${S5_INITIAL_PEERS:-wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p}
+      S5_PORTAL_URL: ${S5_PORTAL_URL:-https://s5.platformlessai.ai}
+      S5_INITIAL_PEERS: ${S5_INITIAL_PEERS:-wss://z2Das8aEF7oNoxkcrfvzerZ1iBPWfm6D7gy3hVE4ALGSpVB@node.sfive.net/s5/p2p,wss://z2DWuWNZcdSyZLpXFK2uCU3haaWMXrDAgxzv17sDEMHstZb@s5.garden/s5/p2p,wss://z2Dh2pH1t1u3mjoQKDrZccLQ1CG9hJe3wdFvLCQhDx5UX1K@s5.vup.cx/s5/p2p}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5522/health"]

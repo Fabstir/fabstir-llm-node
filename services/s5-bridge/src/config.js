@@ -19,10 +19,10 @@ export const bridgeConfig = {
   // S5 Identity Configuration
   seedPhrase: process.env.S5_SEED_PHRASE || '',
 
-  // S5 Network Configuration
-  portalUrl: process.env.S5_PORTAL_URL || 'https://s5.vup.cx',
+  // S5 Network Configuration (Platformless AI Portal - Sia Storage)
+  portalUrl: process.env.S5_PORTAL_URL || 'https://s5.platformlessai.ai',
   initialPeers: (process.env.S5_INITIAL_PEERS ||
-    'wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p'
+    'wss://z2Das8aEF7oNoxkcrfvzerZ1iBPWfm6D7gy3hVE4ALGSpVB@node.sfive.net/s5/p2p,wss://z2DWuWNZcdSyZLpXFK2uCU3haaWMXrDAgxzv17sDEMHstZb@s5.garden/s5/p2p,wss://z2Dh2pH1t1u3mjoQKDrZccLQ1CG9hJe3wdFvLCQhDx5UX1K@s5.vup.cx/s5/p2p'
   ).split(',').map(p => p.trim()),
 
   // Logging Configuration
