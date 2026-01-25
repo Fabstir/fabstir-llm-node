@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.12.5-s5-portal-migration-2026-01-23";
+pub const VERSION: &str = "v8.12.6-settlement-race-fix-2026-01-25";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.12.5";
+pub const VERSION_NUMBER: &str = "8.12.6";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 12;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 6;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-23";
+pub const BUILD_DATE: &str = "2026-01-25";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -144,6 +144,11 @@ pub const FEATURES: &[&str] = &[
     // S5 portal migration (v8.12.5)
     "platformless-ai-s5-portal",
     "sia-decentralized-storage",
+    // Settlement race condition fix (v8.12.6)
+    "settlement-wait-loop",
+    "proof-submission-cache",
+    "s5-propagation-delay-handling",
+    "submission-started-tracking",
 ];
 
 /// Supported chain IDs
@@ -154,6 +159,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.12.6 - Settlement Race Condition Fix (Jan 25, 2026)
+    "FIX: Settlement now waits for in-flight proof submissions to complete before proceeding",
+    "FIX: Prevents 'Session not active' errors when WebSocket disconnects during proof generation",
+    "FEAT: Added ProofSubmissionCache for S5 propagation delay handling",
+    "FEAT: Added submission_started_at field to JobTokenTracker for timeout calculation",
+    "FEAT: Settlement polls for up to 120s waiting for submission_in_progress to become false",
     // v8.12.5 - S5 Portal Migration (Jan 23, 2026)
     "CONFIG: Default S5 portal changed from s5.vup.cx to s5.platformlessai.ai",
     "CONFIG: S5 storage backend now uses Sia decentralized storage",
@@ -344,7 +355,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 12);
-        assert_eq!(VERSION_PATCH, 5);
+        assert_eq!(VERSION_PATCH, 6);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
