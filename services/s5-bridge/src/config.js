@@ -19,6 +19,9 @@ export const bridgeConfig = {
   // S5 Identity Configuration
   seedPhrase: process.env.S5_SEED_PHRASE || '',
 
+  // Host Ethereum Configuration (for on-chain verified S5 registration)
+  hostPrivateKey: process.env.HOST_PRIVATE_KEY || '',
+
   // S5 Network Configuration (Platformless AI Portal - Sia Storage)
   portalUrl: process.env.S5_PORTAL_URL || 'https://s5.platformlessai.ai',
   initialPeers: (process.env.S5_INITIAL_PEERS ||
@@ -68,6 +71,7 @@ export function printConfigSummary() {
   console.log(`   Portal: ${bridgeConfig.portalUrl}`);
   console.log(`   Peers: ${bridgeConfig.initialPeers.length} configured`);
   console.log(`   Identity: ${bridgeConfig.seedPhrase ? '✅ Configured' : '❌ Missing'}`);
+  console.log(`   Host Key: ${bridgeConfig.hostPrivateKey ? '✅ Configured' : '⚠️ Missing (on-chain registration disabled)'}`);
   console.log(`   Log Level: ${bridgeConfig.logLevel}`);
   console.log(`   Request Timeout: ${bridgeConfig.requestTimeout}ms`);
   console.log(`   Max Content: ${(bridgeConfig.maxContentLength / 1024 / 1024).toFixed(2)}MB`);
