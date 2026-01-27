@@ -2,20 +2,246 @@
 
 ---
 
+## January 14, 2026: deltaCID Proof Tracking & conversationCID
+
+**Contracts Affected**: JobMarketplaceWithModelsUpgradeable
+**Impact Level**: HIGH - Function signature changes require SDK updates
+
+### Summary
+
+Added cryptographic audit trail support via CID (Content Identifier) parameters for proof submissions and session completion.
+
+| Change | Impact | Action Required |
+|--------|--------|-----------------|
+| `submitProofOfWork` signature | HIGH | Update to 6 parameters |
+| `getProofSubmission` return | HIGH | Update tuple unpacking (5 values) |
+| `ProofSubmitted` event | MEDIUM | Update event listeners |
+| `completeSessionJob` signature | HIGH | Add `conversationCID` parameter |
+
+### 1. submitProofOfWork Signature Change (BREAKING)
+
+**Before (5 parameters):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,
+    string calldata proofCID
+) external
+```
+
+**After (6 parameters):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,
+    string calldata proofCID,
+    string calldata deltaCID    // NEW: Delta CID for incremental changes
+) external
+```
+
+**Migration:**
+```javascript
+// Before
+await marketplace.submitProofOfWork(jobId, tokens, proofHash, signature, proofCID);
+
+// After
+await marketplace.submitProofOfWork(jobId, tokens, proofHash, signature, proofCID, deltaCID);
+// Use "" for deltaCID if not tracking incremental changes
+```
+
+### 2. getProofSubmission Return Change (BREAKING)
+
+**Before (4 return values):**
+```solidity
+returns (bytes32 proofHash, uint256 tokensClaimed, uint256 timestamp, bool verified)
+```
+
+**After (5 return values):**
+```solidity
+returns (bytes32 proofHash, uint256 tokensClaimed, uint256 timestamp, bool verified, string memory deltaCID)
+```
+
+**Migration:**
+```javascript
+// Before
+const [proofHash, tokensClaimed, timestamp, verified] =
+  await marketplace.getProofSubmission(sessionId, proofIndex);
+
+// After
+const [proofHash, tokensClaimed, timestamp, verified, deltaCID] =
+  await marketplace.getProofSubmission(sessionId, proofIndex);
+```
+
+### 3. ProofSubmitted Event Change
+
+**Before (5 fields):**
+```solidity
+event ProofSubmitted(
+    uint256 indexed jobId,
+    address indexed host,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    string proofCID
+);
+```
+
+**After (6 fields):**
+```solidity
+event ProofSubmitted(
+    uint256 indexed jobId,
+    address indexed host,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    string proofCID,
+    string deltaCID    // NEW
+);
+```
+
+### 4. completeSessionJob Signature Change (BREAKING)
+
+**Before (1 parameter):**
+```solidity
+function completeSessionJob(uint256 jobId) external
+```
+
+**After (2 parameters):**
+```solidity
+function completeSessionJob(uint256 jobId, string calldata conversationCID) external
+```
+
+**Migration:**
+```javascript
+// Before
+await marketplace.completeSessionJob(jobId);
+
+// After
+const conversationCID = await s5Client.upload(JSON.stringify(conversationLog));
+await marketplace.completeSessionJob(jobId, conversationCID);
+// Use "" if not storing conversation record
+```
+
+### 5. Updated Implementation Address
+
+| Contract | Proxy | New Implementation |
+|----------|-------|-------------------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` |
+
+### Migration Checklist
+
+#### For SDK Developers
+
+- [ ] Update `submitProofOfWork` calls to include 6th parameter (`deltaCID`)
+- [ ] Update `getProofSubmission` tuple unpacking (5 values)
+- [ ] Update `completeSessionJob` calls to include `conversationCID`
+- [ ] Update event listeners for `ProofSubmitted` (6 fields)
+- [ ] Update cached ABIs from `client-abis/`
+
+#### For Node Operators (Hosts)
+
+- [ ] Update proof submission code to pass `deltaCID` (can be empty string)
+- [ ] Update session completion code to pass `conversationCID`
+- [ ] Implement S5 upload for CID generation (optional but recommended)
+
+### Why This Change?
+
+The deltaCID and conversationCID parameters enable:
+1. **Audit trail**: Every proof and conversation is stored on S5
+2. **Dispute evidence**: CIDs provide cryptographic proof of what was delivered
+3. **Future DAO governance**: Evidence-based dispute resolution with stake slashing
+
+---
+
+## January 11, 2026: ModelRegistry Voting Improvements (Phase 14-15)
+
+**Contracts Affected**: ModelRegistryUpgradeable
+**Impact Level**: LOW - Struct field addition (backward compatible)
+
+### Summary
+
+Voting mechanism improvements from security audit remediation:
+
+| Change | Impact | Action Required |
+|--------|--------|-----------------|
+| `ModelProposal` struct expanded | LOW | Update struct destructuring (7 → 9 fields) |
+| New constants added | NONE | Optional - use for UI display |
+| New `VotingExtended` event | NONE | Optional - subscribe for UI updates |
+
+### 1. ModelProposal Struct Change
+
+**Before (7 fields):**
+```solidity
+struct ModelProposal {
+    bytes32 modelId;
+    address proposer;
+    uint256 votesFor;
+    uint256 votesAgainst;
+    uint256 proposalTime;
+    bool executed;
+    Model modelData;
+}
+```
+
+**After (9 fields):**
+```solidity
+struct ModelProposal {
+    bytes32 modelId;
+    address proposer;
+    uint256 votesFor;
+    uint256 votesAgainst;
+    uint256 proposalTime;
+    bool executed;
+    Model modelData;
+    uint256 endTime;        // NEW: Dynamic end time for anti-sniping
+    uint8 extensionCount;   // NEW: Number of extensions applied
+}
+```
+
+**Impact for SDK Developers**: If you destructure `proposals(bytes32)` return value, update from 7 to 9 fields:
+```javascript
+// Before
+const [modelId, proposer, votesFor, votesAgainst, proposalTime, executed, modelData] =
+  await modelRegistry.proposals(proposalId);
+
+// After
+const [modelId, proposer, votesFor, votesAgainst, proposalTime, executed, modelData, endTime, extensionCount] =
+  await modelRegistry.proposals(proposalId);
+```
+
+### 2. New Constants (Read-Only)
+
+```solidity
+EXTENSION_THRESHOLD = 10000 * 10**18  // 10k FAB triggers extension
+EXTENSION_WINDOW = 4 hours            // Last 4 hours is danger zone
+EXTENSION_DURATION = 1 days           // Extend by 1 day
+MAX_EXTENSIONS = 3                    // Maximum extensions per proposal
+REPROPOSAL_COOLDOWN = 30 days         // Wait time before re-proposing
+```
+
+### 3. New Event
+
+```solidity
+event VotingExtended(bytes32 indexed modelId, uint256 newEndTime, uint8 extensionCount);
+```
+
+Subscribe to this event to update UI when voting is extended due to late whale votes.
+
+### 4. New Mappings
+
+```solidity
+mapping(bytes32 => uint256) public lateVotes;                  // Cumulative late votes
+mapping(bytes32 => uint256) public lastProposalExecutionTime;  // For cooldown tracking
+```
+
+---
+
 ## January 9, 2026: Security Audit Remediation - Solidity Upgrade & Contract Changes
 
 **Contracts Affected**: All upgradeable contracts
-**Impact Level**: HIGH - JobMarketplace proxy address changed (clean slate deployment)
-
-### ⚠️ CRITICAL: NEW PROXY ADDRESS
-
-**JobMarketplace has a NEW proxy address** due to clean slate deployment for security audit:
-
-| Contract | OLD Proxy (deprecated) | NEW Proxy (use this) |
-|----------|------------------------|----------------------|
-| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` |
-
-**Other contract addresses remain unchanged.**
+**Impact Level**: MEDIUM - Requires redeployment awareness and potential ABI updates
 
 ### Summary
 
@@ -23,7 +249,6 @@ Security audit remediation completed with the following breaking changes:
 
 | Change | Impact | Action Required |
 |--------|--------|-----------------|
-| **JobMarketplace proxy address** | **HIGH** | **Update SDK/node configuration to new address** |
 | Solidity ^0.8.24 | LOW | Update build tooling if compiling locally |
 | ReentrancyGuardTransient | LOW | No action (internal change) |
 | ProofSystem function rename | HIGH | Update any direct ProofSystem calls |
@@ -102,15 +327,15 @@ Despite the ReentrancyGuard change, **storage layout is preserved**:
 
 After deploying the upgraded implementations, proxy implementations will change:
 
-| Contract | Proxy | Implementation |
+| Contract | Proxy | Implementation (Jan 9) |
 |----------|-------|----------------|
-| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` ⚠️ NEW | `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` |
-| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xb85424dd91D4ae0C6945e512bfDdF8a494299115` |
-| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x1D31d9688a4ffD2aFE738BC6C9a4cb27C272AA5A` |
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` |
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0x4574d6f1D888cF97eBb8E1bb5E02a5A386b6cFA7` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` |
 | ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9` |
 | HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | `0x8584AeAC9687613095D13EF7be4dE0A796F84D7a` |
 
-**Note**: JobMarketplace has a NEW proxy address (clean slate deployment to remove deprecated storage slots). Other proxies unchanged (January 9, 2026).
+**Note**: JobMarketplace proxy was a clean slate deployment (January 9, 2026). Implementation later upgraded to `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` for deltaCID support (January 14, 2026).
 
 ### 7. ABI Changes
 
@@ -189,19 +414,19 @@ function updateTokenMinDeposit(address token, uint256 minDeposit) external
 event TokenMinDepositUpdated(address indexed token, uint256 oldMinDeposit, uint256 newMinDeposit)
 ```
 
-### Contract Addresses (UUPS Proxies) - Updated January 9, 2026
+### Contract Addresses (UUPS Proxies) - December 14, 2025
 
 All contracts are now UUPS upgradeable:
 
-| Contract | Proxy Address | Implementation | Notes |
-|----------|---------------|----------------|-------|
-| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x26f27C19F80596d228D853dC39A204f0f6C45C7E` | ⚠️ NEW Jan 9, 2026 |
-| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0x68298e2b74a106763aC99E3D973E98012dB5c75F` | |
-| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0xd7Df5c6D4ffe6961d47753D1dd32f844e0F73f50` | |
-| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0x83eB050Aa3443a76a4De64aBeD90cA8d525E7A3A` | |
-| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | `0x588c42249F85C6ac4B4E27f97416C0289980aabB` | |
+| Contract | Proxy Address | Implementation (Dec 14) |
+|----------|---------------|----------------|
+| JobMarketplace | `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` ⚠️ | `0xe0ee96FC4Cc7a05a6e9d5191d070c5d1d13f143F` |
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0x68298e2b74a106763aC99E3D973E98012dB5c75F` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0xd7Df5c6D4ffe6961d47753D1dd32f844e0F73f50` |
+| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0x83eB050Aa3443a76a4De64aBeD90cA8d525E7A3A` |
+| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | `0x588c42249F85C6ac4B4E27f97416C0289980aabB` |
 
-**Deprecated JobMarketplace** (do not use): `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D`
+⚠️ **JobMarketplace proxy `0xeebE...` was replaced with clean slate deployment `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` on January 9, 2026.**
 
 ### Migration Required
 
