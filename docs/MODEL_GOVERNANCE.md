@@ -9,7 +9,7 @@ The Fabstir LLM Node implements a decentralized model governance system that ens
 ### Smart Contracts
 
 #### 1. ModelRegistry Contract
-- **Address**: `0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357` (Base Sepolia)
+- **Address**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` (Base Sepolia, UUPS Proxy)
 - **Purpose**: Maintains the authoritative list of approved models
 - **Features**:
   - Curated allowlist of trusted models
@@ -17,7 +17,7 @@ The Fabstir LLM Node implements a decentralized model governance system that ens
   - Tiered approval system (Tier 1: Auto-approved, Tier 2: Community)
 
 #### 2. NodeRegistryWithModels Contract
-- **Address**: `0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100` (Base Sepolia)
+- **Address**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` (Base Sepolia, UUPS Proxy)
 - **Purpose**: Enhanced node registry with model validation
 - **Features**:
   - Validates models against ModelRegistry during registration
@@ -130,8 +130,8 @@ Add to `.env` or `.env.local`:
 
 ```bash
 # Model Registry Configuration
-MODEL_REGISTRY_ADDRESS=0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357
-NODE_REGISTRY_WITH_MODELS_ADDRESS=0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100
+MODEL_REGISTRY_ADDRESS=0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2
+NODE_REGISTRY_WITH_MODELS_ADDRESS=0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
 
 # Use new registry system
 USE_NEW_REGISTRY=true
@@ -244,9 +244,9 @@ cargo test test_model_registry_client
    # Old
    NODE_REGISTRY_FAB_ADDRESS=0x87516C13Ea2f99de598665e14cab64E191A0f8c4
 
-   # New
-   NODE_REGISTRY_WITH_MODELS_ADDRESS=0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100
-   MODEL_REGISTRY_ADDRESS=0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357
+   # New (UUPS Proxy)
+   NODE_REGISTRY_WITH_MODELS_ADDRESS=0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
+   MODEL_REGISTRY_ADDRESS=0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2
    ```
 
 2. **Update Registration Code**
@@ -303,18 +303,18 @@ cargo run --example validate_models
 
 ## Future Enhancements
 
-### Phase 1: Community Governance (Q2 2025)
+### Phase 1: Community Governance (Planned)
 - Tier 2 model proposals
 - DAO voting mechanism
 - Reputation-based voting weight
 
-### Phase 2: Advanced Features (Q3 2025)
+### Phase 2: Advanced Features (Planned)
 - Model versioning support
 - Automatic model updates
 - Performance benchmarking requirements
 - Slashing for serving unapproved models
 
-### Phase 3: Decentralized Curation (Q4 2025)
+### Phase 3: Decentralized Curation (Planned)
 - Multiple registry support
 - Cross-chain model validation
 - IPFS/Arweave model storage
@@ -354,7 +354,7 @@ Contract ABIs are located in:
 
 ## Resources
 
-- [ModelRegistry Contract](https://basescan.org/address/0xfE54c2aa68A7Afe8E0DD571933B556C8b6adC357)
-- [NodeRegistryWithModels Contract](https://basescan.org/address/0xaa14Ed58c3EF9355501bc360E5F09Fb9EC8c1100)
+- [ModelRegistry Contract](https://sepolia.basescan.org/address/0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2)
+- [NodeRegistryWithModels Contract](https://sepolia.basescan.org/address/0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22)
 - [HuggingFace Model Hub](https://huggingface.co/models)
 - [GGUF Format Specification](https://github.com/ggerganov/ggml/blob/master/docs/gguf.md)

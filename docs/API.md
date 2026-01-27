@@ -265,10 +265,10 @@ GET /chains
       "native_token": "ETH",
       "rpc_url": "https://sepolia.base.org",
       "contracts": {
-        "node_registry": "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6",
-        "job_marketplace": "0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E",
+        "node_registry": "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+        "job_marketplace": "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",
         "payment_escrow": "0x...",
-        "host_earnings": "0x..."
+        "host_earnings": "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0"
       },
       "active": true
     },
@@ -334,8 +334,8 @@ GET /chain/{chain_id}
   "native_token": "ETH",
   "rpc_url": "https://sepolia.base.org",
   "contracts": {
-    "node_registry": "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6",
-    "job_marketplace": "0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E",
+    "node_registry": "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+    "job_marketplace": "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",
     "payment_escrow": "0x...",
     "host_earnings": "0x..."
   },
@@ -683,10 +683,10 @@ GET /v1/chains
       "native_token": "ETH",
       "rpc_url": "https://sepolia.base.org",
       "contracts": {
-        "job_marketplace": "0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E",
-        "node_registry": "0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6",
+        "job_marketplace": "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",
+        "node_registry": "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
         "proof_system": "0x2ACcc60893872A499700908889B38C5420CBcFD1",
-        "host_earnings": "0x908962e8c6CE72610021586f85ebDE09aAc97776",
+        "host_earnings": "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
         "model_registry": "0x92b2De840bB2171203011A6dBA928d855cA8183E",
         "usdc_token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
       }
@@ -2313,7 +2313,7 @@ The node generates cryptographic proofs for all inference results to ensure paym
 - **Storage**: Off-chain in S5 network (737x size reduction on-chain)
 - **On-Chain Submission**: Only hash + CID (hash: 32 bytes, CID: ~50 bytes)
 - **Contract Function**: `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID)`
-- **Contract Address**: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (Base Sepolia)
+- **Contract Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` (Base Sepolia, UUPS Proxy)
 
 **🚨 CRITICAL**: Nodes built without `--features real-ezkl` generate **mock proofs** (126 bytes) which are NOT valid for production use!
 
@@ -2461,8 +2461,8 @@ Starting with v5, payment settlement is automatic when WebSocket disconnects:
 2. **Node Action**: Automatically calls `completeSessionJob()`
 3. **Blockchain Transaction**: Submits settlement to JobMarketplace contract
 4. **Payment Distribution**:
-   - Host: 90% sent to HostEarnings contract (0x908962e8c6CE72610021586f85ebDE09aAc97776)
-   - Treasury: 10% fee (0xbeaBB2a5AEd358aA0bd442dFFd793411519Bdc11)
+   - Host: 90% sent to HostEarnings contract (0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0)
+   - Treasury: 10% fee
    - User: Unused deposit refunded
 
 **No User Action Required**: Sessions settle automatically, ensuring hosts always get paid for completed work.
@@ -2480,7 +2480,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 **Requirements**:
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
-- JobMarketplace: 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E (v8.1.2+)
+- JobMarketplace: 0x3CaCbf3f448B420918A93a88706B26Ab27a3523E (v8.5.0+ UUPS Proxy)
 
 ### Proof Configuration
 
@@ -2978,23 +2978,22 @@ All contract addresses are defined in the `.env.contracts` file at the repositor
 
 #### Base Sepolia (Chain ID: 84532)
 
-**Current Deployment** (v8.1.2+):
+**Current Deployment** (v8.5.0+ UUPS Upgradeable Proxies, December 2025):
 
 | Contract | Address | Version | Features |
 |----------|---------|---------|----------|
-| **NodeRegistry** | `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` | v8.4.22+ | Dual pricing + PRICE_PRECISION=1000 |
-| **JobMarketplace** | `0xfD764804C5A5808b79D66746BAF4B65fb4413731` | v8.4.22+ | S5 proof storage + PRICE_PRECISION=1000 |
-| **PaymentEscrow** | `PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS` | Current | Payment escrow with earnings tracking |
-| **HostEarnings** | `HOST_EARNINGS_ADDRESS` | Current | Host earnings accumulator (90% share) |
-| **ProofSystem** | `PROOF_SYSTEM_ADDRESS` | Current | Proof verification system |
-| **ReputationSystem** | `REPUTATION_SYSTEM_ADDRESS` | Current | Node reputation tracking |
+| **NodeRegistry** | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | v8.5.0+ | UUPS Proxy, dual pricing + PRICE_PRECISION=1000 |
+| **JobMarketplace** | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | v8.5.0+ | UUPS Proxy, S5 proof storage, security audit (Jan 2026) |
+| **HostEarnings** | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | v8.5.0+ | UUPS Proxy, host earnings accumulator (90% share) |
+| **ProofSystem** | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | v8.5.0+ | UUPS Proxy, proof verification system |
+| **ModelRegistry** | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | v8.5.0+ | UUPS Proxy, model governance |
 
 **Deprecated Addresses** (Do not use):
+- Old JobMarketplace: `0xeebEEbc9BCD35e81B06885b63f980FeC71d56e2D` (pre-Security Audit, v8.5.0-v8.9.1)
+- Old NodeRegistry: `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` (pre-UUPS, v8.4.22)
+- Old JobMarketplace: `0xfD764804C5A5808b79D66746BAF4B65fb4413731` (pre-UUPS, v8.4.22)
 - Old NodeRegistry: `0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6` (pre-v8.4.22, no PRICE_PRECISION)
-- Old NodeRegistry: `0xC8dDD546e0993eEB4Df03591208aEDF6336342D7` (pre-v7.0.29, no dual pricing)
 - Old JobMarketplace: `0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E` (pre-v8.4.22, no PRICE_PRECISION)
-- Old JobMarketplace (full proof): `0x462050a4a551c4292586D9c1DE23e3158a9bF3B3` (pre-v8.1.2)
-- Old JobMarketplace (pre-S5): `0xe169A4B57700080725f9553E3Cc69885fea13629` (pre-v8.1.2)
 
 #### opBNB Testnet (Chain ID: 5611)
 
@@ -3021,11 +3020,12 @@ Contract addresses for opBNB Testnet are defined in `.env.contracts` but the cha
 #### Environment Configuration
 
 ```bash
-# From .env.local.test (v8.4.22+ with PRICE_PRECISION=1000)
-NODE_REGISTRY_FAB_ADDRESS=0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999
-JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS=0xfD764804C5A5808b79D66746BAF4B65fb4413731
-PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS=<from .env.contracts>
-HOST_EARNINGS_ADDRESS=<from .env.contracts>
+# From .env.local.test (v8.5.0+ UUPS Proxies)
+CONTRACT_NODE_REGISTRY=0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
+CONTRACT_JOB_MARKETPLACE=0x3CaCbf3f448B420918A93a88706B26Ab27a3523E
+CONTRACT_HOST_EARNINGS=0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0
+CONTRACT_PROOF_SYSTEM=0x5afB91977e69Cc5003288849059bc62d47E7deeb
+CONTRACT_MODEL_REGISTRY=0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2
 
 # Test accounts (from .env.test.local)
 TEST_USER_1_ADDRESS=<from .env.test.local>
@@ -5046,7 +5046,7 @@ cast client --rpc-url https://sepolia.base.org
 cast client --rpc-url https://opbnb-testnet.binance.org
 
 # Check contract deployment (v8.1.2+ hash+CID contract)
-cast code 0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E --rpc-url https://sepolia.base.org
+cast code 0x3CaCbf3f448B420918A93a88706B26Ab27a3523E --rpc-url https://sepolia.base.org
 ```
 
 #### Monitor Logs
@@ -5071,8 +5071,8 @@ CHAIN_ID=84532                    # Default chain (Base Sepolia)
 RPC_URL=https://sepolia.base.org  # Default RPC endpoint
 
 # Contract addresses (from .env.contracts)
-JOB_MARKETPLACE_ADDRESS=0xc6D44D7f2DfA8fdbb1614a8b6675c78D3cfA376E
-NODE_REGISTRY_ADDRESS=0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
+JOB_MARKETPLACE_ADDRESS=0x3CaCbf3f448B420918A93a88706B26Ab27a3523E
+NODE_REGISTRY_ADDRESS=0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
 
 # Node wallet (must have gas on both chains)
 HOST_PRIVATE_KEY=0x...
