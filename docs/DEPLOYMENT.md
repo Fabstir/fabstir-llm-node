@@ -99,7 +99,7 @@ docker-compose logs -f fabstir-node
 # Clone and build
 git clone https://github.com/fabstir/fabstir-llm-node.git
 cd fabstir-llm-node
-cargo build --release
+cargo build --release --features real-ezkl -j 4
 
 # Binary location
 ls -la target/release/fabstir-llm-node
@@ -480,10 +480,10 @@ data:
   EMBEDDING_DIMENSIONS: "384"
   ENABLE_EMBEDDINGS: "true"
 
-  # Blockchain Configuration (v8.4.22+ with PRICE_PRECISION=1000)
+  # Blockchain Configuration (v8.5.0+ UUPS Upgradeable Proxies)
   RPC_URL: "https://sepolia.base.org"
-  JOB_MARKETPLACE_ADDRESS: "0xfD764804C5A5808b79D66746BAF4B65fb4413731"
-  NODE_REGISTRY_ADDRESS: "0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999"
+  JOB_MARKETPLACE_ADDRESS: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E"
+  NODE_REGISTRY_ADDRESS: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22"
 
 ---
 apiVersion: v1

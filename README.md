@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.4.1-s5-integration-tests (November 2025)
+**Version**: v8.12.6-settlement-race-fix (January 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -69,7 +69,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.4"
+strings target/release/fabstir-llm-node | grep "v8.12"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -139,22 +139,21 @@ cargo build --release --features real-ezkl -j 4
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.4.1.tar.gz
-cd fabstir-llm-node-v8.4.1
+tar -xzf fabstir-llm-node-v8.12.6.tar.gz
+cd fabstir-llm-node-v8.12.6
 ./fabstir-llm-node --version
 ```
 
 ## Smart Contract Configuration
 
-**Single Source of Truth**: All contract addresses are defined in `.env.contracts`
+**Single Source of Truth**: All contract addresses are defined in `.env.local.test`
 
-Key contracts (Base Sepolia, v8.4.22+ with PRICE_PRECISION=1000):
-- **NODE_REGISTRY_FAB_ADDRESS**: `0x906F4A8Cb944E4fe12Fb85Be7E627CeDAA8B8999` (Dual pricing + PRICE_PRECISION)
-- **JOB_MARKETPLACE_FAB_WITH_S5_ADDRESS**: `0xfD764804C5A5808b79D66746BAF4B65fb4413731` (S5 proofs + PRICE_PRECISION)
-- **PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS**: Payment escrow contract
-- **HOST_EARNINGS_ADDRESS**: Host earnings tracker
-
-For host registration and dual pricing details, see `docs/compute-contracts-reference/HOST_REGISTRATION_GUIDE.md`.
+Key contracts (Base Sepolia, v8.5.0+ UUPS Upgradeable Proxies):
+- **CONTRACT_NODE_REGISTRY**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
+- **CONTRACT_JOB_MARKETPLACE**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
+- **CONTRACT_HOST_EARNINGS**: `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0`
+- **CONTRACT_PROOF_SYSTEM**: `0x5afB91977e69Cc5003288849059bc62d47E7deeb`
+- **CONTRACT_MODEL_REGISTRY**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2`
 
 ## Project Structure
 
@@ -270,7 +269,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.4"
+strings target/release/fabstir-llm-node | grep "v8.12"
 ```
 
 #### Out of Memory During Build
@@ -378,16 +377,4 @@ For issues and questions:
 ### SDK Developer Guides
 - [WebSocket API Integration](docs/sdk-reference/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
 - [S5 Vector Loading](docs/sdk-reference/S5_VECTOR_LOADING.md) - Load vector databases from S5 storage (v8.4.0+)
-- [RAG SDK Integration](docs/RAG_SDK_INTEGRATION.md) - RAG implementation guide
-- [SDK Encryption Integration](docs/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
-
-### Contract Reference
-- [Host Registration Guide](docs/compute-contracts-reference/HOST_REGISTRATION_GUIDE.md) - Dual pricing registration
-- [JobMarketplace Contract](docs/compute-contracts-reference/JobMarketplace.md) - Job marketplace details
-- [S5 Node Integration](docs/compute-contracts-reference/S5_NODE_INTEGRATION_GUIDE.md) - Off-chain proof storage (v8.1.2+)
-
-### Implementation Tracking
-- [Multi-Chain Implementation](docs/IMPLEMENTATION-MULTI.md) - Multi-chain feature progress
-- [Risc0 & S5 Implementation](docs/IMPLEMENTATION-RISC0-2.md) - Zero-knowledge proof tracking
-- [Host-Side RAG Implementation](docs/IMPLEMENTATION_HOST_SIDE_RAG.md) - RAG feature progress
-- [S5 Vector Loading Implementation](docs/IMPLEMENTATION_S5_VECTOR_LOADING.md) - S5 vector loading status (v8.4.0+)
+- [SDK Encryption Integration](docs/sdk-reference/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
