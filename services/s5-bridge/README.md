@@ -7,9 +7,9 @@ HTTP bridge service that exposes [Enhanced S5.js](https://github.com/parajbs/s5-
 ```
 Rust Node → HTTP Bridge (localhost:5522) → Enhanced S5.js SDK → P2P Network (WebSocket)
                                                   ↓
-                                           S5 Portal (s5.vup.cx)
+                                    S5 Portal (s5.platformlessai.ai)
                                                   ↓
-                                      Decentralized Storage Network
+                                      Sia Decentralized Storage
 ```
 
 ## Features
@@ -64,7 +64,7 @@ Expected output:
   "initialized": true,
   "connected": true,
   "peerCount": 1,
-  "portal": "https://s5.vup.cx"
+  "portal": "https://s5.platformlessai.ai"
 }
 ```
 
@@ -136,8 +136,8 @@ Environment variables (see `.env.example`):
 | `BRIDGE_PORT` | `5522` | HTTP server port |
 | `BRIDGE_HOST` | `localhost` | Bind address (localhost for security) |
 | `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase |
-| `S5_PORTAL_URL` | `https://s5.vup.cx` | S5 portal gateway URL |
-| `S5_INITIAL_PEERS` | `wss://...s5.ninja/s5/p2p` | WebSocket P2P peers (comma-separated) |
+| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL (Sia storage) |
+| `S5_INITIAL_PEERS` | `wss://...node.sfive.net/s5/p2p,...` | WebSocket P2P peers (comma-separated) |
 | `LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `PRETTY_LOGS` | `true` | Enable pretty-printed logs |
 | `REQUEST_TIMEOUT_MS` | `30000` | Request timeout (30 seconds) |
@@ -184,13 +184,13 @@ npm run test:watch
 
 ### P2P Peers Not Connecting
 
-1. Check network connectivity: `ping s5.ninja`
-2. Verify WebSocket access (port 443): `curl -I https://s5.ninja`
+1. Check network connectivity: `ping node.sfive.net`
+2. Verify WebSocket access (port 443): `curl -I https://node.sfive.net`
 3. Try alternative peers in `S5_INITIAL_PEERS`
 
 ### Portal Registration Failing
 
-1. Check portal URL is accessible: `curl https://s5.vup.cx`
+1. Check portal URL is accessible: `curl https://s5.platformlessai.ai/s5/version`
 2. Verify seed phrase is valid (12 words)
 3. Check logs for detailed error messages
 

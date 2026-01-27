@@ -34,6 +34,7 @@ pub struct JobTokenTracker {
     pub session_id: Option<String>,
     pub submission_in_progress: bool,
     pub last_proof_timestamp: Option<std::time::Instant>, // Track when last proof was submitted
+    pub submission_started_at: Option<std::time::Instant>, // Track when current submission started (for timeout calculation)
 }
 
 /// Content hashes for cryptographic proof binding (Phase 4 - v8.10.0)
@@ -50,6 +51,93 @@ pub struct ContentHashes {
     response_buffer: String,
 }
 
+/// Cached proof data for S5 propagation delay handling (v8.12.6)
+///
+/// Local cache that stores proof data after S5 upload succeeds but before on-chain tx.
+/// This allows settlement to proceed even if S5 data hasn't fully propagated to other peers.
+#[derive(Debug, Clone)]
+pub struct CachedProofEntry {
+    /// SHA256 hash of the proof (for on-chain submission)
+    pub proof_hash: [u8; 32],
+    /// S5 CID of the uploaded proof
+    pub proof_cid: String,
+    /// Delta CID for encrypted checkpoint (if applicable)
+    pub delta_cid: Option<String>,
+    /// Token count for this proof
+    pub tokens: u64,
+    /// When this cache entry was created
+    pub cached_at: std::time::Instant,
+}
+
+/// Proof submission cache - allows on-chain tx even if S5 hasn't fully propagated
+pub struct ProofSubmissionCache {
+    /// Map of job_id to list of cached proof entries
+    cache: RwLock<HashMap<u64, Vec<CachedProofEntry>>>,
+    /// TTL for cache entries (default: 1 hour)
+    ttl: Duration,
+}
+
+impl ProofSubmissionCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            cache: RwLock::new(HashMap::new()),
+            ttl,
+        }
+    }
+
+    /// Cache proof data after successful S5 upload
+    pub async fn cache_proof(&self, job_id: u64, entry: CachedProofEntry) {
+        let proof_hash_hex = hex::encode(&entry.proof_hash[..8]);
+        let mut cache = self.cache.write().await;
+        cache.entry(job_id).or_insert_with(Vec::new).push(entry);
+        info!(
+            "[PROOF-CACHE] Cached proof for job {} (hash: 0x{}...)",
+            job_id,
+            proof_hash_hex
+        );
+    }
+
+    /// Get cached proof data for a job
+    pub async fn get_cached_proofs(&self, job_id: u64) -> Vec<CachedProofEntry> {
+        let cache = self.cache.read().await;
+        cache.get(&job_id).cloned().unwrap_or_default()
+    }
+
+    /// Get the most recent cached proof for a job
+    pub async fn get_latest_proof(&self, job_id: u64) -> Option<CachedProofEntry> {
+        let cache = self.cache.read().await;
+        cache.get(&job_id).and_then(|proofs| proofs.last().cloned())
+    }
+
+    /// Cleanup entries for a specific job (called when job tracker is cleaned up)
+    pub async fn cleanup_job(&self, job_id: u64) {
+        let mut cache = self.cache.write().await;
+        if cache.remove(&job_id).is_some() {
+            info!("[PROOF-CACHE] Cleaned up cache for job {}", job_id);
+        }
+    }
+
+    /// Cleanup expired entries (entries older than TTL)
+    pub async fn cleanup_expired(&self) {
+        let mut cache = self.cache.write().await;
+        let now = std::time::Instant::now();
+        let mut expired_count = 0;
+
+        for proofs in cache.values_mut() {
+            let before_len = proofs.len();
+            proofs.retain(|p| now.duration_since(p.cached_at) < self.ttl);
+            expired_count += before_len - proofs.len();
+        }
+
+        // Remove empty entries
+        cache.retain(|_, proofs| !proofs.is_empty());
+
+        if expired_count > 0 {
+            info!("[PROOF-CACHE] Cleaned up {} expired entries", expired_count);
+        }
+    }
+}
+
 pub struct CheckpointManager {
     web3_client: Arc<Web3Client>,
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
@@ -60,6 +148,8 @@ pub struct CheckpointManager {
     s5_storage: Box<dyn S5Storage>, // S5 storage for off-chain proof storage
     /// Checkpoint publisher for conversation recovery (Phase 3)
     checkpoint_publisher: Arc<CheckpointPublisher>,
+    /// Proof submission cache for S5 propagation delay handling (v8.12.6)
+    proof_cache: Arc<ProofSubmissionCache>,
 }
 
 impl CheckpointManager {
@@ -83,6 +173,10 @@ impl CheckpointManager {
         // Initialize checkpoint publisher for conversation recovery (Phase 3)
         let checkpoint_publisher = Arc::new(CheckpointPublisher::new(format!("{:?}", host_address)));
 
+        // Initialize proof cache for S5 propagation delay handling (v8.12.6)
+        // TTL of 1 hour - proofs older than this are cleaned up
+        let proof_cache = Arc::new(ProofSubmissionCache::new(Duration::from_secs(3600)));
+
         eprintln!("CheckpointManager initialized:");
         eprintln!("  Host: {:?}", host_address);
         eprintln!("  JobMarketplace: {}", job_marketplace_address);
@@ -96,6 +190,7 @@ impl CheckpointManager {
             host_address,
             s5_storage,
             checkpoint_publisher,
+            proof_cache,
         })
     }
 
@@ -117,6 +212,7 @@ impl CheckpointManager {
                 session_id: session_id.clone(),
                 submission_in_progress: false,
                 last_proof_timestamp: None,
+                submission_started_at: None,
             }
         });
 
@@ -151,6 +247,7 @@ impl CheckpointManager {
 
             // Mark submission as in progress to prevent race conditions
             tracker.submission_in_progress = true;
+            tracker.submission_started_at = Some(std::time::Instant::now());
             // Optimistically update the checkpoint to reflect cumulative tokens proven
             tracker.last_checkpoint = tracker.tokens_generated;
 
@@ -172,6 +269,7 @@ impl CheckpointManager {
             let host_address = self.host_address;
             let s5_storage = self.s5_storage.clone();
             let checkpoint_publisher = self.checkpoint_publisher.clone();
+            let proof_cache = self.proof_cache.clone();
 
             // Phase 4: Get content hashes for real proof binding (v8.10.0+)
             let content_hashes = self.get_content_hashes(job_id).await;
@@ -191,12 +289,14 @@ impl CheckpointManager {
                     session_id_for_publish,
                     checkpoint_publisher,
                     previous_checkpoint,
+                    proof_cache,
                 ).await;
 
                 // Update tracker based on result
                 let mut trackers = job_trackers.write().await;
                 if let Some(tracker) = trackers.get_mut(&job_id) {
                     tracker.submission_in_progress = false; // Clear the flag
+                    tracker.submission_started_at = None; // Clear the start timestamp
 
                     if let Err(e) = submission_result {
                         error!("Failed to submit checkpoint for job {}: {}", job_id, e);
@@ -599,6 +699,7 @@ impl CheckpointManager {
         session_id: Option<String>,
         checkpoint_publisher: Arc<CheckpointPublisher>,
         previous_checkpoint_tokens: u64,
+        proof_cache: Arc<ProofSubmissionCache>,
     ) -> Result<()> {
         let tokens_to_submit = tokens_generated;
 
@@ -689,6 +790,26 @@ impl CheckpointManager {
             host_address,
             signature[64]
         );
+
+        // Cache proof data for S5 propagation delay handling (v8.12.6)
+        // Cache BEFORE on-chain tx so data is available even if tx fails
+        let delta_cid_option = if delta_cid.is_empty() {
+            None
+        } else {
+            Some(delta_cid.clone())
+        };
+        proof_cache
+            .cache_proof(
+                job_id,
+                CachedProofEntry {
+                    proof_hash: proof_hash_bytes,
+                    proof_cid: proof_cid.clone(),
+                    delta_cid: delta_cid_option,
+                    tokens: tokens_to_submit,
+                    cached_at: std::time::Instant::now(),
+                },
+            )
+            .await;
 
         // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
         let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, delta_cid);
@@ -934,6 +1055,7 @@ impl CheckpointManager {
 
                 // Mark as in progress and update checkpoint to reflect total tokens proven
                 tracker.submission_in_progress = true;
+                tracker.submission_started_at = Some(std::time::Instant::now());
                 tracker.last_checkpoint = tracker.tokens_generated; // Update to total after submission
 
                 // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
@@ -959,12 +1081,14 @@ impl CheckpointManager {
                     session_id_for_publish,
                     self.checkpoint_publisher.clone(),
                     previous_checkpoint,
+                    self.proof_cache.clone(),
                 ).await;
 
                 // Update tracker based on result
                 let mut trackers = self.job_trackers.write().await;
                 if let Some(tracker) = trackers.get_mut(&job_id) {
                     tracker.submission_in_progress = false;
+                    tracker.submission_started_at = None;
 
                     if let Err(ref e) = submission_result {
                         error!("❌ [SYNC-FINAL] Failed to submit final checkpoint for job {}: {}", job_id, e);
@@ -1013,6 +1137,7 @@ impl CheckpointManager {
         let host_address = self.host_address;
         let s5_storage = self.s5_storage.clone();
         let checkpoint_publisher = self.checkpoint_publisher.clone();
+        let proof_cache = self.proof_cache.clone();
 
         // Phase 4: Get content hashes before spawning (v8.10.0+)
         let content_hashes = self.get_content_hashes(job_id).await;
@@ -1059,6 +1184,7 @@ impl CheckpointManager {
 
                 // Mark as in progress and update checkpoint
                 tracker.submission_in_progress = true;
+                tracker.submission_started_at = Some(std::time::Instant::now());
                 tracker.last_checkpoint = tracker.tokens_generated;
 
                 // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
@@ -1085,12 +1211,14 @@ impl CheckpointManager {
                 session_id_for_publish,
                 checkpoint_publisher,
                 previous_checkpoint,
+                proof_cache,
             ).await;
 
             // Update tracker based on result
             let mut trackers = job_trackers.write().await;
             if let Some(tracker) = trackers.get_mut(&job_id) {
                 tracker.submission_in_progress = false;
+                tracker.submission_started_at = None;
 
                 if let Err(e) = submission_result {
                     error!("❌ [FORCE-CHECKPOINT-BG] Failed for job {}: {}", job_id, e);
@@ -1147,6 +1275,48 @@ impl CheckpointManager {
             } else {
                 error!("[CHECKPOINT-MGR]   ❌ Job {} has NO TRACKER - payment calculation may be affected!", job_id);
             }
+        }
+
+        // CRITICAL FIX: Wait for any in-flight background proof submission to complete
+        // before attempting final checkpoint or settlement. This prevents the race condition
+        // where settlement proceeds while a background proof task is still running.
+        let max_wait = Duration::from_secs(120); // 2 minutes max wait
+        let poll_interval = Duration::from_millis(500);
+        let wait_start = std::time::Instant::now();
+
+        loop {
+            let in_progress = {
+                let trackers = self.job_trackers.read().await;
+                trackers
+                    .get(&job_id)
+                    .map(|t| t.submission_in_progress)
+                    .unwrap_or(false)
+            };
+
+            if !in_progress {
+                info!(
+                    "[CHECKPOINT-MGR] ✅ No in-flight submission for job {} - proceeding with settlement",
+                    job_id
+                );
+                break;
+            }
+
+            if wait_start.elapsed() > max_wait {
+                warn!(
+                    "[CHECKPOINT-MGR] ⚠️ Timeout waiting for in-flight submission for job {} after {:.1}s",
+                    job_id,
+                    wait_start.elapsed().as_secs_f32()
+                );
+                warn!("[CHECKPOINT-MGR] Proceeding with settlement anyway - proof may be lost");
+                break;
+            }
+
+            info!(
+                "[CHECKPOINT-MGR] ⏳ Waiting for in-flight submission to complete for job {} ({:.1}s elapsed)...",
+                job_id,
+                wait_start.elapsed().as_secs_f32()
+            );
+            tokio::time::sleep(poll_interval).await;
         }
 
         // First submit any pending checkpoint - FORCE submission even if < MIN_PROVEN_TOKENS
@@ -1494,6 +1664,10 @@ impl CheckpointManager {
         if trackers.remove(&job_id).is_some() {
             info!("Cleaned up tracker for job {}", job_id);
         }
+        drop(trackers);
+
+        // Clean up proof cache for this job
+        self.proof_cache.cleanup_job(job_id).await;
 
         Ok(())
     }
@@ -1508,6 +1682,10 @@ impl CheckpointManager {
         if trackers.remove(&job_id).is_some() {
             info!("Cleaned up tracker for job {}", job_id);
         }
+        drop(trackers);
+
+        // Clean up proof cache for this job
+        self.proof_cache.cleanup_job(job_id).await;
     }
 
     // ============================================================
@@ -2465,6 +2643,7 @@ mod tests {
                     session_id: session_id.clone(),
                     submission_in_progress: false,
                     last_proof_timestamp: None,
+                    submission_started_at: None,
                 },
             );
         }
@@ -2495,6 +2674,7 @@ mod tests {
                     session_id: None, // Initially None
                     submission_in_progress: false,
                     last_proof_timestamp: None,
+                    submission_started_at: None,
                 },
             );
         }
@@ -2543,6 +2723,7 @@ mod tests {
                     session_id: Some("original-session".to_string()),
                     submission_in_progress: false,
                     last_proof_timestamp: None,
+                    submission_started_at: None,
                 },
             );
         }
@@ -2563,6 +2744,119 @@ mod tests {
         let trackers = job_trackers.read().await;
         let tracker = trackers.get(&job_id).unwrap();
         assert_eq!(tracker.session_id, Some("original-session".to_string()));
+    }
+
+    // ========================================================================
+    // Race Condition Fix Tests (v8.12.6)
+    // ========================================================================
+
+    /// Test that proof cache stores and retrieves entries correctly
+    #[tokio::test]
+    async fn test_proof_cache_basic_operations() {
+        use std::time::Duration;
+
+        let cache = ProofSubmissionCache::new(Duration::from_secs(3600));
+        let job_id = 12345u64;
+
+        // Cache should be empty initially
+        let proofs = cache.get_cached_proofs(job_id).await;
+        assert!(proofs.is_empty());
+
+        // Add a proof entry
+        let entry = CachedProofEntry {
+            proof_hash: [1u8; 32],
+            proof_cid: "blobtest123".to_string(),
+            delta_cid: Some("deltacid456".to_string()),
+            tokens: 500,
+            cached_at: std::time::Instant::now(),
+        };
+        cache.cache_proof(job_id, entry).await;
+
+        // Should have one entry now
+        let proofs = cache.get_cached_proofs(job_id).await;
+        assert_eq!(proofs.len(), 1);
+        assert_eq!(proofs[0].tokens, 500);
+        assert_eq!(proofs[0].proof_cid, "blobtest123");
+
+        // Get latest should return the entry
+        let latest = cache.get_latest_proof(job_id).await;
+        assert!(latest.is_some());
+        assert_eq!(latest.unwrap().tokens, 500);
+
+        // Cleanup should remove the entry
+        cache.cleanup_job(job_id).await;
+        let proofs = cache.get_cached_proofs(job_id).await;
+        assert!(proofs.is_empty());
+    }
+
+    /// Test that submission_started_at is set and cleared correctly
+    #[tokio::test]
+    async fn test_submission_started_at_tracking() {
+        let job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let job_id = 77777u64;
+
+        // Create tracker with submission_in_progress = false
+        {
+            let mut trackers = job_trackers.write().await;
+            trackers.insert(
+                job_id,
+                JobTokenTracker {
+                    job_id,
+                    tokens_generated: 100,
+                    last_checkpoint: 0,
+                    session_id: Some("test-session".to_string()),
+                    submission_in_progress: false,
+                    last_proof_timestamp: None,
+                    submission_started_at: None,
+                },
+            );
+        }
+
+        // Verify initial state
+        {
+            let trackers = job_trackers.read().await;
+            let tracker = trackers.get(&job_id).unwrap();
+            assert!(!tracker.submission_in_progress);
+            assert!(tracker.submission_started_at.is_none());
+        }
+
+        // Simulate starting a submission
+        {
+            let mut trackers = job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                tracker.submission_in_progress = true;
+                tracker.submission_started_at = Some(std::time::Instant::now());
+            }
+        }
+
+        // Verify submission is in progress
+        {
+            let trackers = job_trackers.read().await;
+            let tracker = trackers.get(&job_id).unwrap();
+            assert!(tracker.submission_in_progress);
+            assert!(tracker.submission_started_at.is_some());
+        }
+
+        // Simulate completing a submission
+        {
+            let mut trackers = job_trackers.write().await;
+            if let Some(tracker) = trackers.get_mut(&job_id) {
+                tracker.submission_in_progress = false;
+                tracker.submission_started_at = None;
+                tracker.last_proof_timestamp = Some(std::time::Instant::now());
+            }
+        }
+
+        // Verify submission completed
+        {
+            let trackers = job_trackers.read().await;
+            let tracker = trackers.get(&job_id).unwrap();
+            assert!(!tracker.submission_in_progress);
+            assert!(tracker.submission_started_at.is_none());
+            assert!(tracker.last_proof_timestamp.is_some());
+        }
     }
 
     // ========================================================================

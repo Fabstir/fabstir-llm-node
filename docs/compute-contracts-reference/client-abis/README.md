@@ -45,7 +45,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ### NodeRegistryWithModelsUpgradeable
 - **Proxy Address**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
-- **Implementation**: `0x4574d6f1D888cF97eBb8E1bb5E02a5A386b6cFA7` ✅ Corrupt node fix (Jan 10, 2026)
+- **Implementation**: `0xF2D98D38B2dF95f4e8e4A49750823C415E795377` ✅ Stake slashing (Jan 16, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `NodeRegistryWithModelsUpgradeable-CLIENT-ABI.json`
@@ -53,11 +53,23 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - All features from non-upgradeable version
   - UUPS proxy pattern for future upgrades
   - Owner-only upgrade authorization
-- **New Functions (Jan 10, 2026)**:
+- **Stake Slashing (Jan 16, 2026)**:
+  - `slashStake(address, uint256, string, string)` - Slash host stake for misbehavior
+  - `initializeSlashing(address)` - Initialize slashing after upgrade (owner, one-time)
+  - `setSlashingAuthority(address)` - Set slashing authority (owner, for DAO migration)
+  - `setTreasury(address)` - Set treasury for slashed tokens (owner)
+  - `lastSlashTime(address)` - Query last slash timestamp for a host
+  - Max 50% slash per action, 24-hour cooldown between slashes
+  - Auto-unregisters host if stake falls below 100 FAB
+- **Slashing Events**:
+  - `SlashExecuted(host, amount, remainingStake, evidenceCID, reason, executor, timestamp)`
+  - `HostAutoUnregistered(host, slashedAmount, returnedAmount, reason)`
+  - `SlashingAuthorityUpdated(previousAuthority, newAuthority)`
+  - `TreasuryUpdated(newTreasury)`
+- **Previous Updates (Jan 10, 2026)**:
   - `repairCorruptNode(address)` - Owner-only function to fix corrupt node state from upgrades
   - `unregisterNode()` - Now handles corrupt state gracefully (safety check added)
-- **New Event**:
-  - `CorruptNodeRepaired(address indexed operator, uint256 stakeReturned)`
+  - `CorruptNodeRepaired(address indexed operator, uint256 stakeReturned)` event
 
 ### ModelRegistryUpgradeable
 - **Proxy Address**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2`
@@ -614,7 +626,7 @@ struct SessionJob {
     uint256 tokensConsumed;     // Total tokens consumed (via S5 proofs)
     uint256 createdAt;          // Creation timestamp
     bool active;                // Session status
-    string conversationCID;     // IPFS/S5 CID after completion
+    string conversationCID;     // S5 CID after completion
     address paymentToken;       // Payment token (0x0 for ETH)
     uint256 lastProofTimestamp; // Last proof submission time
     uint256 totalPayment;       // Total paid to host
@@ -856,9 +868,10 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-January 14, 2026 - deltaCID support for proof submissions
+January 16, 2026 - Stake slashing feature for NodeRegistry
 
 ### Recent Changes
+- **Jan 16, 2026**: Stake slashing - `slashStake()`, `initializeSlashing()`, `setSlashingAuthority()`, `setTreasury()`, `lastSlashTime()`
 - **Jan 14, 2026**: deltaCID support - `submitProofOfWork` now 6 params, `getProofSubmission` returns 5 values
 - **Jan 10, 2026**: NodeRegistry - Added `repairCorruptNode()` admin function and safety check in `unregisterNode()`
 - **Jan 9, 2026**: Clean slate JobMarketplace deployment - new proxy address `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`

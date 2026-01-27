@@ -11,7 +11,7 @@ services:
       - "5525:5522"
     environment:
       - NODE_ENV=production
-      - S5_NODE_URL=https://s5.vup.cx
+      - S5_NODE_URL=https://s5.platformlessai.ai
       - S5_SEED_PHRASE=${S5_SEED_PHRASE}
       - PORT=5522
       - ENABLE_MOCK=false
