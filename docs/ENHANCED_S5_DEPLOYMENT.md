@@ -23,6 +23,7 @@ Fabstir LLM Node (Rust) → HTTP API (localhost:5522) → Enhanced S5.js Bridge 
 - Connects to P2P network via WebSocket
 - No centralized servers involved
 - Identity managed via seed phrase
+- Portal registration via on-chain verification (NodeRegistry)
 - HTTP API localhost-only for security
 
 ## Prerequisites
@@ -59,10 +60,16 @@ cp .env.example .env
 nano .env
 ```
 
-Set `S5_SEED_PHRASE` to your 12-word phrase:
+Set required environment variables:
 ```bash
+# S5 identity (12-15 word seed phrase)
 S5_SEED_PHRASE=word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12
+
+# Host Ethereum private key (must be registered on NodeRegistry)
+HOST_PRIVATE_KEY=0x...
 ```
+
+**Note:** `HOST_PRIVATE_KEY` is required for on-chain verified portal registration. The host must be registered on the NodeRegistry contract before the bridge can register with the S5 portal.
 
 ### 3. Start Bridge
 
@@ -73,7 +80,7 @@ npm start
 Expected output:
 ```
 ╔════════════════════════════════════════╗
-║  Enhanced S5.js Bridge Service v1.0.0  ║
+║  Enhanced S5.js Bridge Service v1.2.0  ║
 ║  P2P Storage Bridge for Fabstir Node  ║
 ╚════════════════════════════════════════╝
 
@@ -81,20 +88,25 @@ Expected output:
 📋 Bridge Configuration:
    Host: localhost
    Port: 5522
-   Portal: https://s5.vup.cx
-   Peers: 1 configured
+   Portal: https://s5.platformlessai.ai
+   Peers: 3 configured
    Identity: ✅ Configured
+   Host Key: ✅ Configured
    ...
 
 🚀 Initializing Enhanced S5.js client...
-📡 Connecting to 1 P2P peer(s)...
+📡 Connecting to 3 P2P peer(s)...
 ✅ S5 instance created
 🔐 Recovering identity from seed phrase...
 ✅ Identity recovered
-🌐 Registering with S5 portal: https://s5.vup.cx
-✅ Portal registration complete
-📁 Initializing S5 filesystem...
-✅ Filesystem initialized
+🔑 Checking for existing portal account: https://s5.platformlessai.ai
+🌐 Registering with portal via on-chain verification: https://s5.platformlessai.ai
+   S5 PubKey: xxxx...
+   ETH Address: 0x...
+   ✅ On-chain verification passed, got S5 challenge
+✅ Portal registration complete (on-chain verified)
+🔧 Initializing filesystem for read/write operations...
+✅ Filesystem initialized - uploads and downloads ready
 🎉 Enhanced S5.js client fully initialized
 
 🚀 Starting HTTP server...
@@ -117,7 +129,7 @@ Expected:
   "initialized": true,
   "connected": true,
   "peerCount": 1,
-  "portal": "https://s5.vup.cx"
+  "portal": "https://s5.platformlessai.ai"
 }
 ```
 
@@ -264,9 +276,10 @@ For daemon mode:
 |----------|---------|-------------|
 | `BRIDGE_PORT` | `5522` | HTTP server port |
 | `BRIDGE_HOST` | `localhost` | Bind address (localhost for security) |
-| `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase |
-| `S5_PORTAL_URL` | `https://s5.vup.cx` | S5 portal gateway URL |
-| `S5_INITIAL_PEERS` | `wss://...s5.ninja/s5/p2p` | WebSocket P2P peers (comma-separated) |
+| `S5_SEED_PHRASE` | *required* | 12-15 word identity seed phrase |
+| `HOST_PRIVATE_KEY` | *required* | Host ETH private key (must be registered on NodeRegistry) |
+| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL |
+| `S5_INITIAL_PEERS` | `wss://...node.sfive.net/s5/p2p,...` | WebSocket P2P peers (comma-separated) |
 | `LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `PRETTY_LOGS` | `true` | Enable pretty-printed logs (false in production) |
 | `REQUEST_TIMEOUT_MS` | `30000` | Request timeout (30 seconds) |
@@ -287,6 +300,61 @@ MAX_CONTENT_LENGTH=104857600
 # Use multiple peers for redundancy
 S5_INITIAL_PEERS=wss://peer1.example.com/s5/p2p,wss://peer2.example.com/s5/p2p
 ```
+
+## On-Chain Verified Registration
+
+Starting with v1.1.0, the S5 bridge uses **on-chain verification** for portal registration. This eliminates the need for a master token and ensures only legitimate hosts can register.
+
+**v1.2.0 Update:** Uses S5.js v0.9.0-beta.32 high-level APIs (`getSigningPublicKey()`, `sign()`, `storePortalCredentials()`) for simplified code and better maintainability.
+
+### How It Works
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Host (s5-bridge)│     │   S5 Portal      │     │  NodeRegistry   │
+└────────┬────────┘     └────────┬─────────┘     └────────┬────────┘
+         │                       │                        │
+         │ 1. POST /s5/account/register-host              │
+         │    { pubKey, ethAddress, signature, message }  │
+         │──────────────────────>│                        │
+         │                       │                        │
+         │                       │ 2. Verify ETH signature│
+         │                       │                        │
+         │                       │ 3. isActiveNode(addr)  │
+         │                       │───────────────────────>│
+         │                       │                        │
+         │                       │ 4. true/false          │
+         │                       │<───────────────────────│
+         │                       │                        │
+         │ 5. { challenge }      │                        │
+         │<──────────────────────│                        │
+         │                       │                        │
+         │ 6. POST /s5/account/register-host/complete     │
+         │    { pubKey, challenge, response, ... }        │
+         │──────────────────────>│                        │
+         │                       │                        │
+         │ 7. { authToken }      │                        │
+         │<──────────────────────│                        │
+```
+
+### Requirements
+
+1. **Host must be registered on NodeRegistry** - Call `registerNode()` with active stake before starting the bridge
+2. **HOST_PRIVATE_KEY must match** - The ETH private key must correspond to the registered node address
+3. **S5_SEED_PHRASE for S5 identity** - Used to derive S5 keys for signing challenges
+
+### Contract Details
+
+- **Chain**: Base Sepolia
+- **NodeRegistry (UUPS Proxy)**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
+- **Function used**: `isActiveNode(address) returns (bool)`
+
+### Security Benefits
+
+- **No master token exposure** - On-chain state is the authorization
+- **Sybil-resistant** - Only staked hosts can register
+- **Fully automated** - No manual approval needed
+- **Decentralized** - No central authority for registration
 
 ## Identity Management
 
@@ -405,11 +473,11 @@ journalctl -u s5-bridge | grep "fully initialized"
 1. **Network connectivity issues**
    ```bash
    # Test peer connectivity
-   curl -I https://s5.ninja
+   curl -I https://node.sfive.net
    # Should return 200 OK
 
    # Test WebSocket (requires wscat)
-   wscat -c wss://s5.ninja/s5/p2p
+   wscat -c wss://node.sfive.net/s5/p2p
    ```
 
 2. **Firewall blocking WebSocket**
@@ -433,26 +501,47 @@ journalctl -u s5-bridge | grep "fully initialized"
 
 ### Portal Registration Failing
 
-**Symptom**: Error during "Registering with S5 portal"
+**Symptom**: Error during "Registering with portal via on-chain verification"
 
 **Causes & Solutions**:
 
-1. **Portal unreachable**
+1. **Host not registered on NodeRegistry**
+   ```
+   ❌ Host not registered on NodeRegistry
+      Register your host via CLI/TUI first, then restart the bridge
+   ```
+   **Solution**: Register your host on the NodeRegistry contract before starting the bridge. The ETH address from `HOST_PRIVATE_KEY` must be an active node.
+
+2. **Invalid ETH signature**
+   ```
+   ❌ ETH signature verification failed
+      Check HOST_PRIVATE_KEY is correct
+   ```
+   **Solution**: Verify `HOST_PRIVATE_KEY` is set correctly and matches the registered node address.
+
+3. **Missing HOST_PRIVATE_KEY**
+   ```
+   ⚠️  HOST_PRIVATE_KEY not set - cannot register with portal
+   📥 Bridge will operate in read-only mode (downloads only)
+   ```
+   **Solution**: Set `HOST_PRIVATE_KEY` in your `.env` file.
+
+4. **Portal unreachable**
    ```bash
    # Test portal
-   curl https://s5.vup.cx
+   curl https://s5.platformlessai.ai
    ```
 
-2. **Invalid portal URL**
+5. **Invalid portal URL**
    ```bash
    # Check URL format
    echo $S5_PORTAL_URL
-   # Should be: https://s5.vup.cx
+   # Should be: https://s5.platformlessai.ai
    ```
 
-3. **Seed phrase invalid**
+6. **Seed phrase invalid**
    - Regenerate seed phrase
-   - Verify it's exactly 12 words
+   - Verify it's 12-15 words
    - Check for typos
 
 ### File Operations Timing Out

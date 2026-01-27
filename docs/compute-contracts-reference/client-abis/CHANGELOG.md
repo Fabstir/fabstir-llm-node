@@ -1,5 +1,92 @@
 # Client ABIs Changelog
 
+## January 16, 2026 - Stake Slashing Feature
+
+### New Feature: Host Stake Slashing
+Penalize hosts for proven misbehavior (e.g., overclaiming tokens, invalid proofs).
+
+**New Constants:**
+```solidity
+uint256 public constant MAX_SLASH_PERCENTAGE = 50;      // Max 50% per slash
+uint256 public constant MIN_STAKE_AFTER_SLASH = 100e18; // 100 FAB minimum
+uint256 public constant SLASH_COOLDOWN = 24 hours;      // Cooldown between slashes
+```
+
+**New Functions:**
+```solidity
+// Main slashing function (slashing authority only)
+function slashStake(
+    address host,
+    uint256 amount,
+    string calldata evidenceCID,
+    string calldata reason
+) external
+
+// Initialize slashing after upgrade (owner only, one-time)
+function initializeSlashing(address _treasury) external
+
+// Set slashing authority (owner only - for DAO migration)
+function setSlashingAuthority(address newAuthority) external
+
+// Set treasury for slashed tokens (owner only)
+function setTreasury(address newTreasury) external
+
+// Query last slash time
+function lastSlashTime(address host) external view returns (uint256)
+```
+
+**New Events:**
+```solidity
+event SlashExecuted(
+    address indexed host,
+    uint256 amount,
+    uint256 remainingStake,
+    string evidenceCID,
+    string reason,
+    address indexed executor,
+    uint256 timestamp
+);
+event HostAutoUnregistered(
+    address indexed host,
+    uint256 slashedAmount,
+    uint256 returnedAmount,
+    string reason
+);
+event SlashingAuthorityUpdated(address indexed previousAuthority, address indexed newAuthority);
+event TreasuryUpdated(address indexed newTreasury);
+```
+
+**Auto-Unregister Behavior:**
+- If host stake falls below 100 FAB after slash, host is automatically unregistered
+- Remaining stake is returned to the host
+- Host is removed from active nodes list and model mappings
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xF2D98D38B2dF95f4e8e4A49750823C415E795377` |
+
+### No SDK Breaking Changes
+- All existing functions work as before
+- Slashing functions are admin-only (slashing authority)
+- New query function `lastSlashTime(address)` available for all
+
+### SDK Integration (Optional)
+```javascript
+// Query if a host was recently slashed
+const lastSlash = await nodeRegistry.lastSlashTime(hostAddress);
+if (lastSlash > 0) {
+  console.log(`Host was last slashed at: ${new Date(lastSlash * 1000)}`);
+}
+
+// Listen for slash events
+nodeRegistry.on("SlashExecuted", (host, amount, remaining, evidenceCID, reason, executor, timestamp) => {
+  console.log(`Host ${host} slashed ${amount} FAB. Remaining: ${remaining}`);
+});
+```
+
+---
+
 ## January 14, 2026 - deltaCID Support for Proof Submissions (BREAKING CHANGE)
 
 ### ⚠️ SDK BREAKING CHANGE
