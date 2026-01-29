@@ -47,6 +47,7 @@ temp/
 .env.real_s5
 *.env.local
 *.env.production
+.env.prod
 
 # Temporary test files
 s5-mock-service/

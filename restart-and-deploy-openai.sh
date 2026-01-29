@@ -2,12 +2,12 @@
 # Copyright (c) 2025 Fabstir
 # SPDX-License-Identifier: BUSL-1.1
 
-# Test script for GPT-OSS-20B with v8.3.13 CORRECT Harmony format
+# Deployment script for GPT-OSS-120B with 131K context window
 
 set -e
 
 echo "========================================="
-echo "GPT-OSS-20B Test - v8.3.13 (Harmony)"
+echo "GPT-OSS-120B Deployment - 131K Context"
 echo "========================================="
 
 source .env.local.test
@@ -27,9 +27,9 @@ docker rm llm-node-prod-1 2>/dev/null || true
 MODELS_DIR="$(pwd)/models"
 echo "Models directory: $MODELS_DIR"
 
-# Start node with MXFP4 model (recommended quantization)
+# Start node with GPT-OSS-120B (MXFP4, 131K context)
 echo ""
-echo "Starting test node with GPT-OSS-20B (MXFP4 - recommended)..."
+echo "Starting production node with GPT-OSS-120B (MXFP4, 131K context)..."
 docker run -d \
   --name llm-node-prod-1 \
   -p 9001-9003:9001-9003 \
@@ -37,7 +37,10 @@ docker run -d \
   -v "$MODELS_DIR:/models:ro" \
   -e P2P_PORT=9001 \
   -e API_PORT=8080 \
-  -e MODEL_PATH=/models/openai_gpt-oss-20b-MXFP4.gguf \
+  -e MODEL_PATH=/models/gpt-oss-120b-GGUF/gpt-oss-120b-mxfp4-00001-of-00003.gguf \
+  -e MAX_CONTEXT_LENGTH=131072 \
+  -e GPU_LAYERS=99 \
+  -e LLAMA_BATCH_SIZE=2048 \
   -e MODEL_CHAT_TEMPLATE=harmony \
   -e HOST_PRIVATE_KEY="${TEST_HOST_1_PRIVATE_KEY}" \
   -e RPC_URL="https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR" \
@@ -52,10 +55,10 @@ docker run -d \
   --add-host host.docker.internal:host-gateway \
   llm-node-prod:latest
 
-# Wait for model to load
+# Wait for model to load (120B model takes longer)
 echo ""
-echo "Waiting 15 seconds for model to load..."
-sleep 15
+echo "Waiting 60 seconds for 120B model to load (65GB)..."
+sleep 60
 
 # Verify deployment
 echo ""
@@ -83,9 +86,14 @@ echo ""
 echo "TEST 1: What is 2+2?"
 echo "curl -s -X POST http://localhost:8080/v1/inference \\"
 echo "  -H 'Content-Type: application/json' \\"
-echo "  -d '{\"model\": \"gpt-oss-20b\", \"prompt\": \"What is 2+2?\", \"max_tokens\": 20, \"temperature\": 0.1, \"chain_id\": 84532}' | jq ."
+echo "  -d '{\"model\": \"gpt-oss-120b\", \"prompt\": \"What is 2+2?\", \"max_tokens\": 20, \"temperature\": 0.1, \"chain_id\": 84532}' | jq ."
 echo ""
 echo "TEST 2: What is the capital of France?"
 echo "curl -s -X POST http://localhost:8080/v1/inference \\"
 echo "  -H 'Content-Type: application/json' \\"
-echo "  -d '{\"model\": \"gpt-oss-20b\", \"prompt\": \"What is the capital of France?\", \"max_tokens\": 20, \"temperature\": 0.1, \"chain_id\": 84532}' | jq ."
+echo "  -d '{\"model\": \"gpt-oss-120b\", \"prompt\": \"What is the capital of France?\", \"max_tokens\": 50, \"temperature\": 0.1, \"chain_id\": 84532}' | jq ."
+echo ""
+echo "TEST 3: Long context test (check VRAM with nvidia-smi)"
+echo "curl -s -X POST http://localhost:8080/v1/inference \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{\"model\": \"gpt-oss-120b\", \"prompt\": \"Explain quantum computing in detail\", \"max_tokens\": 500, \"temperature\": 0.7, \"chain_id\": 84532}' | jq ."
