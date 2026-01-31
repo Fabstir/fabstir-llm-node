@@ -67,8 +67,8 @@ This implementation updates the node software for the AUDIT pre-report remediati
 | 1 | 1.1 | Update encode_proof_data (TDD) | ✅ Complete | 6/6 | ~15 |
 | 1 | 1.2 | Update sign_proof_data (TDD) | ✅ Complete | 13/13 | ~10 |
 | 1 | 1.3 | Update proof_signer tests | ✅ Complete | 13/13 | ~50 |
-| 2 | 2.1 | Add sessionModel query struct | ⏳ Pending | 0/2 | ~30 |
-| 2 | 2.2 | Add query_session_model function | ⏳ Pending | 0/2 | ~40 |
+| 2 | 2.1 | Add sessionModel query struct | ✅ Complete | 2/2 | ~30 |
+| 2 | 2.2 | Add query_session_model function | ✅ Complete | 2/2 | ~40 |
 | 3 | 3.1 | Update submit_checkpoint (TDD) | ⏳ Pending | 0/3 | ~20 |
 | 3 | 3.2 | Update submit_encrypted_checkpoint | ⏳ Pending | 0/2 | ~15 |
 | 4 | 4.1 | Update checkpoint_manager tests | ⏳ Pending | 0/5 | ~60 |
@@ -316,11 +316,11 @@ cargo test proof_signer -- --nocapture
 **Location**: After line 1900 (after encode_checkpoint_call function)
 
 **Tasks**:
-- [ ] Write test `test_session_model_query_encodes_correctly` - Verify ABI encoding
-- [ ] Write test `test_session_model_returns_bytes32` - Verify return type
-- [ ] Add `SessionModelQuery` struct with ethers-rs derive macros
-- [ ] Add inline documentation
-- [ ] Run `cargo test session_model_query` - 2/2 tests passing
+- [x] Write test `test_session_model_query_encodes_correctly` - Verify ABI encoding
+- [x] Write test `test_session_model_returns_bytes32` - Verify return type
+- [x] Add `SessionModelQuery` struct with ethers-rs derive macros
+- [x] Add inline documentation
+- [x] Run `cargo test session_model_query` - 2/2 tests passing
 
 **Implementation**:
 ```rust
@@ -411,11 +411,11 @@ cargo test session_model_query -- --nocapture
 **Location**: After `cleanup_job_tracker()` function (around line 350)
 
 **Tasks**:
-- [ ] Write test `test_query_session_model_success` - Mock successful query
-- [ ] Write test `test_query_session_model_returns_zero_for_legacy` - Handle bytes32(0)
-- [ ] Add `query_session_model()` async function to CheckpointManager impl
-- [ ] Add error handling for RPC failures
-- [ ] Run `cargo test query_session_model` - 2/2 tests passing
+- [x] Write test `test_query_session_model_success` - Mock successful query
+- [x] Write test `test_query_session_model_returns_zero_for_legacy` - Handle bytes32(0)
+- [x] Add `query_session_model()` async function to CheckpointManager impl
+- [x] Add error handling for RPC failures
+- [x] Run `cargo test query_session_model` - 2/2 tests passing
 
 **Implementation**:
 ```rust

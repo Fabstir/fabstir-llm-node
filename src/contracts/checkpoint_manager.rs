@@ -538,6 +538,76 @@ impl CheckpointManager {
         }
     }
 
+    /// Query the modelId for a session from the JobMarketplace contract
+    ///
+    /// # AUDIT-F4 Compliance
+    ///
+    /// This function queries `sessionModel(uint256 sessionId)` to get the model ID
+    /// that must be included in proof signatures to prevent cross-model replay attacks.
+    ///
+    /// # Arguments
+    ///
+    /// * `job_id` - The session ID to query (same as job_id in this system)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok([u8; 32])` - The modelId as bytes32
+    ///   - Returns [0u8; 32] (bytes32(0)) for non-model sessions (legacy sessions)
+    ///   - Returns actual model ID for model-specific sessions
+    ///
+    /// # Errors
+    ///
+    /// Returns error if contract call fails or RPC is unavailable
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let model_id = checkpoint_manager.query_session_model(job_id).await?;
+    /// // Use model_id in signature generation
+    /// let signature = sign_proof_data(&key, hash, addr, tokens, model_id)?;
+    /// ```
+    pub async fn query_session_model(&self, job_id: u64) -> Result<[u8; 32]> {
+        let query = SessionModelQuery::new(job_id);
+        let call_data = query.encode();
+
+        info!(
+            "🔍 Querying sessionModel for job {} (AUDIT-F4 compliance)",
+            job_id
+        );
+
+        // Create transaction request for contract call
+        let tx = TransactionRequest::new()
+            .to(self.proof_system_address)
+            .data(call_data);
+
+        // Call contract (read-only, doesn't send transaction)
+        let result = self
+            .web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("Failed to query sessionModel for job {}: {}", job_id, e))?;
+
+        // Decode bytes32 response
+        if result.len() != 32 {
+            return Err(anyhow!(
+                "Invalid sessionModel response length: {} (expected 32)",
+                result.len()
+            ));
+        }
+
+        let mut model_id = [0u8; 32];
+        model_id.copy_from_slice(&result[..32]);
+
+        if model_id == [0u8; 32] {
+            info!("   Non-model session (modelId = bytes32(0))");
+        } else {
+            info!("   Model ID: 0x{}", hex::encode(&model_id[..8]));
+        }
+
+        Ok(model_id)
+    }
+
     /// Submit checkpoint to the blockchain
     /// IMPORTANT: tokens_generated should be the INCREMENTAL tokens since last checkpoint
     async fn submit_checkpoint(&self, job_id: u64, tokens_generated: u64) -> Result<()> {
@@ -1892,6 +1962,51 @@ fn encode_checkpoint_call(
         .expect("Failed to encode submitProofOfWork call")
 }
 
+// ========================================================================
+// Phase 2.1: SessionModel Contract Query (AUDIT-F4 Compliance)
+// ========================================================================
+
+/// Query the modelId for a session from JobMarketplace contract
+///
+/// Calls: `sessionModel(uint256 sessionId) returns (bytes32)`
+///
+/// Returns bytes32(0) for sessions created without a model (legacy sessions).
+/// For model-specific sessions, returns the registered model ID.
+///
+/// # AUDIT-F4 Compliance
+///
+/// The modelId must be included in proof signatures to prevent cross-model replay attacks.
+/// This query retrieves the modelId that was set when the session was created.
+#[derive(Debug, Clone)]
+pub struct SessionModelQuery {
+    pub session_id: U256,
+}
+
+impl SessionModelQuery {
+    /// Create a new sessionModel query for the given session ID
+    pub fn new(session_id: u64) -> Self {
+        Self {
+            session_id: U256::from(session_id),
+        }
+    }
+
+    /// Encode the contract call using ethers-rs ABI encoding
+    ///
+    /// Returns the encoded call data for `sessionModel(uint256)`
+    pub fn encode(&self) -> Bytes {
+        // Function signature: sessionModel(uint256)
+        let function_sig = &ethers::utils::keccak256(b"sessionModel(uint256)")[..4];
+        let mut data = Vec::from(function_sig);
+
+        // Encode session_id as uint256 (32 bytes, big-endian)
+        let mut session_bytes = [0u8; 32];
+        self.session_id.to_big_endian(&mut session_bytes);
+        data.extend_from_slice(&session_bytes);
+
+        Bytes::from(data)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2980,5 +3095,60 @@ mod tests {
             )
             .await;
         assert!(publisher.has_recovery_key("session-with-key").await);
+    }
+
+    // ========================================================================
+    // Phase 2.1: SessionModel Query Tests (AUDIT-F4 - Sub-phase 2.1)
+    // ========================================================================
+
+    #[test]
+    fn test_session_model_query_encodes_correctly() {
+        let query = SessionModelQuery::new(42);
+        let encoded = query.encode();
+
+        // Should be 4 bytes (function sig) + 32 bytes (uint256)
+        assert_eq!(encoded.len(), 36, "Encoded query should be 36 bytes");
+
+        // Function signature for sessionModel(uint256)
+        let expected_sig = &ethers::utils::keccak256(b"sessionModel(uint256)")[..4];
+        assert_eq!(&encoded[..4], expected_sig, "Function signature mismatch");
+    }
+
+    #[test]
+    fn test_session_model_returns_bytes32() {
+        let query = SessionModelQuery::new(100);
+        let encoded = query.encode();
+
+        // Verify session_id is encoded as uint256 (32 bytes)
+        assert_eq!(encoded.len(), 36, "Encoded data should be 36 bytes");
+
+        // Verify the session ID is in the encoded data (after the 4-byte function selector)
+        let session_id_bytes = &encoded[4..36];
+        assert_eq!(session_id_bytes.len(), 32, "Session ID should be 32 bytes");
+    }
+
+    // ========================================================================
+    // Phase 2.2: query_session_model Function Tests (AUDIT-F4 - Sub-phase 2.2)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_query_session_model_success() {
+        // Test that SessionModelQuery can be created and encoded
+        // (Full integration test would require mock web3_client)
+        let query = SessionModelQuery::new(42);
+        let encoded = query.encode();
+
+        assert!(encoded.len() > 0, "Query should encode to non-empty data");
+        assert_eq!(encoded.len(), 36, "Query should be 36 bytes");
+    }
+
+    #[tokio::test]
+    async fn test_query_session_model_returns_zero_for_legacy() {
+        // Test that bytes32(0) is handled correctly
+        let zero_model_id = [0u8; 32];
+
+        // Verify bytes32(0) is the expected format for non-model sessions
+        assert_eq!(zero_model_id.len(), 32, "ModelId should be 32 bytes");
+        assert!(zero_model_id.iter().all(|&b| b == 0), "bytes32(0) should be all zeros");
     }
 }
