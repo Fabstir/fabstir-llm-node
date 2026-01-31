@@ -1,5 +1,111 @@
 # Client ABIs Changelog
 
+## January 31, 2026 - Security Audit Remediation (AUDIT-F1 to F5)
+
+### ⚠️ BREAKING CHANGES
+
+**1. IProofSystem Interface Updated (AUDIT-F4)**
+
+All signature verification functions now require `modelId` parameter:
+
+```solidity
+// OLD (3 parameters)
+function verifyAndMarkComplete(bytes calldata proof, address prover, uint256 claimedTokens) external returns (bool);
+function verifyHostSignature(bytes calldata proof, address prover, uint256 claimedTokens) external view returns (bool);
+
+// NEW (4 parameters - BREAKING CHANGE)
+function verifyAndMarkComplete(bytes calldata proof, address prover, uint256 claimedTokens, bytes32 modelId) external returns (bool);
+function verifyHostSignature(bytes calldata proof, address prover, uint256 claimedTokens, bytes32 modelId) external view returns (bool);
+```
+
+**Host Signing Update Required:**
+- Hosts MUST include `modelId` when signing proofs
+- Signature message: `keccak256(proofHash, host, tokensClaimed, modelId)`
+- For non-model sessions: use `bytes32(0)` as modelId
+
+**2. Session Creation Functions Updated (AUDIT-F3)**
+
+All session creation functions now require `proofTimeoutWindow` parameter:
+
+```solidity
+// NEW parameter added to ALL session creation functions:
+function createSessionJob(
+    address host,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow  // NEW: 60-3600 seconds
+) external payable returns (uint256);
+
+function createSessionJobForModel(
+    address host,
+    bytes32 modelId,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow  // NEW
+) external payable returns (uint256);
+
+// Similar updates to:
+// - createSessionJobWithToken()
+// - createSessionJobForModelWithToken()
+// - createSessionFromDeposit()
+```
+
+**Constants:**
+```solidity
+uint256 public constant MIN_PROOF_TIMEOUT = 60;    // 1 minute minimum
+uint256 public constant MAX_PROOF_TIMEOUT = 3600;  // 1 hour maximum
+uint256 public constant DEFAULT_PROOF_TIMEOUT = 300; // 5 minute default
+```
+
+### New Functions
+
+**createSessionFromDepositForModel (AUDIT-F5):**
+```solidity
+function createSessionFromDepositForModel(
+    bytes32 modelId,
+    address host,
+    address paymentToken,
+    uint256 deposit,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
+```
+
+### Security Fixes
+
+| Finding | Description | Fix |
+|---------|-------------|-----|
+| AUDIT-F1 | Dead `onlyRegisteredHost` modifier | Removed |
+| AUDIT-F2 | ProofSystem address(0) bypasses verification | Now reverts: "ProofSystem not configured" |
+| AUDIT-F3 | proofInterval used as timeout (dual interpretation) | Separate `proofTimeoutWindow` parameter |
+| AUDIT-F4 | modelId missing from signature | Now required in all signatures |
+| AUDIT-F5 | No createSessionFromDepositForModel | New function added |
+
+### Test Contract Deployments (DO NOT USE IN PRODUCTION)
+
+For testing remediation fixes only - audited contracts unchanged:
+
+| Contract | Test Proxy | Test Implementation |
+|----------|------------|---------------------|
+| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x56657bCBAE50AB656A9452f7B52e317650f90267` |
+| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x06dB705BcBdda50A1712635fdC64A28d75de5603` |
+
+### Audited Contracts (FROZEN)
+
+| Contract | Audited Proxy | Status |
+|----------|--------------|--------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | FROZEN |
+| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | FROZEN |
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | FROZEN |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | FROZEN |
+| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | FROZEN |
+
+---
+
 ## January 16, 2026 - Stake Slashing Feature
 
 ### New Feature: Host Stake Slashing

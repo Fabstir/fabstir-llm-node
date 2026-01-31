@@ -288,6 +288,11 @@
         "name": "claimedTokens",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -317,6 +322,11 @@
         "name": "tokenCounts",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      },
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -346,6 +356,11 @@
         "name": "tokenCounts",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      },
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -375,6 +390,11 @@
         "name": "claimedTokens",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [

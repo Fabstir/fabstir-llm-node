@@ -1,6 +1,6 @@
 # Fabstir LLM Marketplace - API Reference
 
-**Last Updated:** January 16, 2026
+**Last Updated:** January 31, 2026
 **Network:** Base Sepolia (Chain ID: 84532)
 **PRICE_PRECISION:** 1000 (all prices multiplied by 1000 for sub-$1/million support)
 
@@ -16,10 +16,10 @@
 // UPGRADEABLE CONTRACTS (UUPS Proxies) - Use these addresses
 const contracts = {
   // Proxy addresses (interact with these)
-  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E", // ⚠️ NEW - Jan 9, 2026
+  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E", // FROZEN for audit
   nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
-  proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
+  proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb", // FROZEN for audit
   hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
 
   // Tokens (unchanged)
@@ -34,6 +34,28 @@ const implementations = {
   modelRegistry: "0x8491af1f0D47f6367b56691dCA0F4996431fB0A5", // Voting improvements (Jan 11)
   proofSystem: "0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9", // Phase 12 (Jan 9)
   hostEarnings: "0x8584AeAC9687613095D13EF7be4dE0A796F84D7a", // Phase 12 (Jan 9)
+};
+```
+
+### Test Contracts (Remediation - January 31, 2026)
+
+> **AUDIT REMEDIATION**: These contracts include fixes for AUDIT-F1 through AUDIT-F5. Use these for testing remediated code while auditors continue on frozen contracts above.
+
+```javascript
+// TEST CONTRACTS - Remediation fixes (AUDIT-F1 to AUDIT-F5)
+const testContracts = {
+  jobMarketplace: "0x95132177F964FF053C1E874b53CF74d819618E06",  // NEW proxy
+  proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",    // NEW proxy
+  // Other contracts unchanged - use production addresses
+  nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+  modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
+  hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
+};
+
+// Test implementation addresses
+const testImplementations = {
+  jobMarketplace: "0x06dB705BcBdda50A1712635fdC64A28d75de5603",
+  proofSystem: "0x56657bCBAE50AB656A9452f7B52e317650f90267",
 };
 ```
 
@@ -517,19 +539,22 @@ function lastSlashTime(address host) external view returns (uint256)
 
 Session management and payments.
 
-**Proxy Address:** `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
-**Implementation:** `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` (deltaCID support - Jan 14, 2026)
+**Frozen Proxy Address:** `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
+**Test Proxy Address:** `0x95132177F964FF053C1E874b53CF74d819618E06` (Remediation - Jan 31, 2026)
 
 ### Constants
 
-| Constant            | Value               | Description                         |
-| ------------------- | ------------------- | ----------------------------------- |
-| `MIN_DEPOSIT`       | 0.0001 ETH (~$0.50) | Minimum ETH deposit                 |
-| `USDC_MIN_DEPOSIT`  | 500,000 (0.50 USDC) | Minimum USDC deposit                |
-| `PRICE_PRECISION`   | 1000                | Prices stored with 1000x multiplier |
-| `FEE_BASIS_POINTS`  | 1000                | 10% platform fee                    |
-| `DISPUTE_WINDOW`    | 30 seconds          | Time for disputes                   |
-| `MIN_PROVEN_TOKENS` | 100                 | Minimum tokens per proof            |
+| Constant               | Value               | Description                         |
+| ---------------------- | ------------------- | ----------------------------------- |
+| `MIN_DEPOSIT`          | 0.0001 ETH (~$0.50) | Minimum ETH deposit                 |
+| `USDC_MIN_DEPOSIT`     | 500,000 (0.50 USDC) | Minimum USDC deposit                |
+| `PRICE_PRECISION`      | 1000                | Prices stored with 1000x multiplier |
+| `FEE_BASIS_POINTS`     | 1000                | 10% platform fee                    |
+| `DISPUTE_WINDOW`       | 30 seconds          | Time for disputes                   |
+| `MIN_PROVEN_TOKENS`    | 100                 | Minimum tokens per proof            |
+| `MIN_PROOF_TIMEOUT`    | 60 seconds          | Minimum proof timeout window (NEW)  |
+| `MAX_PROOF_TIMEOUT`    | 3600 seconds        | Maximum proof timeout window (NEW)  |
+| `DEFAULT_PROOF_TIMEOUT`| 300 seconds         | Default timeout - 5 minutes (NEW)   |
 
 > **Payment Calculations with PRICE_PRECISION:**
 >
@@ -540,6 +565,8 @@ Session management and payments.
 
 ### Session Creation
 
+> **BREAKING CHANGE (AUDIT-F3):** All session creation functions now require a `proofTimeoutWindow` parameter. This separates timeout logic from `proofInterval`. Range: 60-3600 seconds.
+
 #### `createSessionJob`
 
 Create a session with native ETH payment (uses default pricing).
@@ -549,7 +576,8 @@ function createSessionJob(
     address host,           // Host address
     uint256 pricePerToken,  // Agreed price per token
     uint256 maxDuration,    // Max session duration in seconds
-    uint256 proofInterval   // Tokens between proofs (min 100)
+    uint256 proofInterval,  // Tokens between proofs (min 100)
+    uint256 proofTimeoutWindow  // NEW: Timeout window in seconds (60-3600)
 ) external payable returns (uint256 jobId)
 ```
 
@@ -557,13 +585,14 @@ function createSessionJob(
 
 - `msg.value >= MIN_DEPOSIT` (0.0001 ETH)
 - `pricePerToken >= host's minPricePerTokenNative`
+- `proofTimeoutWindow >= 60 && proofTimeoutWindow <= 3600`
 - Host must be registered and active
 
 **Example:**
 
 ```javascript
 const marketplace = new ethers.Contract(
-  contracts.jobMarketplace,
+  testContracts.jobMarketplace, // Use test contract for remediated code
   JobMarketplaceABI,
   signer
 );
@@ -580,6 +609,7 @@ const tx = await marketplace.createSessionJob(
   hostPrice, // Must meet host's minimum
   3600, // 1 hour max duration
   1000, // Proof every 1000 tokens
+  300,  // 5 minute timeout window (NEW)
   { value: ethers.parseEther("0.01") }
 );
 
@@ -608,7 +638,8 @@ function createSessionJobForModel(
     bytes32 modelId,        // Model to use
     uint256 pricePerToken,  // Agreed price per token
     uint256 maxDuration,    // Max session duration
-    uint256 proofInterval   // Tokens between proofs
+    uint256 proofInterval,  // Tokens between proofs
+    uint256 proofTimeoutWindow  // NEW: Timeout window in seconds (60-3600)
 ) external payable returns (uint256 jobId)
 ```
 
@@ -616,6 +647,7 @@ function createSessionJobForModel(
 
 - Host must support the specified model
 - `pricePerToken >= host's model-specific minimum (or default fallback)`
+- `proofTimeoutWindow >= 60 && proofTimeoutWindow <= 3600`
 
 **Example:**
 
@@ -634,6 +666,7 @@ const tx = await marketplace.createSessionJobForModel(
   modelPrice, // Model-specific minimum
   3600,
   1000,
+  300, // 5 minute timeout (NEW)
   { value: ethers.parseEther("0.01") }
 );
 ```
@@ -661,7 +694,8 @@ function createSessionJobWithToken(
     uint256 deposit,        // Amount to deposit
     uint256 pricePerToken,
     uint256 maxDuration,
-    uint256 proofInterval
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow  // NEW: Timeout window in seconds (60-3600)
 ) external returns (uint256 jobId)
 ```
 
@@ -671,6 +705,7 @@ function createSessionJobWithToken(
 - Caller must have approved tokens for transfer
 - `deposit >= tokenMinDeposits[token]`
 - `pricePerToken >= host's minPricePerTokenStable`
+- `proofTimeoutWindow >= 60 && proofTimeoutWindow <= 3600`
 
 **Example:**
 
@@ -679,7 +714,7 @@ const usdc = new ethers.Contract(contracts.usdcToken, ERC20ABI, signer);
 
 // Approve USDC
 const depositAmount = ethers.parseUnits("10", 6); // 10 USDC
-await usdc.approve(contracts.jobMarketplace, depositAmount);
+await usdc.approve(testContracts.jobMarketplace, depositAmount);
 
 // Query host pricing for USDC
 const hostPrice = await nodeRegistry.getNodePricing(
@@ -694,7 +729,8 @@ const tx = await marketplace.createSessionJobWithToken(
   depositAmount,
   hostPrice,
   3600,
-  1000
+  1000,
+  300 // 5 minute timeout (NEW)
 );
 ```
 
@@ -710,11 +746,14 @@ function createSessionJobForModelWithToken(
     uint256 deposit,
     uint256 pricePerToken,
     uint256 maxDuration,
-    uint256 proofInterval
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow  // NEW: Timeout window in seconds (60-3600)
 ) external returns (uint256 jobId)
 ```
 
 ### Proof Submission (Host)
+
+> **BREAKING CHANGE (AUDIT-F4):** Host signature must now include `modelId`. See signature generation section below.
 
 #### `submitProofOfWork`
 
@@ -727,7 +766,7 @@ function submitProofOfWork(
     bytes32 proofHash,      // SHA256 hash of STARK proof
     bytes calldata signature,  // Host's ECDSA signature (65 bytes)
     string calldata proofCID,  // S5 CID where full proof is stored
-    string calldata deltaCID   // S5 CID for delta since last proof (NEW - Jan 14, 2026)
+    string calldata deltaCID   // S5 CID for delta since last proof
 ) external
 ```
 
@@ -736,10 +775,11 @@ function submitProofOfWork(
 - Only the session host can submit proofs
 - `tokensClaimed >= MIN_PROVEN_TOKENS` (100)
 - `signature.length == 65` bytes (r, s, v format)
-- Signature must be from the session host
+- Signature must be from the session host **and include modelId**
 - Session must be Active
+- ProofSystem must be configured (AUDIT-F2)
 
-**Example:**
+**Example (Updated for AUDIT-F4):**
 
 ```javascript
 import { keccak256, solidityPacked, getBytes } from "ethers";
@@ -750,11 +790,14 @@ const proofCID = "bafyreib..."; // S5 storage CID for full proof
 const deltaCID = "bafyreic..."; // S5 storage CID for delta changes
 const tokensClaimed = 1000;
 
-// 1. Generate signature
+// Get modelId for this session (REQUIRED for remediated contracts)
+const modelId = await marketplace.sessionModel(sessionId);
+
+// 1. Generate signature WITH modelId (AUDIT-F4 fix)
 const dataHash = keccak256(
   solidityPacked(
-    ["bytes32", "address", "uint256"],
-    [proofHash, hostAddress, tokensClaimed]
+    ["bytes32", "address", "uint256", "bytes32"],  // NOTE: 4 types now
+    [proofHash, hostAddress, tokensClaimed, modelId]  // NOTE: modelId added
   )
 );
 const signature = await hostWallet.signMessage(getBytes(dataHash));
@@ -871,6 +914,7 @@ function sessionJobs(uint256 jobId) external view returns (
     uint256 startTime,
     uint256 lastProofTime,
     uint256 proofInterval,
+    uint256 proofTimeoutWindow,  // NEW - AUDIT-F3
     SessionStatus status,
     uint256 withdrawnByHost,
     uint256 refundedToUser,
@@ -971,8 +1015,64 @@ function createSessionFromDeposit(
     uint256 deposit,
     uint256 pricePerToken,
     uint256 maxDuration,
-    uint256 proofInterval
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow  // NEW: Timeout window in seconds (60-3600)
 ) external returns (uint256 jobId)
+```
+
+#### `createSessionFromDepositForModel` (NEW - AUDIT-F5)
+
+Create model-specific session from pre-deposited funds.
+
+```solidity
+function createSessionFromDepositForModel(
+    bytes32 modelId,           // Model ID (required, cannot be bytes32(0))
+    address host,
+    address paymentToken,      // address(0) for ETH
+    uint256 deposit,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow // Timeout window in seconds (60-3600)
+) external returns (uint256 jobId)
+```
+
+**Requirements:**
+
+- `modelId != bytes32(0)`
+- Model must be approved in ModelRegistry
+- Host must support the specified model
+- `pricePerToken >= host's model-specific minimum`
+- User must have sufficient pre-deposited balance
+
+**Example:**
+
+```javascript
+// Step 1: User deposits funds
+await marketplace.depositNative({ value: ethers.parseEther("1.0") });
+
+// Step 2: Check balance
+const ethBalance = await marketplace.userDepositsNative(userAddress);
+
+// Step 3: Create model session from deposit
+const sessionId = await marketplace.createSessionFromDepositForModel(
+  TINY_VICUNA,              // modelId
+  hostAddress,
+  ethers.ZeroAddress,       // ETH from deposit
+  ethers.parseEther("0.5"), // deposit amount
+  modelPrice,               // pricePerToken
+  3600,                     // maxDuration (1 hour)
+  100,                      // proofInterval (min 100 tokens per proof)
+  300                       // proofTimeoutWindow (5 minutes)
+);
+```
+
+**Events:**
+
+```solidity
+event SessionJobCreated(uint256 indexed jobId, address indexed requester, address indexed host, uint256 deposit);
+event SessionCreatedByDepositor(uint256 indexed jobId, address indexed depositor, address indexed host, uint256 deposit);
+event ModelSessionCreated(uint256 indexed jobId, bytes32 indexed modelId);
 ```
 
 ### Admin Functions
@@ -1062,13 +1162,14 @@ for (const host of hosts) {
   console.log(`Host ${host}: ${ethers.formatEther(price)} ETH/token`);
 }
 
-// 3. Create session with chosen host
+// 3. Create session with chosen host (NOTE: proofTimeoutWindow added)
 const tx = await marketplace.createSessionJobForModel(
   chosenHost,
   TINY_VICUNA,
   chosenHostPrice,
   3600,
   1000,
+  300, // 5 minute timeout (NEW)
   { value: ethers.parseEther("0.01") }
 );
 const { jobId } = (await tx.wait()).logs[0].args;
@@ -1079,7 +1180,7 @@ const { jobId } = (await tx.wait()).logs[0].args;
 // 5. Session completes when host calls completeSessionJob
 ```
 
-### 3. Host Inference Flow
+### 3. Host Inference Flow (Updated for AUDIT-F4)
 
 ```javascript
 import { keccak256, solidityPacked, getBytes } from "ethers";
@@ -1096,11 +1197,14 @@ marketplace.on("SessionJobCreated", async (jobId, requester, host, deposit) => {
 const tokensClaimed = 1000;
 const proofHash = keccak256(proofBytes);
 
-// Generate host signature
+// Get modelId for this session (REQUIRED - AUDIT-F4)
+const modelId = await marketplace.sessionModel(sessionId);
+
+// Generate host signature WITH modelId
 const dataHash = keccak256(
   solidityPacked(
-    ["bytes32", "address", "uint256"],
-    [proofHash, hostAddress, tokensClaimed]
+    ["bytes32", "address", "uint256", "bytes32"],  // 4 types
+    [proofHash, hostAddress, tokensClaimed, modelId]  // modelId included
   )
 );
 const signature = await hostWallet.signMessage(getBytes(dataHash));
@@ -1113,7 +1217,7 @@ await marketplace.submitProofOfWork(
   sessionId,
   tokensClaimed,
   proofHash,
-  signature, // Host's ECDSA signature
+  signature, // Host's ECDSA signature (includes modelId)
   proofCID, // Full proof CID
   deltaCID // Delta CID (can be "" if not tracking)
 );
@@ -1164,6 +1268,8 @@ await hostEarningsContract.withdrawNative();
 | `DepositReceived(address account, address token, uint256 amount)`                                                         | Deposit received            |
 | `WithdrawalProcessed(address account, address token, uint256 amount)`                                                     | Withdrawal processed        |
 | `TokenAccepted(address token, uint256 minDeposit)`                                                                        | New token accepted          |
+| `ModelSessionCreated(uint256 jobId, bytes32 modelId)`                                                                     | Model session created (NEW) |
+| `SessionCreatedByDepositor(uint256 jobId, address depositor, address host, uint256 deposit)`                              | Pre-deposit session (NEW)   |
 
 ---
 
@@ -1194,13 +1300,14 @@ await hostEarningsContract.withdrawNative();
 
 ### JobMarketplaceWithModels
 
-| Error                                   | Cause                                  |
-| --------------------------------------- | -------------------------------------- |
+| Error                            | Cause                                         |
+| -------------------------------- | --------------------------------------------- |
 | `"Insufficient deposit"`                | Deposit below minimum                  |
 | `"Deposit too large"`                   | Deposit > 1000 ETH                     |
 | `"Invalid price"`                       | pricePerToken is 0                     |
 | `"Invalid duration"`                    | Duration is 0 or > 365 days            |
 | `"Invalid proof interval"`              | proofInterval is 0                     |
+| `"Invalid proof timeout window"`        | proofTimeoutWindow < 60 or > 3600 (NEW)|
 | `"Invalid host"`                        | Host address is zero                   |
 | `"Host does not support model"`         | Host doesn't support requested model   |
 | `"Price below host minimum for model"`  | Price < host's model-specific minimum  |
@@ -1211,6 +1318,9 @@ await hostEarningsContract.withdrawNative();
 | `"Only host can submit proof"`          | Non-host trying to submit proof        |
 | `"Only depositor or host can complete"` | Third party trying to complete session |
 | `"Session not active"`                  | Session is not in Active status        |
+| `"ProofSystem not configured"`          | ProofSystem address is zero (NEW)      |
+| `"Invalid model ID"`                    | modelId is bytes32(0) for model function (NEW) |
+| `"Model not approved"`                  | Model not approved in ModelRegistry (NEW) |
 
 ---
 
@@ -1219,10 +1329,10 @@ await hostEarningsContract.withdrawNative();
 ABIs are available in `/client-abis/`:
 
 - `NodeRegistryWithModels-CLIENT-ABI.json`
-- `JobMarketplaceWithModels-CLIENT-ABI.json`
+- `JobMarketplaceWithModels-CLIENT-ABI.json` (Updated Jan 31, 2026)
 - `ModelRegistry-CLIENT-ABI.json`
 - `HostEarnings-CLIENT-ABI.json`
-- `ProofSystem-CLIENT-ABI.json`
+- `ProofSystem-CLIENT-ABI.json` (Updated Jan 31, 2026)
 
 ---
 
@@ -1234,27 +1344,39 @@ const config = {
   rpcUrl: "https://sepolia.base.org",
   explorer: "https://sepolia.basescan.org",
 
-  // UPGRADEABLE CONTRACTS (UUPS Proxies) - January 16, 2026
-  contracts: {
+  // FROZEN CONTRACTS (for auditors) - January 16, 2026
+  frozenContracts: {
     jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",
+    proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
     nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
     modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
-    proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
     hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
+  },
+
+  // TEST CONTRACTS (remediation) - January 31, 2026
+  testContracts: {
+    jobMarketplace: "0x95132177F964FF053C1E874b53CF74d819618E06",
+    proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",
+  },
+
+  // Tokens (unchanged)
+  tokens: {
     fabToken: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62",
     usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   },
-
-  // Implementation addresses (for contract verification) - January 16, 2026
-  implementations: {
-    jobMarketplace: "0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c", // deltaCID support (Jan 14)
-    nodeRegistry: "0xF2D98D38B2dF95f4e8e4A49750823C415E795377", // Stake slashing (Jan 16)
-    modelRegistry: "0x8491af1f0D47f6367b56691dCA0F4996431fB0A5", // Voting improvements (Jan 11)
-    proofSystem: "0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9", // Phase 12 (Jan 9)
-    hostEarnings: "0x8584AeAC9687613095D13EF7be4dE0A796F84D7a", // Phase 12 (Jan 9)
-  },
 };
 ```
+
+---
+
+## Breaking Changes Summary (AUDIT Remediation)
+
+| Finding | Change | Impact |
+|---------|--------|--------|
+| AUDIT-F2 | ProofSystem must be configured | Sessions fail if ProofSystem is address(0) |
+| AUDIT-F3 | `proofTimeoutWindow` required | All session creation functions gain new parameter (60-3600 seconds) |
+| AUDIT-F4 | `modelId` in signature | Hosts MUST include modelId in signed proof message |
+| AUDIT-F5 | `createSessionFromDepositForModel()` | New function for model-specific pre-deposit sessions |
 
 ---
 
