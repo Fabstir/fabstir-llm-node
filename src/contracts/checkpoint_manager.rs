@@ -574,11 +574,16 @@ impl CheckpointManager {
         // Generate host signature for security audit compliance (v8.9.0)
         let private_key = crate::crypto::extract_node_private_key()
             .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
+
+        // TODO: Phase 3.1 - Query actual modelId from contract via query_session_model(job_id)
+        let model_id = [0u8; 32]; // Temporary placeholder for Phase 1 compilation
+
         let signature = crate::crypto::sign_proof_data(
             &private_key,
             proof_hash_bytes,
             self.host_address,
             tokens_to_submit,
+            model_id, // AUDIT-F4 compliance (temporary placeholder)
         )
         .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
 
@@ -777,11 +782,16 @@ impl CheckpointManager {
         } else {
             String::new() // No session_id means no encrypted checkpoint
         };
+
+        // TODO: Phase 3.2 - Query actual modelId from contract via query_session_model(job_id)
+        let model_id = [0u8; 32]; // Temporary placeholder for Phase 1 compilation
+
         let signature = crate::crypto::sign_proof_data(
             &private_key,
             proof_hash_bytes,
             host_address,
             tokens_to_submit,
+            model_id, // AUDIT-F4 compliance (temporary placeholder)
         )
         .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
 
