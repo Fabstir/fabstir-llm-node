@@ -64,9 +64,9 @@ This implementation updates the node software for the AUDIT pre-report remediati
 
 | Phase | Sub-phase | Description | Status | Tests | Lines Changed |
 |-------|-----------|-------------|--------|-------|---------------|
-| 1 | 1.1 | Update encode_proof_data (TDD) | ⏳ Pending | 0/3 | ~15 |
-| 1 | 1.2 | Update sign_proof_data (TDD) | ⏳ Pending | 0/5 | ~10 |
-| 1 | 1.3 | Update proof_signer tests | ⏳ Pending | 0/10 | ~50 |
+| 1 | 1.1 | Update encode_proof_data (TDD) | ✅ Complete | 6/6 | ~15 |
+| 1 | 1.2 | Update sign_proof_data (TDD) | ✅ Complete | 13/13 | ~10 |
+| 1 | 1.3 | Update proof_signer tests | ✅ Complete | 13/13 | ~50 |
 | 2 | 2.1 | Add sessionModel query struct | ⏳ Pending | 0/2 | ~30 |
 | 2 | 2.2 | Add query_session_model function | ⏳ Pending | 0/2 | ~40 |
 | 3 | 3.1 | Update submit_checkpoint (TDD) | ⏳ Pending | 0/3 | ~20 |
@@ -88,7 +88,7 @@ This implementation updates the node software for the AUDIT pre-report remediati
 
 **Goal**: Add modelId as 4th parameter to proof data encoding
 
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 
 **File**: `src/crypto/proof_signer.rs` (modify existing function)
 
@@ -100,12 +100,12 @@ This implementation updates the node software for the AUDIT pre-report remediati
 3. Verify existing tests still pass
 
 **Tasks**:
-- [ ] Write test `test_encode_proof_data_with_model_id` - Verify 116 bytes (32+20+32+32)
-- [ ] Write test `test_encode_proof_data_model_id_zero` - Verify bytes32(0) works
-- [ ] Write test `test_encode_proof_data_different_model_id` - Different modelId → different encoding
-- [ ] Update `encode_proof_data()` signature: add `model_id: [u8; 32]` parameter
-- [ ] Update function body: append modelId after tokensClaimed
-- [ ] Run `cargo test encode_proof_data` - 6/6 tests passing (3 old + 3 new)
+- [x] Write test `test_encode_proof_data_with_model_id` - Verify 116 bytes (32+20+32+32)
+- [x] Write test `test_encode_proof_data_model_id_zero` - Verify bytes32(0) works
+- [x] Write test `test_encode_proof_data_different_model_id` - Different modelId → different encoding
+- [x] Update `encode_proof_data()` signature: add `model_id: [u8; 32]` parameter
+- [x] Update function body: append modelId after tokensClaimed
+- [x] Run `cargo test encode_proof_data` - 6/6 tests passing (3 old + 3 new)
 
 **Current Implementation** (lines 179-194):
 ```rust
@@ -186,7 +186,7 @@ cargo test encode_proof_data -- --nocapture
 
 **Goal**: Add modelId parameter to signature generation function
 
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 
 **File**: `src/crypto/proof_signer.rs` (modify existing function)
 
@@ -195,13 +195,13 @@ cargo test encode_proof_data -- --nocapture
 **Dependencies**: Sub-phase 1.1 must be complete
 
 **Tasks**:
-- [ ] Write test `test_sign_proof_data_with_model_id` - Verify 65-byte signature
-- [ ] Write test `test_sign_proof_data_different_model_different_sig` - Different modelId → different signature
-- [ ] Write test `test_sign_proof_data_recovers_with_model_id` - Signature recovery works with modelId
-- [ ] Update `sign_proof_data()` signature: add `model_id: [u8; 32]` parameter (line 91-96)
-- [ ] Update encode_proof_data call: pass model_id parameter (line 98)
-- [ ] Update function documentation: mention modelId parameter
-- [ ] Run `cargo test sign_proof_data` - 13/13 tests passing (10 old + 3 new)
+- [x] Write test `test_sign_proof_data_with_model_id` - Verify 65-byte signature
+- [x] Write test `test_sign_proof_data_different_model_different_sig` - Different modelId → different signature
+- [x] Write test `test_sign_proof_data_recovers_with_model_id` - Signature recovery works with modelId
+- [x] Update `sign_proof_data()` signature: add `model_id: [u8; 32]` parameter (line 91-96)
+- [x] Update encode_proof_data call: pass model_id parameter (line 98)
+- [x] Update function documentation: mention modelId parameter
+- [x] Run `cargo test sign_proof_data` - 13/13 tests passing (10 old + 3 new)
 
 **Current Signature** (lines 91-96):
 ```rust
@@ -263,7 +263,7 @@ cargo test sign_proof_data -- --nocapture
 
 **Goal**: Update existing tests to use 5-parameter signature
 
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 
 **File**: `src/crypto/proof_signer.rs` (test module)
 
@@ -272,16 +272,16 @@ cargo test sign_proof_data -- --nocapture
 **Dependencies**: Sub-phases 1.1 and 1.2 must be complete
 
 **Tasks**:
-- [ ] Update `test_sign_proof_data_returns_65_bytes` - Add model_id param
-- [ ] Update `test_sign_proof_data_recoverable_address` - Add model_id param
-- [ ] Update `test_sign_proof_data_different_tokens_different_signature` - Add model_id param
-- [ ] Update `test_sign_proof_data_different_proof_hash_different_signature` - Add model_id param
-- [ ] Update `test_sign_proof_data_v_value_is_27_or_28` - Add model_id param
-- [ ] Update `test_sign_proof_data_wrong_address_fails_verification` - Add model_id param
-- [ ] Update `test_sign_proof_data_wrong_tokens_fails_verification` - Add model_id param
-- [ ] Update `test_encode_proof_data_tokens_big_endian` - Add model_id param
-- [ ] Update `test_verify_proof_signature_*` tests - Add model_id param (if they call sign_proof_data)
-- [ ] Run `cargo test proof_signer` - 13/13 tests passing
+- [x] Update `test_sign_proof_data_returns_65_bytes` - Add model_id param
+- [x] Update `test_sign_proof_data_recoverable_address` - Add model_id param
+- [x] Update `test_sign_proof_data_different_tokens_different_signature` - Add model_id param
+- [x] Update `test_sign_proof_data_different_proof_hash_different_signature` - Add model_id param
+- [x] Update `test_sign_proof_data_v_value_is_27_or_28` - Add model_id param
+- [x] Update `test_sign_proof_data_wrong_address_fails_verification` - Add model_id param
+- [x] Update `test_sign_proof_data_wrong_tokens_fails_verification` - Add model_id param
+- [x] Update `test_encode_proof_data_tokens_big_endian` - Add model_id param
+- [x] Update `test_verify_proof_signature_*` tests - Add model_id param (if they call sign_proof_data)
+- [x] Run `cargo test proof_signer` - 13/13 tests passing
 
 **Example Update**:
 ```rust

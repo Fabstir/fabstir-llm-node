@@ -5,10 +5,14 @@
 //! Signs proof data for `submitProofOfWork` contract calls.
 //! Required after January 2026 security audit.
 //!
+//! ## AUDIT-F4 (January 31, 2026)
+//!
+//! Signature now includes `modelId` to prevent cross-model replay attacks.
+//!
 //! ## Signature Formula
 //!
 //! ```text
-//! 1. dataHash = keccak256(abi.encodePacked(proofHash, hostAddress, tokensClaimed))
+//! 1. dataHash = keccak256(abi.encodePacked(proofHash, hostAddress, tokensClaimed, modelId))
 //! 2. signature = personal_sign(dataHash)  // 65 bytes: r(32) + s(32) + v(1)
 //! ```
 //!
@@ -18,6 +22,7 @@
 //! - Signature must be exactly 65 bytes (r + s + v format)
 //! - Each proofHash can only be used once (replay protection)
 //! - v value must be 27 or 28 (Ethereum standard)
+//! - modelId must match session.modelId (AUDIT-F4 - prevents cross-model replay)
 //!
 //! ## Usage
 //!
@@ -25,11 +30,13 @@
 //! use fabstir_llm_node::crypto::sign_proof_data;
 //! use ethers::types::Address;
 //!
+//! let model_id = [0u8; 32]; // bytes32(0) for non-model sessions
 //! let signature = sign_proof_data(
 //!     &private_key,
 //!     proof_hash,
 //!     host_address,
 //!     tokens_claimed,
+//!     model_id,
 //! )?;
 //! ```
 
@@ -54,11 +61,14 @@ pub enum ProofSigningError {
 
 /// Sign proof data for contract submission
 ///
+/// # AUDIT-F4 Compliance (January 31, 2026)
+///
 /// Creates a 65-byte ECDSA signature that proves the host authorized
 /// this specific proof submission. The signature binds together:
 /// - The proof hash (proves work was done)
 /// - The host address (proves authorization)
 /// - The token count (prevents manipulation)
+/// - The model ID (prevents cross-model replay attacks - AUDIT-F4)
 ///
 /// # Arguments
 ///
@@ -66,6 +76,7 @@ pub enum ProofSigningError {
 /// * `proof_hash` - 32-byte keccak256 hash of the proof data
 /// * `host_address` - 20-byte Ethereum address of the host
 /// * `tokens_claimed` - Number of tokens being claimed in this submission
+/// * `model_id` - 32-byte model ID (use `[0u8; 32]` for non-model sessions)
 ///
 /// # Returns
 ///
@@ -80,11 +91,13 @@ pub enum ProofSigningError {
 /// # Example
 ///
 /// ```ignore
+/// let model_id = [0u8; 32]; // bytes32(0) for non-model session
 /// let signature = sign_proof_data(
 ///     &private_key,
 ///     proof_hash,
 ///     host_address,
 ///     1000,
+///     model_id,
 /// )?;
 /// assert_eq!(signature.len(), 65);
 /// ```
@@ -93,11 +106,12 @@ pub fn sign_proof_data(
     proof_hash: [u8; 32],
     host_address: Address,
     tokens_claimed: u64,
+    model_id: [u8; 32],
 ) -> Result<[u8; 65]> {
     // 1. Encode the data (Solidity abi.encodePacked equivalent)
-    let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed);
+    let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed, model_id);
     debug!(
-        "Encoded proof data: {} bytes (proofHash + address + tokens)",
+        "Encoded proof data: {} bytes (proofHash + address + tokens + modelId)",
         encoded.len()
     );
 
@@ -134,6 +148,8 @@ pub fn sign_proof_data(
 
 /// Verify a proof signature locally (for debugging)
 ///
+/// # AUDIT-F4 Compliance
+///
 /// Recovers the signer address from the signature and compares
 /// it to the expected host address.
 ///
@@ -143,6 +159,7 @@ pub fn sign_proof_data(
 /// * `proof_hash` - 32-byte proof hash that was signed
 /// * `host_address` - Expected signer address
 /// * `tokens_claimed` - Token count that was signed
+/// * `model_id` - 32-byte model ID that was signed (AUDIT-F4)
 ///
 /// # Returns
 ///
@@ -152,9 +169,10 @@ pub fn verify_proof_signature(
     proof_hash: [u8; 32],
     host_address: Address,
     tokens_claimed: u64,
+    model_id: [u8; 32],
 ) -> Result<bool> {
     // 1. Encode and hash the data (same as signing)
-    let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed);
+    let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed, model_id);
     let data_hash = hash_data(&encoded);
 
     // 2. Apply EIP-191 prefix (same as signing)
@@ -172,12 +190,22 @@ pub fn verify_proof_signature(
 
 /// Encode proof data for signing (Solidity abi.encodePacked equivalent)
 ///
+/// # AUDIT-F4 Compliance (January 31, 2026)
+///
 /// Packs the data in the same order as the contract expects:
 /// - proofHash: 32 bytes
 /// - hostAddress: 20 bytes
 /// - tokensClaimed: 32 bytes (uint256, big-endian, zero-padded)
-fn encode_proof_data(proof_hash: [u8; 32], host_address: Address, tokens_claimed: u64) -> Vec<u8> {
-    let mut data = Vec::with_capacity(32 + 20 + 32); // 84 bytes total
+/// - modelId: 32 bytes (NEW - AUDIT-F4 to prevent cross-model replay attacks)
+///
+/// For non-model sessions, use `[0u8; 32]` (bytes32(0)) as the modelId.
+fn encode_proof_data(
+    proof_hash: [u8; 32],
+    host_address: Address,
+    tokens_claimed: u64,
+    model_id: [u8; 32],
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(32 + 20 + 32 + 32); // 116 bytes total (AUDIT-F4)
 
     // proofHash: 32 bytes
     data.extend_from_slice(&proof_hash);
@@ -189,6 +217,9 @@ fn encode_proof_data(proof_hash: [u8; 32], host_address: Address, tokens_claimed
     let mut tokens_bytes = [0u8; 32];
     tokens_bytes[24..].copy_from_slice(&tokens_claimed.to_be_bytes()); // Last 8 bytes
     data.extend_from_slice(&tokens_bytes);
+
+    // modelId: 32 bytes (NEW - AUDIT-F4)
+    data.extend_from_slice(&model_id);
 
     data
 }
@@ -285,9 +316,10 @@ mod tests {
         let proof_hash = [0u8; 32];
         let host_address = Address::zero();
         let tokens = 1000u64;
+        let model_id = [0u8; 32];
 
-        let encoded = encode_proof_data(proof_hash, host_address, tokens);
-        assert_eq!(encoded.len(), 84); // 32 + 20 + 32
+        let encoded = encode_proof_data(proof_hash, host_address, tokens, model_id);
+        assert_eq!(encoded.len(), 116); // 32 + 20 + 32 + 32 (AUDIT-F4)
     }
 
     #[test]
@@ -297,15 +329,105 @@ mod tests {
         assert_eq!(hash.len(), 32);
     }
 
-    // === Sub-phase 1.2 Tests (TDD) ===
+    // === Sub-phase 1.1: AUDIT-F4 modelId Tests ===
+
+    #[test]
+    fn test_encode_proof_data_with_model_id() {
+        let proof_hash = [0xaa; 32];
+        let host_address = Address::from([0x12; 20]);
+        let tokens_claimed = 1000u64;
+        let model_id = [0xbb; 32];
+
+        let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed, model_id);
+
+        // Should be 116 bytes: 32 (proof) + 20 (address) + 32 (tokens) + 32 (modelId)
+        assert_eq!(
+            encoded.len(),
+            116,
+            "AUDIT-F4: Encoded data must be 116 bytes with modelId"
+        );
+
+        // Verify modelId is at the end (bytes 84-116)
+        assert_eq!(
+            &encoded[84..116],
+            &model_id,
+            "modelId should be at bytes 84-116"
+        );
+
+        // Verify proof_hash is at the beginning
+        assert_eq!(
+            &encoded[0..32],
+            &proof_hash,
+            "proof_hash should be at bytes 0-32"
+        );
+
+        // Verify host_address is in the middle
+        assert_eq!(
+            &encoded[32..52],
+            host_address.as_bytes(),
+            "host_address should be at bytes 32-52"
+        );
+    }
+
+    #[test]
+    fn test_encode_proof_data_model_id_zero() {
+        let proof_hash = [0xcc; 32];
+        let host_address = Address::from([0x34; 20]);
+        let tokens_claimed = 5000u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model sessions
+
+        let encoded = encode_proof_data(proof_hash, host_address, tokens_claimed, model_id);
+
+        assert_eq!(
+            encoded.len(),
+            116,
+            "Length should be 116 bytes even with zero modelId"
+        );
+
+        // Verify last 32 bytes are all zeros
+        assert_eq!(
+            &encoded[84..116],
+            &[0u8; 32],
+            "bytes32(0) modelId should be all zeros"
+        );
+    }
+
+    #[test]
+    fn test_encode_proof_data_different_model_id() {
+        let proof_hash = [0xdd; 32];
+        let host_address = Address::from([0x56; 20]);
+        let tokens_claimed = 2000u64;
+
+        let model_id_1 = [0xaa; 32];
+        let model_id_2 = [0xbb; 32];
+
+        let encoded_1 = encode_proof_data(proof_hash, host_address, tokens_claimed, model_id_1);
+        let encoded_2 = encode_proof_data(proof_hash, host_address, tokens_claimed, model_id_2);
+
+        assert_ne!(
+            encoded_1, encoded_2,
+            "Different modelIds should produce different encodings"
+        );
+
+        // Both should be 116 bytes
+        assert_eq!(encoded_1.len(), 116);
+        assert_eq!(encoded_2.len(), 116);
+
+        // Only the last 32 bytes should differ
+        assert_eq!(&encoded_1[0..84], &encoded_2[0..84], "First 84 bytes should be identical");
+        assert_ne!(&encoded_1[84..116], &encoded_2[84..116], "Last 32 bytes should differ");
+    }
+
+    // === Sub-phase 1.2 Tests (Updated for AUDIT-F4) ===
 
     #[test]
     fn test_sign_proof_data_returns_65_bytes() {
         let (private_key, host_address) = generate_test_keypair();
         let proof_hash = [0xab; 32];
         let tokens = 1000u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         assert_eq!(signature.len(), 65, "Signature must be exactly 65 bytes");
     }
@@ -315,12 +437,13 @@ mod tests {
         let (private_key, host_address) = generate_test_keypair();
         let proof_hash = [0xcd; 32];
         let tokens = 5000u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         // Verify the signature using our verify function
         let is_valid =
-            verify_proof_signature(&signature, proof_hash, host_address, tokens).unwrap();
+            verify_proof_signature(&signature, proof_hash, host_address, tokens, model_id).unwrap();
 
         assert!(
             is_valid,
@@ -332,11 +455,12 @@ mod tests {
     fn test_sign_proof_data_different_tokens_different_signature() {
         let (private_key, host_address) = generate_test_keypair();
         let proof_hash = [0xef; 32];
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
         let signature_1000 =
-            sign_proof_data(&private_key, proof_hash, host_address, 1000).unwrap();
+            sign_proof_data(&private_key, proof_hash, host_address, 1000, model_id).unwrap();
         let signature_2000 =
-            sign_proof_data(&private_key, proof_hash, host_address, 2000).unwrap();
+            sign_proof_data(&private_key, proof_hash, host_address, 2000, model_id).unwrap();
 
         assert_ne!(
             signature_1000, signature_2000,
@@ -348,14 +472,15 @@ mod tests {
     fn test_sign_proof_data_different_proof_hash_different_signature() {
         let (private_key, host_address) = generate_test_keypair();
         let tokens = 1000u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
         let proof_hash_1 = [0x11; 32];
         let proof_hash_2 = [0x22; 32];
 
         let signature_1 =
-            sign_proof_data(&private_key, proof_hash_1, host_address, tokens).unwrap();
+            sign_proof_data(&private_key, proof_hash_1, host_address, tokens, model_id).unwrap();
         let signature_2 =
-            sign_proof_data(&private_key, proof_hash_2, host_address, tokens).unwrap();
+            sign_proof_data(&private_key, proof_hash_2, host_address, tokens, model_id).unwrap();
 
         assert_ne!(
             signature_1, signature_2,
@@ -368,8 +493,9 @@ mod tests {
         let (private_key, host_address) = generate_test_keypair();
         let proof_hash = [0x99; 32];
         let tokens = 100u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         let v = signature[64];
         assert!(
@@ -385,12 +511,13 @@ mod tests {
         let (_, wrong_address) = generate_test_keypair_2();
         let proof_hash = [0x55; 32];
         let tokens = 100u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens).unwrap();
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         // Verify with wrong address should fail
         let is_valid =
-            verify_proof_signature(&signature, proof_hash, wrong_address, tokens).unwrap();
+            verify_proof_signature(&signature, proof_hash, wrong_address, tokens, model_id).unwrap();
 
         assert!(
             !is_valid,
@@ -402,12 +529,13 @@ mod tests {
     fn test_sign_proof_data_wrong_tokens_fails_verification() {
         let (private_key, host_address) = generate_test_keypair();
         let proof_hash = [0x66; 32];
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, 1000).unwrap();
+        let signature = sign_proof_data(&private_key, proof_hash, host_address, 1000, model_id).unwrap();
 
         // Verify with wrong token count should fail
         let is_valid =
-            verify_proof_signature(&signature, proof_hash, host_address, 2000).unwrap();
+            verify_proof_signature(&signature, proof_hash, host_address, 2000, model_id).unwrap();
 
         assert!(
             !is_valid,
@@ -420,10 +548,11 @@ mod tests {
         let proof_hash = [0u8; 32];
         let host_address = Address::zero();
         let tokens = 0x0102030405060708u64;
+        let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let encoded = encode_proof_data(proof_hash, host_address, tokens);
+        let encoded = encode_proof_data(proof_hash, host_address, tokens, model_id);
 
-        // Tokens should be in the last 32 bytes, big-endian, zero-padded left
+        // Tokens should be in bytes 52-84, big-endian, zero-padded left
         // Position: 32 (proof_hash) + 20 (address) = 52, then 32 bytes for tokens
         let tokens_portion = &encoded[52..84];
 
