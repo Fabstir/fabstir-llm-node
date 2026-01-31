@@ -2,6 +2,233 @@
 
 ---
 
+## January 31, 2026: AUDIT Security Remediation (AUDIT-F1 to AUDIT-F5)
+
+**Contracts Affected**: JobMarketplaceWithModelsUpgradeable, ProofSystemUpgradeable, IProofSystem
+**Impact Level**: HIGH - Multiple breaking changes require SDK and Node operator updates
+
+### Summary
+
+Security audit remediation addressing findings AUDIT-F1 through AUDIT-F5. These changes are deployed to **test contracts** while frozen contracts remain unchanged for auditors.
+
+| Finding | Change | Impact | Action Required |
+|---------|--------|--------|-----------------|
+| AUDIT-F2 | ProofSystem must be configured | MEDIUM | Ensure ProofSystem is set before deployment |
+| AUDIT-F3 | `proofTimeoutWindow` parameter required | HIGH | Update all session creation calls |
+| AUDIT-F4 | `modelId` required in signatures | HIGH | Update host signature generation |
+| AUDIT-F5 | New `createSessionFromDepositForModel()` | LOW | Optional - new function available |
+
+### Test Contract Addresses (Use These for Remediated Code)
+
+| Contract | Test Proxy | Frozen Proxy (Auditors) |
+|----------|------------|-------------------------|
+| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` |
+| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` |
+
+### 1. AUDIT-F3: proofTimeoutWindow Parameter (BREAKING)
+
+All session creation functions now require a `proofTimeoutWindow` parameter. This separates timeout logic from `proofInterval` (which is now only for minimum tokens per proof).
+
+**New Constants:**
+```solidity
+uint256 public constant MIN_PROOF_TIMEOUT = 60;      // 1 minute minimum
+uint256 public constant MAX_PROOF_TIMEOUT = 3600;    // 1 hour maximum
+uint256 public constant DEFAULT_PROOF_TIMEOUT = 300; // 5 minutes (recommended)
+```
+
+**Before (OLD) - createSessionJob:**
+```solidity
+function createSessionJob(
+    address host,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval     // Was used for timeout calculation
+) external payable returns (uint256);
+```
+
+**After (NEW) - createSessionJob:**
+```solidity
+function createSessionJob(
+    address host,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,    // Now ONLY for minimum tokens per proof
+    uint256 proofTimeoutWindow // NEW: Timeout in seconds (60-3600)
+) external payable returns (uint256);
+```
+
+**All Affected Functions:**
+| Function | Old Params | New Params |
+|----------|------------|------------|
+| `createSessionJob` | 4 | 5 (+proofTimeoutWindow) |
+| `createSessionJobForModel` | 5 | 6 (+proofTimeoutWindow) |
+| `createSessionJobWithToken` | 6 | 7 (+proofTimeoutWindow) |
+| `createSessionJobForModelWithToken` | 7 | 8 (+proofTimeoutWindow) |
+| `createSessionFromDeposit` | 6 | 7 (+proofTimeoutWindow) |
+
+**Migration Example:**
+```javascript
+// Before
+await marketplace.createSessionJobForModel(
+  host, modelId, pricePerToken, maxDuration, proofInterval,
+  { value: deposit }
+);
+
+// After
+await marketplace.createSessionJobForModel(
+  host, modelId, pricePerToken, maxDuration, proofInterval,
+  300, // proofTimeoutWindow: 5 minutes (recommended)
+  { value: deposit }
+);
+```
+
+### 2. AUDIT-F4: modelId Required in Signatures (BREAKING)
+
+Host signatures must now include `modelId` to prevent cross-model replay attacks.
+
+**Before (OLD) - Signature Generation:**
+```javascript
+const dataHash = keccak256(
+  solidityPacked(
+    ["bytes32", "address", "uint256"],
+    [proofHash, hostAddress, tokensClaimed]
+  )
+);
+```
+
+**After (NEW) - Signature Generation:**
+```javascript
+// Get modelId for this session (bytes32(0) for non-model sessions)
+const modelId = await marketplace.sessionModel(sessionId);
+
+const dataHash = keccak256(
+  solidityPacked(
+    ["bytes32", "address", "uint256", "bytes32"],
+    [proofHash, hostAddress, tokensClaimed, modelId]  // modelId added!
+  )
+);
+```
+
+**IProofSystem Interface Changes:**
+```solidity
+// Before
+function verifyAndMarkComplete(bytes proof, address prover, uint256 tokens) returns (bool);
+
+// After
+function verifyAndMarkComplete(bytes proof, address prover, uint256 tokens, bytes32 modelId) returns (bool);
+```
+
+**Full Proof Submission Example:**
+```javascript
+async function submitProof(sessionId, tokensClaimed, proofData) {
+  const proofHash = keccak256(proofData);
+  const session = await marketplace.sessionJobs(sessionId);
+  const modelId = await marketplace.sessionModel(sessionId);
+
+  // Sign with modelId included
+  const dataHash = keccak256(
+    solidityPacked(
+      ["bytes32", "address", "uint256", "bytes32"],
+      [proofHash, session.host, tokensClaimed, modelId]
+    )
+  );
+  const signature = await hostWallet.signMessage(getBytes(dataHash));
+
+  await marketplace.submitProofOfWork(
+    sessionId, tokensClaimed, proofHash, signature, proofCID, deltaCID
+  );
+}
+```
+
+### 3. AUDIT-F5: createSessionFromDepositForModel (NEW FUNCTION)
+
+New function for creating model-specific sessions from pre-deposited funds.
+
+```solidity
+function createSessionFromDepositForModel(
+    bytes32 modelId,           // Required (cannot be bytes32(0))
+    address host,
+    address paymentToken,      // address(0) for ETH
+    uint256 deposit,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
+```
+
+**Usage:**
+```javascript
+// 1. Pre-deposit funds
+await marketplace.depositNative({ value: ethers.parseEther("1.0") });
+
+// 2. Create model session from deposit
+const sessionId = await marketplace.createSessionFromDepositForModel(
+  modelId,
+  hostAddress,
+  ethers.ZeroAddress,       // ETH
+  ethers.parseEther("0.5"),
+  pricePerToken,
+  3600,                     // 1 hour max duration
+  100,                      // min 100 tokens per proof
+  300                       // 5 minute timeout
+);
+```
+
+### 4. AUDIT-F2: ProofSystem Required Check
+
+Sessions will fail to submit proofs if ProofSystem is not configured. This is an internal safeguard - no SDK changes required unless you're deploying contracts.
+
+**New Error:**
+```solidity
+require(address(proofSystem) != address(0), "ProofSystem not configured");
+```
+
+### Migration Checklist
+
+#### For SDK Developers
+
+- [ ] Update all session creation calls to include `proofTimeoutWindow` (60-3600 seconds)
+- [ ] Add helper function to query `sessionModel(sessionId)` before proof submission
+- [ ] Update signature generation to include `modelId` as 4th parameter
+- [ ] Add `createSessionFromDepositForModel` support (optional)
+- [ ] Update cached ABIs from `client-abis/`
+- [ ] Update contract addresses to use test contracts for remediated code
+
+#### For Node Operators (Hosts)
+
+- [ ] **CRITICAL**: Update signature generation to include `modelId`
+- [ ] Query `sessionModel(sessionId)` for each session before signing
+- [ ] For non-model sessions, use `bytes32(0)` as modelId
+- [ ] Test signature verification with test contracts before production
+
+#### For UI Developers
+
+- [ ] Add `proofTimeoutWindow` input to session creation forms (default: 300)
+- [ ] Display timeout information (min 60s, max 3600s)
+
+### Why These Changes?
+
+| Finding | Security Issue | Fix |
+|---------|---------------|-----|
+| AUDIT-F3 | `proofInterval` was used for both token minimum AND timeout calculation, causing confusion | Separate `proofTimeoutWindow` parameter |
+| AUDIT-F4 | Signatures could be replayed across different models | Include `modelId` in signed message |
+| AUDIT-F5 | No way to create model sessions from pre-deposited funds | New `createSessionFromDepositForModel()` function |
+
+### Verification
+
+```javascript
+// Verify test contracts have new constants
+const minTimeout = await testMarketplace.MIN_PROOF_TIMEOUT();
+console.log("Min timeout:", minTimeout); // Expected: 60
+
+// Verify new function exists
+const hasFunction = typeof testMarketplace.createSessionFromDepositForModel === 'function';
+console.log("New function available:", hasFunction); // Expected: true
+```
+
+---
+
 ## January 14, 2026: deltaCID Proof Tracking & conversationCID
 
 **Contracts Affected**: JobMarketplaceWithModelsUpgradeable

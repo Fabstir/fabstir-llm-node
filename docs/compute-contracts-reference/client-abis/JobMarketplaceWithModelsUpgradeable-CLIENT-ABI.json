@@ -6,7 +6,46 @@
   },
   {
     "type": "function",
+    "name": "DEFAULT_PROOF_TIMEOUT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_PROOF_TIMEOUT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_DEPOSIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PROOF_TIMEOUT",
     "inputs": [],
     "outputs": [
       {
@@ -235,6 +274,65 @@
         "name": "proofInterval",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createSessionFromDepositForModel",
+    "inputs": [
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "host",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "paymentToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "deposit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pricePerToken",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxDuration",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proofInterval",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -267,6 +365,11 @@
       },
       {
         "name": "proofInterval",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -306,6 +409,11 @@
       },
       {
         "name": "proofInterval",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -357,6 +465,11 @@
         "name": "proofInterval",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -399,6 +512,11 @@
       },
       {
         "name": "proofInterval",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -896,6 +1014,11 @@
       },
       {
         "name": "proofInterval",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proofTimeoutWindow",
         "type": "uint256",
         "internalType": "uint256"
       },
