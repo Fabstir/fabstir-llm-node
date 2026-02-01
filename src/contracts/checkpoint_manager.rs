@@ -645,15 +645,23 @@ impl CheckpointManager {
         let private_key = crate::crypto::extract_node_private_key()
             .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
 
-        // TODO: Phase 3.1 - Query actual modelId from contract via query_session_model(job_id)
-        let model_id = [0u8; 32]; // Temporary placeholder for Phase 1 compilation
+        // Query modelId from contract for AUDIT-F4 compliance
+        let model_id = self.query_session_model(job_id).await?;
+        info!(
+            "📋 Job {} modelId: 0x{} (AUDIT-F4)",
+            job_id,
+            hex::encode(&model_id[..8])
+        );
 
+        // Generate host signature for security audit compliance (AUDIT-F4 - Jan 31, 2026)
+        // Contract requires ECDSA signature to prove host authorized this proof submission
+        // Signature format: sign(keccak256(proofHash + hostAddress + tokensClaimed + modelId))
         let signature = crate::crypto::sign_proof_data(
             &private_key,
             proof_hash_bytes,
             self.host_address,
             tokens_to_submit,
-            model_id, // AUDIT-F4 compliance (temporary placeholder)
+            model_id, // AUDIT-F4 compliance
         )
         .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
 
@@ -853,15 +861,38 @@ impl CheckpointManager {
             String::new() // No session_id means no encrypted checkpoint
         };
 
-        // TODO: Phase 3.2 - Query actual modelId from contract via query_session_model(job_id)
-        let model_id = [0u8; 32]; // Temporary placeholder for Phase 1 compilation
+        // Query modelId from contract for AUDIT-F4 compliance
+        let query = SessionModelQuery::new(job_id);
+        let call_data = query.encode();
+        let tx = TransactionRequest::new()
+            .to(proof_system_address)
+            .data(call_data);
+        let result = web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("Failed to query sessionModel for job {}: {}", job_id, e))?;
 
+        let mut model_id = [0u8; 32];
+        if result.len() == 32 {
+            model_id.copy_from_slice(&result[..32]);
+        }
+
+        info!(
+            "📋 [ASYNC] Job {} modelId: 0x{} (AUDIT-F4)",
+            job_id,
+            hex::encode(&model_id[..8])
+        );
+
+        // Generate host signature for security audit compliance (AUDIT-F4 - Jan 31, 2026)
+        // Contract requires ECDSA signature to prove host authorized this proof submission
+        // Signature format: sign(keccak256(proofHash + hostAddress + tokensClaimed + modelId))
         let signature = crate::crypto::sign_proof_data(
             &private_key,
             proof_hash_bytes,
             host_address,
             tokens_to_submit,
-            model_id, // AUDIT-F4 compliance (temporary placeholder)
+            model_id, // AUDIT-F4 compliance
         )
         .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
 
