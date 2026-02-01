@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.12.6-settlement-race-fix-2026-01-25";
+pub const VERSION: &str = "v8.13.0-audit-remediation-2026-02-01";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.12.6";
+pub const VERSION_NUMBER: &str = "8.13.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 12;
+pub const VERSION_MINOR: u32 = 13;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 6;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-01-25";
+pub const BUILD_DATE: &str = "2026-02-01";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -149,6 +149,12 @@ pub const FEATURES: &[&str] = &[
     "proof-submission-cache",
     "s5-propagation-delay-handling",
     "submission-started-tracking",
+    // AUDIT pre-report remediation (v8.13.0)
+    "audit-f4-compliance",
+    "model-id-signature",
+    "cross-model-replay-protection",
+    "session-model-query",
+    "audit-remediation",
 ];
 
 /// Supported chain IDs
@@ -159,6 +165,15 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.13.0 - AUDIT Pre-Report Remediation (Feb 1, 2026)
+    "BREAKING: Proof signatures now include modelId as 4th parameter (AUDIT-F4)",
+    "BREAKING: Signature format changed from 84 bytes to 116 bytes",
+    "FEAT: Node queries sessionModel(sessionId) from JobMarketplace before signing",
+    "FEAT: Prevents cross-model replay attacks (cheap model proof on premium model)",
+    "FEAT: For non-model sessions: modelId = bytes32(0)",
+    "CONTRACT: Using remediated contracts at 0x95132177F964FF053C1E874b53CF74d819618E06 (JobMarketplace)",
+    "CONTRACT: Using remediated contracts at 0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31 (ProofSystem)",
+    "SECURITY: Implements AUDIT-F4 recommendation from pre-report security audit",
     // v8.12.6 - Settlement Race Condition Fix (Jan 25, 2026)
     "FIX: Settlement now waits for in-flight proof submissions to complete before proceeding",
     "FIX: Prevents 'Session not active' errors when WebSocket disconnects during proof generation",
@@ -354,8 +369,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 12);
-        assert_eq!(VERSION_PATCH, 6);
+        assert_eq!(VERSION_MINOR, 13);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -410,21 +425,27 @@ mod tests {
         assert!(FEATURES.contains(&"delta-cid-on-chain"));
         assert!(FEATURES.contains(&"checkpoint-blockchain-events"));
         assert!(FEATURES.contains(&"decentralized-checkpoint-recovery"));
+        // v8.13.0 AUDIT-F4 remediation features
+        assert!(FEATURES.contains(&"audit-f4-compliance"));
+        assert!(FEATURES.contains(&"model-id-signature"));
+        assert!(FEATURES.contains(&"cross-model-replay-protection"));
+        assert!(FEATURES.contains(&"session-model-query"));
+        assert!(FEATURES.contains(&"audit-remediation"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.12.5"));
-        assert!(version.contains("2026-01-23"));
+        assert!(version.contains("8.13.0"));
+        assert!(version.contains("2026-02-01"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.12.5-s5-portal-migration-2026-01-23");
-        assert_eq!(VERSION_NUMBER, "8.12.5");
-        assert_eq!(BUILD_DATE, "2026-01-23");
+        assert_eq!(VERSION, "v8.13.0-audit-remediation-2026-02-01");
+        assert_eq!(VERSION_NUMBER, "8.13.0");
+        assert_eq!(BUILD_DATE, "2026-02-01");
     }
 
     #[test]
