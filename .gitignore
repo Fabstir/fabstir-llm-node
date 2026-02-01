@@ -63,3 +63,4 @@ dist/
 
 fabstir-llm-node
 *.tgz
+.env.contracts
