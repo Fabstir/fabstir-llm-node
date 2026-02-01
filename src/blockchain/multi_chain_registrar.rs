@@ -15,8 +15,7 @@ use crate::config::chains::{ChainConfig, ChainRegistry};
 use crate::contracts::pricing_constants::{native, stable};
 use crate::contracts::types::NodeRegistryWithModels;
 
-// FAB Token constants
-const FAB_TOKEN_ADDRESS: &str = "0xC78949004B4EB6dEf2D66e49Cd81231472612D62";
+// FAB Token stake amount
 const MIN_STAKE_AMOUNT: &str = "1000"; // 1000 FAB tokens
 
 // Registration status for each chain
@@ -115,6 +114,11 @@ impl MultiChainRegistrar {
             .get(&chain_id)
             .ok_or_else(|| anyhow!("No provider for chain {}", chain_id))?;
 
+        // Get FAB token address from environment
+        let fab_token_address_str = std::env::var("FAB_TOKEN")
+            .expect("FAB_TOKEN environment variable is required for node registration");
+        let fab_token_address = Address::from_str(&fab_token_address_str)?;
+
         // FAB Token ABI for balanceOf
         abigen!(
             FabToken,
@@ -123,7 +127,6 @@ impl MultiChainRegistrar {
             ]"#
         );
 
-        let fab_token_address = Address::from_str(FAB_TOKEN_ADDRESS)?;
         let fab_token = FabToken::new(fab_token_address, provider.clone());
 
         let balance = fab_token.balance_of(self.node_address).call().await?;
@@ -142,6 +145,11 @@ impl MultiChainRegistrar {
             .get(&chain_id)
             .ok_or_else(|| anyhow!("No signer for chain {}", chain_id))?;
 
+        // Get FAB token address from environment
+        let fab_token_address_str = std::env::var("FAB_TOKEN")
+            .expect("FAB_TOKEN environment variable is required for node registration");
+        let fab_token_address = Address::from_str(&fab_token_address_str)?;
+
         // FAB Token ABI for approve
         abigen!(
             FabToken,
@@ -150,7 +158,6 @@ impl MultiChainRegistrar {
             ]"#
         );
 
-        let fab_token_address = Address::from_str(FAB_TOKEN_ADDRESS)?;
         let fab_token = FabToken::new(fab_token_address, signer.clone());
 
         let stake_amount = ethers::utils::parse_units(MIN_STAKE_AMOUNT, 18)?;
