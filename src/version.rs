@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.13.0-audit-remediation-2026-02-01";
+pub const VERSION: &str = "v8.13.1-env-vars-required-2026-02-01";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.13.0";
+pub const VERSION_NUMBER: &str = "8.13.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 13;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-01";
@@ -370,7 +370,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 13);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -437,14 +437,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.13.0"));
+        assert!(version.contains("8.13.1"));
         assert!(version.contains("2026-02-01"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.13.0-audit-remediation-2026-02-01");
-        assert_eq!(VERSION_NUMBER, "8.13.0");
+        assert_eq!(VERSION, "v8.13.1-env-vars-required-2026-02-01");
+        assert_eq!(VERSION_NUMBER, "8.13.1");
         assert_eq!(BUILD_DATE, "2026-02-01");
     }
 

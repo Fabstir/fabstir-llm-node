@@ -374,9 +374,12 @@ impl Web3Client {
     }
 
     pub async fn create_multicall(&self) -> Result<Multicall3<Provider<Http>>> {
-        // Try to load from environment variable, fall back to default
+        // Try to load from environment variable, fall back to default universal address
         let multicall_address = std::env::var("MULTICALL3_ADDRESS")
-            .unwrap_or_else(|_| "0xcA11bde05977b3631167028862bE2a173976CA11".to_string())
+            .unwrap_or_else(|_| {
+                eprintln!("⚠️  WARNING: MULTICALL3_ADDRESS not set, using default universal address: 0xcA11bde05977b3631167028862bE2a173976CA11");
+                "0xcA11bde05977b3631167028862bE2a173976CA11".to_string()
+            })
             .parse::<Address>()?;
 
         let multicall = Multicall3::new(multicall_address, self.provider.clone());
