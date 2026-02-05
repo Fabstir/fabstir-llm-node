@@ -2,154 +2,222 @@
 
 ---
 
-## January 31, 2026: AUDIT Security Remediation (AUDIT-F1 to AUDIT-F5)
+## February 4, 2026: Signature Removal from Proof Submission
 
-**Contracts Affected**: JobMarketplaceWithModelsUpgradeable, ProofSystemUpgradeable, IProofSystem
-**Impact Level**: HIGH - Multiple breaking changes require SDK and Node operator updates
+**Contracts Affected**: JobMarketplaceWithModelsUpgradeable, ProofSystemUpgradeable (Remediation Proxies)
+**Impact Level**: HIGH - Function signature change requires SDK updates
 
 ### Summary
 
-Security audit remediation addressing findings AUDIT-F1 through AUDIT-F5. These changes are deployed to **test contracts** while frozen contracts remain unchanged for auditors.
+Removed redundant ECDSA signature verification from `submitProofOfWork()`. Authentication is now handled via `msg.sender == session.host` check, providing equivalent security with ~3,000 gas savings per proof.
 
-| Finding | Change | Impact | Action Required |
-|---------|--------|--------|-----------------|
-| AUDIT-F2 | ProofSystem must be configured | MEDIUM | Ensure ProofSystem is set before deployment |
-| AUDIT-F3 | `proofTimeoutWindow` parameter required | HIGH | Update all session creation calls |
-| AUDIT-F4 | `modelId` required in signatures | HIGH | Update host signature generation |
-| AUDIT-F5 | New `createSessionFromDepositForModel()` | LOW | Optional - new function available |
+| Change | Impact | Action Required |
+|--------|--------|-----------------|
+| `submitProofOfWork` signature param removed | HIGH | Update to 5 parameters (remove signature) |
+| `verifyAndMarkComplete` removed from ProofSystem | MEDIUM | Use `markProofUsed` instead |
+| `verifyHostSignature` removed from ProofSystem | MEDIUM | No longer needed |
 
-### Test Contract Addresses (Use These for Remediated Code)
+### 1. submitProofOfWork Signature Change (BREAKING)
 
-| Contract | Test Proxy | Frozen Proxy (Auditors) |
-|----------|------------|-------------------------|
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` |
-| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` |
-
-### 1. AUDIT-F3: proofTimeoutWindow Parameter (BREAKING)
-
-All session creation functions now require a `proofTimeoutWindow` parameter. This separates timeout logic from `proofInterval` (which is now only for minimum tokens per proof).
-
-**New Constants:**
+**Before (6 parameters):**
 ```solidity
-uint256 public constant MIN_PROOF_TIMEOUT = 60;      // 1 minute minimum
-uint256 public constant MAX_PROOF_TIMEOUT = 3600;    // 1 hour maximum
-uint256 public constant DEFAULT_PROOF_TIMEOUT = 300; // 5 minutes (recommended)
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,    // ❌ REMOVED
+    string calldata proofCID,
+    string calldata deltaCID
+) external
 ```
 
-**Before (OLD) - createSessionJob:**
+**After (5 parameters):**
 ```solidity
-function createSessionJob(
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    string calldata proofCID,
+    string calldata deltaCID     // 5 params total
+) external
+```
+
+**Migration:**
+```javascript
+// Before (6 params with signature)
+const dataHash = keccak256(solidityPacked(['bytes32', 'address', 'uint256'], [proofHash, hostAddress, tokensClaimed]));
+const signature = await hostWallet.signMessage(getBytes(dataHash));
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
+
+// After (5 params, no signature)
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID);
+```
+
+### 2. ProofSystem Function Changes
+
+**Removed Functions:**
+- `verifyAndMarkComplete(bytes proof, address prover, uint256 claimedTokens, bytes32 modelId)` - No longer exists
+- `verifyHostSignature(bytes proof, address prover, uint256 claimedTokens, bytes32 modelId)` - No longer exists
+
+**New Function:**
+```solidity
+// Simple replay protection - no signature verification
+function markProofUsed(bytes32 proofHash) external returns (bool)
+```
+
+**Note:** `markProofUsed` is called internally by JobMarketplace. SDK developers do not need to call it directly.
+
+### 3. Updated Implementation Addresses
+
+| Contract | Proxy | New Implementation |
+|----------|-------|-------------------|
+| JobMarketplace (Remediation) | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
+| ProofSystem (Remediation) | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5345a926dcf3B0E1A6895406FB68210ED19AC556` |
+
+### Why This Change?
+
+The signature was **redundant** because:
+1. Only the session host can call `submitProofOfWork()` (enforced by `msg.sender == session.host`)
+2. The host is already authenticated by their Ethereum address
+3. Removing ECDSA verification saves ~3,000 gas per proof submission
+4. Simpler integration for hosts (no signature generation code needed)
+
+### Migration Checklist
+
+#### For SDK Developers
+
+- [ ] Update `submitProofOfWork` calls to 5 parameters (remove signature)
+- [ ] Remove signature generation code from host integration
+- [ ] Update cached ABIs from `client-abis/`
+
+#### For Node Operators (Hosts)
+
+- [ ] Remove signature generation from proof submission code
+- [ ] Update SDK/library to latest version
+- [ ] Test proof submission with new 5-parameter function
+
+---
+
+## February 3, 2026: Early Cancellation Fee + Per-Model Rate Limits
+
+**Contracts Affected**: JobMarketplaceWithModelsUpgradeable, ModelRegistryUpgradeable (Remediation Proxies)
+**Impact Level**: LOW - New functions added, no breaking changes
+
+### Summary
+
+Added two security features from audit remediation:
+1. **Early Cancellation Fee**: Protects hosts from users who cancel before first proof
+2. **Per-Model Rate Limits**: Allows setting token rate limits per model
+
+| Change | Impact | Action Required |
+|--------|--------|-----------------|
+| New `minTokensFee` state variable | LOW | Query before session creation for UX |
+| New `setMinTokensFee()` admin function | NONE | Admin only |
+| New `modelRateLimits` mapping | LOW | Optional - use for rate limit enforcement |
+| New `setModelRateLimit()` admin function | NONE | Admin only |
+
+### 1. Early Cancellation Fee (JobMarketplace)
+
+When a depositor completes a session **before any proofs are submitted**, they are charged a minimum fee:
+
+```
+fee = minTokensFee * pricePerToken / PRICE_PRECISION
+```
+
+**New Functions:**
+```solidity
+// Query the minimum token fee (default: 1000 tokens)
+function minTokensFee() external view returns (uint256);
+
+// Set the minimum token fee (owner only)
+function setMinTokensFee(uint256 _fee) external;
+```
+
+**SDK Integration (Optional but Recommended):**
+```typescript
+// Calculate potential early cancellation fee before session creation
+const minTokensFee = await marketplace.minTokensFee();
+const potentialFee = (minTokensFee * pricePerToken) / 1000n;
+console.log(`Early cancel fee: ${potentialFee} (if canceling before first proof)`);
+```
+
+### 2. Per-Model Rate Limits (ModelRegistry)
+
+Allows setting token generation rate limits per model for quality enforcement.
+
+**New Functions:**
+```solidity
+// Query rate limit for a model (tokens per second, 0 = unlimited)
+function modelRateLimits(bytes32 modelId) external view returns (uint256);
+
+// Set rate limit for a model (owner only)
+function setModelRateLimit(bytes32 modelId, uint256 tokensPerSecond) external;
+```
+
+### 3. Updated Implementation Addresses
+
+| Contract | Proxy | New Implementation |
+|----------|-------|-------------------|
+| JobMarketplace (Remediation) | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x40df542b58A54B9F077289442944fbA562c94E67` |
+| ModelRegistry (Remediation) | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x3F22fd532Ac051aE09b0F2e45F3DBfc835AfCD45` |
+
+### Migration Checklist
+
+#### For SDK Developers
+
+- [ ] (Optional) Query `minTokensFee()` to display early cancellation cost to users
+- [ ] (Optional) Query `modelRateLimits(modelId)` for rate limit enforcement
+- [ ] Update cached ABIs from `client-abis/`
+
+#### For Node Operators
+
+- [ ] No action required - fee is automatically credited to host earnings
+
+---
+
+## February 2, 2026: V2 Direct Payment Delegation + Custom Errors
+
+**Contracts Affected**: JobMarketplaceWithModelsUpgradeable (Remediation Proxy)
+**Impact Level**: MEDIUM - New functions added, custom errors introduced
+
+### Summary
+
+Added V2 Direct Payment Delegation for Coinbase Smart Wallet sub-account support. Delegates can create sessions using the payer's USDC via `transferFrom` pattern.
+
+| Change | Impact | Action Required |
+|--------|--------|-----------------|
+| New delegation functions | LOW | Adopt for Smart Wallet integration |
+| Custom errors introduced | LOW | Update error handling in tests/SDK |
+| Bytecode optimization | NONE | Internal change |
+
+### 1. New V2 Delegation Functions
+
+```solidity
+// Authorize a delegate
+function authorizeDelegate(address delegate, bool authorized) external;
+
+// Check authorization
+function isDelegateAuthorized(address payer, address delegate) external view returns (bool);
+
+// Create model session as delegate (USDC only)
+function createSessionForModelAsDelegate(
+    address payer,
+    bytes32 modelId,
     address host,
+    address paymentToken,
+    uint256 amount,
     uint256 pricePerToken,
     uint256 maxDuration,
-    uint256 proofInterval     // Was used for timeout calculation
-) external payable returns (uint256);
-```
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
 
-**After (NEW) - createSessionJob:**
-```solidity
-function createSessionJob(
+// Create non-model session as delegate (USDC only)
+function createSessionAsDelegate(
+    address payer,
     address host,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,    // Now ONLY for minimum tokens per proof
-    uint256 proofTimeoutWindow // NEW: Timeout in seconds (60-3600)
-) external payable returns (uint256);
-```
-
-**All Affected Functions:**
-| Function | Old Params | New Params |
-|----------|------------|------------|
-| `createSessionJob` | 4 | 5 (+proofTimeoutWindow) |
-| `createSessionJobForModel` | 5 | 6 (+proofTimeoutWindow) |
-| `createSessionJobWithToken` | 6 | 7 (+proofTimeoutWindow) |
-| `createSessionJobForModelWithToken` | 7 | 8 (+proofTimeoutWindow) |
-| `createSessionFromDeposit` | 6 | 7 (+proofTimeoutWindow) |
-
-**Migration Example:**
-```javascript
-// Before
-await marketplace.createSessionJobForModel(
-  host, modelId, pricePerToken, maxDuration, proofInterval,
-  { value: deposit }
-);
-
-// After
-await marketplace.createSessionJobForModel(
-  host, modelId, pricePerToken, maxDuration, proofInterval,
-  300, // proofTimeoutWindow: 5 minutes (recommended)
-  { value: deposit }
-);
-```
-
-### 2. AUDIT-F4: modelId Required in Signatures (BREAKING)
-
-Host signatures must now include `modelId` to prevent cross-model replay attacks.
-
-**Before (OLD) - Signature Generation:**
-```javascript
-const dataHash = keccak256(
-  solidityPacked(
-    ["bytes32", "address", "uint256"],
-    [proofHash, hostAddress, tokensClaimed]
-  )
-);
-```
-
-**After (NEW) - Signature Generation:**
-```javascript
-// Get modelId for this session (bytes32(0) for non-model sessions)
-const modelId = await marketplace.sessionModel(sessionId);
-
-const dataHash = keccak256(
-  solidityPacked(
-    ["bytes32", "address", "uint256", "bytes32"],
-    [proofHash, hostAddress, tokensClaimed, modelId]  // modelId added!
-  )
-);
-```
-
-**IProofSystem Interface Changes:**
-```solidity
-// Before
-function verifyAndMarkComplete(bytes proof, address prover, uint256 tokens) returns (bool);
-
-// After
-function verifyAndMarkComplete(bytes proof, address prover, uint256 tokens, bytes32 modelId) returns (bool);
-```
-
-**Full Proof Submission Example:**
-```javascript
-async function submitProof(sessionId, tokensClaimed, proofData) {
-  const proofHash = keccak256(proofData);
-  const session = await marketplace.sessionJobs(sessionId);
-  const modelId = await marketplace.sessionModel(sessionId);
-
-  // Sign with modelId included
-  const dataHash = keccak256(
-    solidityPacked(
-      ["bytes32", "address", "uint256", "bytes32"],
-      [proofHash, session.host, tokensClaimed, modelId]
-    )
-  );
-  const signature = await hostWallet.signMessage(getBytes(dataHash));
-
-  await marketplace.submitProofOfWork(
-    sessionId, tokensClaimed, proofHash, signature, proofCID, deltaCID
-  );
-}
-```
-
-### 3. AUDIT-F5: createSessionFromDepositForModel (NEW FUNCTION)
-
-New function for creating model-specific sessions from pre-deposited funds.
-
-```solidity
-function createSessionFromDepositForModel(
-    bytes32 modelId,           // Required (cannot be bytes32(0))
-    address host,
-    address paymentToken,      // address(0) for ETH
-    uint256 deposit,
+    address paymentToken,
+    uint256 amount,
     uint256 pricePerToken,
     uint256 maxDuration,
     uint256 proofInterval,
@@ -157,75 +225,91 @@ function createSessionFromDepositForModel(
 ) external returns (uint256 sessionId);
 ```
 
-**Usage:**
-```javascript
-// 1. Pre-deposit funds
-await marketplace.depositNative({ value: ethers.parseEther("1.0") });
+### 2. New Custom Errors (BREAKING for Test Code)
 
-// 2. Create model session from deposit
-const sessionId = await marketplace.createSessionFromDepositForModel(
-  modelId,
-  hostAddress,
-  ethers.ZeroAddress,       // ETH
-  ethers.parseEther("0.5"),
-  pricePerToken,
-  3600,                     // 1 hour max duration
-  100,                      // min 100 tokens per proof
-  300                       // 5 minute timeout
+V2 delegation functions use custom errors instead of string reverts for gas optimization:
+
+```solidity
+error NotDelegate();        // Caller not authorized as delegate for payer
+error ERC20Only();          // Direct delegation requires ERC-20 token (no ETH)
+error BadDelegateParams();  // Invalid parameters (zero address, bad duration, etc.)
+```
+
+**Migration for tests:**
+```javascript
+// Before (string revert)
+vm.expectRevert("Not authorized delegate");
+
+// After (custom error selector)
+vm.expectRevert(JobMarketplaceWithModelsUpgradeable.NotDelegate.selector);
+```
+
+### 3. New Events
+
+```solidity
+event DelegateAuthorized(
+    address indexed payer,
+    address indexed delegate,
+    bool authorized
+);
+
+event SessionCreatedByDelegate(
+    uint256 indexed sessionId,
+    address indexed payer,
+    address indexed delegate,
+    address host,
+    bytes32 modelId,
+    uint256 amount
 );
 ```
 
-### 4. AUDIT-F2: ProofSystem Required Check
+### 4. Updated Implementation Address
 
-Sessions will fail to submit proofs if ProofSystem is not configured. This is an internal safeguard - no SDK changes required unless you're deploying contracts.
+| Contract | Proxy | New Implementation |
+|----------|-------|-------------------|
+| JobMarketplace (Remediation) | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0xf5441bda610AbCDe71B96fe6051E738d2702f071` |
 
-**New Error:**
-```solidity
-require(address(proofSystem) != address(0), "ProofSystem not configured");
+### SDK Integration Example
+
+```typescript
+import { parseUnits } from "ethers";
+
+// One-time setup (2 popups)
+const APPROVAL_AMOUNT = parseUnits("1000", 6); // $1,000 USDC
+
+// 1. Approve USDC to contract
+await usdc.connect(primaryWallet).approve(marketplace.address, APPROVAL_AMOUNT);
+
+// 2. Authorize sub-account
+await marketplace.connect(primaryWallet).authorizeDelegate(subAccount.address, true);
+
+// Per-session (NO popup!)
+const sessionId = await marketplace.connect(subAccount).createSessionForModelAsDelegate(
+    primaryWallet.address,  // payer
+    modelId,                // model
+    hostAddress,            // host
+    usdcAddress,            // USDC token (no ETH!)
+    parseUnits("10", 6),    // amount
+    5000,                   // pricePerToken
+    3600,                   // maxDuration
+    1000,                   // proofInterval
+    300                     // proofTimeoutWindow
+);
 ```
 
 ### Migration Checklist
 
 #### For SDK Developers
 
-- [ ] Update all session creation calls to include `proofTimeoutWindow` (60-3600 seconds)
-- [ ] Add helper function to query `sessionModel(sessionId)` before proof submission
-- [ ] Update signature generation to include `modelId` as 4th parameter
-- [ ] Add `createSessionFromDepositForModel` support (optional)
+- [ ] Add V2 delegation functions to SDK (optional but recommended for Smart Wallet)
 - [ ] Update cached ABIs from `client-abis/`
-- [ ] Update contract addresses to use test contracts for remediated code
+- [ ] Handle custom errors if catching delegation reverts
 
-#### For Node Operators (Hosts)
+#### For Smart Wallet Integrators
 
-- [ ] **CRITICAL**: Update signature generation to include `modelId`
-- [ ] Query `sessionModel(sessionId)` for each session before signing
-- [ ] For non-model sessions, use `bytes32(0)` as modelId
-- [ ] Test signature verification with test contracts before production
-
-#### For UI Developers
-
-- [ ] Add `proofTimeoutWindow` input to session creation forms (default: 300)
-- [ ] Display timeout information (min 60s, max 3600s)
-
-### Why These Changes?
-
-| Finding | Security Issue | Fix |
-|---------|---------------|-----|
-| AUDIT-F3 | `proofInterval` was used for both token minimum AND timeout calculation, causing confusion | Separate `proofTimeoutWindow` parameter |
-| AUDIT-F4 | Signatures could be replayed across different models | Include `modelId` in signed message |
-| AUDIT-F5 | No way to create model sessions from pre-deposited funds | New `createSessionFromDepositForModel()` function |
-
-### Verification
-
-```javascript
-// Verify test contracts have new constants
-const minTimeout = await testMarketplace.MIN_PROOF_TIMEOUT();
-console.log("Min timeout:", minTimeout); // Expected: 60
-
-// Verify new function exists
-const hasFunction = typeof testMarketplace.createSessionFromDepositForModel === 'function';
-console.log("New function available:", hasFunction); // Expected: true
-```
+- [ ] Implement one-time setup flow (approve USDC + authorize delegate)
+- [ ] Use `createSessionForModelAsDelegate()` for popup-free session creation
+- [ ] Track allowance and prompt re-approval when low
 
 ---
 

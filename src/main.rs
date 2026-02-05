@@ -3,8 +3,13 @@
 use anyhow::Result;
 use fabstir_llm_node::{
     api::{ApiConfig, ApiServer},
-    contracts::{checkpoint_manager::CheckpointManager, Web3Client, Web3Config},
+    contracts::{
+        checkpoint_manager::CheckpointManager,
+        model_registry::ModelRegistryClient,
+        Web3Client, Web3Config,
+    },
     inference::{EngineConfig, LlmEngine, ModelConfig},
+    model_validation::ModelValidator,
     p2p::{Node, NodeEvent},
     p2p_config::NodeConfig,
 };
@@ -20,6 +25,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     println!("🚀 Starting Fabstir LLM Node...\n");
+    println!("📦 BUILD VERSION: {}", fabstir_llm_node::version::VERSION);
+    println!("📅 Build Date: {}", fabstir_llm_node::version::BUILD_DATE);
+    println!();
 
     // Parse environment variables for configuration
     let p2p_port = env::var("P2P_PORT").unwrap_or_else(|_| "9000".to_string());
@@ -62,8 +70,142 @@ async fn main() -> Result<()> {
     let mut llm_engine = LlmEngine::new(engine_config).await?;
     println!("✅ Inference engine initialized");
 
-    // Load the real GGUF model
+    // ========================================================================
+    // Model Authorization Validation (Phase 2.2 - v8.14.0)
+    // ========================================================================
+    // If REQUIRE_MODEL_VALIDATION=true, validate model before loading.
+    // Default is false (disabled) for v8.14.0 gradual rollout.
     let model_path_buf = PathBuf::from(&model_path);
+    let mut semantic_model_id: Option<ethers::types::H256> = None;
+
+    let validation_enabled = env::var("REQUIRE_MODEL_VALIDATION")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false);
+
+    if validation_enabled {
+        println!("🔒 Model validation ENABLED - validating before loading...");
+
+        // Check if HOST_PRIVATE_KEY is available (needed for host address)
+        match env::var("HOST_PRIVATE_KEY") {
+            Ok(host_private_key) => {
+                // Get required contract addresses from environment
+                let model_registry_addr = env::var("CONTRACT_MODEL_REGISTRY")
+                    .unwrap_or_else(|_| "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2".to_string());
+                let node_registry_addr = env::var("CONTRACT_NODE_REGISTRY")
+                    .unwrap_or_else(|_| "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22".to_string());
+                let rpc_url = env::var("BASE_SEPOLIA_RPC_URL")
+                    .or_else(|_| env::var("RPC_URL"))
+                    .unwrap_or_else(|_| "https://sepolia.base.org".to_string());
+
+                // Parse addresses
+                let model_registry_address: ethers::types::Address = model_registry_addr
+                    .parse()
+                    .expect("Invalid MODEL_REGISTRY address");
+                let node_registry_address: ethers::types::Address = node_registry_addr
+                    .parse()
+                    .expect("Invalid NODE_REGISTRY address");
+
+                // Extract host address from private key
+                let wallet: ethers::signers::LocalWallet = host_private_key
+                    .parse()
+                    .expect("Invalid HOST_PRIVATE_KEY");
+                let host_address = ethers::signers::Signer::address(&wallet);
+
+                println!("   Host address: 0x{}", hex::encode(host_address.as_bytes()));
+                println!("   Model registry: {}", model_registry_addr);
+                println!("   Node registry: {}", node_registry_addr);
+
+                // Initialize Web3 provider for validation
+                let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(&rpc_url)
+                    .expect("Failed to create provider");
+                let provider = Arc::new(provider);
+
+                // Create ModelRegistryClient
+                match ModelRegistryClient::new(
+                    provider.clone(),
+                    model_registry_address,
+                    Some(node_registry_address),
+                ).await {
+                    Ok(model_registry_client) => {
+                        let model_registry = Arc::new(model_registry_client);
+
+                        // Create dummy Web3Client (for ModelValidator interface)
+                        // Note: We only need the provider for validation queries
+                        let web3_config = Web3Config {
+                            rpc_url: rpc_url.clone(),
+                            chain_id: 84532,
+                            private_key: Some(host_private_key.clone()),
+                            ..Default::default()
+                        };
+
+                        match Web3Client::new(web3_config).await {
+                            Ok(web3_client) => {
+                                let web3_client = Arc::new(web3_client);
+
+                                // Create ModelValidator
+                                let validator = ModelValidator::new(
+                                    model_registry.clone(),
+                                    node_registry_address,
+                                    web3_client,
+                                );
+
+                                // Build dynamic model map from contract
+                                println!("📋 Building dynamic model map from contract...");
+                                if let Err(e) = validator.build_model_map().await {
+                                    eprintln!("❌ Failed to build model map: {}", e);
+                                    eprintln!("   Cannot validate model without contract access.");
+                                    std::process::exit(1);
+                                }
+
+                                // Validate model at startup
+                                match validator.validate_model_at_startup(&model_path_buf, host_address).await {
+                                    Ok(model_id) => {
+                                        println!("✅ Model authorization verified: 0x{}", hex::encode(&model_id.0));
+                                        semantic_model_id = Some(model_id);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("❌ Model validation FAILED: {}", e);
+                                        eprintln!("");
+                                        eprintln!("   Your MODEL_PATH does not match a model you're registered for.");
+                                        eprintln!("   Either:");
+                                        eprintln!("     1. Register this model in NodeRegistry contract");
+                                        eprintln!("     2. Change MODEL_PATH to a model you're registered for");
+                                        eprintln!("     3. Disable validation: REQUIRE_MODEL_VALIDATION=false");
+                                        eprintln!("");
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("❌ Failed to initialize Web3Client for validation: {}", e);
+                                eprintln!("   Cannot validate model without contract access.");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to initialize ModelRegistryClient: {}", e);
+                        eprintln!("   Cannot validate model without contract access.");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(_) => {
+                eprintln!("❌ REQUIRE_MODEL_VALIDATION=true but HOST_PRIVATE_KEY not set!");
+                eprintln!("   Model validation requires HOST_PRIVATE_KEY to determine host address.");
+                eprintln!("   Either:");
+                eprintln!("     1. Set HOST_PRIVATE_KEY environment variable");
+                eprintln!("     2. Disable validation: REQUIRE_MODEL_VALIDATION=false");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        println!("ℹ️  Model validation DISABLED (set REQUIRE_MODEL_VALIDATION=true to enable)");
+    }
+
+    // ========================================================================
+    // Load the GGUF model (after validation)
+    // ========================================================================
     let mut model_id = String::new();
 
     if model_path_buf.exists() {
@@ -78,6 +220,10 @@ async fn main() -> Result<()> {
             chat_template: None, // Use model's default chat template
         };
 
+        // Pass semantic_model_id if validation was performed
+        // Note: In Phase 4, load_model will accept this parameter
+        let _ = semantic_model_id; // Suppress unused warning until Phase 4
+
         match llm_engine.load_model(model_config).await {
             Ok(id) => {
                 model_id = id.clone();
@@ -85,6 +231,9 @@ async fn main() -> Result<()> {
                 println!("   GPU layers: {}", gpu_layers);
                 println!("   Context size: {} tokens", max_context_length);
                 println!("   Batch size: {} tokens", batch_size);
+                if semantic_model_id.is_some() {
+                    println!("   Contract model ID: 0x{}", hex::encode(&semantic_model_id.unwrap().0[..8]));
+                }
             }
             Err(e) => {
                 eprintln!("❌ Failed to load model: {}", e);

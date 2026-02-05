@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.13.1-env-vars-required-2026-02-01";
+pub const VERSION: &str = "v8.14.1-dynamic-model-registry-2026-02-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.13.1";
+pub const VERSION_NUMBER: &str = "8.14.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 13;
+pub const VERSION_MINOR: u32 = 14;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-01";
+pub const BUILD_DATE: &str = "2026-02-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -155,6 +155,13 @@ pub const FEATURES: &[&str] = &[
     "cross-model-replay-protection",
     "session-model-query",
     "audit-remediation",
+    // Model validation (v8.14.0)
+    "model-validation",
+    "dynamic-model-discovery",
+    "sha256-model-verification",
+    "host-authorization-cache",
+    "startup-model-validation",
+    "contract-model-queries",
 ];
 
 /// Supported chain IDs
@@ -165,6 +172,19 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.14.1 - Dynamic Model Registry + submitProofOfWork Fix (Feb 5, 2026)
+    "FIX: submitProofOfWork now uses 5 params (signature removed per Feb 4 contract update)",
+    "FIX: Removed hardcoded ApprovedModels struct - now fully dynamic from contract",
+    "FIX: validate_models_for_registration() queries ModelRegistry contract at startup",
+    "FEAT: Any model registered on-chain works automatically without code changes",
+    "FEAT: GPT-OSS-20B and future models supported without hardcoding",
+    // v8.14.0 - Model Validation (Feb 5, 2026)
+    "FEAT: Model validation enforces host authorization at startup (REQUIRE_MODEL_VALIDATION=true)",
+    "FEAT: Dynamic model discovery from ModelRegistry contract (no hardcoded model list)",
+    "FEAT: SHA256 hash verification of model files against on-chain hash",
+    "FEAT: Host authorization caching for performance (nodeSupportsModel queries)",
+    "FEAT: Node refuses to start if MODEL_PATH not authorized for host",
+    "FEAT: Feature flag REQUIRE_MODEL_VALIDATION (default: false) for gradual rollout",
     // v8.13.0 - AUDIT Pre-Report Remediation (Feb 1, 2026)
     "BREAKING: Proof signatures now include modelId as 4th parameter (AUDIT-F4)",
     "BREAKING: Signature format changed from 84 bytes to 116 bytes",
@@ -369,8 +389,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 13);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 14);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         assert!(FEATURES.contains(&"cpu-ocr"));
@@ -437,15 +457,25 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.13.1"));
-        assert!(version.contains("2026-02-01"));
+        assert!(version.contains("8.14.1"));
+        assert!(version.contains("2026-02-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.13.1-env-vars-required-2026-02-01");
-        assert_eq!(VERSION_NUMBER, "8.13.1");
-        assert_eq!(BUILD_DATE, "2026-02-01");
+        assert_eq!(VERSION, "v8.14.1-dynamic-model-registry-2026-02-05");
+        assert_eq!(VERSION_NUMBER, "8.14.1");
+        assert_eq!(BUILD_DATE, "2026-02-05");
+    }
+
+    #[test]
+    fn test_model_validation_features() {
+        assert!(FEATURES.contains(&"model-validation"));
+        assert!(FEATURES.contains(&"dynamic-model-discovery"));
+        assert!(FEATURES.contains(&"sha256-model-verification"));
+        assert!(FEATURES.contains(&"host-authorization-cache"));
+        assert!(FEATURES.contains(&"startup-model-validation"));
+        assert!(FEATURES.contains(&"contract-model-queries"));
     }
 
     #[test]

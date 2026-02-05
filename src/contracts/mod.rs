@@ -12,7 +12,7 @@ pub mod types;
 
 pub use checkpoint_manager::{CheckpointManager, JobTokenTracker};
 pub use client::{ChainConfig, Web3Client, Web3Config};
-pub use model_registry::{ApprovedModels, ModelInfo as ModelContractInfo, ModelRegistryClient};
+pub use model_registry::{calculate_model_id, ModelInfo as ModelContractInfo, ModelRegistryClient};
 pub use monitor::{JobEvent, JobMonitor, JobMonitorConfig};
 pub use payments::{PaymentConfig, PaymentEvent, PaymentVerifier, TokenInfo};
 pub use proofs::{ProofConfig, ProofData, ProofEvent, ProofSubmitter};

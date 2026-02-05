@@ -22,77 +22,22 @@ pub struct ModelInfo {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone)]
-pub struct ApprovedModels {
-    pub tiny_vicuna: ModelSpec,
-    pub tiny_llama: ModelSpec,
-}
+// ============================================================================
+// Model ID Calculation (standalone utility)
+// ============================================================================
 
-#[derive(Debug, Clone)]
-pub struct ModelSpec {
-    pub repo: String,
-    pub file: String,
-    pub sha256: String,
-    pub id: H256,
-}
-
-impl Default for ApprovedModels {
-    fn default() -> Self {
-        let tiny_vicuna = ModelSpec {
-            repo: "CohereForAI/TinyVicuna-1B-32k-GGUF".to_string(),
-            file: "tiny-vicuna-1b.q4_k_m.gguf".to_string(),
-            sha256: "329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f".to_string(),
-            id: H256::zero(), // Will be calculated
-        };
-
-        let tiny_llama = ModelSpec {
-            repo: "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF".to_string(),
-            file: "tinyllama-1b.Q4_K_M.gguf".to_string(),
-            sha256: "45b71fe98efe5f530b825dce6f5049d738e9c16869f10be4370ab81a9912d4a6".to_string(),
-            id: H256::zero(), // Will be calculated
-        };
-
-        let mut models = Self {
-            tiny_vicuna,
-            tiny_llama,
-        };
-
-        // Calculate model IDs
-        models.tiny_vicuna.id =
-            Self::calculate_model_id(&models.tiny_vicuna.repo, &models.tiny_vicuna.file);
-        models.tiny_llama.id =
-            Self::calculate_model_id(&models.tiny_llama.repo, &models.tiny_llama.file);
-
-        models
-    }
-}
-
-impl ApprovedModels {
-    pub fn calculate_model_id(huggingface_repo: &str, file_name: &str) -> H256 {
-        let input = format!("{}/{}", huggingface_repo, file_name);
-        let hash = keccak256(input.as_bytes());
-        H256::from_slice(&hash)
-    }
-
-    pub fn get_all_ids(&self) -> Vec<H256> {
-        vec![self.tiny_vicuna.id, self.tiny_llama.id]
-    }
-
-    pub fn get_spec_by_file(&self, file_name: &str) -> Option<&ModelSpec> {
-        if file_name == self.tiny_vicuna.file {
-            Some(&self.tiny_vicuna)
-        } else if file_name == self.tiny_llama.file {
-            Some(&self.tiny_llama)
-        } else {
-            None
-        }
-    }
+/// Calculate model ID from HuggingFace repo and filename
+///
+/// Model IDs are keccak256("{repo}/{filename}") - same as contract
+pub fn calculate_model_id(huggingface_repo: &str, file_name: &str) -> H256 {
+    let input = format!("{}/{}", huggingface_repo, file_name);
+    let hash = keccak256(input.as_bytes());
+    H256::from_slice(&hash)
 }
 
 pub struct ModelRegistryClient {
     contract: Arc<ModelRegistry<Provider<Http>>>,
     node_registry: Option<Arc<NodeRegistryWithModels<Provider<Http>>>>,
-    approved_models: ApprovedModels,
 }
 
 impl ModelRegistryClient {
@@ -141,13 +86,12 @@ impl ModelRegistryClient {
         Ok(Self {
             contract,
             node_registry,
-            approved_models: ApprovedModels::default(),
         })
     }
 
     /// Get model ID from HuggingFace repo and filename
     pub fn get_model_id(&self, huggingface_repo: &str, file_name: &str) -> H256 {
-        ApprovedModels::calculate_model_id(huggingface_repo, file_name)
+        calculate_model_id(huggingface_repo, file_name)
     }
 
     /// Check if a model is approved
@@ -255,13 +199,38 @@ impl ModelRegistryClient {
         Ok(matches)
     }
 
-    /// Validate models for node registration
+    /// Validate models for node registration (queries contract dynamically)
+    ///
+    /// This function queries the ModelRegistry contract to get all approved models,
+    /// builds a filename→model_id map, and validates each model path against it.
+    /// No hardcoded model list - any model registered on-chain is supported.
     pub async fn validate_models_for_registration(
         &self,
         model_paths: &[String],
     ) -> Result<Vec<H256>> {
-        info!("Validating {} models for registration", model_paths.len());
+        info!("Validating {} models for registration (querying contract)", model_paths.len());
 
+        // Step 1: Get all approved models from contract
+        let all_model_ids = self.get_all_approved_models().await?;
+        info!("Found {} approved models on-chain", all_model_ids.len());
+
+        // Step 2: Build filename → (model_id, sha256_hash) map from contract
+        let mut filename_map: std::collections::HashMap<String, (H256, H256)> =
+            std::collections::HashMap::new();
+
+        for model_id in &all_model_ids {
+            match self.get_model_details(*model_id).await {
+                Ok(info) => {
+                    debug!("  {} → 0x{}", info.file_name, hex::encode(&model_id.0[..8]));
+                    filename_map.insert(info.file_name.clone(), (*model_id, info.sha256_hash));
+                }
+                Err(e) => {
+                    debug!("Could not get details for model 0x{}: {}", hex::encode(&model_id.0), e);
+                }
+            }
+        }
+
+        // Step 3: Validate each model path against dynamic map
         let mut validated_ids = Vec::new();
 
         for path_str in model_paths {
@@ -270,22 +239,27 @@ impl ModelRegistryClient {
                 .and_then(|n| n.to_str())
                 .ok_or_else(|| anyhow!("Invalid model path: {}", path_str))?;
 
-            // Find the model spec for this file
-            let spec = self
-                .approved_models
-                .get_spec_by_file(file_name)
-                .ok_or_else(|| anyhow!("Model {} is not in approved list", file_name))?;
-
-            // Verify the model is approved
-            if !self.is_model_approved(spec.id).await? {
-                return Err(anyhow!("Model {} is not approved", file_name));
-            }
+            // Lookup in dynamic map (from contract)
+            let (model_id, sha256_hash) = filename_map.get(file_name).ok_or_else(|| {
+                anyhow!(
+                    "Model '{}' is not registered in ModelRegistry. \
+                     Only models approved on-chain can be used. \
+                     Found {} approved models: {:?}",
+                    file_name,
+                    filename_map.len(),
+                    filename_map.keys().collect::<Vec<_>>()
+                )
+            })?;
 
             // Verify file hash if it exists
             let path = Path::new(path_str);
             if path.exists() {
-                if !self.verify_model_hash(path, &spec.sha256).await? {
-                    return Err(anyhow!("Model {} failed hash verification", file_name));
+                let expected_hash = format!("{:x}", sha256_hash);
+                if !self.verify_model_hash(path, &expected_hash).await? {
+                    return Err(anyhow!(
+                        "Model {} failed hash verification against on-chain SHA256",
+                        file_name
+                    ));
                 }
             } else {
                 debug!(
@@ -294,19 +268,15 @@ impl ModelRegistryClient {
                 );
             }
 
-            validated_ids.push(spec.id);
+            validated_ids.push(*model_id);
             info!(
-                "Model {} validated successfully with ID {:?}",
-                file_name, spec.id
+                "Model {} validated successfully with ID 0x{}",
+                file_name,
+                hex::encode(&model_id.0[..8])
             );
         }
 
         Ok(validated_ids)
-    }
-
-    /// Get the approved models specifications
-    pub fn get_approved_models(&self) -> &ApprovedModels {
-        &self.approved_models
     }
 
     /// Find hosts that support a specific model
@@ -329,6 +299,46 @@ impl ModelRegistryClient {
             Err(anyhow!("NodeRegistryWithModels not configured"))
         }
     }
+
+    /// Check if a specific node supports a model
+    ///
+    /// Calls NodeRegistry.nodeSupportsModel(nodeAddress, modelId) to verify
+    /// host authorization for a specific model.
+    ///
+    /// # Arguments
+    /// * `node_address` - The host/node wallet address
+    /// * `model_id` - The model ID (H256 hash)
+    ///
+    /// # Returns
+    /// * `Ok(true)` if the node is authorized for the model
+    /// * `Ok(false)` if the node is NOT authorized
+    /// * `Err` if the contract query fails
+    pub async fn node_supports_model(
+        &self,
+        node_address: Address,
+        model_id: H256,
+    ) -> Result<bool> {
+        if let Some(registry) = &self.node_registry {
+            debug!(
+                "Checking if node {:?} supports model {:?}",
+                node_address, model_id
+            );
+
+            // Call nodeSupportsModel(address nodeAddress, bytes32 modelId) -> bool
+            let method = registry
+                .method::<_, bool>("nodeSupportsModel", (node_address, model_id))
+                .map_err(|e| anyhow!("Failed to create nodeSupportsModel call: {}", e))?;
+
+            let supports = method
+                .call()
+                .await
+                .map_err(|e| anyhow!("Failed to query nodeSupportsModel: {}", e))?;
+
+            Ok(supports)
+        } else {
+            Err(anyhow!("NodeRegistryWithModels not configured"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -337,34 +347,61 @@ mod tests {
 
     #[test]
     fn test_model_id_calculation() {
-        let approved = ApprovedModels::default();
+        // Test that calculate_model_id produces deterministic keccak256 hashes
+        // Model ID = keccak256("{repo}/{filename}")
 
-        // Test TinyVicuna ID calculation
-        let vicuna_id = ApprovedModels::calculate_model_id(
+        // TinyVicuna - expected ID from API_REFERENCE.md
+        let vicuna_id = calculate_model_id(
             "CohereForAI/TinyVicuna-1B-32k-GGUF",
             "tiny-vicuna-1b.q4_k_m.gguf",
         );
-        assert_eq!(vicuna_id, approved.tiny_vicuna.id);
+        let expected_vicuna =
+            H256::from_slice(&hex::decode("0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced").unwrap());
+        assert_eq!(vicuna_id, expected_vicuna);
 
-        // Test TinyLlama ID calculation
-        let llama_id = ApprovedModels::calculate_model_id(
+        // TinyLlama - expected ID from API_REFERENCE.md
+        let llama_id = calculate_model_id(
             "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
             "tinyllama-1b.Q4_K_M.gguf",
         );
-        assert_eq!(llama_id, approved.tiny_llama.id);
+        let expected_llama =
+            H256::from_slice(&hex::decode("14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca").unwrap());
+        assert_eq!(llama_id, expected_llama);
+
+        // GPT-OSS-20B - expected ID from API_REFERENCE.md
+        let gpt_id = calculate_model_id(
+            "bartowski/openai_gpt-oss-20b-GGUF",
+            "openai_gpt-oss-20b-MXFP4.gguf",
+        );
+        let expected_gpt =
+            H256::from_slice(&hex::decode("7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c").unwrap());
+        assert_eq!(gpt_id, expected_gpt);
     }
 
     #[test]
-    fn test_approved_models_lookup() {
-        let approved = ApprovedModels::default();
+    fn test_model_id_is_keccak256() {
+        // Verify the calculation matches keccak256("{repo}/{filename}")
+        use ethers::utils::keccak256;
 
-        // Test finding by filename
-        let spec = approved.get_spec_by_file("tiny-vicuna-1b.q4_k_m.gguf");
-        assert!(spec.is_some());
-        assert_eq!(spec.unwrap().repo, "CohereForAI/TinyVicuna-1B-32k-GGUF");
+        let repo = "CohereForAI/TinyVicuna-1B-32k-GGUF";
+        let filename = "tiny-vicuna-1b.q4_k_m.gguf";
+        let input = format!("{}/{}", repo, filename);
 
-        // Test non-existent file
-        let spec = approved.get_spec_by_file("unknown-model.gguf");
-        assert!(spec.is_none());
+        let expected = H256::from_slice(&keccak256(input.as_bytes()));
+        let actual = calculate_model_id(repo, filename);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_model_id_deterministic() {
+        // Same inputs should always produce same output
+        let id1 = calculate_model_id("test/repo", "model.gguf");
+        let id2 = calculate_model_id("test/repo", "model.gguf");
+        assert_eq!(id1, id2);
+
+        // Different inputs should produce different outputs
+        let id3 = calculate_model_id("test/repo", "other.gguf");
+        assert_ne!(id1, id3);
     }
 }
