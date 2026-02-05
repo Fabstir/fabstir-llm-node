@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.14.1-dynamic-model-registry-2026-02-05";
+pub const VERSION: &str = "v8.14.2-proofinterval-billing-2026-02-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.14.1";
+pub const VERSION_NUMBER: &str = "8.14.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 14;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-05";

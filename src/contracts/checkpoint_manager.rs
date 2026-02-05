@@ -35,6 +35,8 @@ pub struct JobTokenTracker {
     pub submission_in_progress: bool,
     pub last_proof_timestamp: Option<std::time::Instant>, // Track when last proof was submitted
     pub submission_started_at: Option<std::time::Instant>, // Track when current submission started (for timeout calculation)
+    /// Session's proofInterval from contract - minimum billable tokens (v8.14.2)
+    pub proof_interval: u64,
 }
 
 /// Content hashes for cryptographic proof binding (Phase 4 - v8.10.0)
@@ -194,6 +196,58 @@ impl CheckpointManager {
         })
     }
 
+    /// Query the session's proofInterval from the JobMarketplace contract (v8.14.2)
+    ///
+    /// Returns the proofInterval for minimum billing, or MIN_PROVEN_TOKENS as fallback.
+    /// The proofInterval is at index 10 in the sessionJobs return tuple.
+    async fn query_session_proof_interval(&self, job_id: u64) -> u64 {
+        // Build the sessionJobs(uint256) call
+        // Returns: (id, depositor, host, paymentToken, deposit, pricePerToken, tokensUsed,
+        //           maxDuration, startTime, lastProofTime, proofInterval, status, ...)
+        let contract = ethers::contract::Contract::new(
+            self.proof_system_address,
+            ethers::abi::parse_abi(&[
+                "function sessionJobs(uint256 jobId) external view returns (uint256, address, address, address, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint8, uint256, uint256, string, bytes32, string)"
+            ]).unwrap_or_default(),
+            self.web3_client.provider.clone(),
+        );
+
+        match contract
+            .method::<_, (U256, Address, Address, Address, U256, U256, U256, U256, U256, U256, U256, u8, U256, U256, String, H256, String)>(
+                "sessionJobs",
+                U256::from(job_id),
+            ) {
+            Ok(call) => {
+                match call.call().await {
+                    Ok(result) => {
+                        // proofInterval is at index 10
+                        let proof_interval = result.10.as_u64();
+                        info!(
+                            "📋 Queried proofInterval for job {}: {} tokens (minimum billing)",
+                            job_id, proof_interval
+                        );
+                        // Use contract value, but ensure it's at least MIN_PROVEN_TOKENS
+                        std::cmp::max(proof_interval, MIN_PROVEN_TOKENS)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "⚠️ Failed to query proofInterval for job {}: {}. Using default {}",
+                            job_id, e, CHECKPOINT_THRESHOLD
+                        );
+                        CHECKPOINT_THRESHOLD // Fallback to checkpoint threshold
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "⚠️ Failed to create sessionJobs call for job {}: {}. Using default {}",
+                    job_id, e, CHECKPOINT_THRESHOLD
+                );
+                CHECKPOINT_THRESHOLD
+            }
+        }
+    }
+
     /// Track tokens generated for a specific job
     pub async fn track_tokens(
         &self,
@@ -201,10 +255,23 @@ impl CheckpointManager {
         tokens: u64,
         session_id: Option<String>,
     ) -> Result<()> {
+        // Check if we need to create a new tracker (requires async contract query)
+        let needs_new_tracker = {
+            let trackers = self.job_trackers.read().await;
+            !trackers.contains_key(&job_id)
+        };
+
+        // If new tracker needed, query contract for proofInterval BEFORE acquiring write lock
+        let proof_interval = if needs_new_tracker {
+            self.query_session_proof_interval(job_id).await
+        } else {
+            0 // Will be ignored, existing tracker has its own value
+        };
+
         let mut trackers = self.job_trackers.write().await;
 
         let tracker = trackers.entry(job_id).or_insert_with(|| {
-            eprintln!("📝 Starting token tracking for job {}", job_id);
+            eprintln!("📝 Starting token tracking for job {} (proofInterval: {} tokens)", job_id, proof_interval);
             JobTokenTracker {
                 job_id,
                 tokens_generated: 0,
@@ -213,6 +280,7 @@ impl CheckpointManager {
                 submission_in_progress: false,
                 last_proof_timestamp: None,
                 submission_started_at: None,
+                proof_interval, // Store session's proofInterval for minimum billing
             }
         });
 
@@ -236,13 +304,15 @@ impl CheckpointManager {
             let previous_checkpoint = tracker.last_checkpoint; // Save for rollback
             let is_first_checkpoint = previous_checkpoint == 0;
 
-            // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-            if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+            // v8.14.2: Use session's proofInterval for minimum billing (not just MIN_PROVEN_TOKENS)
+            // This ensures hosts get paid for at least proofInterval tokens even on short sessions
+            let min_billable_tokens = tracker.proof_interval;
+            if is_first_checkpoint && tokens_to_submit < min_billable_tokens {
                 info!(
-                    "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
-                    tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                    "📝 Padding FIRST checkpoint from {} to {} tokens (session proofInterval) for job {}",
+                    tokens_to_submit, min_billable_tokens, job_id
                 );
-                tokens_to_submit = MIN_PROVEN_TOKENS;
+                tokens_to_submit = min_billable_tokens;
             }
 
             // Mark submission as in progress to prevent race conditions
@@ -1106,15 +1176,16 @@ impl CheckpointManager {
                 let previous_checkpoint = tracker.last_checkpoint;
                 let is_first_checkpoint = previous_checkpoint == 0;
 
-                // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-                if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                // v8.14.2: Use session's proofInterval for minimum billing
+                let min_billable_tokens = tracker.proof_interval;
+                if is_first_checkpoint && tokens_to_submit < min_billable_tokens {
                     info!(
-                        "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
-                        tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                        "📝 Padding FIRST checkpoint from {} to {} tokens (session proofInterval) for job {}",
+                        tokens_to_submit, min_billable_tokens, job_id
                     );
-                    tokens_to_submit = MIN_PROVEN_TOKENS;
+                    tokens_to_submit = min_billable_tokens;
                 } else if !is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
-                    // Not first checkpoint and below minimum - contract will reject this
+                    // Not first checkpoint and below contract minimum - will be rejected
                     warn!(
                         "⚠️ Skipping final checkpoint for job {} - only {} tokens remaining (below minimum {})",
                         job_id, tokens_to_submit, MIN_PROVEN_TOKENS
@@ -1251,13 +1322,14 @@ impl CheckpointManager {
                 let previous_checkpoint = tracker.last_checkpoint;
                 let is_first_checkpoint = previous_checkpoint == 0;
 
-                // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-                if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                // v8.14.2: Use session's proofInterval for minimum billing
+                let min_billable_tokens = tracker.proof_interval;
+                if is_first_checkpoint && tokens_to_submit < min_billable_tokens {
                     info!(
-                        "📝 [FORCE-CHECKPOINT-BG] Padding FIRST checkpoint from {} to {} tokens for job {}",
-                        tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                        "📝 [FORCE-CHECKPOINT-BG] Padding FIRST checkpoint from {} to {} tokens (proofInterval) for job {}",
+                        tokens_to_submit, min_billable_tokens, job_id
                     );
-                    tokens_to_submit = MIN_PROVEN_TOKENS;
+                    tokens_to_submit = min_billable_tokens;
                 }
 
                 info!(
@@ -2717,6 +2789,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2748,6 +2821,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2797,6 +2871,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2883,6 +2958,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
