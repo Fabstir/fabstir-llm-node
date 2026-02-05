@@ -648,32 +648,18 @@ impl CheckpointManager {
         // Query modelId from contract for AUDIT-F4 compliance
         let model_id = self.query_session_model(job_id).await?;
         info!(
-            "📋 Job {} modelId: 0x{} (AUDIT-F4)",
+            "📋 Job {} modelId: 0x{} (for reference)",
             job_id,
             hex::encode(&model_id[..8])
         );
 
-        // Generate host signature for security audit compliance (AUDIT-F4 - Jan 31, 2026)
-        // Contract requires ECDSA signature to prove host authorized this proof submission
-        // Signature format: sign(keccak256(proofHash + hostAddress + tokensClaimed + modelId))
-        let signature = crate::crypto::sign_proof_data(
-            &private_key,
-            proof_hash_bytes,
-            self.host_address,
-            tokens_to_submit,
-            model_id, // AUDIT-F4 compliance
-        )
-        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
+        // v8.14.0: Signature removed from submitProofOfWork per BREAKING_CHANGES.md
+        // Contract now verifies msg.sender == session.host instead of signature
+        // This saves ~3,000 gas per proof submission
 
-        info!(
-            "✅ Proof signed by host {:?} (v={})",
-            self.host_address,
-            signature[64]
-        );
-
-        // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
+        // Encode contract call with hash + CID + deltaCID (v8.14.0 - no signature)
         // Sync path doesn't publish encrypted checkpoints, so delta_cid is empty
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, String::new());
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid, String::new());
 
         info!(
             "📦 Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -879,28 +865,14 @@ impl CheckpointManager {
         }
 
         info!(
-            "📋 [ASYNC] Job {} modelId: 0x{} (AUDIT-F4)",
+            "📋 [ASYNC] Job {} modelId: 0x{} (for reference)",
             job_id,
             hex::encode(&model_id[..8])
         );
 
-        // Generate host signature for security audit compliance (AUDIT-F4 - Jan 31, 2026)
-        // Contract requires ECDSA signature to prove host authorized this proof submission
-        // Signature format: sign(keccak256(proofHash + hostAddress + tokensClaimed + modelId))
-        let signature = crate::crypto::sign_proof_data(
-            &private_key,
-            proof_hash_bytes,
-            host_address,
-            tokens_to_submit,
-            model_id, // AUDIT-F4 compliance
-        )
-        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
-
-        info!(
-            "✅ [ASYNC] Proof signed by host {:?} (v={})",
-            host_address,
-            signature[64]
-        );
+        // v8.14.0: Signature removed from submitProofOfWork per BREAKING_CHANGES.md
+        // Contract now verifies msg.sender == session.host instead of signature
+        // This saves ~3,000 gas per proof submission
 
         // Cache proof data for S5 propagation delay handling (v8.12.6)
         // Cache BEFORE on-chain tx so data is available even if tx fails
@@ -922,8 +894,8 @@ impl CheckpointManager {
             )
             .await;
 
-        // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, delta_cid);
+        // Encode contract call with hash + CID + deltaCID (v8.14.0 - no signature)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid, delta_cid);
 
         info!(
             "📦 [ASYNC] Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -1924,21 +1896,21 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
     function.encode_input(&tokens).unwrap()
 }
 
-// ABI encoding helper for submitProofOfWork (v8.9.0 - Security Audit Compliance)
-// Accepts proof hash + host signature + CID for off-chain proof storage
-// BREAKING CHANGE: Now requires 65-byte signature parameter (r + s + v)
+// ABI encoding helper for submitProofOfWork (v8.14.0 - Post-Remediation)
+// Signature parameter REMOVED per BREAKING_CHANGES.md (Feb 4, 2026)
+// Authentication now via msg.sender == session.host check in contract
 fn encode_checkpoint_call(
     job_id: u64,
     tokens_generated: u64,
     proof_hash: [u8; 32],
-    signature: [u8; 65], // Host's proof signature for security audit
     proof_cid: String,
     delta_cid: String, // Phase 10: Encrypted checkpoint delta CID for on-chain recovery
 ) -> Vec<u8> {
     use ethers::abi::Function;
 
-    // Define the function signature for submitProofOfWork (v8.12.4 - Security Audit Jan 2026)
-    // Contract accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, bytes signature, string proofCID, string deltaCID)
+    // Define the function signature for submitProofOfWork (v8.14.0 - Signature Removed)
+    // Contract accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, string proofCID, string deltaCID)
+    // Note: Signature removed - contract verifies msg.sender == session.host instead
     let function = Function {
         name: "submitProofOfWork".to_string(),
         inputs: vec![
@@ -1958,11 +1930,6 @@ fn encode_checkpoint_call(
                 internal_type: None,
             },
             ethers::abi::Param {
-                name: "signature".to_string(), // 65-byte ECDSA signature
-                kind: ethers::abi::ParamType::Bytes,
-                internal_type: None,
-            },
-            ethers::abi::Param {
                 name: "proofCID".to_string(),
                 kind: ethers::abi::ParamType::String,
                 internal_type: None,
@@ -1978,12 +1945,11 @@ fn encode_checkpoint_call(
         state_mutability: ethers::abi::StateMutability::NonPayable,
     };
 
-    // Encode the function call with hash + signature + CID + deltaCID
+    // Encode the function call with hash + CID + deltaCID (no signature)
     let tokens = vec![
         Token::Uint(U256::from(job_id)),
         Token::Uint(U256::from(tokens_generated)),
         Token::FixedBytes(proof_hash.to_vec()),
-        Token::Bytes(signature.to_vec()), // 65-byte signature
         Token::String(proof_cid),
         Token::String(delta_cid), // Phase 10: delta CID (empty string if not encrypted)
     ];
@@ -2042,29 +2008,27 @@ impl SessionModelQuery {
 mod tests {
     use super::*;
 
-    /// Test that encode_checkpoint_call includes signature in encoded data
+    /// Test that encode_checkpoint_call encodes correctly (v8.14.0 - no signature)
     #[test]
-    fn test_checkpoint_with_signature_encodes_correctly() {
+    fn test_checkpoint_encodes_correctly() {
         let job_id = 12345u64;
         let tokens_generated = 1000u64;
         let proof_hash = [0xab; 32];
-        let signature = [0xcd; 65]; // Mock signature
         let proof_cid = "bafytest123".to_string();
 
         let encoded = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(), // No delta CID
         );
 
         // Function selector (4 bytes) + encoded params
         assert!(encoded.len() > 4, "Encoded data should include function selector");
 
         // Verify function selector is for submitProofOfWork
-        // keccak256("submitProofOfWork(uint256,uint256,bytes32,bytes,string,string)")
+        // keccak256("submitProofOfWork(uint256,uint256,bytes32,string,string)")
         let selector = &encoded[0..4];
         assert!(
             !selector.iter().all(|&b| b == 0),
@@ -2072,96 +2036,59 @@ mod tests {
         );
     }
 
-    /// Test that signature bytes appear in the encoded transaction data
+    /// Test that proof hash appears in the encoded transaction data
     #[test]
-    fn test_signature_in_transaction_data() {
+    fn test_proof_hash_in_transaction_data() {
         let job_id = 100u64;
         let tokens_generated = 500u64;
         let proof_hash = [0x11; 32];
-        let signature = [0x99; 65]; // Distinctive signature pattern
         let proof_cid = "cid123".to_string();
 
         let encoded = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
-        // The encoded data should contain our signature bytes somewhere
-        // In ABI encoding, bytes are length-prefixed and padded
-        let sig_pattern = [0x99u8; 65];
-
-        // Check that the signature bytes appear in the encoded data
-        let encoded_hex = hex::encode(&encoded);
-        let sig_hex = hex::encode(&sig_pattern);
-
-        // ABI encoding pads to 32-byte boundaries, so we check for the signature content
-        // The 65-byte signature will be in the dynamic data section
+        // The encoded data should contain our proof hash bytes
         assert!(
-            encoded.len() >= 65,
-            "Encoded data should be at least 65 bytes to contain signature"
+            encoded.len() >= 32,
+            "Encoded data should be at least 32 bytes to contain proof hash"
         );
     }
 
-    /// Test that different signatures produce different encoded data
+    /// Test that different proof hashes produce different encoded data
     #[test]
-    fn test_different_signatures_different_encoding() {
+    fn test_different_hashes_different_encoding() {
         let job_id = 100u64;
         let tokens_generated = 500u64;
-        let proof_hash = [0x11; 32];
         let proof_cid = "cid123".to_string();
 
-        let signature1 = [0xaa; 65];
-        let signature2 = [0xbb; 65];
+        let hash1 = [0xaa; 32];
+        let hash2 = [0xbb; 32];
 
         let encoded1 = encode_checkpoint_call(
             job_id,
             tokens_generated,
-            proof_hash,
-            signature1,
+            hash1,
             proof_cid.clone(),
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         let encoded2 = encode_checkpoint_call(
             job_id,
             tokens_generated,
-            proof_hash,
-            signature2,
+            hash2,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         assert_ne!(
             encoded1, encoded2,
-            "Different signatures should produce different encoded data"
+            "Different proof hashes should produce different encoded data"
         );
-    }
-
-    /// Test that signature is 65 bytes in encoded call
-    #[test]
-    fn test_signature_length_in_encoding() {
-        let job_id = 1u64;
-        let tokens_generated = 1u64;
-        let proof_hash = [0u8; 32];
-        let signature = [0u8; 65];
-        let proof_cid = "x".to_string();
-
-        // This should not panic - if signature was wrong size, encoding would fail
-        let encoded = encode_checkpoint_call(
-            job_id,
-            tokens_generated,
-            proof_hash,
-            signature,
-            proof_cid,
-            String::new(), // No delta CID for legacy test
-        );
-
-        // Basic sanity check
-        assert!(!encoded.is_empty(), "Encoded data should not be empty");
     }
 
     /// Test encode_checkpoint_call produces consistent output
@@ -2170,25 +2097,22 @@ mod tests {
         let job_id = 42u64;
         let tokens_generated = 100u64;
         let proof_hash = [0xde; 32];
-        let signature = [0xad; 65];
         let proof_cid = "testcid".to_string();
 
         let encoded1 = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid.clone(),
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         let encoded2 = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         assert_eq!(
@@ -2207,7 +2131,6 @@ mod tests {
         let job_id = 999u64;
         let tokens_generated = 500u64;
         let proof_hash = [0xaa; 32];
-        let signature = [0xbb; 65];
         let proof_cid = "bafyproof123".to_string();
         let delta_cid = "blob:abc123def456".to_string(); // Non-empty delta CID
 
@@ -2215,7 +2138,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
             delta_cid.clone(),
         );
@@ -2241,7 +2163,6 @@ mod tests {
         let job_id = 888u64;
         let tokens_generated = 250u64;
         let proof_hash = [0xcc; 32];
-        let signature = [0xdd; 65];
         let proof_cid = "bafyproof456".to_string();
         let delta_cid = "".to_string(); // Empty delta CID for non-encrypted path
 
@@ -2249,7 +2170,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
             delta_cid,
         );
@@ -2265,7 +2185,6 @@ mod tests {
         let job_id = 777u64;
         let tokens_generated = 100u64;
         let proof_hash = [0xee; 32];
-        let signature = [0xff; 65];
         let proof_cid = "bafyproof789".to_string();
 
         let delta_cid1 = "blob:first".to_string();
@@ -2275,7 +2194,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid.clone(),
             delta_cid1,
         );
@@ -2284,7 +2202,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
             delta_cid2,
         );

@@ -4,6 +4,93 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ---
 
+## REMEDIATION CONTRACTS (February 4, 2026 - Signature Removal)
+
+> **🚀 FOR SDK DEVELOPMENT:** Use these contracts for testing new features including V2 Direct Payment Delegation, Early Cancellation Fee, and simplified proof submission (no signature required).
+
+### JobMarketplaceWithModelsUpgradeable (Remediation)
+- **Proxy Address**: `0x95132177F964FF053C1E874b53CF74d819618E06`
+- **Implementation**: `0x1a0436a15d2fD911b2F062D08aA312141A978955` ✅ Signature Removal + Early Cancellation Fee (Feb 4, 2026)
+- **Network**: Base Sepolia
+- **Status**: ✅ ACTIVE - Development/Testing
+- **ABI File**: `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
+
+**Early Cancellation Fee (NEW - Feb 3, 2026):**
+```solidity
+// Query minimum token fee for early cancellation
+function minTokensFee() external view returns (uint256);
+
+// Admin function to set minimum token fee
+function setMinTokensFee(uint256 _fee) external; // onlyOwner
+```
+
+When a depositor completes a session before any proofs are submitted, they are charged an early cancellation fee:
+- Fee = `minTokensFee * pricePerToken / PRICE_PRECISION`
+- Fee goes to host as compensation for wasted resources
+- Protects against bot abuse (free inference before proof submission)
+- Default: 1000 tokens
+
+**V2 Direct Payment Delegation:**
+```solidity
+// Authorization
+function authorizeDelegate(address delegate, bool authorized) external;
+function isDelegateAuthorized(address payer, address delegate) external view returns (bool);
+
+// Create session as delegate (USDC only - uses transferFrom)
+function createSessionForModelAsDelegate(
+    address payer, bytes32 modelId, address host, address paymentToken,
+    uint256 amount, uint256 pricePerToken, uint256 maxDuration,
+    uint256 proofInterval, uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
+
+function createSessionAsDelegate(
+    address payer, address host, address paymentToken,
+    uint256 amount, uint256 pricePerToken, uint256 maxDuration,
+    uint256 proofInterval, uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
+```
+
+**Custom Errors:**
+```solidity
+error NotDelegate();        // Caller not authorized
+error ERC20Only();          // Must use ERC-20 token (no ETH)
+error BadDelegateParams();  // Invalid parameters
+```
+
+**Events:**
+```solidity
+event DelegateAuthorized(address indexed payer, address indexed delegate, bool authorized);
+event SessionCreatedByDelegate(uint256 indexed sessionId, address indexed payer, address indexed delegate, address host, bytes32 modelId, uint256 amount);
+```
+
+### SDK Integration Example
+
+```javascript
+import { parseUnits } from "ethers";
+
+// Remediation proxy address
+const MARKETPLACE = "0x95132177F964FF053C1E874b53CF74d819618E06";
+
+// One-time setup (primary wallet - 2 popups)
+await usdc.approve(MARKETPLACE, parseUnits("1000", 6)); // $1,000 USDC
+await marketplace.authorizeDelegate(subAccount.address, true);
+
+// Per-session (sub-account - NO popup!)
+const sessionId = await marketplace.connect(subAccount).createSessionForModelAsDelegate(
+    primaryWallet.address,  // payer
+    modelId,                // model
+    hostAddress,            // host
+    usdcAddress,            // USDC (no ETH for delegation)
+    parseUnits("10", 6),    // amount
+    5000,                   // pricePerToken
+    3600,                   // maxDuration
+    1000,                   // proofInterval
+    300                     // proofTimeoutWindow
+);
+```
+
+---
+
 ## UPGRADEABLE CONTRACTS (January 9, 2026 - Clean Slate Deployment)
 
 > **🔒 SECURITY UPDATE**: All CRITICAL vulnerabilities from January 2025 audit have been fixed.
@@ -756,30 +843,30 @@ const response = await fetch(`${hostApiUrl}/api/v1/inference`, {
 Key functions for session jobs:
 - `createSessionJob()` - Create ETH-based session
 - `createSessionJobWithToken()` - Create token-based session
-- `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - Submit signed proof (6 params)
+- `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID)` - Submit proof (5 params, no signature)
 - `getProofSubmission(sessionId, proofIndex)` - Get proof details (returns 5 values including deltaCID)
 - `completeSessionJob(jobId, conversationCID)` - Complete and settle payments
 - `triggerSessionTimeout()` - Handle timeout scenarios
 
-**BREAKING CHANGE (Jan 14, 2026)**: `submitProofOfWork()` now includes deltaCID:
-- Old: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID)` - 5 params ❌ DEPRECATED
-- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - 6 params ✅ CURRENT
+**BREAKING CHANGE (Feb 4, 2026)**: `submitProofOfWork()` signature parameter REMOVED:
+- Old: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - 6 params ❌ DEPRECATED
+- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID)` - 5 params ✅ CURRENT
+
+**Why removed?** The signature was redundant - `msg.sender == session.host` check provides equivalent security with ~3,000 gas savings.
 
 **BREAKING CHANGE (Jan 14, 2026)**: `getProofSubmission()` return value changed:
 - Old: Returns 4 values `(proofHash, tokensClaimed, timestamp, verified)`
 - New: Returns 5 values `(proofHash, tokensClaimed, timestamp, verified, deltaCID)` ✅ CURRENT
 
 ```javascript
-// Generate signature for proof submission
+// No signature needed! Host authentication via msg.sender
 const proofHash = keccak256(workData);
-const dataHash = keccak256(
-  solidityPacked(['bytes32', 'address', 'uint256'], [proofHash, hostAddress, tokensClaimed])
-);
-const signature = await hostWallet.signMessage(getBytes(dataHash));
 
 // deltaCID is optional - use empty string if not tracking deltas
 const deltaCID = "QmDeltaCID123"; // or "" if not using delta tracking
-await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
+
+// Submit directly as host (5 params, no signature)
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID);
 ```
 
 ## Treasury Functions
@@ -868,9 +955,11 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-January 16, 2026 - Stake slashing feature for NodeRegistry
+February 4, 2026 - Signature Removal from Proof Submission
 
 ### Recent Changes
+- **Feb 4, 2026**: **BREAKING** - Signature removed from `submitProofOfWork` (6 → 5 params). No signature generation needed.
+- **Feb 3, 2026**: Early Cancellation Fee - `minTokensFee()`, `setMinTokensFee()` - Protects hosts from instant cancellation abuse
 - **Jan 16, 2026**: Stake slashing - `slashStake()`, `initializeSlashing()`, `setSlashingAuthority()`, `setTreasury()`, `lastSlashTime()`
 - **Jan 14, 2026**: deltaCID support - `submitProofOfWork` now 6 params, `getProofSubmission` returns 5 values
 - **Jan 10, 2026**: NodeRegistry - Added `repairCorruptNode()` admin function and safety check in `unregisterNode()`
