@@ -131,7 +131,10 @@ fn test_lru_get_updates_recency() {
     // Insert db4, should evict db2 (now least recently used)
     cache.insert("db4".to_string(), index4);
 
-    assert!(cache.get("db1").is_some(), "db1 was accessed, should not be evicted");
+    assert!(
+        cache.get("db1").is_some(),
+        "db1 was accessed, should not be evicted"
+    );
     assert!(cache.get("db2").is_none(), "db2 should have been evicted");
     assert!(cache.get("db3").is_some());
     assert!(cache.get("db4").is_some());
@@ -202,7 +205,10 @@ fn test_ttl_access_doesnt_refresh() {
     thread::sleep(Duration::from_millis(60));
     cache.evict_expired();
 
-    assert!(cache.get("db1").is_none(), "TTL should not refresh on access");
+    assert!(
+        cache.get("db1").is_none(),
+        "TTL should not refresh on access"
+    );
 }
 
 // ============================================================================
@@ -221,7 +227,11 @@ fn test_memory_limit_enforcement() {
     cache.insert("db3".to_string(), build_test_index(1000, 384));
 
     let memory_mb = cache.memory_usage_mb();
-    assert!(memory_mb <= 5, "Memory usage {} MB should not exceed 5 MB limit", memory_mb);
+    assert!(
+        memory_mb <= 5,
+        "Memory usage {} MB should not exceed 5 MB limit",
+        memory_mb
+    );
 }
 
 #[test]
@@ -233,11 +243,20 @@ fn test_memory_usage_tracking() {
     // Use 1000 vectors to ensure memory usage shows up in MB
     cache.insert("db1".to_string(), build_test_index(1000, 384));
     let usage1 = cache.memory_usage_mb();
-    assert!(usage1 > 0, "Memory usage should increase after insert. Got: {} MB", usage1);
+    assert!(
+        usage1 > 0,
+        "Memory usage should increase after insert. Got: {} MB",
+        usage1
+    );
 
     cache.insert("db2".to_string(), build_test_index(1000, 384));
     let usage2 = cache.memory_usage_mb();
-    assert!(usage2 > usage1, "Memory usage should increase with more indexes. Got {} MB vs {} MB", usage2, usage1);
+    assert!(
+        usage2 > usage1,
+        "Memory usage should increase with more indexes. Got {} MB vs {} MB",
+        usage2,
+        usage1
+    );
 }
 
 // ============================================================================

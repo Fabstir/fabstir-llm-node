@@ -46,13 +46,9 @@ fn setup_model(rt: &Runtime) -> Arc<OnnxEmbeddingModel> {
     init_tracing();
 
     rt.block_on(async {
-        let model = OnnxEmbeddingModel::new(
-            "all-MiniLM-L6-v2",
-            MODEL_PATH,
-            TOKENIZER_PATH,
-        )
-        .await
-        .expect("Failed to load embedding model for benchmarks");
+        let model = OnnxEmbeddingModel::new("all-MiniLM-L6-v2", MODEL_PATH, TOKENIZER_PATH)
+            .await
+            .expect("Failed to load embedding model for benchmarks");
 
         Arc::new(model)
     })
@@ -61,9 +57,24 @@ fn setup_model(rt: &Runtime) -> Arc<OnnxEmbeddingModel> {
 /// Generate sample texts of various lengths
 fn generate_sample_texts(count: usize, words_per_text: usize) -> Vec<String> {
     let words = vec![
-        "machine", "learning", "artificial", "intelligence", "neural", "network",
-        "deep", "transformer", "embedding", "vector", "semantic", "representation",
-        "model", "training", "inference", "optimization", "gradient", "descent",
+        "machine",
+        "learning",
+        "artificial",
+        "intelligence",
+        "neural",
+        "network",
+        "deep",
+        "transformer",
+        "embedding",
+        "vector",
+        "semantic",
+        "representation",
+        "model",
+        "training",
+        "inference",
+        "optimization",
+        "gradient",
+        "descent",
     ];
 
     (0..count)
@@ -227,9 +238,7 @@ fn bench_concurrent_10_requests(c: &mut Criterion) {
                 for text in &texts {
                     let model = Arc::clone(&model);
                     let text = text.clone();
-                    let handle = tokio::spawn(async move {
-                        model.embed(&text).await.unwrap()
-                    });
+                    let handle = tokio::spawn(async move { model.embed(&text).await.unwrap() });
                     handles.push(handle);
                 }
 
@@ -264,9 +273,7 @@ fn bench_concurrent_50_requests(c: &mut Criterion) {
                 for text in &texts {
                     let model = Arc::clone(&model);
                     let text = text.clone();
-                    let handle = tokio::spawn(async move {
-                        model.embed(&text).await.unwrap()
-                    });
+                    let handle = tokio::spawn(async move { model.embed(&text).await.unwrap() });
                     handles.push(handle);
                 }
 

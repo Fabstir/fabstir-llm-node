@@ -13,11 +13,10 @@ use crate::job_processor::Message;
 /// to prevent double-formatting issues when SDK/client pre-formats messages.
 pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
     // Get template from environment variable
-    let template_name = std::env::var("MODEL_CHAT_TEMPLATE")
-        .unwrap_or_else(|_| "harmony".to_string());
+    let template_name =
+        std::env::var("MODEL_CHAT_TEMPLATE").unwrap_or_else(|_| "harmony".to_string());
 
-    let template = ChatTemplate::from_str(&template_name)
-        .unwrap_or(ChatTemplate::Harmony); // Default to Harmony for GPT-OSS-20B
+    let template = ChatTemplate::from_str(&template_name).unwrap_or(ChatTemplate::Harmony); // Default to Harmony for GPT-OSS-20B
 
     // Take last 10 messages maximum
     let recent_context = if context.len() > 10 {
@@ -47,7 +46,8 @@ pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
     if cleaned_prompt != prompt {
         tracing::debug!(
             "🔧 Stripped chat markers from prompt (original len: {}, cleaned len: {})",
-            prompt.len(), cleaned_prompt.len()
+            prompt.len(),
+            cleaned_prompt.len()
         );
     }
     messages.push(("user".to_string(), cleaned_prompt));
@@ -76,7 +76,8 @@ fn strip_chat_template_markers(content: &str) -> String {
 
     // Harmony format: <|start|>role<|message|>content<|end|>
     // We need to extract just the content part
-    if result.contains("<|start|>") || result.contains("<|message|>") || result.contains("<|end|>") {
+    if result.contains("<|start|>") || result.contains("<|message|>") || result.contains("<|end|>")
+    {
         // Remove complete Harmony message wrappers
         // Pattern: <|start|>user<|message|>...<|end|> or <|start|>assistant<|message|>...<|end|>
         let harmony_patterns = [
@@ -122,14 +123,30 @@ fn strip_chat_template_markers(content: &str) -> String {
         result = result.trim().to_string();
     }
 
+    // GLM-4 format: <|system|>\ncontent<|user|>\ncontent<|assistant|>\n
+    if result.contains("<|system|>")
+        || result.contains("<|user|>")
+        || result.contains("<|observation|>")
+    {
+        let glm4_patterns = [
+            "<|system|>\n",
+            "<|user|>\n",
+            "<|assistant|>\n",
+            "<|observation|>\n",
+            "<|system|>",
+            "<|user|>",
+            "<|assistant|>",
+            "<|observation|>",
+        ];
+        for pattern in glm4_patterns {
+            result = result.replace(pattern, "");
+        }
+        result = result.trim().to_string();
+    }
+
     // Llama2 format: [INST] content [/INST]
     if result.contains("[INST]") || result.contains("[/INST]") {
-        let llama2_patterns = [
-            "[INST]",
-            "[/INST]",
-            "<<SYS>>",
-            "<</SYS>>",
-        ];
+        let llama2_patterns = ["[INST]", "[/INST]", "<<SYS>>", "<</SYS>>"];
 
         for pattern in llama2_patterns {
             result = result.replace(pattern, "");
@@ -148,14 +165,15 @@ fn is_prompt_already_formatted(prompt: &str) -> bool {
         || prompt.contains("<|end|>");
 
     // ChatML format markers
-    let has_chatml = prompt.contains("<|im_start|>")
-        || prompt.contains("<|im_end|>");
+    let has_chatml = prompt.contains("<|im_start|>") || prompt.contains("<|im_end|>");
 
     // Llama2 format markers
-    let has_llama2 = prompt.contains("[INST]")
-        || prompt.contains("[/INST]");
+    let has_llama2 = prompt.contains("[INST]") || prompt.contains("[/INST]");
 
-    has_harmony || has_chatml || has_llama2
+    // GLM-4 format markers
+    let has_glm4 = prompt.contains("<|system|>") && prompt.contains("<|user|>");
+
+    has_harmony || has_chatml || has_llama2 || has_glm4
 }
 
 /// Estimate token count for context
@@ -220,15 +238,21 @@ mod tests {
     #[test]
     fn test_is_prompt_already_formatted_harmony() {
         // Harmony format markers
-        assert!(is_prompt_already_formatted("<|start|>user<|message|>Hello<|end|>"));
-        assert!(is_prompt_already_formatted("Some text with <|message|> in it"));
+        assert!(is_prompt_already_formatted(
+            "<|start|>user<|message|>Hello<|end|>"
+        ));
+        assert!(is_prompt_already_formatted(
+            "Some text with <|message|> in it"
+        ));
         assert!(is_prompt_already_formatted("Ending with <|end|>"));
     }
 
     #[test]
     fn test_is_prompt_already_formatted_chatml() {
         // ChatML format markers
-        assert!(is_prompt_already_formatted("<|im_start|>user\nHello<|im_end|>"));
+        assert!(is_prompt_already_formatted(
+            "<|im_start|>user\nHello<|im_end|>"
+        ));
         assert!(is_prompt_already_formatted("Text with <|im_end|> marker"));
     }
 
@@ -277,6 +301,41 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_glm4_markers() {
+        let input = "<|system|>\nYou are helpful.\n<|user|>\nWhat is 2+2?\n<|assistant|>\n";
+        let result = strip_chat_template_markers(input);
+        assert_eq!(result, "You are helpful.\nWhat is 2+2?");
+    }
+
+    #[test]
+    fn test_strip_glm4_preserves_content() {
+        let input = "<|user|>\nHello world\n";
+        let result = strip_chat_template_markers(input);
+        assert_eq!(result, "Hello world");
+    }
+
+    #[test]
+    fn test_strip_glm4_no_false_positives() {
+        // Plain text mentioning user should NOT be stripped
+        let input = "The user asked a question";
+        let result = strip_chat_template_markers(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_is_formatted_glm4() {
+        assert!(is_prompt_already_formatted(
+            "<|system|>\nYou are helpful.\n<|user|>\nHello\n"
+        ));
+    }
+
+    #[test]
+    fn test_is_formatted_glm4_negative() {
+        // Just <|user|> alone should NOT trigger (needs both <|system|> and <|user|>)
+        assert!(!is_prompt_already_formatted("The <|user|> typed something"));
+    }
+
+    #[test]
     fn test_strip_preserves_plain_text() {
         // Plain text should remain unchanged
         let input = "What is the plot of Iron Man?";
@@ -321,7 +380,11 @@ mod tests {
         assert!(!result.contains("<|start|>user<|message|><|start|>user<|message|>"));
         // Count occurrences of user message marker - should be exactly 2 (one for each message)
         let user_marker_count = result.matches("<|start|>user<|message|>").count();
-        assert_eq!(user_marker_count, 2, "Expected exactly 2 user message markers, got {}", user_marker_count);
+        assert_eq!(
+            user_marker_count, 2,
+            "Expected exactly 2 user message markers, got {}",
+            user_marker_count
+        );
     }
 
     #[test]

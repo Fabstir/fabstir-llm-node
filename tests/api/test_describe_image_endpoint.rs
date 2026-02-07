@@ -256,7 +256,10 @@ mod describe_image_handler_tests {
         assert!(result.is_err(), "Should fail when chain_id is invalid");
         let (status, message) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(message.contains("chain_id"), "Error should mention 'chain_id'");
+        assert!(
+            message.contains("chain_id"),
+            "Error should mention 'chain_id'"
+        );
     }
 
     // =============================================================================
@@ -279,7 +282,10 @@ mod describe_image_handler_tests {
 
         let result = describe_image_handler(State(state), Json(request)).await;
 
-        assert!(result.is_err(), "Should fail when vision manager is not available");
+        assert!(
+            result.is_err(),
+            "Should fail when vision manager is not available"
+        );
         let (status, message) = result.unwrap_err();
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert!(
@@ -304,7 +310,10 @@ mod describe_image_handler_tests {
 
         let result = describe_image_handler(State(state), Json(request)).await;
 
-        assert!(result.is_err(), "Should fail when Florence model is not loaded");
+        assert!(
+            result.is_err(),
+            "Should fail when Florence model is not loaded"
+        );
         let (status, message) = result.unwrap_err();
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert!(

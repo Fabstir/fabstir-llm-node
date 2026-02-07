@@ -3,6 +3,6 @@
 // tests/embeddings_tests.rs - Include all embedding test modules
 
 mod embeddings {
-    mod test_onnx_model;
     mod test_model_manager;
+    mod test_onnx_model;
 }

@@ -14,8 +14,8 @@ use tokio::sync::mpsc;
 fn create_enhanced_s5_client() -> EnhancedS5Client {
     use fabstir_llm_node::storage::enhanced_s5_client::S5Config;
 
-    let bridge_url = std::env::var("ENHANCED_S5_URL")
-        .unwrap_or_else(|_| "http://localhost:5522".to_string());
+    let bridge_url =
+        std::env::var("ENHANCED_S5_URL").unwrap_or_else(|_| "http://localhost:5522".to_string());
 
     let config = S5Config {
         api_url: bridge_url,
@@ -23,8 +23,7 @@ fn create_enhanced_s5_client() -> EnhancedS5Client {
         timeout_secs: 30,
     };
 
-    EnhancedS5Client::new(config)
-        .expect("Failed to create Enhanced S5 client")
+    EnhancedS5Client::new(config).expect("Failed to create Enhanced S5 client")
 }
 
 /// Helper to create test manifest and upload to S5
@@ -49,7 +48,7 @@ async fn setup_test_vector_database(
         let vector_data: Vec<f32> = (0..dimensions).map(|j| ((i + j) as f32) / 100.0).collect();
         all_vectors.push(Vector {
             id: format!("vec_{}", i),
-            vector: vector_data,  // SDK uses 'vector', not 'embedding'
+            vector: vector_data, // SDK uses 'vector', not 'embedding'
             metadata: serde_json::json!({
                 "index": i,
                 "test": true,
@@ -88,11 +87,14 @@ async fn setup_test_vector_database(
 
         // Upload to S5
         let chunk_path = format!("{}/chunk-{}.json", base_path, chunk.chunk_id);
-        let cid = s5_client.put(&chunk_path, encrypted_data.clone(), None).await.unwrap();
+        let cid = s5_client
+            .put(&chunk_path, encrypted_data.clone(), None)
+            .await
+            .unwrap();
 
         chunk_metadata.push(ChunkMetadata {
             chunk_id: chunk.chunk_id,
-            cid,  // SDK format requires CID
+            cid, // SDK format requires CID
             vector_count: chunk.vectors.len(),
             size_bytes: encrypted_data.len() as u64,
             updated_at: chrono::Utc::now().timestamp_millis(),
@@ -129,7 +131,10 @@ async fn setup_test_vector_database(
 
     // Upload manifest
     let manifest_path = format!("{}/manifest.json", base_path);
-    s5_client.put(&manifest_path, encrypted_manifest, None).await.unwrap();
+    s5_client
+        .put(&manifest_path, encrypted_manifest, None)
+        .await
+        .unwrap();
 
     println!("✅ Test database uploaded to S5: {}", manifest_path);
     println!("   Vectors: {}, Chunks: {}", num_vectors, chunks.len());
@@ -154,12 +159,8 @@ async fn test_complete_vector_loading_flow() {
     let num_vectors = 250; // 3 chunks
     let dimensions = 384;
 
-    let (manifest_path, session_key) = setup_test_vector_database(
-        &s5_client,
-        owner,
-        num_vectors,
-        dimensions,
-    ).await;
+    let (manifest_path, session_key) =
+        setup_test_vector_database(&s5_client, owner, num_vectors, dimensions).await;
     println!("✅ Database uploaded\n");
 
     // 3. Create vector loader
@@ -205,8 +206,14 @@ async fn test_complete_vector_loading_flow() {
             LoadProgress::IndexBuilding => {
                 println!("   ⚙️  Building HNSW index...");
             }
-            LoadProgress::Complete { vector_count, duration_ms } => {
-                println!("   ✅ Loading complete: {} vectors in {}ms", vector_count, duration_ms);
+            LoadProgress::Complete {
+                vector_count,
+                duration_ms,
+            } => {
+                println!(
+                    "   ✅ Loading complete: {} vectors in {}ms",
+                    vector_count, duration_ms
+                );
             }
         }
     }
@@ -216,8 +223,14 @@ async fn test_complete_vector_loading_flow() {
 
     // 6. Verify progress tracking
     assert!(manifest_downloaded, "Manifest should be downloaded");
-    assert!(chunks_downloaded > 0, "At least one chunk should be downloaded");
-    assert_eq!(chunks_downloaded, total_chunks, "All chunks should be downloaded");
+    assert!(
+        chunks_downloaded > 0,
+        "At least one chunk should be downloaded"
+    );
+    assert_eq!(
+        chunks_downloaded, total_chunks,
+        "All chunks should be downloaded"
+    );
     assert_eq!(vectors.len(), num_vectors, "Should load all vectors");
     println!("\n✅ Progress tracking verified\n");
 
@@ -233,7 +246,10 @@ async fn test_complete_vector_loading_flow() {
 
     assert!(!results.is_empty(), "Search should return results");
     println!("✅ Found {} similar vectors", results.len());
-    println!("   Top result: id={}, score={:.4}", results[0].id, results[0].score);
+    println!(
+        "   Top result: id={}, score={:.4}",
+        results[0].id, results[0].score
+    );
 
     println!("\n🎉 Phase 3.1 Test PASSED\n");
 }
@@ -251,12 +267,8 @@ async fn test_cache_hit_performance() {
 
     // Upload test database
     println!("📤 Uploading test database...");
-    let (manifest_path, session_key) = setup_test_vector_database(
-        &s5_client,
-        owner,
-        num_vectors,
-        dimensions,
-    ).await;
+    let (manifest_path, session_key) =
+        setup_test_vector_database(&s5_client, owner, num_vectors, dimensions).await;
 
     let vector_loader = VectorLoader::new(Box::new(s5_client.clone()), 5);
 
@@ -268,7 +280,11 @@ async fn test_cache_hit_performance() {
         .await
         .unwrap();
     let first_duration = start.elapsed();
-    println!("✅ Loaded {} vectors in {:?}", vectors1.len(), first_duration);
+    println!(
+        "✅ Loaded {} vectors in {:?}",
+        vectors1.len(),
+        first_duration
+    );
 
     // Note: Current implementation doesn't have index caching yet
     // This test documents expected behavior for future cache implementation
@@ -289,12 +305,8 @@ async fn test_concurrent_session_loading() {
 
     // Upload test database
     println!("📤 Uploading test database...");
-    let (manifest_path, session_key) = setup_test_vector_database(
-        &s5_client,
-        owner,
-        num_vectors,
-        dimensions,
-    ).await;
+    let (manifest_path, session_key) =
+        setup_test_vector_database(&s5_client, owner, num_vectors, dimensions).await;
 
     println!("\n🚀 Launching 3 concurrent loading sessions...");
 
@@ -323,7 +335,12 @@ async fn test_concurrent_session_loading() {
     // Verify all succeeded
     for (i, result) in results.iter().enumerate() {
         let vectors = result.as_ref().unwrap().as_ref().unwrap();
-        assert_eq!(vectors.len(), num_vectors, "Session {} should load all vectors", i);
+        assert_eq!(
+            vectors.len(),
+            num_vectors,
+            "Session {} should load all vectors",
+            i
+        );
     }
 
     println!("\n✅ All 3 sessions loaded successfully");

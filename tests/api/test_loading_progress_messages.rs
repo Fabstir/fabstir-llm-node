@@ -6,7 +6,7 @@
 //! LoadingProgressMessage enum and related types.
 
 use fabstir_llm_node::api::websocket::message_types::{
-    LoadingProgressMessage, LoadingErrorCode, MessageType, WebSocketMessage,
+    LoadingErrorCode, LoadingProgressMessage, MessageType, WebSocketMessage,
 };
 use serde_json::json;
 
@@ -88,17 +88,20 @@ fn test_chunk_downloaded_deserialization() {
 fn test_chunk_downloaded_progress_percentage() {
     // Test various progress percentages
     let test_cases = vec![
-        (0, 10, 10),   // First chunk: (0+1)/10 = 10%
-        (4, 10, 50),   // Middle: (4+1)/10 = 50%
-        (9, 10, 100),  // Last chunk: (9+1)/10 = 100%
-        (0, 1, 100),   // Single chunk: (0+1)/1 = 100%
+        (0, 10, 10),  // First chunk: (0+1)/10 = 10%
+        (4, 10, 50),  // Middle: (4+1)/10 = 50%
+        (9, 10, 100), // Last chunk: (9+1)/10 = 100%
+        (0, 1, 100),  // Single chunk: (0+1)/1 = 100%
     ];
 
     for (chunk_id, total, expected_percent) in test_cases {
         let progress = LoadingProgressMessage::ChunkDownloaded { chunk_id, total };
         let json = serde_json::to_value(&progress).expect("Failed to serialize");
-        assert_eq!(json["percent"], expected_percent,
-            "Failed for chunk_id={}, total={}", chunk_id, total);
+        assert_eq!(
+            json["percent"], expected_percent,
+            "Failed for chunk_id={}, total={}",
+            chunk_id, total
+        );
     }
 }
 
@@ -148,7 +151,10 @@ fn test_loading_complete_serialization() {
     assert_eq!(json["event"], "loading_complete");
     assert_eq!(json["vector_count"], 1500);
     assert_eq!(json["duration_ms"], 3250);
-    assert_eq!(json["message"], "Vector database ready (1500 vectors, loaded in 3.25s)");
+    assert_eq!(
+        json["message"],
+        "Vector database ready (1500 vectors, loaded in 3.25s)"
+    );
 }
 
 #[test]
@@ -164,7 +170,10 @@ fn test_loading_complete_deserialization() {
         serde_json::from_value(json).expect("Failed to deserialize");
 
     match progress {
-        LoadingProgressMessage::LoadingComplete { vector_count, duration_ms } => {
+        LoadingProgressMessage::LoadingComplete {
+            vector_count,
+            duration_ms,
+        } => {
             assert_eq!(vector_count, 2000);
             assert_eq!(duration_ms, 5000);
         }
@@ -190,8 +199,12 @@ fn test_loading_complete_duration_formatting() {
         let json = serde_json::to_value(&progress).expect("Failed to serialize");
         let message = json["message"].as_str().unwrap();
 
-        assert!(message.contains(expected_duration_str),
-            "Expected message to contain '{}', got '{}'", expected_duration_str, message);
+        assert!(
+            message.contains(expected_duration_str),
+            "Expected message to contain '{}', got '{}'",
+            expected_duration_str,
+            message
+        );
     }
 }
 
@@ -211,7 +224,10 @@ fn test_loading_error_serialization() {
     assert_eq!(json["event"], "loading_error");
     assert_eq!(json["error_code"], "CHUNK_DOWNLOAD_FAILED");
     assert_eq!(json["error"], "Failed to download chunk 3: Network timeout");
-    assert_eq!(json["message"], "Loading failed: Failed to download chunk 3: Network timeout");
+    assert_eq!(
+        json["message"],
+        "Loading failed: Failed to download chunk 3: Network timeout"
+    );
 }
 
 #[test]
@@ -269,9 +285,15 @@ fn test_all_progress_events_in_websocket_messages() {
 
     let events = vec![
         LoadingProgressMessage::ManifestDownloaded,
-        LoadingProgressMessage::ChunkDownloaded { chunk_id: 0, total: 3 },
+        LoadingProgressMessage::ChunkDownloaded {
+            chunk_id: 0,
+            total: 3,
+        },
         LoadingProgressMessage::IndexBuilding,
-        LoadingProgressMessage::LoadingComplete { vector_count: 500, duration_ms: 1200 },
+        LoadingProgressMessage::LoadingComplete {
+            vector_count: 500,
+            duration_ms: 1200,
+        },
         LoadingProgressMessage::LoadingError {
             error_code: LoadingErrorCode::InternalError,
             error: "Test error".to_string(),
@@ -286,8 +308,8 @@ fn test_all_progress_events_in_websocket_messages() {
         };
 
         // Ensure it serializes without errors
-        let json_str = serde_json::to_string(&ws_message)
-            .expect("Failed to serialize WebSocket message");
+        let json_str =
+            serde_json::to_string(&ws_message).expect("Failed to serialize WebSocket message");
 
         // Ensure session_id is included
         assert!(json_str.contains(session_id));
@@ -345,7 +367,10 @@ fn test_session_id_routing() {
         payload: serde_json::to_value(&progress).unwrap(),
     };
 
-    assert_eq!(ws_message.session_id, Some("session-routing-test".to_string()));
+    assert_eq!(
+        ws_message.session_id,
+        Some("session-routing-test".to_string())
+    );
 
     // Serialize and verify session_id is present
     let json = serde_json::to_value(&ws_message).unwrap();
@@ -361,15 +386,15 @@ fn test_loading_error_user_friendly_messages() {
     let test_cases = vec![
         (
             "Failed to download manifest.json: Network timeout after 30s",
-            "Failed to download manifest.json: Network timeout after 30s"
+            "Failed to download manifest.json: Network timeout after 30s",
         ),
         (
             "Decryption failed: Invalid session key length",
-            "Decryption failed: Invalid session key length"
+            "Decryption failed: Invalid session key length",
         ),
         (
             "Loading timed out after 5 minutes",
-            "Loading timed out after 5 minutes"
+            "Loading timed out after 5 minutes",
         ),
     ];
 
@@ -382,7 +407,11 @@ fn test_loading_error_user_friendly_messages() {
         let json = serde_json::to_value(&progress).unwrap();
         let message = json["message"].as_str().unwrap();
 
-        assert!(message.contains(expected_in_message),
-            "Expected '{}' in message, got '{}'", expected_in_message, message);
+        assert!(
+            message.contains(expected_in_message),
+            "Expected '{}' in message, got '{}'",
+            expected_in_message,
+            message
+        );
     }
 }

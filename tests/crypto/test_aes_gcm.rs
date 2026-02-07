@@ -89,10 +89,7 @@ mod aes_gcm_tests {
         // Try to decrypt with wrong key
         let result = decrypt_aes_gcm(&encrypted, &wrong_key);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("authentication"));
+        assert!(result.unwrap_err().to_string().contains("authentication"));
     }
 
     /// Test 4: Corrupted ciphertext fails authentication
@@ -113,10 +110,7 @@ mod aes_gcm_tests {
         // Decryption should fail
         let result = decrypt_aes_gcm(&encrypted, &key);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("authentication"));
+        assert!(result.unwrap_err().to_string().contains("authentication"));
     }
 
     /// Test 5: Corrupted nonce fails decryption

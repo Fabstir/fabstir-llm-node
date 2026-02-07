@@ -1,7 +1,9 @@
 // TDD Tests for End-to-End RAG Workflow (Sub-phase 3.1)
 // Written FIRST before implementation
 
-use fabstir_llm_node::api::websocket::handlers::rag::{handle_search_vectors, handle_upload_vectors};
+use fabstir_llm_node::api::websocket::handlers::rag::{
+    handle_search_vectors, handle_upload_vectors,
+};
 use fabstir_llm_node::api::websocket::message_types::{
     SearchVectorsRequest, UploadVectorsRequest, VectorUpload,
 };
@@ -62,7 +64,8 @@ fn test_full_rag_workflow() {
     // 3. Search for relevant chunks
     // 4. Verify results are relevant
 
-    let mut session = WebSocketSession::with_config("rag-test".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("rag-test".to_string(), SessionConfig::default());
     session.enable_rag(10000);
     let session = Arc::new(Mutex::new(session));
 
@@ -115,7 +118,8 @@ fn test_upload_search_inference_pipeline() {
     // Test the typical pipeline:
     // Upload → Search → Use results for context injection
 
-    let mut session = WebSocketSession::with_config("pipeline-test".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("pipeline-test".to_string(), SessionConfig::default());
     session.enable_rag(10000);
     let session = Arc::new(Mutex::new(session));
 
@@ -149,9 +153,17 @@ fn test_upload_search_inference_pipeline() {
         assert!(result.metadata.get("chunk").is_some());
         // Cosine similarity should be in range [-1.0, 1.0]
         // Allow small floating point errors (e.g., 1.000007 due to precision)
-        assert!(!result.score.is_nan(), "Score is NaN for result: {:?}", result);
-        assert!(result.score >= -1.001 && result.score <= 1.001,
-                "Score {} out of range for result: {:?}", result.score, result);
+        assert!(
+            !result.score.is_nan(),
+            "Score is NaN for result: {:?}",
+            result
+        );
+        assert!(
+            result.score >= -1.001 && result.score <= 1.001,
+            "Score {} out of range for result: {:?}",
+            result.score,
+            result
+        );
     }
 
     // Context injection would happen here in real workflow
@@ -161,7 +173,8 @@ fn test_upload_search_inference_pipeline() {
 #[test]
 fn test_multiple_searches_same_session() {
     // Test performing multiple searches on the same vector store
-    let mut session = WebSocketSession::with_config("multi-search".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("multi-search".to_string(), SessionConfig::default());
     session.enable_rag(10000);
     let session = Arc::new(Mutex::new(session));
 
@@ -202,7 +215,8 @@ fn test_multiple_searches_same_session() {
 #[test]
 fn test_replace_vectors_mid_session() {
     // Test replacing vectors during a session
-    let mut session = WebSocketSession::with_config("replace-test".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("replace-test".to_string(), SessionConfig::default());
     session.enable_rag(10000);
     let session = Arc::new(Mutex::new(session));
 
@@ -251,7 +265,8 @@ fn test_replace_vectors_mid_session() {
 #[test]
 fn test_search_with_filters() {
     // Test metadata filtering in search
-    let mut session = WebSocketSession::with_config("filter-test".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("filter-test".to_string(), SessionConfig::default());
     session.enable_rag(10000);
     let session = Arc::new(Mutex::new(session));
 
@@ -294,11 +309,13 @@ fn test_search_with_filters() {
 #[test]
 fn test_session_cleanup_removes_vectors() {
     // Test that vectors are properly isolated per session
-    let mut session1 = WebSocketSession::with_config("session-1".to_string(), SessionConfig::default());
+    let mut session1 =
+        WebSocketSession::with_config("session-1".to_string(), SessionConfig::default());
     session1.enable_rag(10000);
     let session1 = Arc::new(Mutex::new(session1));
 
-    let mut session2 = WebSocketSession::with_config("session-2".to_string(), SessionConfig::default());
+    let mut session2 =
+        WebSocketSession::with_config("session-2".to_string(), SessionConfig::default());
     session2.enable_rag(10000);
     let session2 = Arc::new(Mutex::new(session2));
 
@@ -377,7 +394,8 @@ fn test_session_cleanup_removes_vectors() {
 #[test]
 fn test_rag_10k_vectors_performance() {
     // Performance benchmark: 10K vectors, search should be <50ms
-    let mut session = WebSocketSession::with_config("perf-test".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("perf-test".to_string(), SessionConfig::default());
     session.enable_rag(100000); // Large capacity
     let session = Arc::new(Mutex::new(session));
 
@@ -412,10 +430,15 @@ fn test_rag_10k_vectors_performance() {
 
     // Performance assertion: search should be < 200ms (linear scan of 10K vectors)
     // Note: This is reasonable for brute-force cosine similarity on 10K vectors
-    println!("Search 10K vectors took: {:.2}ms", search_response.search_time_ms);
-    assert!(search_response.search_time_ms < 200.0,
-            "Search too slow: {:.2}ms (expected <200ms)",
-            search_response.search_time_ms);
+    println!(
+        "Search 10K vectors took: {:.2}ms",
+        search_response.search_time_ms
+    );
+    assert!(
+        search_response.search_time_ms < 200.0,
+        "Search too slow: {:.2}ms (expected <200ms)",
+        search_response.search_time_ms
+    );
 }
 
 #[test]
