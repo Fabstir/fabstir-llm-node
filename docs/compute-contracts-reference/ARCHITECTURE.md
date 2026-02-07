@@ -1,31 +1,36 @@
 # Architecture Documentation
 
-**Version:** 2.2
-**Last Updated:** January 31, 2026
+**Version:** 2.4
+**Last Updated:** February 4, 2026
 **Network:** Base Sepolia (Testnet)
 
 ---
 
-## 1. Contract Addresses
+## 1. Contract Addresses (UUPS Proxies)
 
-### Frozen Contracts (Auditors - DO NOT UPGRADE)
+> **⚠️ TWO DEPLOYMENT SETS:** Frozen (Audit) and Remediation (Active Development)
+
+### 1.1 Remediation Contracts (Active Development)
+
+Use for SDK development. Includes Signature Removal, Early Cancellation Fee + Per-Model Rate Limits.
 
 | Contract | Proxy Address | Implementation |
 |----------|---------------|----------------|
-| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` |
+| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
 | NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xF2D98D38B2dF95f4e8e4A49750823C415E795377` |
-| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` |
-| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | `0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x3F22fd532Ac051aE09b0F2e45F3DBfc835AfCD45` |
+| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5345a926dcf3B0E1A6895406FB68210ED19AC556` |
 | HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | `0x8584AeAC9687613095D13EF7be4dE0A796F84D7a` |
 
-### Test Contracts (Remediation - January 31, 2026)
+### 1.2 Frozen Contracts (Security Audit - DO NOT MODIFY)
 
-> **AUDIT Remediation**: These contracts include fixes for AUDIT-F1 through AUDIT-F5. Deployed as new proxies to avoid upgrading frozen audit contracts.
-
-| Contract | Test Proxy | Test Implementation |
-|----------|------------|---------------------|
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x06dB705BcBdda50A1712635fdC64A28d75de5603` |
-| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x56657bCBAE50AB656A9452f7B52e317650f90267` |
+| Contract | Proxy Address | Implementation |
+|----------|---------------|----------------|
+| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` 🔒 | `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` |
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` 🔒 | `0xF2D98D38B2dF95f4e8e4A49750823C415E795377` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` 🔒 | `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` |
+| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` 🔒 | `0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9` |
+| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` 🔒 | `0x8584AeAC9687613095D13EF7be4dE0A796F84D7a` |
 
 **Tokens:**
 - FAB Token: `0xC78949004B4EB6dEf2D66e49Cd81231472612D62`
@@ -46,6 +51,8 @@
                           │  • Model whitelist    │
                           │  • Community voting   │
                           │  • Trusted models     │
+                          │  • Per-model rate     │
+                          │    limits (NEW)       │
                           └───────────┬───────────┘
                                       │ validates models
                                       ▼
@@ -66,20 +73,16 @@
 │  • Session management          • Deposit handling                           │
 │  • Proof submission            • Payment settlement                         │
 │  • Timeout enforcement         • Treasury collection                        │
-│  • proofTimeoutWindow (NEW)    • createSessionFromDepositForModel (NEW)    │
 └────────────────┬────────────────────────────────────┬───────────────────────┘
                  │                                    │
-                 │ verifies signatures                │ credits earnings
-                 │ (now includes modelId)            │
+                 │ marks proofs used                  │ credits earnings
                  ▼                                    ▼
     ┌───────────────────────┐            ┌───────────────────────┐
     │     ProofSystem       │            │    HostEarnings       │
     │  ─────────────────    │            │  ─────────────────    │
-    │  • ECDSA verification │            │  • Earnings ledger    │
-    │  • Proof recording    │            │  • Batch withdrawals  │
-    │  • Replay prevention  │            │  • Multi-token        │
-    │  • modelId validation │            │                       │
-    │    (NEW - AUDIT-F4)   │            │                       │
+    │  • Replay prevention  │            │  • Earnings ledger    │
+    │  • markProofUsed()    │            │  • Batch withdrawals  │
+    │  • Proof hash storage │            │  • Multi-token        │
     └───────────────────────┘            └───────────────────────┘
 ```
 
@@ -89,7 +92,7 @@
 |----------|------------|-------------|
 | ModelRegistry | OpenZeppelin | NodeRegistry |
 | NodeRegistry | ModelRegistry, FAB Token | JobMarketplace |
-| JobMarketplace | NodeRegistry, ProofSystem, HostEarnings, ModelRegistry | - |
+| JobMarketplace | NodeRegistry, ProofSystem, HostEarnings | - |
 | ProofSystem | OpenZeppelin | JobMarketplace |
 | HostEarnings | OpenZeppelin | JobMarketplace |
 
@@ -106,9 +109,8 @@
     │  (Not Exists)    │
     └────────┬─────────┘
              │
-             │ createSessionJobForModel(... proofTimeoutWindow)  // NEW param
-             │ createSessionJobForModelWithToken(... proofTimeoutWindow)
-             │ createSessionFromDepositForModel(...)  // NEW function
+             │ createSessionJobForModel()
+             │ createSessionJobForModelWithToken()
              │
              ▼
     ┌──────────────────┐
@@ -116,15 +118,14 @@
     │     ACTIVE       │                                           │
     │                  │──── submitProofOfWork() ───────────────────┘
     │  status = 0      │     (updates tokensUsed, stores deltaCID)
-    │                  │     (signature now includes modelId)
+    │                  │
     └────────┬─────────┘
              │
              ├─────────────────────────┬────────────────────────────┐
              │                         │                            │
              │ completeSessionJob()    │ triggerSessionTimeout()    │
-             │ (host or depositor)     │ (anyone, after timeout)    │
-             │ + conversationCID       │ Uses proofTimeoutWindow    │
-             │                         │ (NOT proofInterval * 3)    │
+             │ (host or depositor)     │ (anyone, after 3× interval)│
+             │ + conversationCID       │                            │
              ▼                         ▼                            │
     ┌──────────────────┐    ┌──────────────────┐                   │
     │    COMPLETED     │    │    TIMED_OUT     │                   │
@@ -144,8 +145,6 @@
     │  ACTIVE → ACTIVE      : submitProofOfWork() [tokensUsed++]  ││
     │  ACTIVE → COMPLETED   : completeSessionJob(conversationCID)  │
     │  ACTIVE → TIMED_OUT   : triggerSessionTimeout()             ││
-    │                         (uses proofTimeoutWindow, not       ││
-    │                          proofInterval * 3 - AUDIT-F3 fix)  ││
     │                                                              ││
     │  COMPLETED → *        : BLOCKED (immutable)                 ││
     │  TIMED_OUT → *        : BLOCKED (immutable)                 ││
@@ -171,7 +170,6 @@
      │                                │                                  │
      │  3. createSessionJobForModel() │                                  │
      │    + ETH deposit               │                                  │
-     │    + proofTimeoutWindow (NEW)  │                                  │
      │ ──────────────────────────────>│                                  │
      │                                │                                  │
      │                                │  4. isActiveNode(host)?          │
@@ -186,15 +184,50 @@
      │                                │  7. true                         │
      │                                │ <────────────────────────────────│
      │                                │                                  │
-     │                                │  8. Validate proofTimeoutWindow  │
-     │                                │     (60-3600 seconds) - NEW      │
-     │                                │                                  │
-     │  9. SessionJobCreated event    │                                  │
+     │  8. SessionJobCreated event    │                                  │
      │ <──────────────────────────────│                                  │
      │                                │                                  │
 ```
 
-### 4.2 Proof Submission Flow (Updated for AUDIT-F4)
+### 4.1b V2 Direct Payment Delegation Flow (NEW - Feb 2026)
+
+For Coinbase Smart Wallet sub-accounts creating sessions using primary account's USDC:
+
+```
+┌─────────┐   ┌───────────┐                  ┌─────────────────┐
+│ Primary │   │Sub-Account│                  │  JobMarketplace │
+│ Wallet  │   │(Delegate) │                  │                 │
+└────┬────┘   └─────┬─────┘                  └────────┬────────┘
+     │              │                                 │
+     │  1. approve(marketplace, $1000)               │
+     │ ─────────────────────────────────────────────>│  (USDC contract)
+     │              │                                 │
+     │  2. authorizeDelegate(subAccount, true)       │
+     │ ─────────────────────────────────────────────>│
+     │              │                                 │
+     │              │  3. createSessionForModelAsDelegate()
+     │              │     (payer=primary, USDC)       │
+     │              │ ───────────────────────────────>│
+     │              │                                 │
+     │              │     4. Check authorization      │
+     │              │     isAuthorizedDelegate[payer][msg.sender]?
+     │              │                                 │
+     │              │     5. transferFrom(payer, contract, amount)
+     │              │        (pulls USDC from primary's wallet)
+     │              │                                 │
+     │              │  6. Session created             │
+     │              │     (depositor = primary)       │
+     │              │ <───────────────────────────────│
+     │              │                                 │
+```
+
+**Key Points:**
+- Steps 1-2 are one-time setup (2 popups)
+- Step 3 is per-session (NO popup - sub-account signs)
+- Refunds go to primary (depositor), not delegate
+- USDC only (ETH not supported for delegation)
+
+### 4.2 Proof Submission Flow
 
 ```
 ┌──────┐                  ┌─────────────────┐                  ┌─────────────┐
@@ -207,41 +240,31 @@
    │  2. Upload proof to S5        │                                  │
    │     → get proofCID, deltaCID  │                                  │
    │                               │                                  │
-   │  3. Get modelId from session  │                                  │
-   │     sessionModel(sessionId)   │                                  │
-   │                               │                                  │
-   │  4. Sign proof WITH modelId:  │                                  │
-   │     hash(proof, host, tokens, │                                  │
-   │          modelId)  // NEW     │                                  │
-   │                               │                                  │
-   │  5. submitProofOfWork(        │                                  │
+   │  3. submitProofOfWork(        │                                  │
    │       jobId, tokens,          │                                  │
-   │       proofHash, signature,   │                                  │
+   │       proofHash,              │                                  │
    │       proofCID, deltaCID)     │                                  │
    │ ─────────────────────────────>│                                  │
    │                               │                                  │
-   │                               │  6. Check proofSystem != 0       │
-   │                               │     (AUDIT-F2 fix)               │
+   │                               │  4. Verify msg.sender == host    │
+   │                               │     (no signature needed)        │
    │                               │                                  │
-   │                               │  7. Get modelId = sessionModel[] │
-   │                               │                                  │
-   │                               │  8. verifyAndMarkComplete(       │
-   │                               │       proof, host, tokens,       │
-   │                               │       modelId)  // NEW param     │
+   │                               │  5. markProofUsed(proofHash)     │
    │                               │ ────────────────────────────────>│
    │                               │                                  │
-   │                               │  9. ECDSA.recover() with modelId │
-   │                               │     in signed message (AUDIT-F4) │
+   │                               │  6. Proof marked (replay protect)│
    │                               │ <────────────────────────────────│
    │                               │                                  │
-   │                               │ 10. Update tokensUsed            │
+   │                               │  7. Update tokensUsed            │
    │                               │     Store proofHash, deltaCID    │
    │                               │                                  │
-   │ 11. ProofSubmitted event      │                                  │
+   │  8. ProofSubmitted event      │                                  │
    │     (includes deltaCID)       │                                  │
    │ <─────────────────────────────│                                  │
    │                               │                                  │
 ```
+
+> **Note (Feb 4, 2026):** Signature verification removed. Host authentication is via `msg.sender == session.host` check.
 
 ### 4.3 Payment Settlement Flow
 
@@ -256,6 +279,7 @@
       │                        │ 2. Calculate:          │                     │
       │                        │    hostPayment = 90%   │                     │
       │                        │    treasuryFee = 10%   │                     │
+      │                        │    earlyFee (if applicable)                  │
       │                        │    refund = remainder  │                     │
       │                        │                        │                     │
       │                        │ 3. creditEarnings()    │                     │
@@ -284,6 +308,46 @@
    │ <─────────────────│
    │                   │
 ```
+
+### 4.3b Early Cancellation Fee Flow (NEW - Feb 3, 2026)
+
+When depositor cancels **before any proofs** are submitted:
+
+```
+┌──────────┐        ┌─────────────────┐        ┌──────────────┐
+│ Depositor│        │  JobMarketplace │        │ HostEarnings │
+└────┬─────┘        └────────┬────────┘        └──────┬───────┘
+     │                       │                        │
+     │ 1. completeSessionJob()                        │
+     │    (proofs.length == 0)                        │
+     │ ─────────────────────>│                        │
+     │                       │                        │
+     │                       │ 2. Check conditions:   │
+     │                       │    - caller == depositor
+     │                       │    - proofs.length == 0│
+     │                       │    - minTokensFee > 0  │
+     │                       │                        │
+     │                       │ 3. Calculate earlyFee: │
+     │                       │    = minTokensFee *    │
+     │                       │      pricePerToken /   │
+     │                       │      PRICE_PRECISION   │
+     │                       │                        │
+     │                       │ 4. creditEarnings()    │
+     │                       │    (earlyFee to host)  │
+     │                       │ ──────────────────────>│
+     │                       │                        │
+     │                       │ 5. NO treasury fee     │
+     │                       │    (only on proven work)
+     │                       │                        │
+     │ 6. Refund = deposit - earlyFee                 │
+     │ <─────────────────────│                        │
+     │                       │                        │
+```
+
+**Key Points:**
+- Early cancellation fee goes 100% to host (no treasury cut)
+- Fee only charged when depositor cancels with 0 proofs
+- Protects hosts from free inference exploitation
 
 ### 4.4 Model Governance Flow
 
@@ -346,11 +410,17 @@ mapping(address => uint256) public tokenMinDeposits;    // Slot 17
 uint256 public accumulatedTreasuryNative;         // Slot 18
 mapping(address => uint256) public accumulatedTreasuryTokens;  // Slot 19
 
-// Slot 20-69: Storage gap (50 slots reserved)
-uint256[50] private __gap;
+// V2 Delegation (Feb 2, 2026)
+mapping(address => mapping(address => bool)) public isAuthorizedDelegate;  // Slot 20
+
+// Early Cancellation Fee (Feb 3, 2026)
+uint256 public minTokensFee;                      // Slot 21 - Min tokens charged on early cancel
+
+// Slot 22-54: Storage gap (33 slots reserved)
+uint256[33] private __gap;
 ```
 
-### 5.2 SessionJob Struct Layout (Updated - AUDIT-F3)
+### 5.2 SessionJob Struct Layout
 
 ```solidity
 struct SessionJob {
@@ -362,15 +432,14 @@ struct SessionJob {
     uint256 tokensUsed;        // 32 bytes (renamed from tokensProven)
     uint256 startTime;         // 32 bytes
     uint256 maxDuration;       // 32 bytes
-    uint256 proofInterval;     // 32 bytes (min tokens per proof)
-    uint256 proofTimeoutWindow;// 32 bytes (NEW - AUDIT-F3: timeout in seconds)
+    uint256 proofInterval;     // 32 bytes
     uint256 lastProofTime;     // 32 bytes
     bytes32 lastProofHash;     // 32 bytes
     string lastProofCID;       // Dynamic (S5 CID)
     string conversationCID;    // Dynamic (S5 CID) - set on completion
     SessionStatus status;      // 1 byte (enum: Active=0, Completed=1, TimedOut=2)
 }
-// Total: ~13 storage slots per session (plus dynamic strings)
+// Total: ~12 storage slots per session (plus dynamic strings)
 ```
 
 ### 5.3 NodeRegistryWithModelsUpgradeable
@@ -401,15 +470,38 @@ mapping(address => uint256) public lastSlashTime; // Slot 15
 uint256[36] private __gap;
 ```
 
-### 5.4 Storage Gap Strategy
+### 5.4 ModelRegistryUpgradeable
+
+```solidity
+// Slot 0-2: Inherited storage (Ownable, etc.)
+
+IERC20 public fabToken;                           // Slot 3
+mapping(bytes32 => Model) public models;          // Slot 4
+mapping(bytes32 => ModelProposal) public proposals;  // Slot 5
+bytes32[] public approvedModels;                  // Slot 6
+mapping(bytes32 => bool) public trustedModels;    // Slot 7
+
+// Voting state
+mapping(bytes32 => mapping(address => uint256)) public voterDeposits;  // Slot 8
+mapping(bytes32 => uint256) public lateVotes;     // Slot 9
+mapping(bytes32 => uint256) public lastProposalExecutionTime;  // Slot 10
+
+// Per-Model Rate Limits (Feb 3, 2026)
+mapping(bytes32 => uint256) public modelRateLimits;  // Slot 11 - tokens/second (0 = unlimited)
+
+// Slot 12-60: Storage gap (49 slots)
+uint256[49] private __gap;
+```
+
+### 5.6 Storage Gap Strategy
 
 All upgradeable contracts reserve storage gaps for future additions:
 
 | Contract | Gap Size | Reserved Slots |
 |----------|----------|----------------|
-| JobMarketplaceWithModelsUpgradeable | 50 | Future payment methods, analytics |
+| JobMarketplaceWithModelsUpgradeable | 33 | Reduced for delegation + early cancel fee |
 | NodeRegistryWithModelsUpgradeable | 36 | Reputation (reduced from 39 for slashing) |
-| ModelRegistryUpgradeable | 49 | Governance extensions |
+| ModelRegistryUpgradeable | 49 | Governance extensions + rate limits |
 | ProofSystemUpgradeable | 49 | ZK proof support |
 | HostEarningsUpgradeable | 48 | Multi-chain earnings |
 
@@ -487,7 +579,6 @@ contract JobMarketplaceUpgradeable is ReentrancyGuardTransient {
 - `registerNode()`, `unregisterNode()`, `stake()` (NodeRegistry)
 - `withdraw()`, `withdrawToken()` (HostEarnings)
 - Session creation and completion functions (JobMarketplace)
-- `depositToken()` (JobMarketplace) - Added for AUDIT remediation
 
 ### 7.2 Safe Transfer Patterns
 
@@ -540,36 +631,6 @@ Address.sendValue(payable(recipient), amount);
 └─────────────────────────────────────────────┘
 ```
 
-### 7.4 Signature Verification (Updated - AUDIT-F4)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Proof Signature Scheme (AUDIT-F4)               │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  SIGNED MESSAGE FORMAT:                                     │
-│  ──────────────────────                                     │
-│  keccak256(                                                 │
-│    proofHash,      // bytes32 - hash of proof data          │
-│    hostAddress,    // address - session host                │
-│    tokensClaimed,  // uint256 - tokens in this proof        │
-│    modelId         // bytes32 - session model (NEW)         │
-│  )                                                          │
-│                                                             │
-│  WHY modelId IS REQUIRED (AUDIT-F4):                        │
-│  • Prevents cross-model replay attacks                      │
-│  • Non-model sessions use bytes32(0)                        │
-│  • modelId retrieved from sessionModel[sessionId]           │
-│                                                             │
-│  VERIFICATION FLOW:                                         │
-│  1. JobMarketplace gets modelId from sessionModel[]         │
-│  2. Passes modelId to ProofSystem.verifyAndMarkComplete()   │
-│  3. ProofSystem includes modelId in hash reconstruction     │
-│  4. ECDSA.recover() verifies host signed with modelId       │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## 8. Gas Optimization Patterns
@@ -615,7 +676,6 @@ function _removeNodeFromModel(bytes32 modelId, address node) private {
 | JobMarketplace | `SessionJobCreated` | Track session starts |
 | JobMarketplace | `SessionCompleted` | Track completions, payments |
 | JobMarketplace | `ProofSubmitted` | Track proof history (includes deltaCID) |
-| JobMarketplace | `ModelSessionCreated` | Track model-specific sessions (NEW) |
 | NodeRegistry | `NodeRegistered` | Track host onboarding |
 | NodeRegistry | `PricingUpdated` | Track price changes |
 | ModelRegistry | `ModelProposed` | Track governance |
@@ -637,38 +697,4 @@ function _removeNodeFromModel(bytes32 modelId, address node) private {
 │  • modelId (ModelProposed, SessionJobCreated)              │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 10. AUDIT Remediation Summary
-
-### Finding Fixes (January 31, 2026)
-
-| Finding | Severity | Description | Fix |
-|---------|----------|-------------|-----|
-| AUDIT-F1 | Low | Dead `onlyRegisteredHost` modifier | Removed unused code |
-| AUDIT-F2 | High | ProofSystem address(0) allows arbitrary proofs | Added require check |
-| AUDIT-F3 | Medium | `proofInterval` dual interpretation | Separate `proofTimeoutWindow` param |
-| AUDIT-F4 | Medium | Missing modelId in signatures | Include modelId in signed message |
-| AUDIT-F5 | Low | Missing `createSessionFromDepositForModel` | Added new function |
-
-### Breaking Changes
-
-| Change | Impact | Migration |
-|--------|--------|-----------|
-| ProofSystem required | Sessions fail if ProofSystem not configured | Ensure ProofSystem is set before deployment |
-| `proofTimeoutWindow` parameter | All session creation calls need new parameter | SDK must pass 60-3600 seconds |
-| `modelId` in signature | Hosts MUST include modelId in signed message | Host software update required |
-| IProofSystem interface | Functions now require modelId parameter | Update all callers |
-
-### Test Contract Verification
-
-```bash
-# Verify test contracts include fixes
-cast call 0x95132177F964FF053C1E874b53CF74d819618E06 "MIN_PROOF_TIMEOUT()" --rpc-url https://sepolia.base.org
-# Expected: 60
-
-cast call 0x95132177F964FF053C1E874b53CF74d819618E06 "MAX_PROOF_TIMEOUT()" --rpc-url https://sepolia.base.org
-# Expected: 3600
 ```

@@ -35,6 +35,8 @@ pub struct JobTokenTracker {
     pub submission_in_progress: bool,
     pub last_proof_timestamp: Option<std::time::Instant>, // Track when last proof was submitted
     pub submission_started_at: Option<std::time::Instant>, // Track when current submission started (for timeout calculation)
+    /// Session's proofInterval from contract - minimum billable tokens (v8.14.2)
+    pub proof_interval: u64,
 }
 
 /// Content hashes for cryptographic proof binding (Phase 4 - v8.10.0)
@@ -194,6 +196,58 @@ impl CheckpointManager {
         })
     }
 
+    /// Query the session's proofInterval from the JobMarketplace contract (v8.14.2)
+    ///
+    /// Returns the proofInterval for minimum billing, or MIN_PROVEN_TOKENS as fallback.
+    /// The proofInterval is at index 10 in the sessionJobs return tuple.
+    async fn query_session_proof_interval(&self, job_id: u64) -> u64 {
+        // Build the sessionJobs(uint256) call
+        // Returns: (id, depositor, host, paymentToken, deposit, pricePerToken, tokensUsed,
+        //           maxDuration, startTime, lastProofTime, proofInterval, status, ...)
+        let contract = ethers::contract::Contract::new(
+            self.proof_system_address,
+            ethers::abi::parse_abi(&[
+                "function sessionJobs(uint256 jobId) external view returns (uint256, address, address, address, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint8, uint256, uint256, string, bytes32, string)"
+            ]).unwrap_or_default(),
+            self.web3_client.provider.clone(),
+        );
+
+        match contract
+            .method::<_, (U256, Address, Address, Address, U256, U256, U256, U256, U256, U256, U256, u8, U256, U256, String, H256, String)>(
+                "sessionJobs",
+                U256::from(job_id),
+            ) {
+            Ok(call) => {
+                match call.call().await {
+                    Ok(result) => {
+                        // proofInterval is at index 10
+                        let proof_interval = result.10.as_u64();
+                        info!(
+                            "📋 Queried proofInterval for job {}: {} tokens (minimum billing)",
+                            job_id, proof_interval
+                        );
+                        // Use contract value, but ensure it's at least MIN_PROVEN_TOKENS
+                        std::cmp::max(proof_interval, MIN_PROVEN_TOKENS)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "⚠️ Failed to query proofInterval for job {}: {}. Using default {}",
+                            job_id, e, CHECKPOINT_THRESHOLD
+                        );
+                        CHECKPOINT_THRESHOLD // Fallback to checkpoint threshold
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "⚠️ Failed to create sessionJobs call for job {}: {}. Using default {}",
+                    job_id, e, CHECKPOINT_THRESHOLD
+                );
+                CHECKPOINT_THRESHOLD
+            }
+        }
+    }
+
     /// Track tokens generated for a specific job
     pub async fn track_tokens(
         &self,
@@ -201,10 +255,23 @@ impl CheckpointManager {
         tokens: u64,
         session_id: Option<String>,
     ) -> Result<()> {
+        // Check if we need to create a new tracker (requires async contract query)
+        let needs_new_tracker = {
+            let trackers = self.job_trackers.read().await;
+            !trackers.contains_key(&job_id)
+        };
+
+        // If new tracker needed, query contract for proofInterval BEFORE acquiring write lock
+        let proof_interval = if needs_new_tracker {
+            self.query_session_proof_interval(job_id).await
+        } else {
+            0 // Will be ignored, existing tracker has its own value
+        };
+
         let mut trackers = self.job_trackers.write().await;
 
         let tracker = trackers.entry(job_id).or_insert_with(|| {
-            eprintln!("📝 Starting token tracking for job {}", job_id);
+            eprintln!("📝 Starting token tracking for job {} (proofInterval: {} tokens)", job_id, proof_interval);
             JobTokenTracker {
                 job_id,
                 tokens_generated: 0,
@@ -213,6 +280,7 @@ impl CheckpointManager {
                 submission_in_progress: false,
                 last_proof_timestamp: None,
                 submission_started_at: None,
+                proof_interval, // Store session's proofInterval for minimum billing
             }
         });
 
@@ -236,13 +304,15 @@ impl CheckpointManager {
             let previous_checkpoint = tracker.last_checkpoint; // Save for rollback
             let is_first_checkpoint = previous_checkpoint == 0;
 
-            // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-            if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+            // v8.14.2: Use session's proofInterval for minimum billing (not just MIN_PROVEN_TOKENS)
+            // This ensures hosts get paid for at least proofInterval tokens even on short sessions
+            let min_billable_tokens = tracker.proof_interval;
+            if is_first_checkpoint && tokens_to_submit < min_billable_tokens {
                 info!(
-                    "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
-                    tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                    "📝 Padding FIRST checkpoint from {} to {} tokens (session proofInterval) for job {}",
+                    tokens_to_submit, min_billable_tokens, job_id
                 );
-                tokens_to_submit = MIN_PROVEN_TOKENS;
+                tokens_to_submit = min_billable_tokens;
             }
 
             // Mark submission as in progress to prevent race conditions
@@ -538,6 +608,76 @@ impl CheckpointManager {
         }
     }
 
+    /// Query the modelId for a session from the JobMarketplace contract
+    ///
+    /// # AUDIT-F4 Compliance
+    ///
+    /// This function queries `sessionModel(uint256 sessionId)` to get the model ID
+    /// that must be included in proof signatures to prevent cross-model replay attacks.
+    ///
+    /// # Arguments
+    ///
+    /// * `job_id` - The session ID to query (same as job_id in this system)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok([u8; 32])` - The modelId as bytes32
+    ///   - Returns [0u8; 32] (bytes32(0)) for non-model sessions (legacy sessions)
+    ///   - Returns actual model ID for model-specific sessions
+    ///
+    /// # Errors
+    ///
+    /// Returns error if contract call fails or RPC is unavailable
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let model_id = checkpoint_manager.query_session_model(job_id).await?;
+    /// // Use model_id in signature generation
+    /// let signature = sign_proof_data(&key, hash, addr, tokens, model_id)?;
+    /// ```
+    pub async fn query_session_model(&self, job_id: u64) -> Result<[u8; 32]> {
+        let query = SessionModelQuery::new(job_id);
+        let call_data = query.encode();
+
+        info!(
+            "🔍 Querying sessionModel for job {} (AUDIT-F4 compliance)",
+            job_id
+        );
+
+        // Create transaction request for contract call
+        let tx = TransactionRequest::new()
+            .to(self.proof_system_address)
+            .data(call_data);
+
+        // Call contract (read-only, doesn't send transaction)
+        let result = self
+            .web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("Failed to query sessionModel for job {}: {}", job_id, e))?;
+
+        // Decode bytes32 response
+        if result.len() != 32 {
+            return Err(anyhow!(
+                "Invalid sessionModel response length: {} (expected 32)",
+                result.len()
+            ));
+        }
+
+        let mut model_id = [0u8; 32];
+        model_id.copy_from_slice(&result[..32]);
+
+        if model_id == [0u8; 32] {
+            info!("   Non-model session (modelId = bytes32(0))");
+        } else {
+            info!("   Model ID: 0x{}", hex::encode(&model_id[..8]));
+        }
+
+        Ok(model_id)
+    }
+
     /// Submit checkpoint to the blockchain
     /// IMPORTANT: tokens_generated should be the INCREMENTAL tokens since last checkpoint
     async fn submit_checkpoint(&self, job_id: u64, tokens_generated: u64) -> Result<()> {
@@ -574,23 +714,22 @@ impl CheckpointManager {
         // Generate host signature for security audit compliance (v8.9.0)
         let private_key = crate::crypto::extract_node_private_key()
             .map_err(|e| anyhow!("Failed to get host private key for signing: {}", e))?;
-        let signature = crate::crypto::sign_proof_data(
-            &private_key,
-            proof_hash_bytes,
-            self.host_address,
-            tokens_to_submit,
-        )
-        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
 
+        // Query modelId from contract for AUDIT-F4 compliance
+        let model_id = self.query_session_model(job_id).await?;
         info!(
-            "✅ Proof signed by host {:?} (v={})",
-            self.host_address,
-            signature[64]
+            "📋 Job {} modelId: 0x{} (for reference)",
+            job_id,
+            hex::encode(&model_id[..8])
         );
 
-        // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
+        // v8.14.0: Signature removed from submitProofOfWork per BREAKING_CHANGES.md
+        // Contract now verifies msg.sender == session.host instead of signature
+        // This saves ~3,000 gas per proof submission
+
+        // Encode contract call with hash + CID + deltaCID (v8.14.0 - no signature)
         // Sync path doesn't publish encrypted checkpoints, so delta_cid is empty
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, String::new());
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid, String::new());
 
         info!(
             "📦 Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -777,19 +916,33 @@ impl CheckpointManager {
         } else {
             String::new() // No session_id means no encrypted checkpoint
         };
-        let signature = crate::crypto::sign_proof_data(
-            &private_key,
-            proof_hash_bytes,
-            host_address,
-            tokens_to_submit,
-        )
-        .map_err(|e| anyhow!("Failed to sign proof data: {}", e))?;
+
+        // Query modelId from contract for AUDIT-F4 compliance
+        let query = SessionModelQuery::new(job_id);
+        let call_data = query.encode();
+        let tx = TransactionRequest::new()
+            .to(proof_system_address)
+            .data(call_data);
+        let result = web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("Failed to query sessionModel for job {}: {}", job_id, e))?;
+
+        let mut model_id = [0u8; 32];
+        if result.len() == 32 {
+            model_id.copy_from_slice(&result[..32]);
+        }
 
         info!(
-            "✅ [ASYNC] Proof signed by host {:?} (v={})",
-            host_address,
-            signature[64]
+            "📋 [ASYNC] Job {} modelId: 0x{} (for reference)",
+            job_id,
+            hex::encode(&model_id[..8])
         );
+
+        // v8.14.0: Signature removed from submitProofOfWork per BREAKING_CHANGES.md
+        // Contract now verifies msg.sender == session.host instead of signature
+        // This saves ~3,000 gas per proof submission
 
         // Cache proof data for S5 propagation delay handling (v8.12.6)
         // Cache BEFORE on-chain tx so data is available even if tx fails
@@ -811,8 +964,8 @@ impl CheckpointManager {
             )
             .await;
 
-        // Encode contract call with hash + signature + CID + deltaCID (v8.12.4)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, signature, proof_cid, delta_cid);
+        // Encode contract call with hash + CID + deltaCID (v8.14.0 - no signature)
+        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid, delta_cid);
 
         info!(
             "📦 [ASYNC] Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -1023,15 +1176,16 @@ impl CheckpointManager {
                 let previous_checkpoint = tracker.last_checkpoint;
                 let is_first_checkpoint = previous_checkpoint == 0;
 
-                // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-                if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                // v8.14.2: Use session's proofInterval for minimum billing
+                let min_billable_tokens = tracker.proof_interval;
+                if is_first_checkpoint && tokens_to_submit < min_billable_tokens {
                     info!(
-                        "📝 Padding FIRST checkpoint from {} to {} tokens (contract minimum) for job {}",
-                        tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                        "📝 Padding FIRST checkpoint from {} to {} tokens (session proofInterval) for job {}",
+                        tokens_to_submit, min_billable_tokens, job_id
                     );
-                    tokens_to_submit = MIN_PROVEN_TOKENS;
+                    tokens_to_submit = min_billable_tokens;
                 } else if !is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
-                    // Not first checkpoint and below minimum - contract will reject this
+                    // Not first checkpoint and below contract minimum - will be rejected
                     warn!(
                         "⚠️ Skipping final checkpoint for job {} - only {} tokens remaining (below minimum {})",
                         job_id, tokens_to_submit, MIN_PROVEN_TOKENS
@@ -1168,13 +1322,14 @@ impl CheckpointManager {
                 let previous_checkpoint = tracker.last_checkpoint;
                 let is_first_checkpoint = previous_checkpoint == 0;
 
-                // ONLY pad the first checkpoint if it's less than MIN_PROVEN_TOKENS
-                if is_first_checkpoint && tokens_to_submit < MIN_PROVEN_TOKENS {
+                // v8.14.2: Use session's proofInterval for minimum billing
+                let min_billable_tokens = tracker.proof_interval;
+                if is_first_checkpoint && tokens_to_submit < min_billable_tokens {
                     info!(
-                        "📝 [FORCE-CHECKPOINT-BG] Padding FIRST checkpoint from {} to {} tokens for job {}",
-                        tokens_to_submit, MIN_PROVEN_TOKENS, job_id
+                        "📝 [FORCE-CHECKPOINT-BG] Padding FIRST checkpoint from {} to {} tokens (proofInterval) for job {}",
+                        tokens_to_submit, min_billable_tokens, job_id
                     );
-                    tokens_to_submit = MIN_PROVEN_TOKENS;
+                    tokens_to_submit = min_billable_tokens;
                 }
 
                 info!(
@@ -1813,21 +1968,21 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
     function.encode_input(&tokens).unwrap()
 }
 
-// ABI encoding helper for submitProofOfWork (v8.9.0 - Security Audit Compliance)
-// Accepts proof hash + host signature + CID for off-chain proof storage
-// BREAKING CHANGE: Now requires 65-byte signature parameter (r + s + v)
+// ABI encoding helper for submitProofOfWork (v8.14.0 - Post-Remediation)
+// Signature parameter REMOVED per BREAKING_CHANGES.md (Feb 4, 2026)
+// Authentication now via msg.sender == session.host check in contract
 fn encode_checkpoint_call(
     job_id: u64,
     tokens_generated: u64,
     proof_hash: [u8; 32],
-    signature: [u8; 65], // Host's proof signature for security audit
     proof_cid: String,
     delta_cid: String, // Phase 10: Encrypted checkpoint delta CID for on-chain recovery
 ) -> Vec<u8> {
     use ethers::abi::Function;
 
-    // Define the function signature for submitProofOfWork (v8.12.4 - Security Audit Jan 2026)
-    // Contract accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, bytes signature, string proofCID, string deltaCID)
+    // Define the function signature for submitProofOfWork (v8.14.0 - Signature Removed)
+    // Contract accepts: (uint256 jobId, uint256 tokensClaimed, bytes32 proofHash, string proofCID, string deltaCID)
+    // Note: Signature removed - contract verifies msg.sender == session.host instead
     let function = Function {
         name: "submitProofOfWork".to_string(),
         inputs: vec![
@@ -1847,11 +2002,6 @@ fn encode_checkpoint_call(
                 internal_type: None,
             },
             ethers::abi::Param {
-                name: "signature".to_string(), // 65-byte ECDSA signature
-                kind: ethers::abi::ParamType::Bytes,
-                internal_type: None,
-            },
-            ethers::abi::Param {
                 name: "proofCID".to_string(),
                 kind: ethers::abi::ParamType::String,
                 internal_type: None,
@@ -1867,12 +2017,11 @@ fn encode_checkpoint_call(
         state_mutability: ethers::abi::StateMutability::NonPayable,
     };
 
-    // Encode the function call with hash + signature + CID + deltaCID
+    // Encode the function call with hash + CID + deltaCID (no signature)
     let tokens = vec![
         Token::Uint(U256::from(job_id)),
         Token::Uint(U256::from(tokens_generated)),
         Token::FixedBytes(proof_hash.to_vec()),
-        Token::Bytes(signature.to_vec()), // 65-byte signature
         Token::String(proof_cid),
         Token::String(delta_cid), // Phase 10: delta CID (empty string if not encrypted)
     ];
@@ -1882,33 +2031,76 @@ fn encode_checkpoint_call(
         .expect("Failed to encode submitProofOfWork call")
 }
 
+// ========================================================================
+// Phase 2.1: SessionModel Contract Query (AUDIT-F4 Compliance)
+// ========================================================================
+
+/// Query the modelId for a session from JobMarketplace contract
+///
+/// Calls: `sessionModel(uint256 sessionId) returns (bytes32)`
+///
+/// Returns bytes32(0) for sessions created without a model (legacy sessions).
+/// For model-specific sessions, returns the registered model ID.
+///
+/// # AUDIT-F4 Compliance
+///
+/// The modelId must be included in proof signatures to prevent cross-model replay attacks.
+/// This query retrieves the modelId that was set when the session was created.
+#[derive(Debug, Clone)]
+pub struct SessionModelQuery {
+    pub session_id: U256,
+}
+
+impl SessionModelQuery {
+    /// Create a new sessionModel query for the given session ID
+    pub fn new(session_id: u64) -> Self {
+        Self {
+            session_id: U256::from(session_id),
+        }
+    }
+
+    /// Encode the contract call using ethers-rs ABI encoding
+    ///
+    /// Returns the encoded call data for `sessionModel(uint256)`
+    pub fn encode(&self) -> Bytes {
+        // Function signature: sessionModel(uint256)
+        let function_sig = &ethers::utils::keccak256(b"sessionModel(uint256)")[..4];
+        let mut data = Vec::from(function_sig);
+
+        // Encode session_id as uint256 (32 bytes, big-endian)
+        let mut session_bytes = [0u8; 32];
+        self.session_id.to_big_endian(&mut session_bytes);
+        data.extend_from_slice(&session_bytes);
+
+        Bytes::from(data)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Test that encode_checkpoint_call includes signature in encoded data
+    /// Test that encode_checkpoint_call encodes correctly (v8.14.0 - no signature)
     #[test]
-    fn test_checkpoint_with_signature_encodes_correctly() {
+    fn test_checkpoint_encodes_correctly() {
         let job_id = 12345u64;
         let tokens_generated = 1000u64;
         let proof_hash = [0xab; 32];
-        let signature = [0xcd; 65]; // Mock signature
         let proof_cid = "bafytest123".to_string();
 
         let encoded = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(), // No delta CID
         );
 
         // Function selector (4 bytes) + encoded params
         assert!(encoded.len() > 4, "Encoded data should include function selector");
 
         // Verify function selector is for submitProofOfWork
-        // keccak256("submitProofOfWork(uint256,uint256,bytes32,bytes,string,string)")
+        // keccak256("submitProofOfWork(uint256,uint256,bytes32,string,string)")
         let selector = &encoded[0..4];
         assert!(
             !selector.iter().all(|&b| b == 0),
@@ -1916,96 +2108,59 @@ mod tests {
         );
     }
 
-    /// Test that signature bytes appear in the encoded transaction data
+    /// Test that proof hash appears in the encoded transaction data
     #[test]
-    fn test_signature_in_transaction_data() {
+    fn test_proof_hash_in_transaction_data() {
         let job_id = 100u64;
         let tokens_generated = 500u64;
         let proof_hash = [0x11; 32];
-        let signature = [0x99; 65]; // Distinctive signature pattern
         let proof_cid = "cid123".to_string();
 
         let encoded = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
-        // The encoded data should contain our signature bytes somewhere
-        // In ABI encoding, bytes are length-prefixed and padded
-        let sig_pattern = [0x99u8; 65];
-
-        // Check that the signature bytes appear in the encoded data
-        let encoded_hex = hex::encode(&encoded);
-        let sig_hex = hex::encode(&sig_pattern);
-
-        // ABI encoding pads to 32-byte boundaries, so we check for the signature content
-        // The 65-byte signature will be in the dynamic data section
+        // The encoded data should contain our proof hash bytes
         assert!(
-            encoded.len() >= 65,
-            "Encoded data should be at least 65 bytes to contain signature"
+            encoded.len() >= 32,
+            "Encoded data should be at least 32 bytes to contain proof hash"
         );
     }
 
-    /// Test that different signatures produce different encoded data
+    /// Test that different proof hashes produce different encoded data
     #[test]
-    fn test_different_signatures_different_encoding() {
+    fn test_different_hashes_different_encoding() {
         let job_id = 100u64;
         let tokens_generated = 500u64;
-        let proof_hash = [0x11; 32];
         let proof_cid = "cid123".to_string();
 
-        let signature1 = [0xaa; 65];
-        let signature2 = [0xbb; 65];
+        let hash1 = [0xaa; 32];
+        let hash2 = [0xbb; 32];
 
         let encoded1 = encode_checkpoint_call(
             job_id,
             tokens_generated,
-            proof_hash,
-            signature1,
+            hash1,
             proof_cid.clone(),
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         let encoded2 = encode_checkpoint_call(
             job_id,
             tokens_generated,
-            proof_hash,
-            signature2,
+            hash2,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         assert_ne!(
             encoded1, encoded2,
-            "Different signatures should produce different encoded data"
+            "Different proof hashes should produce different encoded data"
         );
-    }
-
-    /// Test that signature is 65 bytes in encoded call
-    #[test]
-    fn test_signature_length_in_encoding() {
-        let job_id = 1u64;
-        let tokens_generated = 1u64;
-        let proof_hash = [0u8; 32];
-        let signature = [0u8; 65];
-        let proof_cid = "x".to_string();
-
-        // This should not panic - if signature was wrong size, encoding would fail
-        let encoded = encode_checkpoint_call(
-            job_id,
-            tokens_generated,
-            proof_hash,
-            signature,
-            proof_cid,
-            String::new(), // No delta CID for legacy test
-        );
-
-        // Basic sanity check
-        assert!(!encoded.is_empty(), "Encoded data should not be empty");
     }
 
     /// Test encode_checkpoint_call produces consistent output
@@ -2014,25 +2169,22 @@ mod tests {
         let job_id = 42u64;
         let tokens_generated = 100u64;
         let proof_hash = [0xde; 32];
-        let signature = [0xad; 65];
         let proof_cid = "testcid".to_string();
 
         let encoded1 = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid.clone(),
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         let encoded2 = encode_checkpoint_call(
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
-            String::new(), // No delta CID for legacy test
+            String::new(),
         );
 
         assert_eq!(
@@ -2051,7 +2203,6 @@ mod tests {
         let job_id = 999u64;
         let tokens_generated = 500u64;
         let proof_hash = [0xaa; 32];
-        let signature = [0xbb; 65];
         let proof_cid = "bafyproof123".to_string();
         let delta_cid = "blob:abc123def456".to_string(); // Non-empty delta CID
 
@@ -2059,7 +2210,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
             delta_cid.clone(),
         );
@@ -2085,7 +2235,6 @@ mod tests {
         let job_id = 888u64;
         let tokens_generated = 250u64;
         let proof_hash = [0xcc; 32];
-        let signature = [0xdd; 65];
         let proof_cid = "bafyproof456".to_string();
         let delta_cid = "".to_string(); // Empty delta CID for non-encrypted path
 
@@ -2093,7 +2242,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
             delta_cid,
         );
@@ -2109,7 +2257,6 @@ mod tests {
         let job_id = 777u64;
         let tokens_generated = 100u64;
         let proof_hash = [0xee; 32];
-        let signature = [0xff; 65];
         let proof_cid = "bafyproof789".to_string();
 
         let delta_cid1 = "blob:first".to_string();
@@ -2119,7 +2266,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid.clone(),
             delta_cid1,
         );
@@ -2128,7 +2274,6 @@ mod tests {
             job_id,
             tokens_generated,
             proof_hash,
-            signature,
             proof_cid,
             delta_cid2,
         );
@@ -2644,6 +2789,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2675,6 +2821,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2724,6 +2871,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2810,6 +2958,7 @@ mod tests {
                     submission_in_progress: false,
                     last_proof_timestamp: None,
                     submission_started_at: None,
+                    proof_interval: 1000, // Default for tests
                 },
             );
         }
@@ -2970,5 +3119,60 @@ mod tests {
             )
             .await;
         assert!(publisher.has_recovery_key("session-with-key").await);
+    }
+
+    // ========================================================================
+    // Phase 2.1: SessionModel Query Tests (AUDIT-F4 - Sub-phase 2.1)
+    // ========================================================================
+
+    #[test]
+    fn test_session_model_query_encodes_correctly() {
+        let query = SessionModelQuery::new(42);
+        let encoded = query.encode();
+
+        // Should be 4 bytes (function sig) + 32 bytes (uint256)
+        assert_eq!(encoded.len(), 36, "Encoded query should be 36 bytes");
+
+        // Function signature for sessionModel(uint256)
+        let expected_sig = &ethers::utils::keccak256(b"sessionModel(uint256)")[..4];
+        assert_eq!(&encoded[..4], expected_sig, "Function signature mismatch");
+    }
+
+    #[test]
+    fn test_session_model_returns_bytes32() {
+        let query = SessionModelQuery::new(100);
+        let encoded = query.encode();
+
+        // Verify session_id is encoded as uint256 (32 bytes)
+        assert_eq!(encoded.len(), 36, "Encoded data should be 36 bytes");
+
+        // Verify the session ID is in the encoded data (after the 4-byte function selector)
+        let session_id_bytes = &encoded[4..36];
+        assert_eq!(session_id_bytes.len(), 32, "Session ID should be 32 bytes");
+    }
+
+    // ========================================================================
+    // Phase 2.2: query_session_model Function Tests (AUDIT-F4 - Sub-phase 2.2)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_query_session_model_success() {
+        // Test that SessionModelQuery can be created and encoded
+        // (Full integration test would require mock web3_client)
+        let query = SessionModelQuery::new(42);
+        let encoded = query.encode();
+
+        assert!(encoded.len() > 0, "Query should encode to non-empty data");
+        assert_eq!(encoded.len(), 36, "Query should be 36 bytes");
+    }
+
+    #[tokio::test]
+    async fn test_query_session_model_returns_zero_for_legacy() {
+        // Test that bytes32(0) is handled correctly
+        let zero_model_id = [0u8; 32];
+
+        // Verify bytes32(0) is the expected format for non-model sessions
+        assert_eq!(zero_model_id.len(), 32, "ModelId should be 32 bytes");
+        assert!(zero_model_id.iter().all(|&b| b == 0), "bytes32(0) should be all zeros");
     }
 }

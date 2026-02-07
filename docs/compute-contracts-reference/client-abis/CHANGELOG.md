@@ -1,5 +1,165 @@
 # Client ABIs Changelog
 
+## February 4, 2026 - Signature Removal from Proof Submission
+
+### ⚠️ SDK BREAKING CHANGE
+**`submitProofOfWork` signature changed from 6 to 5 parameters** - Signature parameter removed.
+
+The redundant ECDSA signature verification has been removed. Authentication is now handled via `msg.sender == session.host` check, which provides equivalent security with ~3,000 gas savings per proof.
+
+**Old signature (no longer works):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    bytes calldata signature,    // ❌ REMOVED
+    string calldata proofCID,
+    string calldata deltaCID
+)
+```
+
+**New signature (required):**
+```solidity
+function submitProofOfWork(
+    uint256 jobId,
+    uint256 tokensClaimed,
+    bytes32 proofHash,
+    string calldata proofCID,
+    string calldata deltaCID     // 5 params total
+)
+```
+
+### SDK Migration Guide
+```javascript
+// OLD (no longer works - 6 params):
+const signature = await hostWallet.signMessage(getBytes(dataHash));
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
+
+// NEW (required - 5 params):
+// No signature needed! Just call directly as the host
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID);
+```
+
+### ProofSystem Changes
+
+**Removed Functions:**
+- `verifyAndMarkComplete(bytes proof, address prover, uint256 claimedTokens, bytes32 modelId)` - REMOVED
+- `verifyHostSignature(bytes proof, address prover, uint256 claimedTokens, bytes32 modelId)` - REMOVED
+
+**New Function:**
+```solidity
+// Simple replay protection only - no signature verification
+function markProofUsed(bytes32 proofHash) external returns (bool)
+```
+
+### Implementation Upgrades (Remediation Proxy)
+| Contract | Proxy | New Implementation |
+|----------|-------|-------------------|
+| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
+| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5345a926dcf3B0E1A6895406FB68210ED19AC556` |
+
+### Benefits
+- ~3,000 gas savings per proof submission (no ecrecover)
+- Simpler host integration (no signature generation)
+- Equivalent security via `msg.sender == session.host` check
+- Reduced code complexity
+
+### No Other Breaking Changes
+- All other functions work as before
+- Session creation unchanged
+- Completion unchanged
+- V2 delegation unchanged
+
+---
+
+## February 2, 2026 - V2 Direct Payment Delegation
+
+### New Feature: Smart Wallet Sub-Account Support
+
+Enables Coinbase Smart Wallet sub-accounts to create sessions using primary account's USDC via `transferFrom` pattern.
+
+**New Functions:**
+```solidity
+// Authorize a delegate
+function authorizeDelegate(address delegate, bool authorized) external;
+
+// Check authorization
+function isDelegateAuthorized(address payer, address delegate) external view returns (bool);
+
+// Create model session as delegate (USDC only)
+function createSessionForModelAsDelegate(
+    address payer,
+    bytes32 modelId,
+    address host,
+    address paymentToken,
+    uint256 amount,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
+
+// Create non-model session as delegate (USDC only)
+function createSessionAsDelegate(
+    address payer,
+    address host,
+    address paymentToken,
+    uint256 amount,
+    uint256 pricePerToken,
+    uint256 maxDuration,
+    uint256 proofInterval,
+    uint256 proofTimeoutWindow
+) external returns (uint256 sessionId);
+```
+
+**New Custom Errors:**
+```solidity
+error NotDelegate();        // Caller not authorized as delegate
+error ERC20Only();          // Direct delegation requires ERC-20 token
+error BadDelegateParams();  // Invalid parameters
+```
+
+**New Events:**
+```solidity
+event DelegateAuthorized(address indexed payer, address indexed delegate, bool authorized);
+event SessionCreatedByDelegate(uint256 indexed sessionId, address indexed payer, address indexed delegate, address host, bytes32 modelId, uint256 amount);
+```
+
+**New Storage:**
+```solidity
+mapping(address => mapping(address => bool)) public isAuthorizedDelegate;
+```
+
+### Implementation Upgrade (Remediation Proxy)
+| Contract | Proxy | New Implementation |
+|----------|-------|-------------------|
+| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0xf5441bda610AbCDe71B96fe6051E738d2702f071` |
+
+### Bytecode Optimization
+- Custom errors reduced bytecode from 25,453 to 24,516 bytes
+- Contract now fits within EVM 24,576 byte limit
+
+### SDK Integration
+```typescript
+// One-time setup (primary wallet)
+await usdc.approve(marketplace.address, parseUnits("1000", 6));
+await marketplace.authorizeDelegate(subAccount.address, true);
+
+// Per-session (sub-account - NO popup!)
+await marketplace.connect(subAccount).createSessionForModelAsDelegate(
+    primaryWallet.address, modelId, host, usdcAddress,
+    amount, pricePerToken, maxDuration, proofInterval, proofTimeoutWindow
+);
+```
+
+### No Breaking Changes
+- All existing functions work as before
+- V2 delegation is additive (new functions only)
+- Escrow/deposit functions retained for general wallet support
+
+---
+
 ## January 31, 2026 - Security Audit Remediation (AUDIT-F1 to F5)
 
 ### ⚠️ BREAKING CHANGES

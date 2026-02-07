@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::contracts::model_registry::{ApprovedModels, ModelRegistryClient};
+use crate::contracts::model_registry::ModelRegistryClient;
 use crate::contracts::pricing_constants::{native, stable};
 use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
 

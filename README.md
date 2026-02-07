@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.12.6-settlement-race-fix (January 2026)
+**Version**: v8.13.0-audit-remediation (February 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -27,6 +27,8 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **S5 Vector Loading**: Load vector databases from S5 decentralized storage (v8.4.0+)
 - **Encrypted Vector Paths**: Support for encrypted vector_database paths in job parameters (v8.4.0+)
 - **Chat Templates**: Model-specific formatting (Harmony, Llama, etc.) (v8.3.13+)
+- **AUDIT-F4 Compliance**: Model ID in proof signatures prevents cross-model replay attacks (v8.13.0+)
+- **Model Validation**: Dynamic model authorization with SHA256 verification (v8.14.0+)
 
 ## Prerequisites
 
@@ -69,7 +71,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.12"
+strings target/release/fabstir-llm-node | grep "v8.13.0"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -118,6 +120,10 @@ VECTOR_DB_URL=http://localhost:8081    # Vector DB endpoint
 HOST_PRIVATE_KEY=0x...           # Required for encryption and settlements
 SESSION_KEY_TTL_SECONDS=3600     # Session key expiration (default: 1 hour)
 
+# Model Validation (v8.14.0+)
+REQUIRE_MODEL_VALIDATION=false   # Enable model authorization enforcement
+                                 # When true: validates MODEL_PATH, SHA256, host auth
+
 # Logging
 RUST_LOG=debug                   # Log level (trace, debug, info, warn, error)
 ```
@@ -139,21 +145,25 @@ cargo build --release --features real-ezkl -j 4
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.12.6.tar.gz
-cd fabstir-llm-node-v8.12.6
+tar -xzf fabstir-llm-node-v8.13.0-audit-remediation.tar.gz
+cd fabstir-llm-node-v8.13.0
 ./fabstir-llm-node --version
 ```
 
 ## Smart Contract Configuration
 
-**Single Source of Truth**: All contract addresses are defined in `.env.local.test`
+**Single Source of Truth**: All contract addresses are defined in `.env.contracts`
 
-Key contracts (Base Sepolia, v8.5.0+ UUPS Upgradeable Proxies):
-- **CONTRACT_NODE_REGISTRY**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
-- **CONTRACT_JOB_MARKETPLACE**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
-- **CONTRACT_HOST_EARNINGS**: `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0`
-- **CONTRACT_PROOF_SYSTEM**: `0x5afB91977e69Cc5003288849059bc62d47E7deeb`
-- **CONTRACT_MODEL_REGISTRY**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2`
+Key contracts (Base Sepolia, v8.13.0+ AUDIT-F4 Remediated):
+- **CONTRACT_NODE_REGISTRY**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` (unchanged)
+- **CONTRACT_JOB_MARKETPLACE**: `0x95132177F964FF053C1E874b53CF74d819618E06` (AUDIT-F4 compliant)
+- **CONTRACT_HOST_EARNINGS**: `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` (unchanged)
+- **CONTRACT_PROOF_SYSTEM**: `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` (AUDIT-F4 compliant)
+- **CONTRACT_MODEL_REGISTRY**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` (unchanged)
+
+**Deprecated (pre-AUDIT-F4)**:
+- Old JobMarketplace: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` (deprecated Jan 31, 2026)
+- Old ProofSystem: `0x5afB91977e69Cc5003288849059bc62d47E7deeb` (deprecated Jan 31, 2026)
 
 ## Project Structure
 
@@ -269,7 +279,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.12"
+strings target/release/fabstir-llm-node | grep "v8.13.0"
 ```
 
 #### Out of Memory During Build
@@ -378,3 +388,4 @@ For issues and questions:
 - [WebSocket API Integration](docs/sdk-reference/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
 - [S5 Vector Loading](docs/sdk-reference/S5_VECTOR_LOADING.md) - Load vector databases from S5 storage (v8.4.0+)
 - [SDK Encryption Integration](docs/sdk-reference/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
+- [Model Validation Compatibility](docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md) - Model authorization guide (v8.14.0+)

@@ -12,6 +12,73 @@ This guide covers deploying the Fabstir LLM Node in production environments with
 - Stable internet connection
 - Wallet with native tokens (ETH for Base Sepolia, BNB for opBNB)
 
+## AUDIT Pre-Report Remediation (January 31, 2026)
+
+**⚠️ Important**: The node software has been updated for AUDIT-F4 compliance. Use the remediated contract addresses.
+
+### Remediated Contracts (Use These)
+
+The node software (v8.4.4+) works with these AUDIT-compliant contracts:
+
+```bash
+# AUDIT-F4 Remediated Contracts
+CONTRACT_JOB_MARKETPLACE=0x95132177F964FF053C1E874b53CF74d819618E06
+CONTRACT_PROOF_SYSTEM=0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31
+
+# Unchanged Contracts
+CONTRACT_NODE_REGISTRY=0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
+CONTRACT_MODEL_REGISTRY=0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2
+CONTRACT_HOST_EARNINGS=0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0
+```
+
+These addresses are already configured in `.env.local.test` and `.env.contracts`.
+
+### AUDIT-F4 Breaking Change
+
+**What Changed**: Proof signatures now include `modelId` parameter to prevent cross-model replay attacks.
+
+**Old signature** (pre-remediation contracts - deprecated):
+```
+dataHash = keccak256(proofHash + hostAddress + tokensClaimed)
+```
+
+**New signature** (AUDIT-F4 compliant):
+```
+dataHash = keccak256(proofHash + hostAddress + tokensClaimed + modelId)
+```
+
+### Node Software Changes
+
+The node software (v8.4.4+) automatically handles AUDIT-F4:
+
+1. **Queries modelId**: Calls `sessionModel(sessionId)` from JobMarketplace contract
+2. **Generates compliant signatures**: Includes modelId in proof signatures
+3. **Submits to remediated contracts**: Works with contracts at addresses above
+
+**No manual configuration needed** - the node handles this automatically.
+
+### Verification
+
+After deployment, verify the node is using the correct contracts:
+
+```bash
+# Check contract addresses in environment
+grep "CONTRACT_JOB_MARKETPLACE\|CONTRACT_PROOF_SYSTEM" .env.local.test
+
+# Expected output:
+# CONTRACT_JOB_MARKETPLACE=0x95132177F964FF053C1E874b53CF74d819618E06
+# CONTRACT_PROOF_SYSTEM=0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31
+
+# Check node logs for signature generation
+tail -f logs/fabstir-llm-node.log | grep "AUDIT-F4"
+```
+
+### Old Contract Addresses (Deprecated)
+
+These pre-remediation contracts are deprecated as of January 31, 2026:
+- JobMarketplace: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` (deprecated)
+- ProofSystem: `0x5afB91977e69Cc5003288849059bc62d47E7deeb` (deprecated)
+
 ## Deployment Options
 
 ### Option 1: Docker Deployment (Recommended)
