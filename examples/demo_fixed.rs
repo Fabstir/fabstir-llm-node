@@ -20,6 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use_mlock: false,
         max_concurrent_inferences: 1,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     // Create the LLM engine

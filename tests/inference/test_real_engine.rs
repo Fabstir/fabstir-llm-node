@@ -21,6 +21,8 @@ async fn test_load_gguf_model() {
         use_mlock: false,
         max_concurrent_inferences: 1,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let mut engine = LlmEngine::new(config).await
@@ -308,6 +310,8 @@ async fn test_model_unloading() {
         use_mlock: false,
         max_concurrent_inferences: 1,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let mut engine = LlmEngine::new(config).await

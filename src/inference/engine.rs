@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
 use llama_cpp_2::{
-    context::params::LlamaContextParams,
+    context::params::{KvCacheType, LlamaContextParams},
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
     model::{params::LlamaModelParams, AddBos, LlamaModel, Special},
@@ -39,6 +39,24 @@ fn sanitize_prompt_for_tokenizer(prompt: &str) -> String {
         .collect()
 }
 
+/// Parse a KV cache type string into a KvCacheType enum.
+/// Supports: "q8_0", "q4_0", "f16", "bf16", "f32" (case-insensitive).
+/// Returns None for unrecognized types (will use llama.cpp default = fp16).
+pub fn parse_kv_cache_type(s: &str) -> Option<KvCacheType> {
+    match s.to_lowercase().as_str() {
+        "q8_0" => Some(KvCacheType::Q8_0),
+        "q4_0" => Some(KvCacheType::Q4_0),
+        "q4_1" => Some(KvCacheType::Q4_1),
+        "q5_0" => Some(KvCacheType::Q5_0),
+        "q5_1" => Some(KvCacheType::Q5_1),
+        "q6_k" => Some(KvCacheType::Q6_K),
+        "f16" => Some(KvCacheType::F16),
+        "bf16" => Some(KvCacheType::BF16),
+        "f32" => Some(KvCacheType::F32),
+        _ => None,
+    }
+}
+
 // Wrapper around the real LLama model
 struct RealLlamaModel {
     backend: LlamaBackend,
@@ -58,6 +76,8 @@ pub struct EngineConfig {
     pub use_mlock: bool,
     pub max_concurrent_inferences: usize,
     pub model_eviction_policy: String,
+    pub kv_cache_type_k: Option<String>,
+    pub kv_cache_type_v: Option<String>,
 }
 
 impl Default for EngineConfig {
@@ -76,6 +96,8 @@ impl Default for EngineConfig {
             use_mlock: false,
             max_concurrent_inferences: 4,
             model_eviction_policy: "lru".to_string(),
+            kv_cache_type_k: None,
+            kv_cache_type_v: None,
         }
     }
 }
@@ -357,9 +379,22 @@ impl LlmEngine {
                 .ok_or_else(|| anyhow!("Model not found in storage"))?;
 
             // Create context
-            let ctx_params = LlamaContextParams::default()
+            let mut ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(context_size as u32))
                 .with_n_batch(self.config.batch_size as u32);
+
+            if let Some(ref type_k_str) = self.config.kv_cache_type_k {
+                if let Some(kv_type) = parse_kv_cache_type(type_k_str) {
+                    ctx_params = ctx_params.with_type_k(kv_type);
+                    tracing::info!("KV cache K type set to: {}", type_k_str);
+                }
+            }
+            if let Some(ref type_v_str) = self.config.kv_cache_type_v {
+                if let Some(kv_type) = parse_kv_cache_type(type_v_str) {
+                    ctx_params = ctx_params.with_type_v(kv_type);
+                    tracing::info!("KV cache V type set to: {}", type_v_str);
+                }
+            }
 
             let mut context = model
                 .model
@@ -403,7 +438,7 @@ impl LlmEngine {
                 let mut samplers: Vec<LlamaSampler> = Vec::new();
                 samplers.push(LlamaSampler::temp(request.temperature));
                 if request.repeat_penalty != 1.0 {
-                    samplers.push(LlamaSampler::penalties(64, request.repeat_penalty, 0.0, 0.0));
+                    samplers.push(LlamaSampler::penalties(256, request.repeat_penalty, 0.0, 0.0));
                 }
                 samplers.push(LlamaSampler::top_p(request.top_p, 1));
                 if request.min_p > 0.0 {
@@ -728,6 +763,44 @@ pub enum ModelCapability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === KV Cache Type Parsing Tests (Sub-phase 1.1) ===
+
+    #[test]
+    fn test_parse_kv_cache_type_q8_0() {
+        assert_eq!(parse_kv_cache_type("q8_0"), Some(KvCacheType::Q8_0));
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_q4_0() {
+        assert_eq!(parse_kv_cache_type("q4_0"), Some(KvCacheType::Q4_0));
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_f16() {
+        assert_eq!(parse_kv_cache_type("f16"), Some(KvCacheType::F16));
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_invalid() {
+        assert_eq!(parse_kv_cache_type("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_case_insensitive() {
+        assert_eq!(parse_kv_cache_type("Q8_0"), Some(KvCacheType::Q8_0));
+        assert_eq!(parse_kv_cache_type("F16"), Some(KvCacheType::F16));
+        assert_eq!(parse_kv_cache_type("BF16"), Some(KvCacheType::BF16));
+    }
+
+    // === EngineConfig KV Cache Default Test (Sub-phase 1.2) ===
+
+    #[test]
+    fn test_engine_config_default_kv_cache() {
+        let config = EngineConfig::default();
+        assert_eq!(config.kv_cache_type_k, None);
+        assert_eq!(config.kv_cache_type_v, None);
+    }
 
     #[test]
     fn test_sanitize_removes_null_bytes() {

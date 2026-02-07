@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.15.0-model-agnostic-inference-2026-02-07";
+pub const VERSION: &str = "v8.15.2-repeat-penalty-window-2026-02-07";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.15.0";
+pub const VERSION_NUMBER: &str = "8.15.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 15;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-07";
@@ -169,6 +169,10 @@ pub const FEATURES: &[&str] = &[
     "model-agnostic-inference",
     "per-template-stop-tokens",
     "probabilistic-sampling",
+    // KV cache quantization (v8.15.1)
+    "kv-cache-quantization",
+    // Repeat penalty window fix (v8.15.2)
+    "repeat-penalty-window-256",
 ];
 
 /// Supported chain IDs
@@ -179,6 +183,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.15.2 - Repeat Penalty Window Fix (Feb 7, 2026)
+    "FIX: Repeat penalty window increased from 64 to 256 tokens to prevent long repetition loops",
+    "FIX: Models no longer get stuck in repeating patterns that exceed 64-token lookback",
+    // v8.15.1 - KV Cache Quantization (Feb 7, 2026)
+    "FEAT: KV cache quantization via KV_CACHE_TYPE env var (q8_0, q4_0, f16, bf16, f32)",
+    "FEAT: EngineConfig gains kv_cache_type_k/v fields (Option<String>, default None)",
     // v8.15.0 - Model-Agnostic Inference Pipeline (Feb 7, 2026)
     "FEAT: GLM-4 chat template support (MODEL_CHAT_TEMPLATE=glm4)",
     "FEAT: Per-template stop tokens replace hardcoded Harmony token ID 200002",
@@ -404,7 +414,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 15);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 2);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.15.0 model-agnostic inference features
@@ -414,20 +424,24 @@ mod tests {
         assert!(FEATURES.contains(&"model-agnostic-inference"));
         assert!(FEATURES.contains(&"per-template-stop-tokens"));
         assert!(FEATURES.contains(&"probabilistic-sampling"));
+        // v8.15.1 KV cache quantization
+        assert!(FEATURES.contains(&"kv-cache-quantization"));
+        // v8.15.2 repeat penalty window
+        assert!(FEATURES.contains(&"repeat-penalty-window-256"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.15.0"));
+        assert!(version.contains("8.15.2"));
         assert!(version.contains("2026-02-07"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.15.0-model-agnostic-inference-2026-02-07");
-        assert_eq!(VERSION_NUMBER, "8.15.0");
+        assert_eq!(VERSION, "v8.15.2-repeat-penalty-window-2026-02-07");
+        assert_eq!(VERSION_NUMBER, "8.15.2");
         assert_eq!(BUILD_DATE, "2026-02-07");
     }
 

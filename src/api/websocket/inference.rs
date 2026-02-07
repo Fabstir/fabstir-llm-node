@@ -115,6 +115,8 @@ impl InferenceEngine {
             use_mlock: false,
             max_concurrent_inferences: 4,
             model_eviction_policy: "lru".to_string(),
+            kv_cache_type_k: std::env::var("KV_CACHE_TYPE").ok(),
+            kv_cache_type_v: std::env::var("KV_CACHE_TYPE").ok(),
         };
 
         // Create base engine

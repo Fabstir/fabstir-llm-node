@@ -20,6 +20,8 @@ async fn test_engine_initialization() {
         use_mlock: false,
         max_concurrent_inferences: 4,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let engine = LlmEngine::new(config)
