@@ -40,28 +40,28 @@ impl ChainConfig {
             chain_id: 84532,
             name: "Base Sepolia".to_string(),
             rpc_url: std::env::var("BASE_SEPOLIA_RPC_URL")
-                .unwrap_or_else(|_| "https://sepolia.base.org".to_string()),
+                .expect("BASE_SEPOLIA_RPC_URL environment variable is required"),
             native_token: TokenInfo {
                 symbol: "ETH".to_string(),
                 decimals: 18,
             },
             contracts: ContractAddresses {
-                // Load from environment variables
+                // AUDIT-F4 Remediated Contracts - REQUIRED from environment
                 job_marketplace: std::env::var("CONTRACT_JOB_MARKETPLACE")
                     .ok()
                     .and_then(|addr| Address::from_str(&addr).ok())
-                    .expect("CONTRACT_JOB_MARKETPLACE environment variable must be set"),
+                    .expect("CONTRACT_JOB_MARKETPLACE environment variable is required (AUDIT-F4 remediated contract)"),
                 node_registry: std::env::var("CONTRACT_NODE_REGISTRY")
                     .ok()
                     .and_then(|addr| Address::from_str(&addr).ok())
-                    .expect("CONTRACT_NODE_REGISTRY environment variable must be set"),
+                    .expect("CONTRACT_NODE_REGISTRY environment variable is required"),
                 payment_escrow: std::env::var("CONTRACT_PAYMENT_ESCROW")
                     .ok()
                     .and_then(|addr| Address::from_str(&addr).ok()), // Deprecated, optional
                 host_earnings: std::env::var("CONTRACT_HOST_EARNINGS")
                     .ok()
                     .and_then(|addr| Address::from_str(&addr).ok())
-                    .expect("CONTRACT_HOST_EARNINGS environment variable must be set"),
+                    .expect("CONTRACT_HOST_EARNINGS environment variable is required"),
             },
             confirmation_blocks: 3,
             gas_multiplier: std::env::var("BASE_GAS_MULTIPLIER")
@@ -388,8 +388,22 @@ impl Default for ChainConfigLoader {
 mod tests {
     use super::*;
 
+    fn setup_test_env() {
+        // Set required environment variables for tests
+        std::env::set_var("CONTRACT_JOB_MARKETPLACE", "0x95132177F964FF053C1E874b53CF74d819618E06");
+        std::env::set_var("CONTRACT_NODE_REGISTRY", "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22");
+        std::env::set_var("CONTRACT_HOST_EARNINGS", "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0");
+        std::env::set_var("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org");
+
+        // Optional opBNB addresses (zero addresses for test)
+        std::env::set_var("OPBNB_JOB_MARKETPLACE", "0x0000000000000000000000000000000000000000");
+        std::env::set_var("OPBNB_NODE_REGISTRY", "0x0000000000000000000000000000000000000000");
+        std::env::set_var("OPBNB_HOST_EARNINGS", "0x0000000000000000000000000000000000000000");
+    }
+
     #[test]
     fn test_chain_config_creation() {
+        setup_test_env();
         let config = ChainConfig::base_sepolia();
         assert_eq!(config.chain_id, 84532);
         assert_eq!(config.name, "Base Sepolia");
@@ -397,6 +411,7 @@ mod tests {
 
     #[test]
     fn test_registry_creation() {
+        setup_test_env();
         let registry = ChainRegistry::new();
         assert!(registry.is_chain_supported(84532));
         assert!(registry.is_chain_supported(5611));

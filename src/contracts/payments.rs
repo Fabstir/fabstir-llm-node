@@ -30,14 +30,18 @@ impl Default for PaymentConfig {
             .parse()
             .expect("❌ FATAL: Invalid PAYMENT_ESCROW_WITH_EARNINGS_ADDRESS format");
 
+        // Get USDC token address from environment (Base Sepolia USDC)
+        let usdc_address = std::env::var("USDC_TOKEN")
+            .expect("USDC_TOKEN environment variable is required")
+            .parse::<Address>()
+            .expect("Invalid USDC_TOKEN address format");
+
         Self {
             escrow_address,
             supported_tokens: vec![
                 TokenInfo {
                     symbol: "USDC".to_string(),
-                    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-                        .parse()
-                        .unwrap(),
+                    address: usdc_address,
                     decimals: 6,
                 },
                 TokenInfo {

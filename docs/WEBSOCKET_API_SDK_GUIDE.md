@@ -4,7 +4,7 @@
 
 This document describes the current state of the fabstir-llm-node WebSocket API implementation and provides guidance for SDK developers working with TypeScript/JavaScript to integrate with the node's capabilities. This covers all work completed from Sub-phase 8.7 through 8.12 in this session.
 
-## Current Implementation Status (Updated January 2025)
+## Current Implementation Status (Updated February 2026)
 
 ### ✅ Phase 8.18: WebSocket Integration with Main HTTP Server (COMPLETED)
 - **WebSocket endpoint now available at `/v1/ws`**
@@ -53,7 +53,7 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Payment Distribution**: Host receives 90%, Treasury 10%, User gets refund
 - **No User Action Required**: Payments settle even on unexpected disconnects
 - **Session Cleanup**: Token trackers and state cleared after settlement
-- **Blockchain Integration**: Direct contract calls to JobMarketplace (0x3CaCbf3f448B420918A93a88706B26Ab27a3523E)
+- **Blockchain Integration**: Direct contract calls to JobMarketplace (0x95132177F964FF053C1E874b53CF74d819618E06 - AUDIT-F4 compliant)
 
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
@@ -200,9 +200,30 @@ interface ErrorMessage {
 - 'RATE_LIMIT': Rate limit exceeded
 - 'SESSION_EXPIRED': Session token expired
 - 'INVALID_JOB': Job verification failed
-- 'MODEL_UNAVAILABLE': Requested model not available
+- 'MODEL_UNAVAILABLE': Requested model not available or host not authorized for model (v8.14.0+)
+- 'MODEL_UNAUTHORIZED': Host not authorized to run requested model (see model validation)
 - 'CONTEXT_TOO_LARGE': Conversation context exceeds limits
 ```
+
+### Model Validation (v8.14.0+)
+
+As of v8.14.0, hosts enforce model authorization:
+
+- **Startup**: Host validates MODEL_PATH matches registered model with SHA256 verification
+- **Job Claiming**: Hosts only claim jobs for models they're registered for
+- **Runtime**: Inference requests verified against loaded model
+
+**SDK Impact**: None - this is transparent server-side security. If you request a model the host doesn't support, the job will remain unclaimed and eventually timeout. For better UX, use pre-flight validation:
+
+```typescript
+// Check if host supports model before creating job
+const supports = await nodeRegistry.nodeSupportsModel(hostAddress, modelId);
+if (!supports) {
+  throw new Error('Host does not support this model');
+}
+```
+
+See `docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md` for complete SDK integration guide.
 
 ## Stateless Memory Cache Architecture
 
@@ -290,7 +311,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 **Requirements:**
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
-- JobMarketplace: 0x3CaCbf3f448B420918A93a88706B26Ab27a3523E (v8.5.0+ UUPS Proxy)
+- JobMarketplace: 0x95132177F964FF053C1E874b53CF74d819618E06 (v8.13.0+ AUDIT-F4 remediated)
 
 ## Compression Support
 
@@ -610,6 +631,7 @@ describe('End-to-End Conversation', () => {
 - **Contract Integration**: `/workspace/docs/compute-contracts-reference/`
 - **Test Accounts**: See `.env.test.local` for Base Sepolia test accounts
 - **WebSocket Tests**: `/workspace/tests/websocket/` for reference implementations
+- **Model Validation**: `/workspace/docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md` for SDK compatibility guide
 
 ## Appendix: Message Type Reference
 
@@ -635,10 +657,11 @@ describe('End-to-End Conversation', () => {
 - `SESSION_EXPIRED`: Token expired
 - `INVALID_JOB`: Job verification failed
 - `MODEL_UNAVAILABLE`: Model not loaded
+- `MODEL_UNAUTHORIZED`: Host not authorized for requested model (v8.14.0+)
 - `CONTEXT_TOO_LARGE`: Exceeds token limit
 - `CIRCUIT_OPEN`: Service temporarily unavailable
 
-## Current Working Implementation (January 2025)
+## Current Working Implementation (February 2026)
 
 ### Simple WebSocket Connection Example
 
@@ -737,6 +760,7 @@ const wsUrl = apiUrl.replace('http://', 'ws://') + '/v1/ws';
 2. **Session Management**: Stateless only, no conversation persistence
 3. **Proof Verification**: Using mock EZKL proofs (SHA256-based)
 4. **Rate Limiting**: Not enforced on WebSocket endpoint yet
+5. **Model Validation**: Hosts may reject jobs for unsupported models (v8.14.0+)
 
 ### Troubleshooting
 
