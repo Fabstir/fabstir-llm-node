@@ -18,7 +18,9 @@ global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder;
 // Note: global.crypto already exists in Node.js 20+
 
-import { S5, CHALLENGE_TYPE_REGISTER } from '@julesl23/s5js';
+import { S5 } from '@julesl23/s5js';
+import { signChallenge, CHALLENGE_TYPE_REGISTER } from '@julesl23/s5js/dist/src/account/sign_challenge.js';
+import { base64UrlNoPaddingEncode, base64UrlNoPaddingDecode } from '@julesl23/s5js/dist/src/util/base64.js';
 import { FS5Advanced } from '@julesl23/s5js/advanced';
 import { ethers } from 'ethers';
 import { bridgeConfig } from './config.js';
@@ -26,6 +28,121 @@ import { bridgeConfig } from './config.js';
 let s5Instance = null;
 let advancedInstance = null;
 let initializationPromise = null;
+
+/**
+ * Try to login to portal using stored account seed
+ *
+ * When the S5.js library's built-in login fails (e.g. portal returns non-standard
+ * response), this function manually performs the login flow and handles various
+ * response formats.
+ *
+ * @param {S5} s5 - S5 instance with identity
+ * @param {string} portalUrl - Portal URL
+ * @param {string} accountId - Account ID from accounts.json
+ * @param {object} accountEntry - Account entry from accounts.json
+ * @returns {Promise<string|null>} Auth token if successful, null otherwise
+ */
+async function tryManualLogin(s5, portalUrl, accountId, accountEntry) {
+  try {
+    const seed = base64UrlNoPaddingDecode(accountEntry.seed);
+    const identity = s5.identity;
+    const portalAccountsSeed = identity.portalAccountSeed;
+    const portalAccountKey = await s5.node.crypto.hashBlake3(
+      new Uint8Array([...portalAccountsSeed, ...seed])
+    );
+    const keyPair = await s5.node.crypto.newKeyPairEd25519(portalAccountKey);
+    const publicKey = base64UrlNoPaddingEncode(keyPair.publicKey);
+
+    console.log(`🔄 Manual login attempt for ${accountId}`);
+
+    // Step 1: GET challenge
+    const loginGetRes = await fetch(`${portalUrl}/s5/account/login?pubKey=${publicKey}`);
+    if (!loginGetRes.ok) {
+      console.log(`   Login GET failed: HTTP ${loginGetRes.status}`);
+      return null;
+    }
+    const loginGetData = await loginGetRes.json();
+    const challengeBase64 = loginGetData.challenge;
+    if (!challengeBase64) {
+      console.log('   No challenge in login response');
+      return null;
+    }
+
+    // Step 2: Sign challenge
+    const { CHALLENGE_TYPE_LOGIN } = await import('@julesl23/s5js/dist/src/account/sign_challenge.js');
+    const uri = new URL(portalUrl);
+    const challengeBytes = base64UrlNoPaddingDecode(challengeBase64);
+    const challengeResult = await signChallenge(keyPair, challengeBytes, CHALLENGE_TYPE_LOGIN, uri.host, s5.node.crypto);
+
+    // Step 3: POST signed challenge
+    const loginPostRes = await fetch(`${portalUrl}/s5/account/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pubKey: publicKey,
+        response: base64UrlNoPaddingEncode(challengeResult.response),
+        signature: base64UrlNoPaddingEncode(challengeResult.signature),
+        label: 's5-bridge',
+      }),
+    });
+    if (!loginPostRes.ok) {
+      console.log(`   Login POST failed: HTTP ${loginPostRes.status}`);
+      return null;
+    }
+
+    const loginData = await loginPostRes.json();
+    // Handle various response formats
+    const authToken = loginData.authToken || loginData.token || loginData.auth_token;
+    if (typeof authToken === 'string' && authToken.length > 0) {
+      console.log('✅ Manual login successful');
+      return authToken;
+    }
+
+    console.log('   Login response has no auth token:', JSON.stringify(loginData).slice(0, 200));
+    return null;
+  } catch (error) {
+    console.log(`   Manual login failed: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Restore auth token for a portal account
+ *
+ * Updates the authStore and accountConfigs with the given auth token.
+ *
+ * @param {S5} s5 - S5 instance with identity
+ * @param {string} portalUrl - Portal URL
+ * @param {string} accountId - Account ID
+ * @param {string} authToken - Auth token to store
+ */
+async function restoreAuthToken(s5, portalUrl, accountId, authToken) {
+  const uri = new URL(portalUrl);
+
+  // Update authStore
+  const authTokenKey = new TextEncoder().encode(`identity_main_account_${accountId}_auth_token`);
+  await s5.authStore.put(authTokenKey, new TextEncoder().encode(authToken));
+
+  // Re-create portal config with correct auth token
+  const { S5Portal } = await import('@julesl23/s5js/dist/src/account/portal.js');
+  const portalConfig = new S5Portal(
+    uri.protocol.replace(':', ''),
+    uri.hostname + (uri.port ? `:${uri.port}` : ''),
+    { 'Authorization': `Bearer ${authToken}` }
+  );
+  s5.apiWithIdentity.accountConfigs[accountId] = portalConfig;
+
+  // Also update accounts.json entry for future restarts
+  if (s5.apiWithIdentity?.accounts?.['accounts']?.[accountId]) {
+    s5.apiWithIdentity.accounts['accounts'][accountId].authToken = authToken;
+    try {
+      await s5.apiWithIdentity.saveStorageServices();
+      console.log('   ✅ Auth token persisted for future restarts');
+    } catch (e) {
+      console.warn('   ⚠️  Could not persist auth token:', e.message);
+    }
+  }
+}
 
 /**
  * Try to login to portal (for returning hosts with existing accounts)
@@ -44,12 +161,47 @@ async function tryPortalLogin(s5, portalUrl) {
     // Check if we already have an account configured for this portal
     const uri = new URL(portalUrl);
     const accountConfigs = s5.apiWithIdentity?.accountConfigs || {};
+    const accounts = s5.apiWithIdentity?.accounts?.['accounts'] || {};
 
     for (const id of Object.keys(accountConfigs)) {
-      if (id.startsWith(`${uri.host}:`)) {
-        console.log('✅ Existing account found for this portal');
+      if (!id.startsWith(`${uri.host}:`)) continue;
+
+      console.log(`🔑 Found account: ${id}`);
+
+      // Check if the auth token in the portal config is valid
+      // After restart, setupAccount may fail to login and create a config with empty Bearer token
+      const portalConfig = accountConfigs[id];
+      const authHeader = portalConfig?.headers?.['Authorization'] || '';
+      const currentToken = authHeader.replace('Bearer ', '').trim();
+
+      if (currentToken) {
+        console.log('✅ Existing account found with valid auth token');
         return true;
       }
+
+      // Auth token is empty - try to restore from accounts.json (persisted in S5 hidden DB)
+      console.log('⚠️  Auth token empty after restart - attempting to restore from stored credentials');
+      const accountEntry = accounts[id];
+      const storedToken = accountEntry?.authToken;
+
+      if (storedToken) {
+        console.log('🔄 Restoring auth token from stored credentials...');
+        await restoreAuthToken(s5, portalUrl, id, storedToken);
+        console.log('✅ Auth token restored successfully');
+        return true;
+      }
+
+      // No stored auth token - try manual login using the account seed
+      if (accountEntry?.seed) {
+        const manualToken = await tryManualLogin(s5, portalUrl, id, accountEntry);
+        if (manualToken) {
+          await restoreAuthToken(s5, portalUrl, id, manualToken);
+          return true;
+        }
+      }
+
+      console.log('❌ Could not restore auth - will attempt re-registration');
+      return false;
     }
 
     console.log('   No existing account for this portal');
@@ -90,12 +242,14 @@ async function tryOnChainRegistration(s5, portalUrl, hostPrivateKey) {
     }
 
     // Generate purpose-specific seed for this portal account
+    // Uses the same derivation as S5APIWithIdentity.registerAccount()
     const accountSeed = s5.node.crypto.generateSecureRandomBytes(32);
-    const seedBase64 = Buffer.from(accountSeed).toString('base64')
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-
-    // Get S5 public key using high-level API
-    const s5PubKey = await s5.getSigningPublicKey(seedBase64);
+    const portalAccountsSeed = identity.portalAccountSeed;
+    const portalAccountKey = await s5.node.crypto.hashBlake3(
+      new Uint8Array([...portalAccountsSeed, ...accountSeed])
+    );
+    const keyPair = await s5.node.crypto.newKeyPairEd25519(portalAccountKey);
+    const s5PubKey = base64UrlNoPaddingEncode(keyPair.publicKey);
     console.log(`   S5 PubKey: ${s5PubKey.slice(0, 20)}...`);
 
     // Create ETH wallet for on-chain verification
@@ -128,6 +282,20 @@ async function tryOnChainRegistration(s5, portalUrl, hostPrivateKey) {
         console.error('   Check HOST_PRIVATE_KEY is correct');
       } else if (errorMsg.includes('already has an account')) {
         console.log('✅ Account already registered on portal');
+        // Try to login with existing account credentials
+        const accounts = s5.apiWithIdentity?.accounts?.['accounts'] || {};
+        for (const [id, entry] of Object.entries(accounts)) {
+          if (!id.startsWith(`${new URL(portalUrl).host}:`)) continue;
+          if (entry?.seed) {
+            const token = await tryManualLogin(s5, portalUrl, id, entry);
+            if (token) {
+              await restoreAuthToken(s5, portalUrl, id, token);
+              return true;
+            }
+          }
+        }
+        // Could not get auth token but account exists - uploads may fail
+        console.warn('⚠️  Account exists but could not obtain auth token');
         return true;
       } else {
         console.error(`❌ Portal challenge request failed: ${errorMsg}`);
@@ -138,53 +306,68 @@ async function tryOnChainRegistration(s5, portalUrl, hostPrivateKey) {
     const { challenge: challengeBase64 } = await challengeRes.json();
     console.log('   ✅ On-chain verification passed, got S5 challenge');
 
-    // Step 2: Build challenge message and sign with high-level API
+    // Step 2: Sign challenge using S5.js signChallenge (same as standard registration)
     const uri = new URL(portalUrl);
-    const challengeBytes = Buffer.from(
-      challengeBase64.replace(/-/g, '+').replace(/_/g, '/'),
-      'base64'
+    const challengeBytes = base64UrlNoPaddingDecode(challengeBase64);
+    console.log(`   Challenge: ${challengeBytes.length} bytes`);
+    console.log(`   Portal host for blake3: "${uri.host}"`);
+    console.log(`   Key pair pubKey length: ${keyPair.publicKey.length}`);
+    const challengeResult = await signChallenge(
+      keyPair, challengeBytes, CHALLENGE_TYPE_REGISTER, uri.host, s5.node.crypto
     );
-    const portalHostHash = await s5.node.crypto.hashBlake3(
-      new TextEncoder().encode(uri.host)
-    );
-    const challengeMessage = new Uint8Array([
-      CHALLENGE_TYPE_REGISTER,
-      ...challengeBytes,
-      ...portalHostHash,
-    ]);
+    console.log(`   Response: ${challengeResult.response.length} bytes, Signature: ${challengeResult.signature.length} bytes`);
 
-    // Sign using high-level API (returns base64url encoded signature)
-    const signature = await s5.sign(challengeMessage, seedBase64);
-
-    // Encode response as base64url
-    const responseBase64 = Buffer.from(challengeMessage).toString('base64')
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    // Encode response and signature as base64url
+    const responseBase64 = base64UrlNoPaddingEncode(challengeResult.response);
+    const signature = base64UrlNoPaddingEncode(challengeResult.signature);
 
     // Step 3: Complete registration
+    // s5Signature = Ed25519 signature of response (for S5 registration)
+    // signature = ETH signature of message (for NodeRegistry verification)
+    const completeBody = {
+      pubKey: s5PubKey,
+      challenge: challengeBase64,
+      response: responseBase64,
+      s5Signature: signature,
+      ethAddress: ethWallet.address,
+      signature: ethSignature,
+      message,
+    };
+    console.log(`   pubKey: ${s5PubKey.length} chars, response: ${responseBase64.length} chars, s5Signature: ${signature.length} chars`);
     const registerRes = await fetch(`${portalUrl}/s5/account/register-host/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pubKey: s5PubKey,
-        challenge: challengeBase64,
-        response: responseBase64,
-        signature: signature,
-        ethAddress: ethWallet.address,
-        ethSignature: ethSignature,
-        message,
-      }),
+      body: JSON.stringify(completeBody),
     });
 
     if (!registerRes.ok) {
-      const error = await registerRes.json().catch(() => ({}));
-      const errorMsg = error.error || `HTTP ${registerRes.status}`;
+      const errorText = await registerRes.text().catch(() => '');
+      let errorMsg;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMsg = errorJson.error || `HTTP ${registerRes.status}`;
+      } catch {
+        errorMsg = errorText || `HTTP ${registerRes.status}`;
+      }
 
       if (errorMsg.includes('already has an account')) {
-        console.log('✅ Account already registered on portal');
+        console.log('✅ Account already registered on portal (at complete step)');
+        // Try manual login with existing account credentials
+        const accounts2 = s5.apiWithIdentity?.accounts?.['accounts'] || {};
+        for (const [id2, entry2] of Object.entries(accounts2)) {
+          if (!id2.startsWith(`${new URL(portalUrl).host}:`)) continue;
+          if (entry2?.seed) {
+            const token2 = await tryManualLogin(s5, portalUrl, id2, entry2);
+            if (token2) {
+              await restoreAuthToken(s5, portalUrl, id2, token2);
+              return true;
+            }
+          }
+        }
         return true;
       }
 
-      console.error(`❌ Portal registration failed: ${errorMsg}`);
+      console.error(`❌ Portal registration failed (${registerRes.status}): ${errorMsg}`);
       return false;
     }
 
@@ -198,66 +381,71 @@ async function tryOnChainRegistration(s5, portalUrl, hostPrivateKey) {
 
     console.log('✅ Portal registration complete (on-chain verified)');
 
-    // Step 4: Store credentials using high-level API
+    // Step 4: Store credentials using same pattern as S5APIWithIdentity.registerAccount()
+    const seedBase64 = base64UrlNoPaddingEncode(accountSeed);
+    const id = `${uri.host}:${base64UrlNoPaddingEncode(accountSeed.slice(0, 12))}`;
+
+    const accounts = s5.apiWithIdentity?.accounts || {
+      'accounts': {},
+      'active': [],
+      'uploadOrder': { 'default': [] }
+    };
+
+    accounts['accounts'][id] = {
+      'url': `${uri.protocol}//${uri.host}`,
+      'seed': seedBase64,
+      'authToken': authToken,
+      'createdAt': new Date().toISOString(),
+    };
+    accounts['active'].push(id);
+    if (!accounts['uploadOrder']) accounts['uploadOrder'] = { 'default': [] };
+    accounts['uploadOrder']['default'].push(id);
+
+    if (s5.apiWithIdentity) {
+      s5.apiWithIdentity.accounts = accounts;
+    }
+
+    // Store auth token
+    const authTokenKey = new TextEncoder().encode(`identity_main_account_${id}_auth_token`);
+    await s5.authStore.put(authTokenKey, new TextEncoder().encode(authToken));
+
+    // Setup account and persist to hidden DB
     try {
-      await s5.storePortalCredentials(portalUrl, seedBase64, authToken);
-      console.log('   ✅ Credentials stored via S5.js API');
-    } catch (storeError) {
-      console.warn('⚠️  Could not store credentials via API:', storeError.message);
-      console.log('   Attempting manual storage fallback...');
+      await s5.apiWithIdentity.setupAccount(id);
+      await s5.apiWithIdentity.saveStorageServices();
+      console.log(`   ✅ Credentials stored (account: ${id})`);
+    } catch (e) {
+      console.warn('⚠️  Could not persist account to hidden DB:', e.message);
+      console.log('   Attempting manual config fallback...');
 
-      // Fallback: Manual storage if high-level API fails
-      const id = `${uri.host}:${seedBase64.slice(0, 16)}`;
-      const accounts = s5.apiWithIdentity?.accounts || {
-        'accounts': {},
-        'active': [],
-        'uploadOrder': { 'default': [] }
-      };
-
-      accounts['accounts'][id] = {
-        'url': `${uri.protocol}//${uri.host}`,
-        'seed': seedBase64,
-        'createdAt': new Date().toISOString(),
-      };
-      accounts['active'].push(id);
-      if (!accounts['uploadOrder']) accounts['uploadOrder'] = { 'default': [] };
-      accounts['uploadOrder']['default'].push(id);
-
-      // Store auth token
-      const authTokenKey = new TextEncoder().encode(`identity_main_account_${id}_auth_token`);
-      await s5.authStore.put(authTokenKey, new TextEncoder().encode(authToken));
-
-      // Setup account config for uploads
-      const portalConfig = {
-        protocol: uri.protocol.replace(':', ''),
-        host: uri.hostname + (uri.port ? `:${uri.port}` : ''),
-        headers: { 'Authorization': `Bearer ${authToken}` },
-        apiURL: (endpoint, params = {}) => {
-          const base = `${uri.protocol}//${uri.hostname}${uri.port ? `:${uri.port}` : ''}/s5/${endpoint}`;
-          const queryString = Object.keys(params).length > 0
-            ? '?' + new URLSearchParams(params).toString()
-            : '';
-          return base + queryString;
-        }
-      };
-
+      // Fallback: Create portal config manually if setupAccount fails
+      const { S5Portal } = await import('@julesl23/s5js/dist/src/account/portal.js');
+      const portalConfig = new S5Portal(
+        uri.protocol.replace(':', ''),
+        uri.hostname + (uri.port ? `:${uri.port}` : ''),
+        { 'Authorization': `Bearer ${authToken}` }
+      );
       s5.apiWithIdentity.accountConfigs[id] = portalConfig;
-
-      try {
-        await s5.apiWithIdentity.saveStorageServices();
-        console.log('   ✅ Credentials stored via fallback');
-      } catch (e) {
-        console.warn('⚠️  Could not persist account to hidden DB:', e.message);
-      }
-
-      console.log(`   Account ID: ${id}`);
+      console.log(`   ✅ Manual config set (account: ${id})`);
     }
 
     return true;
 
   } catch (error) {
     if (error.message && error.message.includes('already has an account')) {
-      console.log('✅ Account already registered on portal');
+      console.log('✅ Account already registered on portal (caught)');
+      // Try manual login with existing account credentials
+      const accounts3 = s5.apiWithIdentity?.accounts?.['accounts'] || {};
+      for (const [id3, entry3] of Object.entries(accounts3)) {
+        if (!id3.startsWith(`${new URL(portalUrl).host}:`)) continue;
+        if (entry3?.seed) {
+          const token3 = await tryManualLogin(s5, portalUrl, id3, entry3);
+          if (token3) {
+            await restoreAuthToken(s5, portalUrl, id3, token3);
+            return true;
+          }
+        }
+      }
       return true;
     }
 
@@ -311,18 +499,34 @@ export async function initializeS5Client() {
         console.warn('⚠️  No seed phrase configured - filesystem operations will fail');
       }
 
-      // Step 3: Register with S5 portal via on-chain verification
+      // Step 3: Register with S5 portal
       let accountReady = false;
       if (bridgeConfig.portalUrl) {
         // Try login first (for returning hosts)
         accountReady = await tryPortalLogin(s5, bridgeConfig.portalUrl);
 
-        // If login failed, try on-chain verified registration
-        if (!accountReady && bridgeConfig.hostPrivateKey) {
-          accountReady = await tryOnChainRegistration(s5, bridgeConfig.portalUrl, bridgeConfig.hostPrivateKey);
-        } else if (!accountReady && !bridgeConfig.hostPrivateKey) {
-          console.warn('⚠️  HOST_PRIVATE_KEY not set - cannot register with portal');
-          console.log('📥 Bridge will operate in read-only mode (downloads only)');
+        if (!accountReady) {
+          if (bridgeConfig.hostPrivateKey) {
+            // On-chain verified registration (for portals that require NodeRegistry verification)
+            accountReady = await tryOnChainRegistration(s5, bridgeConfig.portalUrl, bridgeConfig.hostPrivateKey);
+          } else {
+            // Standard S5 registration (for open portals without on-chain requirement)
+            try {
+              console.log(`🌐 Registering with portal: ${bridgeConfig.portalUrl}`);
+              await s5.registerOnNewPortal(bridgeConfig.portalUrl);
+              console.log('✅ Portal registration complete (standard flow)');
+              accountReady = true;
+            } catch (regError) {
+              const msg = regError.message || '';
+              if (msg.includes('already has an account')) {
+                console.log('✅ Account already registered on portal');
+                accountReady = true;
+              } else {
+                console.warn(`⚠️  Registration failed: ${msg}`);
+                console.log('📥 Bridge will operate in read-only mode (downloads only)');
+              }
+            }
+          }
         }
       }
 
