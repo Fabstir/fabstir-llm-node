@@ -72,7 +72,7 @@ fn simulate_client_session_init(
         session_key: session_key_bytes,
         price_per_token: 1000,
         client_address: String::new(), // Will be filled by decrypt_session_init
-        vector_database: None, // Optional RAG database
+        vector_database: None,         // Optional RAG database
     };
 
     // 5. Generate random nonce (24 bytes)

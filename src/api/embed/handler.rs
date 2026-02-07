@@ -126,7 +126,11 @@ pub async fn embed_handler(
         )
     })?;
 
-    debug!("Using model: {} ({} dimensions)", model.model_name(), model.dimension());
+    debug!(
+        "Using model: {} ({} dimensions)",
+        model.model_name(),
+        model.dimension()
+    );
 
     // Step 5: Validate model dimensions (defensive check)
     if model.dimension() != 384 {
@@ -244,7 +248,7 @@ mod tests {
         let result = embed_handler(State(state), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed: {:?}", result.err());
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
         assert_eq!(response.embeddings.len(), 1);
         assert_eq!(response.embeddings[0].embedding.len(), 384);
         assert_eq!(response.model, "all-MiniLM-L6-v2");

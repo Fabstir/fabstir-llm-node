@@ -8,7 +8,10 @@ async fn test_gpt_oss_20b_model_inference() {
     let model_path = PathBuf::from("/app/models/openai_gpt-oss-20b-Q8_0.gguf");
 
     if !model_path.exists() {
-        println!("⚠️ Skipping test - model file not found at {:?}", model_path);
+        println!(
+            "⚠️ Skipping test - model file not found at {:?}",
+            model_path
+        );
         println!("   This test should be run in the Docker container with the model");
         return;
     }
@@ -38,9 +41,7 @@ async fn test_gpt_oss_20b_model_inference() {
     println!("\n🧪 TEST 1: What is 2+2?");
 
     let template = ChatTemplate::Harmony;
-    let messages = vec![
-        ("user".to_string(), "What is 2+2?".to_string()),
-    ];
+    let messages = vec![("user".to_string(), "What is 2+2?".to_string())];
     let prompt = template.format_messages(&messages);
 
     println!("📝 Formatted prompt:\n{}", prompt);
@@ -62,8 +63,8 @@ async fn test_gpt_oss_20b_model_inference() {
             println!("   Tokens used: {}", response.tokens_used);
 
             // Check for garbage output
-            let garbage_chars = response.content.matches('…').count()
-                + response.content.matches("...").count();
+            let garbage_chars =
+                response.content.matches('…').count() + response.content.matches("...").count();
             let total_chars = response.content.len();
             let garbage_ratio = (garbage_chars as f64) / (total_chars as f64);
 
@@ -92,9 +93,10 @@ async fn test_gpt_oss_20b_model_inference() {
     // Test 2: Capital question
     println!("\n🧪 TEST 2: What is the capital of France?");
 
-    let messages2 = vec![
-        ("user".to_string(), "What is the capital of France?".to_string()),
-    ];
+    let messages2 = vec![(
+        "user".to_string(),
+        "What is the capital of France?".to_string(),
+    )];
     let prompt2 = template.format_messages(&messages2);
 
     let request2 = InferenceRequest {
@@ -113,8 +115,8 @@ async fn test_gpt_oss_20b_model_inference() {
             println!("✅ Response: {}", response.content);
 
             // Check for garbage output
-            let garbage_chars = response.content.matches('…').count()
-                + response.content.matches("...").count();
+            let garbage_chars =
+                response.content.matches('…').count() + response.content.matches("...").count();
             let total_chars = response.content.len();
             let garbage_ratio = (garbage_chars as f64) / (total_chars as f64);
 
@@ -146,9 +148,7 @@ async fn test_gpt_oss_20b_model_inference() {
 fn test_harmony_template_format() {
     // Verify the template format is correct
     let template = ChatTemplate::Harmony;
-    let messages = vec![
-        ("user".to_string(), "Hello".to_string()),
-    ];
+    let messages = vec![("user".to_string(), "Hello".to_string())];
 
     let formatted = template.format_messages(&messages);
 

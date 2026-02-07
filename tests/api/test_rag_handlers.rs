@@ -2,8 +2,8 @@
 // Written FIRST before implementation
 
 use fabstir_llm_node::api::websocket::message_types::{
-    UploadVectorsRequest, UploadVectorsResponse, VectorUpload, SearchVectorsRequest,
-    SearchVectorsResponse,
+    SearchVectorsRequest, SearchVectorsResponse, UploadVectorsRequest, UploadVectorsResponse,
+    VectorUpload,
 };
 use fabstir_llm_node::api::websocket::session::{SessionConfig, WebSocketSession};
 use serde_json::json;
@@ -11,14 +11,16 @@ use std::sync::{Arc, Mutex};
 
 // Helper function to create a test session with RAG enabled
 fn create_test_session_with_rag(max_vectors: usize) -> Arc<Mutex<WebSocketSession>> {
-    let mut session = WebSocketSession::with_config("test-session".to_string(), SessionConfig::default());
+    let mut session =
+        WebSocketSession::with_config("test-session".to_string(), SessionConfig::default());
     session.enable_rag(max_vectors);
     Arc::new(Mutex::new(session))
 }
 
 // Helper function to create a test session without RAG
 fn create_test_session_without_rag() -> Arc<Mutex<WebSocketSession>> {
-    let session = WebSocketSession::with_config("test-session".to_string(), SessionConfig::default());
+    let session =
+        WebSocketSession::with_config("test-session".to_string(), SessionConfig::default());
     Arc::new(Mutex::new(session))
 }
 
@@ -93,13 +95,11 @@ fn test_upload_handler_replace_clears() {
     // First upload
     let request1 = UploadVectorsRequest {
         request_id: None,
-        vectors: vec![
-            VectorUpload {
-                id: "doc1".to_string(),
-                vector: vec![0.1; 384],
-                metadata: json!({}),
-            },
-        ],
+        vectors: vec![VectorUpload {
+            id: "doc1".to_string(),
+            vector: vec![0.1; 384],
+            metadata: json!({}),
+        }],
         replace: false,
     };
     handle_upload_vectors(&session, request1).unwrap();
@@ -107,13 +107,11 @@ fn test_upload_handler_replace_clears() {
     // Second upload with replace=true
     let request2 = UploadVectorsRequest {
         request_id: None,
-        vectors: vec![
-            VectorUpload {
-                id: "doc2".to_string(),
-                vector: vec![0.2; 384],
-                metadata: json!({}),
-            },
-        ],
+        vectors: vec![VectorUpload {
+            id: "doc2".to_string(),
+            vector: vec![0.2; 384],
+            metadata: json!({}),
+        }],
         replace: true,
     };
     let response2 = handle_upload_vectors(&session, request2).unwrap();
@@ -136,13 +134,11 @@ fn test_upload_handler_rag_disabled_error() {
 
     let request = UploadVectorsRequest {
         request_id: None,
-        vectors: vec![
-            VectorUpload {
-                id: "doc1".to_string(),
-                vector: vec![0.1; 384],
-                metadata: json!({}),
-            },
-        ],
+        vectors: vec![VectorUpload {
+            id: "doc1".to_string(),
+            vector: vec![0.1; 384],
+            metadata: json!({}),
+        }],
         replace: false,
     };
 
@@ -218,7 +214,9 @@ fn test_upload_handler_partial_success() {
 
 #[test]
 fn test_search_handler_success() {
-    use fabstir_llm_node::api::websocket::handlers::rag::{handle_upload_vectors, handle_search_vectors};
+    use fabstir_llm_node::api::websocket::handlers::rag::{
+        handle_search_vectors, handle_upload_vectors,
+    };
 
     let session = create_test_session_with_rag(1000);
 
@@ -280,7 +278,9 @@ fn test_search_handler_empty_store() {
 
 #[test]
 fn test_search_handler_with_threshold() {
-    use fabstir_llm_node::api::websocket::handlers::rag::{handle_upload_vectors, handle_search_vectors};
+    use fabstir_llm_node::api::websocket::handlers::rag::{
+        handle_search_vectors, handle_upload_vectors,
+    };
 
     let session = create_test_session_with_rag(1000);
 
@@ -325,7 +325,9 @@ fn test_search_handler_with_threshold() {
 
 #[test]
 fn test_search_handler_with_filter() {
-    use fabstir_llm_node::api::websocket::handlers::rag::{handle_upload_vectors, handle_search_vectors};
+    use fabstir_llm_node::api::websocket::handlers::rag::{
+        handle_search_vectors, handle_upload_vectors,
+    };
 
     let session = create_test_session_with_rag(1000);
 
@@ -386,7 +388,9 @@ fn test_search_handler_rag_disabled_error() {
 
 #[test]
 fn test_search_handler_timing_accurate() {
-    use fabstir_llm_node::api::websocket::handlers::rag::{handle_upload_vectors, handle_search_vectors};
+    use fabstir_llm_node::api::websocket::handlers::rag::{
+        handle_search_vectors, handle_upload_vectors,
+    };
 
     let session = create_test_session_with_rag(1000);
 

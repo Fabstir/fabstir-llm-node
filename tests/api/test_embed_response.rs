@@ -82,7 +82,7 @@ mod response_structure_tests {
             total_tokens: 1,
             cost: 0.0,
             chain_id: 84532,
-            chain_name: String::new(), // Empty initially
+            chain_name: String::new(),   // Empty initially
             native_token: String::new(), // Empty initially
         };
 

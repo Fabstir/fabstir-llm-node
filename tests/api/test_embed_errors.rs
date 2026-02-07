@@ -438,7 +438,8 @@ async fn test_invalid_chain_id() {
     let error_text = String::from_utf8_lossy(&body_bytes);
 
     assert!(
-        error_text.contains("chain_id") && (error_text.contains("84532") || error_text.contains("5611")),
+        error_text.contains("chain_id")
+            && (error_text.contains("84532") || error_text.contains("5611")),
         "Error should mention chain_id and list supported values: {}",
         error_text
     );

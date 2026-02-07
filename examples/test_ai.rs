@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 top_p: 0.9,
                 top_k: 40,
                 repeat_penalty: 1.1,
+                min_p: 0.0,
                 seed: None,
                 stop_sequences: vec![],
                 stream: false,

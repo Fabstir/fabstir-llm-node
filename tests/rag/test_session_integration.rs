@@ -43,7 +43,9 @@ fn test_session_vector_store_isolated() {
 
     // Add vector to store1
     let mut store1_locked = store1.lock().unwrap();
-    store1_locked.add("doc1".to_string(), vec![0.1; 384], json!({})).unwrap();
+    store1_locked
+        .add("doc1".to_string(), vec![0.1; 384], json!({}))
+        .unwrap();
     drop(store1_locked);
 
     // Store2 should be empty
@@ -63,7 +65,9 @@ fn test_session_cleanup_clears_vectors() {
     {
         let mut store_locked = store.lock().unwrap();
         for i in 0..5 {
-            store_locked.add(format!("doc{}", i), vec![0.1; 384], json!({})).unwrap();
+            store_locked
+                .add(format!("doc{}", i), vec![0.1; 384], json!({}))
+                .unwrap();
         }
         assert_eq!(store_locked.count(), 5);
     }
@@ -153,7 +157,9 @@ fn test_session_disconnect_frees_memory() {
     {
         let mut store_locked = store.lock().unwrap();
         for i in 0..100 {
-            store_locked.add(format!("doc{}", i), vec![0.1; 384], json!({})).unwrap();
+            store_locked
+                .add(format!("doc{}", i), vec![0.1; 384], json!({}))
+                .unwrap();
         }
         assert_eq!(store_locked.count(), 100);
     }
@@ -168,7 +174,9 @@ fn test_session_disconnect_frees_memory() {
     // Can add new vectors after clear
     drop(store_locked);
     let mut store_locked = store.lock().unwrap();
-    store_locked.add("new".to_string(), vec![0.5; 384], json!({})).unwrap();
+    store_locked
+        .add("new".to_string(), vec![0.5; 384], json!({}))
+        .unwrap();
     assert_eq!(store_locked.count(), 1);
 }
 
@@ -190,7 +198,11 @@ fn test_session_vector_store_thread_safe() {
             for i in 0..20 {
                 let mut store = store_clone.lock().unwrap();
                 let id = format!("thread{}-doc{}", thread_id, i);
-                let _ = store.add(id, vec![thread_id as f32; 384], json!({"thread": thread_id}));
+                let _ = store.add(
+                    id,
+                    vec![thread_id as f32; 384],
+                    json!({"thread": thread_id}),
+                );
             }
         });
         handles.push(handle);
@@ -219,7 +231,9 @@ fn test_multiple_sessions_no_memory_leak() {
         {
             let mut store_locked = store.lock().unwrap();
             for j in 0..50 {
-                store_locked.add(format!("doc{}", j), vec![0.1; 384], json!({})).unwrap();
+                store_locked
+                    .add(format!("doc{}", j), vec![0.1; 384], json!({}))
+                    .unwrap();
             }
             assert_eq!(store_locked.count(), 50);
         }
@@ -251,7 +265,9 @@ fn test_rag_enable_disable_toggle() {
     // Add vectors
     {
         let mut store_locked = store.lock().unwrap();
-        store_locked.add("doc1".to_string(), vec![0.1; 384], json!({})).unwrap();
+        store_locked
+            .add("doc1".to_string(), vec![0.1; 384], json!({}))
+            .unwrap();
         assert_eq!(store_locked.count(), 1);
     }
 

@@ -157,7 +157,10 @@ mod ocr_handler_tests {
         assert!(result.is_err(), "Should fail when language is invalid");
         let (status, message) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(message.contains("language"), "Error should mention 'language'");
+        assert!(
+            message.contains("language"),
+            "Error should mention 'language'"
+        );
     }
 
     /// Test 5: Validation error when chain_id is invalid
@@ -177,7 +180,10 @@ mod ocr_handler_tests {
         assert!(result.is_err(), "Should fail when chain_id is invalid");
         let (status, message) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(message.contains("chain_id"), "Error should mention 'chain_id'");
+        assert!(
+            message.contains("chain_id"),
+            "Error should mention 'chain_id'"
+        );
     }
 
     // =============================================================================
@@ -198,7 +204,10 @@ mod ocr_handler_tests {
 
         let result = ocr_handler(State(state), Json(request)).await;
 
-        assert!(result.is_err(), "Should fail when vision manager is not available");
+        assert!(
+            result.is_err(),
+            "Should fail when vision manager is not available"
+        );
         let (status, message) = result.unwrap_err();
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert!(
@@ -249,10 +258,14 @@ mod ocr_handler_tests {
 
         let result = ocr_handler(State(state), Json(request)).await;
 
-        assert!(result.is_ok(), "Should succeed with minimal image: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Should succeed with minimal image: {:?}",
+            result.err()
+        );
 
         let response = result.unwrap().0; // Extract from Json wrapper
-        // Minimal image has no text - that's OK
+                                          // Minimal image has no text - that's OK
         assert_eq!(response.model, "paddleocr");
         assert_eq!(response.provider, "host");
         assert_eq!(response.chain_id, 84532);
@@ -346,7 +359,11 @@ mod ocr_handler_tests {
 
         let result = ocr_handler(State(state), Json(request)).await;
 
-        assert!(result.is_ok(), "Should handle GIF format: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Should handle GIF format: {:?}",
+            result.err()
+        );
     }
 
     /// Test 13: Default values work correctly
@@ -363,7 +380,11 @@ mod ocr_handler_tests {
 
         let result = ocr_handler(State(state), Json(request)).await;
 
-        assert!(result.is_ok(), "Should work with default values: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Should work with default values: {:?}",
+            result.err()
+        );
 
         let response = result.unwrap().0;
         // Default chain_id is 84532

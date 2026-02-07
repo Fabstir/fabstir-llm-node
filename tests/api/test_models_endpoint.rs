@@ -87,7 +87,10 @@ mod models_endpoint_tests {
         let body: Value = serde_json::from_slice(&body_bytes).unwrap();
 
         // Verify models array exists
-        assert!(body.get("models").is_some(), "Response should have models field");
+        assert!(
+            body.get("models").is_some(),
+            "Response should have models field"
+        );
         let models = body["models"].as_array().unwrap();
         assert_eq!(models.len(), 1, "Should return 1 embedding model");
 
@@ -128,14 +131,23 @@ mod models_endpoint_tests {
         let body: Value = serde_json::from_slice(&body_bytes).unwrap();
 
         // Verify models array exists (may be empty if no inference models loaded)
-        assert!(body.get("models").is_some(), "Response should have models field");
+        assert!(
+            body.get("models").is_some(),
+            "Response should have models field"
+        );
 
         // Verify inference models don't have embedding-specific fields
         let models = body["models"].as_array().unwrap();
         if !models.is_empty() {
             let model = &models[0];
-            assert!(model.get("dimensions").is_none(), "Inference models should not have dimensions field");
-            assert!(model.get("is_default").is_none(), "Inference models should not have is_default field");
+            assert!(
+                model.get("dimensions").is_none(),
+                "Inference models should not have dimensions field"
+            );
+            assert!(
+                model.get("is_default").is_none(),
+                "Inference models should not have is_default field"
+            );
         }
     }
 
@@ -162,12 +174,14 @@ mod models_endpoint_tests {
         let models = body["models"].as_array().unwrap();
 
         // Find default model
-        let default_models: Vec<&Value> = models
-            .iter()
-            .filter(|m| m["is_default"] == true)
-            .collect();
+        let default_models: Vec<&Value> =
+            models.iter().filter(|m| m["is_default"] == true).collect();
 
-        assert_eq!(default_models.len(), 1, "Exactly one model should be marked as default");
+        assert_eq!(
+            default_models.len(),
+            1,
+            "Exactly one model should be marked as default"
+        );
         assert_eq!(default_models[0]["name"], "all-MiniLM-L6-v2");
     }
 
@@ -271,7 +285,11 @@ mod models_endpoint_tests {
         let body: Value = serde_json::from_slice(&body_bytes).unwrap();
 
         let models = body["models"].as_array().unwrap();
-        assert_eq!(models.len(), 0, "Should return empty array when no models loaded");
+        assert_eq!(
+            models.len(),
+            0,
+            "Should return empty array when no models loaded"
+        );
     }
 
     /// Test 7: Chain context is included
@@ -295,8 +313,14 @@ mod models_endpoint_tests {
         let body: Value = serde_json::from_slice(&body_bytes).unwrap();
 
         // Verify chain context
-        assert!(body.get("chain_id").is_some(), "Response should include chain_id");
-        assert!(body.get("chain_name").is_some(), "Response should include chain_name");
+        assert!(
+            body.get("chain_id").is_some(),
+            "Response should include chain_id"
+        );
+        assert!(
+            body.get("chain_name").is_some(),
+            "Response should include chain_name"
+        );
 
         assert_eq!(
             body["chain_id"].as_u64().unwrap(),

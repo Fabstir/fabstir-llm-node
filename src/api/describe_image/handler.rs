@@ -71,9 +71,10 @@ pub async fn describe_image_handler(
     })?;
 
     // 4. Decode base64 image
-    let image_data = request.image.as_ref().ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, "image is required".to_string())
-    })?;
+    let image_data = request
+        .image
+        .as_ref()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "image is required".to_string()))?;
 
     let (image, image_info) = decode_base64_image(image_data).map_err(|e| {
         warn!("Failed to decode image: {}", e);

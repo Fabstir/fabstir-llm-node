@@ -13,8 +13,8 @@ use std::sync::Arc;
 fn create_enhanced_s5_client() -> EnhancedS5Client {
     use fabstir_llm_node::storage::enhanced_s5_client::S5Config;
 
-    let bridge_url = std::env::var("ENHANCED_S5_URL")
-        .unwrap_or_else(|_| "http://localhost:5522".to_string());
+    let bridge_url =
+        std::env::var("ENHANCED_S5_URL").unwrap_or_else(|_| "http://localhost:5522".to_string());
 
     let config = S5Config {
         api_url: bridge_url,
@@ -22,8 +22,7 @@ fn create_enhanced_s5_client() -> EnhancedS5Client {
         timeout_secs: 30,
     };
 
-    EnhancedS5Client::new(config)
-        .expect("Failed to create Enhanced S5 client")
+    EnhancedS5Client::new(config).expect("Failed to create Enhanced S5 client")
 }
 
 /// Helper to upload encrypted manifest
@@ -48,7 +47,10 @@ async fn upload_test_manifest(
     encrypted_manifest.extend_from_slice(&ciphertext);
 
     let path = format!("home/test-errors/{}/manifest.json", manifest.owner);
-    s5_client.put(&path, encrypted_manifest, None).await.unwrap();
+    s5_client
+        .put(&path, encrypted_manifest, None)
+        .await
+        .unwrap();
 
     path
 }
@@ -89,7 +91,10 @@ async fn test_manifest_not_found() {
             assert!(path.contains("nonexistent"));
         }
         other => {
-            panic!("Expected ManifestNotFound or ManifestDownloadFailed, got: {:?}", other);
+            panic!(
+                "Expected ManifestNotFound or ManifestDownloadFailed, got: {:?}",
+                other
+            );
         }
     }
 
@@ -173,7 +178,10 @@ async fn test_corrupted_manifest() {
     println!("📤 Uploading corrupted manifest...");
     let corrupted_data = b"{invalid json";
     let manifest_path = "home/test-errors/corrupted/manifest.json";
-    s5_client.put(manifest_path, corrupted_data.to_vec(), None).await.unwrap();
+    s5_client
+        .put(manifest_path, corrupted_data.to_vec(), None)
+        .await
+        .unwrap();
     println!("✅ Corrupted data uploaded\n");
 
     // Try to load it
@@ -191,7 +199,10 @@ async fn test_corrupted_manifest() {
             println!("✅ Correct error type (Decryption or ManifestParseError)");
         }
         other => {
-            panic!("Expected DecryptionFailed or ManifestParseError, got: {:?}", other);
+            panic!(
+                "Expected DecryptionFailed or ManifestParseError, got: {:?}",
+                other
+            );
         }
     }
 
@@ -290,8 +301,11 @@ async fn test_dimension_mismatch() {
     let manifest_path = upload_test_manifest(&s5_client, &manifest, &session_key).await;
 
     // Upload chunk with WRONG dimensions (128 instead of 384)
+    use aes_gcm::{
+        aead::{Aead, KeyInit},
+        Aes256Gcm, Nonce,
+    };
     use fabstir_llm_node::storage::manifest::{Vector, VectorChunk};
-    use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
     use rand::Rng;
 
     let wrong_dimension_vector = Vector {
@@ -315,7 +329,10 @@ async fn test_dimension_mismatch() {
     encrypted_chunk.extend_from_slice(&ciphertext);
 
     let chunk_path = manifest_path.replace("manifest.json", "chunk-0.json");
-    s5_client.put(&chunk_path, encrypted_chunk, None).await.unwrap();
+    s5_client
+        .put(&chunk_path, encrypted_chunk, None)
+        .await
+        .unwrap();
     println!("✅ Chunk uploaded (with 128 dimensions)\n");
 
     // Try to load - should detect dimension mismatch
@@ -330,7 +347,9 @@ async fn test_dimension_mismatch() {
     assert!(result.is_err(), "Should detect dimension mismatch");
 
     match result.unwrap_err() {
-        VectorLoadError::DimensionMismatch { expected, actual, .. } => {
+        VectorLoadError::DimensionMismatch {
+            expected, actual, ..
+        } => {
             println!("✅ Correct error type: DimensionMismatch");
             println!("   Expected: {}", expected);
             println!("   Actual: {}", actual);
@@ -361,7 +380,7 @@ async fn test_bridge_service_unavailable() {
     let config = S5Config {
         api_url: "http://localhost:5522".to_string(),
         api_key: None,
-        timeout_secs: 5,  // Short timeout for faster test
+        timeout_secs: 5, // Short timeout for faster test
     };
 
     let client = EnhancedS5Client::new(config)
@@ -373,7 +392,10 @@ async fn test_bridge_service_unavailable() {
 
     println!("📋 Result: {:?}\n", result);
 
-    assert!(result.is_err(), "Health check should fail when bridge is unavailable");
+    assert!(
+        result.is_err(),
+        "Health check should fail when bridge is unavailable"
+    );
 
     let err = result.unwrap_err();
     let err_msg = err.to_string().to_lowercase();
@@ -437,7 +459,10 @@ async fn test_empty_database() {
     // 3. VectorLoader should add validation for vector_count == 0
 
     // For now, expect success with empty vector
-    assert!(result.is_ok(), "Empty database should load successfully (validation happens at WebSocket layer)");
+    assert!(
+        result.is_ok(),
+        "Empty database should load successfully (validation happens at WebSocket layer)"
+    );
     let vectors = result.unwrap();
     assert_eq!(vectors.len(), 0, "Should return empty vector list");
 

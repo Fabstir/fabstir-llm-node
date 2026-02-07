@@ -8,8 +8,10 @@
 //! ```
 
 use anyhow::Result;
-use fabstir_llm_node::storage::enhanced_s5_client::{BridgeHealthResponse, EnhancedS5Client, S5Config};
 use chrono;
+use fabstir_llm_node::storage::enhanced_s5_client::{
+    BridgeHealthResponse, EnhancedS5Client, S5Config,
+};
 use serde_json;
 
 /// Test 2.1: Enhanced S5 Client Initialization
@@ -58,7 +60,10 @@ async fn test_bridge_connection_invalid_url() {
     let client = EnhancedS5Client::new(config).expect("Client creation should succeed");
 
     let result = client.bridge_health_check().await;
-    assert!(result.is_err(), "Should fail to connect to non-existent service");
+    assert!(
+        result.is_err(),
+        "Should fail to connect to non-existent service"
+    );
 
     println!("✅ Error handling works correctly for invalid URLs");
 }
@@ -106,7 +111,10 @@ async fn test_file_upload() -> Result<()> {
     let test_bytes = serde_json::to_vec(&test_data)?;
 
     // Upload file (S5 requires paths to start with home/ or archive/)
-    let test_path = format!("home/test-uploads/test-{}.json", chrono::Utc::now().timestamp());
+    let test_path = format!(
+        "home/test-uploads/test-{}.json",
+        chrono::Utc::now().timestamp()
+    );
     let result = client.put_file(&test_path, test_bytes).await;
 
     match result {
@@ -114,7 +122,10 @@ async fn test_file_upload() -> Result<()> {
             println!("✅ File uploaded successfully to: {}", test_path);
         }
         Err(e) => {
-            println!("ℹ️  File upload failed (expected without portal registration): {}", e);
+            println!(
+                "ℹ️  File upload failed (expected without portal registration): {}",
+                e
+            );
             println!("   This test will pass once portal registration is working");
         }
     }
@@ -142,7 +153,10 @@ async fn test_file_download_after_upload() -> Result<()> {
     });
     let original_bytes = serde_json::to_vec(&test_data)?;
 
-    let test_path = format!("home/test-downloads/test-{}.json", chrono::Utc::now().timestamp());
+    let test_path = format!(
+        "home/test-downloads/test-{}.json",
+        chrono::Utc::now().timestamp()
+    );
 
     // Try to upload first
     let upload_result = client.put_file(&test_path, original_bytes.clone()).await;
@@ -157,11 +171,18 @@ async fn test_file_download_after_upload() -> Result<()> {
             // Download and verify
             match client.get_file(&test_path).await {
                 Ok(downloaded_bytes) => {
-                    assert_eq!(downloaded_bytes, original_bytes, "Downloaded content should match uploaded content");
+                    assert_eq!(
+                        downloaded_bytes, original_bytes,
+                        "Downloaded content should match uploaded content"
+                    );
 
                     // Verify JSON parsing works
-                    let downloaded_json: serde_json::Value = serde_json::from_slice(&downloaded_bytes)?;
-                    assert_eq!(downloaded_json, test_data, "Parsed JSON should match original");
+                    let downloaded_json: serde_json::Value =
+                        serde_json::from_slice(&downloaded_bytes)?;
+                    assert_eq!(
+                        downloaded_json, test_data,
+                        "Parsed JSON should match original"
+                    );
 
                     println!("✅ File downloaded successfully and content verified");
                 }
@@ -171,7 +192,10 @@ async fn test_file_download_after_upload() -> Result<()> {
             }
         }
         Err(e) => {
-            println!("ℹ️  File upload failed (expected without portal registration): {}", e);
+            println!(
+                "ℹ️  File upload failed (expected without portal registration): {}",
+                e
+            );
             println!("   This test will pass once portal registration is working");
         }
     }
@@ -235,10 +259,15 @@ async fn test_manifest_download() -> Result<()> {
     });
     let manifest_bytes = serde_json::to_vec(&manifest)?;
 
-    let manifest_path = format!("home/test-manifests/manifest-{}.json", chrono::Utc::now().timestamp());
+    let manifest_path = format!(
+        "home/test-manifests/manifest-{}.json",
+        chrono::Utc::now().timestamp()
+    );
 
     // Upload manifest first (this will be ignored if portal registration is not working)
-    let _ = client.put_file(&manifest_path, manifest_bytes.clone()).await;
+    let _ = client
+        .put_file(&manifest_path, manifest_bytes.clone())
+        .await;
 
     // Wait for potential S5 propagation
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -256,7 +285,10 @@ async fn test_manifest_download() -> Result<()> {
         }
         Err(e) => {
             // Expected if portal registration is not working
-            println!("ℹ️  Manifest download failed (expected without portal registration): {}", e);
+            println!(
+                "ℹ️  Manifest download failed (expected without portal registration): {}",
+                e
+            );
             println!("   This test will pass once portal registration is working");
         }
     }
@@ -280,7 +312,10 @@ async fn test_chunk_download() -> Result<()> {
     let chunk_size = 10 * 384 * 4;
     let chunk_data: Vec<u8> = (0..chunk_size).map(|i| (i % 256) as u8).collect();
 
-    let chunk_path = format!("home/test-chunks/chunk-{}.bin", chrono::Utc::now().timestamp());
+    let chunk_path = format!(
+        "home/test-chunks/chunk-{}.bin",
+        chrono::Utc::now().timestamp()
+    );
 
     // Upload chunk first
     let _ = client.put_file(&chunk_path, chunk_data.clone()).await;
@@ -296,11 +331,17 @@ async fn test_chunk_download() -> Result<()> {
             // Successfully downloaded
             assert_eq!(downloaded_bytes.len(), chunk_size);
             assert_eq!(downloaded_bytes, chunk_data);
-            println!("✅ Chunk downloaded successfully ({} bytes)", downloaded_bytes.len());
+            println!(
+                "✅ Chunk downloaded successfully ({} bytes)",
+                downloaded_bytes.len()
+            );
         }
         Err(e) => {
             // Expected if portal registration is not working
-            println!("ℹ️  Chunk download failed (expected without portal registration): {}", e);
+            println!(
+                "ℹ️  Chunk download failed (expected without portal registration): {}",
+                e
+            );
             println!("   This test will pass once portal registration is working");
         }
     }
@@ -364,10 +405,16 @@ async fn test_parallel_downloads() -> Result<()> {
     let duration = start.elapsed();
 
     // Check results
-    let successful = results.iter().filter(|r| r.is_ok() && r.as_ref().unwrap().is_ok()).count();
+    let successful = results
+        .iter()
+        .filter(|r| r.is_ok() && r.as_ref().unwrap().is_ok())
+        .count();
 
     if successful > 0 {
-        println!("✅ Downloaded {} chunks in parallel in {:?}", successful, duration);
+        println!(
+            "✅ Downloaded {} chunks in parallel in {:?}",
+            successful, duration
+        );
         assert!(duration.as_secs() < 10, "Parallel downloads took too long");
     } else {
         println!("ℹ️  Parallel downloads failed (expected without portal registration)");
@@ -395,11 +442,16 @@ async fn test_bridge_unavailable() {
     let result = client.bridge_health_check().await;
 
     // Should fail with connection error
-    assert!(result.is_err(), "Should fail to connect when bridge is unavailable");
+    assert!(
+        result.is_err(),
+        "Should fail to connect when bridge is unavailable"
+    );
 
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("connection") || error_msg.contains("refused") || error_msg.contains("timeout"),
+        error_msg.contains("connection")
+            || error_msg.contains("refused")
+            || error_msg.contains("timeout"),
         "Error should indicate connection issue, got: {}",
         error_msg
     );

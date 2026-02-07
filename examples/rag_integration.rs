@@ -265,7 +265,9 @@ fn example_error_handling() -> Result<()> {
     println!();
 
     println!("2. INVALID_DIMENSIONS");
-    println!("   Error: {{\"error\": \"Vector doc_1: Invalid dimensions: expected 384, got 256\"}}");
+    println!(
+        "   Error: {{\"error\": \"Vector doc_1: Invalid dimensions: expected 384, got 256\"}}"
+    );
     println!("   Solution: Ensure all embeddings are 384-dimensional");
     println!("   Verify: POST /v1/embed returns 384D vectors");
     println!();

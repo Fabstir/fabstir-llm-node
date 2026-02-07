@@ -120,7 +120,8 @@ async fn test_all_15_error_codes_mapping() {
 
         // Verify mapping
         assert_eq!(
-            error_code, *expected_code,
+            error_code,
+            *expected_code,
             "Test case {}: {:?} should map to {:?}",
             i + 1,
             ws_error,
@@ -133,14 +134,23 @@ async fn test_all_15_error_codes_mapping() {
 
         // Verify user-friendly message exists
         let message = ws_error.user_friendly_message();
-        assert!(!message.is_empty(), "Test case {}: Should have user-friendly message", i + 1);
+        assert!(
+            !message.is_empty(),
+            "Test case {}: Should have user-friendly message",
+            i + 1
+        );
         assert!(
             !message.contains("Error("),
             "Test case {}: Should not contain debug strings",
             i + 1
         );
 
-        println!("  ✅ {}: {} → {}", i + 1, expected_str, &message[..60.min(message.len())]);
+        println!(
+            "  ✅ {}: {} → {}",
+            i + 1,
+            expected_str,
+            &message[..60.min(message.len())]
+        );
     }
 
     println!("\n🎉 All 15 error codes mapped correctly!\n");
@@ -160,15 +170,12 @@ async fn test_security_sanitization() {
     println!("   Message: {}", message);
 
     // Should NOT contain addresses (sanitized at WebSocket layer)
-    assert!(
-        !message.contains("0x"),
-        "Should not expose any addresses"
-    );
+    assert!(!message.contains("0x"), "Should not expose any addresses");
 
     // Should contain generic security message
     assert!(
-        message.to_lowercase().contains("access") ||
-            message.to_lowercase().contains("verification"),
+        message.to_lowercase().contains("access")
+            || message.to_lowercase().contains("verification"),
         "Should mention access/verification"
     );
     println!("   ✅ No address leakage\n");
@@ -227,7 +234,10 @@ async fn test_error_message_quality() {
         ),
     ];
 
-    println!("Testing message quality for {} error types:\n", test_cases.len());
+    println!(
+        "Testing message quality for {} error types:\n",
+        test_cases.len()
+    );
 
     for (i, (ws_error, required_terms)) in test_cases.iter().enumerate() {
         let message = ws_error.user_friendly_message().to_lowercase();
@@ -245,7 +255,10 @@ async fn test_error_message_quality() {
         }
 
         // Should be user-friendly (no Rust error syntax)
-        assert!(!message.contains("error("), "Should not have Error() wrapper");
+        assert!(
+            !message.contains("error("),
+            "Should not have Error() wrapper"
+        );
         assert!(!message.contains("anyhow"), "Should not mention anyhow");
         assert!(!message.contains("source:"), "Should not show source field");
 
@@ -286,7 +299,10 @@ async fn test_error_context_preservation() {
     println!("   Error code: {:?}", ws_error.to_error_code());
     println!("   Message: {}\n", message);
 
-    assert!(message.contains("1536"), "Should mention expected dimension");
+    assert!(
+        message.contains("1536"),
+        "Should mention expected dimension"
+    );
     assert!(message.contains("768"), "Should mention actual dimension");
 
     // Test MemoryLimitExceeded preserves size details
@@ -348,14 +364,20 @@ async fn test_loading_progress_message_serialization() {
         LoadingErrorCode::InternalError,
     ];
 
-    println!("Testing serialization of all {} error codes:\n", all_codes.len());
+    println!(
+        "Testing serialization of all {} error codes:\n",
+        all_codes.len()
+    );
 
     for (i, code) in all_codes.iter().enumerate() {
         let json = serde_json::to_value(code).unwrap();
         assert!(json.is_string(), "Error code should serialize as string");
         let code_str = json.as_str().unwrap();
-        assert!(code_str.chars().all(|c| c.is_uppercase() || c == '_'),
-                "Error code should be UPPER_SNAKE_CASE: {}", code_str);
+        assert!(
+            code_str.chars().all(|c| c.is_uppercase() || c == '_'),
+            "Error code should be UPPER_SNAKE_CASE: {}",
+            code_str
+        );
 
         println!("  {}. {:?} → \"{}\" ✅", i + 1, code, code_str);
     }

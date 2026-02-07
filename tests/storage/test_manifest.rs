@@ -217,7 +217,11 @@ mod manifest_tests {
         let result = manifest.validate();
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.to_lowercase().contains("chunk count"), "Error was: {}", err_msg);
+        assert!(
+            err_msg.to_lowercase().contains("chunk count"),
+            "Error was: {}",
+            err_msg
+        );
     }
 
     /// Test 7: Manifest validation - invalid dimensions
@@ -304,7 +308,7 @@ mod manifest_tests {
         });
 
         let chunk: VectorChunk = serde_json::from_value(json).unwrap();
-        let result = chunk.validate(3);  // Expected 3 dimensions
+        let result = chunk.validate(3); // Expected 3 dimensions
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("dimension"));
     }
@@ -337,9 +341,12 @@ mod manifest_tests {
         });
 
         let vec: Vector = serde_json::from_value(json).unwrap();
-        let result = vec.validate(384);  // Expected 384, got 3
+        let result = vec.validate(384); // Expected 384, got 3
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Expected 384 dimensions"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected 384 dimensions"));
     }
 
     /// Test 12: Manifest with optional fields (minimal valid manifest)

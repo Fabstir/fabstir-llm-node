@@ -38,8 +38,8 @@ mod vector_database_info_tests {
             "userAddress": "0x1234567890ABCDEF1234567890ABCDEF12345678"
         });
 
-        let vdb_info: VectorDatabaseInfo = serde_json::from_value(json)
-            .expect("Failed to deserialize");
+        let vdb_info: VectorDatabaseInfo =
+            serde_json::from_value(json).expect("Failed to deserialize");
 
         assert_eq!(
             vdb_info.manifest_path,
@@ -59,8 +59,8 @@ mod vector_database_info_tests {
             "userAddress": "0xABCDEF1234567890ABCDEF1234567890ABCDEF12"
         });
 
-        let vdb_info: VectorDatabaseInfo = serde_json::from_value(json)
-            .expect("Failed to deserialize camelCase");
+        let vdb_info: VectorDatabaseInfo =
+            serde_json::from_value(json).expect("Failed to deserialize camelCase");
 
         assert_eq!(
             vdb_info.manifest_path,
@@ -155,8 +155,8 @@ mod vector_database_info_tests {
         };
 
         let json = serde_json::to_value(&original).expect("Failed to serialize");
-        let deserialized: VectorDatabaseInfo = serde_json::from_value(json)
-            .expect("Failed to deserialize");
+        let deserialized: VectorDatabaseInfo =
+            serde_json::from_value(json).expect("Failed to deserialize");
 
         assert_eq!(original.manifest_path, deserialized.manifest_path);
         assert_eq!(original.user_address, deserialized.user_address);
@@ -185,8 +185,7 @@ mod session_init_with_vector_database_tests {
             }
         });
 
-        let msg: SessionInitMessage = serde_json::from_value(json)
-            .expect("Failed to deserialize");
+        let msg: SessionInitMessage = serde_json::from_value(json).expect("Failed to deserialize");
 
         assert_eq!(msg.job_id, 12345);
         assert!(msg.vector_database.is_some());
@@ -212,8 +211,7 @@ mod session_init_with_vector_database_tests {
             "timestamp": 1700000000
         });
 
-        let msg: SessionInitMessage = serde_json::from_value(json)
-            .expect("Failed to deserialize");
+        let msg: SessionInitMessage = serde_json::from_value(json).expect("Failed to deserialize");
 
         assert_eq!(msg.job_id, 12345);
         assert!(msg.vector_database.is_none());
@@ -234,8 +232,7 @@ mod session_init_with_vector_database_tests {
             "vector_database": null
         });
 
-        let msg: SessionInitMessage = serde_json::from_value(json)
-            .expect("Failed to deserialize");
+        let msg: SessionInitMessage = serde_json::from_value(json).expect("Failed to deserialize");
 
         assert!(msg.vector_database.is_none());
     }

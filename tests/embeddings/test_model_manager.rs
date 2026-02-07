@@ -242,8 +242,7 @@ mod model_manager_tests {
         }
 
         // First model should be marked as default
-        let default_models: Vec<&ModelInfo> =
-            models.iter().filter(|m| m.is_default).collect();
+        let default_models: Vec<&ModelInfo> = models.iter().filter(|m| m.is_default).collect();
         assert_eq!(
             default_models.len(),
             1,
