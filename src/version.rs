@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.14.2-proofinterval-billing-2026-02-05";
+pub const VERSION: &str = "v8.15.2-repeat-penalty-window-2026-02-07";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.14.2";
+pub const VERSION_NUMBER: &str = "8.15.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 14;
+pub const VERSION_MINOR: u32 = 15;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-05";
+pub const BUILD_DATE: &str = "2026-02-07";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -162,6 +162,17 @@ pub const FEATURES: &[&str] = &[
     "host-authorization-cache",
     "startup-model-validation",
     "contract-model-queries",
+    // Model-agnostic inference (v8.15.0)
+    "glm4-chat-template",
+    "configurable-stop-tokens",
+    "min-p-sampling",
+    "model-agnostic-inference",
+    "per-template-stop-tokens",
+    "probabilistic-sampling",
+    // KV cache quantization (v8.15.1)
+    "kv-cache-quantization",
+    // Repeat penalty window fix (v8.15.2)
+    "repeat-penalty-window-256",
 ];
 
 /// Supported chain IDs
@@ -172,6 +183,19 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.15.2 - Repeat Penalty Window Fix (Feb 7, 2026)
+    "FIX: Repeat penalty window increased from 64 to 256 tokens to prevent long repetition loops",
+    "FIX: Models no longer get stuck in repeating patterns that exceed 64-token lookback",
+    // v8.15.1 - KV Cache Quantization (Feb 7, 2026)
+    "FEAT: KV cache quantization via KV_CACHE_TYPE env var (q8_0, q4_0, f16, bf16, f32)",
+    "FEAT: EngineConfig gains kv_cache_type_k/v fields (Option<String>, default None)",
+    // v8.15.0 - Model-Agnostic Inference Pipeline (Feb 7, 2026)
+    "FEAT: GLM-4 chat template support (MODEL_CHAT_TEMPLATE=glm4)",
+    "FEAT: Per-template stop tokens replace hardcoded Harmony token ID 200002",
+    "FEAT: min_p sampler field added to InferenceRequest (default 0.0 = disabled)",
+    "FEAT: Sampler chain now uses dist() for probabilistic sampling when temp > 0",
+    "FEAT: MODEL_STOP_TOKENS env var for custom stop token override",
+    "FEAT: repeat_penalty now wired into sampler chain (was ignored before)",
     // v8.14.1 - Dynamic Model Registry + submitProofOfWork Fix (Feb 5, 2026)
     "FIX: submitProofOfWork now uses 5 params (signature removed per Feb 4 contract update)",
     "FIX: Removed hardcoded ApprovedModels struct - now fully dynamic from contract",
@@ -389,83 +413,36 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 14);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_MINOR, 15);
+        assert_eq!(VERSION_PATCH, 2);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
-        assert!(FEATURES.contains(&"cpu-ocr"));
-        assert!(FEATURES.contains(&"cpu-vision"));
-        assert!(FEATURES.contains(&"vision-20mb-body-limit"));
-        assert!(FEATURES.contains(&"host-side-web-search"));
-        assert!(FEATURES.contains(&"brave-search-api"));
-        assert!(FEATURES.contains(&"inference-web-search"));
-        assert!(FEATURES.contains(&"streaming-web-search"));
-        assert!(FEATURES.contains(&"websocket-web-search"));
-        assert!(FEATURES.contains(&"auto-search-intent-detection"));
-        assert!(FEATURES.contains(&"sdk-web-search-field"));
-        assert!(FEATURES.contains(&"web-search-system-prompt"));
-        assert!(FEATURES.contains(&"search-query-harmony-cleanup"));
-        assert!(FEATURES.contains(&"search-prompt-v2"));
-        // v8.8.0 content fetching features
-        assert!(FEATURES.contains(&"content-fetching"));
-        assert!(FEATURES.contains(&"html-extraction"));
-        assert!(FEATURES.contains(&"page-content-cache"));
-        assert!(FEATURES.contains(&"parallel-fetch"));
-        // v8.9.0 proof signing features
-        assert!(FEATURES.contains(&"proof-signing"));
-        assert!(FEATURES.contains(&"security-audit-compliance"));
-        assert!(FEATURES.contains(&"ecdsa-proof-signatures"));
-        assert!(FEATURES.contains(&"65-byte-signatures"));
-        // v8.9.1 EIP-191 fix
-        assert!(FEATURES.contains(&"eip191-personal-sign"));
-        // v8.10.0 content hash binding features
-        assert!(FEATURES.contains(&"content-hash-binding"));
-        assert!(FEATURES.contains(&"real-prompt-hash"));
-        assert!(FEATURES.contains(&"real-response-hash"));
-        assert!(FEATURES.contains(&"proof-witness-content"));
-        assert!(FEATURES.contains(&"streaming-response-accumulation"));
-        // v8.11.0 checkpoint publishing features
-        assert!(FEATURES.contains(&"checkpoint-publishing"));
-        assert!(FEATURES.contains(&"conversation-recovery"));
-        assert!(FEATURES.contains(&"sdk-checkpoint-recovery"));
-        assert!(FEATURES.contains(&"s5-checkpoint-storage"));
-        assert!(FEATURES.contains(&"eip191-checkpoint-signatures"));
-        assert!(FEATURES.contains(&"sorted-json-keys"));
-        assert!(FEATURES.contains(&"session-resumption"));
-        assert!(FEATURES.contains(&"ttl-cleanup-policy"));
-        // v8.12.0 encrypted checkpoint deltas features
-        assert!(FEATURES.contains(&"encrypted-checkpoint-deltas"));
-        assert!(FEATURES.contains(&"checkpoint-encryption"));
-        assert!(FEATURES.contains(&"ecdh-checkpoint-keys"));
-        assert!(FEATURES.contains(&"xchacha20-checkpoint-encryption"));
-        assert!(FEATURES.contains(&"recovery-public-key"));
-        assert!(FEATURES.contains(&"forward-secrecy-checkpoints"));
-        assert!(FEATURES.contains(&"ephemeral-keypairs"));
-        // v8.12.4 deltaCID on-chain features
-        assert!(FEATURES.contains(&"delta-cid-on-chain"));
-        assert!(FEATURES.contains(&"checkpoint-blockchain-events"));
-        assert!(FEATURES.contains(&"decentralized-checkpoint-recovery"));
-        // v8.13.0 AUDIT-F4 remediation features
-        assert!(FEATURES.contains(&"audit-f4-compliance"));
-        assert!(FEATURES.contains(&"model-id-signature"));
-        assert!(FEATURES.contains(&"cross-model-replay-protection"));
-        assert!(FEATURES.contains(&"session-model-query"));
-        assert!(FEATURES.contains(&"audit-remediation"));
+        // v8.15.0 model-agnostic inference features
+        assert!(FEATURES.contains(&"glm4-chat-template"));
+        assert!(FEATURES.contains(&"configurable-stop-tokens"));
+        assert!(FEATURES.contains(&"min-p-sampling"));
+        assert!(FEATURES.contains(&"model-agnostic-inference"));
+        assert!(FEATURES.contains(&"per-template-stop-tokens"));
+        assert!(FEATURES.contains(&"probabilistic-sampling"));
+        // v8.15.1 KV cache quantization
+        assert!(FEATURES.contains(&"kv-cache-quantization"));
+        // v8.15.2 repeat penalty window
+        assert!(FEATURES.contains(&"repeat-penalty-window-256"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.14.1"));
-        assert!(version.contains("2026-02-05"));
+        assert!(version.contains("8.15.2"));
+        assert!(version.contains("2026-02-07"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.14.1-dynamic-model-registry-2026-02-05");
-        assert_eq!(VERSION_NUMBER, "8.14.1");
-        assert_eq!(BUILD_DATE, "2026-02-05");
+        assert_eq!(VERSION, "v8.15.2-repeat-penalty-window-2026-02-07");
+        assert_eq!(VERSION_NUMBER, "8.15.2");
+        assert_eq!(BUILD_DATE, "2026-02-07");
     }
 
     #[test]

@@ -81,7 +81,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed: {:?}", result.err());
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
         assert_eq!(response.embeddings.len(), 1, "Should return 1 embedding");
         assert_eq!(
             response.embeddings[0].embedding.len(),
@@ -119,7 +119,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed: {:?}", result.err());
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
         assert_eq!(response.embeddings.len(), 3, "Should return 3 embeddings");
 
         for (i, result) in response.embeddings.iter().enumerate() {
@@ -158,7 +158,7 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
         assert_eq!(
             response.model, "all-MiniLM-L6-v2",
             "Should use default model"
@@ -184,8 +184,11 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
-        assert_eq!(response.model, "all-MiniLM-L6-v2", "Should use specified model");
+        let response = result.unwrap().0; // Extract from Json wrapper
+        assert_eq!(
+            response.model, "all-MiniLM-L6-v2",
+            "Should use specified model"
+        );
     }
 
     /// Test 5: Chain context is added to response
@@ -205,7 +208,7 @@ mod embed_handler_tests {
         let result = embed_handler(State(state.clone()), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
         assert_eq!(response.chain_id, 84532);
         assert_eq!(response.chain_name, "Base Sepolia");
         assert_eq!(response.native_token, "ETH");
@@ -229,7 +232,11 @@ mod embed_handler_tests {
         } else {
             // If not registered, that's okay for tests - just verify error is about invalid chain
             let (status, msg) = result2.unwrap_err();
-            assert_eq!(status, StatusCode::BAD_REQUEST, "Should be 400 for invalid chain");
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "Should be 400 for invalid chain"
+            );
             assert!(
                 msg.contains("chain") || msg.contains("5611"),
                 "Error should mention chain issue"
@@ -256,12 +263,11 @@ mod embed_handler_tests {
         let result = embed_handler(State(state), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
 
         // First text ("hello") should have 2-4 tokens
         assert!(
-            response.embeddings[0].token_count >= 2
-                && response.embeddings[0].token_count <= 4,
+            response.embeddings[0].token_count >= 2 && response.embeddings[0].token_count <= 4,
             "Short text should have 2-4 tokens, got {}",
             response.embeddings[0].token_count
         );
@@ -297,7 +303,7 @@ mod embed_handler_tests {
         let result = embed_handler(State(state), Json(request)).await;
         assert!(result.is_ok(), "Handler should succeed");
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
+        let response = result.unwrap().0; // Extract from Json wrapper
         assert_eq!(response.cost, 0.0, "Host embeddings should be free");
         assert_eq!(response.provider, "host", "Provider should be 'host'");
     }
@@ -382,7 +388,9 @@ mod embed_handler_tests {
         let (status, error_msg) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(
-            error_msg.contains("8192") || error_msg.contains("long") || error_msg.contains("length"),
+            error_msg.contains("8192")
+                || error_msg.contains("long")
+                || error_msg.contains("length"),
             "Error should mention length limit, got: {}",
             error_msg
         );
@@ -408,7 +416,9 @@ mod embed_handler_tests {
         let (status, error_msg) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(
-            error_msg.contains("chain") || error_msg.contains("99999") || error_msg.contains("valid"),
+            error_msg.contains("chain")
+                || error_msg.contains("99999")
+                || error_msg.contains("valid"),
             "Error should mention invalid chain, got: {}",
             error_msg
         );
@@ -434,7 +444,9 @@ mod embed_handler_tests {
         let (status, error_msg) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND, "Should be 404 Not Found");
         assert!(
-            error_msg.contains("model") || error_msg.contains("nonexistent") || error_msg.contains("found"),
+            error_msg.contains("model")
+                || error_msg.contains("nonexistent")
+                || error_msg.contains("found"),
             "Error should mention model not found, got: {}",
             error_msg
         );
@@ -462,8 +474,8 @@ mod embed_handler_tests {
 
         assert!(result.is_ok(), "Valid model should succeed");
 
-        let response = result.unwrap().0;  // Extract from Json wrapper
-        // Verify dimensions are correct
+        let response = result.unwrap().0; // Extract from Json wrapper
+                                          // Verify dimensions are correct
         assert_eq!(
             response.embeddings[0].embedding.len(),
             384,

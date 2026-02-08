@@ -126,6 +126,7 @@ impl InferenceHandler {
             top_p: 0.95,
             top_k: 40,
             repeat_penalty: 1.1,
+            min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
             stream: false,
@@ -234,6 +235,7 @@ impl InferenceHandler {
             top_p: 0.95,
             top_k: 40,
             repeat_penalty: 1.1,
+            min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
             stream: false,
@@ -468,6 +470,18 @@ impl InferenceHandler {
                 "<|im_start|>system",
                 "<|im_end|>",
                 "<|im_start|>",
+            ];
+            for pattern in patterns {
+                result = result.replace(pattern, "");
+            }
+            result = result.trim().to_string();
+        }
+
+        // GLM-4 format markers
+        if result.contains("<|system|>") || result.contains("<|user|>") || result.contains("<|observation|>") {
+            let patterns = [
+                "<|system|>\n", "<|user|>\n", "<|assistant|>\n", "<|observation|>\n",
+                "<|system|>", "<|user|>", "<|assistant|>", "<|observation|>",
             ];
             for pattern in patterns {
                 result = result.replace(pattern, "");

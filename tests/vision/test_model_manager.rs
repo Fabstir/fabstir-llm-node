@@ -37,11 +37,7 @@ mod model_manager_tests {
         assert!(config.florence_model_dir.is_some());
 
         // Check default paths
-        assert!(config
-            .ocr_model_dir
-            .as_ref()
-            .unwrap()
-            .contains("paddleocr"));
+        assert!(config.ocr_model_dir.as_ref().unwrap().contains("paddleocr"));
         assert!(config
             .florence_model_dir
             .as_ref()
@@ -139,7 +135,10 @@ mod model_manager_tests {
 
         let result = VisionModelManager::new(config).await;
 
-        assert!(result.is_ok(), "Manager should initialize even with no models");
+        assert!(
+            result.is_ok(),
+            "Manager should initialize even with no models"
+        );
 
         let manager = result.unwrap();
         assert!(!manager.has_ocr());
@@ -157,10 +156,16 @@ mod model_manager_tests {
         let result = VisionModelManager::new(config).await;
 
         // Should not error, just not have the model available
-        assert!(result.is_ok(), "Manager should handle missing directories gracefully");
+        assert!(
+            result.is_ok(),
+            "Manager should handle missing directories gracefully"
+        );
 
         let manager = result.unwrap();
-        assert!(!manager.has_ocr(), "OCR should not be available with missing directory");
+        assert!(
+            !manager.has_ocr(),
+            "OCR should not be available with missing directory"
+        );
     }
 
     /// Test 8: Manager gracefully handles missing Florence directory
@@ -174,7 +179,10 @@ mod model_manager_tests {
         let result = VisionModelManager::new(config).await;
 
         // Should not error, just not have the model available
-        assert!(result.is_ok(), "Manager should handle missing directories gracefully");
+        assert!(
+            result.is_ok(),
+            "Manager should handle missing directories gracefully"
+        );
 
         let manager = result.unwrap();
         assert!(
@@ -193,7 +201,10 @@ mod model_manager_tests {
 
         let result = VisionModelManager::new(config).await;
 
-        assert!(result.is_ok(), "Manager should handle missing directories gracefully");
+        assert!(
+            result.is_ok(),
+            "Manager should handle missing directories gracefully"
+        );
 
         let manager = result.unwrap();
         assert!(!manager.has_ocr());
@@ -271,7 +282,11 @@ mod model_manager_tests {
 
         let result = VisionModelManager::new(config).await;
 
-        assert!(result.is_ok(), "Failed to create manager: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create manager: {:?}",
+            result.err()
+        );
 
         let manager = result.unwrap();
         assert!(manager.has_ocr(), "OCR should be available");
@@ -293,14 +308,21 @@ mod model_manager_tests {
 
         let result = VisionModelManager::new(config).await;
 
-        assert!(result.is_ok(), "Failed to create manager: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create manager: {:?}",
+            result.err()
+        );
 
         let manager = result.unwrap();
         assert!(!manager.has_ocr(), "OCR should not be available");
         assert!(manager.has_florence(), "Florence should be available");
 
         let florence_model = manager.get_florence_model();
-        assert!(florence_model.is_some(), "get_florence_model should return model");
+        assert!(
+            florence_model.is_some(),
+            "get_florence_model should return model"
+        );
         assert!(
             florence_model.unwrap().is_ready(),
             "Florence model should be ready"
@@ -318,7 +340,11 @@ mod model_manager_tests {
 
         let result = VisionModelManager::new(config).await;
 
-        assert!(result.is_ok(), "Failed to create manager: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create manager: {:?}",
+            result.err()
+        );
 
         let manager = result.unwrap();
         assert!(manager.has_ocr(), "OCR should be available");
@@ -387,7 +413,10 @@ mod model_manager_tests {
             .expect("Manager should initialize with default config");
 
         // With models in default locations, both should load
-        assert!(manager.has_ocr(), "OCR should be available with default config");
+        assert!(
+            manager.has_ocr(),
+            "OCR should be available with default config"
+        );
         assert!(
             manager.has_florence(),
             "Florence should be available with default config"

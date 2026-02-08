@@ -40,9 +40,7 @@ mod s5_retry_tests {
 
         // Inject a transient error (will be cleared after first attempt)
         storage
-            .inject_error(StorageError::NetworkError(
-                "Connection reset".to_string(),
-            ))
+            .inject_error(StorageError::NetworkError("Connection reset".to_string()))
             .await;
 
         // Download should fail on first attempt due to injected error
@@ -131,10 +129,10 @@ mod s5_retry_tests {
 
         // Test various invalid paths
         let invalid_paths = vec![
-            "",                                  // Empty path
-            "/home/test.json",                   // Leading slash
-            "home/../etc/passwd",                // Path traversal
-            "invalid/path/test.json",            // Not home/ or archive/
+            "",                       // Empty path
+            "/home/test.json",        // Leading slash
+            "home/../etc/passwd",     // Path traversal
+            "invalid/path/test.json", // Not home/ or archive/
         ];
 
         for path in invalid_paths {

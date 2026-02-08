@@ -140,7 +140,10 @@ mod vector_loader_tests {
         let chunks: Vec<ChunkMetadata> = (0..chunk_count)
             .map(|i| ChunkMetadata {
                 chunk_id: i,
-                cid: format!("s5://mock-cid-home/vector-databases/{}/test-db/chunk-{}.json", owner, i),
+                cid: format!(
+                    "s5://mock-cid-home/vector-databases/{}/test-db/chunk-{}.json",
+                    owner, i
+                ),
                 vector_count: 10,
                 size_bytes: 5000,
                 updated_at: 1700000000000,
@@ -203,7 +206,10 @@ mod vector_loader_tests {
             let chunk_json = serde_json::to_string(&chunk).unwrap();
             let encrypted_chunk = encrypt_web_crypto_format(&chunk_json, session_key);
 
-            let chunk_path = format!("home/vector-databases/{}/{}/chunk-{}.json", owner, db_name, i);
+            let chunk_path = format!(
+                "home/vector-databases/{}/{}/chunk-{}.json",
+                owner, db_name, i
+            );
             storage.add_file(&chunk_path, encrypted_chunk).await;
         }
 
@@ -249,7 +255,10 @@ mod vector_loader_tests {
             progress_messages.push(msg);
         }
 
-        assert!(!progress_messages.is_empty(), "Should receive progress messages");
+        assert!(
+            !progress_messages.is_empty(),
+            "Should receive progress messages"
+        );
     }
 
     /// Test 2: Manifest download and decryption
@@ -269,7 +278,11 @@ mod vector_loader_tests {
             .download_and_decrypt_manifest(&manifest_path, &session_key)
             .await;
 
-        assert!(result.is_ok(), "Manifest download should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Manifest download should succeed: {:?}",
+            result.err()
+        );
         let manifest = result.unwrap();
 
         assert_eq!(manifest.name, "test-db");
@@ -338,7 +351,11 @@ mod vector_loader_tests {
             .download_and_decrypt_chunks(&manifest, &base_path, &session_key, None)
             .await;
 
-        assert!(result.is_ok(), "Parallel downloads should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Parallel downloads should succeed: {:?}",
+            result.err()
+        );
         let vectors = result.unwrap();
 
         // Verify all vectors loaded (10 chunks × 10 vectors)
@@ -417,7 +434,12 @@ mod vector_loader_tests {
 
         let session_key = [0u8; 32];
         let result = loader
-            .load_vectors_from_s5("nonexistent/path/manifest.json", "0xABC", &session_key, None)
+            .load_vectors_from_s5(
+                "nonexistent/path/manifest.json",
+                "0xABC",
+                &session_key,
+                None,
+            )
             .await;
 
         assert!(result.is_err(), "Should fail when manifest doesn't exist");
@@ -483,12 +505,15 @@ mod vector_loader_tests {
         }
 
         // Verify we received progress updates
-        assert!(!progress_messages.is_empty(), "Should receive progress messages");
+        assert!(
+            !progress_messages.is_empty(),
+            "Should receive progress messages"
+        );
 
         // Verify we have manifest downloaded message
-        let has_manifest_downloaded = progress_messages.iter().any(|msg| {
-            matches!(msg, LoadProgress::ManifestDownloaded)
-        });
+        let has_manifest_downloaded = progress_messages
+            .iter()
+            .any(|msg| matches!(msg, LoadProgress::ManifestDownloaded));
         assert!(has_manifest_downloaded, "Should report manifest downloaded");
 
         // Verify we have chunk downloaded messages
@@ -502,9 +527,9 @@ mod vector_loader_tests {
         assert!(!chunk_messages.is_empty(), "Should report chunk downloads");
 
         // Verify we have completion message
-        let has_complete = progress_messages.iter().any(|msg| {
-            matches!(msg, LoadProgress::Complete { .. })
-        });
+        let has_complete = progress_messages
+            .iter()
+            .any(|msg| matches!(msg, LoadProgress::Complete { .. }));
         assert!(has_complete, "Should report completion");
     }
 
@@ -673,7 +698,11 @@ mod vector_loader_tests {
             .load_vectors_from_s5(&manifest_path, owner, &session_key, None)
             .await;
 
-        assert!(result.is_ok(), "Large database loading should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Large database loading should succeed: {:?}",
+            result.err()
+        );
         let vectors = result.unwrap();
 
         // Verify all vectors loaded (50 chunks × 10 vectors)

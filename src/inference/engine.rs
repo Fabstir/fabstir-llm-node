@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
 use llama_cpp_2::{
-    context::params::LlamaContextParams,
+    context::params::{KvCacheType, LlamaContextParams},
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
     model::{params::LlamaModelParams, AddBos, LlamaModel, Special},
@@ -39,6 +39,24 @@ fn sanitize_prompt_for_tokenizer(prompt: &str) -> String {
         .collect()
 }
 
+/// Parse a KV cache type string into a KvCacheType enum.
+/// Supports: "q8_0", "q4_0", "f16", "bf16", "f32" (case-insensitive).
+/// Returns None for unrecognized types (will use llama.cpp default = fp16).
+pub fn parse_kv_cache_type(s: &str) -> Option<KvCacheType> {
+    match s.to_lowercase().as_str() {
+        "q8_0" => Some(KvCacheType::Q8_0),
+        "q4_0" => Some(KvCacheType::Q4_0),
+        "q4_1" => Some(KvCacheType::Q4_1),
+        "q5_0" => Some(KvCacheType::Q5_0),
+        "q5_1" => Some(KvCacheType::Q5_1),
+        "q6_k" => Some(KvCacheType::Q6_K),
+        "f16" => Some(KvCacheType::F16),
+        "bf16" => Some(KvCacheType::BF16),
+        "f32" => Some(KvCacheType::F32),
+        _ => None,
+    }
+}
+
 // Wrapper around the real LLama model
 struct RealLlamaModel {
     backend: LlamaBackend,
@@ -58,6 +76,8 @@ pub struct EngineConfig {
     pub use_mlock: bool,
     pub max_concurrent_inferences: usize,
     pub model_eviction_policy: String,
+    pub kv_cache_type_k: Option<String>,
+    pub kv_cache_type_v: Option<String>,
 }
 
 impl Default for EngineConfig {
@@ -76,6 +96,8 @@ impl Default for EngineConfig {
             use_mlock: false,
             max_concurrent_inferences: 4,
             model_eviction_policy: "lru".to_string(),
+            kv_cache_type_k: None,
+            kv_cache_type_v: None,
         }
     }
 }
@@ -100,6 +122,8 @@ pub struct InferenceRequest {
     pub top_p: f32,
     pub top_k: usize,
     pub repeat_penalty: f32,
+    /// Min-P sampling threshold (0.0 = disabled, typical: 0.01-0.1)
+    pub min_p: f32,
     pub seed: Option<u64>,
     pub stop_sequences: Vec<String>,
     pub stream: bool,
@@ -291,7 +315,7 @@ impl LlmEngine {
             }
 
             // Create necessary data before borrowing the model
-            let (prompt_tokens, context_size, eos_token, return_token, end_token) = {
+            let (prompt_tokens, context_size, eos_token, stop_token_ids) = {
                 let model = models
                     .get_mut(&request.model_id)
                     .ok_or_else(|| anyhow!("Model not found in storage"))?;
@@ -316,31 +340,37 @@ impl LlmEngine {
 
                 let eos = model.model.token_eos();
 
-                // Get token ID for "<|return|>" special token (GPT-OSS-20B Harmony format stop token)
-                // Official spec: https://cookbook.openai.com/articles/openai-harmony
-                // <|return|> (200002) is the proper stop token for Harmony format
-                let return_tok = model
-                    .model
-                    .str_to_token("<|return|>", AddBos::Never)
-                    .ok()
-                    .and_then(|tokens| tokens.first().copied())
-                    .unwrap_or_else(|| {
-                        // Fallback: create LlamaToken from known ID for GPT-OSS-20B
-                        use llama_cpp_2::token::LlamaToken;
-                        unsafe { LlamaToken::new(200002) }
-                    });
+                // Resolve stop tokens from template (or MODEL_STOP_TOKENS env override)
+                let template_name = std::env::var("MODEL_CHAT_TEMPLATE")
+                    .unwrap_or_else(|_| "harmony".to_string());
+                let template = crate::inference::ChatTemplate::from_str(&template_name)
+                    .unwrap_or(crate::inference::ChatTemplate::Harmony);
 
-                // Get token ID for "<|end|>" (Harmony format message end token) (v8.4.14)
-                // This token can cause premature truncation if the model outputs it early
-                let end_tok = model
-                    .model
-                    .str_to_token("<|end|>", AddBos::Never)
-                    .ok()
-                    .and_then(|tokens| tokens.first().copied());
+                let stop_token_strings = {
+                    let env_overrides = crate::inference::chat_template::parse_stop_tokens_env();
+                    if env_overrides.is_empty() {
+                        template.stop_tokens().iter().map(|s| s.to_string()).collect::<Vec<_>>()
+                    } else {
+                        env_overrides
+                    }
+                };
 
-                tracing::debug!("🎯 Token IDs: eos_token={}, return_token={}, end_token={:?}", eos, return_tok, end_tok);
+                let mut stop_ids: Vec<llama_cpp_2::token::LlamaToken> = Vec::new();
+                for token_str in &stop_token_strings {
+                    if let Ok(tokens) = model.model.str_to_token(token_str, AddBos::Never) {
+                        if let Some(&tok) = tokens.first() {
+                            stop_ids.push(tok);
+                        }
+                    }
+                }
 
-                (tokens_list, model.context_size, eos, return_tok, end_tok)
+                tracing::debug!(
+                    "🎯 Stop tokens: eos={}, template={}, strings={:?}, ids={:?}",
+                    eos, template_name, stop_token_strings,
+                    stop_ids.iter().map(|t| t.0).collect::<Vec<_>>()
+                );
+
+                (tokens_list, model.context_size, eos, stop_ids)
             };
 
             // Now work with the model again for context creation and generation
@@ -349,9 +379,22 @@ impl LlmEngine {
                 .ok_or_else(|| anyhow!("Model not found in storage"))?;
 
             // Create context
-            let ctx_params = LlamaContextParams::default()
+            let mut ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(context_size as u32))
                 .with_n_batch(self.config.batch_size as u32);
+
+            if let Some(ref type_k_str) = self.config.kv_cache_type_k {
+                if let Some(kv_type) = parse_kv_cache_type(type_k_str) {
+                    ctx_params = ctx_params.with_type_k(kv_type);
+                    tracing::info!("KV cache K type set to: {}", type_k_str);
+                }
+            }
+            if let Some(ref type_v_str) = self.config.kv_cache_type_v {
+                if let Some(kv_type) = parse_kv_cache_type(type_v_str) {
+                    ctx_params = ctx_params.with_type_v(kv_type);
+                    tracing::info!("KV cache V type set to: {}", type_v_str);
+                }
+            }
 
             let mut context = model
                 .model
@@ -391,30 +434,41 @@ impl LlmEngine {
             );
 
             while n_cur < prompt_tokens.len() + max_tokens {
-                // Sample next token using sampler chain
-                let mut sampler = LlamaSampler::chain_simple([
-                    LlamaSampler::temp(request.temperature),
-                    LlamaSampler::top_p(request.top_p, 1),
-                    LlamaSampler::greedy(),
-                ]);
+                // Build sampler chain: temp → penalties → top_p → min_p → dist/greedy
+                let mut samplers: Vec<LlamaSampler> = Vec::new();
+                samplers.push(LlamaSampler::temp(request.temperature));
+                if request.repeat_penalty != 1.0 {
+                    samplers.push(LlamaSampler::penalties(256, request.repeat_penalty, 0.0, 0.0));
+                }
+                samplers.push(LlamaSampler::top_p(request.top_p, 1));
+                if request.min_p > 0.0 {
+                    samplers.push(LlamaSampler::min_p(request.min_p, 1));
+                }
+                if request.temperature > 0.0 {
+                    let seed = request.seed.unwrap_or(0) as u32;
+                    samplers.push(LlamaSampler::dist(seed));
+                } else {
+                    samplers.push(LlamaSampler::greedy());
+                }
+                let mut sampler = LlamaSampler::chain_simple(samplers);
 
                 let new_token_id = sampler.sample(&context, -1);
 
                 let tokens_so_far = n_cur - prompt_tokens.len();
-                let is_special = new_token_id == eos_token || new_token_id == return_token || end_token.map_or(false, |et| new_token_id == et);
+                let is_special = new_token_id == eos_token || stop_token_ids.contains(&new_token_id);
 
-                // ONLY stop on EOS token - no early termination
-                // All other stop conditions have been disabled to prevent truncation
+                // Stop on EOS token
                 if new_token_id == eos_token {
                     stop_reason = "eos_token";
-                    tracing::info!("🛑 EOS token detected after {} chars, {} tokens", output.len(), token_info_list.len());
+                    tracing::info!("🛑 EOS token after {} chars, {} tokens", output.len(), token_info_list.len());
                     break;
                 }
 
-                // Log but DON'T stop on other special tokens - let model continue
-                if new_token_id == return_token || end_token.map_or(false, |et| new_token_id == et) {
-                    tracing::info!("⏭️ Special token {} detected at {} chars - continuing generation", new_token_id, output.len());
-                    // Don't break - let the model continue
+                // Stop on template-specific stop tokens
+                if stop_token_ids.contains(&new_token_id) {
+                    stop_reason = "stop_token";
+                    tracing::info!("🛑 Stop token {} after {} chars, {} tokens", new_token_id, output.len(), token_info_list.len());
+                    break;
                 }
 
                 // v8.4.19 FIX: Convert token to string - handle invalid UTF-8 by still advancing model state
@@ -628,6 +682,7 @@ impl LlmEngine {
             top_p: 0.9,
             top_k: 40,
             repeat_penalty: 1.0,
+            min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
             stream: false,
@@ -708,6 +763,44 @@ pub enum ModelCapability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === KV Cache Type Parsing Tests (Sub-phase 1.1) ===
+
+    #[test]
+    fn test_parse_kv_cache_type_q8_0() {
+        assert_eq!(parse_kv_cache_type("q8_0"), Some(KvCacheType::Q8_0));
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_q4_0() {
+        assert_eq!(parse_kv_cache_type("q4_0"), Some(KvCacheType::Q4_0));
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_f16() {
+        assert_eq!(parse_kv_cache_type("f16"), Some(KvCacheType::F16));
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_invalid() {
+        assert_eq!(parse_kv_cache_type("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_kv_cache_type_case_insensitive() {
+        assert_eq!(parse_kv_cache_type("Q8_0"), Some(KvCacheType::Q8_0));
+        assert_eq!(parse_kv_cache_type("F16"), Some(KvCacheType::F16));
+        assert_eq!(parse_kv_cache_type("BF16"), Some(KvCacheType::BF16));
+    }
+
+    // === EngineConfig KV Cache Default Test (Sub-phase 1.2) ===
+
+    #[test]
+    fn test_engine_config_default_kv_cache() {
+        let config = EngineConfig::default();
+        assert_eq!(config.kv_cache_type_k, None);
+        assert_eq!(config.kv_cache_type_v, None);
+    }
 
     #[test]
     fn test_sanitize_removes_null_bytes() {

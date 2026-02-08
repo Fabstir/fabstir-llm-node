@@ -21,6 +21,8 @@ async fn test_load_gguf_model() {
         use_mlock: false,
         max_concurrent_inferences: 1,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let mut engine = LlmEngine::new(config).await
@@ -87,6 +89,7 @@ async fn test_tokenization() {
             top_p: 1.0,
             top_k: 1,
             repeat_penalty: 1.0,
+            min_p: 0.0,
             seed: Some(42),
             stop_sequences: vec![],
             stream: false,
@@ -131,6 +134,7 @@ async fn test_generation_params() {
             top_p: 0.9,
             top_k: 40,
             repeat_penalty: 1.1,
+            min_p: 0.0,
             seed: Some(42), // Fixed seed for reproducibility
             stop_sequences: vec![],
             stream: false,
@@ -173,6 +177,7 @@ async fn test_real_inference_output() {
         top_p: 0.9,
         top_k: 40,
         repeat_penalty: 1.0,
+        min_p: 0.0,
         seed: Some(42),
         stop_sequences: vec![],
         stream: false,
@@ -222,6 +227,7 @@ async fn test_stop_sequences() {
         top_p: 0.9,
         top_k: 40,
         repeat_penalty: 1.0,
+        min_p: 0.0,
         seed: Some(42),
         stop_sequences: vec!["3.".to_string()], // Stop before item 3
         stream: false,
@@ -261,6 +267,7 @@ async fn test_streaming_generation() {
         top_p: 0.9,
         top_k: 40,
         repeat_penalty: 1.1,
+        min_p: 0.0,
         seed: None,
         stop_sequences: vec![],
         stream: true,
@@ -303,6 +310,8 @@ async fn test_model_unloading() {
         use_mlock: false,
         max_concurrent_inferences: 1,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let mut engine = LlmEngine::new(config).await
@@ -339,6 +348,7 @@ async fn test_model_unloading() {
         top_p: 0.9,
         top_k: 40,
         repeat_penalty: 1.0,
+        min_p: 0.0,
         seed: None,
         stop_sequences: vec![],
         stream: false,

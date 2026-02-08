@@ -88,8 +88,14 @@ mod module_structure_tests {
         let req: EmbedRequest = serde_json::from_str(json).unwrap();
 
         // Should use defaults
-        assert_eq!(req.model, "all-MiniLM-L6-v2", "Model should default to all-MiniLM-L6-v2");
-        assert_eq!(req.chain_id, 84532, "Chain ID should default to 84532 (Base Sepolia)");
+        assert_eq!(
+            req.model, "all-MiniLM-L6-v2",
+            "Model should default to all-MiniLM-L6-v2"
+        );
+        assert_eq!(
+            req.chain_id, 84532,
+            "Chain ID should default to 84532 (Base Sepolia)"
+        );
         assert_eq!(req.texts.len(), 1);
         assert_eq!(req.texts[0], "test");
     }

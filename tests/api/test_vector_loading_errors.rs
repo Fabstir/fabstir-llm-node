@@ -38,10 +38,7 @@ fn test_chunk_download_failed_error_code() {
         chunk_id: 3,
         source: anyhow::anyhow!("timeout"),
     };
-    assert_eq!(
-        error.to_error_code(),
-        LoadingErrorCode::ChunkDownloadFailed
-    );
+    assert_eq!(error.to_error_code(), LoadingErrorCode::ChunkDownloadFailed);
 }
 
 #[test]
@@ -71,10 +68,7 @@ fn test_memory_limit_exceeded_error_code() {
         size_mb: 200,
         limit_mb: 100,
     };
-    assert_eq!(
-        error.to_error_code(),
-        LoadingErrorCode::MemoryLimitExceeded
-    );
+    assert_eq!(error.to_error_code(), LoadingErrorCode::MemoryLimitExceeded);
 }
 
 #[test]
@@ -103,10 +97,7 @@ fn test_invalid_path_error_code() {
 #[test]
 fn test_invalid_session_key_error_code() {
     let error = VectorLoadingError::InvalidSessionKey { actual: 16 };
-    assert_eq!(
-        error.to_error_code(),
-        LoadingErrorCode::InvalidSessionKey
-    );
+    assert_eq!(error.to_error_code(), LoadingErrorCode::InvalidSessionKey);
 }
 
 #[test]
@@ -195,8 +186,14 @@ fn test_owner_mismatch_sanitized() {
 
     // Should NOT expose actual addresses or specific owner information
     assert!(!msg.contains("0x"), "Should not contain hex addresses");
-    assert!(!msg.contains("expected:"), "Should not contain 'expected:' with address");
-    assert!(!msg.contains("actual:"), "Should not contain 'actual:' with address");
+    assert!(
+        !msg.contains("expected:"),
+        "Should not contain 'expected:' with address"
+    );
+    assert!(
+        !msg.contains("actual:"),
+        "Should not contain 'actual:' with address"
+    );
 
     // It's OK to use the word "owner" in generic context like "owner verification"
     // as long as we don't expose the actual owner addresses
@@ -415,10 +412,7 @@ fn test_convert_chunk_download_failed() {
     let rag_error = VectorLoadError::ChunkDownloadFailed {
         chunk_id: 3,
         path: "chunk-3.json".to_string(),
-        source: Box::new(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "timeout",
-        )),
+        source: Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout")),
     };
     let ws_error: VectorLoadingError = rag_error.into();
 
@@ -434,13 +428,8 @@ fn test_convert_index_build_failed() {
     let rag_error = VectorLoadError::IndexBuildFailed("out of memory".to_string());
     let ws_error: VectorLoadingError = rag_error.into();
 
-    assert_eq!(
-        ws_error.to_error_code(),
-        LoadingErrorCode::IndexBuildFailed
-    );
-    assert!(ws_error
-        .user_friendly_message()
-        .contains("out of memory"));
+    assert_eq!(ws_error.to_error_code(), LoadingErrorCode::IndexBuildFailed);
+    assert!(ws_error.user_friendly_message().contains("out of memory"));
 }
 
 #[test]

@@ -14,8 +14,8 @@ use std::time::Instant;
 fn create_enhanced_s5_client() -> EnhancedS5Client {
     use fabstir_llm_node::storage::enhanced_s5_client::S5Config;
 
-    let bridge_url = std::env::var("ENHANCED_S5_URL")
-        .unwrap_or_else(|_| "http://localhost:5522".to_string());
+    let bridge_url =
+        std::env::var("ENHANCED_S5_URL").unwrap_or_else(|_| "http://localhost:5522".to_string());
 
     let config = S5Config {
         api_url: bridge_url,
@@ -23,8 +23,7 @@ fn create_enhanced_s5_client() -> EnhancedS5Client {
         timeout_secs: 30,
     };
 
-    EnhancedS5Client::new(config)
-        .expect("Failed to create Enhanced S5 client")
+    EnhancedS5Client::new(config).expect("Failed to create Enhanced S5 client")
 }
 
 /// Helper to upload large vector database
@@ -55,7 +54,7 @@ async fn setup_large_database(
             .collect();
         all_vectors.push(Vector {
             id: format!("vec_{:06}", i),
-            vector: vector_data,  // SDK uses 'vector', not 'embedding'
+            vector: vector_data, // SDK uses 'vector', not 'embedding'
             metadata: serde_json::json!({
                 "index": i,
                 "batch": i / 1000,
@@ -95,11 +94,14 @@ async fn setup_large_database(
         encrypted_data.extend_from_slice(&ciphertext);
 
         let chunk_path = format!("{}/chunk-{:04}.json", base_path, chunk.chunk_id);
-        let cid = s5_client.put(&chunk_path, encrypted_data.clone(), None).await.unwrap();
+        let cid = s5_client
+            .put(&chunk_path, encrypted_data.clone(), None)
+            .await
+            .unwrap();
 
         chunk_metadata.push(ChunkMetadata {
             chunk_id: chunk.chunk_id,
-            cid,  // SDK format requires CID
+            cid, // SDK format requires CID
             vector_count: chunk.vectors.len(),
             size_bytes: encrypted_data.len() as u64,
             updated_at: chrono::Utc::now().timestamp_millis(),
@@ -139,7 +141,10 @@ async fn setup_large_database(
     encrypted_manifest.extend_from_slice(&ciphertext);
 
     let manifest_path = format!("{}/manifest.json", base_path);
-    s5_client.put(&manifest_path, encrypted_manifest, None).await.unwrap();
+    s5_client
+        .put(&manifest_path, encrypted_manifest, None)
+        .await
+        .unwrap();
 
     println!("   ✅ Database ready at: {}\n", manifest_path);
 
@@ -161,12 +166,8 @@ async fn test_large_database_10k() {
     println!("⏱️  Phase 1: Database Setup");
     println!("-----------------------------");
     let setup_start = Instant::now();
-    let (manifest_path, session_key) = setup_large_database(
-        &s5_client,
-        owner,
-        num_vectors,
-        dimensions,
-    ).await;
+    let (manifest_path, session_key) =
+        setup_large_database(&s5_client, owner, num_vectors, dimensions).await;
     let setup_duration = setup_start.elapsed();
     println!("Setup time: {:?}\n", setup_duration);
 
@@ -184,7 +185,10 @@ async fn test_large_database_10k() {
     let load_duration = load_start.elapsed();
 
     println!("✅ Loaded {} vectors in {:?}", vectors.len(), load_duration);
-    println!("   Throughput: {:.0} vectors/sec\n", num_vectors as f64 / load_duration.as_secs_f64());
+    println!(
+        "   Throughput: {:.0} vectors/sec\n",
+        num_vectors as f64 / load_duration.as_secs_f64()
+    );
 
     // Build index
     println!("⏱️  Phase 3: Index Building");
@@ -197,7 +201,9 @@ async fn test_large_database_10k() {
     // Search performance
     println!("⏱️  Phase 4: Search Performance");
     println!("--------------------------------");
-    let query: Vec<f32> = (0..dimensions).map(|i| (i as f32) / dimensions as f32).collect();
+    let query: Vec<f32> = (0..dimensions)
+        .map(|i| (i as f32) / dimensions as f32)
+        .collect();
 
     let search_start = Instant::now();
     let results = index.search(&query, 10, 0.0).unwrap();
@@ -243,12 +249,8 @@ async fn test_large_database_100k() {
     println!("⏱️  Phase 1: Database Setup (this will take ~5-10 minutes)");
     println!("------------------------------------------------------------");
     let setup_start = Instant::now();
-    let (manifest_path, session_key) = setup_large_database(
-        &s5_client,
-        owner,
-        num_vectors,
-        dimensions,
-    ).await;
+    let (manifest_path, session_key) =
+        setup_large_database(&s5_client, owner, num_vectors, dimensions).await;
     let setup_duration = setup_start.elapsed();
     println!("Setup time: {:?}\n", setup_duration);
 
@@ -266,7 +268,10 @@ async fn test_large_database_100k() {
     let load_duration = load_start.elapsed();
 
     println!("✅ Loaded {} vectors in {:?}", vectors.len(), load_duration);
-    println!("   Throughput: {:.0} vectors/sec\n", num_vectors as f64 / load_duration.as_secs_f64());
+    println!(
+        "   Throughput: {:.0} vectors/sec\n",
+        num_vectors as f64 / load_duration.as_secs_f64()
+    );
 
     // Memory check
     println!("💾 Memory Usage Check");
@@ -303,12 +308,8 @@ async fn test_concurrent_session_loading_stress() {
 
     // Setup shared database
     println!("📦 Setting up shared database for 5 concurrent sessions...");
-    let (manifest_path, session_key) = setup_large_database(
-        &s5_client,
-        owner,
-        num_vectors,
-        dimensions,
-    ).await;
+    let (manifest_path, session_key) =
+        setup_large_database(&s5_client, owner, num_vectors, dimensions).await;
 
     println!("\n🚀 Launching 5 concurrent loading sessions...\n");
 
@@ -331,7 +332,10 @@ async fn test_concurrent_session_loading_stress() {
                     .await;
 
                 let session_duration = session_start.elapsed();
-                println!("   Session {} completed in {:?}", session_id, session_duration);
+                println!(
+                    "   Session {} completed in {:?}",
+                    session_id, session_duration
+                );
 
                 (session_id, result, session_duration)
             })
@@ -350,13 +354,21 @@ async fn test_concurrent_session_loading_stress() {
         let (session_id, load_result, session_duration) = result.as_ref().unwrap();
         let vectors = load_result.as_ref().unwrap();
 
-        println!("   Session {}: {} vectors in {:?}", session_id, vectors.len(), session_duration);
+        println!(
+            "   Session {}: {} vectors in {:?}",
+            session_id,
+            vectors.len(),
+            session_duration
+        );
         assert_eq!(vectors.len(), num_vectors);
     }
 
     println!("\n⏱️  Total concurrent time: {:?}", total_duration);
     println!("✅ All 5 sessions loaded successfully");
-    println!("🔍 Connection pool handled {} concurrent sessions without issues\n", results.len());
+    println!(
+        "🔍 Connection pool handled {} concurrent sessions without issues\n",
+        results.len()
+    );
 
     // Performance assertion
     assert!(

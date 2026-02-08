@@ -57,7 +57,8 @@ async fn test_host_earnings_base_sepolia() {
 
     // NEW formula: total_payment = (tokens_used * price_per_token) / PRICE_PRECISION
     // = (1000 * 1e18) / 1000 = 1e18 = 1 ETH
-    let expected_payment = (U256::from(tokens_used) * price_per_token) / U256::from(PRICE_PRECISION);
+    let expected_payment =
+        (U256::from(tokens_used) * price_per_token) / U256::from(PRICE_PRECISION);
     let expected_host_earning = expected_payment * 90 / 100;
     let expected_treasury = expected_payment * 10 / 100;
 
@@ -94,7 +95,8 @@ async fn test_host_earnings_opbnb() {
 
     // NEW formula: total_payment = (tokens_used * price_per_token) / PRICE_PRECISION
     // = (500 * 1e19) / 1000 = 5e18 = 5 BNB
-    let expected_payment = (U256::from(tokens_used) * price_per_token) / U256::from(PRICE_PRECISION);
+    let expected_payment =
+        (U256::from(tokens_used) * price_per_token) / U256::from(PRICE_PRECISION);
     let expected_host_earning = expected_payment * 90 / 100;
     let expected_treasury = expected_payment * 10 / 100;
 
@@ -360,10 +362,22 @@ async fn test_payment_split_with_price_precision() {
     let expected_treasury = expected_total * 10 / 100; // $0.50
     let expected_refund = deposit - expected_total; // $5
 
-    assert_eq!(split.total_payment, expected_total, "Total payment should be $5 (5_000_000 units)");
-    assert_eq!(split.host_earnings, expected_host, "Host earnings should be 90% = $4.50");
-    assert_eq!(split.treasury_fee, expected_treasury, "Treasury fee should be 10% = $0.50");
-    assert_eq!(split.user_refund, expected_refund, "User refund should be $5");
+    assert_eq!(
+        split.total_payment, expected_total,
+        "Total payment should be $5 (5_000_000 units)"
+    );
+    assert_eq!(
+        split.host_earnings, expected_host,
+        "Host earnings should be 90% = $4.50"
+    );
+    assert_eq!(
+        split.treasury_fee, expected_treasury,
+        "Treasury fee should be 10% = $0.50"
+    );
+    assert_eq!(
+        split.user_refund, expected_refund,
+        "User refund should be $5"
+    );
 }
 
 /// Test refund calculation with PRICE_PRECISION division
@@ -388,9 +402,19 @@ async fn test_refund_with_price_precision() {
     let expected_spent = U256::from(60_000u64);
     let expected_refund = deposit - expected_spent; // $0.94
 
-    assert_eq!(refund.amount_spent, expected_spent, "Amount spent should be $0.06 (60_000 units)");
-    assert_eq!(refund.refund_amount, expected_refund, "Refund should be $0.94 (940_000 units)");
-    assert_eq!(refund.tokens_unused, max_tokens - tokens_used, "Should have 9 million unused tokens");
+    assert_eq!(
+        refund.amount_spent, expected_spent,
+        "Amount spent should be $0.06 (60_000 units)"
+    );
+    assert_eq!(
+        refund.refund_amount, expected_refund,
+        "Refund should be $0.94 (940_000 units)"
+    );
+    assert_eq!(
+        refund.tokens_unused,
+        max_tokens - tokens_used,
+        "Should have 9 million unused tokens"
+    );
 }
 
 /// Test edge case: very small token amounts
@@ -411,8 +435,14 @@ async fn test_price_precision_small_amounts() {
     // amount_spent = (100 * 1) / 1000 = 0 (rounds down)
     // This is expected behavior for very small amounts
     let expected_spent = U256::from(0u64);
-    assert_eq!(refund.amount_spent, expected_spent, "Very small amounts should round to 0");
-    assert_eq!(refund.refund_amount, deposit, "Full refund when amount rounds to 0");
+    assert_eq!(
+        refund.amount_spent, expected_spent,
+        "Very small amounts should round to 0"
+    );
+    assert_eq!(
+        refund.refund_amount, deposit,
+        "Full refund when amount rounds to 0"
+    );
 }
 
 /// Test edge case: large deposits and token amounts
@@ -433,8 +463,15 @@ async fn test_price_precision_large_amounts() {
     // amount_spent = (1_000_000_000 * 100_000) / 1000 = 100_000_000_000
     // = $100,000 USDC
     let expected_spent = U256::from(100_000_000_000u64);
-    assert_eq!(refund.amount_spent, expected_spent, "Large amount calculation should be correct");
-    assert_eq!(refund.refund_amount, U256::zero(), "No refund when full deposit used");
+    assert_eq!(
+        refund.amount_spent, expected_spent,
+        "Large amount calculation should be correct"
+    );
+    assert_eq!(
+        refund.refund_amount,
+        U256::zero(),
+        "No refund when full deposit used"
+    );
 }
 
 /// Test precision loss handling (rounding behavior)
@@ -448,15 +485,27 @@ async fn test_price_precision_rounding() {
     // 999 tokens at price 1 = (999 * 1) / 1000 = 0 (rounds down)
     let deposit = U256::from(1_000_000u64);
     let refund1 = distributor.calculate_refund(deposit, 999, 1_000_000, U256::from(1u64));
-    assert_eq!(refund1.amount_spent, U256::from(0u64), "999/1000 should round to 0");
+    assert_eq!(
+        refund1.amount_spent,
+        U256::from(0u64),
+        "999/1000 should round to 0"
+    );
 
     // 1000 tokens at price 1 = (1000 * 1) / 1000 = 1
     let refund2 = distributor.calculate_refund(deposit, 1000, 1_000_000, U256::from(1u64));
-    assert_eq!(refund2.amount_spent, U256::from(1u64), "1000/1000 should equal 1");
+    assert_eq!(
+        refund2.amount_spent,
+        U256::from(1u64),
+        "1000/1000 should equal 1"
+    );
 
     // 1500 tokens at price 1 = (1500 * 1) / 1000 = 1 (rounds down)
     let refund3 = distributor.calculate_refund(deposit, 1500, 1_000_000, U256::from(1u64));
-    assert_eq!(refund3.amount_spent, U256::from(1u64), "1500/1000 should round to 1");
+    assert_eq!(
+        refund3.amount_spent,
+        U256::from(1u64),
+        "1500/1000 should round to 1"
+    );
 }
 
 /// Test native token (ETH) pricing with PRICE_PRECISION
@@ -478,5 +527,8 @@ async fn test_price_precision_native_token() {
     // amount_spent = (100_000 * 2_272_727_273) / 1000 = 227,272,727,300 wei
     // ≈ 0.0002272 ETH
     let expected_spent = U256::from(227_272_727_300u64);
-    assert_eq!(refund.amount_spent, expected_spent, "Native token calculation should include PRICE_PRECISION");
+    assert_eq!(
+        refund.amount_spent, expected_spent,
+        "Native token calculation should include PRICE_PRECISION"
+    );
 }

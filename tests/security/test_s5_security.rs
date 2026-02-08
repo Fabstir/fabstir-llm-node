@@ -3,11 +3,11 @@
 // TDD Security Tests for S5 Vector Loading (Sub-phase 5.3)
 // Tests owner verification, manifest tampering, rate limiting, memory limits, and timeouts
 
+use async_trait::async_trait;
 use fabstir_llm_node::rag::errors::VectorLoadError;
 use fabstir_llm_node::rag::vector_loader::{LoadProgress, VectorLoader};
 use fabstir_llm_node::storage::manifest::{ChunkMetadata, Manifest, Vector, VectorChunk};
 use fabstir_llm_node::storage::s5_client::{S5Entry, S5ListResult, S5Storage, StorageError};
-use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -274,7 +274,9 @@ async fn test_dimension_mismatch_detection() {
 
     let err = result.unwrap_err();
     match err {
-        VectorLoadError::DimensionMismatch { expected, actual, .. } => {
+        VectorLoadError::DimensionMismatch {
+            expected, actual, ..
+        } => {
             assert_eq!(expected, 384);
             assert_eq!(actual, 256);
         }
@@ -307,7 +309,9 @@ async fn test_vector_count_mismatch_detection() {
 
     let err = result.unwrap_err();
     match err {
-        VectorLoadError::VectorCountMismatch { expected, actual, .. } => {
+        VectorLoadError::VectorCountMismatch {
+            expected, actual, ..
+        } => {
             assert_eq!(expected, 100);
             assert_eq!(actual, 50);
         }
@@ -352,9 +356,9 @@ async fn test_rate_limit_enforcement() {
     let base_path = "home/vector-databases/0xALICE/db1";
 
     // Set up manifest with 5 chunks
-    let mut manifest_data = serde_json::from_slice::<Manifest>(
-        &create_encrypted_manifest("0xALICE", 384, 500)
-    ).unwrap();
+    let mut manifest_data =
+        serde_json::from_slice::<Manifest>(&create_encrypted_manifest("0xALICE", 384, 500))
+            .unwrap();
 
     // Manually set 5 chunks
     manifest_data.chunks = (0..5)
@@ -381,7 +385,8 @@ async fn test_rate_limit_enforcement() {
     storage.reset_download_count().await;
 
     // Create loader with rate limit: max 3 downloads per second
-    let loader = VectorLoader::with_rate_limit(S5Storage::clone(&storage), 5, 3, Duration::from_secs(1));
+    let loader =
+        VectorLoader::with_rate_limit(S5Storage::clone(&storage), 5, 3, Duration::from_secs(1));
     let session_key = test_session_key();
 
     let start = Instant::now();
@@ -394,8 +399,11 @@ async fn test_rate_limit_enforcement() {
 
     // With 5 chunks + 1 manifest = 6 downloads and max 3/sec, it should take at least 1 second
     // (first 3 downloads in first second, remaining 3 in second second)
-    assert!(duration >= Duration::from_millis(900),
-        "Rate limiting should enforce delays. Duration: {:?}", duration);
+    assert!(
+        duration >= Duration::from_millis(900),
+        "Rate limiting should enforce delays. Duration: {:?}",
+        duration
+    );
 }
 
 #[tokio::test]
@@ -421,7 +429,11 @@ async fn test_download_count_tracking() {
         .await;
 
     // Should have downloaded manifest + 1 chunk = 2 downloads
-    assert_eq!(storage.download_count().await, 2, "Should track download count");
+    assert_eq!(
+        storage.download_count().await,
+        2,
+        "Should track download count"
+    );
 }
 
 // ============================================================================
@@ -450,7 +462,10 @@ async fn test_memory_limit_exceeded() {
 
     let err = result.unwrap_err();
     match err {
-        VectorLoadError::MemoryLimitExceeded { required_mb, limit_mb } => {
+        VectorLoadError::MemoryLimitExceeded {
+            required_mb,
+            limit_mb,
+        } => {
             assert!(required_mb > limit_mb);
             assert_eq!(limit_mb, 100);
         }
@@ -540,7 +555,10 @@ async fn test_timeout_with_progress() {
 
     // Should receive at least ManifestDownloaded before timeout
     let first_progress = progress_rx.try_recv();
-    assert!(first_progress.is_ok(), "Should receive progress before timeout");
+    assert!(
+        first_progress.is_ok(),
+        "Should receive progress before timeout"
+    );
 
     assert!(result.is_err(), "Should timeout even with partial progress");
 }

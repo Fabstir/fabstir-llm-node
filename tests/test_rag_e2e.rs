@@ -4,11 +4,11 @@
 
 use anyhow::Result;
 use fabstir_llm_node::embeddings::{EmbeddingModelConfig, EmbeddingModelManager};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use futures_util::{SinkExt, StreamExt};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UploadVectorsRequest {
@@ -115,7 +115,10 @@ async fn test_rag_whale_document() -> Result<()> {
     println!("   Created {} chunks\n", chunks.len());
 
     // Step 3: Generate embeddings for all chunks
-    println!("🧮 Step 3: Generating embeddings for {} chunks...", chunks.len());
+    println!(
+        "🧮 Step 3: Generating embeddings for {} chunks...",
+        chunks.len()
+    );
     let mut vectors = Vec::new();
 
     // Get the embedding model
@@ -123,8 +126,12 @@ async fn test_rag_whale_document() -> Result<()> {
 
     for (i, chunk) in chunks.iter().enumerate() {
         let embedding = model.embed(chunk).await?;
-        println!("   ✓ Chunk {}: {} chars → {} dimensions",
-                 i + 1, chunk.len(), embedding.len());
+        println!(
+            "   ✓ Chunk {}: {} chars → {} dimensions",
+            i + 1,
+            chunk.len(),
+            embedding.len()
+        );
 
         vectors.push(VectorUpload {
             id: format!("whale-chunk-{}", i),
@@ -213,7 +220,7 @@ async fn test_rag_whale_document() -> Result<()> {
         session_id: session_id.to_string(),
         query_vector: query_embedding,
         k: 3,
-        threshold: None,  // No threshold - return top-k regardless of score
+        threshold: None, // No threshold - return top-k regardless of score
     };
 
     let search_json = serde_json::to_string(&search_request)?;
@@ -244,11 +251,22 @@ async fn test_rag_whale_document() -> Result<()> {
             }
 
             // Verify results are returned (session persistence works!)
-            assert!(!response.results.is_empty(), "Should find at least one result");
-            assert_eq!(response.results.len(), 3, "Should return exactly 3 results (k=3)");
+            assert!(
+                !response.results.is_empty(),
+                "Should find at least one result"
+            );
+            assert_eq!(
+                response.results.len(),
+                3,
+                "Should return exactly 3 results (k=3)"
+            );
 
             println!("🎬 Verification:");
-            println!("   ✓ Found {} results from {} total vectors", response.results.len(), response.total_vectors);
+            println!(
+                "   ✓ Found {} results from {} total vectors",
+                response.results.len(),
+                response.total_vectors
+            );
             println!("   ✓ Session persistence working - vectors uploaded in one message, retrieved in next!");
             println!("   ✓ Search completed in {:.2}ms", response.search_time_ms);
 

@@ -166,7 +166,10 @@ mod hnsw_index_tests {
 
         let search_results = results.unwrap();
         assert!(!search_results.is_empty(), "Should return results");
-        assert!(search_results.len() <= 10, "Should return at most k results");
+        assert!(
+            search_results.len() <= 10,
+            "Should return at most k results"
+        );
 
         // First result should be the query vector itself (highest similarity)
         assert_eq!(search_results[0].id, "vec-0");
@@ -189,11 +192,7 @@ mod hnsw_index_tests {
         // Test different k values
         for k in [1, 5, 10, 20] {
             let results = index.search(&query_vector, k, 0.0).unwrap();
-            assert!(
-                results.len() <= k,
-                "Should return at most {} results",
-                k
-            );
+            assert!(results.len() <= k, "Should return at most {} results", k);
         }
     }
 
@@ -283,7 +282,9 @@ mod hnsw_index_tests {
         });
 
         // Vector 3: Orthogonal (alternating 1, -1) -> cosine ≈ 0
-        let v3_raw: Vec<f32> = (0..384).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let v3_raw: Vec<f32> = (0..384)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
         let magnitude3 = (384.0_f32).sqrt();
         let v3: Vec<f32> = v3_raw.iter().map(|x| x / magnitude3).collect();
 
@@ -301,20 +302,49 @@ mod hnsw_index_tests {
         println!("Cosine test: index has {} vectors", index.vector_count());
         println!("Cosine test: search returned {} results", results.len());
         for (i, result) in results.iter().enumerate() {
-            println!("  Result {}: id={}, score={:.4}", i, result.id, result.score);
+            println!(
+                "  Result {}: id={}, score={:.4}",
+                i, result.id, result.score
+            );
         }
 
-        assert_eq!(results.len(), 3, "Expected 3 results, got {}", results.len());
+        assert_eq!(
+            results.len(),
+            3,
+            "Expected 3 results, got {}",
+            results.len()
+        );
 
         // v1 and v2 should both have high similarity (same direction)
         // HNSW is approximate, so order may vary when scores are identical
-        let v1_result = results.iter().find(|r| r.id == "v1").expect("v1 not found in results");
-        let v2_result = results.iter().find(|r| r.id == "v2").expect("v2 not found in results");
-        let v3_result = results.iter().find(|r| r.id == "v3").expect("v3 not found in results");
+        let v1_result = results
+            .iter()
+            .find(|r| r.id == "v1")
+            .expect("v1 not found in results");
+        let v2_result = results
+            .iter()
+            .find(|r| r.id == "v2")
+            .expect("v2 not found in results");
+        let v3_result = results
+            .iter()
+            .find(|r| r.id == "v3")
+            .expect("v3 not found in results");
 
-        assert!(v1_result.score >= 0.99, "v1 similarity should be ~1.0, got {}", v1_result.score);
-        assert!(v2_result.score >= 0.99, "v2 similarity should be ~1.0 (same direction as v1), got {}", v2_result.score);
-        assert!(v3_result.score <= 0.1, "v3 similarity should be ~0 (orthogonal), got {}", v3_result.score);
+        assert!(
+            v1_result.score >= 0.99,
+            "v1 similarity should be ~1.0, got {}",
+            v1_result.score
+        );
+        assert!(
+            v2_result.score >= 0.99,
+            "v2 similarity should be ~1.0 (same direction as v1), got {}",
+            v2_result.score
+        );
+        assert!(
+            v3_result.score <= 0.1,
+            "v3 similarity should be ~0 (orthogonal), got {}",
+            v3_result.score
+        );
     }
 
     /// Test 10: Empty index

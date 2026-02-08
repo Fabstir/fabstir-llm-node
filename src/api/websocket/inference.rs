@@ -115,6 +115,8 @@ impl InferenceEngine {
             use_mlock: false,
             max_concurrent_inferences: 4,
             model_eviction_policy: "lru".to_string(),
+            kv_cache_type_k: std::env::var("KV_CACHE_TYPE").ok(),
+            kv_cache_type_v: std::env::var("KV_CACHE_TYPE").ok(),
         };
 
         // Create base engine
@@ -180,6 +182,7 @@ impl InferenceEngine {
             top_p: 0.95,
             top_k: 40,
             repeat_penalty: 1.1,
+            min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
             stream: false,
@@ -232,6 +235,7 @@ impl InferenceEngine {
             top_p: 0.95,
             top_k: 40,
             repeat_penalty: 1.1,
+            min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
             stream: false,

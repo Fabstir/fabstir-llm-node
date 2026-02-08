@@ -86,7 +86,10 @@ fn test_upload_validates_batch_size() {
 
     let validation_result = request.validate();
     assert!(validation_result.is_err());
-    assert!(validation_result.unwrap_err().to_string().contains("batch size"));
+    assert!(validation_result
+        .unwrap_err()
+        .to_string()
+        .contains("batch size"));
 }
 
 #[test]
