@@ -1,0 +1,51 @@
+# Dockerfile for VLM sidecar (llama-server with CUDA + multimodal)
+# Builds llama.cpp from source with vision/mmproj support
+#
+# Build:
+#   docker build -t llama-server-cuda -f docker/Dockerfile.vlm-sidecar .
+#
+# Run:
+#   docker run --gpus all -v ./models/qwen3-vl:/models:ro -p 8081:8081 llama-server-cuda
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+RUN apt-get update && apt-get install -y \
+    git cmake build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make CUDA driver stubs available for linking (real driver provided at runtime)
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 \
+    && echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf \
+    && ldconfig
+
+# Clone latest stable llama.cpp
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /build/llama.cpp
+
+WORKDIR /build/llama.cpp
+
+# Build with CUDA support
+RUN cmake -B build \
+    -DGGML_CUDA=ON \
+    -DLLAMA_CURL=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target llama-server -j$(nproc)
+
+# Remove stubs symlink so it doesn't leak into runtime
+RUN rm -f /usr/local/cuda/lib64/stubs/libcuda.so.1
+
+# Runtime image
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y curl libgomp1 && rm -rf /var/lib/apt/lists/*
+
+# Copy server binary and shared libraries it depends on
+COPY --from=builder /build/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
+COPY --from=builder /build/llama.cpp/build/bin/*.so* /usr/local/lib/
+
+# Ensure dynamic linker can find the libs
+RUN ldconfig
+
+EXPOSE 8081
+
+ENTRYPOINT ["llama-server"]
+CMD ["--help"]
