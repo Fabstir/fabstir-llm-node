@@ -3,6 +3,9 @@
 // TDD Tests for searchVectors with S5-loaded HNSW Index (Sub-phase 4.2)
 // Tests dual-path search: S5-loaded HNSW vs uploaded SessionVectorStore
 
+use fabstir_llm_node::api::websocket::handlers::rag::{
+    handle_search_vectors, handle_upload_vectors,
+};
 use fabstir_llm_node::api::websocket::message_types::{
     SearchVectorsRequest, SearchVectorsResponse, UploadVectorsRequest, VectorDatabaseInfo,
     VectorUpload,
@@ -10,7 +13,6 @@ use fabstir_llm_node::api::websocket::message_types::{
 use fabstir_llm_node::api::websocket::session::{
     SessionConfig, VectorLoadingStatus, WebSocketSession,
 };
-use fabstir_llm_node::api::websocket::handlers::rag::{handle_search_vectors, handle_upload_vectors};
 use fabstir_llm_node::storage::manifest::Vector;
 use fabstir_llm_node::vector::hnsw::HnswIndex;
 use serde_json::json;
@@ -101,7 +103,10 @@ fn test_search_s5_loaded_index_basic() {
     let response = handle_search_vectors(&session, request).expect("Search should succeed");
 
     assert_eq!(response.request_id, Some("search-s5-1".to_string()));
-    assert!(response.results.len() <= 10, "Should return at most 10 results");
+    assert!(
+        response.results.len() <= 10,
+        "Should return at most 10 results"
+    );
     assert!(response.results.len() > 0, "Should return some results");
 
     // First result should be self-match (vec-50) or very similar
@@ -303,7 +308,11 @@ fn test_search_uploaded_vectors_still_works() {
 
     let response = handle_search_vectors(&session, search_request).expect("Search should succeed");
 
-    assert_eq!(response.results.len(), 2, "Should find both uploaded vectors");
+    assert_eq!(
+        response.results.len(),
+        2,
+        "Should find both uploaded vectors"
+    );
 }
 
 #[test]
@@ -413,10 +422,7 @@ fn test_search_not_started_returns_error() {
 
     let result = handle_search_vectors(&session_arc, request);
 
-    assert!(
-        result.is_err(),
-        "Search should fail when status=NotStarted"
-    );
+    assert!(result.is_err(), "Search should fail when status=NotStarted");
 }
 
 #[test]

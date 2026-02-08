@@ -3,8 +3,8 @@
 // Phase 3.2: Encrypted Session Init with Vector Database
 // Test encrypted transmission of vector_database info via WebSocket
 
-use fabstir_llm_node::crypto::{derive_shared_key, encrypt_with_aead, decrypt_with_aead};
-use k256::{PublicKey, elliptic_curve::sec1::ToEncodedPoint, ecdh::EphemeralSecret};
+use fabstir_llm_node::crypto::{decrypt_with_aead, derive_shared_key, encrypt_with_aead};
+use k256::{ecdh::EphemeralSecret, elliptic_curve::sec1::ToEncodedPoint, PublicKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -84,14 +84,12 @@ async fn test_encrypted_session_init_with_vector_database() {
     let nonce: [u8; 24] = [0x01; 24]; // XChaCha20 uses 24-byte nonce
     let aad = b"session_init"; // Additional authenticated data
 
-    let ciphertext = encrypt_with_aead(
-        session_json.as_bytes(),
-        &nonce,
-        aad,
-        &shared_key,
-    ).unwrap();
-    println!("✅ Session data encrypted ({} bytes → {} bytes)\n",
-             session_json.len(), ciphertext.len());
+    let ciphertext = encrypt_with_aead(session_json.as_bytes(), &nonce, aad, &shared_key).unwrap();
+    println!(
+        "✅ Session data encrypted ({} bytes → {} bytes)\n",
+        session_json.len(),
+        ciphertext.len()
+    );
 
     // 6. Create encrypted payload
     println!("📦 Step 6: Creating encrypted payload...");
@@ -112,12 +110,8 @@ async fn test_encrypted_session_init_with_vector_database() {
 
     // Decrypt
     let nonce: [u8; 24] = payload.nonce.as_slice().try_into().unwrap();
-    let decrypted_bytes = decrypt_with_aead(
-        &payload.ciphertext,
-        &nonce,
-        &payload.aad,
-        &shared_key_node,
-    ).unwrap();
+    let decrypted_bytes =
+        decrypt_with_aead(&payload.ciphertext, &nonce, &payload.aad, &shared_key_node).unwrap();
 
     let decrypted_json = String::from_utf8(decrypted_bytes).unwrap();
     println!("✅ Decrypted successfully\n");
@@ -126,7 +120,10 @@ async fn test_encrypted_session_init_with_vector_database() {
     println!("✔️  Step 8: Verifying vector_database field...");
     let session_init: TestSessionInitData = serde_json::from_str(&decrypted_json).unwrap();
 
-    assert!(session_init.vector_database.is_some(), "vector_database should be present");
+    assert!(
+        session_init.vector_database.is_some(),
+        "vector_database should be present"
+    );
 
     let vdb = session_init.vector_database.unwrap();
     assert_eq!(
@@ -167,8 +164,10 @@ async fn test_session_init_without_vector_database() {
 
     // Verify JSON doesn't include vectorDatabase field (skip_serializing_if)
     let json_value: serde_json::Value = serde_json::from_str(&session_json).unwrap();
-    assert!(json_value.get("vectorDatabase").is_none(),
-            "vectorDatabase should be omitted when None");
+    assert!(
+        json_value.get("vectorDatabase").is_none(),
+        "vectorDatabase should be omitted when None"
+    );
 
     println!("✅ Backward compatibility verified:");
     println!("   vectorDatabase field correctly omitted when None");
@@ -216,12 +215,7 @@ async fn test_encrypted_session_with_large_manifest_path() {
     let nonce: [u8; 24] = [0x01; 24];
     let aad = b"session_init";
 
-    let ciphertext = encrypt_with_aead(
-        session_json.as_bytes(),
-        &nonce,
-        aad,
-        &shared_key,
-    ).unwrap();
+    let ciphertext = encrypt_with_aead(session_json.as_bytes(), &nonce, aad, &shared_key).unwrap();
 
     // Decrypt and verify
     let decrypted = decrypt_with_aead(&ciphertext, &nonce, aad, &shared_key).unwrap();
@@ -259,16 +253,37 @@ async fn test_json_serialization_formats() {
 
     // Verify camelCase field names
     let json_value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(json_value.get("jobId").is_some(), "Should use camelCase: jobId");
-    assert!(json_value.get("modelName").is_some(), "Should use camelCase: modelName");
-    assert!(json_value.get("sessionKey").is_some(), "Should use camelCase: sessionKey");
-    assert!(json_value.get("pricePerToken").is_some(), "Should use camelCase: pricePerToken");
-    assert!(json_value.get("vectorDatabase").is_some(), "Should use camelCase: vectorDatabase");
+    assert!(
+        json_value.get("jobId").is_some(),
+        "Should use camelCase: jobId"
+    );
+    assert!(
+        json_value.get("modelName").is_some(),
+        "Should use camelCase: modelName"
+    );
+    assert!(
+        json_value.get("sessionKey").is_some(),
+        "Should use camelCase: sessionKey"
+    );
+    assert!(
+        json_value.get("pricePerToken").is_some(),
+        "Should use camelCase: pricePerToken"
+    );
+    assert!(
+        json_value.get("vectorDatabase").is_some(),
+        "Should use camelCase: vectorDatabase"
+    );
 
     // Verify nested object
     let vdb = json_value.get("vectorDatabase").unwrap();
-    assert!(vdb.get("manifestPath").is_some(), "Should use camelCase: manifestPath");
-    assert!(vdb.get("userAddress").is_some(), "Should use camelCase: userAddress");
+    assert!(
+        vdb.get("manifestPath").is_some(),
+        "Should use camelCase: manifestPath"
+    );
+    assert!(
+        vdb.get("userAddress").is_some(),
+        "Should use camelCase: userAddress"
+    );
 
     println!("✅ JSON serialization format verified:");
     println!("   ✓ All fields use camelCase");

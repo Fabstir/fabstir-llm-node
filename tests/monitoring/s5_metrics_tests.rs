@@ -164,13 +164,19 @@ mod tests {
             .get_metric("s5_download_duration_seconds")
             .await
             .unwrap();
-        assert_eq!(download_metric.metric_type, fabstir_llm_node::monitoring::MetricType::Histogram);
+        assert_eq!(
+            download_metric.metric_type,
+            fabstir_llm_node::monitoring::MetricType::Histogram
+        );
 
         let error_metric = collector
             .get_metric("s5_download_errors_total")
             .await
             .unwrap();
-        assert_eq!(error_metric.metric_type, fabstir_llm_node::monitoring::MetricType::Counter);
+        assert_eq!(
+            error_metric.metric_type,
+            fabstir_llm_node::monitoring::MetricType::Counter
+        );
     }
 
     #[tokio::test]

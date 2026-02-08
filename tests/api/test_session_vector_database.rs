@@ -47,7 +47,10 @@ mod session_vector_database_tests {
         assert!(session.vector_database.is_none());
 
         // Should have default loading status
-        assert_eq!(session.vector_loading_status, VectorLoadingStatus::NotStarted);
+        assert_eq!(
+            session.vector_loading_status,
+            VectorLoadingStatus::NotStarted
+        );
     }
 
     /// Test 4: Vector loading status tracking
@@ -62,7 +65,10 @@ mod session_vector_database_tests {
         session.set_vector_database(Some(vdb_info));
 
         // Initial status
-        assert_eq!(session.vector_loading_status, VectorLoadingStatus::NotStarted);
+        assert_eq!(
+            session.vector_loading_status,
+            VectorLoadingStatus::NotStarted
+        );
 
         // Transition to Loading
         session.set_vector_loading_status(VectorLoadingStatus::Loading);
@@ -74,7 +80,10 @@ mod session_vector_database_tests {
             load_time_ms: 500,
         });
         match session.vector_loading_status {
-            VectorLoadingStatus::Loaded { vector_count, load_time_ms } => {
+            VectorLoadingStatus::Loaded {
+                vector_count,
+                load_time_ms,
+            } => {
                 assert_eq!(vector_count, 1000);
                 assert_eq!(load_time_ms, 500);
             }

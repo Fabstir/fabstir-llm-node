@@ -27,7 +27,10 @@ mod dependency_tests {
 
         // The crate compiled if we got here - that's the main verification
         // We're testing that the dependency was added correctly and compiles
-        assert!(true, "ONNX Runtime crate (ort v2.0.0-rc.10) is available and compiled successfully");
+        assert!(
+            true,
+            "ONNX Runtime crate (ort v2.0.0-rc.10) is available and compiled successfully"
+        );
     }
 
     /// Test 2: Verify tokenizers library is available and functional
@@ -64,11 +67,19 @@ mod dependency_tests {
 
         // Test 1D array creation (embedding vector)
         let embedding = Array1::<f32>::zeros(384);
-        assert_eq!(embedding.len(), 384, "Embedding vector should have 384 dimensions");
+        assert_eq!(
+            embedding.len(),
+            384,
+            "Embedding vector should have 384 dimensions"
+        );
 
         // Test 2D array creation (batch of embeddings)
         let batch = Array2::<f32>::zeros((10, 384));
-        assert_eq!(batch.shape(), &[10, 384], "Batch should have shape [10, 384]");
+        assert_eq!(
+            batch.shape(),
+            &[10, 384],
+            "Batch should have shape [10, 384]"
+        );
 
         // Test basic operations work
         let sum: f32 = embedding.sum();
@@ -129,6 +140,9 @@ mod dependency_version_tests {
         // - tokenizers: 0.20.4
         // - ndarray: 0.16.1
 
-        assert!(true, "All embedding dependencies are available and compiled successfully");
+        assert!(
+            true,
+            "All embedding dependencies are available and compiled successfully"
+        );
     }
 }

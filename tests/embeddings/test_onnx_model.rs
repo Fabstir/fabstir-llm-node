@@ -80,12 +80,7 @@ mod onnx_model_tests {
 
         // Verify all values are valid f32 (not NaN or Inf)
         for (i, &val) in embedding.iter().enumerate() {
-            assert!(
-                val.is_finite(),
-                "Embedding[{}] is not finite: {}",
-                i,
-                val
-            );
+            assert!(val.is_finite(), "Embedding[{}] is not finite: {}", i, val);
         }
     }
 
@@ -273,7 +268,10 @@ mod onnx_model_tests {
 
         // Verify all values are finite
         for &val in &embedding {
-            assert!(val.is_finite(), "Empty text embedding contains non-finite value");
+            assert!(
+                val.is_finite(),
+                "Empty text embedding contains non-finite value"
+            );
         }
     }
 

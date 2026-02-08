@@ -54,6 +54,9 @@ async fn main() -> Result<()> {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(8192);
 
+    // Read KV cache type from environment variable (sets both K and V)
+    let kv_cache_type = env::var("KV_CACHE_TYPE").ok();
+
     let engine_config = EngineConfig {
         models_directory: PathBuf::from("./models"),
         max_loaded_models: 1,
@@ -65,6 +68,8 @@ async fn main() -> Result<()> {
         use_mlock: false,
         max_concurrent_inferences: 4,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: kv_cache_type.clone(),
+        kv_cache_type_v: kv_cache_type,
     };
 
     let mut llm_engine = LlmEngine::new(engine_config).await?;

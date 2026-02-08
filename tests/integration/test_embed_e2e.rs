@@ -111,7 +111,10 @@ mod e2e_tests {
         assert_eq!(embeddings.len(), 3);
 
         // Verify each embedding
-        for (i, text) in ["First text", "Second text", "Third text"].iter().enumerate() {
+        for (i, text) in ["First text", "Second text", "Third text"]
+            .iter()
+            .enumerate()
+        {
             assert_eq!(embeddings[i]["text"], *text);
             assert_eq!(embeddings[i]["embedding"].as_array().unwrap().len(), 384);
         }
@@ -448,20 +451,32 @@ mod e2e_tests {
         assert!(body.get("embeddings").is_some(), "Missing embeddings field");
         assert!(body.get("model").is_some(), "Missing model field");
         assert!(body.get("provider").is_some(), "Missing provider field");
-        assert!(body.get("totalTokens").is_some(), "Missing totalTokens field");
+        assert!(
+            body.get("totalTokens").is_some(),
+            "Missing totalTokens field"
+        );
         assert!(body.get("cost").is_some(), "Missing cost field");
         assert!(body.get("chainId").is_some(), "Missing chainId field");
         assert!(body.get("chainName").is_some(), "Missing chainName field");
-        assert!(body.get("nativeToken").is_some(), "Missing nativeToken field");
+        assert!(
+            body.get("nativeToken").is_some(),
+            "Missing nativeToken field"
+        );
 
         // Verify embedding structure
         let embeddings = body["embeddings"].as_array().unwrap();
         assert_eq!(embeddings.len(), 1);
 
         let embedding = &embeddings[0];
-        assert!(embedding.get("embedding").is_some(), "Missing embedding array");
+        assert!(
+            embedding.get("embedding").is_some(),
+            "Missing embedding array"
+        );
         assert!(embedding.get("text").is_some(), "Missing text field");
-        assert!(embedding.get("tokenCount").is_some(), "Missing tokenCount field");
+        assert!(
+            embedding.get("tokenCount").is_some(),
+            "Missing tokenCount field"
+        );
 
         // Verify types
         assert!(body["embeddings"].is_array());

@@ -45,7 +45,10 @@ mod session_init_s5_tests {
 
         // Verify default state
         assert_eq!(session.vector_database, None);
-        assert_eq!(session.vector_loading_status, VectorLoadingStatus::NotStarted);
+        assert_eq!(
+            session.vector_loading_status,
+            VectorLoadingStatus::NotStarted
+        );
         assert!(session.vector_store.is_none());
     }
 
@@ -68,7 +71,10 @@ mod session_init_s5_tests {
         assert_eq!(stored_vdb.user_address, "0xABC123");
 
         // Initially not started
-        assert_eq!(session.vector_loading_status, VectorLoadingStatus::NotStarted);
+        assert_eq!(
+            session.vector_loading_status,
+            VectorLoadingStatus::NotStarted
+        );
     }
 
     /// Test 3: Vector loading status transitions
@@ -129,7 +135,11 @@ mod session_init_s5_tests {
             let mut store = vector_store.lock().unwrap();
             for vector in test_vectors {
                 store
-                    .add(vector.id.clone(), vector.vector.clone(), vector.metadata.clone())
+                    .add(
+                        vector.id.clone(),
+                        vector.vector.clone(),
+                        vector.metadata.clone(),
+                    )
                     .expect("Failed to add vector");
             }
         }
@@ -240,7 +250,10 @@ mod session_init_s5_tests {
                 serde_json::json!({}),
             );
             assert!(result.is_err());
-            assert!(result.unwrap_err().to_string().contains("Maximum vector capacity"));
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Maximum vector capacity"));
         }
     }
 
@@ -248,13 +261,21 @@ mod session_init_s5_tests {
     #[tokio::test]
     async fn test_vector_database_info_paths() {
         let test_cases = vec![
-            ("0xABC", "docs", "home/vector-databases/0xABC/docs/manifest.json"),
+            (
+                "0xABC",
+                "docs",
+                "home/vector-databases/0xABC/docs/manifest.json",
+            ),
             (
                 "0x123456",
                 "my-project",
                 "home/vector-databases/0x123456/my-project/manifest.json",
             ),
-            ("0xUSER", "test_db_1", "home/vector-databases/0xUSER/test_db_1/manifest.json"),
+            (
+                "0xUSER",
+                "test_db_1",
+                "home/vector-databases/0xUSER/test_db_1/manifest.json",
+            ),
         ];
 
         for (user, db_name, expected_path) in test_cases {

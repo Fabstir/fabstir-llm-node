@@ -165,13 +165,11 @@ fn test_search_timing_included() {
     let response = SearchVectorsResponse {
         msg_type: "searchVectorsResponse".to_string(),
         request_id: Some("req-456".to_string()),
-        results: vec![
-            VectorSearchResult {
-                id: "doc1".to_string(),
-                score: 0.95,
-                metadata: json!({"title": "Test"}),
-            },
-        ],
+        results: vec![VectorSearchResult {
+            id: "doc1".to_string(),
+            score: 0.95,
+            metadata: json!({"title": "Test"}),
+        }],
         total_vectors: 500,
         search_time_ms: 8.3,
     };

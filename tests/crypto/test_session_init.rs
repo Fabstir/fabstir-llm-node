@@ -539,7 +539,10 @@ fn test_decrypt_with_vector_database() {
 
     // Decrypt and verify vector_database field
     let result = decrypt_session_init(&payload, &node_priv_bytes);
-    assert!(result.is_ok(), "Decryption with vector_database should succeed");
+    assert!(
+        result.is_ok(),
+        "Decryption with vector_database should succeed"
+    );
 
     let session_init = result.unwrap();
     assert_eq!(session_init.job_id, "test-job-with-vectors");

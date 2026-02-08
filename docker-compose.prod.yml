@@ -49,8 +49,8 @@ services:
     env_file:
       - .env
     ports:
-      - "8080:8080"      # API port
-      - "9000:9000"      # P2P port
+      - "${API_PORT:-8080}:${API_PORT:-8080}"      # API port
+      - "${P2P_PORT:-9000}:${P2P_PORT:-9000}"      # P2P port
       - "9001:9001"      # P2P port
       - "9002:9002"      # P2P port
     environment:

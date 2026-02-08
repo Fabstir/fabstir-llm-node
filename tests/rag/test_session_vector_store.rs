@@ -65,7 +65,9 @@ fn test_add_with_metadata() {
         "tags": ["ml", "ai", "tutorial"]
     });
 
-    store.add("doc1".to_string(), vector, metadata.clone()).unwrap();
+    store
+        .add("doc1".to_string(), vector, metadata.clone())
+        .unwrap();
 
     let entry = store.get("doc1").unwrap();
     assert_eq!(entry.metadata["title"], "Machine Learning Basics");
@@ -86,7 +88,9 @@ fn test_add_duplicate_id_replaces() {
     // Add second vector with same ID (should replace)
     let vector2 = vec![0.9; 384];
     let metadata2 = json!({"version": 2});
-    store.add("doc1".to_string(), vector2.clone(), metadata2.clone()).unwrap();
+    store
+        .add("doc1".to_string(), vector2.clone(), metadata2.clone())
+        .unwrap();
 
     assert_eq!(store.count(), 1); // Still 1, not 2
     let entry = store.get("doc1").unwrap();
@@ -100,7 +104,9 @@ fn test_get_existing_vector() {
     let vector = vec![0.3; 384];
     let metadata = json!({"test": true});
 
-    store.add("doc1".to_string(), vector.clone(), metadata.clone()).unwrap();
+    store
+        .add("doc1".to_string(), vector.clone(), metadata.clone())
+        .unwrap();
 
     let entry = store.get("doc1");
     assert!(entry.is_some());
@@ -217,8 +223,12 @@ fn test_multiple_sessions_isolated() {
     let metadata1 = json!({"session": 1});
     let metadata2 = json!({"session": 2});
 
-    store1.add("doc1".to_string(), vector.clone(), metadata1.clone()).unwrap();
-    store2.add("doc1".to_string(), vector, metadata2.clone()).unwrap();
+    store1
+        .add("doc1".to_string(), vector.clone(), metadata1.clone())
+        .unwrap();
+    store2
+        .add("doc1".to_string(), vector, metadata2.clone())
+        .unwrap();
 
     // Both have "doc1" but they're isolated
     assert_eq!(store1.count(), 1);
@@ -233,7 +243,10 @@ fn test_concurrent_add_safe() {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
-    let store = Arc::new(Mutex::new(SessionVectorStore::new("session-123".to_string(), 1000)));
+    let store = Arc::new(Mutex::new(SessionVectorStore::new(
+        "session-123".to_string(),
+        1000,
+    )));
     let mut handles = vec![];
 
     // Spawn 10 threads, each adding 10 vectors
@@ -336,8 +349,12 @@ fn test_search_zero_magnitude_vector() {
     let mut store = SessionVectorStore::new("test-session".to_string(), 1000);
 
     // Add normal vectors
-    store.add("doc1".to_string(), vec![0.5; 384], json!({})).unwrap();
-    store.add("doc2".to_string(), vec![1.0; 384], json!({})).unwrap();
+    store
+        .add("doc1".to_string(), vec![0.5; 384], json!({}))
+        .unwrap();
+    store
+        .add("doc2".to_string(), vec![1.0; 384], json!({}))
+        .unwrap();
 
     // Add zero vector (all zeros) - should succeed
     let zero_vector = vec![0.0; 384];
@@ -368,9 +385,11 @@ fn test_add_rejects_oversized_metadata() {
 
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("Metadata too large") ||
-            err_msg.contains("metadata") ||
-            err_msg.contains("size"));
+    assert!(
+        err_msg.contains("Metadata too large")
+            || err_msg.contains("metadata")
+            || err_msg.contains("size")
+    );
     assert_eq!(store.count(), 0); // Should not be added
 }
 

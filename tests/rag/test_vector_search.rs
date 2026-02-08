@@ -20,7 +20,9 @@ fn test_search_empty_store_returns_empty() {
 fn test_search_single_vector() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
     let vector = vec![0.5; 384];
-    store.add("doc1".to_string(), vector.clone(), json!({"title": "Test"})).unwrap();
+    store
+        .add("doc1".to_string(), vector.clone(), json!({"title": "Test"}))
+        .unwrap();
 
     let query = vec![0.5; 384]; // Same as stored vector
     let results = store.search(query, 5, None).unwrap();
@@ -39,7 +41,9 @@ fn test_search_returns_top_k() {
     for i in 0..10 {
         let mut vector = vec![0.0; 384];
         vector[0] = i as f32 * 0.1; // Different first component
-        store.add(format!("doc{}", i), vector, json!({"index": i})).unwrap();
+        store
+            .add(format!("doc{}", i), vector, json!({"index": i}))
+            .unwrap();
     }
 
     let query = vec![0.5; 384]; // Query in middle
@@ -56,7 +60,9 @@ fn test_search_sorted_by_score_descending() {
     for i in 0..5 {
         let mut vector = vec![0.1; 384];
         vector[0] = i as f32 * 0.2; // 0.0, 0.2, 0.4, 0.6, 0.8
-        store.add(format!("doc{}", i), vector, json!({"index": i})).unwrap();
+        store
+            .add(format!("doc{}", i), vector, json!({"index": i}))
+            .unwrap();
     }
 
     let query = vec![0.8; 384]; // Should match doc4 best
@@ -71,7 +77,9 @@ fn test_search_sorted_by_score_descending() {
 #[test]
 fn test_search_validates_query_dimensions() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
-    store.add("doc1".to_string(), vec![0.1; 384], json!({})).unwrap();
+    store
+        .add("doc1".to_string(), vec![0.1; 384], json!({}))
+        .unwrap();
 
     let query_wrong = vec![0.1; 256]; // Wrong: 256 dimensions
     let result = store.search(query_wrong, 5, None);
@@ -136,7 +144,9 @@ fn test_search_exact_match_highest_score() {
     vec3[2] = 1.0; // Only third component
 
     store.add("doc1".to_string(), vec1, json!({})).unwrap();
-    store.add("doc2".to_string(), vec2.clone(), json!({})).unwrap();
+    store
+        .add("doc2".to_string(), vec2.clone(), json!({}))
+        .unwrap();
     store.add("doc3".to_string(), vec3, json!({})).unwrap();
 
     let query = vec2; // Exact match with doc2
@@ -158,7 +168,9 @@ fn test_search_orthogonal_vectors_low_score() {
     let mut vec2 = vec![0.0; 384];
     vec2[1] = 1.0; // Only second component (orthogonal)
 
-    store.add("doc1".to_string(), vec1.clone(), json!({})).unwrap();
+    store
+        .add("doc1".to_string(), vec1.clone(), json!({}))
+        .unwrap();
     store.add("doc2".to_string(), vec2, json!({})).unwrap();
 
     let query = vec1; // Same as doc1
@@ -194,9 +206,27 @@ fn test_search_k_larger_than_store() {
 fn test_search_with_metadata_filter_eq() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
 
-    store.add("doc1".to_string(), vec![0.1; 384], json!({"category": "science"})).unwrap();
-    store.add("doc2".to_string(), vec![0.2; 384], json!({"category": "math"})).unwrap();
-    store.add("doc3".to_string(), vec![0.3; 384], json!({"category": "science"})).unwrap();
+    store
+        .add(
+            "doc1".to_string(),
+            vec![0.1; 384],
+            json!({"category": "science"}),
+        )
+        .unwrap();
+    store
+        .add(
+            "doc2".to_string(),
+            vec![0.2; 384],
+            json!({"category": "math"}),
+        )
+        .unwrap();
+    store
+        .add(
+            "doc3".to_string(),
+            vec![0.3; 384],
+            json!({"category": "science"}),
+        )
+        .unwrap();
 
     let query = vec![0.15; 384];
     let filter = json!({"category": {"$eq": "science"}});
@@ -213,9 +243,27 @@ fn test_search_with_metadata_filter_eq() {
 fn test_search_with_metadata_filter_in() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
 
-    store.add("doc1".to_string(), vec![0.1; 384], json!({"category": "science"})).unwrap();
-    store.add("doc2".to_string(), vec![0.2; 384], json!({"category": "math"})).unwrap();
-    store.add("doc3".to_string(), vec![0.3; 384], json!({"category": "history"})).unwrap();
+    store
+        .add(
+            "doc1".to_string(),
+            vec![0.1; 384],
+            json!({"category": "science"}),
+        )
+        .unwrap();
+    store
+        .add(
+            "doc2".to_string(),
+            vec![0.2; 384],
+            json!({"category": "math"}),
+        )
+        .unwrap();
+    store
+        .add(
+            "doc3".to_string(),
+            vec![0.3; 384],
+            json!({"category": "history"}),
+        )
+        .unwrap();
 
     let query = vec![0.15; 384];
     let filter = json!({"category": {"$in": ["science", "math"]}});
@@ -237,8 +285,12 @@ fn test_search_k_zero_returns_empty() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
 
     // Add some vectors
-    store.add("doc1".to_string(), vec![0.1; 384], json!({})).unwrap();
-    store.add("doc2".to_string(), vec![0.2; 384], json!({})).unwrap();
+    store
+        .add("doc1".to_string(), vec![0.1; 384], json!({}))
+        .unwrap();
+    store
+        .add("doc2".to_string(), vec![0.2; 384], json!({}))
+        .unwrap();
 
     let query = vec![0.15; 384];
     let results = store.search(query, 0, None).unwrap();
@@ -252,8 +304,12 @@ fn test_search_negative_threshold() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
 
     // Add vectors
-    store.add("doc1".to_string(), vec![0.1; 384], json!({})).unwrap();
-    store.add("doc2".to_string(), vec![0.2; 384], json!({})).unwrap();
+    store
+        .add("doc1".to_string(), vec![0.1; 384], json!({}))
+        .unwrap();
+    store
+        .add("doc2".to_string(), vec![0.2; 384], json!({}))
+        .unwrap();
 
     let query = vec![0.15; 384];
     let results = store.search(query, 5, Some(-0.5)).unwrap();
@@ -268,8 +324,12 @@ fn test_search_threshold_above_one() {
     let mut store = SessionVectorStore::new("session-123".to_string(), 1000);
 
     // Add vectors
-    store.add("doc1".to_string(), vec![0.1; 384], json!({})).unwrap();
-    store.add("doc2".to_string(), vec![0.2; 384], json!({})).unwrap();
+    store
+        .add("doc1".to_string(), vec![0.1; 384], json!({}))
+        .unwrap();
+    store
+        .add("doc2".to_string(), vec![0.2; 384], json!({}))
+        .unwrap();
 
     let query = vec![0.15; 384];
     let results = store.search(query, 5, Some(1.5)).unwrap();
@@ -284,7 +344,9 @@ fn test_add_after_delete_at_capacity() {
 
     // Fill to capacity
     for i in 0..5 {
-        store.add(format!("doc{}", i), vec![i as f32; 384], json!({})).unwrap();
+        store
+            .add(format!("doc{}", i), vec![i as f32; 384], json!({}))
+            .unwrap();
     }
     assert_eq!(store.count(), 5);
 

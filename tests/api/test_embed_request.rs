@@ -27,7 +27,10 @@ mod request_validation_tests {
         };
 
         let result = request.validate();
-        assert!(result.is_ok(), "Valid single text request should pass validation");
+        assert!(
+            result.is_ok(),
+            "Valid single text request should pass validation"
+        );
     }
 
     /// Test 2: Valid request with batch of texts
@@ -35,9 +38,7 @@ mod request_validation_tests {
     /// Verifies that a batch request with multiple texts passes validation.
     #[test]
     fn test_valid_request_batch() {
-        let texts: Vec<String> = (0..50)
-            .map(|i| format!("Test text number {}", i))
-            .collect();
+        let texts: Vec<String> = (0..50).map(|i| format!("Test text number {}", i)).collect();
 
         let request = EmbedRequest {
             texts,
@@ -80,7 +81,10 @@ mod request_validation_tests {
         );
 
         let result = request.validate();
-        assert!(result.is_ok(), "Request with default chain_id should be valid");
+        assert!(
+            result.is_ok(),
+            "Request with default chain_id should be valid"
+        );
     }
 
     /// Test 5: Empty texts array is rejected
@@ -111,9 +115,7 @@ mod request_validation_tests {
     /// Verifies that requests with more than 96 texts fail validation.
     #[test]
     fn test_too_many_texts_rejected() {
-        let texts: Vec<String> = (0..100)
-            .map(|i| format!("Text {}", i))
-            .collect();
+        let texts: Vec<String> = (0..100).map(|i| format!("Text {}", i)).collect();
 
         let request = EmbedRequest {
             texts,
@@ -147,7 +149,10 @@ mod request_validation_tests {
         };
 
         let result = request.validate();
-        assert!(result.is_err(), "Text longer than 8192 chars should be rejected");
+        assert!(
+            result.is_err(),
+            "Text longer than 8192 chars should be rejected"
+        );
 
         let err = result.unwrap_err();
         let err_msg = err.to_string();
@@ -216,9 +221,18 @@ mod request_validation_tests {
         };
 
         let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("\"texts\""), "JSON should contain 'texts' field");
-        assert!(json.contains("\"model\""), "JSON should contain 'model' field");
-        assert!(json.contains("\"chainId\""), "JSON should contain 'chainId' field (camelCase)");
+        assert!(
+            json.contains("\"texts\""),
+            "JSON should contain 'texts' field"
+        );
+        assert!(
+            json.contains("\"model\""),
+            "JSON should contain 'model' field"
+        );
+        assert!(
+            json.contains("\"chainId\""),
+            "JSON should contain 'chainId' field (camelCase)"
+        );
     }
 
     /// Test 11: JSON deserialization works correctly
@@ -289,9 +303,7 @@ mod request_validation_tests {
     /// Verifies that exactly 96 texts (the maximum) passes validation.
     #[test]
     fn test_maximum_batch_size_valid() {
-        let texts: Vec<String> = (0..96)
-            .map(|i| format!("Text number {}", i))
-            .collect();
+        let texts: Vec<String> = (0..96).map(|i| format!("Text number {}", i)).collect();
 
         let request = EmbedRequest {
             texts,
@@ -300,7 +312,10 @@ mod request_validation_tests {
         };
 
         let result = request.validate();
-        assert!(result.is_ok(), "Maximum batch size (96 texts) should be valid");
+        assert!(
+            result.is_ok(),
+            "Maximum batch size (96 texts) should be valid"
+        );
     }
 
     /// Test 14: Maximum text length (8192 chars)
@@ -317,7 +332,10 @@ mod request_validation_tests {
         };
 
         let result = request.validate();
-        assert!(result.is_ok(), "Text with exactly 8192 chars should be valid");
+        assert!(
+            result.is_ok(),
+            "Text with exactly 8192 chars should be valid"
+        );
     }
 
     /// Test 15: Valid opBNB Testnet chain_id (5611)
@@ -332,6 +350,9 @@ mod request_validation_tests {
         };
 
         let result = request.validate();
-        assert!(result.is_ok(), "opBNB Testnet chain_id (5611) should be valid");
+        assert!(
+            result.is_ok(),
+            "opBNB Testnet chain_id (5611) should be valid"
+        );
     }
 }

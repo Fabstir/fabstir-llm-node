@@ -26,6 +26,8 @@ async fn setup_test_server() -> Result<(), Box<dyn std::error::Error>> {
         use_mlock: false,
         max_concurrent_inferences: 2,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let mut engine = LlmEngine::new(engine_config).await?;
@@ -80,6 +82,8 @@ async fn test_load_real_model_on_startup() {
         use_mlock: false,
         max_concurrent_inferences: 2,
         model_eviction_policy: "lru".to_string(),
+        kv_cache_type_k: None,
+        kv_cache_type_v: None,
     };
 
     let mut engine = LlmEngine::new(engine_config).await
