@@ -51,6 +51,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some("/custom/ocr".to_string()),
             florence_model_dir: Some("/custom/florence".to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         assert_eq!(config.ocr_model_dir, Some("/custom/ocr".to_string()));
@@ -67,6 +69,8 @@ mod model_manager_tests {
         let ocr_only = VisionModelConfig {
             ocr_model_dir: Some("/path/to/ocr".to_string()),
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
         assert!(ocr_only.ocr_model_dir.is_some());
         assert!(ocr_only.florence_model_dir.is_none());
@@ -75,6 +79,8 @@ mod model_manager_tests {
         let florence_only = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: Some("/path/to/florence".to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
         assert!(florence_only.ocr_model_dir.is_none());
         assert!(florence_only.florence_model_dir.is_some());
@@ -83,6 +89,8 @@ mod model_manager_tests {
         let none = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
         assert!(none.ocr_model_dir.is_none());
         assert!(none.florence_model_dir.is_none());
@@ -131,6 +139,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -151,6 +161,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some("/nonexistent/ocr/path".to_string()),
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -174,6 +186,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: Some("/nonexistent/florence/path".to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -197,6 +211,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some("/nonexistent/ocr".to_string()),
             florence_model_dir: Some("/nonexistent/florence".to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -217,6 +233,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let manager = VisionModelManager::new(config)
@@ -243,6 +261,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let manager = VisionModelManager::new(config)
@@ -258,6 +278,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let manager = VisionModelManager::new(config)
@@ -278,6 +300,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some(OCR_MODEL_DIR.to_string()),
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -304,6 +328,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: None,
             florence_model_dir: Some(FLORENCE_MODEL_DIR.to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -336,6 +362,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some(OCR_MODEL_DIR.to_string()),
             florence_model_dir: Some(FLORENCE_MODEL_DIR.to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let result = VisionModelManager::new(config).await;
@@ -362,6 +390,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some(OCR_MODEL_DIR.to_string()),
             florence_model_dir: Some(FLORENCE_MODEL_DIR.to_string()),
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let manager = VisionModelManager::new(config)
@@ -388,6 +418,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some(OCR_MODEL_DIR.to_string()),
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let manager = VisionModelManager::new(config)
@@ -432,6 +464,8 @@ mod model_manager_tests {
         let config = VisionModelConfig {
             ocr_model_dir: Some(OCR_MODEL_DIR.to_string()),
             florence_model_dir: None,
+            vlm_endpoint: None,
+            vlm_model_name: None,
         };
 
         let manager = Arc::new(

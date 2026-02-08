@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! OCR endpoint handler
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use tracing::{debug, info, warn};
 
 use super::request::OcrRequest;
@@ -56,7 +56,39 @@ pub async fn ocr_handler(
         )
     })?;
 
-    // 3. Get OCR model
+    // 2b. Try VLM first (if available)
+    if let Some(vlm_client) = manager.get_vlm_client() {
+        let vlm_image = request
+            .image
+            .as_ref()
+            .ok_or_else(|| (StatusCode::BAD_REQUEST, "image is required".to_string()))?;
+
+        match vlm_client.ocr(vlm_image, &request.format).await {
+            Ok(vlm_result) => {
+                info!(
+                    "VLM OCR complete: {} chars, {}ms (model: {})",
+                    vlm_result.text.len(),
+                    vlm_result.processing_time_ms,
+                    vlm_result.model
+                );
+
+                let response = OcrResponse::new(
+                    vlm_result.text,
+                    1.0,
+                    vec![],
+                    vlm_result.processing_time_ms,
+                    request.chain_id,
+                    &vlm_result.model,
+                );
+                return Ok(Json(response));
+            }
+            Err(e) => {
+                warn!("VLM OCR failed, falling back to ONNX: {}", e);
+            }
+        }
+    }
+
+    // 3. Get OCR model (ONNX fallback)
     let ocr_model = manager.get_ocr_model().ok_or_else(|| {
         warn!("OCR model not loaded");
         (
@@ -66,9 +98,10 @@ pub async fn ocr_handler(
     })?;
 
     // 4. Decode base64 image
-    let image_data = request.image.as_ref().ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, "image is required".to_string())
-    })?;
+    let image_data = request
+        .image
+        .as_ref()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "image is required".to_string()))?;
 
     let (image, image_info) = decode_base64_image(image_data).map_err(|e| {
         warn!("Failed to decode image: {}", e);
@@ -119,6 +152,7 @@ pub async fn ocr_handler(
         regions,
         ocr_result.processing_time_ms,
         request.chain_id,
+        "paddleocr",
     );
 
     Ok(Json(response))
@@ -132,6 +166,36 @@ mod tests {
     fn test_handler_exists() {
         // Just verify the handler compiles
         let _ = ocr_handler;
+    }
+
+    #[test]
+    fn test_ocr_handler_vlm_model_field() {
+        // VLM OCR result should carry model name
+        let response = OcrResponse::new("VLM text".to_string(), 1.0, vec![], 50, 84532, "qwen3-vl");
+        assert_eq!(response.model, "qwen3-vl");
+    }
+
+    #[test]
+    fn test_ocr_handler_onnx_model_field() {
+        // ONNX fallback should use "paddleocr"
+        let response = OcrResponse::new(
+            "ONNX text".to_string(),
+            0.95,
+            vec![],
+            100,
+            84532,
+            "paddleocr",
+        );
+        assert_eq!(response.model, "paddleocr");
+    }
+
+    #[test]
+    fn test_ocr_handler_fallback_on_vlm_error() {
+        // When VLM fails, fallback produces "paddleocr" model name
+        let response =
+            OcrResponse::new("fallback".to_string(), 0.9, vec![], 200, 84532, "paddleocr");
+        assert_eq!(response.model, "paddleocr");
+        assert!(response.text == "fallback");
     }
 
     #[test]
