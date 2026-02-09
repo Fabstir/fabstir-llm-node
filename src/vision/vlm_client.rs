@@ -24,8 +24,16 @@ struct ChatMessage {
 }
 
 #[derive(serde::Deserialize)]
+struct ChatUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+}
+
+#[derive(serde::Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+    usage: Option<ChatUsage>,
 }
 
 #[derive(serde::Deserialize)]
@@ -45,6 +53,7 @@ pub struct VlmOcrResult {
     pub text: String,
     pub model: String,
     pub processing_time_ms: u64,
+    pub tokens_used: u32,
 }
 
 /// Result from VLM-based image description
@@ -52,6 +61,7 @@ pub struct VlmDescribeResult {
     pub description: String,
     pub model: String,
     pub processing_time_ms: u64,
+    pub tokens_used: u32,
 }
 
 /// Client for calling a VLM sidecar service via OpenAI-compatible API
@@ -138,11 +148,13 @@ impl VlmClient {
             .first()
             .map(|c| c.message.content.clone())
             .unwrap_or_default();
+        let tokens_used = chat_response.usage.map(|u| u.total_tokens).unwrap_or(0);
 
         Ok(VlmOcrResult {
             text,
             model: self.model_name.clone(),
             processing_time_ms: start.elapsed().as_millis() as u64,
+            tokens_used,
         })
     }
 
@@ -193,11 +205,13 @@ impl VlmClient {
             .first()
             .map(|c| c.message.content.clone())
             .unwrap_or_default();
+        let tokens_used = chat_response.usage.map(|u| u.total_tokens).unwrap_or(0);
 
         Ok(VlmDescribeResult {
             description,
             model: self.model_name.clone(),
             processing_time_ms: start.elapsed().as_millis() as u64,
+            tokens_used,
         })
     }
 }
@@ -294,6 +308,39 @@ mod tests {
     fn test_describe_prompt_detailed() {
         assert!(DESCRIBE_DETAILED.contains("in detail"));
         assert!(DESCRIBE_DETAILED.contains("objects"));
+    }
+
+    // --- Phase 7 tests ---
+
+    #[test]
+    fn test_chat_usage_deserialization() {
+        let json = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 42,
+            "total_tokens": 142
+        });
+        let usage: ChatUsage = serde_json::from_value(json).unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 42);
+        assert_eq!(usage.total_tokens, 142);
+    }
+
+    #[test]
+    fn test_chat_response_with_usage() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": { "content": "A cat." }
+            }],
+            "usage": {
+                "prompt_tokens": 200,
+                "completion_tokens": 15,
+                "total_tokens": 215
+            }
+        });
+        let response: ChatResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.choices[0].message.content, "A cat.");
+        let usage = response.usage.expect("usage should be present");
+        assert_eq!(usage.total_tokens, 215);
     }
 
     #[test]
