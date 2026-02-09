@@ -1,8 +1,8 @@
 # IMPLEMENTATION - VLM Sidecar for Vision with ONNX Fallback
 
-## Status: ✅ COMPLETE (Phase 6 added)
+## Status: COMPLETE
 
-**Version**: v8.15.3-vlm-vision
+**Version**: v8.15.4-vlm-vision-ws-ocr
 **Previous Version**: v8.15.2-repeat-penalty-window
 **Start Date**: 2026-02-08
 **Approach**: Strict TDD with bounded autonomy - one sub-phase at a time
@@ -93,7 +93,11 @@ Replace the CPU-only PaddleOCR + Florence-2 ONNX pipeline with a modern VLM side
 | 6 | 6.3 | Integrate into encrypted_message handler | ✅ Done | 1/1 | 20 |
 | 6 | 6.4 | Integrate into plaintext inference handler | ✅ Done | 1/1 | 20 |
 | 6 | 6.5 | Full test suite + rebuild tarball | ✅ Done | 820/827 (7 pre-existing) | 0 |
-| **Total** | | | **100%** | **77 new tests passing** | **~540** |
+| 7 | 7.1 | Tests for VLM token capture + billing | ✅ Done | 4/4 | 40 |
+| 7 | 7.2 | Capture usage from VLM response | ✅ Done | 2/2 | 25 |
+| 7 | 7.3 | Return + track VLM tokens in server.rs | ✅ Done | 1/1 | 30 |
+| 7 | 7.4 | Full test suite + rebuild tarball | ✅ Done | 822/829 (7 pre-existing) | 0 |
+| **Total** | | | **100%** | **83 total** | **~660** |
 
 ---
 
@@ -949,6 +953,113 @@ cargo check
 - [x] Run `cargo fmt`
 - [x] Run `timeout 120 cargo test --lib -- --test-threads=2` — all pass
 - [x] Rebuild tarball
+
+---
+
+## Phase 7: VLM Token Billing
+
+**Problem**: The VLM sidecar processes images via OCR (up to 4096 tokens) and describe (up to 100 tokens) on GPU, but these tokens are never counted for billing. Only main LLM output tokens are tracked. The host bears GPU compute cost for vision processing but isn't compensated. The VLM sidecar (llama-server) already returns token usage in its OpenAI-compatible response (`usage.total_tokens`), but the `ChatResponse` struct ignores it.
+
+**Solution**: Capture VLM token usage from the OpenAI-compatible response and add it to the job's token tracker so hosts are compensated for vision processing.
+
+### Token Flow After Fix
+
+```
+Images → VLM OCR (N tokens) + VLM Describe (M tokens)
+       → track_tokens(job_id, N+M)              ← NEW
+       → Augmented prompt → Main LLM (K tokens)
+       → track_tokens(job_id, K)                 ← existing
+       → Total billed: N + M + K
+```
+
+---
+
+### Sub-phase 7.1: Tests for VLM Token Capture + Billing (RED)
+
+**Goal**: Write tests that validate token usage is captured from VLM responses and flows to billing
+
+**Status**: ✅ Done
+
+**File**: `tests/vision_websocket_tests.rs` (append, max 40 lines) + `src/vision/vlm_client.rs` (unit tests)
+
+**Max Lines Changed**: 40
+
+**Dependencies**: Phase 6 complete
+
+**Tasks**:
+- [x] Write test `test_vlm_ocr_result_has_tokens_used` — `VlmOcrResult` struct has `tokens_used: u32` field
+- [x] Write test `test_vlm_describe_result_has_tokens_used` — `VlmDescribeResult` struct has `tokens_used: u32` field
+- [x] Write test `test_chat_usage_deserialization` — `ChatUsage` struct deserializes from OpenAI JSON
+- [x] Write test `test_chat_response_with_usage` — `ChatResponse` captures optional `usage` field
+
+---
+
+### Sub-phase 7.2: Capture Usage from VLM Response (GREEN)
+
+**Goal**: Update `VlmClient` to deserialize token usage from VLM sidecar response
+
+**Status**: ✅ Done
+
+**File**: `src/vision/vlm_client.rs` (modify, max 25 lines)
+
+**Max Lines Changed**: 25
+
+**Dependencies**: Sub-phase 7.1 tests must exist
+
+**Tasks**:
+- [x] Add `ChatUsage` struct: `{ prompt_tokens: u32, completion_tokens: u32, total_tokens: u32 }`
+- [x] Add `usage: Option<ChatUsage>` field to `ChatResponse`
+- [x] Add `pub tokens_used: u32` field to `VlmOcrResult`
+- [x] Add `pub tokens_used: u32` field to `VlmDescribeResult`
+- [x] In `ocr()`: extract `total_tokens` from response usage, default 0
+- [x] In `describe()`: extract `total_tokens` from response usage, default 0
+- [x] Verify Sub-phase 7.1 tests pass (GREEN)
+
+---
+
+### Sub-phase 7.3: Return + Track VLM Tokens in server.rs
+
+**Goal**: Change `process_vision_images()` to return VLM token count and track it for billing
+
+**Status**: ✅ Done
+
+**File**: `src/api/server.rs` (modify, max 30 lines changed)
+
+**Max Lines Changed**: 30
+
+**Dependencies**: Sub-phase 7.2 must be complete
+
+**Tasks**:
+- [x] Change `process_vision_images()` return type from `String` to `(String, u64)`
+- [x] Accumulate `tokens_used` from each `ocr()` + `describe()` call
+- [x] Return `(augmented_prompt, total_vlm_tokens)`
+- [x] At encrypted call site (~line 2013): destructure tuple, track VLM tokens via `checkpoint_manager.track_tokens()` or `token_tracker.track_tokens()`
+- [x] At plaintext call site (~line 2535): same destructure + track
+- [x] Add log: `"VLM vision processing used {} tokens for job {}", vlm_tokens, job_id`
+- [x] Verify compilation: `cargo check`
+
+---
+
+### Sub-phase 7.4: Full Test Suite + Rebuild Tarball
+
+**Goal**: Verify all tests pass, rebuild tarball once
+
+**Status**: ✅ Done
+
+**Tasks**:
+- [x] Run `cargo fmt`
+- [x] Run `timeout 120 cargo test --lib -- --test-threads=2` — 822 pass (7 pre-existing failures)
+- [x] Run `timeout 60 cargo test --test vision_websocket_tests -- --test-threads=1` — all 12 pass
+- [x] Rebuild tarball
+
+**Verification**:
+```bash
+cargo fmt
+timeout 120 cargo test --lib -- --test-threads=2
+cargo build --release --features real-ezkl -j 4
+cp target/release/fabstir-llm-node ./fabstir-llm-node
+tar -czvf fabstir-llm-node-v8.15.4.tar.gz fabstir-llm-node docker-compose.prod.yml docker/ scripts/*.sh
+```
 
 ---
 

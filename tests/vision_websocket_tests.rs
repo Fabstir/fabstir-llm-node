@@ -53,6 +53,7 @@ fn test_extract_images_empty_array() {
 // --- Prompt augmentation with vision context ---
 
 use fabstir_llm_node::vision::augment_prompt_with_vision;
+use fabstir_llm_node::vision::{VlmDescribeResult, VlmOcrResult};
 
 #[test]
 fn test_augment_prompt_with_vision_single_turn() {
@@ -180,4 +181,28 @@ fn test_augment_prompt_ocr_text_is_visible() {
     assert!(result.contains("gettyimages"));
     assert!(result.contains("Credit: James Warwick"));
     assert!(result.contains("599365999"));
+}
+
+// --- Phase 7: VLM token billing tests ---
+
+#[test]
+fn test_vlm_ocr_result_has_tokens_used() {
+    let result = VlmOcrResult {
+        text: "Hello World".to_string(),
+        model: "qwen3-vl".to_string(),
+        processing_time_ms: 150,
+        tokens_used: 42,
+    };
+    assert_eq!(result.tokens_used, 42);
+}
+
+#[test]
+fn test_vlm_describe_result_has_tokens_used() {
+    let result = VlmDescribeResult {
+        description: "A cat on a table.".to_string(),
+        model: "qwen3-vl".to_string(),
+        processing_time_ms: 200,
+        tokens_used: 18,
+    };
+    assert_eq!(result.tokens_used, 18);
 }
