@@ -165,6 +165,30 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Ensure a session exists, creating only if not already present.
+    /// Returns Ok(true) if created, Ok(false) if already existed.
+    /// This preserves existing session state (vectors, history) on re-init.
+    pub async fn ensure_session_exists_with_chain(
+        &mut self,
+        session_id: String,
+        config: SessionConfig,
+        chain_id: u64,
+    ) -> Result<bool> {
+        let mut sessions = self.sessions.write().await;
+        if sessions.contains_key(&session_id) {
+            return Ok(false);
+        }
+        if sessions.len() >= self.config.max_sessions {
+            return Err(anyhow!("Maximum sessions limit reached"));
+        }
+        let session = WebSocketSession::with_chain(session_id.clone(), config, chain_id);
+        if let Some(persistence) = &self.persistence {
+            let _ = persistence.save_session(&session).await;
+        }
+        sessions.insert(session_id, session);
+        Ok(true)
+    }
+
     pub async fn get_session(&self, session_id: &str) -> Option<WebSocketSession> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).cloned()

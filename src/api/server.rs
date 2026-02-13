@@ -1693,20 +1693,22 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                             )
                                                             .await;
 
-                                                        // FIX: Create session in session_store FIRST (was missing - caused "Session not found" errors)
+                                                        // Ensure session exists without replacing (preserves vectors/history on re-init)
                                                         {
                                                             let mut store = server.session_store.write().await;
-                                                            match store.create_session_with_chain(
+                                                            match store.ensure_session_exists_with_chain(
                                                                 sid.clone(),
                                                                 crate::api::websocket::session::SessionConfig::default(),
-                                                                chain_id.unwrap_or(84532), // Default to Base Sepolia
+                                                                chain_id.unwrap_or(84532),
                                                             ).await {
-                                                                Ok(_) => {
+                                                                Ok(true) => {
                                                                     info!("✅ Encrypted session created in store: {}", sid);
                                                                 }
+                                                                Ok(false) => {
+                                                                    info!("✅ Session re-init, preserving existing state: {}", sid);
+                                                                }
                                                                 Err(e) => {
-                                                                    // Session might already exist (e.g., reconnection), which is fine
-                                                                    warn!("⚠️ Session creation returned error (may already exist): {}", e);
+                                                                    error!("❌ Failed to ensure session exists: {}", e);
                                                                 }
                                                             }
                                                         }
