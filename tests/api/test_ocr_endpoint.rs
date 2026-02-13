@@ -40,6 +40,8 @@ async fn setup_test_state_with_ocr() -> AppState {
     let config = VisionModelConfig {
         ocr_model_dir: Some(OCR_MODEL_DIR.to_string()),
         florence_model_dir: None, // Skip Florence for OCR tests
+        vlm_endpoint: None,
+        vlm_model_name: None,
     };
 
     let manager = VisionModelManager::new(config)
@@ -56,6 +58,8 @@ async fn setup_test_state_without_ocr() -> AppState {
     let config = VisionModelConfig {
         ocr_model_dir: None,
         florence_model_dir: None,
+        vlm_endpoint: None,
+        vlm_model_name: None,
     };
 
     let manager = VisionModelManager::new(config)

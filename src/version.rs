@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.15.2-repeat-penalty-window-2026-02-07";
+pub const VERSION: &str = "v8.15.4-vlm-vision-ws-ocr-2026-02-08";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.15.2";
+pub const VERSION_NUMBER: &str = "8.15.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 15;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-07";
+pub const BUILD_DATE: &str = "2026-02-08";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -173,6 +173,16 @@ pub const FEATURES: &[&str] = &[
     "kv-cache-quantization",
     // Repeat penalty window fix (v8.15.2)
     "repeat-penalty-window-256",
+    // VLM vision sidecar (v8.15.3)
+    "vlm-vision-sidecar",
+    "vlm-ocr",
+    "vlm-image-description",
+    "vlm-onnx-fallback",
+    "openai-compatible-vlm",
+    // WebSocket vision pre-processing (v8.15.4)
+    "websocket-vision-preprocessing",
+    "vlm-dual-ocr-describe",
+    "vision-prompt-augmentation",
 ];
 
 /// Supported chain IDs
@@ -183,6 +193,17 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.15.4 - WebSocket Vision Pre-Processing (Feb 8, 2026)
+    "FEAT: WebSocket encrypted messages now route images to VLM sidecar for OCR + visual description",
+    "FEAT: Dual OCR+describe pipeline: text extraction (4096 tokens) + brief visual description (100 tokens)",
+    "FEAT: Prompt augmented with [Image Analysis]...[/Image Analysis] context before main LLM",
+    "FEAT: Plaintext inference path also supports image routing to VLM sidecar",
+    // v8.15.3 - VLM Vision Sidecar (Feb 8, 2026)
+    "FEAT: Optional VLM sidecar (Qwen3-VL via llama-server) for high-quality OCR and image description",
+    "FEAT: VLM_ENDPOINT and VLM_MODEL_NAME env vars for sidecar configuration",
+    "FEAT: Automatic ONNX fallback when VLM unavailable or fails",
+    "FEAT: Response model field now dynamic based on provider (VLM name or paddleocr/florence-2)",
+    "FEAT: OcrResponse::new() and DescribeImageResponse::new() accept model parameter",
     // v8.15.2 - Repeat Penalty Window Fix (Feb 7, 2026)
     "FIX: Repeat penalty window increased from 64 to 256 tokens to prevent long repetition loops",
     "FIX: Models no longer get stuck in repeating patterns that exceed 64-token lookback",
@@ -414,7 +435,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 15);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_PATCH, 4);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.15.0 model-agnostic inference features
@@ -428,21 +449,29 @@ mod tests {
         assert!(FEATURES.contains(&"kv-cache-quantization"));
         // v8.15.2 repeat penalty window
         assert!(FEATURES.contains(&"repeat-penalty-window-256"));
+        // v8.15.3 VLM vision
+        assert!(FEATURES.contains(&"vlm-vision-sidecar"));
+        assert!(FEATURES.contains(&"vlm-ocr"));
+        assert!(FEATURES.contains(&"vlm-onnx-fallback"));
+        // v8.15.4 WebSocket vision pre-processing
+        assert!(FEATURES.contains(&"websocket-vision-preprocessing"));
+        assert!(FEATURES.contains(&"vlm-dual-ocr-describe"));
+        assert!(FEATURES.contains(&"vision-prompt-augmentation"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.15.2"));
-        assert!(version.contains("2026-02-07"));
+        assert!(version.contains("8.15.4"));
+        assert!(version.contains("2026-02-08"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.15.2-repeat-penalty-window-2026-02-07");
-        assert_eq!(VERSION_NUMBER, "8.15.2");
-        assert_eq!(BUILD_DATE, "2026-02-07");
+        assert_eq!(VERSION, "v8.15.4-vlm-vision-ws-ocr-2026-02-08");
+        assert_eq!(VERSION_NUMBER, "8.15.4");
+        assert_eq!(BUILD_DATE, "2026-02-08");
     }
 
     #[test]

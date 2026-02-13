@@ -404,17 +404,25 @@ impl LlmEngine {
             // Create batch with configured batch size
             let mut batch = LlamaBatch::new(self.config.batch_size, 1);
 
-            // Add all tokens to batch with only last one requesting logits
-            for (i, &token) in prompt_tokens.iter().enumerate() {
-                let is_last = i == prompt_tokens.len() - 1;
-                batch
-                    .add(token, i as i32, &[0], is_last)
-                    .map_err(|e| anyhow!("Failed to add token to batch: {:?}", e))?;
+            // Process prompt tokens in chunks of batch_size (v8.15.4+)
+            // Previously all tokens were added to a single batch, causing
+            // InsufficientSpace errors when prompt exceeded batch_size.
+            let total_prompt_tokens = prompt_tokens.len();
+            let mut processed = 0;
+            while processed < total_prompt_tokens {
+                batch.clear();
+                let chunk_end = (processed + self.config.batch_size).min(total_prompt_tokens);
+                for i in processed..chunk_end {
+                    let is_last = i == total_prompt_tokens - 1;
+                    batch
+                        .add(prompt_tokens[i], i as i32, &[0], is_last)
+                        .map_err(|e| anyhow!("Failed to add token to batch: {:?}", e))?;
+                }
+                context
+                    .decode(&mut batch)
+                    .map_err(|e| anyhow!("Decode failed at chunk {}/{}: {:?}", processed, total_prompt_tokens, e))?;
+                processed = chunk_end;
             }
-
-            context
-                .decode(&mut batch)
-                .map_err(|e| anyhow!("Decode failed: {:?}", e))?;
 
             // Generate tokens
             let mut output = String::new();
