@@ -57,6 +57,7 @@ impl OcrResponse {
         regions: Vec<TextRegion>,
         processing_time_ms: u64,
         chain_id: u64,
+        model: &str,
     ) -> Self {
         let (chain_name, native_token) = match chain_id {
             84532 => ("Base Sepolia", "ETH"),
@@ -69,7 +70,7 @@ impl OcrResponse {
             confidence,
             regions,
             processing_time_ms,
-            model: "paddleocr".to_string(),
+            model: model.to_string(),
             provider: "host".to_string(),
             chain_id,
             chain_name: chain_name.to_string(),
@@ -90,6 +91,7 @@ mod tests {
             vec![],
             150,
             84532,
+            "paddleocr",
         );
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"text\":\"Hello World\""));
@@ -99,16 +101,22 @@ mod tests {
 
     #[test]
     fn test_chain_context_base_sepolia() {
-        let response = OcrResponse::new("test".to_string(), 0.9, vec![], 100, 84532);
+        let response = OcrResponse::new("test".to_string(), 0.9, vec![], 100, 84532, "paddleocr");
         assert_eq!(response.chain_name, "Base Sepolia");
         assert_eq!(response.native_token, "ETH");
     }
 
     #[test]
     fn test_chain_context_opbnb() {
-        let response = OcrResponse::new("test".to_string(), 0.9, vec![], 100, 5611);
+        let response = OcrResponse::new("test".to_string(), 0.9, vec![], 100, 5611, "paddleocr");
         assert_eq!(response.chain_name, "opBNB Testnet");
         assert_eq!(response.native_token, "BNB");
+    }
+
+    #[test]
+    fn test_ocr_response_custom_model() {
+        let response = OcrResponse::new("text".to_string(), 0.9, vec![], 100, 84532, "qwen3-vl");
+        assert_eq!(response.model, "qwen3-vl");
     }
 
     #[test]

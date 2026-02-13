@@ -4,9 +4,8 @@ use anyhow::Result;
 use fabstir_llm_node::{
     api::{ApiConfig, ApiServer},
     contracts::{
-        checkpoint_manager::CheckpointManager,
-        model_registry::ModelRegistryClient,
-        Web3Client, Web3Config,
+        checkpoint_manager::CheckpointManager, model_registry::ModelRegistryClient, Web3Client,
+        Web3Config,
     },
     inference::{EngineConfig, LlmEngine, ModelConfig},
     model_validation::ModelValidator,
@@ -111,18 +110,21 @@ async fn main() -> Result<()> {
                     .expect("Invalid NODE_REGISTRY address");
 
                 // Extract host address from private key
-                let wallet: ethers::signers::LocalWallet = host_private_key
-                    .parse()
-                    .expect("Invalid HOST_PRIVATE_KEY");
+                let wallet: ethers::signers::LocalWallet =
+                    host_private_key.parse().expect("Invalid HOST_PRIVATE_KEY");
                 let host_address = ethers::signers::Signer::address(&wallet);
 
-                println!("   Host address: 0x{}", hex::encode(host_address.as_bytes()));
+                println!(
+                    "   Host address: 0x{}",
+                    hex::encode(host_address.as_bytes())
+                );
                 println!("   Model registry: {}", model_registry_addr);
                 println!("   Node registry: {}", node_registry_addr);
 
                 // Initialize Web3 provider for validation
-                let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(&rpc_url)
-                    .expect("Failed to create provider");
+                let provider =
+                    ethers::providers::Provider::<ethers::providers::Http>::try_from(&rpc_url)
+                        .expect("Failed to create provider");
                 let provider = Arc::new(provider);
 
                 // Create ModelRegistryClient
@@ -130,7 +132,9 @@ async fn main() -> Result<()> {
                     provider.clone(),
                     model_registry_address,
                     Some(node_registry_address),
-                ).await {
+                )
+                .await
+                {
                     Ok(model_registry_client) => {
                         let model_registry = Arc::new(model_registry_client);
 
@@ -163,9 +167,15 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Validate model at startup
-                                match validator.validate_model_at_startup(&model_path_buf, host_address).await {
+                                match validator
+                                    .validate_model_at_startup(&model_path_buf, host_address)
+                                    .await
+                                {
                                     Ok(model_id) => {
-                                        println!("✅ Model authorization verified: 0x{}", hex::encode(&model_id.0));
+                                        println!(
+                                            "✅ Model authorization verified: 0x{}",
+                                            hex::encode(&model_id.0)
+                                        );
                                         semantic_model_id = Some(model_id);
                                     }
                                     Err(e) => {
@@ -173,7 +183,9 @@ async fn main() -> Result<()> {
                                         eprintln!("");
                                         eprintln!("   Your MODEL_PATH does not match a model you're registered for.");
                                         eprintln!("   Either:");
-                                        eprintln!("     1. Register this model in NodeRegistry contract");
+                                        eprintln!(
+                                            "     1. Register this model in NodeRegistry contract"
+                                        );
                                         eprintln!("     2. Change MODEL_PATH to a model you're registered for");
                                         eprintln!("     3. Disable validation: REQUIRE_MODEL_VALIDATION=false");
                                         eprintln!("");
@@ -182,7 +194,10 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("❌ Failed to initialize Web3Client for validation: {}", e);
+                                eprintln!(
+                                    "❌ Failed to initialize Web3Client for validation: {}",
+                                    e
+                                );
                                 eprintln!("   Cannot validate model without contract access.");
                                 std::process::exit(1);
                             }
@@ -197,7 +212,9 @@ async fn main() -> Result<()> {
             }
             Err(_) => {
                 eprintln!("❌ REQUIRE_MODEL_VALIDATION=true but HOST_PRIVATE_KEY not set!");
-                eprintln!("   Model validation requires HOST_PRIVATE_KEY to determine host address.");
+                eprintln!(
+                    "   Model validation requires HOST_PRIVATE_KEY to determine host address."
+                );
                 eprintln!("   Either:");
                 eprintln!("     1. Set HOST_PRIVATE_KEY environment variable");
                 eprintln!("     2. Disable validation: REQUIRE_MODEL_VALIDATION=false");
@@ -237,7 +254,10 @@ async fn main() -> Result<()> {
                 println!("   Context size: {} tokens", max_context_length);
                 println!("   Batch size: {} tokens", batch_size);
                 if semantic_model_id.is_some() {
-                    println!("   Contract model ID: 0x{}", hex::encode(&semantic_model_id.unwrap().0[..8]));
+                    println!(
+                        "   Contract model ID: 0x{}",
+                        hex::encode(&semantic_model_id.unwrap().0[..8])
+                    );
                 }
             }
             Err(e) => {
@@ -309,19 +329,19 @@ async fn main() -> Result<()> {
     println!("🧠 Initializing embedding model manager...");
 
     // Create default embedding model config for all-MiniLM-L6-v2
-    let embedding_configs = vec![
-        fabstir_llm_node::embeddings::EmbeddingModelConfig {
-            name: "all-MiniLM-L6-v2".to_string(),
-            model_path: "./models/all-MiniLM-L6-v2-onnx/model.onnx".to_string(),
-            tokenizer_path: "./models/all-MiniLM-L6-v2-onnx/tokenizer.json".to_string(),
-            dimensions: 384,
-        },
-    ];
+    let embedding_configs = vec![fabstir_llm_node::embeddings::EmbeddingModelConfig {
+        name: "all-MiniLM-L6-v2".to_string(),
+        model_path: "./models/all-MiniLM-L6-v2-onnx/model.onnx".to_string(),
+        tokenizer_path: "./models/all-MiniLM-L6-v2-onnx/tokenizer.json".to_string(),
+        dimensions: 384,
+    }];
 
     match fabstir_llm_node::embeddings::EmbeddingModelManager::new(embedding_configs).await {
         Ok(manager) => {
             let manager = Arc::new(manager);
-            api_server.set_embedding_model_manager(manager.clone()).await;
+            api_server
+                .set_embedding_model_manager(manager.clone())
+                .await;
             println!("✅ Embedding model manager initialized");
 
             // List available models
@@ -343,14 +363,25 @@ async fn main() -> Result<()> {
     // Initialize Vision Model Manager for /v1/ocr and /v1/describe-image endpoints
     println!("👁️  Initializing vision model manager...");
 
-    let ocr_model_path = env::var("OCR_MODEL_PATH")
-        .unwrap_or_else(|_| "./models/paddleocr-onnx".to_string());
-    let florence_model_path = env::var("FLORENCE_MODEL_PATH")
-        .unwrap_or_else(|_| "./models/florence-2-onnx".to_string());
+    let ocr_model_path =
+        env::var("OCR_MODEL_PATH").unwrap_or_else(|_| "./models/paddleocr-onnx".to_string());
+    let florence_model_path =
+        env::var("FLORENCE_MODEL_PATH").unwrap_or_else(|_| "./models/florence-2-onnx".to_string());
+
+    let vlm_endpoint = env::var("VLM_ENDPOINT").ok();
+    let vlm_model_name = env::var("VLM_MODEL_NAME").ok();
+
+    if let Some(ref endpoint) = vlm_endpoint {
+        println!("🔭 VLM endpoint configured: {}", endpoint);
+    } else {
+        println!("   No VLM_ENDPOINT set, using ONNX vision models only");
+    }
 
     let vision_config = fabstir_llm_node::vision::VisionModelConfig {
         ocr_model_dir: Some(ocr_model_path),
         florence_model_dir: Some(florence_model_path),
+        vlm_endpoint,
+        vlm_model_name,
     };
 
     match fabstir_llm_node::vision::VisionModelManager::new(vision_config).await {
@@ -392,9 +423,7 @@ async fn main() -> Result<()> {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        api_server
-            .set_search_service(search_service)
-            .await;
+        api_server.set_search_service(search_service).await;
         println!("✅ Web search service initialized (enabled by default)");
         println!("   Available providers: {}", providers.join(", "));
         println!("   /v1/search endpoint enabled");
@@ -474,7 +503,10 @@ async fn main() -> Result<()> {
         "  Inference:    POST http://localhost:{}/v1/inference",
         api_port
     );
-    println!("  Embed:        POST http://localhost:{}/v1/embed", api_port);
+    println!(
+        "  Embed:        POST http://localhost:{}/v1/embed",
+        api_port
+    );
     println!("  OCR:          POST http://localhost:{}/v1/ocr", api_port);
     println!(
         "  Describe:     POST http://localhost:{}/v1/describe-image",

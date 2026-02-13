@@ -61,7 +61,53 @@ pub async fn describe_image_handler(
         )
     })?;
 
-    // 3. Get Florence model
+    // 2b. Try VLM first (if available)
+    if let Some(vlm_client) = manager.get_vlm_client() {
+        let vlm_image = request
+            .image
+            .as_ref()
+            .ok_or_else(|| (StatusCode::BAD_REQUEST, "image is required".to_string()))?;
+
+        match vlm_client
+            .describe(
+                vlm_image,
+                &request.format,
+                &request.detail,
+                request.prompt.as_deref(),
+            )
+            .await
+        {
+            Ok(vlm_result) => {
+                info!(
+                    "VLM describe complete: {} chars, {}ms (model: {})",
+                    vlm_result.description.len(),
+                    vlm_result.processing_time_ms,
+                    vlm_result.model
+                );
+
+                let analysis = ImageAnalysis {
+                    width: 0,
+                    height: 0,
+                    dominant_colors: vec![],
+                    scene_type: None,
+                };
+                let response = DescribeImageResponse::new(
+                    vlm_result.description,
+                    vec![],
+                    analysis,
+                    vlm_result.processing_time_ms,
+                    request.chain_id,
+                    &vlm_result.model,
+                );
+                return Ok(Json(response));
+            }
+            Err(e) => {
+                warn!("VLM describe failed, falling back to Florence-2: {}", e);
+            }
+        }
+    }
+
+    // 3. Get Florence model (ONNX fallback)
     let florence_model = manager.get_florence_model().ok_or_else(|| {
         warn!("Florence model not loaded");
         (
@@ -130,6 +176,7 @@ pub async fn describe_image_handler(
         analysis,
         description_result.processing_time_ms,
         request.chain_id,
+        "florence-2",
     );
 
     Ok(Json(response))
@@ -143,6 +190,62 @@ mod tests {
     fn test_handler_exists() {
         // Just verify the handler compiles
         let _ = describe_image_handler;
+    }
+
+    #[test]
+    fn test_describe_handler_vlm_model_field() {
+        let response = DescribeImageResponse::new(
+            "VLM description".to_string(),
+            vec![],
+            ImageAnalysis {
+                width: 0,
+                height: 0,
+                dominant_colors: vec![],
+                scene_type: None,
+            },
+            50,
+            84532,
+            "qwen3-vl",
+        );
+        assert_eq!(response.model, "qwen3-vl");
+    }
+
+    #[test]
+    fn test_describe_handler_onnx_model_field() {
+        let response = DescribeImageResponse::new(
+            "ONNX description".to_string(),
+            vec![],
+            ImageAnalysis {
+                width: 640,
+                height: 480,
+                dominant_colors: vec![],
+                scene_type: None,
+            },
+            200,
+            84532,
+            "florence-2",
+        );
+        assert_eq!(response.model, "florence-2");
+    }
+
+    #[test]
+    fn test_describe_handler_fallback_on_vlm_error() {
+        // When VLM fails, fallback produces "florence-2" model
+        let response = DescribeImageResponse::new(
+            "fallback".to_string(),
+            vec![],
+            ImageAnalysis {
+                width: 100,
+                height: 100,
+                dominant_colors: vec![],
+                scene_type: None,
+            },
+            300,
+            84532,
+            "florence-2",
+        );
+        assert_eq!(response.model, "florence-2");
+        assert_eq!(response.description, "fallback");
     }
 
     #[test]

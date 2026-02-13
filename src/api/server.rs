@@ -1335,6 +1335,117 @@ async fn search_handler_wrapper(
     }
 }
 
+/// Process images via VLM sidecar, return augmented prompt (v8.15.3+)
+///
+/// Strip SDK UI markers from prompt before sending to LLM (v8.15.4+)
+///
+/// The SDK chat UI embeds `<<DISPLAY>>...<</DISPLAY>>` and `<<ATTACHMENTS>>...<</ATTACHMENTS>>`
+/// markers in the prompt text. These contain filenames that cause the LLM to hallucinate
+/// (e.g., seeing "Book1 - Excel.png" and describing a spreadsheet instead of the actual image).
+/// This function removes those markers so the LLM only sees the actual user text and
+/// the `[Image Analysis]` block from VLM processing.
+fn strip_ui_markers(prompt: &str) -> String {
+    use regex::Regex;
+    // Strip <<ATTACHMENTS>>...<</ATTACHMENTS>> entirely (filenames cause hallucinations)
+    let re_attach = Regex::new(r"<<ATTACHMENTS>>.*?<</ATTACHMENTS>>").unwrap();
+    let cleaned = re_attach.replace_all(prompt, "");
+    // Strip <<DISPLAY>> and <</DISPLAY>> markers but keep content between them
+    let cleaned = cleaned.replace("<<DISPLAY>>", "").replace("<</DISPLAY>>", "");
+    // Also strip [Attached image: ...] lines that may reference filenames
+    let re_attached = Regex::new(r"\[Attached image: [^\]]*\]").unwrap();
+    let cleaned = re_attached.replace_all(&cleaned, "");
+    // Collapse multiple newlines
+    let re_newlines = Regex::new(r"\n{3,}").unwrap();
+    re_newlines.replace_all(&cleaned, "\n\n").trim().to_string()
+}
+
+/// For each image in the array, calls VlmClient::describe() to get a text description.
+/// Returns the prompt augmented with `[Image Analysis]...[/Image Analysis]` context,
+/// or the original prompt if VLM is unavailable or all images fail.
+async fn process_vision_images(
+    server: &ApiServer,
+    images: &[serde_json::Value],
+    user_prompt: &str,
+) -> (String, u64) {
+    let manager_guard = server.vision_model_manager.read().await;
+    if let Some(manager) = manager_guard.as_ref() {
+        if let Some(vlm_client) = manager.get_vlm_client() {
+            let mut descriptions = Vec::new();
+            let mut vlm_tokens: u64 = 0;
+            for (i, image) in images.iter().enumerate() {
+                let data = match image["data"].as_str() {
+                    Some(d) if !d.is_empty() => d,
+                    _ => continue,
+                };
+                let format = image["format"].as_str().unwrap_or("png");
+                info!(
+                    "Processing image {}/{} via VLM sidecar (OCR + describe)",
+                    i + 1,
+                    images.len()
+                );
+
+                // Step 1: OCR - extract all text (4096 tokens, temp 0.1)
+                let mut parts = Vec::new();
+                match vlm_client.ocr(data, format).await {
+                    Ok(result) => {
+                        let text = result.text.trim().to_string();
+                        info!(
+                            "VLM OCR image {} in {}ms ({} chars, {} tokens): {:?}",
+                            i + 1,
+                            result.processing_time_ms,
+                            text.len(),
+                            result.tokens_used,
+                            &text[..text.len().min(200)]
+                        );
+                        vlm_tokens += result.tokens_used as u64;
+                        if !text.is_empty() {
+                            parts.push(format!("Text content:\n{}", text));
+                        }
+                    }
+                    Err(e) => warn!("VLM OCR failed for image {}: {}", i + 1, e),
+                }
+
+                // Step 2: Brief visual description (100 tokens, temp 0.3)
+                match vlm_client.describe(data, format, "brief", None).await {
+                    Ok(result) => {
+                        let desc = result.description.trim().to_string();
+                        info!(
+                            "VLM described image {} in {}ms ({} tokens): {:?}",
+                            i + 1,
+                            result.processing_time_ms,
+                            result.tokens_used,
+                            &desc[..desc.len().min(200)]
+                        );
+                        vlm_tokens += result.tokens_used as u64;
+                        if !desc.is_empty() {
+                            parts.push(format!("Visual: {}", desc));
+                        }
+                    }
+                    Err(e) => warn!("VLM describe failed for image {}: {}", i + 1, e),
+                }
+
+                if !parts.is_empty() {
+                    descriptions.push(parts.join("\n\n"));
+                }
+            }
+            // Strip UI markers (<<ATTACHMENTS>>, <<DISPLAY>>, [Attached image:]) that
+            // contain filenames causing LLM hallucinations (v8.15.4+)
+            let clean_prompt = strip_ui_markers(user_prompt);
+            let augmented = crate::vision::augment_prompt_with_vision(&descriptions, &clean_prompt);
+            info!(
+                "VLM vision processing used {} tokens total",
+                vlm_tokens
+            );
+            info!(
+                "Vision-augmented prompt preview (first 500 chars): {:?}",
+                &augmented[..augmented.len().min(500)]
+            );
+            return (augmented, vlm_tokens);
+        }
+    }
+    (user_prompt.to_string(), 0)
+}
+
 async fn websocket_handler(
     ws: WebSocketUpgrade,
     State(server): State<Arc<ApiServer>>,
@@ -1876,12 +1987,56 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                             json!({"prompt": plaintext_str})
                                                                         });
 
+                                                                // Log decrypted JSON keys for debugging (v8.15.3+)
+                                                                if let Some(obj) = decrypted_json.as_object() {
+                                                                    let keys: Vec<&String> = obj.keys().collect();
+                                                                    info!("Decrypted JSON keys: {:?}", keys);
+                                                                    if let Some(images_val) = obj.get("images") {
+                                                                        info!("images field type: {}, is_array={}, is_null={}",
+                                                                            match images_val {
+                                                                                serde_json::Value::Array(a) => format!("array(len={})", a.len()),
+                                                                                serde_json::Value::String(_) => "string".to_string(),
+                                                                                serde_json::Value::Null => "null".to_string(),
+                                                                                serde_json::Value::Object(_) => "object".to_string(),
+                                                                                _ => format!("{:?}", images_val),
+                                                                            },
+                                                                            images_val.is_array(),
+                                                                            images_val.is_null()
+                                                                        );
+                                                                    } else {
+                                                                        info!("No 'images' field in decrypted JSON");
+                                                                    }
+                                                                }
+
                                                                 // Extract prompt from decrypted JSON or use entire string
                                                                 let plaintext_prompt = decrypted_json
                                                                     .get("prompt")
                                                                     .and_then(|v| v.as_str())
                                                                     .unwrap_or(&plaintext_str)
                                                                     .to_string();
+
+                                                                // Vision pre-processing: route images to VLM sidecar (v8.15.3+)
+                                                                let mut vlm_tokens_used: u64 = 0;
+                                                                let plaintext_prompt = match decrypted_json.get("images").and_then(|v| v.as_array()) {
+                                                                    Some(imgs) if !imgs.is_empty() => {
+                                                                        info!("Found {} image(s) in encrypted message, routing to VLM sidecar", imgs.len());
+                                                                        let (augmented, vlm_tokens) = process_vision_images(&server, imgs, &plaintext_prompt).await;
+                                                                        vlm_tokens_used = vlm_tokens;
+                                                                        // Track VLM tokens for billing (v8.15.4+)
+                                                                        if vlm_tokens > 0 {
+                                                                            if let Some(jid) = job_id {
+                                                                                info!("📊 VLM vision used {} tokens for job {}", vlm_tokens, jid);
+                                                                                if let Some(cm) = server.checkpoint_manager.read().await.as_ref() {
+                                                                                    let _ = cm.track_tokens(jid, vlm_tokens, current_session_id.clone()).await;
+                                                                                } else {
+                                                                                    server.token_tracker.track_tokens(Some(jid), vlm_tokens as usize, current_session_id.clone()).await;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        augmented
+                                                                    }
+                                                                    _ => plaintext_prompt,
+                                                                };
 
                                                                 // Extract model (priority: decrypted > outer message > default)
                                                                 let model = decrypted_json
@@ -2113,6 +2268,9 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                             }
                                                                                                             if let Some(ref sid) = current_session_id {
                                                                                                                 stream_end_msg["session_id"] = json!(sid);
+                                                                                                            }
+                                                                                                            if vlm_tokens_used > 0 {
+                                                                                                                stream_end_msg["vlm_tokens"] = json!(vlm_tokens_used);
                                                                                                             }
                                                                                                             let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                                                         }
@@ -2395,6 +2553,31 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             json_msg["request"].clone()
                         };
 
+                        // Vision pre-processing for plaintext messages (v8.15.3+)
+                        let mut vlm_tokens_used: u64 = 0;
+                        let request_value = if let Some(imgs) = json_msg.get("images").and_then(|v| v.as_array()) {
+                            if !imgs.is_empty() {
+                                info!("Found {} image(s) in plaintext message, routing to VLM sidecar", imgs.len());
+                                let prompt = request_value.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+                                let (augmented, vlm_tokens) = process_vision_images(&server, imgs, prompt).await;
+                                vlm_tokens_used = vlm_tokens;
+                                // Track VLM tokens for billing (v8.15.4+)
+                                if vlm_tokens > 0 {
+                                    if let Some(jid) = job_id {
+                                        info!("📊 VLM vision used {} tokens for job {}", vlm_tokens, jid);
+                                        if let Some(cm) = server.checkpoint_manager.read().await.as_ref() {
+                                            let _ = cm.track_tokens(jid, vlm_tokens, session_id.clone()).await;
+                                        } else {
+                                            server.token_tracker.track_tokens(Some(jid), vlm_tokens as usize, session_id.clone()).await;
+                                        }
+                                    }
+                                }
+                                let mut rv = request_value;
+                                rv["prompt"] = serde_json::Value::String(augmented);
+                                rv
+                            } else { request_value }
+                        } else { request_value };
+
                         // Debug: Log the entire request
                         info!(
                             "🔍 WebSocket inference request received: {:?}",
@@ -2452,6 +2635,9 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             // Include message ID in end message too
                                             if let Some(ref msg_id) = message_id {
                                                 end_msg["id"] = msg_id.clone();
+                                            }
+                                            if vlm_tokens_used > 0 {
+                                                end_msg["vlm_tokens"] = json!(vlm_tokens_used);
                                             }
 
                                             let _ = socket

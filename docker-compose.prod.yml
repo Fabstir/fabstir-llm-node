@@ -91,6 +91,10 @@ services:
       WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}
       BRAVE_API_KEY: ${BRAVE_API_KEY:-}
 
+      # Optional: VLM Vision sidecar (for high-VRAM hosts)
+      VLM_ENDPOINT: ${VLM_ENDPOINT:-http://qwen3-vl:8081}
+      VLM_MODEL_NAME: ${VLM_MODEL_NAME:-qwen3-vl}
+
     volumes:
       # Mount model directory
       - ${MODELS_DIR:-./models}:/app/models:ro
@@ -99,6 +103,35 @@ services:
     depends_on:
       s5-bridge:
         condition: service_healthy
+    networks:
+      - fabstir-network
+
+  # VLM Vision Sidecar (optional - for high-VRAM hosts only)
+  # Requires ~5GB VRAM for Qwen3-VL-8B-Instruct Q4_K_M
+  # To disable: set VLM_ENDPOINT= (empty) in .env or stop this service
+  # First build: docker-compose -f docker-compose.prod.yml build qwen3-vl
+  qwen3-vl:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vlm-sidecar
+    container_name: qwen3-vl
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${VLM_MODEL_PATH:-./models/qwen3-vl}:/models:ro
+    command: >
+      --model /models/${VLM_MODEL_FILE:-Qwen3VL-8B-Instruct-Q4_K_M.gguf}
+      --mmproj /models/${VLM_MMPROJ_FILE:-mmproj-Qwen3VL-8B-Instruct-F16.gguf}
+      --host 0.0.0.0 --port 8081
+      --ctx-size 4096 --n-gpu-layers 99
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
     networks:
       - fabstir-network
 

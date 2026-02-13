@@ -66,6 +66,7 @@ impl DescribeImageResponse {
         analysis: ImageAnalysis,
         processing_time_ms: u64,
         chain_id: u64,
+        model: &str,
     ) -> Self {
         let (chain_name, native_token) = match chain_id {
             84532 => ("Base Sepolia", "ETH"),
@@ -78,7 +79,7 @@ impl DescribeImageResponse {
             objects,
             analysis,
             processing_time_ms,
-            model: "florence-2".to_string(),
+            model: model.to_string(),
             provider: "host".to_string(),
             chain_id,
             chain_name: chain_name.to_string(),
@@ -108,6 +109,7 @@ mod tests {
             },
             4500,
             84532,
+            "florence-2",
         );
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"description\":\"A cat sitting on a windowsill\""));
@@ -128,6 +130,7 @@ mod tests {
             },
             100,
             84532,
+            "florence-2",
         );
         assert_eq!(response.chain_name, "Base Sepolia");
         assert_eq!(response.native_token, "ETH");
@@ -146,9 +149,28 @@ mod tests {
             },
             100,
             5611,
+            "florence-2",
         );
         assert_eq!(response.chain_name, "opBNB Testnet");
         assert_eq!(response.native_token, "BNB");
+    }
+
+    #[test]
+    fn test_describe_response_custom_model() {
+        let response = DescribeImageResponse::new(
+            "test".to_string(),
+            vec![],
+            ImageAnalysis {
+                width: 100,
+                height: 100,
+                dominant_colors: vec![],
+                scene_type: None,
+            },
+            100,
+            84532,
+            "qwen3-vl",
+        );
+        assert_eq!(response.model, "qwen3-vl");
     }
 
     #[test]
