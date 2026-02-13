@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.15.4-vlm-vision-ws-ocr-2026-02-08";
+pub const VERSION: &str = "v8.15.5-session-reinit-fix-2026-02-13";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.15.4";
+pub const VERSION_NUMBER: &str = "8.15.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 15;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-08";
+pub const BUILD_DATE: &str = "2026-02-13";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -183,6 +183,8 @@ pub const FEATURES: &[&str] = &[
     "websocket-vision-preprocessing",
     "vlm-dual-ocr-describe",
     "vision-prompt-augmentation",
+    // Session re-init fix (v8.15.5)
+    "session-reinit-fix",
 ];
 
 /// Supported chain IDs
@@ -193,6 +195,9 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.15.5 - Session Re-init Fix (Feb 13, 2026)
+    "FIX: Second encrypted_session_init no longer wipes uploaded vectors and conversation history",
+    "FEAT: New ensure_session_exists_with_chain() preserves existing session state on re-init",
     // v8.15.4 - WebSocket Vision Pre-Processing (Feb 8, 2026)
     "FEAT: WebSocket encrypted messages now route images to VLM sidecar for OCR + visual description",
     "FEAT: Dual OCR+describe pipeline: text extraction (4096 tokens) + brief visual description (100 tokens)",
@@ -435,9 +440,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 15);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_PATCH, 5);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.15.5 session re-init fix
+        assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
         assert!(FEATURES.contains(&"glm4-chat-template"));
         assert!(FEATURES.contains(&"configurable-stop-tokens"));
@@ -463,15 +470,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.15.4"));
-        assert!(version.contains("2026-02-08"));
+        assert!(version.contains("8.15.5"));
+        assert!(version.contains("2026-02-13"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.15.4-vlm-vision-ws-ocr-2026-02-08");
-        assert_eq!(VERSION_NUMBER, "8.15.4");
-        assert_eq!(BUILD_DATE, "2026-02-08");
+        assert_eq!(VERSION, "v8.15.5-session-reinit-fix-2026-02-13");
+        assert_eq!(VERSION_NUMBER, "8.15.5");
+        assert_eq!(BUILD_DATE, "2026-02-13");
     }
 
     #[test]
