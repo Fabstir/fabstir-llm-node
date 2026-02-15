@@ -140,7 +140,8 @@ services:
       - fabstir-network
 
   # SGLang Diffusion Sidecar (optional - for image generation)
-  # Requires ~13GB VRAM for FLUX.2 Klein 4B
+  # PYTORCH_NO_CUDA_MEMORY_CACHING=1 prevents PyTorch from holding freed VRAM,
+  # ensuring the LLM can allocate KV cache contexts after image generation.
   # To disable: set DIFFUSION_ENDPOINT= (empty) in .env or stop this service
   # First build: docker-compose -f docker-compose.prod.yml build diffusion-sidecar
   diffusion-sidecar:
@@ -150,18 +151,19 @@ services:
     container_name: diffusion-sidecar
     restart: unless-stopped
     runtime: nvidia
-    shm_size: '32g'
+    shm_size: '8g'
     ipc: host
     environment:
       NVIDIA_VISIBLE_DEVICES: all
+      # Prevent PyTorch from caching freed GPU memory — ensures VRAM is returned
+      # to the CUDA driver immediately so the LLM can allocate KV cache contexts
+      PYTORCH_NO_CUDA_MEMORY_CACHING: "1"
     volumes:
       - ${DIFFUSION_MODEL_PATH:-./models/flux2-klein-4b}:/models/black-forest-labs/FLUX.2-klein-4B
     command: >
       --model-path /models/black-forest-labs/FLUX.2-klein-4B
       --port 8082
       --host 0.0.0.0
-      --text-encoder-cpu-offload
-      --pin-cpu-memory
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       interval: 30s
