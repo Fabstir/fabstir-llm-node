@@ -49,9 +49,7 @@ pub enum VectorLoadError {
     ChunkValidationFailed { chunk_id: usize, reason: String },
 
     /// Vector dimensions don't match manifest specification
-    #[error(
-        "Dimension mismatch in chunk {chunk_id}: expected {expected}D, got {actual}D vectors"
-    )]
+    #[error("Dimension mismatch in chunk {chunk_id}: expected {expected}D, got {actual}D vectors")]
     DimensionMismatch {
         chunk_id: usize,
         expected: usize,
@@ -82,10 +80,7 @@ pub enum VectorLoadError {
 
     /// Memory limit exceeded for loaded vectors
     #[error("Memory limit exceeded: dataset requires {required_mb}MB, limit is {limit_mb}MB")]
-    MemoryLimitExceeded {
-        required_mb: usize,
-        limit_mb: usize,
-    },
+    MemoryLimitExceeded { required_mb: usize, limit_mb: usize },
 
     /// Loading operation timed out
     #[error("Loading timeout: operation exceeded {duration_sec}s limit")]
@@ -145,7 +140,9 @@ impl VectorLoadError {
             VectorLoadError::Timeout { duration_sec } => {
                 format!("Loading timed out after {}s", duration_sec)
             }
-            VectorLoadError::RateLimitExceeded { limit, window_sec, .. } => {
+            VectorLoadError::RateLimitExceeded {
+                limit, window_sec, ..
+            } => {
                 format!("Too many requests: limit is {} per {}s", limit, window_sec)
             }
             _ => self.to_string(),

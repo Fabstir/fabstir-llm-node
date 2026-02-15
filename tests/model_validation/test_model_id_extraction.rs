@@ -26,7 +26,10 @@ use fabstir_llm_node::model_validation::{DynamicModelInfo, ModelValidationError}
 fn test_extract_filename_from_path() {
     // Unix-style paths
     let path = Path::new("/models/tiny-vicuna-1b.q4_k_m.gguf");
-    assert_eq!(path.file_name().unwrap().to_str().unwrap(), "tiny-vicuna-1b.q4_k_m.gguf");
+    assert_eq!(
+        path.file_name().unwrap().to_str().unwrap(),
+        "tiny-vicuna-1b.q4_k_m.gguf"
+    );
 
     // Relative path
     let path = Path::new("./models/model.gguf");
@@ -55,7 +58,10 @@ fn test_extract_filename_directory_path() {
     let filename = path.file_name().and_then(|n| n.to_str());
     // If we have a filename without .gguf extension, it's invalid
     if let Some(name) = filename {
-        assert!(!name.ends_with(".gguf"), "Directory should not be treated as model file");
+        assert!(
+            !name.ends_with(".gguf"),
+            "Directory should not be treated as model file"
+        );
     }
 }
 
@@ -66,9 +72,9 @@ fn test_extract_filename_directory_path() {
 /// Test looking up a registered model in dynamic map
 #[test]
 fn test_lookup_registered_model_in_map() {
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut map: HashMap<String, DynamicModelInfo> = HashMap::new();
     map.insert(
@@ -94,9 +100,9 @@ fn test_lookup_registered_model_in_map() {
 /// Test looking up unregistered model returns None
 #[test]
 fn test_lookup_unregistered_model_in_map() {
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut map: HashMap<String, DynamicModelInfo> = HashMap::new();
     map.insert(
@@ -121,9 +127,9 @@ fn test_lookup_unregistered_model_in_map() {
 #[test]
 fn test_any_registered_model_works() {
     // Even "GPT-OSS-120B" works if registered
-    let gpt_model_id = H256::from_str(
-        "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    ).unwrap();
+    let gpt_model_id =
+        H256::from_str("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+            .unwrap();
 
     let mut map: HashMap<String, DynamicModelInfo> = HashMap::new();
     map.insert(
@@ -140,16 +146,19 @@ fn test_any_registered_model_works() {
     let filename = path.file_name().unwrap().to_str().unwrap();
 
     let result = map.get(filename);
-    assert!(result.is_some(), "GPT-OSS-120B should be found if registered");
+    assert!(
+        result.is_some(),
+        "GPT-OSS-120B should be found if registered"
+    );
     assert_eq!(result.unwrap().model_id, gpt_model_id);
 }
 
 /// Test production model (Llama 70B) works if registered
 #[test]
 fn test_production_model_works() {
-    let llama_model_id = H256::from_str(
-        "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-    ).unwrap();
+    let llama_model_id =
+        H256::from_str("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
+            .unwrap();
 
     let mut map: HashMap<String, DynamicModelInfo> = HashMap::new();
     map.insert(
@@ -178,31 +187,39 @@ fn test_production_model_works() {
 #[test]
 fn test_error_model_not_registered() {
     let err = ModelValidationError::ModelNotRegistered(
-        "Model file 'unknown-model.gguf' is not registered in ModelRegistry.".to_string()
+        "Model file 'unknown-model.gguf' is not registered in ModelRegistry.".to_string(),
     );
 
     let msg = format!("{}", err);
-    assert!(msg.contains("not registered"), "Error should mention 'not registered'");
-    assert!(msg.contains("unknown-model.gguf"), "Error should contain filename");
+    assert!(
+        msg.contains("not registered"),
+        "Error should mention 'not registered'"
+    );
+    assert!(
+        msg.contains("unknown-model.gguf"),
+        "Error should contain filename"
+    );
 }
 
 /// Test InvalidModelPath error for paths with no filename
 #[test]
 fn test_error_invalid_model_path() {
-    let err = ModelValidationError::InvalidModelPath(
-        "Cannot extract filename from path: /".to_string()
-    );
+    let err =
+        ModelValidationError::InvalidModelPath("Cannot extract filename from path: /".to_string());
 
     let msg = format!("{}", err);
-    assert!(msg.contains("Invalid") || msg.contains("invalid"), "Error should indicate invalid path");
+    assert!(
+        msg.contains("Invalid") || msg.contains("invalid"),
+        "Error should indicate invalid path"
+    );
 }
 
 /// Test case sensitivity - filename must match exactly
 #[test]
 fn test_case_sensitivity() {
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut map: HashMap<String, DynamicModelInfo> = HashMap::new();
     map.insert(

@@ -2,10 +2,10 @@
 //!
 //! Fetches web page content from URLs returned by search results.
 
+use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
-use reqwest::Client;
-use tracing::{debug, warn, info};
+use tracing::{debug, info, warn};
 use url::Url;
 
 use super::cache::ContentCache;
@@ -71,7 +71,11 @@ impl ContentFetcher {
             config.max_cache_entries,
         ));
 
-        Self { client, cache, config }
+        Self {
+            client,
+            cache,
+            config,
+        }
     }
 
     /// Fetch content from a single URL
@@ -94,24 +98,22 @@ impl ContentFetcher {
         debug!("Fetching content from: {}", url);
 
         // Fetch page
-        let response = self.client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    FetchError::Timeout(url.to_string())
-                } else {
-                    FetchError::HttpError(e.to_string())
-                }
-            })?;
+        let response = self.client.get(url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                FetchError::Timeout(url.to_string())
+            } else {
+                FetchError::HttpError(e.to_string())
+            }
+        })?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(FetchError::HttpStatus(status.as_u16(), url.to_string()));
         }
 
-        let html = response.text().await
+        let html = response
+            .text()
+            .await
             .map_err(|e| FetchError::HttpError(e.to_string()))?;
 
         // Extract content
@@ -129,7 +131,11 @@ impl ContentFetcher {
 
         info!("Fetched {} chars from: {}", text.len(), url);
 
-        Ok(PageContent { url: url.to_string(), title, text })
+        Ok(PageContent {
+            url: url.to_string(),
+            title,
+            text,
+        })
     }
 
     /// Fetch content from multiple URLs in parallel
@@ -201,7 +207,8 @@ impl ContentFetcher {
                 || host_lower.starts_with("172.30.")
                 || host_lower.starts_with("172.31.")
                 || host_lower.starts_with("0.0.0.0")
-                || host_lower.starts_with("169.254.") // Link-local
+                || host_lower.starts_with("169.254.")
+            // Link-local
             {
                 return false;
             }
@@ -217,7 +224,8 @@ impl ContentFetcher {
         let document = Html::parse_document(html);
         let selector = Selector::parse("title").ok()?;
 
-        document.select(&selector)
+        document
+            .select(&selector)
             .next()
             .map(|el| el.text().collect::<String>().trim().to_string())
     }
@@ -246,7 +254,9 @@ mod tests {
     fn test_is_safe_url_valid() {
         assert!(ContentFetcher::is_safe_url("https://example.com/page"));
         assert!(ContentFetcher::is_safe_url("http://bbc.com/news"));
-        assert!(ContentFetcher::is_safe_url("https://www.google.com/search?q=test"));
+        assert!(ContentFetcher::is_safe_url(
+            "https://www.google.com/search?q=test"
+        ));
     }
 
     #[test]

@@ -327,7 +327,9 @@ impl SessionStore {
         }
 
         // Get mutable reference and enable RAG
-        let session = sessions.get_mut(&session_id).ok_or_else(|| anyhow!("Session not found"))?;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| anyhow!("Session not found"))?;
 
         if session.get_vector_store().is_none() {
             session.enable_rag(max_vectors);

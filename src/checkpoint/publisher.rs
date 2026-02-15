@@ -376,10 +376,7 @@ impl CheckpointPublisher {
                     "📤 [CHECKPOINT] ❌ Delta upload FAILED: session='{}', checkpoint={}, error={}",
                     session_id, checkpoint_index, e
                 );
-                anyhow!(
-                    "S5 delta upload failed - NOT submitting proof: {}",
-                    e
-                )
+                anyhow!("S5 delta upload failed - NOT submitting proof: {}", e)
             })?;
 
         // Strip s5:// prefix if present (SDK expects raw CID)
@@ -390,7 +387,10 @@ impl CheckpointPublisher {
 
         info!(
             "📤 [CHECKPOINT] ✅ Delta uploaded: session='{}', checkpoint={}, cid='{}', cid_len={}",
-            session_id, checkpoint_index, delta_cid_raw, delta_cid_raw.len()
+            session_id,
+            checkpoint_index,
+            delta_cid_raw,
+            delta_cid_raw.len()
         );
 
         // 5. Update checkpoint index
@@ -429,15 +429,12 @@ impl CheckpointPublisher {
         upload_with_retry(s5_storage, &index_path, index_bytes)
             .await
             .map_err(|e| {
-            error!(
-                "Index upload failed for session {} checkpoint {}: {}",
-                session_id, checkpoint_index, e
-            );
-            anyhow!(
-                "S5 index upload failed - NOT submitting proof: {}",
-                e
-            )
-        })?;
+                error!(
+                    "Index upload failed for session {} checkpoint {}: {}",
+                    session_id, checkpoint_index, e
+                );
+                anyhow!("S5 index upload failed - NOT submitting proof: {}", e)
+            })?;
 
         info!("Index uploaded to {}", index_path);
 
@@ -453,11 +450,7 @@ impl CheckpointPublisher {
     ///
     /// Call this when a session starts to check for existing checkpoint index.
     /// If found, resumes numbering from last checkpoint.
-    pub async fn init_session(
-        &self,
-        session_id: &str,
-        s5_storage: &dyn S5Storage,
-    ) -> Result<()> {
+    pub async fn init_session(&self, session_id: &str, s5_storage: &dyn S5Storage) -> Result<()> {
         let index_path = CheckpointIndex::s5_path(&self.host_address, session_id);
 
         // Try to fetch existing index from S5
@@ -547,10 +540,7 @@ pub async fn upload_with_retry(
                 last_error = Some(e);
                 if attempt < MAX_S5_RETRIES - 1 {
                     let delay_ms = S5_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
-                    info!(
-                        "📤 [S5-RUST] Waiting {}ms before retry...",
-                        delay_ms
-                    );
+                    info!("📤 [S5-RUST] Waiting {}ms before retry...", delay_ms);
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
@@ -600,10 +590,16 @@ mod tests {
         let publisher = CheckpointPublisher::new("0xhost".to_string());
 
         publisher
-            .buffer_message("session-1", CheckpointMessage::new_user("A".to_string(), 100))
+            .buffer_message(
+                "session-1",
+                CheckpointMessage::new_user("A".to_string(), 100),
+            )
             .await;
         publisher
-            .buffer_message("session-2", CheckpointMessage::new_user("B".to_string(), 200))
+            .buffer_message(
+                "session-2",
+                CheckpointMessage::new_user("B".to_string(), 200),
+            )
             .await;
 
         let state1 = publisher.get_session_state("session-1").await.unwrap();
@@ -658,7 +654,10 @@ mod tests {
         let publisher = CheckpointPublisher::new("0xhost".to_string());
 
         publisher
-            .buffer_message("session-1", CheckpointMessage::new_user("A".to_string(), 100))
+            .buffer_message(
+                "session-1",
+                CheckpointMessage::new_user("A".to_string(), 100),
+            )
             .await;
         assert_eq!(publisher.session_count().await, 1);
 
@@ -686,7 +685,11 @@ mod tests {
     fn test_get_buffered_messages_returns_copy() {
         let mut state = SessionCheckpointState::new();
         state.buffer_message(CheckpointMessage::new_user("Hello".to_string(), 100));
-        state.buffer_message(CheckpointMessage::new_assistant("Hi".to_string(), 200, false));
+        state.buffer_message(CheckpointMessage::new_assistant(
+            "Hi".to_string(),
+            200,
+            false,
+        ));
 
         let messages = state.get_buffered_messages();
         assert_eq!(messages.len(), 2);
@@ -743,7 +746,11 @@ mod tests {
 
         // Buffer some messages
         state.buffer_message(CheckpointMessage::new_user("Question?".to_string(), 100));
-        state.buffer_message(CheckpointMessage::new_assistant("Answer!".to_string(), 200, false));
+        state.buffer_message(CheckpointMessage::new_assistant(
+            "Answer!".to_string(),
+            200,
+            false,
+        ));
 
         // Get messages for checkpoint
         let messages = state.get_buffered_messages();
@@ -760,7 +767,10 @@ mod tests {
         assert_eq!(state.last_checkpoint_tokens, 500);
 
         // Buffer more messages for next checkpoint
-        state.buffer_message(CheckpointMessage::new_user("Next question".to_string(), 600));
+        state.buffer_message(CheckpointMessage::new_user(
+            "Next question".to_string(),
+            600,
+        ));
         assert_eq!(state.buffer_size(), 1);
     }
 
@@ -772,8 +782,7 @@ mod tests {
     async fn test_upload_succeeds_first_try() {
         let mock = MockS5Backend::new();
         // MockS5Backend requires paths starting with "home/" or "archive/"
-        let result =
-            upload_with_retry(&mock, "home/checkpoints/test", b"test data".to_vec()).await;
+        let result = upload_with_retry(&mock, "home/checkpoints/test", b"test data".to_vec()).await;
 
         assert!(result.is_ok());
         let cid = result.unwrap();
@@ -790,8 +799,7 @@ mod tests {
         .await;
 
         // First attempt fails, retry should succeed
-        let result =
-            upload_with_retry(&mock, "home/checkpoints/test", b"test data".to_vec()).await;
+        let result = upload_with_retry(&mock, "home/checkpoints/test", b"test data".to_vec()).await;
 
         // Should succeed on retry
         assert!(result.is_ok(), "Should succeed after retry");
@@ -1093,10 +1101,7 @@ mod tests {
             .await;
 
         // Verify buffer has message before publish
-        let state_before = publisher
-            .get_session_state("session-buffer")
-            .await
-            .unwrap();
+        let state_before = publisher.get_session_state("session-buffer").await.unwrap();
         assert_eq!(state_before.buffer_size(), 1);
 
         let proof_hash = [0x44u8; 32];
@@ -1106,10 +1111,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Buffer should be cleared after successful publish
-        let state_after = publisher
-            .get_session_state("session-buffer")
-            .await
-            .unwrap();
+        let state_after = publisher.get_session_state("session-buffer").await.unwrap();
         assert_eq!(state_after.buffer_size(), 0, "Buffer should be cleared");
     }
 
@@ -1174,10 +1176,11 @@ mod tests {
             )
             .await;
 
-        let proof_hash = [0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90,
-                         0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90,
-                         0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90,
-                         0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90];
+        let proof_hash = [
+            0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56,
+            0x78, 0x90, 0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF, 0x12,
+            0x34, 0x56, 0x78, 0x90,
+        ];
 
         let result = publisher
             .publish_checkpoint("session-proof", proof_hash, 0, 500, &private_key, &mock)
@@ -1285,7 +1288,10 @@ mod tests {
         // Don't pre-populate S5 - this is a new session
         // Initialize session - should start fresh
         let result = publisher.init_session("session-new", &mock).await;
-        assert!(result.is_ok(), "init_session should succeed for new session");
+        assert!(
+            result.is_ok(),
+            "init_session should succeed for new session"
+        );
 
         // For a new session, no state is created until buffer_message is called
         // Verify no error was returned (success means it handled missing index gracefully)
@@ -1299,9 +1305,18 @@ mod tests {
             .await;
 
         let state = publisher.get_session_state("session-new").await.unwrap();
-        assert_eq!(state.checkpoint_index, 0, "New session should start at index 0");
-        assert_eq!(state.last_checkpoint_tokens, 0, "New session should have 0 tokens");
-        assert!(state.index.is_none(), "New session should have no preloaded index");
+        assert_eq!(
+            state.checkpoint_index, 0,
+            "New session should start at index 0"
+        );
+        assert_eq!(
+            state.last_checkpoint_tokens, 0,
+            "New session should have 0 tokens"
+        );
+        assert!(
+            state.index.is_none(),
+            "New session should have no preloaded index"
+        );
     }
 
     #[tokio::test]
@@ -1366,7 +1381,10 @@ mod tests {
             .publish_checkpoint("session-full", proof_hash, 1000, 2000, &private_key, &mock)
             .await;
 
-        assert!(result.is_ok(), "publish_checkpoint should succeed after resume");
+        assert!(
+            result.is_ok(),
+            "publish_checkpoint should succeed after resume"
+        );
 
         // Verify the new checkpoint was added at index 1 (not 0)
         let state = publisher.get_session_state("session-full").await.unwrap();
@@ -1376,9 +1394,19 @@ mod tests {
         );
 
         let index = state.index.unwrap();
-        assert_eq!(index.checkpoints.len(), 2, "Index should have 2 checkpoints");
-        assert_eq!(index.checkpoints[0].index, 0, "First checkpoint should be index 0");
-        assert_eq!(index.checkpoints[1].index, 1, "Second checkpoint should be index 1");
+        assert_eq!(
+            index.checkpoints.len(),
+            2,
+            "Index should have 2 checkpoints"
+        );
+        assert_eq!(
+            index.checkpoints[0].index, 0,
+            "First checkpoint should be index 0"
+        );
+        assert_eq!(
+            index.checkpoints[1].index, 1,
+            "Second checkpoint should be index 1"
+        );
     }
 
     // ==================== Streaming Response Tests (Phase 4.3) ====================
@@ -1412,8 +1440,12 @@ mod tests {
     async fn test_publisher_update_streaming_response() {
         let publisher = CheckpointPublisher::new("0xhost".to_string());
 
-        publisher.update_streaming_response("session-1", "Hello").await;
-        publisher.update_streaming_response("session-1", " World").await;
+        publisher
+            .update_streaming_response("session-1", "Hello")
+            .await;
+        publisher
+            .update_streaming_response("session-1", " World")
+            .await;
 
         let state = publisher.get_session_state("session-1").await.unwrap();
         assert_eq!(state.get_streaming_response(), Some("Hello World"));
@@ -1423,7 +1455,9 @@ mod tests {
     async fn test_publisher_clear_streaming_response() {
         let publisher = CheckpointPublisher::new("0xhost".to_string());
 
-        publisher.update_streaming_response("session-1", "Hello").await;
+        publisher
+            .update_streaming_response("session-1", "Hello")
+            .await;
         publisher.clear_streaming_response("session-1").await;
 
         let state = publisher.get_session_state("session-1").await.unwrap();
@@ -1463,7 +1497,11 @@ mod tests {
         let delta: CheckpointDelta = serde_json::from_slice(&stored).unwrap();
 
         // Should have 2 messages: user question + partial assistant response
-        assert_eq!(delta.messages.len(), 2, "Should have user + partial assistant");
+        assert_eq!(
+            delta.messages.len(),
+            2,
+            "Should have user + partial assistant"
+        );
         assert_eq!(delta.messages[0].role, "user");
         assert_eq!(delta.messages[1].role, "assistant");
         assert_eq!(delta.messages[1].content, "The answer is");
@@ -1474,11 +1512,7 @@ mod tests {
             "Partial response should have metadata"
         );
         let metadata = delta.messages[1].metadata.as_ref().unwrap();
-        assert_eq!(
-            metadata.partial,
-            Some(true),
-            "Partial flag should be true"
-        );
+        assert_eq!(metadata.partial, Some(true), "Partial flag should be true");
     }
 
     #[tokio::test]
@@ -1519,7 +1553,14 @@ mod tests {
         // Second checkpoint with complete response
         let proof_hash2 = [0xCCu8; 32];
         let result2 = publisher
-            .publish_checkpoint("session-replace", proof_hash2, 500, 1000, &private_key, &mock)
+            .publish_checkpoint(
+                "session-replace",
+                proof_hash2,
+                500,
+                1000,
+                &private_key,
+                &mock,
+            )
             .await;
         assert!(result2.is_ok());
 
@@ -1528,7 +1569,11 @@ mod tests {
         let stored2 = mock.get(delta_path2).await.unwrap();
         let delta2: CheckpointDelta = serde_json::from_slice(&stored2).unwrap();
 
-        assert_eq!(delta2.messages.len(), 1, "Should have 1 complete assistant message");
+        assert_eq!(
+            delta2.messages.len(),
+            1,
+            "Should have 1 complete assistant message"
+        );
         assert_eq!(delta2.messages[0].role, "assistant");
         assert_eq!(delta2.messages[0].content, "The answer is 4.");
 
@@ -1554,7 +1599,10 @@ mod tests {
     fn test_session_state_set_recovery_key() {
         let mut state = SessionCheckpointState::new();
         state.set_recovery_public_key(Some(TEST_RECOVERY_PUBKEY.to_string()));
-        assert_eq!(state.recovery_public_key, Some(TEST_RECOVERY_PUBKEY.to_string()));
+        assert_eq!(
+            state.recovery_public_key,
+            Some(TEST_RECOVERY_PUBKEY.to_string())
+        );
     }
 
     #[test]
@@ -1580,17 +1628,25 @@ mod tests {
         // When resuming from index, recovery key should be None (set separately)
         let index = CheckpointIndex::new("session".to_string(), "0xhost".to_string());
         let state = SessionCheckpointState::from_index(index);
-        assert!(state.recovery_public_key.is_none(), "From index should not have recovery key");
+        assert!(
+            state.recovery_public_key.is_none(),
+            "From index should not have recovery key"
+        );
     }
 
     #[tokio::test]
     async fn test_publisher_set_recovery_key() {
         let publisher = CheckpointPublisher::new("0xhost".to_string());
 
-        publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
+        publisher
+            .set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string())
+            .await;
 
         let state = publisher.get_session_state("session-1").await.unwrap();
-        assert_eq!(state.recovery_public_key, Some(TEST_RECOVERY_PUBKEY.to_string()));
+        assert_eq!(
+            state.recovery_public_key,
+            Some(TEST_RECOVERY_PUBKEY.to_string())
+        );
     }
 
     #[tokio::test]
@@ -1602,7 +1658,9 @@ mod tests {
         assert!(key_before.is_none());
 
         // After setting
-        publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
+        publisher
+            .set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string())
+            .await;
         let key_after = publisher.get_recovery_public_key("session-1").await;
         assert_eq!(key_after, Some(TEST_RECOVERY_PUBKEY.to_string()));
     }
@@ -1615,11 +1673,18 @@ mod tests {
         assert!(!publisher.has_recovery_key("session-1").await);
 
         // Create session without recovery key
-        publisher.buffer_message("session-1", CheckpointMessage::new_user("Hi".to_string(), 100)).await;
+        publisher
+            .buffer_message(
+                "session-1",
+                CheckpointMessage::new_user("Hi".to_string(), 100),
+            )
+            .await;
         assert!(!publisher.has_recovery_key("session-1").await);
 
         // After setting recovery key
-        publisher.set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string()).await;
+        publisher
+            .set_recovery_public_key("session-1", TEST_RECOVERY_PUBKEY.to_string())
+            .await;
         assert!(publisher.has_recovery_key("session-1").await);
     }
 
@@ -1632,7 +1697,9 @@ mod tests {
         let private_key = generate_test_private_key();
 
         // Set recovery public key BEFORE buffering messages
-        publisher.set_recovery_public_key("session-encrypt", TEST_RECOVERY_PUBKEY.to_string()).await;
+        publisher
+            .set_recovery_public_key("session-encrypt", TEST_RECOVERY_PUBKEY.to_string())
+            .await;
 
         // Buffer a message
         publisher
@@ -1648,7 +1715,11 @@ mod tests {
             .publish_checkpoint("session-encrypt", proof_hash, 0, 500, &private_key, &mock)
             .await;
 
-        assert!(result.is_ok(), "publish_checkpoint should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "publish_checkpoint should succeed: {:?}",
+            result
+        );
 
         // Verify uploaded delta is encrypted (has "encrypted":true field)
         let delta_path = "home/checkpoints/0xhostencrypt/session-encrypt/delta_0.json";
@@ -1656,10 +1727,19 @@ mod tests {
         let stored_str = String::from_utf8(stored).unwrap();
 
         // Check for encrypted delta format (pretty-printed JSON has spaces)
-        assert!(stored_str.contains("\"encrypted\": true") || stored_str.contains("\"encrypted\":true"),
-                "Delta should be encrypted, got: {}", &stored_str[..stored_str.len().min(200)]);
-        assert!(stored_str.contains("\"ciphertext\""), "Delta should have ciphertext field");
-        assert!(stored_str.contains("\"ephemeralPublicKey\""), "Delta should have ephemeral key");
+        assert!(
+            stored_str.contains("\"encrypted\": true") || stored_str.contains("\"encrypted\":true"),
+            "Delta should be encrypted, got: {}",
+            &stored_str[..stored_str.len().min(200)]
+        );
+        assert!(
+            stored_str.contains("\"ciphertext\""),
+            "Delta should have ciphertext field"
+        );
+        assert!(
+            stored_str.contains("\"ephemeralPublicKey\""),
+            "Delta should have ephemeral key"
+        );
         assert!(stored_str.contains("\"nonce\""), "Delta should have nonce");
     }
 
@@ -1689,10 +1769,22 @@ mod tests {
         let stored = mock.get(delta_path).await.unwrap();
         let stored_str = String::from_utf8(stored).unwrap();
 
-        assert!(stored_str.contains("\"sessionId\""), "Delta should have sessionId (plaintext format)");
-        assert!(stored_str.contains("\"messages\""), "Delta should have messages array (plaintext format)");
-        assert!(stored_str.contains("Plain text!"), "Delta should contain actual message content");
-        assert!(!stored_str.contains("\"ciphertext\""), "Delta should NOT have ciphertext field");
+        assert!(
+            stored_str.contains("\"sessionId\""),
+            "Delta should have sessionId (plaintext format)"
+        );
+        assert!(
+            stored_str.contains("\"messages\""),
+            "Delta should have messages array (plaintext format)"
+        );
+        assert!(
+            stored_str.contains("Plain text!"),
+            "Delta should contain actual message content"
+        );
+        assert!(
+            !stored_str.contains("\"ciphertext\""),
+            "Delta should NOT have ciphertext field"
+        );
     }
 
     #[tokio::test]
@@ -1702,7 +1794,9 @@ mod tests {
         let private_key = generate_test_private_key();
 
         // Set recovery key - should mark index entry as encrypted
-        publisher.set_recovery_public_key("session-marker", TEST_RECOVERY_PUBKEY.to_string()).await;
+        publisher
+            .set_recovery_public_key("session-marker", TEST_RECOVERY_PUBKEY.to_string())
+            .await;
 
         publisher
             .buffer_message(
@@ -1724,8 +1818,11 @@ mod tests {
         let stored_str = String::from_utf8(stored).unwrap();
 
         // Check for encrypted marker (handles both compact and pretty JSON)
-        assert!(stored_str.contains("\"encrypted\": true") || stored_str.contains("\"encrypted\":true"),
-                "Index entry should have encrypted:true marker, got: {}", &stored_str[..stored_str.len().min(300)]);
+        assert!(
+            stored_str.contains("\"encrypted\": true") || stored_str.contains("\"encrypted\":true"),
+            "Index entry should have encrypted:true marker, got: {}",
+            &stored_str[..stored_str.len().min(300)]
+        );
     }
 
     #[tokio::test]
@@ -1754,6 +1851,9 @@ mod tests {
         let stored = mock.get(index_path).await.unwrap();
         let stored_str = String::from_utf8(stored).unwrap();
 
-        assert!(!stored_str.contains("\"encrypted\""), "Index entry should NOT have encrypted field for plaintext");
+        assert!(
+            !stored_str.contains("\"encrypted\""),
+            "Index entry should NOT have encrypted field for plaintext"
+        );
     }
 }

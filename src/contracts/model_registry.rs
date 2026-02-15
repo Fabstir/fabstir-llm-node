@@ -208,7 +208,10 @@ impl ModelRegistryClient {
         &self,
         model_paths: &[String],
     ) -> Result<Vec<H256>> {
-        info!("Validating {} models for registration (querying contract)", model_paths.len());
+        info!(
+            "Validating {} models for registration (querying contract)",
+            model_paths.len()
+        );
 
         // Step 1: Get all approved models from contract
         let all_model_ids = self.get_all_approved_models().await?;
@@ -225,7 +228,11 @@ impl ModelRegistryClient {
                     filename_map.insert(info.file_name.clone(), (*model_id, info.sha256_hash));
                 }
                 Err(e) => {
-                    debug!("Could not get details for model 0x{}: {}", hex::encode(&model_id.0), e);
+                    debug!(
+                        "Could not get details for model 0x{}: {}",
+                        hex::encode(&model_id.0),
+                        e
+                    );
                 }
             }
         }
@@ -313,11 +320,7 @@ impl ModelRegistryClient {
     /// * `Ok(true)` if the node is authorized for the model
     /// * `Ok(false)` if the node is NOT authorized
     /// * `Err` if the contract query fails
-    pub async fn node_supports_model(
-        &self,
-        node_address: Address,
-        model_id: H256,
-    ) -> Result<bool> {
+    pub async fn node_supports_model(&self, node_address: Address, model_id: H256) -> Result<bool> {
         if let Some(registry) = &self.node_registry {
             debug!(
                 "Checking if node {:?} supports model {:?}",
@@ -355,8 +358,10 @@ mod tests {
             "CohereForAI/TinyVicuna-1B-32k-GGUF",
             "tiny-vicuna-1b.q4_k_m.gguf",
         );
-        let expected_vicuna =
-            H256::from_slice(&hex::decode("0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced").unwrap());
+        let expected_vicuna = H256::from_slice(
+            &hex::decode("0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+                .unwrap(),
+        );
         assert_eq!(vicuna_id, expected_vicuna);
 
         // TinyLlama - expected ID from API_REFERENCE.md
@@ -364,8 +369,10 @@ mod tests {
             "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
             "tinyllama-1b.Q4_K_M.gguf",
         );
-        let expected_llama =
-            H256::from_slice(&hex::decode("14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca").unwrap());
+        let expected_llama = H256::from_slice(
+            &hex::decode("14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca")
+                .unwrap(),
+        );
         assert_eq!(llama_id, expected_llama);
 
         // GPT-OSS-20B - expected ID from API_REFERENCE.md
@@ -373,8 +380,10 @@ mod tests {
             "bartowski/openai_gpt-oss-20b-GGUF",
             "openai_gpt-oss-20b-MXFP4.gguf",
         );
-        let expected_gpt =
-            H256::from_slice(&hex::decode("7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c").unwrap());
+        let expected_gpt = H256::from_slice(
+            &hex::decode("7583557c14f71d2bf21d48ffb7cde9329f9494090869d2d311ea481b26e7e06c")
+                .unwrap(),
+        );
         assert_eq!(gpt_id, expected_gpt);
     }
 

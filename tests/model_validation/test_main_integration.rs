@@ -52,7 +52,10 @@ fn test_validation_enabled_when_set() {
         .map(|v| v.to_lowercase() == "true" || v == "1")
         .unwrap_or(false);
 
-    assert!(enabled, "Validation should be enabled when REQUIRE_MODEL_VALIDATION=true");
+    assert!(
+        enabled,
+        "Validation should be enabled when REQUIRE_MODEL_VALIDATION=true"
+    );
 
     // Restore original
     match original {
@@ -75,7 +78,10 @@ fn test_validation_enabled_with_1() {
         .map(|v| v.to_lowercase() == "true" || v == "1")
         .unwrap_or(false);
 
-    assert!(enabled, "Validation should be enabled when REQUIRE_MODEL_VALIDATION=1");
+    assert!(
+        enabled,
+        "Validation should be enabled when REQUIRE_MODEL_VALIDATION=1"
+    );
 
     // Restore original
     match original {
@@ -91,22 +97,28 @@ fn test_validation_enabled_with_1() {
 /// Test that error message for unauthorized model is clear
 #[test]
 fn test_error_message_host_not_authorized() {
-    use fabstir_llm_node::model_validation::ModelValidationError;
     use ethers::types::{Address, H256};
+    use fabstir_llm_node::model_validation::ModelValidationError;
     use std::str::FromStr;
 
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let err = ModelValidationError::HostNotAuthorized(host, model_id);
     let msg = format!("{}", err);
 
     // Error message should be helpful
-    assert!(msg.to_lowercase().contains("not authorized"), "Should explain the issue");
-    assert!(msg.contains("NodeRegistry") || msg.contains("register"),
-        "Should suggest solution: {}", msg);
+    assert!(
+        msg.to_lowercase().contains("not authorized"),
+        "Should explain the issue"
+    );
+    assert!(
+        msg.contains("NodeRegistry") || msg.contains("register"),
+        "Should suggest solution: {}",
+        msg
+    );
 }
 
 /// Test that error message for unregistered model is clear
@@ -114,25 +126,26 @@ fn test_error_message_host_not_authorized() {
 fn test_error_message_model_not_registered() {
     use fabstir_llm_node::model_validation::ModelValidationError;
 
-    let err = ModelValidationError::ModelNotRegistered(
-        "/models/unknown-model.gguf".to_string()
-    );
+    let err = ModelValidationError::ModelNotRegistered("/models/unknown-model.gguf".to_string());
     let msg = format!("{}", err);
 
     // Error message should be helpful
-    assert!(msg.to_lowercase().contains("not registered"), "Should explain the issue");
+    assert!(
+        msg.to_lowercase().contains("not registered"),
+        "Should explain the issue"
+    );
 }
 
 /// Test that error message for hash mismatch is clear
 #[test]
 fn test_error_message_hash_mismatch() {
-    use fabstir_llm_node::model_validation::ModelValidationError;
     use ethers::types::H256;
+    use fabstir_llm_node::model_validation::ModelValidationError;
     use std::str::FromStr;
 
-    let expected = H256::from_str(
-        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-    ).unwrap();
+    let expected =
+        H256::from_str("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+            .unwrap();
 
     let err = ModelValidationError::ModelHashMismatch {
         expected,
@@ -141,7 +154,10 @@ fn test_error_message_hash_mismatch() {
     let msg = format!("{}", err);
 
     // Error message should be helpful
-    assert!(msg.to_lowercase().contains("hash"), "Should explain hash issue");
+    assert!(
+        msg.to_lowercase().contains("hash"),
+        "Should explain hash issue"
+    );
     assert!(
         msg.to_lowercase().contains("tampered") || msg.contains("tampered.gguf"),
         "Should include file path"
@@ -201,9 +217,9 @@ fn test_semantic_model_id_passed_to_loader() {
     use std::str::FromStr;
 
     // After successful validation, semantic_model_id is known
-    let semantic_model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let semantic_model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // This would be passed to load_model(config, Some(semantic_model_id))
     let passed_to_loader: Option<H256> = Some(semantic_model_id);

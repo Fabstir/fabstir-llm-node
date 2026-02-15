@@ -19,11 +19,7 @@ fn make_store(max_sessions: usize) -> SessionStore {
 async fn test_ensure_session_creates_when_not_exists() {
     let mut store = make_store(10);
     let result = store
-        .ensure_session_exists_with_chain(
-            "s1".to_string(),
-            SessionConfig::default(),
-            84532,
-        )
+        .ensure_session_exists_with_chain("s1".to_string(), SessionConfig::default(), 84532)
         .await;
     assert_eq!(result.unwrap(), true, "should return true for new session");
     assert!(store.get_session("s1").await.is_some());
@@ -39,11 +35,7 @@ async fn test_ensure_session_noop_when_exists() {
         .unwrap();
     // Ensure again
     let result = store
-        .ensure_session_exists_with_chain(
-            "s1".to_string(),
-            SessionConfig::default(),
-            84532,
-        )
+        .ensure_session_exists_with_chain("s1".to_string(), SessionConfig::default(), 84532)
         .await;
     assert_eq!(result.unwrap(), false, "should return false for existing");
     assert_eq!(store.async_session_count().await, 1);
@@ -58,8 +50,13 @@ async fn test_ensure_session_preserves_vectors_on_reinit() {
         .await
         .unwrap();
     // Step 2: enable RAG + upload vectors
-    let session = store.get_or_create_rag_session("s1".to_string(), 100_000).await.unwrap();
-    let vs = session.get_vector_store().expect("vector_store should exist");
+    let session = store
+        .get_or_create_rag_session("s1".to_string(), 100_000)
+        .await
+        .unwrap();
+    let vs = session
+        .get_vector_store()
+        .expect("vector_store should exist");
     {
         let mut locked = vs.lock().unwrap();
         for i in 0..5 {
@@ -70,16 +67,14 @@ async fn test_ensure_session_preserves_vectors_on_reinit() {
     }
     // Step 3: re-init (the bug scenario)
     let result = store
-        .ensure_session_exists_with_chain(
-            "s1".to_string(),
-            SessionConfig::default(),
-            84532,
-        )
+        .ensure_session_exists_with_chain("s1".to_string(), SessionConfig::default(), 84532)
         .await;
     assert_eq!(result.unwrap(), false);
     // Step 4: verify vectors survived
     let session = store.get_session("s1").await.unwrap();
-    let vs = session.get_vector_store().expect("vector_store must survive re-init");
+    let vs = session
+        .get_vector_store()
+        .expect("vector_store must survive re-init");
     assert_eq!(vs.lock().unwrap().count(), 5, "all 5 vectors must survive");
 }
 
@@ -115,11 +110,7 @@ async fn test_ensure_session_preserves_conversation_history() {
         .unwrap();
     // Re-init
     store
-        .ensure_session_exists_with_chain(
-            "s1".to_string(),
-            SessionConfig::default(),
-            84532,
-        )
+        .ensure_session_exists_with_chain("s1".to_string(), SessionConfig::default(), 84532)
         .await
         .unwrap();
     // Verify history survived
@@ -140,11 +131,7 @@ async fn test_ensure_session_respects_max_sessions() {
         .unwrap();
     // 3rd session should fail
     let result = store
-        .ensure_session_exists_with_chain(
-            "s3".to_string(),
-            SessionConfig::default(),
-            84532,
-        )
+        .ensure_session_exists_with_chain("s3".to_string(), SessionConfig::default(), 84532)
         .await;
     assert!(result.is_err(), "should reject when at capacity");
 }
@@ -162,13 +149,13 @@ async fn test_ensure_existing_does_not_count_against_max() {
         .unwrap();
     // Re-init existing should succeed even at capacity
     let result = store
-        .ensure_session_exists_with_chain(
-            "s1".to_string(),
-            SessionConfig::default(),
-            84532,
-        )
+        .ensure_session_exists_with_chain("s1".to_string(), SessionConfig::default(), 84532)
         .await;
-    assert_eq!(result.unwrap(), false, "existing session at capacity must succeed");
+    assert_eq!(
+        result.unwrap(),
+        false,
+        "existing session at capacity must succeed"
+    );
 }
 
 #[tokio::test]

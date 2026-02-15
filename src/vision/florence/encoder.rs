@@ -68,10 +68,7 @@ impl FlorenceEncoder {
 
         // Validate path exists
         if !model_path.exists() {
-            anyhow::bail!(
-                "Florence encoder model not found: {}",
-                model_path.display()
-            );
+            anyhow::bail!("Florence encoder model not found: {}", model_path.display());
         }
 
         info!(
@@ -159,10 +156,7 @@ impl FlorenceEncoder {
         // Validate input shape
         let shape = input.shape();
         if shape.len() != 4 || shape[0] != 1 || shape[1] != 3 {
-            anyhow::bail!(
-                "Invalid input shape: {:?}, expected [1, 3, H, W]",
-                shape
-            );
+            anyhow::bail!("Invalid input shape: {:?}, expected [1, 3, H, W]", shape);
         }
 
         // Expected size check (warning only, some models are flexible)
@@ -176,8 +170,8 @@ impl FlorenceEncoder {
         // Run inference
         let mut session = self.session.lock().unwrap();
 
-        let input_value = Value::from_array(input.to_owned())
-            .context("Failed to create input tensor")?;
+        let input_value =
+            Value::from_array(input.to_owned()).context("Failed to create input tensor")?;
 
         let outputs = session
             .run(ort::inputs![&self.input_name => input_value])
@@ -273,7 +267,8 @@ mod tests {
     #[ignore] // Only run if model files are downloaded
     async fn test_model_loading() {
         // Try primary path first, then alternative
-        let result = FlorenceEncoder::new(ENCODER_MODEL_PATH).await
+        let result = FlorenceEncoder::new(ENCODER_MODEL_PATH)
+            .await
             .or_else(|_| futures::executor::block_on(FlorenceEncoder::new(ALT_ENCODER_PATH)));
 
         if let Ok(encoder) = result {
@@ -286,7 +281,8 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_encode_inference() {
-        let encoder = match FlorenceEncoder::new(ENCODER_MODEL_PATH).await
+        let encoder = match FlorenceEncoder::new(ENCODER_MODEL_PATH)
+            .await
             .or_else(|_| futures::executor::block_on(FlorenceEncoder::new(ALT_ENCODER_PATH)))
         {
             Ok(e) => e,

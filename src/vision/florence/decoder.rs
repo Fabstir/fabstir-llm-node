@@ -86,16 +86,10 @@ impl FlorenceDecoder {
 
         // Validate paths exist
         if !model_path.exists() {
-            anyhow::bail!(
-                "Florence decoder model not found: {}",
-                model_path.display()
-            );
+            anyhow::bail!("Florence decoder model not found: {}", model_path.display());
         }
         if !tokenizer_path.exists() {
-            anyhow::bail!(
-                "Florence tokenizer not found: {}",
-                tokenizer_path.display()
-            );
+            anyhow::bail!("Florence tokenizer not found: {}", tokenizer_path.display());
         }
         if !embed_path.exists() {
             anyhow::bail!(
@@ -104,10 +98,7 @@ impl FlorenceDecoder {
             );
         }
 
-        info!(
-            "Loading Florence decoder from {}",
-            model_path.display()
-        );
+        info!("Loading Florence decoder from {}", model_path.display());
 
         // Load tokenizer
         let tokenizer = Tokenizer::from_file(tokenizer_path)
@@ -215,11 +206,7 @@ impl FlorenceDecoder {
     /// 2. Run autoregressive generation loop
     /// 3. Stop at EOS token or max tokens
     /// 4. Decode tokens to text
-    pub fn generate(
-        &self,
-        image_embeddings: &Array2<f32>,
-        prompt: Option<&str>,
-    ) -> Result<String> {
+    pub fn generate(&self, image_embeddings: &Array2<f32>, prompt: Option<&str>) -> Result<String> {
         // Initialize input tokens with prompt
         // NOTE: Task tokens (<cap>, <dcap>) produce "unanswerable" with this ONNX export
         // Natural language prompts like "A photo of" work correctly
@@ -260,18 +247,34 @@ impl FlorenceDecoder {
 
         // Verify encoder output is valid (not all zeros or NaN)
         let enc_mean: f32 = image_embeddings.iter().sum::<f32>() / image_embeddings.len() as f32;
-        let enc_var: f32 = image_embeddings.iter().map(|x| (x - enc_mean).powi(2)).sum::<f32>() / image_embeddings.len() as f32;
-        info!("Encoder output stats: mean={:.6}, variance={:.6}, shape={:?}", enc_mean, enc_var, image_embeddings.shape());
+        let enc_var: f32 = image_embeddings
+            .iter()
+            .map(|x| (x - enc_mean).powi(2))
+            .sum::<f32>()
+            / image_embeddings.len() as f32;
+        info!(
+            "Encoder output stats: mean={:.6}, variance={:.6}, shape={:?}",
+            enc_mean,
+            enc_var,
+            image_embeddings.shape()
+        );
 
         if enc_var < 0.001 {
-            warn!("⚠️ Encoder output has very low variance ({:.6}) - image features may be garbage!", enc_var);
+            warn!(
+                "⚠️ Encoder output has very low variance ({:.6}) - image features may be garbage!",
+                enc_var
+            );
         }
         if enc_mean.is_nan() || enc_var.is_nan() {
             warn!("⚠️ Encoder output contains NaN values - model may be corrupted!");
         }
 
         // Autoregressive generation loop
-        debug!("Starting generation with {} initial tokens, EOS={}", tokens.len(), self.eos_token_id);
+        debug!(
+            "Starting generation with {} initial tokens, EOS={}",
+            tokens.len(),
+            self.eos_token_id
+        );
         for step in 0..self.max_tokens {
             // Get next token logits
             let logits = self.forward(image_embeddings, &tokens)?;
@@ -281,8 +284,14 @@ impl FlorenceDecoder {
 
             // Debug: show what token was selected and top logits
             if step < 5 {
-                let token_text = self.tokenizer.decode(&[next_token], false).unwrap_or_default();
-                info!("Step {}: selected token {} = '{}' (repetition masked)", step, next_token, token_text);
+                let token_text = self
+                    .tokenizer
+                    .decode(&[next_token], false)
+                    .unwrap_or_default();
+                info!(
+                    "Step {}: selected token {} = '{}' (repetition masked)",
+                    step, next_token, token_text
+                );
 
                 // Build mask set for display
                 let mask_tokens: std::collections::HashSet<u32> = tokens
@@ -294,20 +303,34 @@ impl FlorenceDecoder {
                     .collect();
 
                 // Show top 5 logits (excluding masked tokens)
-                let mut indexed_logits: Vec<(usize, f32)> = logits.iter().enumerate()
+                let mut indexed_logits: Vec<(usize, f32)> = logits
+                    .iter()
+                    .enumerate()
                     .filter(|(i, _)| !mask_tokens.contains(&(*i as u32)))
-                    .map(|(i, &v)| (i, v)).collect();
-                indexed_logits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                info!("  Top 5 logits (after masking {} tokens):", mask_tokens.len());
+                    .map(|(i, &v)| (i, v))
+                    .collect();
+                indexed_logits
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                info!(
+                    "  Top 5 logits (after masking {} tokens):",
+                    mask_tokens.len()
+                );
                 for (idx, val) in indexed_logits.iter().take(5) {
-                    let tok = self.tokenizer.decode(&[*idx as u32], false).unwrap_or_default();
+                    let tok = self
+                        .tokenizer
+                        .decode(&[*idx as u32], false)
+                        .unwrap_or_default();
                     info!("    ID {:5} = {:>10.4} '{}'", idx, val, tok);
                 }
             }
 
             // Check for end of sequence
             if next_token == self.eos_token_id {
-                info!("Generation stopped at EOS after {} tokens (total {} tokens)", step + 1, tokens.len());
+                info!(
+                    "Generation stopped at EOS after {} tokens (total {} tokens)",
+                    step + 1,
+                    tokens.len()
+                );
                 break;
             }
 
@@ -406,8 +429,8 @@ impl FlorenceDecoder {
             .context("Failed to create encoder hidden states tensor")?;
         let attention_mask_value = Value::from_array(encoder_attention_mask)
             .context("Failed to create encoder attention mask tensor")?;
-        let inputs_embeds_value = Value::from_array(inputs_embeds)
-            .context("Failed to create inputs_embeds tensor")?;
+        let inputs_embeds_value =
+            Value::from_array(inputs_embeds).context("Failed to create inputs_embeds tensor")?;
 
         let outputs = session
             .run(ort::inputs![
@@ -515,11 +538,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_not_found_error() {
-        let result = FlorenceDecoder::new(
-            "/nonexistent/path/decoder.onnx",
-            TOKENIZER_PATH,
-        )
-        .await;
+        let result = FlorenceDecoder::new("/nonexistent/path/decoder.onnx", TOKENIZER_PATH).await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -528,11 +547,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_tokenizer_not_found_error() {
-        let result = FlorenceDecoder::new(
-            DECODER_MODEL_PATH,
-            "/nonexistent/path/tokenizer.json",
-        )
-        .await;
+        let result =
+            FlorenceDecoder::new(DECODER_MODEL_PATH, "/nonexistent/path/tokenizer.json").await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -542,10 +558,11 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_model_loading() {
-        let result = FlorenceDecoder::new(DECODER_MODEL_PATH, TOKENIZER_PATH).await
-            .or_else(|_| futures::executor::block_on(
-                FlorenceDecoder::new(ALT_DECODER_PATH, TOKENIZER_PATH)
-            ));
+        let result = FlorenceDecoder::new(DECODER_MODEL_PATH, TOKENIZER_PATH)
+            .await
+            .or_else(|_| {
+                futures::executor::block_on(FlorenceDecoder::new(ALT_DECODER_PATH, TOKENIZER_PATH))
+            });
 
         if let Ok(decoder) = result {
             assert!(decoder.is_ready());
@@ -557,10 +574,11 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_decoder_with_custom_max_tokens() {
-        let result = FlorenceDecoder::new(DECODER_MODEL_PATH, TOKENIZER_PATH).await
-            .or_else(|_| futures::executor::block_on(
-                FlorenceDecoder::new(ALT_DECODER_PATH, TOKENIZER_PATH)
-            ));
+        let result = FlorenceDecoder::new(DECODER_MODEL_PATH, TOKENIZER_PATH)
+            .await
+            .or_else(|_| {
+                futures::executor::block_on(FlorenceDecoder::new(ALT_DECODER_PATH, TOKENIZER_PATH))
+            });
 
         if let Ok(decoder) = result {
             let decoder = decoder.with_max_tokens(200);
@@ -571,11 +589,11 @@ mod tests {
     #[tokio::test]
     #[ignore] // Only run if model files are downloaded
     async fn test_generation() {
-        let decoder = match FlorenceDecoder::new(DECODER_MODEL_PATH, TOKENIZER_PATH).await
-            .or_else(|_| futures::executor::block_on(
-                FlorenceDecoder::new(ALT_DECODER_PATH, TOKENIZER_PATH)
-            ))
-        {
+        let decoder = match FlorenceDecoder::new(DECODER_MODEL_PATH, TOKENIZER_PATH)
+            .await
+            .or_else(|_| {
+                futures::executor::block_on(FlorenceDecoder::new(ALT_DECODER_PATH, TOKENIZER_PATH))
+            }) {
             Ok(d) => d,
             Err(_) => return,
         };

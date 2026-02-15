@@ -6,8 +6,8 @@
 
 use anyhow::Result;
 use fabstir_llm_node::checkpoint::{
-    cleanup_checkpoints, CheckpointDelta, CheckpointEntry, CheckpointIndex,
-    CheckpointMessage, CheckpointPublisher, CleanupResult, SessionState,
+    cleanup_checkpoints, CheckpointDelta, CheckpointEntry, CheckpointIndex, CheckpointMessage,
+    CheckpointPublisher, CleanupResult, SessionState,
 };
 use fabstir_llm_node::storage::s5_client::MockS5Backend;
 use fabstir_llm_node::storage::S5Storage;
@@ -124,7 +124,14 @@ async fn test_multiple_checkpoints() -> Result<()> {
 
     let proof_hash2 = [0x22u8; 32];
     publisher
-        .publish_checkpoint("session-multi", proof_hash2, 1000, 2000, &private_key, &mock)
+        .publish_checkpoint(
+            "session-multi",
+            proof_hash2,
+            1000,
+            2000,
+            &private_key,
+            &mock,
+        )
         .await?;
 
     // Checkpoint 3: 2000-3000 tokens
@@ -143,7 +150,14 @@ async fn test_multiple_checkpoints() -> Result<()> {
 
     let proof_hash3 = [0x33u8; 32];
     publisher
-        .publish_checkpoint("session-multi", proof_hash3, 2000, 3000, &private_key, &mock)
+        .publish_checkpoint(
+            "session-multi",
+            proof_hash3,
+            2000,
+            3000,
+            &private_key,
+            &mock,
+        )
         .await?;
 
     // Verify index has all 3 checkpoints
@@ -337,7 +351,14 @@ async fn test_session_resumption_from_s5() -> Result<()> {
 
     let proof_hash = [0x99u8; 32];
     publisher
-        .publish_checkpoint("session-resume", proof_hash, 1000, 2000, &private_key, &mock)
+        .publish_checkpoint(
+            "session-resume",
+            proof_hash,
+            1000,
+            2000,
+            &private_key,
+            &mock,
+        )
         .await?;
 
     // Verify new checkpoint was added at index 1
@@ -378,7 +399,14 @@ async fn test_cleanup_deletes_all_checkpoint_data() -> Result<()> {
         )
         .await;
     publisher
-        .publish_checkpoint("session-clean", [0x22u8; 32], 1000, 2000, &private_key, &mock)
+        .publish_checkpoint(
+            "session-clean",
+            [0x22u8; 32],
+            1000,
+            2000,
+            &private_key,
+            &mock,
+        )
         .await?;
 
     // Verify data exists
@@ -386,8 +414,13 @@ async fn test_cleanup_deletes_all_checkpoint_data() -> Result<()> {
     assert!(mock.get(index_path).await.is_ok());
 
     // Run cleanup for cancelled session
-    let result =
-        cleanup_checkpoints(&mock, "0xhostclean", "session-clean", SessionState::Cancelled).await?;
+    let result = cleanup_checkpoints(
+        &mock,
+        "0xhostclean",
+        "session-clean",
+        SessionState::Cancelled,
+    )
+    .await?;
 
     match result {
         CleanupResult::Deleted { deltas_removed } => {

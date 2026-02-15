@@ -64,10 +64,7 @@ impl OcrRequest {
             if image.len() > MAX_IMAGE_SIZE {
                 return Err(ApiError::ValidationError {
                     field: "image".to_string(),
-                    message: format!(
-                        "image exceeds maximum size of {} bytes",
-                        MAX_IMAGE_SIZE
-                    ),
+                    message: format!("image exceeds maximum size of {} bytes", MAX_IMAGE_SIZE),
                 });
             }
         }

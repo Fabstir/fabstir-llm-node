@@ -77,10 +77,7 @@ pub enum VectorLoadingError {
 
     /// Too many S5 download requests in time window
     #[error("Rate limit exceeded: {requests} requests in {window_secs}s")]
-    RateLimitExceeded {
-        requests: usize,
-        window_secs: u64,
-    },
+    RateLimitExceeded { requests: usize, window_secs: u64 },
 
     /// Loading operation timed out
     #[error("Loading timed out after {timeout_secs} seconds")]
@@ -237,13 +234,13 @@ impl VectorLoadingError {
     pub fn log_level(&self) -> tracing::Level {
         match self {
             Self::InternalError(_) => tracing::Level::WARN, // Unexpected error
-            Self::OwnerMismatch => tracing::Level::WARN,     // Security concern
-            Self::DecryptionFailed => tracing::Level::WARN,  // Security concern
-            Self::Timeout { .. } => tracing::Level::INFO,    // Expected for large DBs
+            Self::OwnerMismatch => tracing::Level::WARN,    // Security concern
+            Self::DecryptionFailed => tracing::Level::WARN, // Security concern
+            Self::Timeout { .. } => tracing::Level::INFO,   // Expected for large DBs
             Self::ManifestNotFound { .. } => tracing::Level::DEBUG, // User error
             Self::InvalidPath { .. } => tracing::Level::DEBUG, // User error
             Self::InvalidSessionKey { .. } => tracing::Level::DEBUG, // User error
-            _ => tracing::Level::DEBUG, // Other normal errors
+            _ => tracing::Level::DEBUG,                     // Other normal errors
         }
     }
 }
@@ -330,10 +327,7 @@ mod tests {
             chunk_id: 5,
             source: anyhow::anyhow!("network error"),
         };
-        assert_eq!(
-            error.to_error_code(),
-            LoadingErrorCode::ChunkDownloadFailed
-        );
+        assert_eq!(error.to_error_code(), LoadingErrorCode::ChunkDownloadFailed);
         assert!(error.user_friendly_message().contains("chunk 5"));
     }
 

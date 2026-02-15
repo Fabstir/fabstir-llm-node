@@ -12,11 +12,13 @@ use super::bing::BingSearchProvider;
 use super::brave::BraveSearchProvider;
 use super::cache::SearchCache;
 use super::config::SearchConfig;
-use super::content::{ContentFetcher, ContentFetchConfig};
+use super::content::{ContentFetchConfig, ContentFetcher};
 use super::duckduckgo::DuckDuckGoProvider;
 use super::provider::SearchProvider;
 use super::rate_limiter::SearchRateLimiter;
-use super::types::{SearchError, SearchResponse, SearchResult, SearchResultWithContent, SearchResponseWithContent};
+use super::types::{
+    SearchError, SearchResponse, SearchResponseWithContent, SearchResult, SearchResultWithContent,
+};
 
 /// Main search service that orchestrates providers, caching, and rate limiting
 pub struct SearchService {
@@ -62,7 +64,10 @@ impl SearchService {
         // Initialize content fetcher (Phase 9)
         let content_fetch_config = ContentFetchConfig::from_env();
         let content_fetcher = if content_fetch_config.enabled {
-            debug!("Content fetching enabled (max {} pages)", content_fetch_config.max_pages);
+            debug!(
+                "Content fetching enabled (max {} pages)",
+                content_fetch_config.max_pages
+            );
             Some(Arc::new(ContentFetcher::new(content_fetch_config)))
         } else {
             debug!("Content fetching disabled");
@@ -205,7 +210,8 @@ impl SearchService {
                 let content_start = Instant::now();
 
                 // Collect URLs to fetch
-                let urls: Vec<String> = search_response.results
+                let urls: Vec<String> = search_response
+                    .results
                     .iter()
                     .map(|r| r.url.clone())
                     .collect();
@@ -226,18 +232,17 @@ impl SearchService {
                 );
 
                 // Combine search results with fetched content
-                let results_with_content: Vec<SearchResultWithContent> = search_response.results
+                let results_with_content: Vec<SearchResultWithContent> = search_response
+                    .results
                     .into_iter()
                     .zip(contents.into_iter())
-                    .map(|(result, content)| {
-                        SearchResultWithContent {
-                            title: result.title,
-                            url: result.url,
-                            snippet: result.snippet,
-                            content: content.ok().map(|c| c.text),
-                            published_date: result.published_date,
-                            source: result.source,
-                        }
+                    .map(|(result, content)| SearchResultWithContent {
+                        title: result.title,
+                        url: result.url,
+                        snippet: result.snippet,
+                        content: content.ok().map(|c| c.text),
+                        published_date: result.published_date,
+                        source: result.source,
                     })
                     .collect();
 
@@ -255,7 +260,8 @@ impl SearchService {
         }
 
         // Content fetching disabled - return snippet only
-        let results_with_content: Vec<SearchResultWithContent> = search_response.results
+        let results_with_content: Vec<SearchResultWithContent> = search_response
+            .results
             .into_iter()
             .map(|r| {
                 SearchResultWithContent {
@@ -307,7 +313,10 @@ impl SearchService {
 
     /// Check if content fetching is enabled (Phase 9)
     pub fn is_content_fetch_enabled(&self) -> bool {
-        self.content_fetcher.as_ref().map(|f| f.is_enabled()).unwrap_or(false)
+        self.content_fetcher
+            .as_ref()
+            .map(|f| f.is_enabled())
+            .unwrap_or(false)
     }
 
     /// Get content fetcher cache statistics (Phase 9)

@@ -155,9 +155,11 @@ pub fn encrypt_checkpoint_delta(
     let encryption_key = derive_checkpoint_encryption_key(&ephemeral_private, &pubkey_bytes)?;
 
     // 4. Serialize delta to JSON with sorted keys (SDK compatibility)
-    let value = serde_json::to_value(delta).map_err(|e| anyhow!("JSON serialization failed: {}", e))?;
+    let value =
+        serde_json::to_value(delta).map_err(|e| anyhow!("JSON serialization failed: {}", e))?;
     let sorted = sort_json_keys(&value);
-    let plaintext = serde_json::to_string(&sorted).map_err(|e| anyhow!("JSON stringify failed: {}", e))?;
+    let plaintext =
+        serde_json::to_string(&sorted).map_err(|e| anyhow!("JSON stringify failed: {}", e))?;
 
     // 5. Generate random 24-byte nonce
     let nonce_bytes: [u8; 24] = rng.gen();
@@ -201,8 +203,7 @@ fn parse_hex_pubkey(hex_str: &str) -> Result<Vec<u8>> {
         ));
     }
 
-    let bytes = hex::decode(hex_clean)
-        .map_err(|e| anyhow!("Invalid hex in public key: {}", e))?;
+    let bytes = hex::decode(hex_clean).map_err(|e| anyhow!("Invalid hex in public key: {}", e))?;
 
     // Validate it's a valid curve point
     let encoded = EncodedPoint::from_bytes(&bytes)
@@ -518,20 +519,17 @@ mod tests {
     // These are well-known test vectors from Bitcoin/Ethereum ecosystem
     // Private key: 1 (for testing only - never use in production!)
     const TEST_EPHEMERAL_PRIVATE: [u8; 32] = [
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01,
     ];
 
     // Compressed public key for private key = 2 (G * 2)
     // This is a valid secp256k1 point
     const TEST_USER_RECOVERY_PUBKEY_BYTES: [u8; 33] = [
-        0x02, 0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d,
-        0x6d, 0x30, 0x45, 0x40, 0x6e, 0x95, 0xc0, 0x7c,
-        0xd8, 0x5c, 0x77, 0x8e, 0x4b, 0x8c, 0xef, 0x3c,
-        0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c, 0x70, 0x9e,
-        0xe5,
+        0x02, 0xc6, 0x04, 0x7f, 0x94, 0x41, 0xed, 0x7d, 0x6d, 0x30, 0x45, 0x40, 0x6e, 0x95, 0xc0,
+        0x7c, 0xd8, 0x5c, 0x77, 0x8e, 0x4b, 0x8c, 0xef, 0x3c, 0xa7, 0xab, 0xac, 0x09, 0xb9, 0x5c,
+        0x70, 0x9e, 0xe5,
     ];
 
     #[test]
@@ -552,12 +550,14 @@ mod tests {
         let key1 = derive_checkpoint_encryption_key(
             &TEST_EPHEMERAL_PRIVATE,
             &TEST_USER_RECOVERY_PUBKEY_BYTES,
-        ).unwrap();
+        )
+        .unwrap();
 
         let key2 = derive_checkpoint_encryption_key(
             &TEST_EPHEMERAL_PRIVATE,
             &TEST_USER_RECOVERY_PUBKEY_BYTES,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(key1, key2);
     }
@@ -568,20 +568,19 @@ mod tests {
         let key1 = derive_checkpoint_encryption_key(
             &TEST_EPHEMERAL_PRIVATE,
             &TEST_USER_RECOVERY_PUBKEY_BYTES,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Different private key (2 instead of 1)
         let different_private: [u8; 32] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x02,
         ];
 
-        let key2 = derive_checkpoint_encryption_key(
-            &different_private,
-            &TEST_USER_RECOVERY_PUBKEY_BYTES,
-        ).unwrap();
+        let key2 =
+            derive_checkpoint_encryption_key(&different_private, &TEST_USER_RECOVERY_PUBKEY_BYTES)
+                .unwrap();
 
         assert_ne!(key1, key2);
     }
@@ -589,35 +588,32 @@ mod tests {
     #[test]
     fn test_derive_checkpoint_key_rejects_invalid_private_key_size() {
         let short_key = [0u8; 16]; // Too short
-        let result = derive_checkpoint_encryption_key(
-            &short_key,
-            &TEST_USER_RECOVERY_PUBKEY_BYTES,
-        );
+        let result = derive_checkpoint_encryption_key(&short_key, &TEST_USER_RECOVERY_PUBKEY_BYTES);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expected 32 bytes"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("expected 32 bytes"));
     }
 
     #[test]
     fn test_derive_checkpoint_key_rejects_invalid_public_key_size() {
         let short_pubkey = [0u8; 20]; // Too short
-        let result = derive_checkpoint_encryption_key(
-            &TEST_EPHEMERAL_PRIVATE,
-            &short_pubkey,
-        );
+        let result = derive_checkpoint_encryption_key(&TEST_EPHEMERAL_PRIVATE, &short_pubkey);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expected 33 or 65 bytes"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("expected 33 or 65 bytes"));
     }
 
     #[test]
     fn test_derive_checkpoint_key_rejects_invalid_public_key_point() {
         // Valid length but invalid point (all zeros is not on curve)
         let invalid_pubkey = [0u8; 33];
-        let result = derive_checkpoint_encryption_key(
-            &TEST_EPHEMERAL_PRIVATE,
-            &invalid_pubkey,
-        );
+        let result = derive_checkpoint_encryption_key(&TEST_EPHEMERAL_PRIVATE, &invalid_pubkey);
 
         assert!(result.is_err());
     }
@@ -629,7 +625,8 @@ mod tests {
         let key = derive_checkpoint_encryption_key(
             &TEST_EPHEMERAL_PRIVATE,
             &TEST_USER_RECOVERY_PUBKEY_BYTES,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Key should not be all zeros
         assert!(key.iter().any(|&b| b != 0));
@@ -652,7 +649,11 @@ mod tests {
             end_token: 500,
             messages: vec![
                 CheckpointMessage::new_user("Hello, AI!".to_string(), 1704844800000),
-                CheckpointMessage::new_assistant("Hello! How can I help?".to_string(), 1704844801000, false),
+                CheckpointMessage::new_assistant(
+                    "Hello! How can I help?".to_string(),
+                    1704844801000,
+                    false,
+                ),
             ],
             host_signature: "0x".to_string(), // Will be set during encryption
         }
@@ -661,10 +662,9 @@ mod tests {
     fn generate_test_host_key() -> [u8; 32] {
         // Valid private key (value = 3)
         [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x03,
         ]
     }
 
@@ -714,7 +714,11 @@ mod tests {
         let encrypted = encrypt_checkpoint_delta(&delta, TEST_RECOVERY_PUBKEY, &host_key).unwrap();
 
         // Should pass all validation checks
-        assert!(encrypted.validate().is_ok(), "Validation should pass: {:?}", encrypted.validate());
+        assert!(
+            encrypted.validate().is_ok(),
+            "Validation should pass: {:?}",
+            encrypted.validate()
+        );
     }
 
     #[test]
@@ -727,7 +731,10 @@ mod tests {
         let encrypted2 = encrypt_checkpoint_delta(&delta, TEST_RECOVERY_PUBKEY, &host_key).unwrap();
 
         // Ephemeral keys should be different (forward secrecy)
-        assert_ne!(encrypted1.ephemeral_public_key, encrypted2.ephemeral_public_key);
+        assert_ne!(
+            encrypted1.ephemeral_public_key,
+            encrypted2.ephemeral_public_key
+        );
 
         // Nonces should be different
         assert_ne!(encrypted1.nonce, encrypted2.nonce);
@@ -762,7 +769,10 @@ mod tests {
     fn test_encrypt_checkpoint_delta_ciphertext_decryptable() {
         // Verify that ciphertext can be decrypted with the correct shared key
         // This simulates SDK-side decryption using the same crypto parameters
-        use chacha20poly1305::{XChaCha20Poly1305, aead::{Aead, KeyInit}};
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit},
+            XChaCha20Poly1305,
+        };
         use sha2::Digest;
 
         let delta = create_test_delta();
@@ -776,14 +786,14 @@ mod tests {
         // Derive the same shared key from user's perspective (SDK-side decryption)
         // User would use their private key (2) with host's ephemeral public key
         let user_private: [u8; 32] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x02,
         ];
 
         // Use the same derivation as the node (which now includes SHA256 step)
-        let shared_key = derive_checkpoint_encryption_key(&user_private, &ephemeral_pubkey_bytes).unwrap();
+        let shared_key =
+            derive_checkpoint_encryption_key(&user_private, &ephemeral_pubkey_bytes).unwrap();
 
         // Decrypt using XChaCha20-Poly1305
         let cipher = XChaCha20Poly1305::new_from_slice(&shared_key).unwrap();
@@ -812,10 +822,9 @@ mod tests {
 
         // Well-known test vectors
         let ephemeral_private: [u8; 32] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x01,
         ];
 
         // Public key for private key = 2
@@ -840,8 +849,12 @@ mod tests {
         // 3. HKDF with checkpoint info
         let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(None, &shared_secret);
         let mut expected_key = [0u8; 32];
-        hkdf.expand(CHECKPOINT_HKDF_INFO, &mut expected_key).unwrap();
+        hkdf.expand(CHECKPOINT_HKDF_INFO, &mut expected_key)
+            .unwrap();
 
-        assert_eq!(key, expected_key, "Key derivation should match SDK's expected flow");
+        assert_eq!(
+            key, expected_key,
+            "Key derivation should match SDK's expected flow"
+        );
     }
 }

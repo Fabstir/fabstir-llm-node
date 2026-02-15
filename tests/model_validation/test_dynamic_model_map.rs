@@ -47,19 +47,24 @@ fn test_dynamic_model_info_fields() {
 
     let info = DynamicModelInfo {
         model_id: H256::from_str(
-            "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-        ).unwrap(),
+            "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced",
+        )
+        .unwrap(),
         repo: "CohereForAI/TinyVicuna-1B-32k-GGUF".to_string(),
         filename: "tiny-vicuna-1b.q4_k_m.gguf".to_string(),
         sha256_hash: H256::from_str(
-            "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-        ).unwrap(),
+            "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        )
+        .unwrap(),
     };
 
     assert_eq!(info.repo, "CohereForAI/TinyVicuna-1B-32k-GGUF");
     assert_eq!(info.filename, "tiny-vicuna-1b.q4_k_m.gguf");
     assert!(!info.model_id.is_zero(), "model_id should not be zero");
-    assert!(!info.sha256_hash.is_zero(), "sha256_hash should not be zero");
+    assert!(
+        !info.sha256_hash.is_zero(),
+        "sha256_hash should not be zero"
+    );
 }
 
 /// Test DynamicModelInfo is Clone
@@ -92,8 +97,14 @@ fn test_dynamic_model_info_debug() {
     };
 
     let debug_str = format!("{:?}", info);
-    assert!(debug_str.contains("DynamicModelInfo"), "Debug should contain struct name");
-    assert!(debug_str.contains("model.gguf"), "Debug should contain filename");
+    assert!(
+        debug_str.contains("DynamicModelInfo"),
+        "Debug should contain struct name"
+    );
+    assert!(
+        debug_str.contains("model.gguf"),
+        "Debug should contain filename"
+    );
 }
 
 // ============================================================================
@@ -138,9 +149,10 @@ fn test_build_map_creates_filename_index() {
 /// Test that lookup returns correct model info
 #[test]
 fn test_lookup_known_model() {
-    let models = vec![
-        create_mock_model("tiny-vicuna-1b.q4_k_m.gguf", "CohereForAI/TinyVicuna-1B"),
-    ];
+    let models = vec![create_mock_model(
+        "tiny-vicuna-1b.q4_k_m.gguf",
+        "CohereForAI/TinyVicuna-1B",
+    )];
 
     let map: std::collections::HashMap<String, MockModelInfo> = models
         .into_iter()
@@ -157,9 +169,10 @@ fn test_lookup_known_model() {
 /// Test that lookup for unknown model returns None
 #[test]
 fn test_lookup_unknown_model() {
-    let models = vec![
-        create_mock_model("tiny-vicuna-1b.q4_k_m.gguf", "CohereForAI/TinyVicuna-1B"),
-    ];
+    let models = vec![create_mock_model(
+        "tiny-vicuna-1b.q4_k_m.gguf",
+        "CohereForAI/TinyVicuna-1B",
+    )];
 
     let map: std::collections::HashMap<String, MockModelInfo> = models
         .into_iter()
@@ -187,17 +200,24 @@ fn test_map_supports_any_registered_model() {
         .collect();
 
     // All three models should be accessible
-    assert!(map.contains_key("tiny-vicuna-1b.q4_k_m.gguf"), "TinyVicuna should be accessible");
-    assert!(map.contains_key("gpt-oss-120b.gguf"), "GPT-OSS-120B should be accessible");
-    assert!(map.contains_key("llama-70b.gguf"), "Llama-70B should be accessible");
+    assert!(
+        map.contains_key("tiny-vicuna-1b.q4_k_m.gguf"),
+        "TinyVicuna should be accessible"
+    );
+    assert!(
+        map.contains_key("gpt-oss-120b.gguf"),
+        "GPT-OSS-120B should be accessible"
+    );
+    assert!(
+        map.contains_key("llama-70b.gguf"),
+        "Llama-70B should be accessible"
+    );
 }
 
 /// Test that filename matching is case-sensitive
 #[test]
 fn test_map_case_sensitive() {
-    let models = vec![
-        create_mock_model("Model.gguf", "Test/Repo"),
-    ];
+    let models = vec![create_mock_model("Model.gguf", "Test/Repo")];
 
     let map: std::collections::HashMap<String, MockModelInfo> = models
         .into_iter()
@@ -205,17 +225,21 @@ fn test_map_case_sensitive() {
         .collect();
 
     assert!(map.contains_key("Model.gguf"), "Exact case should match");
-    assert!(!map.contains_key("model.gguf"), "Lowercase should not match");
-    assert!(!map.contains_key("MODEL.gguf"), "Uppercase should not match");
+    assert!(
+        !map.contains_key("model.gguf"),
+        "Lowercase should not match"
+    );
+    assert!(
+        !map.contains_key("MODEL.gguf"),
+        "Uppercase should not match"
+    );
 }
 
 /// Test that map can be refreshed/rebuilt
 #[test]
 fn test_map_refresh() {
     // First build with one model
-    let models_v1 = vec![
-        create_mock_model("model-a.gguf", "Test/ModelA"),
-    ];
+    let models_v1 = vec![create_mock_model("model-a.gguf", "Test/ModelA")];
     let mut map: std::collections::HashMap<String, MockModelInfo> = models_v1
         .into_iter()
         .map(|m| (m.filename.clone(), m))
@@ -248,8 +272,10 @@ fn test_map_refresh() {
 fn test_get_all_models_returns_ids() {
     // Simulating what getAllModels() returns
     let model_ids: Vec<H256> = vec![
-        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced").unwrap(),
-        H256::from_str("0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca").unwrap(),
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap(),
+        H256::from_str("0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca")
+            .unwrap(),
     ];
 
     assert_eq!(model_ids.len(), 2);
@@ -261,16 +287,16 @@ fn test_get_all_models_returns_ids() {
 #[test]
 fn test_get_model_returns_details() {
     // Simulating what getModel(modelId) returns
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Mock response from contract
     let repo = "CohereForAI/TinyVicuna-1B-32k-GGUF";
     let filename = "tiny-vicuna-1b.q4_k_m.gguf";
-    let sha256_hash = H256::from_str(
-        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-    ).unwrap();
+    let sha256_hash =
+        H256::from_str("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+            .unwrap();
 
     // Verify we can extract all required fields
     assert!(!model_id.is_zero());

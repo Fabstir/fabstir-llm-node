@@ -164,7 +164,10 @@ pub fn extract_nonce(encrypted: &[u8]) -> Result<&[u8]> {
 /// let session_key = [/* session key */];
 /// let manifest = decrypt_manifest(&encrypted_manifest, &session_key)?;
 /// ```
-pub fn decrypt_manifest(encrypted: &[u8], key: &[u8]) -> Result<crate::storage::manifest::Manifest> {
+pub fn decrypt_manifest(
+    encrypted: &[u8],
+    key: &[u8],
+) -> Result<crate::storage::manifest::Manifest> {
     let json = decrypt_aes_gcm(encrypted, key)?;
     let manifest = serde_json::from_str(&json)
         .map_err(|e| anyhow!("Failed to parse decrypted manifest JSON: {}", e))?;
@@ -193,7 +196,10 @@ pub fn decrypt_manifest(encrypted: &[u8], key: &[u8]) -> Result<crate::storage::
 /// let session_key = [/* session key */];
 /// let chunk = decrypt_chunk(&encrypted_chunk, &session_key)?;
 /// ```
-pub fn decrypt_chunk(encrypted: &[u8], key: &[u8]) -> Result<crate::storage::manifest::VectorChunk> {
+pub fn decrypt_chunk(
+    encrypted: &[u8],
+    key: &[u8],
+) -> Result<crate::storage::manifest::VectorChunk> {
     let json = decrypt_aes_gcm(encrypted, key)?;
     let chunk = serde_json::from_str(&json)
         .map_err(|e| anyhow!("Failed to parse decrypted chunk JSON: {}", e))?;

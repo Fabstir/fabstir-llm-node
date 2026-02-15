@@ -22,6 +22,7 @@ pub struct AppState {
     pub embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
     pub vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
     pub search_service: Arc<RwLock<Option<Arc<crate::search::SearchService>>>>,
+    pub diffusion_client: Arc<RwLock<Option<Arc<crate::diffusion::DiffusionClient>>>>,
 }
 
 impl AppState {
@@ -35,6 +36,7 @@ impl AppState {
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
             search_service: Arc::new(RwLock::new(None)),
+            diffusion_client: Arc::new(RwLock::new(None)),
         }
     }
 }

@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.13.0-audit-remediation (February 2026)
+**Version**: v8.16.0-image-generation (February 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -29,6 +29,8 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Chat Templates**: Model-specific formatting (Harmony, Llama, etc.) (v8.3.13+)
 - **AUDIT-F4 Compliance**: Model ID in proof signatures prevents cross-model replay attacks (v8.13.0+)
 - **Model Validation**: Dynamic model authorization with SHA256 verification (v8.14.0+)
+- **Image Generation**: Text-to-image via FLUX.2 Klein 4B diffusion sidecar (v8.16.0+)
+- **VLM Vision**: GPU-accelerated OCR and image description via Qwen3-VL sidecar (v8.15.3+)
 
 ## Prerequisites
 
@@ -71,7 +73,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.13.0"
+strings target/release/fabstir-llm-node | grep "v8.16.0"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -279,7 +281,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.13.0"
+strings target/release/fabstir-llm-node | grep "v8.16.0"
 ```
 
 #### Out of Memory During Build

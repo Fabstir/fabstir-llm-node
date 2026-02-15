@@ -211,7 +211,11 @@ impl SessionVectorStore {
         }
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Return top-k
         results.truncate(k);
@@ -245,9 +249,7 @@ impl SessionVectorStore {
         let mut all_results = self.search(query, self.vectors.len(), None)?;
 
         // Apply metadata filtering
-        all_results.retain(|result| {
-            self.matches_filter(&result.metadata, &metadata_filter)
-        });
+        all_results.retain(|result| self.matches_filter(&result.metadata, &metadata_filter));
 
         // Return top-k after filtering
         all_results.truncate(k);
@@ -326,11 +328,7 @@ mod tests {
         assert!(store.get("doc1").is_none());
 
         // Test add
-        let result = store.add(
-            "doc1".to_string(),
-            vec![0.5; 384],
-            json!({"title": "Test"}),
-        );
+        let result = store.add("doc1".to_string(), vec![0.5; 384], json!({"title": "Test"}));
         assert!(result.is_ok());
         assert_eq!(store.count(), 1);
 
@@ -343,8 +341,12 @@ mod tests {
         assert_eq!(store.count(), 0);
 
         // Test clear
-        store.add("doc2".to_string(), vec![0.1; 384], json!({})).unwrap();
-        store.add("doc3".to_string(), vec![0.2; 384], json!({})).unwrap();
+        store
+            .add("doc2".to_string(), vec![0.1; 384], json!({}))
+            .unwrap();
+        store
+            .add("doc3".to_string(), vec![0.2; 384], json!({}))
+            .unwrap();
         assert_eq!(store.count(), 2);
         store.clear();
         assert_eq!(store.count(), 0);

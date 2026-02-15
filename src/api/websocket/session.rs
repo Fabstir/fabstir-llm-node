@@ -36,9 +36,7 @@ pub enum VectorLoadingStatus {
         load_time_ms: u64,
     },
     /// Failed to load
-    Error {
-        error: String,
-    },
+    Error { error: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

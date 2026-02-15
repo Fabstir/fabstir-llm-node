@@ -34,8 +34,7 @@ pub fn preprocess_for_detection(image: &DynamicImage) -> Array4<f32> {
     let rgb = resized.to_rgb8();
 
     // Create output tensor in NCHW format
-    let mut tensor =
-        Array4::zeros((1, 3, OCR_INPUT_SIZE as usize, OCR_INPUT_SIZE as usize));
+    let mut tensor = Array4::zeros((1, 3, OCR_INPUT_SIZE as usize, OCR_INPUT_SIZE as usize));
 
     // Fill tensor with normalized pixel values
     for y in 0..OCR_INPUT_SIZE as usize {

@@ -55,6 +55,14 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Session Cleanup**: Token trackers and state cleared after settlement
 - **Blockchain Integration**: Direct contract calls to JobMarketplace (0x95132177F964FF053C1E874b53CF74d819618E06 - AUDIT-F4 compliant)
 
+### ✅ Phase 8.16: Encrypted WebSocket Image Generation (v8.16.0+)
+- **Text-to-Image**: FLUX.2 Klein 4B via SGLang Diffusion sidecar
+- **End-to-End Encrypted**: Same XChaCha20-Poly1305 channel as inference
+- **Routing**: `"action": "image_generation"` in decrypted JSON payload
+- **Safety**: Three-layer content safety pipeline (keyword filter active)
+- **Billing**: Megapixel-steps formula with per-session rate limiting
+- **89 tests passing** across diffusion module
+
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
 - Full production inference engine connection (partially mocked)
@@ -642,6 +650,7 @@ describe('End-to-End Conversation', () => {
 - `prompt`: Send user prompt
 - `batch_prompt`: Multiple prompts
 - `session_end`: Clean termination
+- `encrypted_message` (action: `image_generation`): Generate image over encrypted channel (v8.16.0+)
 
 ### Server → Client Messages
 - `session_ready`: Initialization complete
@@ -650,6 +659,8 @@ describe('End-to-End Conversation', () => {
 - `error`: Error notification
 - `token_refresh`: New JWT token
 - `rate_limit`: Rate limit warning
+- `encrypted_response` (type: `image_generation_result`): Encrypted generated image (v8.16.0+)
+- `encrypted_response` (type: `image_generation_error`): Encrypted generation error (v8.16.0+)
 
 ### Error Codes
 - `AUTH_FAILED`: Authentication failure
@@ -660,6 +671,103 @@ describe('End-to-End Conversation', () => {
 - `MODEL_UNAUTHORIZED`: Host not authorized for requested model (v8.14.0+)
 - `CONTEXT_TOO_LARGE`: Exceeds token limit
 - `CIRCUIT_OPEN`: Service temporarily unavailable
+- `RATE_LIMIT_EXCEEDED`: Image generation rate limit hit (v8.16.0+)
+- `PROMPT_BLOCKED`: Image prompt blocked by safety filter (v8.16.0+)
+- `DIFFUSION_SERVICE_UNAVAILABLE`: No diffusion sidecar configured (v8.16.0+)
+- `VALIDATION_FAILED`: Invalid image generation parameters (v8.16.0+)
+- `IMAGE_GENERATION_FAILED`: Sidecar generation error (v8.16.0+)
+
+## Image Generation over Encrypted WebSocket (v8.16.0+)
+
+Image generation uses the same encrypted WebSocket channel as inference. The SDK sends an `encrypted_message` containing `"action": "image_generation"` in the decrypted JSON payload. The node routes this to the image generation handler instead of the inference pipeline.
+
+### Prerequisites
+
+- Active encrypted session (completed `encrypted_session_init` handshake)
+- Host must have `DIFFUSION_ENDPOINT` configured (check `/v1/version` for `image-generation` feature flag)
+
+### Sending an Image Generation Request
+
+```typescript
+// 1. Build inner payload with "action" routing key
+const innerPayload = {
+  action: "image_generation",  // Required: routes to image gen handler
+  prompt: "A cat astronaut floating in space",
+  size: "1024x1024",          // Optional (default: "1024x1024")
+  steps: 4,                   // Optional (default: 4)
+  seed: 42,                   // Optional (random if omitted)
+  negativePrompt: "blurry",   // Optional
+  guidanceScale: 3.5,         // Optional (default: 3.5)
+  safetyLevel: "strict",      // Optional (default: "strict")
+};
+
+// 2. Encrypt with session key
+const plaintext = new TextEncoder().encode(JSON.stringify(innerPayload));
+const nonce = crypto.getRandomValues(new Uint8Array(24));
+const aad = new TextEncoder().encode(`message_${messageIndex}`);
+const ciphertext = xchacha20poly1305(sessionKey, nonce).encrypt(plaintext, aad);
+
+// 3. Send as encrypted_message
+ws.send(JSON.stringify({
+  type: "encrypted_message",
+  session_id: sessionId,
+  id: `img-${Date.now()}`,
+  payload: {
+    ciphertextHex: bytesToHex(ciphertext),
+    nonceHex: bytesToHex(nonce),
+    aadHex: bytesToHex(aad),
+  }
+}));
+```
+
+### Receiving the Response
+
+The node responds with an `encrypted_response`. The AAD for image generation responses is `encrypted_image_response` (different from inference responses).
+
+```typescript
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === "encrypted_response") {
+    const ct = hexToBytes(msg.payload.ciphertextHex);
+    const nonce = hexToBytes(msg.payload.nonceHex);
+    const aad = hexToBytes(msg.payload.aadHex);  // "encrypted_image_response"
+    const decrypted = xchacha20poly1305(sessionKey, nonce).decrypt(ct, aad);
+    const inner = JSON.parse(new TextDecoder().decode(decrypted));
+
+    if (inner.type === "image_generation_result") {
+      // Success: inner.image is base64 PNG
+      const img = new Image();
+      img.src = `data:image/png;base64,${inner.image}`;
+      console.log(`Seed: ${inner.seed}, Time: ${inner.processingTimeMs}ms`);
+      console.log(`Cost: ${inner.billing.generationUnits} units`);
+    } else if (inner.type === "image_generation_error") {
+      // Error: inner.error.code and inner.error.message
+      console.error(`Error: ${inner.error.code} - ${inner.error.message}`);
+    }
+  }
+};
+```
+
+### Error Codes
+
+| Code | Cause | SDK Action |
+|------|-------|------------|
+| `RATE_LIMIT_EXCEEDED` | > 5 requests/min per session | Show cooldown message |
+| `PROMPT_BLOCKED` | Safety filter blocked the prompt | Show safety warning |
+| `DIFFUSION_SERVICE_UNAVAILABLE` | No sidecar configured | Hide image gen UI |
+| `VALIDATION_FAILED` | Invalid size, empty prompt, etc. | Show validation error |
+| `IMAGE_GENERATION_FAILED` | Sidecar error (timeout, OOM) | Retry once, then show error |
+
+### Key Differences from Inference Messages
+
+| Property | Inference | Image Generation |
+|----------|-----------|-----------------|
+| Routing | Default (no action field) | `"action": "image_generation"` |
+| Response AAD | Varies | `encrypted_image_response` (fixed) |
+| Response type | `stream_chunk` / `response` | `image_generation_result` |
+| Rate limit | Connection-level | 5/min per session (sliding window) |
+
+For the full SDK integration guide with TypeScript interfaces, billing formula, safety levels, and UI patterns, see [SDK Image Generation Integration Guide](./sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md).
 
 ## Current Working Implementation (February 2026)
 

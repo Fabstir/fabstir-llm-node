@@ -149,7 +149,8 @@ mod tests {
 
     #[test]
     fn test_checkpoint_message_new_assistant_partial() {
-        let msg = CheckpointMessage::new_assistant("Partial response...".to_string(), 123456789, true);
+        let msg =
+            CheckpointMessage::new_assistant("Partial response...".to_string(), 123456789, true);
         assert_eq!(msg.role, "assistant");
         assert!(msg.metadata.is_some());
         assert_eq!(msg.metadata.unwrap().partial, Some(true));
@@ -197,7 +198,10 @@ mod tests {
         let timestamp_pos = json.find("\"timestamp\"").unwrap();
 
         assert!(content_pos < role_pos, "content should come before role");
-        assert!(role_pos < timestamp_pos, "role should come before timestamp");
+        assert!(
+            role_pos < timestamp_pos,
+            "role should come before timestamp"
+        );
     }
 
     #[test]
@@ -280,7 +284,10 @@ mod tests {
         let messages_json = delta.compute_messages_json();
 
         // Verify compact format (no unnecessary spaces)
-        assert!(!messages_json.contains(": "), "Should be compact without spaces after colons");
+        assert!(
+            !messages_json.contains(": "),
+            "Should be compact without spaces after colons"
+        );
 
         // Verify keys are sorted: content < role < timestamp
         // For each message, content should appear before role, role before timestamp
@@ -288,8 +295,14 @@ mod tests {
         let first_role = messages_json.find("\"role\"").unwrap();
         let first_timestamp = messages_json.find("\"timestamp\"").unwrap();
 
-        assert!(first_content < first_role, "content should come before role");
-        assert!(first_role < first_timestamp, "role should come before timestamp");
+        assert!(
+            first_content < first_role,
+            "content should come before role"
+        );
+        assert!(
+            first_role < first_timestamp,
+            "role should come before timestamp"
+        );
 
         // Verify it's valid JSON array
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&messages_json).unwrap();

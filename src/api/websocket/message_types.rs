@@ -37,6 +37,10 @@ pub enum MessageType {
     SearchResults,
     SearchError,
 
+    // Image generation (v8.16.0+)
+    ImageGeneration,
+    ImageGenerationResult,
+
     // Error and unknown
     Error,
     Unknown,
@@ -820,10 +824,11 @@ impl LoadingProgressMessage {
                     total
                 )
             }
-            LoadingProgressMessage::IndexBuilding => {
-                "Building search index...".to_string()
-            }
-            LoadingProgressMessage::LoadingComplete { vector_count, duration_ms } => {
+            LoadingProgressMessage::IndexBuilding => "Building search index...".to_string(),
+            LoadingProgressMessage::LoadingComplete {
+                vector_count,
+                duration_ms,
+            } => {
                 let duration_secs = *duration_ms as f64 / 1000.0;
                 format!(
                     "Vector database ready ({} vectors, loaded in {:.2}s)",
@@ -864,7 +869,10 @@ impl Serialize for LoadingProgressMessage {
                 map.serialize_entry("event", "index_building")?;
                 map.serialize_entry("message", &self.message())?;
             }
-            LoadingProgressMessage::LoadingComplete { vector_count, duration_ms } => {
+            LoadingProgressMessage::LoadingComplete {
+                vector_count,
+                duration_ms,
+            } => {
                 map.serialize_entry("event", "loading_complete")?;
                 map.serialize_entry("vector_count", vector_count)?;
                 map.serialize_entry("duration_ms", duration_ms)?;
@@ -933,28 +941,38 @@ impl<'de> Deserialize<'de> for LoadingProgressMessage {
                 match event.as_str() {
                     "manifest_downloaded" => Ok(LoadingProgressMessage::ManifestDownloaded),
                     "chunk_downloaded" => {
-                        let chunk_id = chunk_id.ok_or_else(|| de::Error::missing_field("chunk_id"))?;
+                        let chunk_id =
+                            chunk_id.ok_or_else(|| de::Error::missing_field("chunk_id"))?;
                         let total = total.ok_or_else(|| de::Error::missing_field("total"))?;
                         Ok(LoadingProgressMessage::ChunkDownloaded { chunk_id, total })
                     }
                     "index_building" => Ok(LoadingProgressMessage::IndexBuilding),
                     "loading_complete" => {
-                        let vector_count = vector_count.ok_or_else(|| de::Error::missing_field("vector_count"))?;
-                        let duration_ms = duration_ms.ok_or_else(|| de::Error::missing_field("duration_ms"))?;
-                        Ok(LoadingProgressMessage::LoadingComplete { vector_count, duration_ms })
+                        let vector_count =
+                            vector_count.ok_or_else(|| de::Error::missing_field("vector_count"))?;
+                        let duration_ms =
+                            duration_ms.ok_or_else(|| de::Error::missing_field("duration_ms"))?;
+                        Ok(LoadingProgressMessage::LoadingComplete {
+                            vector_count,
+                            duration_ms,
+                        })
                     }
                     "loading_error" => {
-                        let error_code = error_code.ok_or_else(|| de::Error::missing_field("error_code"))?;
+                        let error_code =
+                            error_code.ok_or_else(|| de::Error::missing_field("error_code"))?;
                         let error = error.ok_or_else(|| de::Error::missing_field("error"))?;
                         Ok(LoadingProgressMessage::LoadingError { error_code, error })
                     }
-                    _ => Err(de::Error::unknown_variant(&event, &[
-                        "manifest_downloaded",
-                        "chunk_downloaded",
-                        "index_building",
-                        "loading_complete",
-                        "loading_error",
-                    ])),
+                    _ => Err(de::Error::unknown_variant(
+                        &event,
+                        &[
+                            "manifest_downloaded",
+                            "chunk_downloaded",
+                            "index_building",
+                            "loading_complete",
+                            "loading_error",
+                        ],
+                    )),
                 }
             }
         }

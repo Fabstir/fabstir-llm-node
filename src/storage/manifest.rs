@@ -179,12 +179,7 @@ impl VectorChunk {
         // Validate each vector has correct dimensions
         for (i, vector) in self.vectors.iter().enumerate() {
             vector.validate(expected_dimensions).map_err(|e| {
-                anyhow!(
-                    "Vector {} (id: {}) validation failed: {}",
-                    i,
-                    vector.id,
-                    e
-                )
+                anyhow!("Vector {} (id: {}) validation failed: {}", i, vector.id, e)
             })?;
         }
 
@@ -256,7 +251,10 @@ impl Vector {
 
     /// Get metadata field as string
     pub fn get_metadata_string(&self, key: &str) -> Option<String> {
-        self.metadata.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+        self.metadata
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Get metadata field as i64

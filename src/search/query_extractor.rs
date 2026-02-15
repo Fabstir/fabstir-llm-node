@@ -428,16 +428,14 @@ mod tests {
     fn test_format_fallback_snippet() {
         use super::super::types::SearchResultWithContent;
 
-        let results = vec![
-            SearchResultWithContent {
-                title: "Test Article".to_string(),
-                url: "https://example.com".to_string(),
-                snippet: "Short snippet description".to_string(),
-                content: None, // No content fetched
-                published_date: None,
-                source: "test".to_string(),
-            },
-        ];
+        let results = vec![SearchResultWithContent {
+            title: "Test Article".to_string(),
+            url: "https://example.com".to_string(),
+            snippet: "Short snippet description".to_string(),
+            content: None, // No content fetched
+            published_date: None,
+            source: "test".to_string(),
+        }];
 
         let formatted = format_results_with_content_for_prompt(&results, 10000);
         assert!(formatted.contains("Summary: Short snippet")); // Falls back to snippet
@@ -447,16 +445,14 @@ mod tests {
     fn test_format_with_content_respects_max_chars() {
         use super::super::types::SearchResultWithContent;
 
-        let results = vec![
-            SearchResultWithContent {
-                title: "Test Article".to_string(),
-                url: "https://example.com".to_string(),
-                snippet: "Short snippet".to_string(),
-                content: Some("A".repeat(1000)), // Long content
-                published_date: None,
-                source: "test".to_string(),
-            },
-        ];
+        let results = vec![SearchResultWithContent {
+            title: "Test Article".to_string(),
+            url: "https://example.com".to_string(),
+            snippet: "Short snippet".to_string(),
+            content: Some("A".repeat(1000)), // Long content
+            published_date: None,
+            source: "test".to_string(),
+        }];
 
         let formatted = format_results_with_content_for_prompt(&results, 100);
         // Should be truncated

@@ -12,10 +12,10 @@
 //!
 //! **TDD Approach**: Tests written BEFORE implementation.
 
-mod test_error_types;
-mod test_dynamic_model_map;
 mod test_contract_queries;
+mod test_dynamic_model_map;
+mod test_error_types;
+mod test_job_claim;
+mod test_main_integration;
 mod test_model_id_extraction;
 mod test_startup_validation;
-mod test_main_integration;
-mod test_job_claim;

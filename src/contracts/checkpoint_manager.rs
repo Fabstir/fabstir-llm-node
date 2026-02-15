@@ -23,7 +23,7 @@ use crate::checkpoint::{CheckpointMessage, CheckpointPublisher};
 use crate::crypto::ezkl::{EzklProver, WitnessBuilder};
 
 const CHECKPOINT_THRESHOLD: u64 = 1000; // Submit checkpoint every 1000 tokens (production value to minimize streaming pauses)
-                                       // Minimum tokens required for checkpoint submission (contract requirement)
+                                        // Minimum tokens required for checkpoint submission (contract requirement)
 const MIN_PROVEN_TOKENS: u64 = 100;
 
 #[derive(Debug, Clone)]
@@ -94,8 +94,7 @@ impl ProofSubmissionCache {
         cache.entry(job_id).or_insert_with(Vec::new).push(entry);
         info!(
             "[PROOF-CACHE] Cached proof for job {} (hash: 0x{}...)",
-            job_id,
-            proof_hash_hex
+            job_id, proof_hash_hex
         );
     }
 
@@ -173,7 +172,8 @@ impl CheckpointManager {
             .map_err(|e| anyhow!("Failed to initialize S5 storage: {}", e))?;
 
         // Initialize checkpoint publisher for conversation recovery (Phase 3)
-        let checkpoint_publisher = Arc::new(CheckpointPublisher::new(format!("{:?}", host_address)));
+        let checkpoint_publisher =
+            Arc::new(CheckpointPublisher::new(format!("{:?}", host_address)));
 
         // Initialize proof cache for S5 propagation delay handling (v8.12.6)
         // TTL of 1 hour - proofs older than this are cleaned up
@@ -212,11 +212,26 @@ impl CheckpointManager {
             self.web3_client.provider.clone(),
         );
 
-        match contract
-            .method::<_, (U256, Address, Address, Address, U256, U256, U256, U256, U256, U256, U256, u8, U256, U256, String, H256, String)>(
-                "sessionJobs",
-                U256::from(job_id),
-            ) {
+        match contract.method::<_, (
+            U256,
+            Address,
+            Address,
+            Address,
+            U256,
+            U256,
+            U256,
+            U256,
+            U256,
+            U256,
+            U256,
+            u8,
+            U256,
+            U256,
+            String,
+            H256,
+            String,
+        )>("sessionJobs", U256::from(job_id))
+        {
             Ok(call) => {
                 match call.call().await {
                     Ok(result) => {
@@ -271,7 +286,10 @@ impl CheckpointManager {
         let mut trackers = self.job_trackers.write().await;
 
         let tracker = trackers.entry(job_id).or_insert_with(|| {
-            eprintln!("📝 Starting token tracking for job {} (proofInterval: {} tokens)", job_id, proof_interval);
+            eprintln!(
+                "📝 Starting token tracking for job {} (proofInterval: {} tokens)",
+                job_id, proof_interval
+            );
             JobTokenTracker {
                 job_id,
                 tokens_generated: 0,
@@ -345,7 +363,10 @@ impl CheckpointManager {
             let content_hashes = self.get_content_hashes(job_id).await;
 
             tokio::spawn(async move {
-                info!("🚀 [ASYNC] Starting background checkpoint submission for job {}", job_id);
+                info!(
+                    "🚀 [ASYNC] Starting background checkpoint submission for job {}",
+                    job_id
+                );
 
                 // Create a temporary checkpoint submitter with cloned data
                 let submission_result = Self::submit_checkpoint_async(
@@ -360,7 +381,8 @@ impl CheckpointManager {
                     checkpoint_publisher,
                     previous_checkpoint,
                     proof_cache,
-                ).await;
+                )
+                .await;
 
                 // Update tracker based on result
                 let mut trackers = job_trackers.write().await;
@@ -401,7 +423,9 @@ impl CheckpointManager {
     /// of the actual prompt text.
     pub async fn set_prompt_hash(&self, job_id: u64, hash: [u8; 32]) {
         let mut content_hashes = self.content_hashes.write().await;
-        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        let entry = content_hashes
+            .entry(job_id)
+            .or_insert_with(ContentHashes::default);
         entry.prompt_hash = Some(hash);
         tracing::debug!(
             "📝 Set prompt hash for job {}: 0x{}",
@@ -415,7 +439,9 @@ impl CheckpointManager {
     /// Accumulates the response text so we can hash it at checkpoint time.
     pub async fn append_response(&self, job_id: u64, text: &str) {
         let mut content_hashes = self.content_hashes.write().await;
-        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        let entry = content_hashes
+            .entry(job_id)
+            .or_insert_with(ContentHashes::default);
         entry.response_buffer.push_str(text);
     }
 
@@ -425,7 +451,9 @@ impl CheckpointManager {
     /// and clears the buffer. Returns the computed hash.
     pub async fn finalize_response_hash(&self, job_id: u64) -> [u8; 32] {
         let mut content_hashes = self.content_hashes.write().await;
-        let entry = content_hashes.entry(job_id).or_insert_with(ContentHashes::default);
+        let entry = content_hashes
+            .entry(job_id)
+            .or_insert_with(ContentHashes::default);
 
         // Compute SHA256 of accumulated response
         let hash = Sha256::digest(entry.response_buffer.as_bytes());
@@ -729,7 +757,13 @@ impl CheckpointManager {
 
         // Encode contract call with hash + CID + deltaCID (v8.14.0 - no signature)
         // Sync path doesn't publish encrypted checkpoints, so delta_cid is empty
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid, String::new());
+        let data = encode_checkpoint_call(
+            job_id,
+            tokens_to_submit,
+            proof_hash_bytes,
+            proof_cid,
+            String::new(),
+        );
 
         info!(
             "📦 Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -844,7 +878,9 @@ impl CheckpointManager {
 
         info!(
             "🚀 [ASYNC] Submitting proof of work for job {} with {} tokens (content_hashes={})...",
-            job_id, tokens_to_submit, content_hashes.is_some()
+            job_id,
+            tokens_to_submit,
+            content_hashes.is_some()
         );
 
         // Generate STARK proof using Risc0 zkVM (static version)
@@ -868,7 +904,10 @@ impl CheckpointManager {
         let proof_hash = hasher.finalize();
         let proof_hash_bytes: [u8; 32] = proof_hash.into();
 
-        info!("📊 [ASYNC] Proof hash: 0x{}", hex::encode(&proof_hash_bytes));
+        info!(
+            "📊 [ASYNC] Proof hash: 0x{}",
+            hex::encode(&proof_hash_bytes)
+        );
 
         // Upload proof to S5 decentralized storage and get CID (Phase 2.2)
         let proof_cid = Self::upload_proof_to_s5_static(&s5_storage, job_id, &proof_bytes).await?;
@@ -965,7 +1004,13 @@ impl CheckpointManager {
             .await;
 
         // Encode contract call with hash + CID + deltaCID (v8.14.0 - no signature)
-        let data = encode_checkpoint_call(job_id, tokens_to_submit, proof_hash_bytes, proof_cid, delta_cid);
+        let data = encode_checkpoint_call(
+            job_id,
+            tokens_to_submit,
+            proof_hash_bytes,
+            proof_cid,
+            delta_cid,
+        );
 
         info!(
             "📦 [ASYNC] Transaction size: {} bytes (was {}KB proof - 737x reduction!)",
@@ -1014,10 +1059,16 @@ impl CheckpointManager {
                             }
                         }
                         Ok(Err(e)) => {
-                            warn!("[ASYNC-BG] Receipt error for job {}: {} - tx may still succeed", job_id, e);
+                            warn!(
+                                "[ASYNC-BG] Receipt error for job {}: {} - tx may still succeed",
+                                job_id, e
+                            );
                         }
                         Err(_) => {
-                            info!("[ASYNC-BG] Confirmation pending for job {} - tx: {:?}", job_id, tx_hash);
+                            info!(
+                                "[ASYNC-BG] Confirmation pending for job {} - tx: {:?}",
+                                job_id, tx_hash
+                            );
                         }
                     }
                 });
@@ -1025,7 +1076,10 @@ impl CheckpointManager {
                 Ok(())
             }
             Err(e) => {
-                error!("❌ [ASYNC] Failed to send transaction for job {}: {}", job_id, e);
+                error!(
+                    "❌ [ASYNC] Failed to send transaction for job {}: {}",
+                    job_id, e
+                );
                 Err(anyhow!("Transaction send failed: {}", e))
             }
         }
@@ -1062,31 +1116,32 @@ impl CheckpointManager {
             model_hash_bytes.copy_from_slice(&model_hash);
 
             // Phase 4: Use real content hashes if available, otherwise placeholder
-            let (input_hash_bytes, output_hash_bytes) = if let Some((prompt_hash, response_hash)) = content_hashes {
-                info!(
-                    "📝 [ASYNC] Using real content hashes - prompt: 0x{}..., response: 0x{}...",
-                    hex::encode(&prompt_hash[..8]),
-                    hex::encode(&response_hash[..8])
-                );
-                (prompt_hash, response_hash)
-            } else {
-                // Fallback to placeholder hashes (backward compatible)
-                let input_data = format!("job_{}:input", job_id);
-                let input_hash = Sha256::digest(input_data.as_bytes());
-                let mut input_bytes = [0u8; 32];
-                input_bytes.copy_from_slice(&input_hash);
+            let (input_hash_bytes, output_hash_bytes) =
+                if let Some((prompt_hash, response_hash)) = content_hashes {
+                    info!(
+                        "📝 [ASYNC] Using real content hashes - prompt: 0x{}..., response: 0x{}...",
+                        hex::encode(&prompt_hash[..8]),
+                        hex::encode(&response_hash[..8])
+                    );
+                    (prompt_hash, response_hash)
+                } else {
+                    // Fallback to placeholder hashes (backward compatible)
+                    let input_data = format!("job_{}:input", job_id);
+                    let input_hash = Sha256::digest(input_data.as_bytes());
+                    let mut input_bytes = [0u8; 32];
+                    input_bytes.copy_from_slice(&input_hash);
 
-                let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
-                let output_hash = Sha256::digest(output_data.as_bytes());
-                let mut output_bytes = [0u8; 32];
-                output_bytes.copy_from_slice(&output_hash);
+                    let output_data = format!("job_{}:output:tokens_{}", job_id, tokens_generated);
+                    let output_hash = Sha256::digest(output_data.as_bytes());
+                    let mut output_bytes = [0u8; 32];
+                    output_bytes.copy_from_slice(&output_hash);
 
-                warn!(
+                    warn!(
                     "⚠️ [ASYNC] Using placeholder hashes (no content hashes available for job {})",
                     job_id
                 );
-                (input_bytes, output_bytes)
-            };
+                    (input_bytes, output_bytes)
+                };
 
             let witness = WitnessBuilder::new()
                 .with_job_id(job_id_bytes)
@@ -1236,7 +1291,8 @@ impl CheckpointManager {
                     self.checkpoint_publisher.clone(),
                     previous_checkpoint,
                     self.proof_cache.clone(),
-                ).await;
+                )
+                .await;
 
                 // Update tracker based on result
                 let mut trackers = self.job_trackers.write().await;
@@ -1245,7 +1301,10 @@ impl CheckpointManager {
                     tracker.submission_started_at = None;
 
                     if let Err(ref e) = submission_result {
-                        error!("❌ [SYNC-FINAL] Failed to submit final checkpoint for job {}: {}", job_id, e);
+                        error!(
+                            "❌ [SYNC-FINAL] Failed to submit final checkpoint for job {}: {}",
+                            job_id, e
+                        );
                         tracker.last_checkpoint = previous_checkpoint;
                     } else {
                         tracker.last_proof_timestamp = Some(std::time::Instant::now());
@@ -1262,7 +1321,10 @@ impl CheckpointManager {
                     return Err(e);
                 }
 
-                info!("✅ Final checkpoint confirmed for job {} - safe to complete session", job_id);
+                info!(
+                    "✅ Final checkpoint confirmed for job {} - safe to complete session",
+                    job_id
+                );
             } else {
                 info!(
                     "⚠️ No new tokens to submit for job {} (0 tokens since last checkpoint)",
@@ -1296,17 +1358,27 @@ impl CheckpointManager {
         // Phase 4: Get content hashes before spawning (v8.10.0+)
         let content_hashes = self.get_content_hashes(job_id).await;
 
-        info!("🚀 [FORCE-CHECKPOINT] Spawning background task for job {} (returns immediately)", job_id);
+        info!(
+            "🚀 [FORCE-CHECKPOINT] Spawning background task for job {} (returns immediately)",
+            job_id
+        );
 
         // Spawn the entire force_checkpoint logic in background
         // This ensures the caller NEVER blocks waiting for locks
         tokio::spawn(async move {
-            info!("🔄 [FORCE-CHECKPOINT-BG] Starting background force checkpoint for job {}", job_id);
+            info!(
+                "🔄 [FORCE-CHECKPOINT-BG] Starting background force checkpoint for job {}",
+                job_id
+            );
 
             // Acquire lock inside the spawned task (not blocking caller)
             let mut trackers = job_trackers.write().await;
 
-            let (tokens_to_submit, previous_checkpoint, session_id_for_publish) = if let Some(tracker) = trackers.get_mut(&job_id) {
+            let (tokens_to_submit, previous_checkpoint, session_id_for_publish) = if let Some(
+                tracker,
+            ) =
+                trackers.get_mut(&job_id)
+            {
                 let tokens_since_checkpoint = tracker.tokens_generated - tracker.last_checkpoint;
 
                 // Skip if submission in progress or not enough tokens
@@ -1345,9 +1417,16 @@ impl CheckpointManager {
                 // Phase 3: Clone session_id for checkpoint publishing (v8.11.0)
                 let session_id_for_publish = tracker.session_id.clone();
 
-                (tokens_to_submit, previous_checkpoint, session_id_for_publish)
+                (
+                    tokens_to_submit,
+                    previous_checkpoint,
+                    session_id_for_publish,
+                )
             } else {
-                info!("⚠️ [FORCE-CHECKPOINT-BG] No tracker found for job {}", job_id);
+                info!(
+                    "⚠️ [FORCE-CHECKPOINT-BG] No tracker found for job {}",
+                    job_id
+                );
                 return;
             };
 
@@ -1367,7 +1446,8 @@ impl CheckpointManager {
                 checkpoint_publisher,
                 previous_checkpoint,
                 proof_cache,
-            ).await;
+            )
+            .await;
 
             // Update tracker based on result
             let mut trackers = job_trackers.write().await;
@@ -1860,7 +1940,11 @@ impl CheckpointManager {
     /// # Arguments
     /// * `session_id` - Session identifier
     /// * `recovery_public_key` - User's recovery public key (0x-prefixed hex, compressed secp256k1)
-    pub async fn set_session_recovery_public_key(&self, session_id: &str, recovery_public_key: String) {
+    pub async fn set_session_recovery_public_key(
+        &self,
+        session_id: &str,
+        recovery_public_key: String,
+    ) {
         self.checkpoint_publisher
             .set_recovery_public_key(session_id, recovery_public_key)
             .await;
@@ -2097,7 +2181,10 @@ mod tests {
         );
 
         // Function selector (4 bytes) + encoded params
-        assert!(encoded.len() > 4, "Encoded data should include function selector");
+        assert!(
+            encoded.len() > 4,
+            "Encoded data should include function selector"
+        );
 
         // Verify function selector is for submitProofOfWork
         // keccak256("submitProofOfWork(uint256,uint256,bytes32,string,string)")
@@ -2149,13 +2236,8 @@ mod tests {
             String::new(),
         );
 
-        let encoded2 = encode_checkpoint_call(
-            job_id,
-            tokens_generated,
-            hash2,
-            proof_cid,
-            String::new(),
-        );
+        let encoded2 =
+            encode_checkpoint_call(job_id, tokens_generated, hash2, proof_cid, String::new());
 
         assert_ne!(
             encoded1, encoded2,
@@ -2215,7 +2297,10 @@ mod tests {
         );
 
         // Function selector (4 bytes) + encoded params
-        assert!(encoded.len() > 4, "Encoded data should include function selector");
+        assert!(
+            encoded.len() > 4,
+            "Encoded data should include function selector"
+        );
 
         // The delta_cid string should appear in the encoded data (ABI-encoded)
         // In ABI encoding, strings are stored as: offset pointer + length + UTF-8 bytes
@@ -2238,16 +2323,14 @@ mod tests {
         let proof_cid = "bafyproof456".to_string();
         let delta_cid = "".to_string(); // Empty delta CID for non-encrypted path
 
-        let encoded = encode_checkpoint_call(
-            job_id,
-            tokens_generated,
-            proof_hash,
-            proof_cid,
-            delta_cid,
-        );
+        let encoded =
+            encode_checkpoint_call(job_id, tokens_generated, proof_hash, proof_cid, delta_cid);
 
         // Should still encode successfully with empty string
-        assert!(encoded.len() > 4, "Encoded data should include function selector");
+        assert!(
+            encoded.len() > 4,
+            "Encoded data should include function selector"
+        );
         assert!(!encoded.is_empty(), "Encoded data should not be empty");
     }
 
@@ -2270,13 +2353,8 @@ mod tests {
             delta_cid1,
         );
 
-        let encoded2 = encode_checkpoint_call(
-            job_id,
-            tokens_generated,
-            proof_hash,
-            proof_cid,
-            delta_cid2,
-        );
+        let encoded2 =
+            encode_checkpoint_call(job_id, tokens_generated, proof_hash, proof_cid, delta_cid2);
 
         assert_ne!(
             encoded1, encoded2,
@@ -2397,12 +2475,12 @@ mod tests {
         // Get content hashes (simulating get_content_hashes)
         let result = {
             let hashes = content_hashes.read().await;
-            hashes.get(&job_id).and_then(|entry| {
-                match (entry.prompt_hash, entry.response_hash) {
+            hashes
+                .get(&job_id)
+                .and_then(|entry| match (entry.prompt_hash, entry.response_hash) {
                     (Some(p), Some(r)) => Some((p, r)),
                     _ => None,
-                }
-            })
+                })
         };
 
         assert!(result.is_some());
@@ -2430,15 +2508,18 @@ mod tests {
         // Get content hashes
         let result = {
             let hashes = content_hashes.read().await;
-            hashes.get(&job_id).and_then(|entry| {
-                match (entry.prompt_hash, entry.response_hash) {
+            hashes
+                .get(&job_id)
+                .and_then(|entry| match (entry.prompt_hash, entry.response_hash) {
                     (Some(p), Some(r)) => Some((p, r)),
                     _ => None,
-                }
-            })
+                })
         };
 
-        assert!(result.is_none(), "Should return None when response_hash is missing");
+        assert!(
+            result.is_none(),
+            "Should return None when response_hash is missing"
+        );
     }
 
     /// Test that content_hashes are cleared after checkpoint
@@ -2499,11 +2580,15 @@ mod tests {
         {
             let mut hashes = content_hashes.write().await;
 
-            let entry1 = hashes.entry(job_id_1).or_insert_with(ContentHashes::default);
+            let entry1 = hashes
+                .entry(job_id_1)
+                .or_insert_with(ContentHashes::default);
             entry1.prompt_hash = Some([0xaa; 32]);
             entry1.response_buffer.push_str("Response 1");
 
-            let entry2 = hashes.entry(job_id_2).or_insert_with(ContentHashes::default);
+            let entry2 = hashes
+                .entry(job_id_2)
+                .or_insert_with(ContentHashes::default);
             entry2.prompt_hash = Some([0xbb; 32]);
             entry2.response_buffer.push_str("Response 2");
         }
@@ -2635,8 +2720,14 @@ mod tests {
         // Verify the hashes are 32 bytes and non-zero
         assert_eq!(input.len(), 32);
         assert_eq!(output.len(), 32);
-        assert!(!input.iter().all(|&b| b == 0), "Input hash should not be all zeros");
-        assert!(!output.iter().all(|&b| b == 0), "Output hash should not be all zeros");
+        assert!(
+            !input.iter().all(|&b| b == 0),
+            "Input hash should not be all zeros"
+        );
+        assert!(
+            !output.iter().all(|&b| b == 0),
+            "Output hash should not be all zeros"
+        );
     }
 
     /// Test that response accumulation produces correct hash
@@ -3060,7 +3151,10 @@ mod tests {
         let test_data = b"test content".to_vec();
 
         // Put data
-        let cid = mock_storage.put(test_path, test_data.clone()).await.unwrap();
+        let cid = mock_storage
+            .put(test_path, test_data.clone())
+            .await
+            .unwrap();
         assert!(!cid.is_empty(), "CID should not be empty");
 
         // Get data back
@@ -3113,10 +3207,7 @@ mod tests {
 
         // Session with recovery key
         publisher
-            .set_recovery_public_key(
-                "session-with-key",
-                "0x02abc123".to_string(),
-            )
+            .set_recovery_public_key("session-with-key", "0x02abc123".to_string())
             .await;
         assert!(publisher.has_recovery_key("session-with-key").await);
     }
@@ -3173,6 +3264,9 @@ mod tests {
 
         // Verify bytes32(0) is the expected format for non-model sessions
         assert_eq!(zero_model_id.len(), 32, "ModelId should be 32 bytes");
-        assert!(zero_model_id.iter().all(|&b| b == 0), "bytes32(0) should be all zeros");
+        assert!(
+            zero_model_id.iter().all(|&b| b == 0),
+            "bytes32(0) should be all zeros"
+        );
     }
 }

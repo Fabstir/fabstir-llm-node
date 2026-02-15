@@ -51,16 +51,10 @@ pub enum ModelValidationError {
     HostNotAuthorized(Address, H256),
 
     /// Job's model_id doesn't match the loaded model's semantic_id
-    ModelIdMismatch {
-        expected: H256,
-        actual: H256,
-    },
+    ModelIdMismatch { expected: H256, actual: H256 },
 
     /// Model file SHA256 hash doesn't match on-chain hash
-    ModelHashMismatch {
-        expected: H256,
-        path: String,
-    },
+    ModelHashMismatch { expected: H256, path: String },
 
     /// Contract RPC query failed (fail-safe: refuse operation)
     ContractUnavailable(String),
@@ -534,10 +528,7 @@ impl ModelValidator {
 
         // Step 1: Extract model ID from filename (uses dynamic map)
         let model_id = self.extract_model_id_from_path(model_path).await?;
-        info!(
-            "📋 Model ID from path: 0x{}",
-            hex::encode(&model_id.0[..8])
-        );
+        info!("📋 Model ID from path: 0x{}", hex::encode(&model_id.0[..8]));
 
         // Step 2: Check if model is globally approved
         let is_approved = self

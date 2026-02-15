@@ -8,9 +8,9 @@ use crate::api::websocket::message_types::{
 };
 use crate::api::websocket::session::{VectorLoadingStatus, WebSocketSession};
 use anyhow::{anyhow, Result};
-use tracing::info;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tracing::info;
 
 /// Handles vector upload requests
 ///
@@ -25,8 +25,11 @@ pub fn handle_upload_vectors(
         let session_lock = session.lock().unwrap();
         let sid = session_lock.id().clone();
         let vs = session_lock.get_vector_store();
-        info!("📦 handle_upload_vectors: session_id={}, vector_store={}",
-              sid, if vs.is_some() { "Some" } else { "None" });
+        info!(
+            "📦 handle_upload_vectors: session_id={}, vector_store={}",
+            sid,
+            if vs.is_some() { "Some" } else { "None" }
+        );
         (
             vs.ok_or_else(|| anyhow!("RAG not enabled for this session"))?,
             sid,
@@ -62,8 +65,13 @@ pub fn handle_upload_vectors(
     // Log final vector count
     {
         let store = vector_store.lock().unwrap();
-        info!("📦 handle_upload_vectors: session_id={}, final_count={}, uploaded={}, rejected={}",
-              session_id, store.count(), uploaded, rejected);
+        info!(
+            "📦 handle_upload_vectors: session_id={}, final_count={}, uploaded={}, rejected={}",
+            session_id,
+            store.count(),
+            uploaded,
+            rejected
+        );
     }
 
     // Determine status: "success" if all uploaded, "partial" if some rejected, "error" if all failed
@@ -104,8 +112,12 @@ pub fn handle_search_vectors(
         let session_lock = session.lock().unwrap();
         let sid = session_lock.id().clone();
         let has_vs = session_lock.get_vector_store().is_some();
-        info!("🔍 handle_search_vectors: session_id={}, has_vector_database={}, has_vector_store={}",
-              sid, session_lock.vector_database.is_some(), has_vs);
+        info!(
+            "🔍 handle_search_vectors: session_id={}, has_vector_database={}, has_vector_store={}",
+            sid,
+            session_lock.vector_database.is_some(),
+            has_vs
+        );
         (
             session_lock.vector_database.is_some(),
             session_lock.vector_loading_status.clone(),
@@ -117,7 +129,10 @@ pub fn handle_search_vectors(
 
     // Log if no vector store (helps debug why vectors not found)
     if !has_vector_store && !has_vector_database {
-        info!("⚠️ handle_search_vectors: session_id={} has NO vector_store and NO vector_database!", session_id);
+        info!(
+            "⚠️ handle_search_vectors: session_id={} has NO vector_store and NO vector_database!",
+            session_id
+        );
     }
 
     // PATH 1: S5-loaded vectors via HNSW index
@@ -130,15 +145,10 @@ pub fn handle_search_vectors(
                 ));
             }
             VectorLoadingStatus::NotStarted => {
-                return Err(anyhow!(
-                    "Vector database loading has not started yet"
-                ));
+                return Err(anyhow!("Vector database loading has not started yet"));
             }
             VectorLoadingStatus::Error { error } => {
-                return Err(anyhow!(
-                    "Vector database failed to load: {}",
-                    error
-                ));
+                return Err(anyhow!("Vector database failed to load: {}", error));
             }
             VectorLoadingStatus::Loaded { .. } => {
                 // Status is Loaded, proceed to use index
@@ -183,8 +193,11 @@ pub fn handle_search_vectors(
     let vector_store = {
         let session_lock = session.lock().unwrap();
         let vs = session_lock.get_vector_store();
-        info!("🔍 handle_search_vectors PATH 2: session_id={}, vector_store={}",
-              session_id, if vs.is_some() { "Some" } else { "None" });
+        info!(
+            "🔍 handle_search_vectors PATH 2: session_id={}, vector_store={}",
+            session_id,
+            if vs.is_some() { "Some" } else { "None" }
+        );
         vs.ok_or_else(|| anyhow!("RAG not enabled for this session"))?
     };
 
@@ -192,7 +205,11 @@ pub fn handle_search_vectors(
     let arc_ptr = Arc::as_ptr(&vector_store);
     {
         let store = vector_store.lock().unwrap();
-        info!("🔍 handle_search_vectors: Arc ptr={:?}, vector_count={}", arc_ptr, store.count());
+        info!(
+            "🔍 handle_search_vectors: Arc ptr={:?}, vector_count={}",
+            arc_ptr,
+            store.count()
+        );
     }
 
     // Perform search
@@ -243,7 +260,8 @@ mod tests {
 
     #[test]
     fn test_handle_upload_vectors_basic() {
-        let mut session = WebSocketSession::with_config("test".to_string(), SessionConfig::default());
+        let mut session =
+            WebSocketSession::with_config("test".to_string(), SessionConfig::default());
         session.enable_rag(100);
         let session = Arc::new(Mutex::new(session));
 
@@ -264,7 +282,8 @@ mod tests {
 
     #[test]
     fn test_handle_search_vectors_basic() {
-        let mut session = WebSocketSession::with_config("test".to_string(), SessionConfig::default());
+        let mut session =
+            WebSocketSession::with_config("test".to_string(), SessionConfig::default());
         session.enable_rag(100);
         let session = Arc::new(Mutex::new(session));
 
@@ -339,7 +358,8 @@ mod tests {
     #[test]
     fn test_vector_store_shared_between_session_clones() {
         // Create a session with RAG enabled
-        let mut session = WebSocketSession::with_config("test-clone".to_string(), SessionConfig::default());
+        let mut session =
+            WebSocketSession::with_config("test-clone".to_string(), SessionConfig::default());
         session.enable_rag(100);
 
         // Clone the session (simulating what get_or_create_rag_session returns)
@@ -379,8 +399,15 @@ mod tests {
 
         // THIS IS THE KEY ASSERTION: vectors uploaded through arc1 should be found through arc2
         // because both clones share the same vector_store Arc<Mutex<SessionVectorStore>>
-        assert_eq!(search_response.results.len(), 1, "Should find 1 vector that was uploaded via different Arc");
-        assert_eq!(search_response.total_vectors, 1, "Total vectors should be 1");
+        assert_eq!(
+            search_response.results.len(),
+            1,
+            "Should find 1 vector that was uploaded via different Arc"
+        );
+        assert_eq!(
+            search_response.total_vectors, 1,
+            "Total vectors should be 1"
+        );
         assert_eq!(search_response.results[0].id, "shared-doc");
     }
 }

@@ -97,10 +97,7 @@ impl OcrDetectionModel {
 
         // Validate path exists
         if !model_path.exists() {
-            anyhow::bail!(
-                "OCR detection model not found: {}",
-                model_path.display()
-            );
+            anyhow::bail!("OCR detection model not found: {}", model_path.display());
         }
 
         info!("Loading OCR detection model from {}", model_path.display());
@@ -184,18 +181,15 @@ impl OcrDetectionModel {
         // Validate input shape
         let shape = input.shape();
         if shape.len() != 4 || shape[0] != 1 || shape[1] != 3 {
-            anyhow::bail!(
-                "Invalid input shape: {:?}, expected [1, 3, H, W]",
-                shape
-            );
+            anyhow::bail!("Invalid input shape: {:?}, expected [1, 3, H, W]", shape);
         }
 
         // Run inference
         let mut session = self.session.lock().unwrap();
 
         // Convert ndarray to ort Value (need owned array)
-        let input_value = Value::from_array(input.to_owned())
-            .context("Failed to create input tensor")?;
+        let input_value =
+            Value::from_array(input.to_owned()).context("Failed to create input tensor")?;
 
         let outputs = session
             .run(ort::inputs![&self.input_name => input_value])
@@ -210,11 +204,15 @@ impl OcrDetectionModel {
         info!("Detection output shape: {:?}", output_shape);
 
         // Log min/max values in output for debugging
-        let (min_val, max_val) = output_tensor.iter().fold(
-            (f32::MAX, f32::MIN),
-            |(min, max), &v| (min.min(v), max.max(v))
+        let (min_val, max_val) = output_tensor
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(min, max), &v| {
+                (min.min(v), max.max(v))
+            });
+        info!(
+            "Detection output range: min={:.4}, max={:.4}",
+            min_val, max_val
         );
-        info!("Detection output range: min={:.4}, max={:.4}", min_val, max_val);
 
         // Parse detection output into text boxes
         let text_boxes = self.parse_detection_output(output_tensor.view(), shape[2], shape[3])?;
@@ -321,9 +319,7 @@ impl OcrDetectionModel {
         }
 
         // Sort by y-position first
-        boxes.sort_by(|a, b| {
-            a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        boxes.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut merged: Vec<TextBox> = Vec::new();
         let mut current_line: Vec<TextBox> = vec![boxes.remove(0)];
@@ -351,9 +347,7 @@ impl OcrDetectionModel {
         }
 
         // Sort final result by y-position
-        merged.sort_by(|a, b| {
-            a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        merged.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal));
 
         merged
     }

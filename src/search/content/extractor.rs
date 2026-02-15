@@ -30,12 +30,12 @@ pub fn extract_main_content(html: &str, max_chars: usize) -> String {
         ".post-content",
         ".article-content",
         ".entry-content",
-        ".story-body",        // BBC
-        ".article__body",     // News sites
+        ".story-body",    // BBC
+        ".article__body", // News sites
         ".content-body",
         "#article-body",
         "#content",
-        ".prose",             // Tailwind
+        ".prose", // Tailwind
     ];
 
     for selector_str in selectors {
@@ -57,10 +57,7 @@ pub fn extract_main_content(html: &str, max_chars: usize) -> String {
 
 /// Extract text from an HTML element, stripping tags
 fn extract_text_from_element(element: &scraper::ElementRef) -> String {
-    element
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ")
+    element.text().collect::<Vec<_>>().join(" ")
 }
 
 /// Extract text from body, removing common noise elements

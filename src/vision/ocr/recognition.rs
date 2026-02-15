@@ -99,10 +99,7 @@ impl OcrRecognitionModel {
 
         // Validate paths exist
         if !model_path.exists() {
-            anyhow::bail!(
-                "OCR recognition model not found: {}",
-                model_path.display()
-            );
+            anyhow::bail!("OCR recognition model not found: {}", model_path.display());
         }
         if !dict_path.exists() {
             anyhow::bail!(
@@ -118,7 +115,10 @@ impl OcrRecognitionModel {
 
         // Load character dictionary
         let dictionary = Self::load_dictionary(dict_path)?;
-        info!("Loaded character dictionary with {} characters", dictionary.len());
+        info!(
+            "Loaded character dictionary with {} characters",
+            dictionary.len()
+        );
 
         // Load ONNX model with CPU-only execution
         let session = Session::builder()
@@ -173,8 +173,10 @@ impl OcrRecognitionModel {
     /// Each line in the file contains one character.
     /// Special tokens: blank (index 0) for CTC
     fn load_dictionary<P: AsRef<Path>>(path: P) -> Result<Vec<char>> {
-        let file = File::open(path.as_ref())
-            .context(format!("Failed to open dictionary: {}", path.as_ref().display()))?;
+        let file = File::open(path.as_ref()).context(format!(
+            "Failed to open dictionary: {}",
+            path.as_ref().display()
+        ))?;
 
         let reader = BufReader::new(file);
         let mut dictionary = vec![' ']; // Index 0 is blank token for CTC
@@ -218,7 +220,12 @@ impl OcrRecognitionModel {
     pub fn recognize(&self, input: &Array4<f32>) -> Result<RecognizedText> {
         // Validate input shape (width is dynamic)
         let shape = input.shape();
-        if shape.len() != 4 || shape[0] != 1 || shape[1] != 3 || shape[2] != RECOGNITION_INPUT_HEIGHT as usize || shape[3] < 4 {
+        if shape.len() != 4
+            || shape[0] != 1
+            || shape[1] != 3
+            || shape[2] != RECOGNITION_INPUT_HEIGHT as usize
+            || shape[3] < 4
+        {
             anyhow::bail!(
                 "Invalid input shape: {:?}, expected [1, 3, {}, W>=4]",
                 shape,
@@ -229,8 +236,8 @@ impl OcrRecognitionModel {
         // Run inference
         let mut session = self.session.lock().unwrap();
 
-        let input_value = Value::from_array(input.to_owned())
-            .context("Failed to create input tensor")?;
+        let input_value =
+            Value::from_array(input.to_owned()).context("Failed to create input tensor")?;
 
         let outputs = session
             .run(ort::inputs![&self.input_name => input_value])
@@ -258,7 +265,10 @@ impl OcrRecognitionModel {
     ///
     /// The recognition model outputs a probability distribution over characters
     /// at each timestep. We use greedy decoding (best path) with blank removal.
-    fn ctc_decode(&self, output: &ndarray::ArrayBase<ndarray::ViewRepr<&f32>, ndarray::Dim<ndarray::IxDynImpl>>) -> Result<(String, f32, Vec<f32>)> {
+    fn ctc_decode(
+        &self,
+        output: &ndarray::ArrayBase<ndarray::ViewRepr<&f32>, ndarray::Dim<ndarray::IxDynImpl>>,
+    ) -> Result<(String, f32, Vec<f32>)> {
         let output_shape = output.shape();
 
         // Expected shape: [batch, seq_len, num_classes] or [seq_len, num_classes]
@@ -304,7 +314,11 @@ impl OcrRecognitionModel {
                 }
             }
 
-            prev_index = if max_index == 0 { None } else { Some(max_index) };
+            prev_index = if max_index == 0 {
+                None
+            } else {
+                Some(max_index)
+            };
         }
 
         // Calculate average confidence
@@ -350,28 +364,158 @@ impl OcrRecognitionModel {
         // Common English words for segmentation (most frequent words)
         const COMMON_WORDS: &[&str] = &[
             // Articles & pronouns
-            "the", "a", "an", "i", "you", "he", "she", "it", "we", "they",
-            "me", "him", "her", "us", "them", "my", "your", "his", "its", "our", "their",
+            "the",
+            "a",
+            "an",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
+            "me",
+            "him",
+            "her",
+            "us",
+            "them",
+            "my",
+            "your",
+            "his",
+            "its",
+            "our",
+            "their",
             // Prepositions & conjunctions
-            "of", "to", "in", "for", "on", "with", "at", "by", "from", "as",
-            "into", "through", "during", "before", "after", "above", "below",
-            "and", "or", "but", "if", "then", "else", "when", "where", "why", "how",
+            "of",
+            "to",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "as",
+            "into",
+            "through",
+            "during",
+            "before",
+            "after",
+            "above",
+            "below",
+            "and",
+            "or",
+            "but",
+            "if",
+            "then",
+            "else",
+            "when",
+            "where",
+            "why",
+            "how",
             // Verbs
-            "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-            "do", "does", "did", "will", "would", "could", "should", "may", "might",
-            "can", "want", "need", "find", "get", "give", "take", "make", "know",
-            "think", "see", "come", "go", "say", "tell", "ask", "use", "try",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "can",
+            "want",
+            "need",
+            "find",
+            "get",
+            "give",
+            "take",
+            "make",
+            "know",
+            "think",
+            "see",
+            "come",
+            "go",
+            "say",
+            "tell",
+            "ask",
+            "use",
+            "try",
             // Common nouns & adjectives
-            "this", "that", "these", "those", "what", "which", "who", "whom",
-            "all", "each", "every", "both", "few", "more", "most", "other", "some",
-            "such", "no", "not", "only", "same", "so", "than", "too", "very",
-            "just", "also", "now", "here", "there", "out", "up", "down",
+            "this",
+            "that",
+            "these",
+            "those",
+            "what",
+            "which",
+            "who",
+            "whom",
+            "all",
+            "each",
+            "every",
+            "both",
+            "few",
+            "more",
+            "most",
+            "other",
+            "some",
+            "such",
+            "no",
+            "not",
+            "only",
+            "same",
+            "so",
+            "than",
+            "too",
+            "very",
+            "just",
+            "also",
+            "now",
+            "here",
+            "there",
+            "out",
+            "up",
+            "down",
             // Math related
-            "square", "root", "plus", "minus", "times", "divided", "equals",
-            "number", "numbers", "sum", "total", "average", "mean", "value",
+            "square",
+            "root",
+            "plus",
+            "minus",
+            "times",
+            "divided",
+            "equals",
+            "number",
+            "numbers",
+            "sum",
+            "total",
+            "average",
+            "mean",
+            "value",
             // Common words in instructions
-            "please", "help", "show", "display", "calculate", "compute", "solve",
-            "answer", "question", "problem", "example", "text", "image", "file",
+            "please",
+            "help",
+            "show",
+            "display",
+            "calculate",
+            "compute",
+            "solve",
+            "answer",
+            "question",
+            "problem",
+            "example",
+            "text",
+            "image",
+            "file",
         ];
 
         let lower = text.to_lowercase();
@@ -569,10 +713,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_not_found_error() {
-        let result = OcrRecognitionModel::new(
-            "/nonexistent/path/rec_model.onnx",
-            DICTIONARY_PATH,
-        ).await;
+        let result =
+            OcrRecognitionModel::new("/nonexistent/path/rec_model.onnx", DICTIONARY_PATH).await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -581,10 +723,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_dictionary_not_found_error() {
-        let result = OcrRecognitionModel::new(
-            RECOGNITION_MODEL_PATH,
-            "/nonexistent/path/dict.txt",
-        ).await;
+        let result =
+            OcrRecognitionModel::new(RECOGNITION_MODEL_PATH, "/nonexistent/path/dict.txt").await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();

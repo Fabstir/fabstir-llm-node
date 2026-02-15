@@ -33,13 +33,13 @@
 //! ```
 
 use crate::api::websocket::message_types::{
-    VectorDatabaseInfo, WebSocketMessage, MessageType, LoadingProgressMessage, LoadingErrorCode,
+    LoadingErrorCode, LoadingProgressMessage, MessageType, VectorDatabaseInfo, WebSocketMessage,
 };
 use crate::api::websocket::session::{VectorLoadingStatus, WebSocketSession};
 use crate::api::websocket::session_store::SessionStore;
 use crate::api::websocket::vector_loading_errors::VectorLoadingError;
 use crate::job_processor::Message;
-use crate::rag::vector_loader::{VectorLoader, LoadProgress};
+use crate::rag::vector_loader::{LoadProgress, VectorLoader};
 use crate::storage::enhanced_s5_client::{EnhancedS5Client, S5Config};
 use crate::storage::s5_client::EnhancedS5Backend;
 use crate::vector::hnsw::HnswIndex;
@@ -56,8 +56,8 @@ use tracing::{debug, error, info, warn};
 const VECTOR_LOADING_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// HNSW index parameters
-const HNSW_M: usize = 16;          // Number of connections per layer
-const HNSW_EF_CONSTRUCTION: usize = 200;  // Size of dynamic candidate list during construction
+const HNSW_M: usize = 16; // Number of connections per layer
+const HNSW_EF_CONSTRUCTION: usize = 200; // Size of dynamic candidate list during construction
 
 /// Load vectors asynchronously in background task
 ///
@@ -119,7 +119,10 @@ pub async fn load_vectors_async(
                 VECTOR_LOADING_TIMEOUT.as_secs()
             );
 
-            let error_msg = format!("Loading timed out after {} minutes", VECTOR_LOADING_TIMEOUT.as_secs() / 60);
+            let error_msg = format!(
+                "Loading timed out after {} minutes",
+                VECTOR_LOADING_TIMEOUT.as_secs() / 60
+            );
 
             // Send LoadingError message to client
             if let Err(e) = send_loading_progress(
@@ -129,7 +132,9 @@ pub async fn load_vectors_async(
                     error_code: LoadingErrorCode::Timeout,
                     error: error_msg.clone(),
                 },
-            ).await {
+            )
+            .await
+            {
                 warn!(
                     session_id = %session_id,
                     error = %e,
@@ -141,10 +146,10 @@ pub async fn load_vectors_async(
             if let Err(e) = update_session_status(
                 &session_id,
                 &session_store,
-                VectorLoadingStatus::Error {
-                    error: error_msg,
-                },
-            ).await {
+                VectorLoadingStatus::Error { error: error_msg },
+            )
+            .await
+            {
                 error!(
                     session_id = %session_id,
                     error = %e,
@@ -203,7 +208,9 @@ pub async fn load_vectors_async(
                     }
 
                     // Send LoadingError message to client
-                    if let Err(send_err) = send_loading_error(&session_id, &session_store, &loading_error).await {
+                    if let Err(send_err) =
+                        send_loading_error(&session_id, &session_store, &loading_error).await
+                    {
                         warn!(
                             session_id = %session_id,
                             error = %send_err,
@@ -277,26 +284,24 @@ async fn load_vectors_with_cancellation(
 
             // Convert LoadProgress to LoadingProgressMessage
             let progress_msg = match progress {
-                LoadProgress::ManifestDownloaded => {
-                    LoadingProgressMessage::ManifestDownloaded
-                }
+                LoadProgress::ManifestDownloaded => LoadingProgressMessage::ManifestDownloaded,
                 LoadProgress::ChunkDownloaded { chunk_id, total } => {
                     LoadingProgressMessage::ChunkDownloaded { chunk_id, total }
                 }
-                LoadProgress::IndexBuilding => {
-                    LoadingProgressMessage::IndexBuilding
-                }
-                LoadProgress::Complete { vector_count, duration_ms } => {
-                    LoadingProgressMessage::LoadingComplete { vector_count, duration_ms }
-                }
+                LoadProgress::IndexBuilding => LoadingProgressMessage::IndexBuilding,
+                LoadProgress::Complete {
+                    vector_count,
+                    duration_ms,
+                } => LoadingProgressMessage::LoadingComplete {
+                    vector_count,
+                    duration_ms,
+                },
             };
 
             // Send progress message via WebSocket
-            if let Err(e) = send_loading_progress(
-                &session_id_clone,
-                &session_store_clone,
-                progress_msg,
-            ).await {
+            if let Err(e) =
+                send_loading_progress(&session_id_clone, &session_store_clone, progress_msg).await
+            {
                 warn!(
                     session_id = %session_id_clone,
                     error = %e,
@@ -385,10 +390,12 @@ async fn load_vectors_with_cancellation(
     let total_duration_ms = index_start.elapsed().as_millis() as u64 + index_duration_ms;
 
     // Send completion progress (will be converted to LoadingProgressMessage by progress task)
-    let _ = progress_tx.send(LoadProgress::Complete {
-        vector_count,
-        duration_ms: total_duration_ms,
-    }).await;
+    let _ = progress_tx
+        .send(LoadProgress::Complete {
+            vector_count,
+            duration_ms: total_duration_ms,
+        })
+        .await;
 
     // Update session with index and status
     {
@@ -462,7 +469,8 @@ async fn send_loading_progress(
             };
 
             // Send via channel
-            tx.send(msg).map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+            tx.send(msg)
+                .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
         } else {
             warn!(session_id = %session_id, "No tx channel available for sending progress");
         }

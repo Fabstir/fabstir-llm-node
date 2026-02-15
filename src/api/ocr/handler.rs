@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! OCR endpoint handler
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{extract::State, http::StatusCode, Json};
 use tracing::{debug, info, warn};
 
 use super::request::OcrRequest;
