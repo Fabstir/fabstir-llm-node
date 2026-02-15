@@ -218,6 +218,19 @@ pub async fn handle_encrypted_image_generation(
             .image_gen_tracker()
             .track(jid, Some(session_id), units)
             .await;
+
+        // Register with checkpoint manager for proof submission & settlement
+        // Converts billing units to token-equivalents (×1000) so the existing
+        // proof interval system works: 0.20 units → 200 tokens
+        if let Some(cm) = server.get_checkpoint_manager().await {
+            let image_tokens = (units * 1000.0).ceil() as u64;
+            if let Err(e) = cm
+                .track_tokens(jid, image_tokens, Some(session_id.to_string()))
+                .await
+            {
+                warn!("Image gen token tracking failed for job {}: {}", jid, e);
+            }
+        }
     }
 
     info!(
