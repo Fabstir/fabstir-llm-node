@@ -64,3 +64,7 @@ dist/
 fabstir-llm-node
 *.tgz
 .env.contracts
+
+ALL-FIXES-*.md
+docs/IMPLEMENTATION-*.md
+docs/archive/
