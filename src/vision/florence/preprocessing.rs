@@ -71,7 +71,11 @@ pub fn preprocess_for_florence_with_mode(image: &DynamicImage, mode: ResizeMode)
 }
 
 /// Resize image to target size using specified mode
-pub fn resize_for_encoder(image: &DynamicImage, target_size: u32, mode: ResizeMode) -> DynamicImage {
+pub fn resize_for_encoder(
+    image: &DynamicImage,
+    target_size: u32,
+    mode: ResizeMode,
+) -> DynamicImage {
     let (orig_w, orig_h) = image.dimensions();
 
     // Handle edge cases
@@ -92,12 +96,8 @@ pub fn resize_for_encoder(image: &DynamicImage, target_size: u32, mode: ResizeMo
                 image::imageops::FilterType::Lanczos3,
             )
         }
-        ResizeMode::CenterCrop => {
-            center_crop_resize(image, target_size)
-        }
-        ResizeMode::Letterbox => {
-            letterbox_resize(image, target_size)
-        }
+        ResizeMode::CenterCrop => center_crop_resize(image, target_size),
+        ResizeMode::Letterbox => letterbox_resize(image, target_size),
     }
 }
 

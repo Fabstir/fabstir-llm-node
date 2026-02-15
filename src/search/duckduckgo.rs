@@ -248,7 +248,10 @@ mod tests {
 
     #[test]
     fn test_url_decode() {
-        assert_eq!(url_decode("https%3A%2F%2Fexample.com"), "https://example.com");
+        assert_eq!(
+            url_decode("https%3A%2F%2Fexample.com"),
+            "https://example.com"
+        );
         assert_eq!(url_decode("hello+world"), "hello world");
     }
 

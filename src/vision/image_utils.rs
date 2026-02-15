@@ -268,10 +268,7 @@ mod tests {
         let random_bytes = STANDARD.encode([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
         let result = decode_base64_image(&random_bytes);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ImageError::UnsupportedFormat
-        ));
+        assert!(matches!(result.unwrap_err(), ImageError::UnsupportedFormat));
     }
 
     #[test]
@@ -364,7 +361,11 @@ mod tests {
         // Test with data URL prefix (common format from browser/frontend)
         let with_prefix = format!("data:image/png;base64,{}", TINY_PNG_BASE64);
         let result = decode_base64_image(&with_prefix);
-        assert!(result.is_ok(), "Failed to decode PNG with data URL prefix: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to decode PNG with data URL prefix: {:?}",
+            result.err()
+        );
 
         let (img, info) = result.unwrap();
         assert_eq!(info.width, 1);

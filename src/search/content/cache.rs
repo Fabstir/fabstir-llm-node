@@ -70,12 +70,15 @@ impl ContentCache {
         }
 
         let key = Self::normalize_url(url);
-        cache.insert(key, CachedContent {
-            url: url.to_string(),
-            title,
-            text,
-            fetched_at: Instant::now(),
-        });
+        cache.insert(
+            key,
+            CachedContent {
+                url: url.to_string(),
+                title,
+                text,
+                fetched_at: Instant::now(),
+            },
+        );
     }
 
     /// Clear all cached entries
@@ -89,24 +92,34 @@ impl ContentCache {
     pub fn stats(&self) -> ContentCacheStats {
         let cache = match self.cache.read() {
             Ok(c) => c,
-            Err(_) => return ContentCacheStats { total: 0, expired: 0, max: self.max_entries },
+            Err(_) => {
+                return ContentCacheStats {
+                    total: 0,
+                    expired: 0,
+                    max: self.max_entries,
+                }
+            }
         };
         let total = cache.len();
-        let expired = cache.values()
+        let expired = cache
+            .values()
             .filter(|e| e.fetched_at.elapsed() > self.ttl)
             .count();
-        ContentCacheStats { total, expired, max: self.max_entries }
+        ContentCacheStats {
+            total,
+            expired,
+            max: self.max_entries,
+        }
     }
 
     /// Normalize URL for cache key (lowercase, remove trailing slash)
     fn normalize_url(url: &str) -> String {
-        url.to_lowercase()
-            .trim_end_matches('/')
-            .to_string()
+        url.to_lowercase().trim_end_matches('/').to_string()
     }
 
     fn evict_oldest(cache: &mut HashMap<String, CachedContent>) {
-        if let Some(oldest_key) = cache.iter()
+        if let Some(oldest_key) = cache
+            .iter()
             .min_by_key(|(_, v)| v.fetched_at)
             .map(|(k, _)| k.clone())
         {

@@ -450,10 +450,15 @@ impl S5Storage for EnhancedS5Backend {
         let clean_path = Self::validate_path(path)?;
         let data_len = data.len();
 
-        tracing::info!("🔵 EnhancedS5Backend::put called: path={}, size={}", clean_path, data_len);
+        tracing::info!(
+            "🔵 EnhancedS5Backend::put called: path={}, size={}",
+            clean_path,
+            data_len
+        );
 
         // put_file now returns the real CID from the S5 bridge
-        let cid = self.client
+        let cid = self
+            .client
             .put_file(&clean_path, data)
             .await
             .map_err(|e| StorageError::ServerError(e.to_string()))?;
@@ -624,9 +629,7 @@ impl S5Client {
         eprintln!(
             "🚨 [S5-INIT] ENHANCED_S5_URL not set! Using MockS5Backend - uploads will NOT reach S5 network!"
         );
-        eprintln!(
-            "🚨 [S5-INIT] Set ENHANCED_S5_URL=http://localhost:5522 to use real S5 storage"
-        );
+        eprintln!("🚨 [S5-INIT] Set ENHANCED_S5_URL=http://localhost:5522 to use real S5 storage");
         let config = S5StorageConfig {
             backend: S5Backend::Mock,
             api_key: None,
@@ -655,7 +658,9 @@ mod tests {
             return false;
         }
         // Rest must be valid base32 lowercase: a-z, 2-7
-        cid[1..].chars().all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
+        cid[1..]
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
     }
 
     #[test]

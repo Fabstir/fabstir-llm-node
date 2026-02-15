@@ -194,7 +194,9 @@ mod tests {
 
     #[test]
     fn test_search_error_display() {
-        let error = SearchError::RateLimited { retry_after_secs: 60 };
+        let error = SearchError::RateLimited {
+            retry_after_secs: 60,
+        };
         assert!(error.to_string().contains("60"));
 
         let error = SearchError::ApiError {

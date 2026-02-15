@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 pub mod disconnect;
+pub mod image_generation;
 pub mod inference;
 pub mod prompt;
 pub mod rag;

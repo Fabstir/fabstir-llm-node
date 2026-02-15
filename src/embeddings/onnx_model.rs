@@ -93,23 +93,21 @@ impl OnnxEmbeddingModel {
     ///     "/workspace/models/all-MiniLM-L6-v2-onnx/tokenizer.json"
     /// ).await?;
     /// ```
-    pub async fn new<P: AsRef<Path>>(model_name: impl Into<String>, model_path: P, tokenizer_path: P) -> Result<Self> {
+    pub async fn new<P: AsRef<Path>>(
+        model_name: impl Into<String>,
+        model_path: P,
+        tokenizer_path: P,
+    ) -> Result<Self> {
         let model_name = model_name.into();
         let model_path = model_path.as_ref();
         let tokenizer_path = tokenizer_path.as_ref();
 
         // Validate paths exist
         if !model_path.exists() {
-            anyhow::bail!(
-                "ONNX model file not found: {}",
-                model_path.display()
-            );
+            anyhow::bail!("ONNX model file not found: {}", model_path.display());
         }
         if !tokenizer_path.exists() {
-            anyhow::bail!(
-                "Tokenizer file not found: {}",
-                tokenizer_path.display()
-            );
+            anyhow::bail!("Tokenizer file not found: {}", tokenizer_path.display());
         }
 
         // Load ONNX model session with GPU support (Sub-phase 8.2)
@@ -145,7 +143,10 @@ impl OnnxEmbeddingModel {
                     .with_intra_threads(4)
                     .context("Failed to set intra threads")?
                     .commit_from_file(model_path)
-                    .context(format!("Failed to load ONNX model from {}", model_path.display()))?
+                    .context(format!(
+                        "Failed to load ONNX model from {}",
+                        model_path.display()
+                    ))?
             }
         };
 
@@ -163,16 +164,26 @@ impl OnnxEmbeddingModel {
                 .encode(test_text, true)
                 .map_err(|e| anyhow::anyhow!("Tokenizer validation failed: {}", e))?;
 
-            let input_ids: Vec<i64> = test_encoding.get_ids().iter().map(|&id| id as i64).collect();
-            let attention_mask: Vec<i64> = test_encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+            let input_ids: Vec<i64> = test_encoding
+                .get_ids()
+                .iter()
+                .map(|&id| id as i64)
+                .collect();
+            let attention_mask: Vec<i64> = test_encoding
+                .get_attention_mask()
+                .iter()
+                .map(|&m| m as i64)
+                .collect();
             let token_type_ids: Vec<i64> = vec![0i64; input_ids.len()]; // All zeros for simple embedding
 
             let input_ids_array = Array2::from_shape_vec((1, input_ids.len()), input_ids)
                 .context("Failed to create input_ids array")?;
-            let attention_mask_array = Array2::from_shape_vec((1, attention_mask.len()), attention_mask)
-                .context("Failed to create attention_mask array")?;
-            let token_type_ids_array = Array2::from_shape_vec((1, token_type_ids.len()), token_type_ids)
-                .context("Failed to create token_type_ids array")?;
+            let attention_mask_array =
+                Array2::from_shape_vec((1, attention_mask.len()), attention_mask)
+                    .context("Failed to create attention_mask array")?;
+            let token_type_ids_array =
+                Array2::from_shape_vec((1, token_type_ids.len()), token_type_ids)
+                    .context("Failed to create token_type_ids array")?;
 
             // Run validation inference (ort 2.0 API)
             let outputs = session.run(ort::inputs![
@@ -228,12 +239,17 @@ impl OnnxEmbeddingModel {
     /// ```
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         // Tokenize input
-        let encoding = self.tokenizer
+        let encoding = self
+            .tokenizer
             .encode(text, true)
             .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-        let attention_mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+        let attention_mask: Vec<i64> = encoding
+            .get_attention_mask()
+            .iter()
+            .map(|&m| m as i64)
+            .collect();
         let token_type_ids: Vec<i64> = vec![0i64; input_ids.len()]; // All zeros for simple embedding
 
         // Keep a copy of attention_mask for mean pooling
@@ -242,10 +258,12 @@ impl OnnxEmbeddingModel {
         // Create input tensors
         let input_ids_array = Array2::from_shape_vec((1, input_ids.len()), input_ids)
             .context("Failed to create input_ids array")?;
-        let attention_mask_array = Array2::from_shape_vec((1, attention_mask.len()), attention_mask)
-            .context("Failed to create attention_mask array")?;
-        let token_type_ids_array = Array2::from_shape_vec((1, token_type_ids.len()), token_type_ids)
-            .context("Failed to create token_type_ids array")?;
+        let attention_mask_array =
+            Array2::from_shape_vec((1, attention_mask.len()), attention_mask)
+                .context("Failed to create attention_mask array")?;
+        let token_type_ids_array =
+            Array2::from_shape_vec((1, token_type_ids.len()), token_type_ids)
+                .context("Failed to create token_type_ids array")?;
 
         // Run inference (ort 2.0 API) - lock session for thread-safe access
         let mut session_guard = self.session.lock().unwrap();
@@ -366,10 +384,12 @@ impl OnnxEmbeddingModel {
         // Create batch tensors
         let input_ids_array = Array2::from_shape_vec((texts.len(), max_len), input_ids_batch)
             .context("Failed to create batch input_ids array")?;
-        let attention_mask_array = Array2::from_shape_vec((texts.len(), max_len), attention_mask_batch)
-            .context("Failed to create batch attention_mask array")?;
-        let token_type_ids_array = Array2::from_shape_vec((texts.len(), max_len), token_type_ids_batch)
-            .context("Failed to create batch token_type_ids array")?;
+        let attention_mask_array =
+            Array2::from_shape_vec((texts.len(), max_len), attention_mask_batch)
+                .context("Failed to create batch attention_mask array")?;
+        let token_type_ids_array =
+            Array2::from_shape_vec((texts.len(), max_len), token_type_ids_batch)
+                .context("Failed to create batch token_type_ids array")?;
 
         // Run batch inference (ort 2.0 API) - lock session for thread-safe access
         let mut session_guard = self.session.lock().unwrap();
@@ -448,7 +468,8 @@ impl OnnxEmbeddingModel {
     /// assert!(count >= 2); // At least 2 tokens
     /// ```
     pub async fn count_tokens(&self, text: &str) -> Result<usize> {
-        let encoding = self.tokenizer
+        let encoding = self
+            .tokenizer
             .encode(text, true)
             .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 

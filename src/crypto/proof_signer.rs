@@ -138,10 +138,7 @@ pub fn sign_proof_data(
     // Ethereum uses v = 27 or 28 (recovery_id + 27)
     sig_bytes[64] = recovery_id.to_byte() + 27;
 
-    debug!(
-        "Generated 65-byte signature, v={}",
-        sig_bytes[64]
-    );
+    debug!("Generated 65-byte signature, v={}", sig_bytes[64]);
 
     Ok(sig_bytes)
 }
@@ -414,8 +411,16 @@ mod tests {
         assert_eq!(encoded_2.len(), 116);
 
         // Only the last 32 bytes should differ
-        assert_eq!(&encoded_1[0..84], &encoded_2[0..84], "First 84 bytes should be identical");
-        assert_ne!(&encoded_1[84..116], &encoded_2[84..116], "Last 32 bytes should differ");
+        assert_eq!(
+            &encoded_1[0..84],
+            &encoded_2[0..84],
+            "First 84 bytes should be identical"
+        );
+        assert_ne!(
+            &encoded_1[84..116],
+            &encoded_2[84..116],
+            "Last 32 bytes should differ"
+        );
     }
 
     // === Sub-phase 1.2 Tests (Updated for AUDIT-F4) ===
@@ -427,7 +432,8 @@ mod tests {
         let tokens = 1000u64;
         let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
+        let signature =
+            sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         assert_eq!(signature.len(), 65, "Signature must be exactly 65 bytes");
     }
@@ -439,7 +445,8 @@ mod tests {
         let tokens = 5000u64;
         let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
+        let signature =
+            sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         // Verify the signature using our verify function
         let is_valid =
@@ -495,7 +502,8 @@ mod tests {
         let tokens = 100u64;
         let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
+        let signature =
+            sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         let v = signature[64];
         assert!(
@@ -513,11 +521,13 @@ mod tests {
         let tokens = 100u64;
         let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
+        let signature =
+            sign_proof_data(&private_key, proof_hash, host_address, tokens, model_id).unwrap();
 
         // Verify with wrong address should fail
         let is_valid =
-            verify_proof_signature(&signature, proof_hash, wrong_address, tokens, model_id).unwrap();
+            verify_proof_signature(&signature, proof_hash, wrong_address, tokens, model_id)
+                .unwrap();
 
         assert!(
             !is_valid,
@@ -531,16 +541,14 @@ mod tests {
         let proof_hash = [0x66; 32];
         let model_id = [0u8; 32]; // bytes32(0) for non-model test
 
-        let signature = sign_proof_data(&private_key, proof_hash, host_address, 1000, model_id).unwrap();
+        let signature =
+            sign_proof_data(&private_key, proof_hash, host_address, 1000, model_id).unwrap();
 
         // Verify with wrong token count should fail
         let is_valid =
             verify_proof_signature(&signature, proof_hash, host_address, 2000, model_id).unwrap();
 
-        assert!(
-            !is_valid,
-            "Verification should fail with wrong token count"
-        );
+        assert!(!is_valid, "Verification should fail with wrong token count");
     }
 
     #[test]

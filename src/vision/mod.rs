@@ -14,7 +14,9 @@ pub mod model_manager;
 pub mod ocr;
 pub mod vlm_client;
 
-pub use image_utils::{decode_base64_image, decode_image_bytes, detect_format, ImageError, ImageInfo};
+pub use image_utils::{
+    decode_base64_image, decode_image_bytes, detect_format, ImageError, ImageInfo,
+};
 pub use model_manager::{VisionModelConfig, VisionModelInfo, VisionModelManager};
 pub use vlm_client::{VlmClient, VlmDescribeResult, VlmOcrResult};
 

@@ -305,8 +305,8 @@ impl JobClaimer {
         // Check minimum payment per token (with PRICE_PRECISION)
         // Since maxTokens = (deposit * PRICE_PRECISION) / pricePerToken
         // Then: pricePerToken = (deposit * PRICE_PRECISION) / maxTokens
-        let price_per_token = (job.payment_amount * U256::from(PRICE_PRECISION))
-            / U256::from(job.max_tokens);
+        let price_per_token =
+            (job.payment_amount * U256::from(PRICE_PRECISION)) / U256::from(job.max_tokens);
         if price_per_token < self.config.min_payment_per_token {
             return Err(ClaimError::BelowMinimumThreshold);
         }
@@ -579,7 +579,7 @@ mod tests {
         // Test the formula: pricePerToken = (deposit * PRICE_PRECISION) / maxTokens
         let deposit = U256::from(10_000_000u64); // $10 USDC
         let max_tokens = 2_000_000u64; // 2 million tokens
-        // Expected: $5/million = 5000 with PRICE_PRECISION
+                                       // Expected: $5/million = 5000 with PRICE_PRECISION
         let price_per_token = (deposit * U256::from(PRICE_PRECISION)) / U256::from(max_tokens);
         assert_eq!(price_per_token, U256::from(5000u64));
     }
@@ -589,7 +589,7 @@ mod tests {
         // Test budget model: $0.06/million tokens
         let deposit = U256::from(600_000u64); // $0.60 USDC
         let max_tokens = 10_000_000u64; // 10 million tokens
-        // Expected: 60 with PRICE_PRECISION ($0.06/million)
+                                        // Expected: 60 with PRICE_PRECISION ($0.06/million)
         let price_per_token = (deposit * U256::from(PRICE_PRECISION)) / U256::from(max_tokens);
         assert_eq!(price_per_token, U256::from(60u64));
     }

@@ -95,6 +95,10 @@ services:
       VLM_ENDPOINT: ${VLM_ENDPOINT:-http://qwen3-vl:8081}
       VLM_MODEL_NAME: ${VLM_MODEL_NAME:-qwen3-vl}
 
+      # Optional: Diffusion sidecar for image generation (v8.16.0+)
+      DIFFUSION_ENDPOINT: ${DIFFUSION_ENDPOINT:-http://diffusion-sidecar:8082}
+      DIFFUSION_MODEL_NAME: ${DIFFUSION_MODEL_NAME:-flux2-klein-4b}
+
     volumes:
       # Mount model directory
       - ${MODELS_DIR:-./models}:/app/models:ro
@@ -131,6 +135,38 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 120s
+      retries: 3
+    networks:
+      - fabstir-network
+
+  # SGLang Diffusion Sidecar (optional - for image generation)
+  # Requires ~13GB VRAM for FLUX.2 Klein 4B
+  # To disable: set DIFFUSION_ENDPOINT= (empty) in .env or stop this service
+  # First build: docker-compose -f docker-compose.prod.yml build diffusion-sidecar
+  diffusion-sidecar:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.diffusion-sidecar
+    container_name: diffusion-sidecar
+    restart: unless-stopped
+    runtime: nvidia
+    shm_size: '32g'
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${DIFFUSION_MODEL_PATH:-./models/flux2-klein-4b}:/models/black-forest-labs/FLUX.2-klein-4B
+    command: >
+      --model-path /models/black-forest-labs/FLUX.2-klein-4B
+      --port 8082
+      --host 0.0.0.0
+      --text-encoder-cpu-offload
+      --pin-cpu-memory
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
       retries: 3
     networks:
       - fabstir-network

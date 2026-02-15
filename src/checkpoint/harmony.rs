@@ -225,7 +225,8 @@ mod tests {
 
     #[test]
     fn test_parse_harmony_messages_skips_system() {
-        let prompt = "<|start|>system<|message|>System prompt<|end|> <|start|>user<|message|>Hello<|end|>";
+        let prompt =
+            "<|start|>system<|message|>System prompt<|end|> <|start|>user<|message|>Hello<|end|>";
         let messages = parse_harmony_messages(prompt);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, "user");

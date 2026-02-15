@@ -62,7 +62,10 @@ pub enum LoadProgress {
     IndexBuilding,
 
     /// Loading complete
-    Complete { vector_count: usize, duration_ms: u64 },
+    Complete {
+        vector_count: usize,
+        duration_ms: u64,
+    },
 }
 
 /// Rate limiting configuration
@@ -233,7 +236,12 @@ impl VectorLoader {
     ) -> Result<Vec<Vector>, VectorLoadError> {
         // Wrap entire operation in timeout if configured
         if let Some(timeout_duration) = self.timeout_duration {
-            match timeout(timeout_duration, self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx)).await {
+            match timeout(
+                timeout_duration,
+                self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx),
+            )
+            .await
+            {
                 Ok(result) => result,
                 Err(_) => {
                     tracing::error!(
@@ -244,10 +252,11 @@ impl VectorLoader {
                     Err(VectorLoadError::Timeout {
                         duration_sec: timeout_duration.as_secs(),
                     })
-                },
+                }
             }
         } else {
-            self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx).await
+            self.load_vectors_internal(manifest_path, user_address, session_key, progress_tx)
+                .await
         }
     }
 
@@ -302,11 +311,7 @@ impl VectorLoader {
             let vector_bytes = manifest.vector_count * manifest.dimensions * 4;
             let metadata_bytes = manifest.vector_count * 200;
             let estimated_mb = (vector_bytes + metadata_bytes) / (1024 * 1024);
-            tracing::debug!(
-                estimated_mb,
-                limit_mb,
-                "✅ Memory limit check passed"
-            );
+            tracing::debug!(estimated_mb, limit_mb, "✅ Memory limit check passed");
         }
 
         // 4. Check if database is deleted
@@ -318,7 +323,9 @@ impl VectorLoader {
         }
 
         // 5. Validate manifest structure
-        manifest.validate().map_err(|e| VectorLoadError::ManifestParseError(e.to_string()))?;
+        manifest
+            .validate()
+            .map_err(|e| VectorLoadError::ManifestParseError(e.to_string()))?;
 
         // 6. Extract base path from manifest path
         let base_path = manifest_path
@@ -453,29 +460,27 @@ impl VectorLoader {
         // Download and decrypt chunks in parallel
         // Clone chunks to avoid lifetime issues with iterator borrows in async closures
         let chunks_owned = manifest.chunks.clone();
-        let chunk_results: Vec<Result<Vec<Vector>, VectorLoadError>> = stream::iter(chunks_owned.into_iter())
-            .map(|chunk_meta| {
-                let s5_client = s5_client.clone();
-                let session_key = session_key.clone();
-                let base_path = base_path.clone();
-                let chunk_id = chunk_meta.chunk_id;
-                let expected_vector_count = chunk_meta.vector_count;
-                let expected_dimensions = expected_dimensions;
-                let rate_limit = rate_limit.clone();
+        let chunk_results: Vec<Result<Vec<Vector>, VectorLoadError>> =
+            stream::iter(chunks_owned.into_iter())
+                .map(|chunk_meta| {
+                    let s5_client = s5_client.clone();
+                    let session_key = session_key.clone();
+                    let base_path = base_path.clone();
+                    let chunk_id = chunk_meta.chunk_id;
+                    let expected_vector_count = chunk_meta.vector_count;
+                    let expected_dimensions = expected_dimensions;
+                    let rate_limit = rate_limit.clone();
 
-                async move {
-                    // Check rate limit before download
-                    if let Some(ref rl) = rate_limit {
-                        Self::check_rate_limit_static(rl).await?;
-                    }
+                    async move {
+                        // Check rate limit before download
+                        if let Some(ref rl) = rate_limit {
+                            Self::check_rate_limit_static(rl).await?;
+                        }
 
-                    // Download encrypted chunk
-                    let chunk_path = format!("{}/chunk-{}.json", base_path, chunk_id);
-                    let chunk_download_start = Instant::now();
-                    let encrypted_chunk = s5_client
-                        .get(&chunk_path)
-                        .await
-                        .map_err(|e| {
+                        // Download encrypted chunk
+                        let chunk_path = format!("{}/chunk-{}.json", base_path, chunk_id);
+                        let chunk_download_start = Instant::now();
+                        let encrypted_chunk = s5_client.get(&chunk_path).await.map_err(|e| {
                             tracing::error!(
                                 chunk_id,
                                 path = %chunk_path,
@@ -489,17 +494,16 @@ impl VectorLoader {
                             }
                         })?;
 
-                    tracing::trace!(
-                        chunk_id,
-                        path = %chunk_path,
-                        duration_ms = chunk_download_start.elapsed().as_millis(),
-                        size_bytes = encrypted_chunk.len(),
-                        "📥 Chunk downloaded"
-                    );
+                        tracing::trace!(
+                            chunk_id,
+                            path = %chunk_path,
+                            duration_ms = chunk_download_start.elapsed().as_millis(),
+                            size_bytes = encrypted_chunk.len(),
+                            "📥 Chunk downloaded"
+                        );
 
-                    // Decrypt chunk
-                    let chunk = decrypt_chunk(&encrypted_chunk, &session_key)
-                        .map_err(|e| {
+                        // Decrypt chunk
+                        let chunk = decrypt_chunk(&encrypted_chunk, &session_key).map_err(|e| {
                             tracing::error!(
                                 chunk_id,
                                 error = %e,
@@ -508,53 +512,53 @@ impl VectorLoader {
                             VectorLoadError::DecryptionFailed(format!("Chunk {}: {}", chunk_id, e))
                         })?;
 
-                    // Validate dimensions
-                    if !chunk.vectors.is_empty() {
-                        let actual_dimensions = chunk.vectors[0].vector.len();
-                        if actual_dimensions != expected_dimensions {
+                        // Validate dimensions
+                        if !chunk.vectors.is_empty() {
+                            let actual_dimensions = chunk.vectors[0].vector.len();
+                            if actual_dimensions != expected_dimensions {
+                                tracing::error!(
+                                    chunk_id,
+                                    expected = expected_dimensions,
+                                    actual = actual_dimensions,
+                                    "❌ Dimension mismatch detected"
+                                );
+                                return Err(VectorLoadError::DimensionMismatch {
+                                    chunk_id,
+                                    expected: expected_dimensions,
+                                    actual: actual_dimensions,
+                                });
+                            }
+                        }
+
+                        // Validate vector count
+                        if chunk.vectors.len() != expected_vector_count {
                             tracing::error!(
                                 chunk_id,
-                                expected = expected_dimensions,
-                                actual = actual_dimensions,
-                                "❌ Dimension mismatch detected"
+                                expected = expected_vector_count,
+                                actual = chunk.vectors.len(),
+                                "❌ Vector count mismatch detected"
                             );
-                            return Err(VectorLoadError::DimensionMismatch {
+                            return Err(VectorLoadError::VectorCountMismatch {
                                 chunk_id,
-                                expected: expected_dimensions,
-                                actual: actual_dimensions,
+                                expected: expected_vector_count,
+                                actual: chunk.vectors.len(),
                             });
                         }
-                    }
 
-                    // Validate vector count
-                    if chunk.vectors.len() != expected_vector_count {
-                        tracing::error!(
-                            chunk_id,
-                            expected = expected_vector_count,
-                            actual = chunk.vectors.len(),
-                            "❌ Vector count mismatch detected"
-                        );
-                        return Err(VectorLoadError::VectorCountMismatch {
-                            chunk_id,
-                            expected: expected_vector_count,
-                            actual: chunk.vectors.len(),
-                        });
-                    }
-
-                    // Validate chunk structure
-                    chunk
-                        .validate(expected_dimensions)
-                        .map_err(|e| VectorLoadError::ChunkValidationFailed {
-                            chunk_id,
-                            reason: e.to_string(),
+                        // Validate chunk structure
+                        chunk.validate(expected_dimensions).map_err(|e| {
+                            VectorLoadError::ChunkValidationFailed {
+                                chunk_id,
+                                reason: e.to_string(),
+                            }
                         })?;
 
-                    Ok(chunk.vectors)
-                }
-            })
-            .buffer_unordered(self.max_parallel_chunks)
-            .collect()
-            .await;
+                        Ok(chunk.vectors)
+                    }
+                })
+                .buffer_unordered(self.max_parallel_chunks)
+                .collect()
+                .await;
 
         // Collect all vectors from successful chunks
         let mut all_vectors = Vec::new();
@@ -582,7 +586,9 @@ impl VectorLoader {
 
         // Record total vectors loaded
         if let Some(ref metrics) = self.metrics {
-            metrics.record_vectors_loaded(all_vectors.len() as u64).await;
+            metrics
+                .record_vectors_loaded(all_vectors.len() as u64)
+                .await;
         }
 
         tracing::info!(
@@ -605,7 +611,11 @@ impl VectorLoader {
     ///
     /// Returns error if owner doesn't match
     /// Made public for testing purposes
-    pub fn verify_owner(&self, manifest: &Manifest, expected_owner: &str) -> Result<(), VectorLoadError> {
+    pub fn verify_owner(
+        &self,
+        manifest: &Manifest,
+        expected_owner: &str,
+    ) -> Result<(), VectorLoadError> {
         // Note: Tests require case-sensitive comparison, but existing code uses case-insensitive
         // Keep case-insensitive for backward compatibility
         if manifest.owner.to_lowercase() != expected_owner.to_lowercase() {
@@ -623,7 +633,11 @@ impl VectorLoader {
     }
 
     /// Check if memory limit would be exceeded by loading this manifest
-    fn check_memory_limit(&self, manifest: &Manifest, limit_mb: usize) -> Result<(), VectorLoadError> {
+    fn check_memory_limit(
+        &self,
+        manifest: &Manifest,
+        limit_mb: usize,
+    ) -> Result<(), VectorLoadError> {
         // Estimate memory usage:
         // vector_count * dimensions * 4 bytes (f32) + metadata overhead
         let vector_bytes = manifest.vector_count * manifest.dimensions * 4;
@@ -692,7 +706,7 @@ impl VectorLoader {
 mod tests {
     use super::*;
     use crate::storage::manifest::{ChunkMetadata, Manifest};
-    use crate::storage::s5_client::{StorageError, S5Entry, S5ListResult};
+    use crate::storage::s5_client::{S5Entry, S5ListResult, StorageError};
     use std::collections::HashMap;
 
     /// Mock S5Storage for unit tests

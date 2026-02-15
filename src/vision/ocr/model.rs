@@ -217,8 +217,15 @@ impl PaddleOcrModel {
         let text_boxes = self.detector.detect(&det_input)?;
         info!("🔍 Detection found {} text regions", text_boxes.len());
         for (i, tb) in text_boxes.iter().enumerate() {
-            info!("  Region {}: x={:.0}, y={:.0}, w={:.0}, h={:.0}, conf={:.2}%",
-                  i, tb.x, tb.y, tb.width, tb.height, tb.confidence * 100.0);
+            info!(
+                "  Region {}: x={:.0}, y={:.0}, w={:.0}, h={:.0}, conf={:.2}%",
+                i,
+                tb.x,
+                tb.y,
+                tb.width,
+                tb.height,
+                tb.confidence * 100.0
+            );
         }
 
         // 3. For each text box, crop and recognize
@@ -235,13 +242,9 @@ impl PaddleOcrModel {
             }
 
             // Map coordinates back to original image space
-            let (orig_x, orig_y) =
-                preprocess_info.map_to_original(text_box.x, text_box.y);
-            let (orig_x2, orig_y2) =
-                preprocess_info.map_to_original(
-                    text_box.x + text_box.width,
-                    text_box.y + text_box.height,
-                );
+            let (orig_x, orig_y) = preprocess_info.map_to_original(text_box.x, text_box.y);
+            let (orig_x2, orig_y2) = preprocess_info
+                .map_to_original(text_box.x + text_box.width, text_box.y + text_box.height);
 
             // Calculate original dimensions
             let orig_width = (orig_x2 - orig_x).abs();
@@ -568,17 +571,32 @@ mod tests {
             TextRegion {
                 text: "C".to_string(),
                 confidence: 0.9,
-                bounding_box: BoundingBox { x: 0, y: 100, width: 50, height: 20 },
+                bounding_box: BoundingBox {
+                    x: 0,
+                    y: 100,
+                    width: 50,
+                    height: 20,
+                },
             },
             TextRegion {
                 text: "A".to_string(),
                 confidence: 0.9,
-                bounding_box: BoundingBox { x: 0, y: 0, width: 50, height: 20 },
+                bounding_box: BoundingBox {
+                    x: 0,
+                    y: 0,
+                    width: 50,
+                    height: 20,
+                },
             },
             TextRegion {
                 text: "B".to_string(),
                 confidence: 0.9,
-                bounding_box: BoundingBox { x: 100, y: 0, width: 50, height: 20 },
+                bounding_box: BoundingBox {
+                    x: 100,
+                    y: 0,
+                    width: 50,
+                    height: 20,
+                },
             },
         ];
 

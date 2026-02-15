@@ -81,7 +81,9 @@ const DESCRIBE_COMPREHENSIVE: &str = "Provide a comprehensive, detailed analysis
 impl VlmClient {
     /// Create a new VLM client
     pub fn new(endpoint: &str, model_name: &str) -> Result<Self> {
-        let client = Client::builder().timeout(Duration::from_secs(120)).build()?;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(120))
+            .build()?;
 
         let endpoint = endpoint.trim_end_matches('/').to_string();
         info!(

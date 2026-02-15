@@ -46,10 +46,8 @@ fn test_parse_model_id_without_prefix() {
 #[test]
 fn test_parse_invalid_model_id() {
     let invalid_strings = vec![
-        "not-hex",
-        "0xGHIJKL",
-        "0x1234", // Too short
-        "", // Empty
+        "not-hex", "0xGHIJKL", "0x1234", // Too short
+        "",       // Empty
     ];
 
     for invalid in invalid_strings {
@@ -57,7 +55,12 @@ fn test_parse_invalid_model_id() {
         let result = hex::decode(hex_str);
         // Either decode fails or length is wrong
         if let Ok(bytes) = result {
-            assert_ne!(bytes.len(), 32, "Invalid model_id should not be 32 bytes: {}", invalid);
+            assert_ne!(
+                bytes.len(),
+                32,
+                "Invalid model_id should not be 32 bytes: {}",
+                invalid
+            );
         }
     }
 }
@@ -70,9 +73,9 @@ fn test_parse_invalid_model_id() {
 #[test]
 fn test_authorized_host_can_claim() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Simulating authorization check result
     let is_authorized = true;
@@ -90,9 +93,9 @@ fn test_authorized_host_can_claim() {
 #[test]
 fn test_unauthorized_host_cannot_claim() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Simulating authorization check result
     let is_authorized = false;
@@ -126,9 +129,9 @@ fn test_cache_hit_for_repeated_claims() {
     use std::collections::HashMap;
 
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Cache already populated from previous claim
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
@@ -163,7 +166,7 @@ fn test_unsupported_model_error() {
 #[test]
 fn test_contract_unavailable_error() {
     let err = ModelValidationError::ContractUnavailable(
-        "Failed to query nodeSupportsModel: RPC timeout".to_string()
+        "Failed to query nodeSupportsModel: RPC timeout".to_string(),
     );
 
     let msg = format!("{}", err);

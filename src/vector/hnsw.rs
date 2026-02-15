@@ -127,10 +127,10 @@ impl HnswIndex {
         if vectors.is_empty() {
             return Ok(Self {
                 hnsw: Arc::new(Hnsw::new(
-                    16,                // max_nb_connection (M parameter)
-                    vectors.len(),     // nb_layer (will be 0 for empty)
-                    16,                // ef_construction
-                    200,               // max elements (doesn't matter for empty)
+                    16,            // max_nb_connection (M parameter)
+                    vectors.len(), // nb_layer (will be 0 for empty)
+                    16,            // ef_construction
+                    200,           // max elements (doesn't matter for empty)
                     DistCosine,
                 )),
                 id_map: Arc::new(HashMap::new()),
@@ -153,20 +153,19 @@ impl HnswIndex {
 
             // Check for NaN/Infinity
             if vector.vector.iter().any(|&v| !v.is_finite()) {
-                return Err(anyhow!(
-                    "Vector {} contains NaN or Infinity values",
-                    i
-                ));
+                return Err(anyhow!("Vector {} contains NaN or Infinity values", i));
             }
         }
 
         // HNSW parameters (optimized for fast construction and 384D embeddings)
         // Reduced M and ef_construction for better build performance
-        let max_nb_connection = 12;      // M parameter: connections per layer (reduced for speed)
-        let ef_construction = 48;         // ef during construction (lower = faster build)
-        // Calculate layers based on dataset size (log2(n), clamped to reasonable range)
+        let max_nb_connection = 12; // M parameter: connections per layer (reduced for speed)
+        let ef_construction = 48; // ef during construction (lower = faster build)
+                                  // Calculate layers based on dataset size (log2(n), clamped to reasonable range)
         let nb_layer = if vectors.len() > 1 {
-            ((vectors.len() as f32).log2().ceil() as usize).max(4).min(16)
+            ((vectors.len() as f32).log2().ceil() as usize)
+                .max(4)
+                .min(16)
         } else {
             4
         };
@@ -301,7 +300,11 @@ impl HnswIndex {
         }
 
         // Sort by score (highest first)
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(results)
     }

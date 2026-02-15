@@ -409,11 +409,10 @@ impl InferenceHandler {
     /// double-formatting when SDK/client pre-formats messages.
     fn format_prompt_for_inference(&self, messages: &[ChatMessage]) -> String {
         // Get template from environment or default to Harmony for GPT-OSS-20B
-        let template_name = std::env::var("MODEL_CHAT_TEMPLATE")
-            .unwrap_or_else(|_| "harmony".to_string());
+        let template_name =
+            std::env::var("MODEL_CHAT_TEMPLATE").unwrap_or_else(|_| "harmony".to_string());
 
-        let template = ChatTemplate::from_str(&template_name)
-            .unwrap_or(ChatTemplate::Harmony);
+        let template = ChatTemplate::from_str(&template_name).unwrap_or(ChatTemplate::Harmony);
 
         // Convert ChatMessage to tuple format, stripping any pre-existing markers
         let message_tuples: Vec<(String, String)> = messages
@@ -438,7 +437,10 @@ impl InferenceHandler {
         let mut result = content.to_string();
 
         // Harmony format markers
-        if result.contains("<|start|>") || result.contains("<|message|>") || result.contains("<|end|>") {
+        if result.contains("<|start|>")
+            || result.contains("<|message|>")
+            || result.contains("<|end|>")
+        {
             let patterns = [
                 "<|start|>user<|message|>",
                 "<|start|>assistant<|message|>",
@@ -478,10 +480,19 @@ impl InferenceHandler {
         }
 
         // GLM-4 format markers
-        if result.contains("<|system|>") || result.contains("<|user|>") || result.contains("<|observation|>") {
+        if result.contains("<|system|>")
+            || result.contains("<|user|>")
+            || result.contains("<|observation|>")
+        {
             let patterns = [
-                "<|system|>\n", "<|user|>\n", "<|assistant|>\n", "<|observation|>\n",
-                "<|system|>", "<|user|>", "<|assistant|>", "<|observation|>",
+                "<|system|>\n",
+                "<|user|>\n",
+                "<|assistant|>\n",
+                "<|observation|>\n",
+                "<|system|>",
+                "<|user|>",
+                "<|assistant|>",
+                "<|observation|>",
             ];
             for pattern in patterns {
                 result = result.replace(pattern, "");

@@ -21,9 +21,9 @@ use tokio::sync::RwLock;
 #[test]
 fn test_cache_hit_returns_true() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
     cache.insert(host, vec![model_id]);
@@ -41,12 +41,12 @@ fn test_cache_hit_returns_true() {
 #[test]
 fn test_cache_miss_returns_false() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
-    let other_model_id = H256::from_str(
-        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
+    let other_model_id =
+        H256::from_str("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
     cache.insert(host, vec![other_model_id]);
@@ -65,9 +65,9 @@ fn test_cache_miss_returns_false() {
 fn test_cache_miss_unknown_host() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
     let unknown_host = Address::from_str("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
     cache.insert(host, vec![model_id]);
@@ -85,29 +85,35 @@ fn test_cache_miss_unknown_host() {
 #[test]
 fn test_cache_multiple_models_same_host() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id_1 = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
-    let model_id_2 = H256::from_str(
-        "0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca"
-    ).unwrap();
+    let model_id_1 =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
+    let model_id_2 =
+        H256::from_str("0x14843424179fbcb9aeb7fd446fa97143300609757bd49ffb3ec7fb2f75aed1ca")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
     cache.insert(host, vec![model_id_1, model_id_2]);
 
     // Both models should be authorized
     let models = cache.get(&host).unwrap();
-    assert!(models.contains(&model_id_1), "First model should be authorized");
-    assert!(models.contains(&model_id_2), "Second model should be authorized");
+    assert!(
+        models.contains(&model_id_1),
+        "First model should be authorized"
+    );
+    assert!(
+        models.contains(&model_id_2),
+        "Second model should be authorized"
+    );
 }
 
 /// Test cache update on successful authorization
 #[test]
 fn test_cache_update_on_success() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
 
@@ -116,9 +122,7 @@ fn test_cache_update_on_success() {
 
     if contract_returned_true {
         // Update cache
-        cache.entry(host)
-            .or_insert_with(Vec::new)
-            .push(model_id);
+        cache.entry(host).or_insert_with(Vec::new).push(model_id);
     }
 
     // Verify cache was updated
@@ -134,9 +138,9 @@ fn test_cache_update_on_success() {
 #[test]
 fn test_cache_not_updated_on_failure() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
 
@@ -145,9 +149,7 @@ fn test_cache_not_updated_on_failure() {
 
     if contract_returned_false {
         // Don't update cache for failed auth
-        cache.entry(host)
-            .or_insert_with(Vec::new)
-            .push(model_id);
+        cache.entry(host).or_insert_with(Vec::new).push(model_id);
     }
 
     // Verify cache was NOT updated
@@ -167,9 +169,9 @@ fn test_cache_not_updated_on_failure() {
 #[tokio::test]
 async fn test_async_cache_lookup() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let cache: Arc<RwLock<HashMap<Address, Vec<H256>>>> = Arc::new(RwLock::new(HashMap::new()));
 
@@ -195,16 +197,17 @@ async fn test_async_cache_lookup() {
 #[tokio::test]
 async fn test_async_cache_update() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let cache: Arc<RwLock<HashMap<Address, Vec<H256>>>> = Arc::new(RwLock::new(HashMap::new()));
 
     // Update cache
     {
         let mut cache_write = cache.write().await;
-        cache_write.entry(host)
+        cache_write
+            .entry(host)
             .or_insert_with(Vec::new)
             .push(model_id);
     }
@@ -231,7 +234,7 @@ fn test_contract_unavailable_error() {
     use fabstir_llm_node::model_validation::ModelValidationError;
 
     let error = ModelValidationError::ContractUnavailable(
-        "RPC timeout: failed to query nodeSupportsModel".to_string()
+        "RPC timeout: failed to query nodeSupportsModel".to_string(),
     );
 
     let msg = format!("{}", error);

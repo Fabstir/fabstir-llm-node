@@ -113,7 +113,9 @@ fn is_valid_s5_cid(s: &str) -> bool {
     }
 
     // Valid base32 lowercase chars: a-z, 2-7
-    s[1..].chars().all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
+    s[1..]
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || ('2'..='7').contains(&c))
 }
 
 /// Convert a raw hash (hex string) to base32 format for internal reference
@@ -150,7 +152,9 @@ fn format_hash_as_cid(hash: &str) -> String {
     // Base32 encode raw 32-byte hash with 'b' multibase prefix
     // Result: 'b' + 52 lowercase base32 chars = 53 total chars
     // NOTE: This is NOT a valid BlobIdentifier CID (portals reject it)
-    let base32_encoded = data_encoding::BASE32_NOPAD.encode(&normalized_hash).to_lowercase();
+    let base32_encoded = data_encoding::BASE32_NOPAD
+        .encode(&normalized_hash)
+        .to_lowercase();
     format!("b{}", base32_encoded)
 }
 
@@ -273,7 +277,8 @@ impl EnhancedS5Client {
 
         let start_time = std::time::Instant::now();
 
-        let response = self.client
+        let response = self
+            .client
             .put(&url)
             .header("Content-Type", "application/octet-stream")
             .body(content)
@@ -318,7 +323,10 @@ impl EnhancedS5Client {
             }
 
             // Check for networkUploaded flag
-            let network_uploaded = json.get("networkUploaded").and_then(|v| v.as_bool()).unwrap_or(false);
+            let network_uploaded = json
+                .get("networkUploaded")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             // Check for CID field from S5 Advanced API (formatCID output)
             if let Some(cid) = json.get("cid").and_then(|v| v.as_str()) {
@@ -594,14 +602,8 @@ mod tests {
         // This is expected - format_hash_as_cid produces deprecated raw hash format
 
         // Must NOT be IPFS format
-        assert!(
-            !cid.starts_with("bafkrei"),
-            "CID must NOT be IPFS format"
-        );
-        assert!(
-            !cid.starts_with("bafybei"),
-            "CID must NOT be IPFS format"
-        );
+        assert!(!cid.starts_with("bafkrei"), "CID must NOT be IPFS format");
+        assert!(!cid.starts_with("bafybei"), "CID must NOT be IPFS format");
     }
 
     #[test]

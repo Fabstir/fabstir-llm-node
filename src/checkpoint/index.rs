@@ -207,10 +207,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_index_new() {
-        let index = CheckpointIndex::new(
-            "session-123".to_string(),
-            "0xABC123DEF456".to_string(),
-        );
+        let index = CheckpointIndex::new("session-123".to_string(), "0xABC123DEF456".to_string());
         assert_eq!(index.session_id, "session-123");
         assert_eq!(index.host_address, "0xabc123def456"); // lowercase
         assert!(index.checkpoints.is_empty());
@@ -235,7 +232,10 @@ mod tests {
         // Host addresses keep 0x prefix for consistency with delta paths
         let path = CheckpointIndex::s5_path("0xDEADBEEF", "session");
         assert!(path.contains("0x"), "Path should preserve 0x prefix");
-        assert!(path.contains("0xdeadbeef"), "Path should be lowercase with 0x");
+        assert!(
+            path.contains("0xdeadbeef"),
+            "Path should be lowercase with 0x"
+        );
     }
 
     #[test]
@@ -249,7 +249,10 @@ mod tests {
         );
         assert_eq!(entry.index, 0);
         assert_eq!(entry.proof_hash, "0x1234");
-        assert_eq!(entry.delta_cid, "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst");
+        assert_eq!(
+            entry.delta_cid,
+            "babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst"
+        );
         assert_eq!(entry.token_range, [0, 1000]);
         assert!(entry.timestamp > 0);
     }
@@ -278,10 +281,20 @@ mod tests {
         assert!(index.last_checkpoint().is_none());
 
         index.add_checkpoint(CheckpointEntry::with_timestamp(
-            0, "0x1".to_string(), "cid1".to_string(), 0, 1000, 100,
+            0,
+            "0x1".to_string(),
+            "cid1".to_string(),
+            0,
+            1000,
+            100,
         ));
         index.add_checkpoint(CheckpointEntry::with_timestamp(
-            1, "0x2".to_string(), "cid2".to_string(), 1000, 2000, 200,
+            1,
+            "0x2".to_string(),
+            "cid2".to_string(),
+            1000,
+            2000,
+            200,
         ));
 
         let last = index.last_checkpoint().unwrap();
@@ -374,24 +387,24 @@ mod tests {
         assert_eq!(entry.encrypted, Some(true));
 
         let json = serde_json::to_string(&entry).unwrap();
-        assert!(json.contains("\"encrypted\":true"), "Should include encrypted:true");
+        assert!(
+            json.contains("\"encrypted\":true"),
+            "Should include encrypted:true"
+        );
     }
 
     #[test]
     fn test_checkpoint_entry_no_encrypted_marker_when_plaintext() {
         // Standard entry (plaintext) should not have encrypted field in JSON
-        let entry = CheckpointEntry::new(
-            0,
-            "0x1234".to_string(),
-            "cidabc123".to_string(),
-            0,
-            1000,
-        );
+        let entry = CheckpointEntry::new(0, "0x1234".to_string(), "cidabc123".to_string(), 0, 1000);
 
         assert_eq!(entry.encrypted, None);
 
         let json = serde_json::to_string(&entry).unwrap();
-        assert!(!json.contains("encrypted"), "Should NOT include encrypted field for plaintext");
+        assert!(
+            !json.contains("encrypted"),
+            "Should NOT include encrypted field for plaintext"
+        );
     }
 
     #[test]
@@ -445,13 +458,8 @@ mod tests {
 
     #[test]
     fn test_checkpoint_entry_encrypted_serialization_camel_case() {
-        let entry = CheckpointEntry::new_encrypted(
-            0,
-            "0x1234".to_string(),
-            "cidtest".to_string(),
-            0,
-            500,
-        );
+        let entry =
+            CheckpointEntry::new_encrypted(0, "0x1234".to_string(), "cidtest".to_string(), 0, 500);
 
         let json = serde_json::to_string(&entry).unwrap();
 

@@ -304,12 +304,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_context_new_with_recovery_key_none() {
-        let context = SessionContext::new_with_recovery_key(
-            "test-session".to_string(),
-            100,
-            84532,
-            None,
-        );
+        let context =
+            SessionContext::new_with_recovery_key("test-session".to_string(), 100, 84532, None);
 
         assert!(context.recovery_public_key.is_none());
     }

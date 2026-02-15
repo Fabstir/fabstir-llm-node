@@ -1,0 +1,30 @@
+# Dockerfile for SGLang Diffusion sidecar (FLUX.2 Klein 4B)
+# Provides text-to-image generation via OpenAI-compatible API
+#
+# Copy to docker/Dockerfile.diffusion-sidecar before building:
+#   cp docker-diffusion-sidecar.Dockerfile docker/Dockerfile.diffusion-sidecar
+#
+# Build:
+#   docker build -t sglang-diffusion -f docker/Dockerfile.diffusion-sidecar .
+#
+# Run:
+#   docker run --gpus all --shm-size 32g --ipc=host \
+#     -v ./models/flux2-klein-4b:/models/black-forest-labs/FLUX.2-klein-4B \
+#     -p 8082:8082 sglang-diffusion \
+#     --model-path /models/black-forest-labs/FLUX.2-klein-4B \
+#     --port 8082 --host 0.0.0.0
+
+FROM lmsysorg/sglang:dev
+
+# Install diffusion-specific dependencies (diffusers, yunchang, etc.)
+RUN pip install --no-cache-dir "sglang[diffusion]"
+
+# Health check dependency
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /models/black-forest-labs/FLUX.2-klein-4B
+
+EXPOSE 8082
+
+ENTRYPOINT ["sglang", "serve"]
+CMD ["--host", "0.0.0.0", "--port", "8082"]

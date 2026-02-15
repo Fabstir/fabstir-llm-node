@@ -26,9 +26,9 @@ fn test_validation_happy_path_logic() {
     // Simulating the validation flow
     let model_path = Path::new("/models/tiny-vicuna-1b.q4_k_m.gguf");
     let host_address = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Step 1: Extract filename
     let filename = model_path.file_name().unwrap().to_str().unwrap();
@@ -57,9 +57,9 @@ fn test_validation_happy_path_logic() {
 /// Test successful validation returns the correct model ID
 #[test]
 fn test_successful_validation_returns_model_id() {
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Simulating successful validation
     let result: Result<H256, ModelValidationError> = Ok(model_id);
@@ -92,7 +92,10 @@ fn test_feature_enabled_performs_validation() {
     if feature_enabled {
         // Would perform full validation
         let validation_performed = true;
-        assert!(validation_performed, "Should perform validation when enabled");
+        assert!(
+            validation_performed,
+            "Should perform validation when enabled"
+        );
     }
 }
 
@@ -104,9 +107,9 @@ fn test_feature_enabled_performs_validation() {
 #[test]
 fn test_unauthorized_host_fails() {
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     // Simulate unauthorized host
     let is_authorized = false;
@@ -132,7 +135,7 @@ fn test_unapproved_model_fails() {
 #[test]
 fn test_invalid_path_fails() {
     let err = ModelValidationError::InvalidModelPath(
-        "Model file not found: /invalid/path/model.gguf".to_string()
+        "Model file not found: /invalid/path/model.gguf".to_string(),
     );
     let msg = format!("{}", err);
     assert!(msg.contains("Invalid") || msg.contains("not found"));
@@ -142,7 +145,7 @@ fn test_invalid_path_fails() {
 #[test]
 fn test_contract_unavailable_fails() {
     let err = ModelValidationError::ContractUnavailable(
-        "Failed to query isModelApproved: RPC timeout".to_string()
+        "Failed to query isModelApproved: RPC timeout".to_string(),
     );
     let msg = format!("{}", err);
     assert!(msg.contains("unavailable") || msg.contains("Contract"));
@@ -155,9 +158,9 @@ fn test_contract_unavailable_fails() {
 /// Test model hash mismatch fails with ModelHashMismatch error
 #[test]
 fn test_model_hash_mismatch_fails() {
-    let expected_hash = H256::from_str(
-        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-    ).unwrap();
+    let expected_hash =
+        H256::from_str("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+            .unwrap();
 
     let err = ModelValidationError::ModelHashMismatch {
         expected: expected_hash,
@@ -173,16 +176,19 @@ fn test_model_hash_mismatch_fails() {
 #[test]
 fn test_model_hash_verified_from_contract() {
     // The expected hash would come from getModel() contract call
-    let contract_sha256 = H256::from_str(
-        "0x329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f"
-    ).unwrap();
+    let contract_sha256 =
+        H256::from_str("0x329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f")
+            .unwrap();
 
     // Local file hash calculation would be compared against this
-    let local_sha256 = H256::from_str(
-        "0x329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f"
-    ).unwrap();
+    let local_sha256 =
+        H256::from_str("0x329d002bc20d4e7baae25df802c9678b5a4340b3ce91f23e6a0644975e95935f")
+            .unwrap();
 
-    assert_eq!(contract_sha256, local_sha256, "Hashes should match for valid file");
+    assert_eq!(
+        contract_sha256, local_sha256,
+        "Hashes should match for valid file"
+    );
 }
 
 /// Test file not found fails with InvalidModelPath
@@ -193,10 +199,8 @@ fn test_model_file_not_found_fails() {
     // Check if file exists (it doesn't)
     assert!(!path.exists(), "Path should not exist");
 
-    let err = ModelValidationError::InvalidModelPath(format!(
-        "Model file not found: {}",
-        path.display()
-    ));
+    let err =
+        ModelValidationError::InvalidModelPath(format!("Model file not found: {}", path.display()));
 
     let msg = format!("{}", err);
     assert!(msg.contains("not found") || msg.contains("Invalid"));
@@ -212,9 +216,9 @@ fn test_cache_warmed_after_validation() {
     use std::collections::HashMap;
 
     let host = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
-    let model_id = H256::from_str(
-        "0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced"
-    ).unwrap();
+    let model_id =
+        H256::from_str("0x0b75a2061e70e736924a30c0a327db7ab719402129f76f631adbd7b7a5a5bced")
+            .unwrap();
 
     let mut cache: HashMap<Address, Vec<H256>> = HashMap::new();
 
@@ -224,7 +228,10 @@ fn test_cache_warmed_after_validation() {
         cache.entry(host).or_insert_with(Vec::new).push(model_id);
     }
 
-    assert!(cache.contains_key(&host), "Cache should contain host after validation");
+    assert!(
+        cache.contains_key(&host),
+        "Cache should contain host after validation"
+    );
     assert!(
         cache.get(&host).unwrap().contains(&model_id),
         "Cache should contain model_id after validation"

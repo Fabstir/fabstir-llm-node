@@ -24,11 +24,11 @@ use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
 use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
 use crate::api::token_tracker::TokenTracker;
 use crate::contracts::checkpoint_manager::CheckpointManager;
-use sha2::{Digest, Sha256};
 use crate::crypto::SessionKeyStore;
 use crate::inference::LlmEngine;
 use crate::p2p::Node;
 use crate::utils::context::{build_prompt_with_context, count_context_tokens};
+use sha2::{Digest, Sha256};
 
 // TODO: Implement full HTTP server using axum framework
 // See tests/client/ for expected functionality
@@ -191,6 +191,9 @@ pub struct ApiServer {
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
     vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
     search_service: Arc<RwLock<Option<Arc<crate::search::SearchService>>>>,
+    diffusion_client: Arc<RwLock<Option<Arc<crate::diffusion::DiffusionClient>>>>,
+    image_gen_tracker: Arc<crate::diffusion::billing::ImageGenerationTracker>,
+    image_gen_rate_limiter: Arc<crate::diffusion::ImageGenerationRateLimiter>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -214,9 +217,10 @@ impl ApiServer {
         let config = ApiConfig::default();
         let addr = "127.0.0.1:0".parse().unwrap();
 
-        let session_store_config = crate::api::websocket::session_store::SessionStoreConfig::default();
+        let session_store_config =
+            crate::api::websocket::session_store::SessionStoreConfig::default();
         let session_store = Arc::new(RwLock::new(
-            crate::api::websocket::session_store::SessionStore::new(session_store_config)
+            crate::api::websocket::session_store::SessionStore::new(session_store_config),
         ));
 
         ApiServer {
@@ -241,6 +245,9 @@ impl ApiServer {
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
             search_service: Arc::new(RwLock::new(None)),
+            diffusion_client: Arc::new(RwLock::new(None)),
+            image_gen_tracker: Arc::new(crate::diffusion::billing::ImageGenerationTracker::new()),
+            image_gen_rate_limiter: Arc::new(crate::diffusion::ImageGenerationRateLimiter::new(10)),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -292,7 +299,7 @@ impl ApiServer {
             enable_persistence: false,
         };
         let session_store = Arc::new(RwLock::new(
-            crate::api::websocket::session_store::SessionStore::new(session_store_config)
+            crate::api::websocket::session_store::SessionStore::new(session_store_config),
         ));
 
         let mut server = Self {
@@ -315,6 +322,14 @@ impl ApiServer {
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
             search_service: Arc::new(RwLock::new(None)),
+            diffusion_client: Arc::new(RwLock::new(None)),
+            image_gen_tracker: Arc::new(crate::diffusion::billing::ImageGenerationTracker::new()),
+            image_gen_rate_limiter: Arc::new(crate::diffusion::ImageGenerationRateLimiter::new(
+                std::env::var("IMAGE_GEN_RATE_LIMIT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(5),
+            )),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -369,6 +384,9 @@ impl ApiServer {
             embedding_model_manager: self.embedding_model_manager.clone(),
             vision_model_manager: self.vision_model_manager.clone(),
             search_service: self.search_service.clone(),
+            diffusion_client: self.diffusion_client.clone(),
+            image_gen_tracker: self.image_gen_tracker.clone(),
+            image_gen_rate_limiter: self.image_gen_rate_limiter.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -395,11 +413,16 @@ impl ApiServer {
         self.checkpoint_manager.read().await.clone()
     }
 
-    pub async fn set_embedding_model_manager(&self, manager: Arc<crate::embeddings::EmbeddingModelManager>) {
+    pub async fn set_embedding_model_manager(
+        &self,
+        manager: Arc<crate::embeddings::EmbeddingModelManager>,
+    ) {
         *self.embedding_model_manager.write().await = Some(manager);
     }
 
-    pub async fn get_embedding_model_manager(&self) -> Option<Arc<crate::embeddings::EmbeddingModelManager>> {
+    pub async fn get_embedding_model_manager(
+        &self,
+    ) -> Option<Arc<crate::embeddings::EmbeddingModelManager>> {
         self.embedding_model_manager.read().await.clone()
     }
 
@@ -419,6 +442,26 @@ impl ApiServer {
     /// Get the search service for web search functionality
     pub async fn get_search_service(&self) -> Option<Arc<crate::search::SearchService>> {
         self.search_service.read().await.clone()
+    }
+
+    /// Set the diffusion client for image generation (v8.16.0+)
+    pub async fn set_diffusion_client(&self, client: Arc<crate::diffusion::DiffusionClient>) {
+        *self.diffusion_client.write().await = Some(client);
+    }
+
+    /// Get the diffusion client for image generation
+    pub async fn get_diffusion_client(&self) -> Option<Arc<crate::diffusion::DiffusionClient>> {
+        self.diffusion_client.read().await.clone()
+    }
+
+    /// Get the image generation rate limiter (v8.16.0+)
+    pub fn image_gen_rate_limiter(&self) -> &crate::diffusion::ImageGenerationRateLimiter {
+        &self.image_gen_rate_limiter
+    }
+
+    /// Get the image generation billing tracker (v8.16.0+)
+    pub fn image_gen_tracker(&self) -> &crate::diffusion::billing::ImageGenerationTracker {
+        &self.image_gen_tracker
     }
 
     /// Get the session key store for encryption/decryption operations
@@ -510,13 +553,16 @@ impl ApiServer {
                         custom_queries.clone()
                     } else {
                         // Extract last user query, stripping Harmony chat markers
-                        let query = crate::search::query_extractor::extract_last_user_query(&request.prompt);
+                        let query = crate::search::query_extractor::extract_last_user_query(
+                            &request.prompt,
+                        );
                         vec![query]
                     };
 
                     // Limit number of searches
                     let max_searches = std::cmp::min(request.max_searches, 20) as usize;
-                    let queries_to_search: Vec<_> = queries.into_iter().take(max_searches).collect();
+                    let queries_to_search: Vec<_> =
+                        queries.into_iter().take(max_searches).collect();
                     let queries_count = queries_to_search.len() as u32;
 
                     // Log the actual search query for debugging
@@ -546,7 +592,10 @@ impl ApiServer {
                         // Uses actual page content when available, falls back to snippets
                         search_context = format!(
                             "\n{}\n",
-                            crate::search::query_extractor::format_results_with_content_for_prompt(&all_results, 8000)
+                            crate::search::query_extractor::format_results_with_content_for_prompt(
+                                &all_results,
+                                8000
+                            )
                         );
                         search_metadata = Some((true, queries_count, provider_name));
                         info!(
@@ -570,7 +619,8 @@ impl ApiServer {
         } else {
             request.prompt.clone()
         };
-        let full_prompt = build_prompt_with_context(&request.conversation_context, &prompt_with_search);
+        let full_prompt =
+            build_prompt_with_context(&request.conversation_context, &prompt_with_search);
 
         if !request.conversation_context.is_empty() {
             info!(
@@ -582,9 +632,10 @@ impl ApiServer {
 
         // Parse job_id early (needed for prompt hash storage)
         let job_id = request.job_id.or_else(|| {
-            request.session_id.as_ref().and_then(|sid| {
-                sid.trim_end_matches('n').parse::<u64>().ok()
-            })
+            request
+                .session_id
+                .as_ref()
+                .and_then(|sid| sid.trim_end_matches('n').parse::<u64>().ok())
         });
 
         // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
@@ -740,12 +791,15 @@ impl ApiServer {
         // Web search integration for streaming (v8.7.5+)
         // Auto-detect search intent from prompt if not explicitly requested (v8.7.8+)
         let mut search_context = String::new();
-        let should_search = request.web_search
-            || crate::search::query_extractor::needs_web_search(&request.prompt);
+        let should_search =
+            request.web_search || crate::search::query_extractor::needs_web_search(&request.prompt);
 
         if should_search {
-            info!("🔍 Web search triggered for streaming inference (explicit={}, auto-detected={})",
-                request.web_search, !request.web_search && should_search);
+            info!(
+                "🔍 Web search triggered for streaming inference (explicit={}, auto-detected={})",
+                request.web_search,
+                !request.web_search && should_search
+            );
 
             // Get search service
             let search_service_guard = self.search_service.read().await;
@@ -757,13 +811,16 @@ impl ApiServer {
                         custom_queries.clone()
                     } else {
                         // Extract last user query, stripping Harmony chat markers
-                        let query = crate::search::query_extractor::extract_last_user_query(&request.prompt);
+                        let query = crate::search::query_extractor::extract_last_user_query(
+                            &request.prompt,
+                        );
                         vec![query]
                     };
 
                     // Limit number of searches
                     let max_searches = std::cmp::min(request.max_searches, 20) as usize;
-                    let queries_to_search: Vec<_> = queries.into_iter().take(max_searches).collect();
+                    let queries_to_search: Vec<_> =
+                        queries.into_iter().take(max_searches).collect();
 
                     // Log the actual search query for debugging
                     debug!("🔍 Search queries (cleaned): {:?}", queries_to_search);
@@ -789,7 +846,10 @@ impl ApiServer {
                         // Format search results with content (Phase 9)
                         search_context = format!(
                             "\n{}\n",
-                            crate::search::query_extractor::format_results_with_content_for_prompt(&all_results, 8000)
+                            crate::search::query_extractor::format_results_with_content_for_prompt(
+                                &all_results,
+                                8000
+                            )
                         );
                         info!(
                             "🔍 Web search completed for streaming: {} results ({} with content)",
@@ -811,7 +871,8 @@ impl ApiServer {
         } else {
             request.prompt.clone()
         };
-        let full_prompt = build_prompt_with_context(&request.conversation_context, &prompt_with_search);
+        let full_prompt =
+            build_prompt_with_context(&request.conversation_context, &prompt_with_search);
 
         if !request.conversation_context.is_empty() {
             info!(
@@ -823,9 +884,10 @@ impl ApiServer {
         // Parse job_id early (needed for prompt hash storage)
         // SDK sends "139n" format, so we strip trailing 'n'
         let job_id = request.job_id.or_else(|| {
-            request.session_id.as_ref().and_then(|sid| {
-                sid.trim_end_matches('n').parse::<u64>().ok()
-            })
+            request
+                .session_id
+                .as_ref()
+                .and_then(|sid| sid.trim_end_matches('n').parse::<u64>().ok())
         });
 
         // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
@@ -965,7 +1027,10 @@ impl ApiServer {
             if !got_any_tokens {
                 error!("Stream completed with no tokens generated");
             } else if let Some(jid) = job_id {
-                eprintln!("✅ Streaming job {} completed: {} tokens", jid, total_tokens);
+                eprintln!(
+                    "✅ Streaming job {} completed: {} tokens",
+                    jid, total_tokens
+                );
             }
 
             // Try to submit checkpoint if we have enough tokens
@@ -986,8 +1051,13 @@ impl ApiServer {
             // Phase 4.2: Track assistant response for checkpoint publishing (v8.11.0)
             if let Some(ref session_id) = session_id {
                 if let Some(cm) = checkpoint_manager.as_ref() {
-                    cm.track_conversation_message(session_id, "assistant", &accumulated_text, false)
-                        .await;
+                    cm.track_conversation_message(
+                        session_id,
+                        "assistant",
+                        &accumulated_text,
+                        false,
+                    )
+                    .await;
                 }
             }
 
@@ -1085,6 +1155,7 @@ impl ApiServer {
             .route("/v1/inference", post(simple_inference_handler))
             .route("/v1/embed", post(embed_handler_wrapper))
             .route("/v1/search", post(search_handler_wrapper))
+            .route("/v1/images/generate", post(generate_image_handler_wrapper))
             .nest("/v1", vision_routes)
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
@@ -1116,7 +1187,10 @@ async fn checkpoints_handler(
 ) -> impl IntoResponse {
     use crate::checkpoint::index::CheckpointIndex;
 
-    tracing::info!("🔍 checkpoints_handler called for session_id: {}", session_id);
+    tracing::info!(
+        "🔍 checkpoints_handler called for session_id: {}",
+        session_id
+    );
 
     // Get checkpoint_manager from server
     let checkpoint_manager = match server.get_checkpoint_manager().await {
@@ -1153,7 +1227,10 @@ async fn checkpoints_handler(
                         index.host_signature.len()
                     );
                     let response = serde_json::to_value(&index).unwrap();
-                    tracing::debug!("🔍 Response JSON: {}", serde_json::to_string(&response).unwrap_or_default());
+                    tracing::debug!(
+                        "🔍 Response JSON: {}",
+                        serde_json::to_string(&response).unwrap_or_default()
+                    );
                     (StatusCode::OK, axum::response::Json(response)).into_response()
                 }
                 Err(e) => {
@@ -1228,8 +1305,8 @@ async fn embed_handler_wrapper(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<crate::api::EmbedRequest>,
 ) -> impl IntoResponse {
-    use crate::blockchain::ChainRegistry;
     use crate::api::http_server::AppState;
+    use crate::blockchain::ChainRegistry;
 
     // Create AppState from ApiServer
     let app_state = AppState {
@@ -1240,14 +1317,19 @@ async fn embed_handler_wrapper(
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
+        diffusion_client: server.diffusion_client.clone(),
     };
 
     // Call the actual embed_handler
     match crate::api::embed_handler(axum::extract::State(app_state), Json(request)).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
-        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
-            "error": message
-        }))).into_response(),
+        Err((status, message)) => (
+            status,
+            axum::response::Json(serde_json::json!({
+                "error": message
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1256,8 +1338,8 @@ async fn ocr_handler_wrapper(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<crate::api::ocr::OcrRequest>,
 ) -> impl IntoResponse {
-    use crate::blockchain::ChainRegistry;
     use crate::api::http_server::AppState;
+    use crate::blockchain::ChainRegistry;
 
     // Create AppState from ApiServer
     let app_state = AppState {
@@ -1268,14 +1350,19 @@ async fn ocr_handler_wrapper(
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
+        diffusion_client: server.diffusion_client.clone(),
     };
 
     // Call the actual ocr_handler
     match crate::api::ocr_handler(axum::extract::State(app_state), Json(request)).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
-        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
-            "error": message
-        }))).into_response(),
+        Err((status, message)) => (
+            status,
+            axum::response::Json(serde_json::json!({
+                "error": message
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1284,8 +1371,8 @@ async fn describe_image_handler_wrapper(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<crate::api::describe_image::DescribeImageRequest>,
 ) -> impl IntoResponse {
-    use crate::blockchain::ChainRegistry;
     use crate::api::http_server::AppState;
+    use crate::blockchain::ChainRegistry;
 
     // Create AppState from ApiServer
     let app_state = AppState {
@@ -1296,14 +1383,19 @@ async fn describe_image_handler_wrapper(
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
+        diffusion_client: server.diffusion_client.clone(),
     };
 
     // Call the actual describe_image_handler
     match crate::api::describe_image_handler(axum::extract::State(app_state), Json(request)).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
-        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
-            "error": message
-        }))).into_response(),
+        Err((status, message)) => (
+            status,
+            axum::response::Json(serde_json::json!({
+                "error": message
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1312,8 +1404,8 @@ async fn search_handler_wrapper(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<crate::api::search::SearchApiRequest>,
 ) -> impl IntoResponse {
-    use crate::blockchain::ChainRegistry;
     use crate::api::http_server::AppState;
+    use crate::blockchain::ChainRegistry;
 
     // Create AppState from ApiServer
     let app_state = AppState {
@@ -1324,14 +1416,57 @@ async fn search_handler_wrapper(
         embedding_model_manager: server.embedding_model_manager.clone(),
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
+        diffusion_client: server.diffusion_client.clone(),
     };
 
     // Call the actual search_handler
     match crate::api::search::search_handler(axum::extract::State(app_state), Json(request)).await {
         Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
-        Err((status, message)) => (status, axum::response::Json(serde_json::json!({
-            "error": message
-        }))).into_response(),
+        Err((status, message)) => (
+            status,
+            axum::response::Json(serde_json::json!({
+                "error": message
+            })),
+        )
+            .into_response(),
+    }
+}
+
+// Generate image handler wrapper that converts ApiServer state to AppState (v8.16.0+)
+async fn generate_image_handler_wrapper(
+    State(server): State<Arc<ApiServer>>,
+    Json(request): Json<crate::api::generate_image::GenerateImageRequest>,
+) -> impl IntoResponse {
+    use crate::api::http_server::AppState;
+    use crate::blockchain::ChainRegistry;
+
+    // Create AppState from ApiServer
+    let app_state = AppState {
+        api_server: server.clone(),
+        chain_registry: Arc::new(ChainRegistry::new()),
+        sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        chain_stats: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        embedding_model_manager: server.embedding_model_manager.clone(),
+        vision_model_manager: server.vision_model_manager.clone(),
+        search_service: server.search_service.clone(),
+        diffusion_client: server.diffusion_client.clone(),
+    };
+
+    // Call the actual generate_image_handler
+    match crate::api::generate_image::generate_image_handler(
+        axum::extract::State(app_state),
+        Json(request),
+    )
+    .await
+    {
+        Ok(response) => (StatusCode::OK, axum::response::Json(response.0)).into_response(),
+        Err((status, message)) => (
+            status,
+            axum::response::Json(serde_json::json!({
+                "error": message
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1350,7 +1485,9 @@ fn strip_ui_markers(prompt: &str) -> String {
     let re_attach = Regex::new(r"<<ATTACHMENTS>>.*?<</ATTACHMENTS>>").unwrap();
     let cleaned = re_attach.replace_all(prompt, "");
     // Strip <<DISPLAY>> and <</DISPLAY>> markers but keep content between them
-    let cleaned = cleaned.replace("<<DISPLAY>>", "").replace("<</DISPLAY>>", "");
+    let cleaned = cleaned
+        .replace("<<DISPLAY>>", "")
+        .replace("<</DISPLAY>>", "");
     // Also strip [Attached image: ...] lines that may reference filenames
     let re_attached = Regex::new(r"\[Attached image: [^\]]*\]").unwrap();
     let cleaned = re_attached.replace_all(&cleaned, "");
@@ -1432,10 +1569,7 @@ async fn process_vision_images(
             // contain filenames causing LLM hallucinations (v8.15.4+)
             let clean_prompt = strip_ui_markers(user_prompt);
             let augmented = crate::vision::augment_prompt_with_vision(&descriptions, &clean_prompt);
-            info!(
-                "VLM vision processing used {} tokens total",
-                vlm_tokens
-            );
+            info!("VLM vision processing used {} tokens total", vlm_tokens);
             info!(
                 "Vision-augmented prompt preview (first 500 chars): {:?}",
                 &augmented[..augmented.len().min(500)]
@@ -1521,11 +1655,14 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                         // FIX: Create session in session_store (was missing - caused "Session not found" errors)
                         if let Some(sid) = &session_id {
                             let mut store = server.session_store.write().await;
-                            match store.create_session_with_chain(
-                                sid.clone(),
-                                crate::api::websocket::session::SessionConfig::default(),
-                                chain_id.unwrap_or(84532), // Default to Base Sepolia
-                            ).await {
+                            match store
+                                .create_session_with_chain(
+                                    sid.clone(),
+                                    crate::api::websocket::session::SessionConfig::default(),
+                                    chain_id.unwrap_or(84532), // Default to Base Sepolia
+                                )
+                                .await
+                            {
                                 Ok(_) => {
                                     info!("✅ Session created in store: {}", sid);
                                 }
@@ -1561,7 +1698,6 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle encrypted session initialization
                     if json_msg["type"] == "encrypted_session_init" {
-
                         // Extract session_id and chain_id
                         session_id = json_msg["session_id"]
                             .as_str()
@@ -1695,7 +1831,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                                                         // Ensure session exists without replacing (preserves vectors/history on re-init)
                                                         {
-                                                            let mut store = server.session_store.write().await;
+                                                            let mut store =
+                                                                server.session_store.write().await;
                                                             match store.ensure_session_exists_with_chain(
                                                                 sid.clone(),
                                                                 crate::api::websocket::session::SessionConfig::default(),
@@ -1714,9 +1851,18 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         }
 
                                                         // Set recovery public key in checkpoint manager (for encrypted checkpoint deltas)
-                                                        if let Some(recovery_pubkey) = &session_init_data.recovery_public_key {
-                                                            if let Some(cm) = server.get_checkpoint_manager().await {
-                                                                cm.set_session_recovery_public_key(sid, recovery_pubkey.clone()).await;
+                                                        if let Some(recovery_pubkey) =
+                                                            &session_init_data.recovery_public_key
+                                                        {
+                                                            if let Some(cm) = server
+                                                                .get_checkpoint_manager()
+                                                                .await
+                                                            {
+                                                                cm.set_session_recovery_public_key(
+                                                                    sid,
+                                                                    recovery_pubkey.clone(),
+                                                                )
+                                                                .await;
                                                                 info!("🔐 Recovery public key set for session {} (encrypted checkpoints enabled)", sid);
                                                             } else {
                                                                 warn!("⚠️ Recovery public key provided but checkpoint manager not available");
@@ -1726,20 +1872,30 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         }
 
                                                         // Handle vector_database if provided (Sub-phase 3.3)
-                                                        if let Some(vdb_info) = session_init_data.vector_database.clone() {
+                                                        if let Some(vdb_info) = session_init_data
+                                                            .vector_database
+                                                            .clone()
+                                                        {
                                                             info!(
                                                                 "📦 Vector database requested: {}",
                                                                 vdb_info.manifest_path
                                                             );
 
                                                             // Get session from store and update it
-                                                            let mut store = server.session_store.write().await;
-                                                            if let Some(mut session) = store.get_session_mut(sid).await {
+                                                            let mut store =
+                                                                server.session_store.write().await;
+                                                            if let Some(mut session) =
+                                                                store.get_session_mut(sid).await
+                                                            {
                                                                 // Store encryption key in session
-                                                                session.encryption_key = Some(extracted_session_key.to_vec());
+                                                                session.encryption_key = Some(
+                                                                    extracted_session_key.to_vec(),
+                                                                );
 
                                                                 // Set vector_database info
-                                                                session.set_vector_database(Some(vdb_info.clone()));
+                                                                session.set_vector_database(Some(
+                                                                    vdb_info.clone(),
+                                                                ));
 
                                                                 // Set status to Loading
                                                                 session.set_vector_loading_status(
@@ -1747,14 +1903,18 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 );
 
                                                                 // Get cancel_token for background task
-                                                                let cancel_token = session.cancel_token.clone();
+                                                                let cancel_token =
+                                                                    session.cancel_token.clone();
 
                                                                 info!("🚀 Spawning async vector loading task for session: {}", sid);
 
                                                                 // Spawn background task
                                                                 let sid_clone = sid.clone();
-                                                                let session_store_clone = server.session_store.clone();
-                                                                let encryption_key_clone = Some(extracted_session_key.to_vec());
+                                                                let session_store_clone =
+                                                                    server.session_store.clone();
+                                                                let encryption_key_clone = Some(
+                                                                    extracted_session_key.to_vec(),
+                                                                );
 
                                                                 tokio::spawn(async move {
                                                                     crate::api::websocket::vector_loading::load_vectors_async(
@@ -1990,10 +2150,18 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         });
 
                                                                 // Log decrypted JSON keys for debugging (v8.15.3+)
-                                                                if let Some(obj) = decrypted_json.as_object() {
-                                                                    let keys: Vec<&String> = obj.keys().collect();
-                                                                    info!("Decrypted JSON keys: {:?}", keys);
-                                                                    if let Some(images_val) = obj.get("images") {
+                                                                if let Some(obj) =
+                                                                    decrypted_json.as_object()
+                                                                {
+                                                                    let keys: Vec<&String> =
+                                                                        obj.keys().collect();
+                                                                    info!(
+                                                                        "Decrypted JSON keys: {:?}",
+                                                                        keys
+                                                                    );
+                                                                    if let Some(images_val) =
+                                                                        obj.get("images")
+                                                                    {
                                                                         info!("images field type: {}, is_array={}, is_null={}",
                                                                             match images_val {
                                                                                 serde_json::Value::Array(a) => format!("array(len={})", a.len()),
@@ -2010,41 +2178,76 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                     }
                                                                 }
 
-                                                                // Extract prompt from decrypted JSON or use entire string
-                                                                let plaintext_prompt = decrypted_json
-                                                                    .get("prompt")
+                                                                // Image generation routing (v8.16.0+)
+                                                                if decrypted_json
+                                                                    .get("action")
                                                                     .and_then(|v| v.as_str())
-                                                                    .unwrap_or(&plaintext_str)
-                                                                    .to_string();
+                                                                    == Some("image_generation")
+                                                                {
+                                                                    info!("Routing encrypted message to image generation handler");
+                                                                    let response_msg = crate::api::websocket::handlers::image_generation::handle_encrypted_image_generation(
+                                                                        &server,
+                                                                        &decrypted_json,
+                                                                        &session_key,
+                                                                        current_session_id.as_deref().unwrap_or("unknown"),
+                                                                        job_id,
+                                                                        json_msg.get("id"),
+                                                                    ).await;
+                                                                    let _ = socket.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
+                                                                    continue;
+                                                                }
+
+                                                                // Extract prompt from decrypted JSON or use entire string
+                                                                let plaintext_prompt =
+                                                                    decrypted_json
+                                                                        .get("prompt")
+                                                                        .and_then(|v| v.as_str())
+                                                                        .unwrap_or(&plaintext_str)
+                                                                        .to_string();
 
                                                                 // Vision pre-processing: route images to VLM sidecar (v8.15.3+)
                                                                 let mut vlm_tokens_used: u64 = 0;
-                                                                let plaintext_prompt = match decrypted_json.get("images").and_then(|v| v.as_array()) {
-                                                                    Some(imgs) if !imgs.is_empty() => {
-                                                                        info!("Found {} image(s) in encrypted message, routing to VLM sidecar", imgs.len());
-                                                                        let (augmented, vlm_tokens) = process_vision_images(&server, imgs, &plaintext_prompt).await;
-                                                                        vlm_tokens_used = vlm_tokens;
-                                                                        // Track VLM tokens for billing (v8.15.4+)
-                                                                        if vlm_tokens > 0 {
-                                                                            if let Some(jid) = job_id {
-                                                                                info!("📊 VLM vision used {} tokens for job {}", vlm_tokens, jid);
-                                                                                if let Some(cm) = server.checkpoint_manager.read().await.as_ref() {
+                                                                let plaintext_prompt =
+                                                                    match decrypted_json
+                                                                        .get("images")
+                                                                        .and_then(|v| v.as_array())
+                                                                    {
+                                                                        Some(imgs)
+                                                                            if !imgs.is_empty() =>
+                                                                        {
+                                                                            info!("Found {} image(s) in encrypted message, routing to VLM sidecar", imgs.len());
+                                                                            let (augmented, vlm_tokens) = process_vision_images(&server, imgs, &plaintext_prompt).await;
+                                                                            vlm_tokens_used =
+                                                                                vlm_tokens;
+                                                                            // Track VLM tokens for billing (v8.15.4+)
+                                                                            if vlm_tokens > 0 {
+                                                                                if let Some(jid) =
+                                                                                    job_id
+                                                                                {
+                                                                                    info!("📊 VLM vision used {} tokens for job {}", vlm_tokens, jid);
+                                                                                    if let Some(cm) = server.checkpoint_manager.read().await.as_ref() {
                                                                                     let _ = cm.track_tokens(jid, vlm_tokens, current_session_id.clone()).await;
                                                                                 } else {
                                                                                     server.token_tracker.track_tokens(Some(jid), vlm_tokens as usize, current_session_id.clone()).await;
                                                                                 }
+                                                                                }
                                                                             }
+                                                                            augmented
                                                                         }
-                                                                        augmented
-                                                                    }
-                                                                    _ => plaintext_prompt,
-                                                                };
+                                                                        _ => plaintext_prompt,
+                                                                    };
 
                                                                 // Extract model (priority: decrypted > outer message > default)
                                                                 let model = decrypted_json
                                                                     .get("model")
                                                                     .and_then(|v| v.as_str())
-                                                                    .or_else(|| json_msg.get("model").and_then(|v| v.as_str()))
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("model")
+                                                                            .and_then(|v| {
+                                                                                v.as_str()
+                                                                            })
+                                                                    })
                                                                     .unwrap_or("tiny-vicuna")
                                                                     .to_string();
 
@@ -2052,21 +2255,39 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 let max_tokens = decrypted_json
                                                                     .get("max_tokens")
                                                                     .and_then(|v| v.as_u64())
-                                                                    .or_else(|| json_msg.get("max_tokens").and_then(|v| v.as_u64()))
-                                                                    .unwrap_or(4000);  // Increased default to 4000
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("max_tokens")
+                                                                            .and_then(|v| {
+                                                                                v.as_u64()
+                                                                            })
+                                                                    })
+                                                                    .unwrap_or(4000); // Increased default to 4000
 
                                                                 // Extract temperature (priority: decrypted > outer message > default)
                                                                 let temperature = decrypted_json
                                                                     .get("temperature")
                                                                     .and_then(|v| v.as_f64())
-                                                                    .or_else(|| json_msg.get("temperature").and_then(|v| v.as_f64()))
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("temperature")
+                                                                            .and_then(|v| {
+                                                                                v.as_f64()
+                                                                            })
+                                                                    })
                                                                     .unwrap_or(0.7);
 
                                                                 // Extract stream (priority: decrypted > outer message > default)
                                                                 let stream = decrypted_json
                                                                     .get("stream")
                                                                     .and_then(|v| v.as_bool())
-                                                                    .or_else(|| json_msg.get("stream").and_then(|v| v.as_bool()))
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("stream")
+                                                                            .and_then(|v| {
+                                                                                v.as_bool()
+                                                                            })
+                                                                    })
                                                                     .unwrap_or(true);
 
                                                                 // Extract web_search fields from outer message (v8.7.9+)
@@ -2074,19 +2295,41 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 let web_search = decrypted_json
                                                                     .get("web_search")
                                                                     .and_then(|v| v.as_bool())
-                                                                    .or_else(|| json_msg.get("web_search").and_then(|v| v.as_bool()))
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("web_search")
+                                                                            .and_then(|v| {
+                                                                                v.as_bool()
+                                                                            })
+                                                                    })
                                                                     .unwrap_or(false);
 
                                                                 let max_searches = decrypted_json
                                                                     .get("max_searches")
                                                                     .and_then(|v| v.as_i64())
-                                                                    .or_else(|| json_msg.get("max_searches").and_then(|v| v.as_i64()))
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("max_searches")
+                                                                            .and_then(|v| {
+                                                                                v.as_i64()
+                                                                            })
+                                                                    })
                                                                     .unwrap_or(5);
 
-                                                                let search_queries: Option<Vec<String>> = decrypted_json
+                                                                let search_queries: Option<
+                                                                    Vec<String>,
+                                                                > = decrypted_json
                                                                     .get("search_queries")
-                                                                    .or_else(|| json_msg.get("search_queries"))
-                                                                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                                                                    .or_else(|| {
+                                                                        json_msg
+                                                                            .get("search_queries")
+                                                                    })
+                                                                    .and_then(|v| {
+                                                                        serde_json::from_value(
+                                                                            v.clone(),
+                                                                        )
+                                                                        .ok()
+                                                                    });
 
                                                                 let mut request_value = json!({
                                                                     "model": model,
@@ -2101,8 +2344,12 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                 });
 
                                                                 // Add search_queries if present
-                                                                if let Some(queries) = search_queries {
-                                                                    request_value["search_queries"] = json!(queries);
+                                                                if let Some(queries) =
+                                                                    search_queries
+                                                                {
+                                                                    request_value
+                                                                        ["search_queries"] =
+                                                                        json!(queries);
                                                                 }
 
                                                                 // Extract message ID for response correlation
@@ -2138,8 +2385,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 .await
                                                                             {
                                                                                 // Count tokens for logging only - producer already tracks for checkpoints
-                                                                                if response.tokens > 0 {
-                                                                                    total_tokens += response.tokens as u64;
+                                                                                if response.tokens
+                                                                                    > 0
+                                                                                {
+                                                                                    total_tokens +=
+                                                                                        response
+                                                                                            .tokens
+                                                                                            as u64;
                                                                                 }
 
                                                                                 // Encrypt response chunks with session key
@@ -2346,8 +2598,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                                                                             // CRITICAL: Send stream_end even on error so SDK knows stream is done
                                                                             let mut stream_end_msg = json!({"type": "stream_end"});
-                                                                            if let Some(ref msg_id) = message_id {
-                                                                                stream_end_msg["id"] = msg_id.clone();
+                                                                            if let Some(
+                                                                                ref msg_id,
+                                                                            ) = message_id
+                                                                            {
+                                                                                stream_end_msg
+                                                                                    ["id"] =
+                                                                                    msg_id.clone();
                                                                             }
                                                                             let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                         }
@@ -2557,28 +2814,52 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                         // Vision pre-processing for plaintext messages (v8.15.3+)
                         let mut vlm_tokens_used: u64 = 0;
-                        let request_value = if let Some(imgs) = json_msg.get("images").and_then(|v| v.as_array()) {
+                        let request_value = if let Some(imgs) =
+                            json_msg.get("images").and_then(|v| v.as_array())
+                        {
                             if !imgs.is_empty() {
                                 info!("Found {} image(s) in plaintext message, routing to VLM sidecar", imgs.len());
-                                let prompt = request_value.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
-                                let (augmented, vlm_tokens) = process_vision_images(&server, imgs, prompt).await;
+                                let prompt = request_value
+                                    .get("prompt")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let (augmented, vlm_tokens) =
+                                    process_vision_images(&server, imgs, prompt).await;
                                 vlm_tokens_used = vlm_tokens;
                                 // Track VLM tokens for billing (v8.15.4+)
                                 if vlm_tokens > 0 {
                                     if let Some(jid) = job_id {
-                                        info!("📊 VLM vision used {} tokens for job {}", vlm_tokens, jid);
-                                        if let Some(cm) = server.checkpoint_manager.read().await.as_ref() {
-                                            let _ = cm.track_tokens(jid, vlm_tokens, session_id.clone()).await;
+                                        info!(
+                                            "📊 VLM vision used {} tokens for job {}",
+                                            vlm_tokens, jid
+                                        );
+                                        if let Some(cm) =
+                                            server.checkpoint_manager.read().await.as_ref()
+                                        {
+                                            let _ = cm
+                                                .track_tokens(jid, vlm_tokens, session_id.clone())
+                                                .await;
                                         } else {
-                                            server.token_tracker.track_tokens(Some(jid), vlm_tokens as usize, session_id.clone()).await;
+                                            server
+                                                .token_tracker
+                                                .track_tokens(
+                                                    Some(jid),
+                                                    vlm_tokens as usize,
+                                                    session_id.clone(),
+                                                )
+                                                .await;
                                         }
                                     }
                                 }
                                 let mut rv = request_value;
                                 rv["prompt"] = serde_json::Value::String(augmented);
                                 rv
-                            } else { request_value }
-                        } else { request_value };
+                            } else {
+                                request_value
+                            }
+                        } else {
+                            request_value
+                        };
 
                         // Debug: Log the entire request
                         info!(
@@ -2679,7 +2960,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     if let Some(ref msg_id) = message_id {
                                         stream_end_msg["id"] = msg_id.clone();
                                     }
-                                    let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                    let _ = socket
+                                        .send(axum::extract::ws::Message::Text(
+                                            stream_end_msg.to_string(),
+                                        ))
+                                        .await;
                                 }
                             }
                         }
@@ -2687,18 +2972,32 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle RAG uploadVectors message (Phase 3.4)
                     if json_msg["type"] == "uploadVectors" {
-                        info!("📤 uploadVectors message received, WS session_id={:?}", session_id);
+                        info!(
+                            "📤 uploadVectors message received, WS session_id={:?}",
+                            session_id
+                        );
 
-                        match serde_json::from_value::<crate::api::websocket::message_types::UploadVectorsRequest>(json_msg.clone()) {
+                        match serde_json::from_value::<
+                            crate::api::websocket::message_types::UploadVectorsRequest,
+                        >(json_msg.clone())
+                        {
                             Ok(request) => {
                                 // Get or create session with RAG enabled
-                                let sid = session_id.clone().unwrap_or_else(|| "default-rag-session".to_string());
-                                info!("📤 uploadVectors using session: {} (from WS session_id={:?})", sid, session_id);
+                                let sid = session_id
+                                    .clone()
+                                    .unwrap_or_else(|| "default-rag-session".to_string());
+                                info!(
+                                    "📤 uploadVectors using session: {} (from WS session_id={:?})",
+                                    sid, session_id
+                                );
 
                                 // Use the new helper method
                                 let rag_session = {
                                     let mut store = server.session_store.write().await;
-                                    match store.get_or_create_rag_session(sid.clone(), 100_000).await {
+                                    match store
+                                        .get_or_create_rag_session(sid.clone(), 100_000)
+                                        .await
+                                    {
                                         Ok(sess) => {
                                             info!("✅ Session ready with RAG enabled: {}", sid);
                                             sess
@@ -2709,7 +3008,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 "type": "error",
                                                 "error": format!("Failed to create RAG session: {}", e)
                                             });
-                                            if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                            if socket
+                                                .send(axum::extract::ws::Message::Text(
+                                                    error_msg.to_string(),
+                                                ))
+                                                .await
+                                                .is_err()
+                                            {
                                                 break;
                                             }
                                             continue;
@@ -2720,13 +3025,22 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 let rag_session_arc = Arc::new(std::sync::Mutex::new(rag_session));
 
                                 // Call the RAG handler
-                                match crate::api::websocket::handlers::rag::handle_upload_vectors(&rag_session_arc, request) {
+                                match crate::api::websocket::handlers::rag::handle_upload_vectors(
+                                    &rag_session_arc,
+                                    request,
+                                ) {
                                     Ok(response) => {
                                         match serde_json::to_string(&response) {
                                             Ok(response_json) => {
                                                 info!("✅ uploadVectors response: {} uploaded, {} rejected",
                                                       response.uploaded, response.rejected);
-                                                if socket.send(axum::extract::ws::Message::Text(response_json)).await.is_err() {
+                                                if socket
+                                                    .send(axum::extract::ws::Message::Text(
+                                                        response_json,
+                                                    ))
+                                                    .await
+                                                    .is_err()
+                                                {
                                                     error!("Failed to send uploadVectors response");
                                                     break;
                                                 }
@@ -2742,7 +3056,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             "type": "error",
                                             "error": format!("Upload vectors failed: {}", e)
                                         });
-                                        if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                        if socket
+                                            .send(axum::extract::ws::Message::Text(
+                                                error_msg.to_string(),
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
                                             break;
                                         }
                                     }
@@ -2754,7 +3074,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     "type": "error",
                                     "error": format!("Invalid uploadVectors request: {}", e)
                                 });
-                                if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                if socket
+                                    .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                    .await
+                                    .is_err()
+                                {
                                     break;
                                 }
                             }
@@ -2763,13 +3087,24 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle RAG searchVectors message (Phase 3.4)
                     if json_msg["type"] == "searchVectors" {
-                        info!("🔍 searchVectors message received, WS session_id={:?}", session_id);
+                        info!(
+                            "🔍 searchVectors message received, WS session_id={:?}",
+                            session_id
+                        );
 
-                        match serde_json::from_value::<crate::api::websocket::message_types::SearchVectorsRequest>(json_msg.clone()) {
+                        match serde_json::from_value::<
+                            crate::api::websocket::message_types::SearchVectorsRequest,
+                        >(json_msg.clone())
+                        {
                             Ok(request) => {
                                 // Get existing session with RAG (should already exist from uploadVectors)
-                                let sid = session_id.clone().unwrap_or_else(|| "default-rag-session".to_string());
-                                info!("🔍 searchVectors using session: {} (from WS session_id={:?})", sid, session_id);
+                                let sid = session_id
+                                    .clone()
+                                    .unwrap_or_else(|| "default-rag-session".to_string());
+                                info!(
+                                    "🔍 searchVectors using session: {} (from WS session_id={:?})",
+                                    sid, session_id
+                                );
 
                                 // Get session from store
                                 let rag_session = {
@@ -2778,12 +3113,21 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         Some(sess) => {
                                             info!("✅ Found session for search: {}", sid);
                                             if sess.get_vector_store().is_none() {
-                                                warn!("⚠️  Session {} exists but RAG not enabled!", sid);
+                                                warn!(
+                                                    "⚠️  Session {} exists but RAG not enabled!",
+                                                    sid
+                                                );
                                                 let error_msg = json!({
                                                     "type": "error",
                                                     "error": format!("Session {} found but RAG not enabled. Upload vectors first.", sid)
                                                 });
-                                                if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                                if socket
+                                                    .send(axum::extract::ws::Message::Text(
+                                                        error_msg.to_string(),
+                                                    ))
+                                                    .await
+                                                    .is_err()
+                                                {
                                                     break;
                                                 }
                                                 continue;
@@ -2796,7 +3140,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 "type": "error",
                                                 "error": format!("Session {} not found. Upload vectors first.", sid)
                                             });
-                                            if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                            if socket
+                                                .send(axum::extract::ws::Message::Text(
+                                                    error_msg.to_string(),
+                                                ))
+                                                .await
+                                                .is_err()
+                                            {
                                                 break;
                                             }
                                             continue;
@@ -2807,13 +3157,22 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 let rag_session_arc = Arc::new(std::sync::Mutex::new(rag_session));
 
                                 // Call the RAG handler
-                                match crate::api::websocket::handlers::rag::handle_search_vectors(&rag_session_arc, request) {
+                                match crate::api::websocket::handlers::rag::handle_search_vectors(
+                                    &rag_session_arc,
+                                    request,
+                                ) {
                                     Ok(response) => {
                                         match serde_json::to_string(&response) {
                                             Ok(response_json) => {
                                                 info!("✅ searchVectors response: {} results in {:.2}ms",
                                                       response.results.len(), response.search_time_ms);
-                                                if socket.send(axum::extract::ws::Message::Text(response_json)).await.is_err() {
+                                                if socket
+                                                    .send(axum::extract::ws::Message::Text(
+                                                        response_json,
+                                                    ))
+                                                    .await
+                                                    .is_err()
+                                                {
                                                     error!("Failed to send searchVectors response");
                                                     break;
                                                 }
@@ -2829,7 +3188,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             "type": "error",
                                             "error": format!("Search vectors failed: {}", e)
                                         });
-                                        if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                        if socket
+                                            .send(axum::extract::ws::Message::Text(
+                                                error_msg.to_string(),
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
                                             break;
                                         }
                                     }
@@ -2841,7 +3206,11 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     "type": "error",
                                     "error": format!("Invalid searchVectors request: {}", e)
                                 });
-                                if socket.send(axum::extract::ws::Message::Text(error_msg.to_string())).await.is_err() {
+                                if socket
+                                    .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                    .await
+                                    .is_err()
+                                {
                                     break;
                                 }
                             }
@@ -2889,7 +3258,10 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
         if let Some(session) = store.get_session(sid).await {
             // Cancel the background task
             session.cancel_token.cancel();
-            info!("🛑 Cancelled background vector loading task for session: {}", sid);
+            info!(
+                "🛑 Cancelled background vector loading task for session: {}",
+                sid
+            );
         }
     }
 
@@ -2904,16 +3276,25 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
         info!("   Checkpoint manager available: {}", cm.is_some());
 
         if let Some(checkpoint_manager) = cm.clone() {
-            info!("✅ Spawning complete_session_job in background for job_id: {}", jid);
+            info!(
+                "✅ Spawning complete_session_job in background for job_id: {}",
+                jid
+            );
             drop(cm); // Release lock before spawning
 
             // ASYNC: Spawn session completion in background to avoid blocking
             tokio::spawn(async move {
-                info!("[WS-BG] 🚀 Starting background session completion for job_id: {}", jid);
+                info!(
+                    "[WS-BG] 🚀 Starting background session completion for job_id: {}",
+                    jid
+                );
 
                 match checkpoint_manager.complete_session_job(jid).await {
                     Ok(()) => {
-                        info!("[WS-BG] 💰 Settlement completed successfully for job_id: {}", jid);
+                        info!(
+                            "[WS-BG] 💰 Settlement completed successfully for job_id: {}",
+                            jid
+                        );
                     }
                     Err(e) => {
                         error!("[WS-BG] ❌ Failed to complete session job {}: {}", jid, e);

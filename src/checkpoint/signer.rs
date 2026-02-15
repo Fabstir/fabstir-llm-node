@@ -81,7 +81,10 @@ pub fn recover_signer_address(signature: &str, data: &str) -> Result<String> {
         .map_err(|e| anyhow!("Invalid signature hex: {}", e))?;
 
     if sig_bytes.len() != 65 {
-        return Err(anyhow!("Signature must be 65 bytes, got {}", sig_bytes.len()));
+        return Err(anyhow!(
+            "Signature must be 65 bytes, got {}",
+            sig_bytes.len()
+        ));
     }
 
     // Extract r, s, v
@@ -96,8 +99,7 @@ pub fn recover_signer_address(signature: &str, data: &str) -> Result<String> {
     };
 
     // Create signature from r, s
-    let signature = Signature::from_slice(r_s)
-        .map_err(|e| anyhow!("Invalid signature: {}", e))?;
+    let signature = Signature::from_slice(r_s).map_err(|e| anyhow!("Invalid signature: {}", e))?;
 
     // Hash the message with EIP-191
     let message_hash = eip191_hash(data.as_bytes());

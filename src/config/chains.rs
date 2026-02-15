@@ -390,15 +390,33 @@ mod tests {
 
     fn setup_test_env() {
         // Set required environment variables for tests
-        std::env::set_var("CONTRACT_JOB_MARKETPLACE", "0x95132177F964FF053C1E874b53CF74d819618E06");
-        std::env::set_var("CONTRACT_NODE_REGISTRY", "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22");
-        std::env::set_var("CONTRACT_HOST_EARNINGS", "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0");
+        std::env::set_var(
+            "CONTRACT_JOB_MARKETPLACE",
+            "0x95132177F964FF053C1E874b53CF74d819618E06",
+        );
+        std::env::set_var(
+            "CONTRACT_NODE_REGISTRY",
+            "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
+        );
+        std::env::set_var(
+            "CONTRACT_HOST_EARNINGS",
+            "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
+        );
         std::env::set_var("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org");
 
         // Optional opBNB addresses (zero addresses for test)
-        std::env::set_var("OPBNB_JOB_MARKETPLACE", "0x0000000000000000000000000000000000000000");
-        std::env::set_var("OPBNB_NODE_REGISTRY", "0x0000000000000000000000000000000000000000");
-        std::env::set_var("OPBNB_HOST_EARNINGS", "0x0000000000000000000000000000000000000000");
+        std::env::set_var(
+            "OPBNB_JOB_MARKETPLACE",
+            "0x0000000000000000000000000000000000000000",
+        );
+        std::env::set_var(
+            "OPBNB_NODE_REGISTRY",
+            "0x0000000000000000000000000000000000000000",
+        );
+        std::env::set_var(
+            "OPBNB_HOST_EARNINGS",
+            "0x0000000000000000000000000000000000000000",
+        );
     }
 
     #[test]

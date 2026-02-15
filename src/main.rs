@@ -410,6 +410,31 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Initialize Diffusion Client (v8.16.0+ - image generation)
+    // Optional: requires DIFFUSION_ENDPOINT env var
+    let diffusion_endpoint = env::var("DIFFUSION_ENDPOINT").ok();
+    let diffusion_model_name =
+        env::var("DIFFUSION_MODEL_NAME").unwrap_or_else(|_| "flux2-klein-4b".to_string());
+
+    if let Some(ref endpoint) = diffusion_endpoint {
+        match fabstir_llm_node::diffusion::DiffusionClient::new(endpoint, &diffusion_model_name) {
+            Ok(client) => {
+                let client = Arc::new(client);
+                api_server.set_diffusion_client(client).await;
+                println!(
+                    "🎨 Diffusion sidecar configured: endpoint={}, model={}",
+                    endpoint, diffusion_model_name
+                );
+            }
+            Err(e) => {
+                println!("⚠️  Failed to create diffusion client: {}", e);
+                println!("   /v1/images/generate will return 503");
+            }
+        }
+    } else {
+        println!("   No DIFFUSION_ENDPOINT set — /v1/images/generate will return 503");
+    }
+
     // Initialize Web Search Service (v8.7.0+)
     // Enabled by default - DuckDuckGo requires no API key
     // Set WEB_SEARCH_ENABLED=false to disable

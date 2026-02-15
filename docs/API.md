@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.13.0",
-  "build": "v8.13.0-audit-remediation-2026-02-01",
-  "date": "2026-02-01",
+  "version": "8.16.0",
+  "build": "v8.16.0-image-generation-2026-02-15",
+  "date": "2026-02-15",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -154,7 +154,15 @@ GET /v1/version
     "model-validation",
     "dynamic-model-discovery",
     "sha256-model-verification",
-    "host-authorization-cache"
+    "host-authorization-cache",
+    "image-generation",
+    "websocket-image-generation",
+    "http-image-generation",
+    "diffusion-sidecar",
+    "prompt-safety-classifier",
+    "output-safety-classifier",
+    "image-generation-billing",
+    "image-content-hashes"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
@@ -181,7 +189,12 @@ GET /v1/version
     "Added POST /v1/ocr endpoint for OCR using PaddleOCR (CPU-only)",
     "Added POST /v1/describe-image endpoint for image description using Florence-2",
     "Added word spacing post-processing for English OCR output (v8.6.6)",
-    "Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)"
+    "Increased body limit to 20MB for vision endpoints to support large images (v8.6.7)",
+    "FEAT: Text-to-image generation via SGLang Diffusion sidecar (v8.16.0)",
+    "FEAT: Encrypted WebSocket image generation with E2E encryption (v8.16.0)",
+    "FEAT: POST /v1/images/generate HTTP endpoint (v8.16.0)",
+    "FEAT: Three-layer content safety pipeline for image generation (v8.16.0)",
+    "FEAT: Per-session rate limiting for image generation (v8.16.0)"
   ]
 }
 ```
@@ -1428,6 +1441,131 @@ GET /v1/models?type=vision&chain_id=84532
 | `models[].name` | String | Model identifier |
 | `models[].model_type` | String | Type: "ocr" or "vision" |
 | `models[].available` | Boolean | Whether model is loaded |
+
+---
+
+### Generate Image (v8.16.0+)
+
+**Status**: Production Ready
+**Feature**: Text-to-image generation via SGLang Diffusion sidecar (FLUX.2 Klein 4B)
+
+Generate images from text prompts. For production use, prefer the [encrypted WebSocket transport](./WEBSOCKET_API_SDK_GUIDE.md#image-generation-over-encrypted-websocket-v8160) — the HTTP endpoint transmits images as plaintext Base64.
+
+#### Request
+
+```http
+POST /v1/images/generate
+Content-Type: application/json
+```
+
+```json
+{
+  "prompt": "A serene mountain lake at golden hour, photorealistic",
+  "size": "1024x1024",
+  "steps": 4,
+  "seed": 42,
+  "negativePrompt": "blurry, low quality",
+  "guidanceScale": 3.5,
+  "safetyLevel": "strict",
+  "chainId": 84532
+}
+```
+
+#### Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `prompt` | String | Yes | - | Text description of desired image (max 2000 characters) |
+| `size` | String | No | "1024x1024" | Output dimensions (see allowed sizes below) |
+| `steps` | Integer | No | 4 | Inference steps 1-100 (higher = better quality, slower) |
+| `seed` | Integer | No | Random | Random seed for reproducibility |
+| `negativePrompt` | String | No | - | What to avoid in the image |
+| `guidanceScale` | Float | No | 3.5 | Classifier-free guidance strength |
+| `safetyLevel` | String | No | "strict" | Safety filter level: "strict", "moderate", "permissive" |
+| `chainId` | Integer | No | 84532 | Blockchain network ID for billing context |
+| `sessionId` | String | No | - | Session ID for rate limiting tracking |
+| `jobId` | Integer | No | - | Job ID for billing integration |
+
+#### Allowed Sizes
+
+| Size | Megapixels | Aspect Ratio |
+|------|-----------|--------------|
+| `256x256` | 0.065 | 1:1 |
+| `512x512` | 0.25 | 1:1 |
+| `768x768` | 0.56 | 1:1 |
+| `1024x1024` | 1.0 | 1:1 |
+| `1024x768` | 0.75 | 4:3 |
+| `768x1024` | 0.75 | 3:4 |
+
+#### Response
+
+```json
+{
+  "image": "<base64-encoded PNG>",
+  "model": "flux2-klein-4b",
+  "size": "1024x1024",
+  "steps": 4,
+  "seed": 42,
+  "processingTimeMs": 823,
+  "safety": {
+    "promptSafe": true,
+    "outputSafe": true,
+    "safetyLevel": "strict"
+  },
+  "billing": {
+    "generationUnits": 0.2,
+    "modelMultiplier": 1.0,
+    "megapixels": 1.0,
+    "steps": 4
+  },
+  "provider": "host",
+  "chainId": 84532,
+  "chainName": "Base Sepolia",
+  "nativeToken": "ETH"
+}
+```
+
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `image` | String | Base64-encoded PNG image data |
+| `model` | String | Model used for generation |
+| `size` | String | Output image dimensions |
+| `steps` | Integer | Inference steps used |
+| `seed` | Integer | Random seed (for reproducibility) |
+| `processingTimeMs` | Integer | Server-side generation time in milliseconds |
+| `safety.promptSafe` | Boolean | Whether prompt passed safety checks |
+| `safety.outputSafe` | Boolean | Whether output passed safety checks |
+| `safety.safetyLevel` | String | Safety level used |
+| `billing.generationUnits` | Float | Total billing units consumed |
+| `billing.modelMultiplier` | Float | Model-specific cost multiplier |
+| `billing.megapixels` | Float | Output image megapixels |
+| `billing.steps` | Integer | Inference steps used |
+| `provider` | String | Always "host" |
+| `chainId` | Integer | Blockchain chain ID |
+| `chainName` | String | Human-readable chain name |
+| `nativeToken` | String | Native token symbol |
+
+#### Billing Formula
+
+```
+generationUnits = (width * height / 1,048,576) * (steps / 20) * modelMultiplier
+```
+
+#### Status Codes
+
+- `200 OK` - Image generated successfully
+- `400 Bad Request` - Invalid request (empty prompt, invalid size, prompt blocked by safety filter)
+- `500 Internal Server Error` - Sidecar generation failure
+- `503 Service Unavailable` - Diffusion sidecar not configured or unavailable
+
+#### Performance Notes
+
+- FLUX.2 Klein 4B uses ~6.6GB VRAM with CPU offloading enabled
+- Generation at 1024x1024 with 4 steps: ~0.5-2 seconds on modern GPUs
+- Rate limited to 5 requests per minute per session (configurable via `IMAGE_GEN_RATE_LIMIT`)
+- Safety keyword check adds < 1 ms overhead
 
 ---
 

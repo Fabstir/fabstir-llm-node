@@ -112,7 +112,12 @@ impl EmbeddingModelManager {
                 let model_name = config.name.clone();
                 info!("Loading embedding model: {}", model_name);
 
-                let result = OnnxEmbeddingModel::new(model_name.clone(), config.model_path, config.tokenizer_path).await;
+                let result = OnnxEmbeddingModel::new(
+                    model_name.clone(),
+                    config.model_path,
+                    config.tokenizer_path,
+                )
+                .await;
 
                 match result {
                     Ok(model) => {

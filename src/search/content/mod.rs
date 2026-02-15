@@ -22,12 +22,12 @@
 //! let contents = fetcher.fetch_multiple(&urls).await;
 //! ```
 
+pub mod cache;
 pub mod config;
 pub mod extractor;
-pub mod cache;
 pub mod fetcher;
 
+pub use cache::{CachedContent, ContentCache, ContentCacheStats};
 pub use config::ContentFetchConfig;
-pub use fetcher::{ContentFetcher, PageContent, FetchError};
-pub use cache::{ContentCache, CachedContent, ContentCacheStats};
 pub use extractor::extract_main_content;
+pub use fetcher::{ContentFetcher, FetchError, PageContent};

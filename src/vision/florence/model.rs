@@ -190,16 +190,12 @@ impl FlorenceModel {
         info!("Loading Florence-2 models from {}", model_dir.display());
 
         // Find encoder model (try multiple names)
-        let encoder_path = Self::find_model_file(model_dir, &[
-            "vision_encoder.onnx",
-            "encoder.onnx",
-        ])?;
+        let encoder_path =
+            Self::find_model_file(model_dir, &["vision_encoder.onnx", "encoder.onnx"])?;
 
         // Find decoder model (try multiple names)
-        let decoder_path = Self::find_model_file(model_dir, &[
-            "decoder_model.onnx",
-            "decoder.onnx",
-        ])?;
+        let decoder_path =
+            Self::find_model_file(model_dir, &["decoder_model.onnx", "decoder.onnx"])?;
 
         let tokenizer_path = model_dir.join("tokenizer.json");
 
@@ -270,15 +266,25 @@ impl FlorenceModel {
         info!("Describing image with detail level: {:?}", detail_level);
 
         // 1. Preprocess image
-        info!("Step 1: Preprocessing image {}x{}", image.width(), image.height());
+        info!(
+            "Step 1: Preprocessing image {}x{}",
+            image.width(),
+            image.height()
+        );
         let preprocessed = preprocess_for_florence(image);
         info!("Preprocessed image shape: {:?}", preprocessed.shape());
 
         // 2. Encode image
         info!("Step 2: Encoding image...");
-        let embeddings = self.encoder.encode(&preprocessed)
+        let embeddings = self
+            .encoder
+            .encode(&preprocessed)
             .context("Failed to encode image")?;
-        info!("Encoded to {} sequences x {} dimensions", embeddings.nrows(), embeddings.ncols());
+        info!(
+            "Encoded to {} sequences x {} dimensions",
+            embeddings.nrows(),
+            embeddings.ncols()
+        );
 
         // 3. Determine prompt
         let generation_prompt = prompt.unwrap_or_else(|| detail_level.prompt_prefix());
@@ -286,11 +292,19 @@ impl FlorenceModel {
 
         // 4. Generate description
         info!("Step 4: Generating text from embeddings...");
-        let description = self.decoder.generate(&embeddings, Some(generation_prompt))
+        let description = self
+            .decoder
+            .generate(&embeddings, Some(generation_prompt))
             .context("Failed to generate description")?;
-        info!("Generated text: '{}' ({} chars)",
-              if description.len() > 50 { &description[..50] } else { &description },
-              description.len());
+        info!(
+            "Generated text: '{}' ({} chars)",
+            if description.len() > 50 {
+                &description[..50]
+            } else {
+                &description
+            },
+            description.len()
+        );
 
         let processing_time_ms = start.elapsed().as_millis() as u64;
 
@@ -411,7 +425,10 @@ mod tests {
         assert_eq!(DetailLevel::from_str("brief"), DetailLevel::Brief);
         assert_eq!(DetailLevel::from_str("short"), DetailLevel::Brief);
         assert_eq!(DetailLevel::from_str("detailed"), DetailLevel::Detailed);
-        assert_eq!(DetailLevel::from_str("comprehensive"), DetailLevel::Comprehensive);
+        assert_eq!(
+            DetailLevel::from_str("comprehensive"),
+            DetailLevel::Comprehensive
+        );
         assert_eq!(DetailLevel::from_str("full"), DetailLevel::Comprehensive);
         assert_eq!(DetailLevel::from_str("unknown"), DetailLevel::Detailed);
     }
@@ -428,7 +445,10 @@ mod tests {
         // Natural language prompts work better than task tokens with this ONNX export
         assert_eq!(DetailLevel::Brief.prompt_prefix(), "A photo of");
         assert_eq!(DetailLevel::Detailed.prompt_prefix(), "The image shows");
-        assert_eq!(DetailLevel::Comprehensive.prompt_prefix(), "This is an image showing");
+        assert_eq!(
+            DetailLevel::Comprehensive.prompt_prefix(),
+            "This is an image showing"
+        );
     }
 
     #[test]

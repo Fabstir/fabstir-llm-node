@@ -174,10 +174,7 @@ async fn mark_for_cleanup(
     // For now, we just log the marking
     // In production, this would update the index with expires_at timestamp
     // or add to a cleanup queue in a database
-    info!(
-        "Marked {} for cleanup in {} days",
-        index_path, ttl_days
-    );
+    info!("Marked {} for cleanup in {} days", index_path, ttl_days);
 
     // Note: S5 doesn't have native TTL support, so actual deletion
     // would need to be handled by a background cleanup job that:
@@ -494,7 +491,10 @@ mod tests {
         assert!(result.is_ok());
         match result.unwrap() {
             CleanupResult::Deleted { deltas_removed } => {
-                assert_eq!(deltas_removed, 0, "Should report 0 deltas for empty session");
+                assert_eq!(
+                    deltas_removed, 0,
+                    "Should report 0 deltas for empty session"
+                );
             }
             other => panic!("Expected Deleted, got {:?}", other),
         }

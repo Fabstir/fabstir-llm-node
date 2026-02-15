@@ -13,22 +13,24 @@
 //! - Rate limiting per provider
 //! - Graceful degradation on provider failures
 
-pub mod types;
-pub mod config;
-pub mod provider;
-pub mod brave;
-pub mod duckduckgo;
 pub mod bing;
+pub mod brave;
 pub mod cache;
+pub mod config;
+pub mod content;
+pub mod duckduckgo;
+pub mod provider;
+pub mod query_extractor;
 pub mod rate_limiter;
 pub mod service;
-pub mod query_extractor;
-pub mod content;
+pub mod types;
 
 // Re-export commonly used types
-pub use types::{SearchResult, SearchResponse, SearchError, SearchResultWithContent, SearchResponseWithContent};
 pub use config::SearchConfig;
 pub use service::SearchService;
+pub use types::{
+    SearchError, SearchResponse, SearchResponseWithContent, SearchResult, SearchResultWithContent,
+};
 
 // Re-export content fetching types (Phase 9)
-pub use content::{ContentFetcher, ContentFetchConfig, PageContent, FetchError, ContentCacheStats};
+pub use content::{ContentCacheStats, ContentFetchConfig, ContentFetcher, FetchError, PageContent};
