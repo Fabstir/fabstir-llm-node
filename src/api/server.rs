@@ -194,6 +194,7 @@ pub struct ApiServer {
     diffusion_client: Arc<RwLock<Option<Arc<crate::diffusion::DiffusionClient>>>>,
     image_gen_tracker: Arc<crate::diffusion::billing::ImageGenerationTracker>,
     image_gen_rate_limiter: Arc<crate::diffusion::ImageGenerationRateLimiter>,
+    auto_image_routing: bool,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -248,6 +249,7 @@ impl ApiServer {
             diffusion_client: Arc::new(RwLock::new(None)),
             image_gen_tracker: Arc::new(crate::diffusion::billing::ImageGenerationTracker::new()),
             image_gen_rate_limiter: Arc::new(crate::diffusion::ImageGenerationRateLimiter::new(10)),
+            auto_image_routing: false,
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -330,6 +332,12 @@ impl ApiServer {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(5),
             )),
+            auto_image_routing: match std::env::var("AUTO_IMAGE_ROUTING") {
+                Ok(v) => v == "true",
+                Err(_) => std::env::var("DIFFUSION_ENDPOINT")
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false),
+            },
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -387,6 +395,7 @@ impl ApiServer {
             diffusion_client: self.diffusion_client.clone(),
             image_gen_tracker: self.image_gen_tracker.clone(),
             image_gen_rate_limiter: self.image_gen_rate_limiter.clone(),
+            auto_image_routing: self.auto_image_routing,
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -2236,6 +2245,33 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         }
                                                                         _ => plaintext_prompt,
                                                                     };
+
+                                                                // Auto-route image intent to diffusion sidecar (v8.16.1+)
+                                                                if server.auto_image_routing
+                                                                    && server
+                                                                        .get_diffusion_client()
+                                                                        .await
+                                                                        .is_some()
+                                                                {
+                                                                    let last_user_msg = crate::search::query_extractor::extract_last_user_query(&plaintext_prompt);
+                                                                    if crate::search::query_extractor::needs_image_generation(&last_user_msg) {
+                                                                    info!("🎨 Auto-routing prompt to image generation (intent detected)");
+                                                                    let auto_json = serde_json::json!({
+                                                                        "action": "image_generation",
+                                                                        "prompt": last_user_msg,
+                                                                    });
+                                                                    let response_msg = crate::api::websocket::handlers::image_generation::handle_encrypted_image_generation(
+                                                                        &server,
+                                                                        &auto_json,
+                                                                        &session_key,
+                                                                        current_session_id.as_deref().unwrap_or("unknown"),
+                                                                        job_id,
+                                                                        json_msg.get("id"),
+                                                                    ).await;
+                                                                    let _ = socket.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
+                                                                    continue;
+                                                                    }
+                                                                }
 
                                                                 // Extract model (priority: decrypted > outer message > default)
                                                                 let model = decrypted_json

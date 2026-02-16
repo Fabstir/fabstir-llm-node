@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.16.0",
-  "build": "v8.16.0-image-generation-2026-02-15",
-  "date": "2026-02-15",
+  "version": "8.16.1",
+  "build": "v8.16.1-auto-image-routing-2026-02-16",
+  "date": "2026-02-16",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -162,7 +162,8 @@ GET /v1/version
     "prompt-safety-classifier",
     "output-safety-classifier",
     "image-generation-billing",
-    "image-content-hashes"
+    "image-content-hashes",
+    "auto-image-routing"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
@@ -194,7 +195,9 @@ GET /v1/version
     "FEAT: Encrypted WebSocket image generation with E2E encryption (v8.16.0)",
     "FEAT: POST /v1/images/generate HTTP endpoint (v8.16.0)",
     "FEAT: Three-layer content safety pipeline for image generation (v8.16.0)",
-    "FEAT: Per-session rate limiting for image generation (v8.16.0)"
+    "FEAT: Per-session rate limiting for image generation (v8.16.0)",
+    "FEAT: Node-side image intent detection with AUTO_IMAGE_ROUTING env var (v8.16.1)",
+    "FEAT: Auto-routes image prompts to diffusion sidecar when intent detected (v8.16.1)"
   ]
 }
 ```
@@ -1566,6 +1569,7 @@ generationUnits = (width * height / 1,048,576) * (steps / 20) * modelMultiplier
 - Generation at 1024x1024 with 4 steps: ~0.5-2 seconds on modern GPUs
 - Rate limited to 5 requests per minute per session (configurable via `IMAGE_GEN_RATE_LIMIT`)
 - Safety keyword check adds < 1 ms overhead
+- **Auto-routing (v8.16.1+)**: Set `AUTO_IMAGE_ROUTING=true` to auto-detect image intent from normal chat messages and route to the diffusion sidecar (default: off)
 
 ---
 

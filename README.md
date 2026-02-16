@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.16.0-image-generation (February 2026)
+**Version**: v8.16.1-auto-image-routing (February 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -29,7 +29,7 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Chat Templates**: Model-specific formatting (Harmony, Llama, etc.) (v8.3.13+)
 - **AUDIT-F4 Compliance**: Model ID in proof signatures prevents cross-model replay attacks (v8.13.0+)
 - **Model Validation**: Dynamic model authorization with SHA256 verification (v8.14.0+)
-- **Image Generation**: Text-to-image via FLUX.2 Klein 4B diffusion sidecar (v8.16.0+)
+- **Image Generation**: Text-to-image via FLUX.2 Klein 4B diffusion sidecar (v8.16.0+), auto-routing from chat (v8.16.1+)
 - **VLM Vision**: GPU-accelerated OCR and image description via Qwen3-VL sidecar (v8.15.3+)
 
 ## Prerequisites
@@ -73,7 +73,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.16.0"
+strings target/release/fabstir-llm-node | grep "v8.16.1"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -125,6 +125,10 @@ SESSION_KEY_TTL_SECONDS=3600     # Session key expiration (default: 1 hour)
 # Model Validation (v8.14.0+)
 REQUIRE_MODEL_VALIDATION=false   # Enable model authorization enforcement
                                  # When true: validates MODEL_PATH, SHA256, host auth
+
+# Image Generation (v8.16.0+)
+AUTO_IMAGE_ROUTING=false         # Auto-detect image intent from chat and route to
+                                 # diffusion sidecar (v8.16.1+, opt-in, default off)
 
 # Logging
 RUST_LOG=debug                   # Log level (trace, debug, info, warn, error)
@@ -266,6 +270,8 @@ Once the node is running, it exposes the following endpoints:
   - RAG vector upload/search (v8.3.0+)
   - S5 vector database loading (v8.4.0+)
   - Encrypted vector_database path support (v8.4.0+)
+  - Image generation via diffusion sidecar (v8.16.0+)
+  - Auto-route image intent from chat (v8.16.1+)
   - Automatic settlement on disconnect
   - Message compression support
 
@@ -281,7 +287,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.16.0"
+strings target/release/fabstir-llm-node | grep "v8.16.1"
 ```
 
 #### Out of Memory During Build
