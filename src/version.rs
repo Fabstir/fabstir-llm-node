@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.16.0-image-generation-2026-02-14";
+pub const VERSION: &str = "v8.16.1-auto-image-routing-2026-02-16";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.16.0";
+pub const VERSION_NUMBER: &str = "8.16.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 16;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-14";
+pub const BUILD_DATE: &str = "2026-02-16";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -198,6 +198,8 @@ pub const FEATURES: &[&str] = &[
     "image-proof-extension",
     "websocket-image-generation",
     "http-image-generation",
+    // Auto-route image intent (v8.16.1)
+    "auto-image-routing",
 ];
 
 /// Supported chain IDs
@@ -208,6 +210,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.16.1 - Auto-Route Image Intent (Feb 16, 2026)
+    "FEAT: Node-side image intent detection (AUTO_IMAGE_ROUTING env var, default OFF)",
+    "FEAT: Conservative keyword matching for generate/create/make/draw/paint/sketch/illustrate",
+    "FEAT: Auto-routes detected image prompts to diffusion sidecar when available",
+    "FEAT: Falls through to normal inference if diffusion sidecar unavailable",
     // v8.16.0 - Image Generation (Feb 14, 2026)
     "FEAT: Text-to-image generation via SGLang Diffusion sidecar (FLUX.2 Klein 4B)",
     "FEAT: DiffusionClient with OpenAI-compatible /v1/images/generations API",
@@ -465,7 +472,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 16);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.15.5 session re-init fix
@@ -496,21 +503,23 @@ mod tests {
         assert!(FEATURES.contains(&"output-safety-classifier"));
         assert!(FEATURES.contains(&"image-generation-billing"));
         assert!(FEATURES.contains(&"image-content-hashes"));
+        // v8.16.1 auto-route image intent
+        assert!(FEATURES.contains(&"auto-image-routing"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.16.0"));
-        assert!(version.contains("2026-02-14"));
+        assert!(version.contains("8.16.1"));
+        assert!(version.contains("2026-02-16"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.16.0-image-generation-2026-02-14");
-        assert_eq!(VERSION_NUMBER, "8.16.0");
-        assert_eq!(BUILD_DATE, "2026-02-14");
+        assert_eq!(VERSION, "v8.16.1-auto-image-routing-2026-02-16");
+        assert_eq!(VERSION_NUMBER, "8.16.1");
+        assert_eq!(BUILD_DATE, "2026-02-16");
     }
 
     #[test]

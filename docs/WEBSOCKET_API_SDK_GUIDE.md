@@ -61,7 +61,8 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Routing**: `"action": "image_generation"` in decrypted JSON payload
 - **Safety**: Three-layer content safety pipeline (keyword filter active)
 - **Billing**: Megapixel-steps formula with per-session rate limiting
-- **89 tests passing** across diffusion module
+- **Auto-Routing (v8.16.1+)**: `AUTO_IMAGE_ROUTING=true` auto-detects image intent from chat and routes to diffusion sidecar
+- **89+ tests passing** across diffusion module
 
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
@@ -681,6 +682,8 @@ describe('End-to-End Conversation', () => {
 
 Image generation uses the same encrypted WebSocket channel as inference. The SDK sends an `encrypted_message` containing `"action": "image_generation"` in the decrypted JSON payload. The node routes this to the image generation handler instead of the inference pipeline.
 
+**Auto-Routing (v8.16.1+)**: When `AUTO_IMAGE_ROUTING=true` is set on the host, the node can also detect image generation intent from normal chat messages (e.g., "generate an image of a sunset") and auto-route them to the diffusion sidecar — no `"action"` field required. This is opt-in (default OFF). SDK-side intent detection with explicit `"action": "image_generation"` remains the recommended approach. See the [SDK Image Generation Integration Guide](./sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md#auto-routing-v8161) for details.
+
 ### Prerequisites
 
 - Active encrypted session (completed `encrypted_session_init` handshake)
@@ -762,7 +765,7 @@ ws.onmessage = (event) => {
 
 | Property | Inference | Image Generation |
 |----------|-----------|-----------------|
-| Routing | Default (no action field) | `"action": "image_generation"` |
+| Routing | Default (no action field) | `"action": "image_generation"` (or auto-detected if `AUTO_IMAGE_ROUTING=true`) |
 | Response AAD | Varies | `encrypted_image_response` (fixed) |
 | Response type | `stream_chunk` / `response` | `image_generation_result` |
 | Rate limit | Connection-level | 5/min per session (sliding window) |

@@ -123,6 +123,51 @@ fn strip_harmony_markers(text: &str) -> String {
         .join(" ")
 }
 
+/// Check if a message likely wants image generation
+///
+/// Returns true if the message contains phrases indicating the user
+/// wants to create/generate an image. Conservative matching to avoid
+/// false positives on messages that merely mention images.
+pub fn needs_image_generation(message: &str) -> bool {
+    let lower = message.to_lowercase();
+
+    if lower.len() < 5 {
+        return false;
+    }
+
+    // Explicit generation phrases (verb + image noun)
+    let generation_phrases = [
+        "generate an image",
+        "generate a picture",
+        "generate a photo",
+        "generate image",
+        "create an image",
+        "create a picture",
+        "create a photo",
+        "create image",
+        "make an image",
+        "make a picture",
+        "make a photo",
+        "make image",
+        "draw me",
+        "draw a ",
+        "paint a ",
+        "paint me",
+        "sketch a ",
+        "sketch me",
+        "illustrate a ",
+        "illustrate me",
+    ];
+
+    for phrase in generation_phrases.iter() {
+        if lower.contains(phrase) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Check if a message likely needs web search
 ///
 /// Returns true if the message contains indicators that
@@ -465,5 +510,67 @@ mod tests {
         let results: Vec<super::super::types::SearchResultWithContent> = vec![];
         let formatted = format_results_with_content_for_prompt(&results, 10000);
         assert!(formatted.is_empty());
+    }
+
+    // --- needs_image_generation tests (Phase 9) ---
+
+    #[test]
+    fn test_needs_image_generation_explicit_phrases() {
+        assert!(needs_image_generation("generate an image of a cat"));
+        assert!(needs_image_generation("create a picture of a sunset"));
+        assert!(needs_image_generation("make a photo of a dog"));
+        assert!(needs_image_generation("generate a photo of the ocean"));
+    }
+
+    #[test]
+    fn test_needs_image_generation_draw_paint_sketch() {
+        assert!(needs_image_generation("draw me a sunset"));
+        assert!(needs_image_generation("paint a landscape"));
+        assert!(needs_image_generation("sketch a portrait"));
+        assert!(needs_image_generation("illustrate a scene from the book"));
+    }
+
+    #[test]
+    fn test_needs_image_generation_negative_cases() {
+        assert!(!needs_image_generation("how do images work"));
+        assert!(!needs_image_generation("describe this picture"));
+        assert!(!needs_image_generation("image quality is poor"));
+        assert!(!needs_image_generation("I saw a picture of a cat"));
+    }
+
+    #[test]
+    fn test_needs_image_generation_case_insensitive() {
+        assert!(needs_image_generation("GENERATE AN IMAGE of a cat"));
+        assert!(needs_image_generation("Draw Me a sunset"));
+    }
+
+    #[test]
+    fn test_needs_image_generation_empty_and_short() {
+        assert!(!needs_image_generation(""));
+        assert!(!needs_image_generation("hi"));
+        assert!(!needs_image_generation("image"));
+    }
+
+    #[test]
+    fn test_needs_image_generation_harmony_wrapped() {
+        // Full harmony conversation — last message has image intent
+        let prompt = "<|start|>user<|message|>hello<|end|>\n<|start|>assistant<|channel|>final<|message|>Hi!<|end|>\n<|start|>user<|message|>generate an image of a cat<|end|>";
+        let last_msg = extract_last_user_query(prompt);
+        assert!(needs_image_generation(&last_msg));
+    }
+
+    #[test]
+    fn test_needs_image_generation_harmony_no_intent() {
+        // Last message does NOT have image intent even though assistant mentioned images
+        let prompt = "<|start|>user<|message|>tell me about image formats<|end|>\n<|start|>assistant<|channel|>final<|message|>I can generate an image if you like<|end|>\n<|start|>user<|message|>no thanks, just explain PNG<|end|>";
+        let last_msg = extract_last_user_query(prompt);
+        assert!(!needs_image_generation(&last_msg));
+    }
+
+    #[test]
+    fn test_needs_image_generation_without_article() {
+        assert!(needs_image_generation("generate image of a sunset"));
+        assert!(needs_image_generation("create image of mountains"));
+        assert!(needs_image_generation("make image of a dog"));
     }
 }

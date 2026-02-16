@@ -99,6 +99,10 @@ services:
       DIFFUSION_ENDPOINT: ${DIFFUSION_ENDPOINT:-http://diffusion-sidecar:8082}
       DIFFUSION_MODEL_NAME: ${DIFFUSION_MODEL_NAME:-flux2-klein-4b}
 
+      # Auto-route image intent to diffusion sidecar (v8.16.1+)
+      # Defaults to true when DIFFUSION_ENDPOINT is set; override with false to disable
+      AUTO_IMAGE_ROUTING: ${AUTO_IMAGE_ROUTING:-}
+
     volumes:
       # Mount model directory
       - ${MODELS_DIR:-./models}:/app/models:ro
