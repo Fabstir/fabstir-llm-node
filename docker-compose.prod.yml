@@ -140,6 +140,10 @@ services:
       - fabstir-network
 
   # SGLang Diffusion Sidecar (optional - for image generation)
+  # --text-encoder-cpu-offload moves the 7.5GB Qwen3 text encoder to CPU RAM.
+  # --dit-layerwise-offload true streams transformer blocks one-at-a-time through
+  # GPU, keeping only ~0.3-0.5GB on VRAM instead of the full 7.2GB transformer.
+  # Combined: sidecar VRAM drops from ~14GB to ~1-2GB (VAE + one block + overhead).
   # PYTORCH_NO_CUDA_MEMORY_CACHING=1 prevents PyTorch from holding freed VRAM,
   # ensuring the LLM can allocate KV cache contexts after image generation.
   # To disable: set DIFFUSION_ENDPOINT= (empty) in .env or stop this service
@@ -164,6 +168,9 @@ services:
       --model-path /models/black-forest-labs/FLUX.2-klein-4B
       --port 8082
       --host 0.0.0.0
+      --text-encoder-cpu-offload
+      --dit-layerwise-offload true
+      --pin-cpu-memory
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       interval: 30s
