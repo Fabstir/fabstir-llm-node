@@ -57,12 +57,33 @@ pub fn build_prompt_with_context(
     messages.push(("user".to_string(), cleaned_prompt));
 
     // Inject thinking directive if specified (v8.17.0+)
-    if let Some(ref mode) = resolve_thinking_mode(thinking) {
-        inject_thinking_directive(&template, &mut messages, mode);
-    }
+    // Returns Some(level) when Harmony post-processing is needed
+    let post_process_level = if let Some(ref mode) = resolve_thinking_mode(thinking) {
+        tracing::info!(
+            "🧠 Injecting thinking directive: mode={}, template={}",
+            mode,
+            template.as_str()
+        );
+        inject_thinking_directive(&template, &mut messages, mode)
+    } else {
+        tracing::debug!(
+            "🧠 No thinking mode specified (explicit={:?}, DEFAULT_THINKING_MODE not set)",
+            thinking
+        );
+        None
+    };
 
     // Format using template
-    let formatted = template.format_messages(&messages);
+    let mut formatted = template.format_messages(&messages);
+
+    // Post-process: replace "Reasoning: medium" with desired level in the
+    // formatted output. This preserves the full default system prompt
+    // (AI identity, date, web search, Valid channels) while changing the level.
+    if let Some(ref level) = post_process_level {
+        if level != "medium" {
+            formatted = formatted.replace("Reasoning: medium", &format!("Reasoning: {}", level));
+        }
+    }
 
     tracing::debug!(
         "🎨 Formatted prompt using {} template (context: {} messages, {} chars)",
@@ -75,24 +96,40 @@ pub fn build_prompt_with_context(
 }
 
 /// Resolve thinking mode: explicit value takes priority over env var default
+///
+/// Empty strings are treated as None (no thinking mode) to handle
+/// docker-compose `${DEFAULT_THINKING_MODE:-}` resolving to "".
 pub(crate) fn resolve_thinking_mode(explicit: Option<&str>) -> Option<String> {
     if let Some(mode) = explicit {
-        return Some(mode.to_string());
+        if !mode.is_empty() {
+            return Some(mode.to_string());
+        }
+        return None;
     }
-    std::env::var("DEFAULT_THINKING_MODE").ok()
+    std::env::var("DEFAULT_THINKING_MODE")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Dispatch thinking injection to the appropriate template handler
+///
+/// Returns `Some(level)` when Harmony post-processing is needed (no system
+/// message exists, so the template's default must be preserved and the
+/// `Reasoning: medium` line replaced after formatting).
 pub(crate) fn inject_thinking_directive(
     template: &ChatTemplate,
     messages: &mut Vec<(String, String)>,
     thinking_mode: &str,
-) {
+) -> Option<String> {
     match template {
         ChatTemplate::Harmony => inject_harmony_thinking(messages, thinking_mode),
-        ChatTemplate::Glm4 => inject_glm4_thinking(messages, thinking_mode),
+        ChatTemplate::Glm4 => {
+            inject_glm4_thinking(messages, thinking_mode);
+            None
+        }
         _ => {
             tracing::debug!("Thinking mode ignored for {} template", template.as_str());
+            None
         }
     }
 }
@@ -101,9 +138,14 @@ pub(crate) fn inject_thinking_directive(
 ///
 /// Maps thinking values: enabled/medium → medium, disabled → none, low → low, high → high
 /// If user already provided "Reasoning:" in a system message, skip injection.
-/// If a system message exists without "Reasoning:", append to it.
-/// If no system message exists, insert one at position 0.
-fn inject_harmony_thinking(messages: &mut Vec<(String, String)>, thinking_mode: &str) {
+/// If a system message exists without "Reasoning:", append to it, return None.
+/// If no system message exists, return Some(level) for post-processing —
+/// the caller must replace "Reasoning: medium" in the formatted output to
+/// preserve the template's full default system prompt.
+fn inject_harmony_thinking(
+    messages: &mut Vec<(String, String)>,
+    thinking_mode: &str,
+) -> Option<String> {
     let level = match thinking_mode {
         "enabled" | "medium" => "medium",
         "disabled" => "none",
@@ -120,7 +162,7 @@ fn inject_harmony_thinking(messages: &mut Vec<(String, String)>, thinking_mode: 
         tracing::debug!(
             "User system message already contains Reasoning: directive, skipping injection"
         );
-        return;
+        return None;
     }
 
     // Find existing system message index
@@ -131,9 +173,12 @@ fn inject_harmony_thinking(messages: &mut Vec<(String, String)>, thinking_mode: 
         messages[idx]
             .1
             .push_str(&format!("\n\nReasoning: {}", level));
+        None
     } else {
-        // Insert new system message at position 0
-        messages.insert(0, ("system".to_string(), format!("Reasoning: {}", level)));
+        // No system message — return level for post-processing.
+        // Do NOT insert a bare system message here; that would cause
+        // format_harmony() to skip its rich default system prompt.
+        Some(level.to_string())
     }
 }
 
@@ -623,6 +668,95 @@ mod tests {
         assert!(
             result.contains("Reasoning: high"),
             "Explicit should override env var"
+        );
+    }
+
+    // === v8.17.1 Bugfix Tests ===
+
+    #[test]
+    fn test_empty_string_thinking_mode_treated_as_none() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::set_var("DEFAULT_THINKING_MODE", "");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        assert!(
+            result.contains("Reasoning: medium"),
+            "Empty env var should fall through to template default: {}",
+            result
+        );
+        assert!(
+            result.contains("Valid channels"),
+            "Empty env var must preserve full default system prompt: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_explicit_empty_string_treated_as_none() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some(""));
+        assert!(
+            result.contains("Reasoning: medium"),
+            "Explicit empty string should fall through to template default: {}",
+            result
+        );
+        assert!(
+            result.contains("Valid channels"),
+            "Explicit empty string must preserve full default system prompt: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_harmony_thinking_high_preserves_valid_channels() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("high"));
+        assert!(
+            result.contains("Reasoning: high"),
+            "Expected Reasoning: high in: {}",
+            result
+        );
+        assert!(
+            result.contains("Valid channels: analysis, commentary, final"),
+            "thinking=high must preserve full system prompt with Valid channels: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_harmony_thinking_disabled_preserves_valid_channels() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("disabled"));
+        assert!(
+            result.contains("Reasoning: none"),
+            "Expected Reasoning: none in: {}",
+            result
+        );
+        assert!(
+            result.contains("Valid channels: analysis, commentary, final"),
+            "thinking=disabled must preserve full system prompt with Valid channels: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_harmony_thinking_with_env_default_preserves_system_prompt() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::set_var("DEFAULT_THINKING_MODE", "high");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        assert!(
+            result.contains("Reasoning: high"),
+            "Expected Reasoning: high in: {}",
+            result
+        );
+        assert!(
+            result.contains("You are a helpful AI assistant"),
+            "Env default must preserve full default system prompt: {}",
+            result
         );
     }
 }

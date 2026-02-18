@@ -2387,6 +2387,13 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         })
                                                                         .map(|s| s.to_string());
 
+                                                                // Log thinking mode for debugging
+                                                                info!(
+                                                                    "🧠 Thinking mode: {:?} (raw JSON value: {:?})",
+                                                                    thinking,
+                                                                    decrypted_json.get("thinking")
+                                                                );
+
                                                                 let mut request_value = json!({
                                                                     "model": model,
                                                                     "prompt": plaintext_prompt,
