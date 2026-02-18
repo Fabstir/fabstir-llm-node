@@ -435,9 +435,13 @@ impl InferenceHandler {
 
         // Inject thinking directive if specified (v8.17.0+)
         // Returns Some(level) when Harmony post-processing is needed
-        let post_process_level = if let Some(ref mode) =
-            crate::utils::context::resolve_thinking_mode(thinking)
-        {
+        // GLM-4 defaults to /think when no mode specified (v8.17.3+)
+        let resolved = crate::utils::context::resolve_thinking_mode(thinking);
+        let effective_mode = match (&resolved, &template) {
+            (None, ChatTemplate::Glm4) => Some("enabled".to_string()),
+            _ => resolved,
+        };
+        let post_process_level = if let Some(ref mode) = effective_mode {
             crate::utils::context::inject_thinking_directive(&template, &mut message_tuples, mode)
         } else {
             None
@@ -447,7 +451,12 @@ impl InferenceHandler {
 
         // Post-process: replace default Reasoning level to preserve full system prompt
         if let Some(ref level) = post_process_level {
-            if level != "medium" {
+            if level == "none" {
+                formatted = formatted.replace(
+                    "Reasoning: medium",
+                    "Reasoning: none\nProvide brief, direct answers without extensive analysis.",
+                );
+            } else if level != "medium" {
                 formatted =
                     formatted.replace("Reasoning: medium", &format!("Reasoning: {}", level));
             }

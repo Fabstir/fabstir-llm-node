@@ -58,7 +58,13 @@ pub fn build_prompt_with_context(
 
     // Inject thinking directive if specified (v8.17.0+)
     // Returns Some(level) when Harmony post-processing is needed
-    let post_process_level = if let Some(ref mode) = resolve_thinking_mode(thinking) {
+    // GLM-4 defaults to /think when no mode specified (v8.17.3+)
+    let resolved = resolve_thinking_mode(thinking);
+    let effective_mode = match (&resolved, &template) {
+        (None, ChatTemplate::Glm4) => Some("enabled".to_string()),
+        _ => resolved,
+    };
+    let post_process_level = if let Some(ref mode) = effective_mode {
         tracing::info!(
             "🧠 Injecting thinking directive: mode={}, template={}",
             mode,
@@ -80,7 +86,12 @@ pub fn build_prompt_with_context(
     // formatted output. This preserves the full default system prompt
     // (AI identity, date, web search, Valid channels) while changing the level.
     if let Some(ref level) = post_process_level {
-        if level != "medium" {
+        if level == "none" {
+            formatted = formatted.replace(
+                "Reasoning: medium",
+                "Reasoning: none\nProvide brief, direct answers without extensive analysis.",
+            );
+        } else if level != "medium" {
             formatted = formatted.replace("Reasoning: medium", &format!("Reasoning: {}", level));
         }
     }
@@ -182,20 +193,20 @@ fn inject_harmony_thinking(
     }
 }
 
-/// Inject /think or /no_think prefix for GLM-4 template
+/// Inject /think prefix for GLM-4 template
 ///
-/// Maps: disabled → /no_think, all others (enabled/low/medium/high) → /think
-/// Prepends to last user message content.
+/// Maps: disabled → skip (natural non-thinking), all others → /think
+/// GLM-4 naturally defaults to non-thinking when no directive is present,
+/// so "Off" simply skips injection for concise output (~483 tokens).
 fn inject_glm4_thinking(messages: &mut Vec<(String, String)>, thinking_mode: &str) {
-    let tag = if thinking_mode == "disabled" {
-        "/no_think"
-    } else {
-        "/think"
-    };
+    if thinking_mode == "disabled" {
+        tracing::debug!("GLM-4: disabled mode — skipping injection (natural non-thinking)");
+        return;
+    }
 
-    // Find last user message and prepend tag
+    // All other modes inject /think
     if let Some(last_user) = messages.iter_mut().rev().find(|(role, _)| role == "user") {
-        last_user.1 = format!("{}\n{}", tag, last_user.1);
+        last_user.1 = format!("/think\n{}", last_user.1);
     }
 }
 
@@ -609,30 +620,30 @@ mod tests {
     }
 
     #[test]
-    fn test_glm4_thinking_disabled_prepends_no_think_tag() {
+    fn test_glm4_thinking_disabled_skips_injection() {
         std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
         std::env::remove_var("DEFAULT_THINKING_MODE");
         let result = build_prompt_with_context(&[], "Hello", Some("disabled"));
         assert!(
-            result.contains("/no_think\n"),
-            "Expected /no_think prefix in: {}",
+            !result.contains("/no_think"),
+            "Disabled should NOT inject /no_think: {}",
+            result
+        );
+        assert!(
+            !result.contains("/think"),
+            "Disabled should NOT inject /think: {}",
             result
         );
     }
 
     #[test]
-    fn test_glm4_no_thinking_no_injection() {
+    fn test_glm4_default_injects_think() {
         std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
         std::env::remove_var("DEFAULT_THINKING_MODE");
         let result = build_prompt_with_context(&[], "Hello", None);
         assert!(
-            !result.contains("/think"),
-            "Should NOT contain /think: {}",
-            result
-        );
-        assert!(
-            !result.contains("/no_think"),
-            "Should NOT contain /no_think: {}",
+            result.contains("/think\n"),
+            "Default mode should inject /think for GLM-4: {}",
             result
         );
     }
@@ -739,6 +750,28 @@ mod tests {
             result.contains("Valid channels: analysis, commentary, final"),
             "thinking=disabled must preserve full system prompt with Valid channels: {}",
             result
+        );
+    }
+
+    // === v8.17.2 Conciseness Directive Tests ===
+
+    #[test]
+    fn test_harmony_thinking_off_includes_conciseness_directive() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("disabled"));
+        assert!(
+            result.contains("Provide brief, direct answers"),
+            "thinking=disabled should include conciseness directive: {}",
+            result
+        );
+        assert!(
+            result.contains("Reasoning: none"),
+            "Expected Reasoning: none"
+        );
+        assert!(
+            result.contains("Valid channels"),
+            "Must preserve full system prompt"
         );
     }
 
