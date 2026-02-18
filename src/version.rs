@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.17.1-thinking-fix-2026-02-18";
+pub const VERSION: &str = "v8.17.3-glm4-default-think-2026-02-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.17.1";
+pub const VERSION_NUMBER: &str = "8.17.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 17;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-18";
@@ -206,6 +206,10 @@ pub const FEATURES: &[&str] = &[
     "default-thinking-mode-env",
     // Thinking injection bugfix (v8.17.1)
     "thinking-post-processing",
+    // Thinking "Off" conciseness directive (v8.17.2)
+    "thinking-off-conciseness",
+    // GLM-4 default thinking + off skip injection (v8.17.3)
+    "glm4-default-thinking",
 ];
 
 /// Supported chain IDs
@@ -216,6 +220,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.17.3 - GLM-4 Default Thinking + Off Skip Injection (Feb 18, 2026)
+    "FEAT: GLM-4 Default mode now injects /think (thinking ON, matching centralised platforms)",
+    "FIX: GLM-4 Off mode skips injection instead of /no_think (natural non-thinking, ~483 tokens)",
+    // v8.17.2 - Thinking "Off" Conciseness Directive (Feb 18, 2026)
+    "FIX: Thinking=disabled now injects conciseness directive for noticeably shorter responses on Harmony",
     // v8.17.1 - Thinking Injection Bugfix (Feb 18, 2026)
     "FIX: Thinking injection no longer destroys default system prompt on first message",
     "FIX: Empty-string DEFAULT_THINKING_MODE env var treated as unset (no injection)",
@@ -488,7 +497,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 17);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_PATCH, 3);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.15.5 session re-init fix
@@ -527,20 +536,24 @@ mod tests {
         assert!(FEATURES.contains(&"default-thinking-mode-env"));
         // v8.17.1 thinking injection bugfix
         assert!(FEATURES.contains(&"thinking-post-processing"));
+        // v8.17.2 thinking off conciseness
+        assert!(FEATURES.contains(&"thinking-off-conciseness"));
+        // v8.17.3 GLM-4 default thinking
+        assert!(FEATURES.contains(&"glm4-default-thinking"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.17.1"));
+        assert!(version.contains("8.17.3"));
         assert!(version.contains("2026-02-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.17.1-thinking-fix-2026-02-18");
-        assert_eq!(VERSION_NUMBER, "8.17.1");
+        assert_eq!(VERSION, "v8.17.3-glm4-default-think-2026-02-18");
+        assert_eq!(VERSION_NUMBER, "8.17.3");
         assert_eq!(BUILD_DATE, "2026-02-18");
     }
 
