@@ -434,11 +434,26 @@ impl InferenceHandler {
             .collect();
 
         // Inject thinking directive if specified (v8.17.0+)
-        if let Some(ref mode) = crate::utils::context::resolve_thinking_mode(thinking) {
-            crate::utils::context::inject_thinking_directive(&template, &mut message_tuples, mode);
+        // Returns Some(level) when Harmony post-processing is needed
+        let post_process_level = if let Some(ref mode) =
+            crate::utils::context::resolve_thinking_mode(thinking)
+        {
+            crate::utils::context::inject_thinking_directive(&template, &mut message_tuples, mode)
+        } else {
+            None
+        };
+
+        let mut formatted = template.format_messages(&message_tuples);
+
+        // Post-process: replace default Reasoning level to preserve full system prompt
+        if let Some(ref level) = post_process_level {
+            if level != "medium" {
+                formatted =
+                    formatted.replace("Reasoning: medium", &format!("Reasoning: {}", level));
+            }
         }
 
-        template.format_messages(&message_tuples)
+        formatted
     }
 
     /// Strip chat template markers from content to prevent double-formatting

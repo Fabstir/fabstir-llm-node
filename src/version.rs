@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.17.0-thinking-mode-2026-02-17";
+pub const VERSION: &str = "v8.17.1-thinking-fix-2026-02-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.17.0";
+pub const VERSION_NUMBER: &str = "8.17.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 17;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-17";
+pub const BUILD_DATE: &str = "2026-02-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -204,6 +204,8 @@ pub const FEATURES: &[&str] = &[
     "thinking-mode",
     "per-request-thinking",
     "default-thinking-mode-env",
+    // Thinking injection bugfix (v8.17.1)
+    "thinking-post-processing",
 ];
 
 /// Supported chain IDs
@@ -214,6 +216,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.17.1 - Thinking Injection Bugfix (Feb 18, 2026)
+    "FIX: Thinking injection no longer destroys default system prompt on first message",
+    "FIX: Empty-string DEFAULT_THINKING_MODE env var treated as unset (no injection)",
+    "FIX: Post-processing replaces Reasoning level in formatted output, preserving Valid channels",
     // v8.17.0 - Thinking/Reasoning Mode (Feb 17, 2026)
     "FEAT: Per-request thinking/reasoning mode via 'thinking' field (enabled, disabled, low, medium, high)",
     "FEAT: Harmony template: maps thinking mode to Reasoning: none/low/medium/high in system prompt",
@@ -482,7 +488,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 17);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.15.5 session re-init fix
@@ -519,21 +525,23 @@ mod tests {
         assert!(FEATURES.contains(&"thinking-mode"));
         assert!(FEATURES.contains(&"per-request-thinking"));
         assert!(FEATURES.contains(&"default-thinking-mode-env"));
+        // v8.17.1 thinking injection bugfix
+        assert!(FEATURES.contains(&"thinking-post-processing"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.17.0"));
-        assert!(version.contains("2026-02-17"));
+        assert!(version.contains("8.17.1"));
+        assert!(version.contains("2026-02-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.17.0-thinking-mode-2026-02-17");
-        assert_eq!(VERSION_NUMBER, "8.17.0");
-        assert_eq!(BUILD_DATE, "2026-02-17");
+        assert_eq!(VERSION, "v8.17.1-thinking-fix-2026-02-18");
+        assert_eq!(VERSION_NUMBER, "8.17.1");
+        assert_eq!(BUILD_DATE, "2026-02-18");
     }
 
     #[test]
