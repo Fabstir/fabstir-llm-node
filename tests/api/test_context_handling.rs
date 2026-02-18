@@ -24,7 +24,7 @@ mod tests {
         ];
 
         let prompt = "Tell me more about it.";
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         assert!(result.contains("user: What is the capital of France?"));
         assert!(result.contains("assistant: The capital of France is Paris."));
@@ -67,7 +67,7 @@ mod tests {
         }
 
         let prompt = "Final prompt";
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         // Should only include messages 5-14 (last 10)
         assert!(!result.contains("Message 0"));
@@ -81,7 +81,7 @@ mod tests {
     fn test_empty_context() {
         let context = vec![];
         let prompt = "Hello world";
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         assert_eq!(result, "user: Hello world\nassistant:");
     }
@@ -119,7 +119,7 @@ mod tests {
         ];
 
         let prompt = "How are you?";
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         assert!(result.contains("system: You are a helpful assistant."));
         assert!(result.contains("user: Hello"));

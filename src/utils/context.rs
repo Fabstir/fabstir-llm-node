@@ -11,7 +11,11 @@ use crate::job_processor::Message;
 ///
 /// Note: Chat template markers are automatically stripped from message content
 /// to prevent double-formatting issues when SDK/client pre-formats messages.
-pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
+pub fn build_prompt_with_context(
+    context: &[Message],
+    prompt: &str,
+    thinking: Option<&str>,
+) -> String {
     // Get template from environment variable
     let template_name =
         std::env::var("MODEL_CHAT_TEMPLATE").unwrap_or_else(|_| "harmony".to_string());
@@ -52,6 +56,11 @@ pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
     }
     messages.push(("user".to_string(), cleaned_prompt));
 
+    // Inject thinking directive if specified (v8.17.0+)
+    if let Some(ref mode) = resolve_thinking_mode(thinking) {
+        inject_thinking_directive(&template, &mut messages, mode);
+    }
+
     // Format using template
     let formatted = template.format_messages(&messages);
 
@@ -63,6 +72,86 @@ pub fn build_prompt_with_context(context: &[Message], prompt: &str) -> String {
     );
 
     formatted
+}
+
+/// Resolve thinking mode: explicit value takes priority over env var default
+pub(crate) fn resolve_thinking_mode(explicit: Option<&str>) -> Option<String> {
+    if let Some(mode) = explicit {
+        return Some(mode.to_string());
+    }
+    std::env::var("DEFAULT_THINKING_MODE").ok()
+}
+
+/// Dispatch thinking injection to the appropriate template handler
+pub(crate) fn inject_thinking_directive(
+    template: &ChatTemplate,
+    messages: &mut Vec<(String, String)>,
+    thinking_mode: &str,
+) {
+    match template {
+        ChatTemplate::Harmony => inject_harmony_thinking(messages, thinking_mode),
+        ChatTemplate::Glm4 => inject_glm4_thinking(messages, thinking_mode),
+        _ => {
+            tracing::debug!("Thinking mode ignored for {} template", template.as_str());
+        }
+    }
+}
+
+/// Inject Reasoning level into Harmony system message
+///
+/// Maps thinking values: enabled/medium → medium, disabled → none, low → low, high → high
+/// If user already provided "Reasoning:" in a system message, skip injection.
+/// If a system message exists without "Reasoning:", append to it.
+/// If no system message exists, insert one at position 0.
+fn inject_harmony_thinking(messages: &mut Vec<(String, String)>, thinking_mode: &str) {
+    let level = match thinking_mode {
+        "enabled" | "medium" => "medium",
+        "disabled" => "none",
+        "low" => "low",
+        "high" => "high",
+        _ => "medium",
+    };
+
+    // Check if any system message already contains "Reasoning:"
+    let has_reasoning = messages
+        .iter()
+        .any(|(role, content)| role == "system" && content.contains("Reasoning:"));
+    if has_reasoning {
+        tracing::debug!(
+            "User system message already contains Reasoning: directive, skipping injection"
+        );
+        return;
+    }
+
+    // Find existing system message index
+    let sys_idx = messages.iter().position(|(role, _)| role == "system");
+
+    if let Some(idx) = sys_idx {
+        // Append reasoning to existing system message
+        messages[idx]
+            .1
+            .push_str(&format!("\n\nReasoning: {}", level));
+    } else {
+        // Insert new system message at position 0
+        messages.insert(0, ("system".to_string(), format!("Reasoning: {}", level)));
+    }
+}
+
+/// Inject /think or /no_think prefix for GLM-4 template
+///
+/// Maps: disabled → /no_think, all others (enabled/low/medium/high) → /think
+/// Prepends to last user message content.
+fn inject_glm4_thinking(messages: &mut Vec<(String, String)>, thinking_mode: &str) {
+    let tag = if thinking_mode == "disabled" {
+        "/no_think"
+    } else {
+        "/think"
+    };
+
+    // Find last user message and prepend tag
+    if let Some(last_user) = messages.iter_mut().rev().find(|(role, _)| role == "user") {
+        last_user.1 = format!("{}\n{}", tag, last_user.1);
+    }
 }
 
 /// Strip chat template markers from content to prevent double-formatting
@@ -200,7 +289,7 @@ mod tests {
 
         let context = vec![];
         let prompt = "Hello";
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         // Should contain user message and assistant prompt
         assert!(result.contains("Hello"));
@@ -214,7 +303,7 @@ mod tests {
 
         let context = vec![];
         let prompt = "Hello";
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         // Should use Harmony format (GPT-OSS-20B compatible)
         // Harmony uses: <|start|>role<|message|>content<|end|>
@@ -351,7 +440,7 @@ mod tests {
         // SDK sends pre-formatted prompt
         let pre_formatted_prompt = "<|start|>user<|message|>What is 2+2?<|end|>";
 
-        let result = build_prompt_with_context(&context, pre_formatted_prompt);
+        let result = build_prompt_with_context(&context, pre_formatted_prompt, None);
 
         // Should strip markers and reformat properly
         assert!(result.contains("<|start|>user<|message|>What is 2+2?<|end|>"));
@@ -371,7 +460,7 @@ mod tests {
         }];
         let prompt = "Follow-up question";
 
-        let result = build_prompt_with_context(&context, prompt);
+        let result = build_prompt_with_context(&context, prompt, None);
 
         // Should contain properly formatted messages without double markers
         assert!(result.contains("Previous question"));
@@ -394,7 +483,7 @@ mod tests {
         let context = vec![];
         let plain_prompt = "What is the plot of Iron Man?";
 
-        let result = build_prompt_with_context(&context, plain_prompt);
+        let result = build_prompt_with_context(&context, plain_prompt, None);
 
         // Should format with Harmony template
         assert!(result.contains("<|start|>user<|message|>"));
@@ -402,5 +491,138 @@ mod tests {
         assert!(result.contains("<|end|>"));
         // Verify it does NOT have double user prefix
         assert!(!result.contains("<|start|>user<|message|><|start|>user<|message|>"));
+    }
+
+    // === Thinking Mode Tests (v8.17.0) ===
+
+    #[test]
+    fn test_harmony_thinking_high_injects_reasoning_high() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("high"));
+        assert!(
+            result.contains("Reasoning: high"),
+            "Expected 'Reasoning: high' in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_harmony_thinking_disabled_injects_reasoning_none() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("disabled"));
+        assert!(
+            result.contains("Reasoning: none"),
+            "Expected 'Reasoning: none' in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_harmony_no_thinking_preserves_default_medium() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        assert!(
+            result.contains("Reasoning: medium"),
+            "Expected 'Reasoning: medium' in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_harmony_user_system_message_with_reasoning_not_overridden() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let context = vec![Message {
+            role: "system".to_string(),
+            content: "You are helpful.\n\nReasoning: low".to_string(),
+            timestamp: None,
+        }];
+        let result = build_prompt_with_context(&context, "Hello", Some("high"));
+        assert!(
+            result.contains("Reasoning: low"),
+            "Should preserve user's Reasoning: low"
+        );
+        assert!(
+            !result.contains("Reasoning: high"),
+            "Should NOT inject Reasoning: high"
+        );
+    }
+
+    #[test]
+    fn test_glm4_thinking_enabled_prepends_think_tag() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("enabled"));
+        assert!(
+            result.contains("/think\n"),
+            "Expected /think prefix in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_glm4_thinking_disabled_prepends_no_think_tag() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("disabled"));
+        assert!(
+            result.contains("/no_think\n"),
+            "Expected /no_think prefix in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_glm4_no_thinking_no_injection() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        assert!(
+            !result.contains("/think"),
+            "Should NOT contain /think: {}",
+            result
+        );
+        assert!(
+            !result.contains("/no_think"),
+            "Should NOT contain /no_think: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_default_template_thinking_ignored() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "default");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let with_thinking = build_prompt_with_context(&[], "Hello", Some("high"));
+        let without_thinking = build_prompt_with_context(&[], "Hello", None);
+        assert_eq!(with_thinking, without_thinking);
+    }
+
+    #[test]
+    fn test_env_var_default_thinking_mode() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::set_var("DEFAULT_THINKING_MODE", "high");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        assert!(
+            result.contains("Reasoning: high"),
+            "Expected env var default 'Reasoning: high' in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_explicit_thinking_overrides_env_var() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "harmony");
+        std::env::set_var("DEFAULT_THINKING_MODE", "low");
+        let result = build_prompt_with_context(&[], "Hello", Some("high"));
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        assert!(
+            result.contains("Reasoning: high"),
+            "Explicit should override env var"
+        );
     }
 }

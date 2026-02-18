@@ -120,7 +120,7 @@ impl InferenceHandler {
         // Create inference request
         let request = InferenceRequest {
             model_id: model_id.to_string(),
-            prompt: self.format_prompt_for_inference(&chat_messages),
+            prompt: self.format_prompt_for_inference(&chat_messages, None),
             max_tokens: 500,
             temperature: 0.7,
             top_p: 0.95,
@@ -229,7 +229,7 @@ impl InferenceHandler {
         // Create inference request
         let request = InferenceRequest {
             model_id: "default".to_string(),
-            prompt: self.format_prompt_for_inference(&chat_messages),
+            prompt: self.format_prompt_for_inference(&chat_messages, None),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             top_p: 0.95,
@@ -407,7 +407,11 @@ impl InferenceHandler {
     ///
     /// Note: Chat template markers are stripped from message content to prevent
     /// double-formatting when SDK/client pre-formats messages.
-    fn format_prompt_for_inference(&self, messages: &[ChatMessage]) -> String {
+    fn format_prompt_for_inference(
+        &self,
+        messages: &[ChatMessage],
+        thinking: Option<&str>,
+    ) -> String {
         // Get template from environment or default to Harmony for GPT-OSS-20B
         let template_name =
             std::env::var("MODEL_CHAT_TEMPLATE").unwrap_or_else(|_| "harmony".to_string());
@@ -415,7 +419,7 @@ impl InferenceHandler {
         let template = ChatTemplate::from_str(&template_name).unwrap_or(ChatTemplate::Harmony);
 
         // Convert ChatMessage to tuple format, stripping any pre-existing markers
-        let message_tuples: Vec<(String, String)> = messages
+        let mut message_tuples: Vec<(String, String)> = messages
             .iter()
             .map(|m| {
                 let cleaned = Self::strip_chat_template_markers(&m.content);
@@ -428,6 +432,11 @@ impl InferenceHandler {
                 (m.role.clone(), cleaned)
             })
             .collect();
+
+        // Inject thinking directive if specified (v8.17.0+)
+        if let Some(ref mode) = crate::utils::context::resolve_thinking_mode(thinking) {
+            crate::utils::context::inject_thinking_directive(&template, &mut message_tuples, mode);
+        }
 
         template.format_messages(&message_tuples)
     }
