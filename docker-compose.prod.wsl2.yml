@@ -1,6 +1,9 @@
-# Fabstir LLM Node Production Docker Compose
+# Fabstir LLM Node Production Docker Compose (WSL2 variant)
 # Copyright (c) 2025 Fabstir
 # SPDX-License-Identifier: BUSL-1.1
+#
+# WSL2 fix: diffusion-sidecar monkey-patches torch.distributed to use gloo
+# backend instead of NCCL, which fails with "Cuda failure 999" on WSL2.
 #
 # Usage:
 #   1. Copy .env.prod.example to .env.prod and configure
@@ -147,6 +150,8 @@ services:
       - fabstir-network
 
   # SGLang Diffusion Sidecar (optional - for image generation)
+  # WSL2 workaround: monkey-patches torch.distributed to use gloo backend
+  # instead of NCCL, which fails with "Cuda failure 999" on WSL2.
   # --text-encoder-cpu-offload moves the 7.5GB Qwen3 text encoder to CPU RAM.
   # --dit-layerwise-offload true streams transformer blocks one-at-a-time through
   # GPU, keeping only ~0.3-0.5GB on VRAM instead of the full 7.2GB transformer.
@@ -166,18 +171,28 @@ services:
     ipc: host
     environment:
       NVIDIA_VISIBLE_DEVICES: all
-      # Prevent PyTorch from caching freed GPU memory — ensures VRAM is returned
-      # to the CUDA driver immediately so the LLM can allocate KV cache contexts
       PYTORCH_NO_CUDA_MEMORY_CACHING: "1"
+      NCCL_P2P_DISABLE: "1"
+      NCCL_IB_DISABLE: "1"
+      NCCL_SHM_DISABLE: "1"
+      CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - ${DIFFUSION_MODEL_PATH:-./models/flux2-klein-4b}:/models/black-forest-labs/FLUX.2-klein-4B
-    command: >
-      --model-path /models/black-forest-labs/FLUX.2-klein-4B
-      --port 8082
-      --host 0.0.0.0
-      --text-encoder-cpu-offload
-      --dit-layerwise-offload true
-      --pin-cpu-memory
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        # WSL2 fix: patch SGLang source to use gloo backend instead of NCCL
+        # NCCL fails with "Cuda failure 999" on WSL2 environments
+        sed -i 's/backend=backend/backend="gloo"/' \
+          /sgl-workspace/sglang/python/sglang/multimodal_gen/runtime/distributed/parallel_state.py
+        exec sglang serve \
+          --model-path /models/black-forest-labs/FLUX.2-klein-4B \
+          --port 8082 \
+          --host 0.0.0.0 \
+          --text-encoder-cpu-offload \
+          --dit-layerwise-offload true \
+          --pin-cpu-memory \
+          --backend diffusers
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       interval: 30s

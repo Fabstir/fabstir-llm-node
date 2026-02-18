@@ -31,6 +31,10 @@ pub struct InferenceRequest {
     /// Custom search queries (optional, auto-extracted from prompt if not provided)
     #[serde(skip_serializing_if = "Option::is_none", alias = "searchQueries")]
     pub search_queries: Option<Vec<String>>,
+    /// Thinking/reasoning mode (v8.17.0+)
+    /// Values: "enabled", "disabled", "low", "medium", "high"
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub thinking: Option<String>,
 }
 
 fn default_max_searches() -> u32 {
@@ -190,6 +194,70 @@ impl InferenceRequest {
             });
         }
 
+        if let Some(ref thinking) = self.thinking {
+            let valid = ["enabled", "disabled", "low", "medium", "high"];
+            if !valid.contains(&thinking.as_str()) {
+                return Err(ApiError::ValidationError {
+                    field: "thinking".to_string(),
+                    message: format!(
+                        "Invalid thinking mode '{}'. Valid: enabled, disabled, low, medium, high",
+                        thinking
+                    ),
+                });
+            }
+        }
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_thinking_field_deserializes_all_values() {
+        for val in &["enabled", "high", "disabled", "low", "medium"] {
+            let json = format!(
+                r#"{{"model":"m","prompt":"p","max_tokens":10,"thinking":"{}"}}"#,
+                val
+            );
+            let req: InferenceRequest = serde_json::from_str(&json).unwrap();
+            assert_eq!(req.thinking.as_deref(), Some(*val));
+        }
+        let json = r#"{"model":"m","prompt":"p","max_tokens":10,"thinking":null}"#;
+        let req: InferenceRequest = serde_json::from_str(json).unwrap();
+        assert!(req.thinking.is_none());
+    }
+
+    #[test]
+    fn test_thinking_field_defaults_to_none() {
+        let json = r#"{"model":"m","prompt":"p","max_tokens":10}"#;
+        let req: InferenceRequest = serde_json::from_str(json).unwrap();
+        assert!(req.thinking.is_none());
+    }
+
+    #[test]
+    fn test_thinking_field_validation_rejects_invalid() {
+        let json = r#"{"model":"m","prompt":"p","max_tokens":10,"thinking":"invalid_value"}"#;
+        let req: InferenceRequest = serde_json::from_str(json).unwrap();
+        let err = req.validate().unwrap_err();
+        assert!(format!("{:?}", err).contains("thinking"));
+    }
+
+    #[test]
+    fn test_thinking_field_validation_accepts_all_valid() {
+        for val in &["enabled", "disabled", "low", "medium", "high"] {
+            let json = format!(
+                r#"{{"model":"m","prompt":"p","max_tokens":10,"thinking":"{}"}}"#,
+                val
+            );
+            let req: InferenceRequest = serde_json::from_str(&json).unwrap();
+            assert!(
+                req.validate().is_ok(),
+                "validate() failed for thinking={}",
+                val
+            );
+        }
     }
 }

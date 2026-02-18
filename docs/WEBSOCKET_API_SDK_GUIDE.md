@@ -678,6 +678,33 @@ describe('End-to-End Conversation', () => {
 - `VALIDATION_FAILED`: Invalid image generation parameters (v8.16.0+)
 - `IMAGE_GENERATION_FAILED`: Sidecar generation error (v8.16.0+)
 
+## Thinking/Reasoning Mode (v8.17.0+)
+
+The `thinking` field controls model reasoning behavior per-request. Include it in the encrypted message payload alongside `prompt`:
+
+```json
+{
+  "prompt": "Explain quantum computing",
+  "thinking": "high"
+}
+```
+
+**Valid values**: `"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`
+
+**Per-template behavior**:
+
+| Template | `"enabled"` | `"disabled"` | `"low"` | `"medium"` | `"high"` | Absent |
+|----------|------------|-------------|---------|-----------|---------|--------|
+| Harmony (GPT-OSS) | `Reasoning: medium` | `Reasoning: none` | `Reasoning: low` | `Reasoning: medium` | `Reasoning: high` | Default `medium` |
+| GLM-4 | `/think` prefix | `/no_think` prefix | `/think` | `/think` | `/think` | No prefix |
+| Others | No-op | No-op | No-op | No-op | No-op | No-op |
+
+**Global default**: Set `DEFAULT_THINKING_MODE` env var on the host to apply a default when clients omit the field. Explicit per-request values always override the env var.
+
+**User override protection**: If a system message in the conversation context already contains `Reasoning:`, the injection is skipped to respect the user's explicit directive.
+
+---
+
 ## Image Generation over Encrypted WebSocket (v8.16.0+)
 
 Image generation uses the same encrypted WebSocket channel as inference. The SDK sends an `encrypted_message` containing `"action": "image_generation"` in the decrypted JSON payload. The node routes this to the image generation handler instead of the inference pipeline.

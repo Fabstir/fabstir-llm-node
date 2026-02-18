@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.16.1-auto-image-routing-2026-02-16";
+pub const VERSION: &str = "v8.17.0-thinking-mode-2026-02-17";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.16.1";
+pub const VERSION_NUMBER: &str = "8.17.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 16;
+pub const VERSION_MINOR: u32 = 17;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-16";
+pub const BUILD_DATE: &str = "2026-02-17";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -200,6 +200,10 @@ pub const FEATURES: &[&str] = &[
     "http-image-generation",
     // Auto-route image intent (v8.16.1)
     "auto-image-routing",
+    // Thinking/reasoning mode (v8.17.0)
+    "thinking-mode",
+    "per-request-thinking",
+    "default-thinking-mode-env",
 ];
 
 /// Supported chain IDs
@@ -210,6 +214,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.17.0 - Thinking/Reasoning Mode (Feb 17, 2026)
+    "FEAT: Per-request thinking/reasoning mode via 'thinking' field (enabled, disabled, low, medium, high)",
+    "FEAT: Harmony template: maps thinking mode to Reasoning: none/low/medium/high in system prompt",
+    "FEAT: GLM-4 template: maps thinking mode to /think or /no_think prefix on user message",
+    "FEAT: DEFAULT_THINKING_MODE env var for global default thinking mode",
+    "FEAT: Respects user-provided Reasoning: directive in system messages (no override)",
     // v8.16.1 - Auto-Route Image Intent (Feb 16, 2026)
     "FEAT: Node-side image intent detection (AUTO_IMAGE_ROUTING env var, default OFF)",
     "FEAT: Conservative keyword matching for generate/create/make/draw/paint/sketch/illustrate",
@@ -471,8 +481,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 16);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 17);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.15.5 session re-init fix
@@ -505,21 +515,25 @@ mod tests {
         assert!(FEATURES.contains(&"image-content-hashes"));
         // v8.16.1 auto-route image intent
         assert!(FEATURES.contains(&"auto-image-routing"));
+        // v8.17.0 thinking mode
+        assert!(FEATURES.contains(&"thinking-mode"));
+        assert!(FEATURES.contains(&"per-request-thinking"));
+        assert!(FEATURES.contains(&"default-thinking-mode-env"));
         assert!(SUPPORTED_CHAINS.contains(&84532));
     }
 
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.16.1"));
-        assert!(version.contains("2026-02-16"));
+        assert!(version.contains("8.17.0"));
+        assert!(version.contains("2026-02-17"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.16.1-auto-image-routing-2026-02-16");
-        assert_eq!(VERSION_NUMBER, "8.16.1");
-        assert_eq!(BUILD_DATE, "2026-02-16");
+        assert_eq!(VERSION, "v8.17.0-thinking-mode-2026-02-17");
+        assert_eq!(VERSION_NUMBER, "8.17.0");
+        assert_eq!(BUILD_DATE, "2026-02-17");
     }
 
     #[test]

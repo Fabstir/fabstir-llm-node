@@ -628,8 +628,11 @@ impl ApiServer {
         } else {
             request.prompt.clone()
         };
-        let full_prompt =
-            build_prompt_with_context(&request.conversation_context, &prompt_with_search);
+        let full_prompt = build_prompt_with_context(
+            &request.conversation_context,
+            &prompt_with_search,
+            request.thinking.as_deref(),
+        );
 
         if !request.conversation_context.is_empty() {
             info!(
@@ -880,8 +883,11 @@ impl ApiServer {
         } else {
             request.prompt.clone()
         };
-        let full_prompt =
-            build_prompt_with_context(&request.conversation_context, &prompt_with_search);
+        let full_prompt = build_prompt_with_context(
+            &request.conversation_context,
+            &prompt_with_search,
+            request.thinking.as_deref(),
+        );
 
         if !request.conversation_context.is_empty() {
             info!(
@@ -2367,6 +2373,20 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         .ok()
                                                                     });
 
+                                                                // Extract thinking mode (v8.17.0+)
+                                                                let thinking: Option<String> =
+                                                                    decrypted_json
+                                                                        .get("thinking")
+                                                                        .and_then(|v| v.as_str())
+                                                                        .or_else(|| {
+                                                                            json_msg
+                                                                                .get("thinking")
+                                                                                .and_then(|v| {
+                                                                                    v.as_str()
+                                                                                })
+                                                                        })
+                                                                        .map(|s| s.to_string());
+
                                                                 let mut request_value = json!({
                                                                     "model": model,
                                                                     "prompt": plaintext_prompt,
@@ -2376,7 +2396,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                     "temperature": temperature,
                                                                     "stream": stream,
                                                                     "web_search": web_search,
-                                                                    "max_searches": max_searches
+                                                                    "max_searches": max_searches,
+                                                                    "thinking": thinking
                                                                 });
 
                                                                 // Add search_queries if present
@@ -2840,7 +2861,8 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     "session_id": session_id.clone(),
                                     "max_tokens": json_msg["max_tokens"].as_u64().unwrap_or(4000),
                                     "temperature": json_msg["temperature"].as_f64().unwrap_or(0.7),
-                                    "stream": json_msg["stream"].as_bool().unwrap_or(true)
+                                    "stream": json_msg["stream"].as_bool().unwrap_or(true),
+                                    "thinking": json_msg["thinking"].as_str()
                                 })
                             }
                         } else {

@@ -482,7 +482,8 @@ Content-Type: application/json
   "job_id": 123,
   "web_search": false,
   "max_searches": 5,
-  "search_queries": null
+  "search_queries": null,
+  "thinking": "medium"
 }
 ```
 
@@ -502,6 +503,7 @@ Content-Type: application/json
 | `web_search` | Boolean | No | false | Enable web search before inference. Works with both streaming and non-streaming modes (v8.7.0+, streaming support v8.7.5+) |
 | `max_searches` | Integer | No | 5 | Maximum number of search queries (1-20) |
 | `search_queries` | Array<String> | No | null | Custom search queries (if null, derived from prompt) |
+| `thinking` | String | No | null | Thinking/reasoning mode (v8.17.0+). Values: `"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`. Harmony template maps to `Reasoning: none/low/medium/high` in system prompt. GLM-4 template maps to `/think` or `/no_think` prefix. Other templates ignore this field. Default behavior when absent: Harmony uses `medium`, GLM-4 uses no directive. Can also set globally via `DEFAULT_THINKING_MODE` env var. |
 
 #### Non-Streaming Response
 
