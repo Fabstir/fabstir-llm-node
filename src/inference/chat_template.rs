@@ -222,7 +222,11 @@ impl ChatTemplate {
         let mut prompt = String::new();
         let has_system = messages.iter().any(|(role, _)| role == "system");
         if !has_system {
-            prompt.push_str("<|system|>\nYou are a helpful assistant.\n");
+            let current_date = chrono::Local::now().format("%Y-%m-%d");
+            prompt.push_str(&format!(
+                "<|system|>\nYou are a helpful assistant.\nCurrent date: {}\n\nWhen the user message contains reference material, search results, or document excerpts, use that information to answer. NEVER claim you cannot access provided context.\n",
+                current_date
+            ));
         }
         for (role, content) in messages {
             match role.as_str() {
@@ -479,7 +483,62 @@ mod tests {
         let template = ChatTemplate::Glm4;
         let messages = vec![("user".to_string(), "Hello".to_string())];
         let formatted = template.format_messages(&messages);
-        assert!(formatted.contains("<|system|>\nYou are a helpful assistant.\n"));
+        assert!(formatted.contains("<|system|>\nYou are a helpful assistant.\nCurrent date:"));
+        assert!(formatted.contains("NEVER claim you cannot access provided context."));
+    }
+
+    #[test]
+    fn test_glm4_auto_system_message_context_aware() {
+        let template = ChatTemplate::Glm4;
+        let messages = vec![("user".to_string(), "Summarise the document".to_string())];
+        let formatted = template.format_messages(&messages);
+        assert!(
+            formatted.contains("reference material, search results, or document excerpts"),
+            "GLM-4 auto system prompt should instruct model to use provided context: {}",
+            formatted
+        );
+        assert!(
+            formatted.contains("NEVER claim you cannot access provided context"),
+            "GLM-4 auto system prompt should prohibit claiming no access: {}",
+            formatted
+        );
+        // Should still have the identity line
+        assert!(formatted.contains("You are a helpful assistant."));
+    }
+
+    #[test]
+    fn test_glm4_auto_system_message_includes_date() {
+        let template = ChatTemplate::Glm4;
+        let messages = vec![("user".to_string(), "Hello".to_string())];
+        let formatted = template.format_messages(&messages);
+        assert!(
+            formatted.contains("Current date:"),
+            "GLM-4 auto system prompt should include current date: {}",
+            formatted
+        );
+    }
+
+    #[test]
+    fn test_glm4_user_system_message_not_overridden() {
+        let template = ChatTemplate::Glm4;
+        let messages = vec![
+            ("system".to_string(), "You are a pirate assistant.".to_string()),
+            ("user".to_string(), "Hello".to_string()),
+        ];
+        let formatted = template.format_messages(&messages);
+        // User's system message should be preserved
+        assert!(formatted.contains("You are a pirate assistant."));
+        // Should NOT auto-inject context instructions
+        assert!(
+            !formatted.contains("NEVER claim you cannot access"),
+            "Should not inject context instructions when user provides system message"
+        );
+        // Only 1 system marker
+        assert_eq!(
+            formatted.matches("<|system|>").count(),
+            1,
+            "Should have exactly one <|system|> marker"
+        );
     }
 
     #[test]

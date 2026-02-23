@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.17.5-dispute-window-fix-2026-02-23";
+pub const VERSION: &str = "v8.17.6-glm4-rag-context-2026-02-23";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.17.5";
+pub const VERSION_NUMBER: &str = "8.17.6";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 17;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 6;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-23";
@@ -216,6 +216,8 @@ pub const FEATURES: &[&str] = &[
     "dispute-window-fix",
     "contract-dispute-window-query",
     "dispute-window-buffer",
+    // GLM-4 RAG context-aware system prompt (v8.17.6)
+    "glm4-context-aware-system-prompt",
 ];
 
 /// Supported chain IDs
@@ -226,6 +228,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.17.6 - GLM-4 RAG Context-Aware System Prompt (Feb 23, 2026)
+    "FIX: GLM-4 default system prompt now instructs model to use provided reference material, search results, and document excerpts",
+    "FIX: GLM-4 no longer claims 'I don't have access to external databases' when RAG context is in user message",
+    "FEAT: GLM-4 auto-injected system prompt now includes current date (matching Harmony pattern)",
     // v8.17.5 - Dispute Window Fix (Feb 23, 2026)
     "FIX: Error string matching broadened from 'Must wait dispute window' to 'dispute window' (catches old and new contract)",
     "FIX: Dispute window now queried from contract disputeWindow() at startup (was hardcoded 30s)",
@@ -511,7 +517,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 17);
-        assert_eq!(VERSION_PATCH, 5);
+        assert_eq!(VERSION_PATCH, 6);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -520,6 +526,8 @@ mod tests {
         assert!(FEATURES.contains(&"dispute-window-fix"));
         assert!(FEATURES.contains(&"contract-dispute-window-query"));
         assert!(FEATURES.contains(&"dispute-window-buffer"));
+        // v8.17.6 GLM-4 RAG context-aware system prompt
+        assert!(FEATURES.contains(&"glm4-context-aware-system-prompt"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -566,14 +574,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.17.5"));
+        assert!(version.contains("8.17.6"));
         assert!(version.contains("2026-02-23"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.17.5-dispute-window-fix-2026-02-23");
-        assert_eq!(VERSION_NUMBER, "8.17.5");
+        assert_eq!(VERSION, "v8.17.6-glm4-rag-context-2026-02-23");
+        assert_eq!(VERSION_NUMBER, "8.17.6");
         assert_eq!(BUILD_DATE, "2026-02-23");
     }
 
