@@ -792,4 +792,24 @@ mod tests {
             result
         );
     }
+
+    #[test]
+    fn test_glm4_rag_context_in_prompt_uses_context_aware_system() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let rag_prompt = "[Relevant Context]\nPlatformless AI is a decentralized compute marketplace.\n[End Context]\n\nWhat is Platformless AI?";
+        let result = build_prompt_with_context(&[], rag_prompt, None);
+        // The GLM-4 context-aware system prompt should be present
+        assert!(
+            result.contains("NEVER claim you cannot access provided context"),
+            "GLM-4 with RAG context should have context-aware system prompt: {}",
+            result
+        );
+        // The RAG context should be in the user message
+        assert!(
+            result.contains("Platformless AI is a decentralized compute marketplace"),
+            "RAG context should be preserved in user message: {}",
+            result
+        );
+    }
 }
