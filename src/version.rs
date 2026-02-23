@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.17.4-new-jobmarketplace-proxy-2026-02-22";
+pub const VERSION: &str = "v8.17.5-dispute-window-fix-2026-02-23";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.17.4";
+pub const VERSION_NUMBER: &str = "8.17.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 17;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-22";
+pub const BUILD_DATE: &str = "2026-02-23";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -212,6 +212,10 @@ pub const FEATURES: &[&str] = &[
     "glm4-default-thinking",
     // New JobMarketplace proxy (v8.17.4)
     "new-jobmarketplace-proxy",
+    // Dispute window fix (v8.17.5)
+    "dispute-window-fix",
+    "contract-dispute-window-query",
+    "dispute-window-buffer",
 ];
 
 /// Supported chain IDs
@@ -222,6 +226,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.17.5 - Dispute Window Fix (Feb 23, 2026)
+    "FIX: Error string matching broadened from 'Must wait dispute window' to 'dispute window' (catches old and new contract)",
+    "FIX: Dispute window now queried from contract disputeWindow() at startup (was hardcoded 30s)",
+    "FIX: 5s safety buffer added to dispute window wait (accounts for block confirmation delay)",
     // v8.17.4 - New JobMarketplace Proxy (Feb 22, 2026)
     "CONTRACT: JobMarketplace proxy changed to 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (fresh proxy deployment)",
     "CONTRACT: Old proxy 0x95132177F964FF053C1E874b53CF74d819618E06 deprecated (de-authorized)",
@@ -503,11 +511,15 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 17);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_PATCH, 5);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
         assert!(FEATURES.contains(&"new-jobmarketplace-proxy"));
+        // v8.17.5 dispute window fix
+        assert!(FEATURES.contains(&"dispute-window-fix"));
+        assert!(FEATURES.contains(&"contract-dispute-window-query"));
+        assert!(FEATURES.contains(&"dispute-window-buffer"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -554,15 +566,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.17.4"));
-        assert!(version.contains("2026-02-22"));
+        assert!(version.contains("8.17.5"));
+        assert!(version.contains("2026-02-23"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.17.4-new-jobmarketplace-proxy-2026-02-22");
-        assert_eq!(VERSION_NUMBER, "8.17.4");
-        assert_eq!(BUILD_DATE, "2026-02-22");
+        assert_eq!(VERSION, "v8.17.5-dispute-window-fix-2026-02-23");
+        assert_eq!(VERSION_NUMBER, "8.17.5");
+        assert_eq!(BUILD_DATE, "2026-02-23");
     }
 
     #[test]

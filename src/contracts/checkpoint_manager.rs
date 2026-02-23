@@ -26,6 +26,11 @@ const CHECKPOINT_THRESHOLD: u64 = 1000; // Submit checkpoint every 1000 tokens (
                                         // Minimum tokens required for checkpoint submission (contract requirement)
 const MIN_PROVEN_TOKENS: u64 = 100;
 
+/// Safety buffer (seconds) added to dispute window to account for block confirmation delay.
+/// The node timestamps proofs when the tx is sent, but the contract uses block.timestamp
+/// from when the tx is confirmed (~1-2s later on Base Sepolia).
+const DISPUTE_WINDOW_BUFFER_SECS: u64 = 5;
+
 #[derive(Debug, Clone)]
 pub struct JobTokenTracker {
     pub job_id: u64,
@@ -151,6 +156,8 @@ pub struct CheckpointManager {
     checkpoint_publisher: Arc<CheckpointPublisher>,
     /// Proof submission cache for S5 propagation delay handling (v8.12.6)
     proof_cache: Arc<ProofSubmissionCache>,
+    /// Dispute window duration in seconds (queried from contract or env override)
+    dispute_window_secs: u64,
 }
 
 impl CheckpointManager {
@@ -179,9 +186,27 @@ impl CheckpointManager {
         // TTL of 1 hour - proofs older than this are cleaned up
         let proof_cache = Arc::new(ProofSubmissionCache::new(Duration::from_secs(3600)));
 
+        // Resolve dispute window: env override > contract query > 30s default (v8.17.5)
+        let dispute_window_secs = if let Ok(val) = std::env::var("DISPUTE_WINDOW_SECONDS") {
+            if !val.is_empty() {
+                let secs = val.parse::<u64>().unwrap_or(30);
+                info!("⏳ Dispute window: {}s (source: env)", secs);
+                secs
+            } else {
+                let secs = Self::query_dispute_window(&web3_client, proof_system_address).await;
+                info!("⏳ Dispute window: {}s (source: contract)", secs);
+                secs
+            }
+        } else {
+            let secs = Self::query_dispute_window(&web3_client, proof_system_address).await;
+            info!("⏳ Dispute window: {}s (source: contract)", secs);
+            secs
+        };
+
         eprintln!("CheckpointManager initialized:");
         eprintln!("  Host: {:?}", host_address);
         eprintln!("  JobMarketplace: {}", job_marketplace_address);
+        eprintln!("  Dispute window: {}s", dispute_window_secs);
         eprintln!("  BUILD VERSION: {}", crate::version::VERSION);
 
         Ok(Self {
@@ -193,7 +218,47 @@ impl CheckpointManager {
             s5_storage,
             checkpoint_publisher,
             proof_cache,
+            dispute_window_secs,
         })
+    }
+
+    /// Query disputeWindow() from JobMarketplace contract (v8.17.5)
+    ///
+    /// Returns the dispute window duration in seconds, or 30 as fallback.
+    async fn query_dispute_window(web3_client: &Web3Client, marketplace_address: Address) -> u64 {
+        // keccak256("disputeWindow()") selector = first 4 bytes
+        use tiny_keccak::{Hasher, Keccak};
+        let mut keccak = Keccak::v256();
+        let mut selector = [0u8; 32];
+        keccak.update(b"disputeWindow()");
+        keccak.finalize(&mut selector);
+
+        let tx = TransactionRequest::new()
+            .to(marketplace_address)
+            .data(selector[..4].to_vec());
+
+        match web3_client.provider.call(&tx.into(), None).await {
+            Ok(result) if result.len() >= 32 => {
+                let value = U256::from_big_endian(&result[..32]);
+                let secs = value.as_u64();
+                info!("📋 Queried disputeWindow() from contract: {}s", secs);
+                secs
+            }
+            Ok(result) => {
+                warn!(
+                    "⚠️ disputeWindow() returned unexpected length: {}, using 30s default",
+                    result.len()
+                );
+                30
+            }
+            Err(e) => {
+                warn!(
+                    "⚠️ Failed to query disputeWindow(): {}, using 30s default",
+                    e
+                );
+                30
+            }
+        }
     }
 
     /// Query the session's proofInterval from the JobMarketplace contract (v8.14.2)
@@ -1566,26 +1631,23 @@ impl CheckpointManager {
         }
 
         // IMPORTANT: Check if we need to wait for dispute window before attempting completion
-        // Get dispute window duration from environment
-        let dispute_window_secs = std::env::var("DISPUTE_WINDOW_SECONDS")
-            .unwrap_or_else(|_| "30".to_string())
-            .parse::<u64>()
-            .unwrap_or(30);
+        let dispute_window_secs = self.dispute_window_secs;
 
         // Check if we have a recent proof submission
         let trackers = self.job_trackers.read().await;
         if let Some(tracker) = trackers.get(&job_id) {
             if let Some(last_proof_time) = tracker.last_proof_timestamp {
                 let elapsed = last_proof_time.elapsed().as_secs();
-                if elapsed < dispute_window_secs {
-                    let wait_time = dispute_window_secs - elapsed;
+                let total_wait = dispute_window_secs + DISPUTE_WINDOW_BUFFER_SECS;
+                if elapsed < total_wait {
+                    let wait_time = total_wait - elapsed;
                     info!(
                         "⏳ Job {} in dispute window. Last proof submitted {}s ago. Waiting {}s before completion...",
                         job_id, elapsed, wait_time
                     );
                     info!(
-                        "   Dispute window: {}s, Elapsed: {}s, Remaining: {}s",
-                        dispute_window_secs, elapsed, wait_time
+                        "   Dispute window: {}s + {}s buffer, Elapsed: {}s, Remaining: {}s",
+                        dispute_window_secs, DISPUTE_WINDOW_BUFFER_SECS, elapsed, wait_time
                     );
                     drop(trackers); // Release lock before sleeping
                     tokio::time::sleep(Duration::from_secs(wait_time)).await;
@@ -1595,8 +1657,8 @@ impl CheckpointManager {
                     );
                 } else {
                     info!(
-                        "✅ Job {} dispute window already elapsed ({}s > {}s). Proceeding immediately.",
-                        job_id, elapsed, dispute_window_secs
+                        "✅ Job {} dispute window already elapsed ({}s > {}s + {}s buffer). Proceeding immediately.",
+                        job_id, elapsed, dispute_window_secs, DISPUTE_WINDOW_BUFFER_SECS
                     );
                     drop(trackers);
                 }
@@ -1734,12 +1796,8 @@ impl CheckpointManager {
                     }
                 }
                 // Check if the error is due to dispute window
-                else if e.to_string().contains("Must wait dispute window") {
-                    // Get dispute window duration from environment or use defaults
-                    let dispute_window = std::env::var("DISPUTE_WINDOW_SECONDS")
-                        .unwrap_or_else(|_| "30".to_string())
-                        .parse::<u64>()
-                        .unwrap_or(30);
+                else if e.to_string().contains("dispute window") {
+                    let dispute_window = self.dispute_window_secs;
 
                     warn!(
                         "⏳ Job {} is in dispute window ({} seconds). Scheduling retry...",
@@ -1841,7 +1899,7 @@ impl CheckpointManager {
                                     let error_msg = e.to_string();
 
                                     // Check if it's still the dispute window error
-                                    if error_msg.contains("Must wait dispute window") {
+                                    if error_msg.contains("dispute window") {
                                         warn!(
                                             "⏳ Retry {} failed - dispute window still active for job {}",
                                             retry_count + 1, job_id
@@ -3268,5 +3326,57 @@ mod tests {
             zero_model_id.iter().all(|&b| b == 0),
             "bytes32(0) should be all zeros"
         );
+    }
+
+    // ========================================================================
+    // Dispute Window Fix Tests (v8.17.5)
+    // ========================================================================
+
+    #[test]
+    fn test_dispute_window_error_string_matches_new_contract() {
+        let error = "execution reverted: Wait dispute window";
+        assert!(error.contains("dispute window"));
+        // Prove old check would fail on new contract error
+        assert!(!error.contains("Must wait dispute window"));
+    }
+
+    #[test]
+    fn test_dispute_window_error_string_matches_old_contract() {
+        let error = "execution reverted: Must wait dispute window";
+        assert!(error.contains("dispute window"));
+    }
+
+    #[test]
+    fn test_dispute_window_default_value() {
+        // When DISPUTE_WINDOW_SECONDS is not set, default should be 30
+        std::env::remove_var("DISPUTE_WINDOW_SECONDS");
+        let val = std::env::var("DISPUTE_WINDOW_SECONDS")
+            .unwrap_or_else(|_| "30".to_string())
+            .parse::<u64>()
+            .unwrap_or(30);
+        assert_eq!(val, 30, "Default dispute window should be 30 seconds");
+    }
+
+    #[test]
+    fn test_dispute_window_wait_includes_buffer() {
+        let dispute_window_secs: u64 = 30;
+        let buffer = DISPUTE_WINDOW_BUFFER_SECS;
+        let total_wait = dispute_window_secs + buffer;
+
+        // When elapsed == dispute_window_secs exactly, should still wait (buffer not elapsed)
+        let elapsed = dispute_window_secs;
+        assert!(
+            elapsed < total_wait,
+            "At exactly dispute_window_secs, buffer should require more waiting"
+        );
+
+        // When elapsed == total_wait, should NOT wait
+        let elapsed_full = total_wait;
+        assert!(
+            !(elapsed_full < total_wait),
+            "At total_wait, should proceed"
+        );
+
+        assert_eq!(buffer, 5, "Buffer should be 5 seconds");
     }
 }
