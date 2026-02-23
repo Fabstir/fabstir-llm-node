@@ -30,7 +30,7 @@ Update your node software to use these addresses:
 
 ```javascript
 const CONTRACTS = {
-  jobMarketplace: "0x95132177F964FF053C1E874b53CF74d819618E06",  // NEW
+  jobMarketplace: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4",  // NEW
   proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",    // NEW
   nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",   // Unchanged
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2", // Unchanged

@@ -51,7 +51,7 @@ chmod +x scripts/validate-env.sh
 ```
 ✅ Checking required environment variables:
   ✅ BASE_SEPOLIA_RPC_URL = https://sepolia.base.org
-  ✅ CONTRACT_JOB_MARKETPLACE = 0x95132177F964FF053C1E874b53CF74d819618E06
+  ✅ CONTRACT_JOB_MARKETPLACE = 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4
   ✅ CONTRACT_PROOF_SYSTEM = 0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31
   ...
 🔒 Checking for deprecated contract addresses:
@@ -113,7 +113,7 @@ Ensure your `.env` has all required variables:
 ```bash
 # Required variables
 BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
-CONTRACT_JOB_MARKETPLACE=0x95132177F964FF053C1E874b53CF74d819618E06
+CONTRACT_JOB_MARKETPLACE=0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4
 CONTRACT_PROOF_SYSTEM=0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31
 CONTRACT_NODE_REGISTRY=0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22
 CONTRACT_HOST_EARNINGS=0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0
@@ -159,7 +159,7 @@ docker logs llm-node-prod | tail -50
 
 ```bash
 docker logs llm-node-prod | grep "0x9513"
-# Should show: 0x95132177F964FF053C1E874b53CF74d819618E06 (JobMarketplace)
+# Should show: 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (JobMarketplace)
 
 docker logs llm-node-prod | grep "0xE8DC"
 # Should show: 0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31 (ProofSystem)
@@ -225,7 +225,7 @@ cat .env | grep CONTRACT_
 ```
 ❌ ERROR: Using deprecated JobMarketplace contract!
    Current:  0x3CaCbf3f448B420918A93a88706B26Ab27a3523E
-   Required: 0x95132177F964FF053C1E874b53CF74d819618E06
+   Required: 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4
 ```
 
 **Fix**:

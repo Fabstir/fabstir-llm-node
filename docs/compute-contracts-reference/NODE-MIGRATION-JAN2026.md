@@ -28,7 +28,7 @@ This guide covers all changes required for host node software to work with the J
 
 | Contract | Proxy Address |
 |----------|---------------|
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` ✅ |
+| JobMarketplace | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` ✅ |
 | ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` ✅ |
 | NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` |
 | ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` |
@@ -451,7 +451,7 @@ event EarningsCredited(
 - [ ] Update `submitProofOfWork` to 5 parameters (no signature)
 - [ ] Add `deltaCID` parameter (can be empty string "")
 - [ ] Replace ABI files in your project
-- [ ] Update contract address to remediation proxy: `0x95132177F964FF053C1E874b53CF74d819618E06`
+- [ ] Update contract address to remediation proxy: `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4`
 
 ### Testing
 
@@ -470,9 +470,10 @@ event EarningsCredited(
 
 ## 9. Troubleshooting
 
-### "Only host can submit proof"
+### "Not host"
 
 **Cause**: Transaction sender doesn't match session host
+**Note**: Error string shortened from "Only host can submit proof" to "Not host" in Feb 2026 deployment.
 
 **Solution**: The wallet sending the transaction must be the same address registered as the session host. No signature needed - just send from the correct wallet.
 
@@ -498,7 +499,7 @@ event EarningsCredited(
 
 **Cause**: Still using frozen audit contract instead of remediation contract
 
-**Solution**: Update to remediation JobMarketplace: `0x95132177F964FF053C1E874b53CF74d819618E06`
+**Solution**: Update to remediation JobMarketplace: `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4`
 
 ---
 
@@ -519,7 +520,7 @@ import HostEarningsABI from './abis/HostEarningsUpgradeable-CLIENT-ABI.json';
 
 // Use REMEDIATION contracts (Feb 4, 2026)
 const ADDRESSES = {
-  marketplace: '0x95132177F964FF053C1E874b53CF74d819618E06',  // Remediation proxy
+  marketplace: '0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4',  // Remediation proxy
   hostEarnings: '0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0',
 };
 

@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.17.3-glm4-default-think-2026-02-18";
+pub const VERSION: &str = "v8.17.4-new-jobmarketplace-proxy-2026-02-22";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.17.3";
+pub const VERSION_NUMBER: &str = "8.17.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 17;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-18";
+pub const BUILD_DATE: &str = "2026-02-22";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -210,6 +210,8 @@ pub const FEATURES: &[&str] = &[
     "thinking-off-conciseness",
     // GLM-4 default thinking + off skip injection (v8.17.3)
     "glm4-default-thinking",
+    // New JobMarketplace proxy (v8.17.4)
+    "new-jobmarketplace-proxy",
 ];
 
 /// Supported chain IDs
@@ -220,6 +222,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.17.4 - New JobMarketplace Proxy (Feb 22, 2026)
+    "CONTRACT: JobMarketplace proxy changed to 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (fresh proxy deployment)",
+    "CONTRACT: Old proxy 0x95132177F964FF053C1E874b53CF74d819618E06 deprecated (de-authorized)",
+    "CONTRACT: Error string shortened: 'Only host can submit proof' -> 'Not host'",
     // v8.17.3 - GLM-4 Default Thinking + Off Skip Injection (Feb 18, 2026)
     "FEAT: GLM-4 Default mode now injects /think (thinking ON, matching centralised platforms)",
     "FIX: GLM-4 Off mode skips injection instead of /no_think (natural non-thinking, ~483 tokens)",
@@ -298,7 +304,7 @@ pub const BREAKING_CHANGES: &[&str] = &[
     "FEAT: Node queries sessionModel(sessionId) from JobMarketplace before signing",
     "FEAT: Prevents cross-model replay attacks (cheap model proof on premium model)",
     "FEAT: For non-model sessions: modelId = bytes32(0)",
-    "CONTRACT: Using remediated contracts at 0x95132177F964FF053C1E874b53CF74d819618E06 (JobMarketplace)",
+    "CONTRACT: Using remediated contracts at 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (JobMarketplace)",
     "CONTRACT: Using remediated contracts at 0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31 (ProofSystem)",
     "SECURITY: Implements AUDIT-F4 recommendation from pre-report security audit",
     // v8.12.6 - Settlement Race Condition Fix (Jan 25, 2026)
@@ -497,9 +503,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 17);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_PATCH, 4);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.17.4 new JobMarketplace proxy
+        assert!(FEATURES.contains(&"new-jobmarketplace-proxy"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -546,15 +554,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.17.3"));
-        assert!(version.contains("2026-02-18"));
+        assert!(version.contains("8.17.4"));
+        assert!(version.contains("2026-02-22"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.17.3-glm4-default-think-2026-02-18");
-        assert_eq!(VERSION_NUMBER, "8.17.3");
-        assert_eq!(BUILD_DATE, "2026-02-18");
+        assert_eq!(VERSION, "v8.17.4-new-jobmarketplace-proxy-2026-02-22");
+        assert_eq!(VERSION_NUMBER, "8.17.4");
+        assert_eq!(BUILD_DATE, "2026-02-22");
     }
 
     #[test]

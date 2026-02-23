@@ -392,7 +392,7 @@ mod tests {
         // Set required environment variables for tests
         std::env::set_var(
             "CONTRACT_JOB_MARKETPLACE",
-            "0x95132177F964FF053C1E874b53CF74d819618E06",
+            "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4",
         );
         std::env::set_var(
             "CONTRACT_NODE_REGISTRY",
