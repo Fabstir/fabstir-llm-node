@@ -261,60 +261,6 @@
   },
   {
     "type": "function",
-    "name": "createSessionAsDelegate",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "host",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "paymentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pricePerToken",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxDuration",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofInterval",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofTimeoutWindow",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sessionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "createSessionForModelAsDelegate",
     "inputs": [
       {
@@ -1818,6 +1764,37 @@
   },
   {
     "type": "event",
+    "name": "RefundCreditedToDeposit",
+    "inputs": [
+      {
+        "name": "jobId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "depositor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SessionCompleted",
     "inputs": [
       {
@@ -2209,11 +2186,6 @@
   },
   {
     "type": "error",
-    "name": "BadDelegateParams",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -2226,11 +2198,6 @@
   {
     "type": "error",
     "name": "ERC1967NonPayable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ERC20Only",
     "inputs": []
   },
   {
@@ -2251,11 +2218,6 @@
   {
     "type": "error",
     "name": "InvalidInitialization",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotDelegate",
     "inputs": []
   },
   {

@@ -20,7 +20,7 @@ Use these for SDK development and testing new features (V2 Delegation, Early Can
 // REMEDIATION CONTRACTS - Active development
 const remediationContracts = {
   // Proxy addresses (interact with these)
-  jobMarketplace: "0x95132177F964FF053C1E874b53CF74d819618E06", // ✅ Early Cancel Fee + Per-Model Rate Limits
+  jobMarketplace: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4", // ✅ Early Cancel Fee + Per-Model Rate Limits
   nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2", // ✅ Per-Model Rate Limits
   proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",
@@ -1505,7 +1505,7 @@ await hostEarningsContract.withdrawNative();
 | `"Price below host minimum (stable)"`   | Price < host's stable minimum          |
 | `"Token not accepted"`                  | Payment token not in accepted list     |
 | `"Token not configured"`                | Token has no minimum deposit set       |
-| `"Only host can submit proof"`          | Non-host trying to submit proof        |
+| `"Not host"`                            | Non-host trying to submit proof        |
 | `"Only depositor or host can complete"` | Third party trying to complete session |
 | `"Session not active"`                  | Session is not in Active status        |
 

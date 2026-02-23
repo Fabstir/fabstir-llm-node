@@ -104,7 +104,7 @@ ProofSystem:    0x5afB91977e69Cc5003288849059bc62d47E7deeb (pre-AUDIT-F4)
 
 **New Contracts (AUDIT-F4 Remediated)**:
 ```
-JobMarketplace: 0x95132177F964FF053C1E874b53CF74d819618E06 (AUDIT-F4 compliant)
+JobMarketplace: 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (AUDIT-F4 compliant)
 ProofSystem:    0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31 (AUDIT-F4 compliant)
 NodeRegistry:   0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 (unchanged)
 ModelRegistry:  0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2 (unchanged)
@@ -220,7 +220,7 @@ Create or update `.env` file with new contract addresses:
 CHAIN_ID=84532  # Base Sepolia
 
 # AUDIT-F4 Remediated Contracts (Use these!)
-CONTRACT_JOB_MARKETPLACE=0x95132177F964FF053C1E874b53CF74d819618E06
+CONTRACT_JOB_MARKETPLACE=0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4
 CONTRACT_PROOF_SYSTEM=0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31
 
 # Unchanged Contracts
@@ -339,7 +339,7 @@ export const CONTRACTS = {
 
 // ✅ NEW (AUDIT-F4 Compliant)
 export const CONTRACTS = {
-  JOB_MARKETPLACE: '0x95132177F964FF053C1E874b53CF74d819618E06',  // AUDIT-F4
+  JOB_MARKETPLACE: '0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4',  // AUDIT-F4
   PROOF_SYSTEM: '0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31',     // AUDIT-F4
   NODE_REGISTRY: '0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22',    // Unchanged
   MODEL_REGISTRY: '0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2',   // Unchanged
@@ -365,7 +365,7 @@ import ProofSystemABI from './abis/ProofSystemAuditF4-CLIENT-ABI.json';
 
 ```typescript
 // Update to new contract addresses
-const JOB_MARKETPLACE_ADDRESS = '0x95132177F964FF053C1E874b53CF74d819618E06';
+const JOB_MARKETPLACE_ADDRESS = '0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4';
 const PROOF_SYSTEM_ADDRESS = '0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31';
 ```
 
@@ -615,7 +615,7 @@ Use this checklist to ensure smooth migration:
 
 - [ ] Update contract addresses in SDK configuration
 - [ ] Download and integrate new contract ABIs
-- [ ] Update `JOB_MARKETPLACE_ADDRESS` to `0x95132177F964FF053C1E874b53CF74d819618E06`
+- [ ] Update `JOB_MARKETPLACE_ADDRESS` to `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4`
 - [ ] Update `PROOF_SYSTEM_ADDRESS` to `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31`
 - [ ] Run SDK tests with new contract addresses
 - [ ] Update event listeners to use new contract addresses
@@ -685,7 +685,7 @@ mv fabstir-llm-node target/release/
 # Check .env file
 grep "CONTRACT_JOB_MARKETPLACE" .env
 
-# Expected: 0x95132177F964FF053C1E874b53CF74d819618E06
+# Expected: 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4
 # NOT:      0x3CaCbf3f448B420918A93a88706B26Ab27a3523E
 ```
 

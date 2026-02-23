@@ -164,7 +164,7 @@ mod tests {
     // ===========================================
 
     /// AUDIT-F4 Remediated JobMarketplace (includes modelId signature verification)
-    const AUDIT_F4_JOB_MARKETPLACE: &str = "0x95132177F964FF053C1E874b53CF74d819618E06";
+    const AUDIT_F4_JOB_MARKETPLACE: &str = "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4";
     /// AUDIT-F4 Remediated ProofSystem (includes modelId signature verification)
     const AUDIT_F4_PROOF_SYSTEM: &str = "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31";
     /// NodeRegistry (unchanged from v8.9.2)

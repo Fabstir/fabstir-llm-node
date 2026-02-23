@@ -71,7 +71,7 @@ function markProofUsed(bytes32 proofHash) external returns (bool)
 
 | Contract | Proxy | New Implementation |
 |----------|-------|-------------------|
-| JobMarketplace (Remediation) | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
+| JobMarketplace (Remediation) | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
 | ProofSystem (Remediation) | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5345a926dcf3B0E1A6895406FB68210ED19AC556` |
 
 ### Why This Change?
@@ -158,7 +158,7 @@ function setModelRateLimit(bytes32 modelId, uint256 tokensPerSecond) external;
 
 | Contract | Proxy | New Implementation |
 |----------|-------|-------------------|
-| JobMarketplace (Remediation) | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x40df542b58A54B9F077289442944fbA562c94E67` |
+| JobMarketplace (Remediation) | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` | `0x40df542b58A54B9F077289442944fbA562c94E67` |
 | ModelRegistry (Remediation) | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x3F22fd532Ac051aE09b0F2e45F3DBfc835AfCD45` |
 
 ### Migration Checklist
@@ -267,7 +267,7 @@ event SessionCreatedByDelegate(
 
 | Contract | Proxy | New Implementation |
 |----------|-------|-------------------|
-| JobMarketplace (Remediation) | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0xf5441bda610AbCDe71B96fe6051E738d2702f071` |
+| JobMarketplace (Remediation) | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` | `0xf5441bda610AbCDe71B96fe6051E738d2702f071` |
 
 ### SDK Integration Example
 

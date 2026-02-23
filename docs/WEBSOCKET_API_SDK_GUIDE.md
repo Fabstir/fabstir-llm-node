@@ -53,7 +53,7 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Payment Distribution**: Host receives 90%, Treasury 10%, User gets refund
 - **No User Action Required**: Payments settle even on unexpected disconnects
 - **Session Cleanup**: Token trackers and state cleared after settlement
-- **Blockchain Integration**: Direct contract calls to JobMarketplace (0x95132177F964FF053C1E874b53CF74d819618E06 - AUDIT-F4 compliant)
+- **Blockchain Integration**: Direct contract calls to JobMarketplace (0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 - AUDIT-F4 compliant)
 
 ### ✅ Phase 8.16: Encrypted WebSocket Image Generation (v8.16.0+)
 - **Text-to-Image**: FLUX.2 Klein 4B via SGLang Diffusion sidecar
@@ -320,7 +320,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 **Requirements:**
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
-- JobMarketplace: 0x95132177F964FF053C1E874b53CF74d819618E06 (v8.13.0+ AUDIT-F4 remediated)
+- JobMarketplace: 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (v8.13.0+ AUDIT-F4 remediated)
 
 ## Compression Support
 

@@ -4,102 +4,15 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ---
 
-## REMEDIATION CONTRACTS (February 4, 2026 - Signature Removal)
+## UPGRADEABLE CONTRACTS (February 22, 2026 - Post-Audit Remediation Deployment)
 
-> **🚀 FOR SDK DEVELOPMENT:** Use these contracts for testing new features including V2 Direct Payment Delegation, Early Cancellation Fee, and simplified proof submission (no signature required).
-
-### JobMarketplaceWithModelsUpgradeable (Remediation)
-- **Proxy Address**: `0x95132177F964FF053C1E874b53CF74d819618E06`
-- **Implementation**: `0x1a0436a15d2fD911b2F062D08aA312141A978955` ✅ Signature Removal + Early Cancellation Fee (Feb 4, 2026)
-- **Network**: Base Sepolia
-- **Status**: ✅ ACTIVE - Development/Testing
-- **ABI File**: `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
-
-**Early Cancellation Fee (NEW - Feb 3, 2026):**
-```solidity
-// Query minimum token fee for early cancellation
-function minTokensFee() external view returns (uint256);
-
-// Admin function to set minimum token fee
-function setMinTokensFee(uint256 _fee) external; // onlyOwner
-```
-
-When a depositor completes a session before any proofs are submitted, they are charged an early cancellation fee:
-- Fee = `minTokensFee * pricePerToken / PRICE_PRECISION`
-- Fee goes to host as compensation for wasted resources
-- Protects against bot abuse (free inference before proof submission)
-- Default: 1000 tokens
-
-**V2 Direct Payment Delegation:**
-```solidity
-// Authorization
-function authorizeDelegate(address delegate, bool authorized) external;
-function isDelegateAuthorized(address payer, address delegate) external view returns (bool);
-
-// Create session as delegate (USDC only - uses transferFrom)
-function createSessionForModelAsDelegate(
-    address payer, bytes32 modelId, address host, address paymentToken,
-    uint256 amount, uint256 pricePerToken, uint256 maxDuration,
-    uint256 proofInterval, uint256 proofTimeoutWindow
-) external returns (uint256 sessionId);
-
-function createSessionAsDelegate(
-    address payer, address host, address paymentToken,
-    uint256 amount, uint256 pricePerToken, uint256 maxDuration,
-    uint256 proofInterval, uint256 proofTimeoutWindow
-) external returns (uint256 sessionId);
-```
-
-**Custom Errors:**
-```solidity
-error NotDelegate();        // Caller not authorized
-error ERC20Only();          // Must use ERC-20 token (no ETH)
-error BadDelegateParams();  // Invalid parameters
-```
-
-**Events:**
-```solidity
-event DelegateAuthorized(address indexed payer, address indexed delegate, bool authorized);
-event SessionCreatedByDelegate(uint256 indexed sessionId, address indexed payer, address indexed delegate, address host, bytes32 modelId, uint256 amount);
-```
-
-### SDK Integration Example
-
-```javascript
-import { parseUnits } from "ethers";
-
-// Remediation proxy address
-const MARKETPLACE = "0x95132177F964FF053C1E874b53CF74d819618E06";
-
-// One-time setup (primary wallet - 2 popups)
-await usdc.approve(MARKETPLACE, parseUnits("1000", 6)); // $1,000 USDC
-await marketplace.authorizeDelegate(subAccount.address, true);
-
-// Per-session (sub-account - NO popup!)
-const sessionId = await marketplace.connect(subAccount).createSessionForModelAsDelegate(
-    primaryWallet.address,  // payer
-    modelId,                // model
-    hostAddress,            // host
-    usdcAddress,            // USDC (no ETH for delegation)
-    parseUnits("10", 6),    // amount
-    5000,                   // pricePerToken
-    3600,                   // maxDuration
-    1000,                   // proofInterval
-    300                     // proofTimeoutWindow
-);
-```
-
----
-
-## UPGRADEABLE CONTRACTS (January 9, 2026 - Clean Slate Deployment)
-
-> **🔒 SECURITY UPDATE**: All CRITICAL vulnerabilities from January 2025 audit have been fixed.
-> **⚠️ ADDRESS CHANGE**: JobMarketplace proxy address changed on January 9, 2026 (clean slate deployment).
+> **POST-AUDIT REMEDIATION**: All 20 findings from the Hacken security audit addressed.
+> **ADDRESS CHANGE**: JobMarketplace has a NEW proxy address (fresh deployment for clean storage layout).
 > **RECOMMENDED**: Use these upgradeable contracts for all integrations.
 
 ### JobMarketplaceWithModelsUpgradeable
-- **Proxy Address**: `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E`
-- **Implementation**: `0x1B6C6A1E373E5E00Bf6210e32A6DA40304f6484c` ✅ deltaCID support (Jan 14, 2026)
+- **Proxy Address**: `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` (**FRESH PROXY** - Feb 22, 2026)
+- **Implementation**: `0x51C3F60D2e3756Cc3F119f9aE1876e2B947347ba` ✅ Full audit remediation (Feb 22, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json`
@@ -122,13 +35,16 @@ const sessionId = await marketplace.connect(subAccount).createSessionForModelAsD
   - NEW: `getTotalBalanceNative(address)` - View total balance (withdrawable + locked)
   - NEW: `getTotalBalanceToken(address, address)` - View total token balance
   - NEW: `getProofSubmission(uint256 sessionId, uint256 proofIndex)` - View proof details including verified flag
-- **Breaking Change (Jan 14, 2026)**:
-  - `submitProofOfWork` now requires 6 parameters (added `string calldata deltaCID`)
-  - `getProofSubmission` now returns 5 values (added `deltaCID`)
-  - `ProofSubmitted` event now includes `deltaCID` field
-- **Previous Breaking Change (Jan 6, 2026)**:
-  - `submitProofOfWork` added `bytes calldata signature` parameter
-  - Hosts must sign their proofs with ECDSA for verification
+- **Breaking Change (Feb 22, 2026) — Audit Remediation**:
+  - `submitProofOfWork` now takes 5 parameters: `(sessionId, tokensClaimed, proofHash, proofCID, deltaCID)` — signature removed (F202614998+F202614976)
+  - New `proofTimeoutWindow` parameter on all session creation functions (F202614911)
+  - New `createSessionFromDepositForModel()` and `createSessionForModelAsDelegate()` functions (F202614916)
+  - Require strings shortened for EVM size limit compliance (F202615067) — error text changed but behavior unchanged
+  - Early cancellation fee via `minTokensFee` (F202614917)
+  - Per-model rate limits via `ModelRegistry.getModelRateLimit()` (F202614913)
+  - Pull-pattern refunds — `RefundCreditedToDeposit` event (F202614898)
+- **Previous Breaking Change (Jan 14, 2026)**:
+  - `submitProofOfWork` previously required 6 parameters (added `string calldata deltaCID`)
 
 ### NodeRegistryWithModelsUpgradeable
 - **Proxy Address**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
@@ -160,7 +76,7 @@ const sessionId = await marketplace.connect(subAccount).createSessionForModelAsD
 
 ### ModelRegistryUpgradeable
 - **Proxy Address**: `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2`
-- **Implementation**: `0x8491af1f0D47f6367b56691dCA0F4996431fB0A5` ✅ Voting improvements (Jan 11, 2026)
+- **Implementation**: `0xF12a0A07d4230E0b045dB22057433a9826d21652` ✅ Rejected fees + lateVotes cleanup + per-model rate limits (Feb 22, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `ModelRegistryUpgradeable-CLIENT-ABI.json`
@@ -183,26 +99,28 @@ const sessionId = await marketplace.connect(subAccount).createSessionForModelAsD
 - **ABI File**: `HostEarningsUpgradeable-CLIENT-ABI.json`
 
 ### ProofSystemUpgradeable
-- **Proxy Address**: `0x5afB91977e69Cc5003288849059bc62d47E7deeb`
-- **Implementation**: `0xCF46BBa79eA69A68001A1c2f5Ad9eFA1AD435EF9` ✅ Security fixes (Jan 9, 2026)
+- **Proxy Address**: `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31`
+- **Implementation**: `0xC46C84a612Cbf4C2eAaf5A9D1411aDA6309EC963` ✅ Dead code removal + storage placeholders (Feb 22, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `ProofSystemUpgradeable-CLIENT-ABI.json`
-- **Security Features** (Jan 2026):
-  - `setAuthorizedCaller(address, bool)` - Owner authorizes callers for recordVerifiedProof
+- **Audit Remediation (Feb 2026)**:
+  - Dead circuit/verification code removed (F202615147, F202615149, F202615002, F202615064-66)
+  - Only `markProofUsed()` and `setAuthorizedCaller()` remain
+  - Storage placeholders preserve slot alignment for `authorizedCallers` at slot 3
+  - `setAuthorizedCaller(address, bool)` - Owner authorizes callers
   - `authorizedCallers(address)` - Check if address is authorized
-  - Access control on `recordVerifiedProof()` prevents front-running attacks
 
 ### Upgradeable Contracts Configuration
 
 ```javascript
-// Use these addresses for all new integrations (Updated January 9, 2026)
+// Use these addresses for all new integrations (Updated February 22, 2026)
 const upgradeableContracts = {
-  jobMarketplace: "0x3CaCbf3f448B420918A93a88706B26Ab27a3523E",  // ⚠️ NEW (Jan 9, 2026)
+  jobMarketplace: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4",  // FRESH PROXY (Feb 22, 2026)
   nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",
   hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
-  proofSystem: "0x5afB91977e69Cc5003288849059bc62d47E7deeb",
+  proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",
   fabToken: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62",
   usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 };
@@ -843,30 +761,30 @@ const response = await fetch(`${hostApiUrl}/api/v1/inference`, {
 Key functions for session jobs:
 - `createSessionJob()` - Create ETH-based session
 - `createSessionJobWithToken()` - Create token-based session
-- `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID)` - Submit proof (5 params, no signature)
+- `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - Submit signed proof (6 params)
 - `getProofSubmission(sessionId, proofIndex)` - Get proof details (returns 5 values including deltaCID)
 - `completeSessionJob(jobId, conversationCID)` - Complete and settle payments
 - `triggerSessionTimeout()` - Handle timeout scenarios
 
-**BREAKING CHANGE (Feb 4, 2026)**: `submitProofOfWork()` signature parameter REMOVED:
-- Old: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - 6 params ❌ DEPRECATED
-- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID)` - 5 params ✅ CURRENT
-
-**Why removed?** The signature was redundant - `msg.sender == session.host` check provides equivalent security with ~3,000 gas savings.
+**BREAKING CHANGE (Jan 14, 2026)**: `submitProofOfWork()` now includes deltaCID:
+- Old: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID)` - 5 params ❌ DEPRECATED
+- New: `submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID)` - 6 params ✅ CURRENT
 
 **BREAKING CHANGE (Jan 14, 2026)**: `getProofSubmission()` return value changed:
 - Old: Returns 4 values `(proofHash, tokensClaimed, timestamp, verified)`
 - New: Returns 5 values `(proofHash, tokensClaimed, timestamp, verified, deltaCID)` ✅ CURRENT
 
 ```javascript
-// No signature needed! Host authentication via msg.sender
+// Generate signature for proof submission
 const proofHash = keccak256(workData);
+const dataHash = keccak256(
+  solidityPacked(['bytes32', 'address', 'uint256'], [proofHash, hostAddress, tokensClaimed])
+);
+const signature = await hostWallet.signMessage(getBytes(dataHash));
 
 // deltaCID is optional - use empty string if not tracking deltas
 const deltaCID = "QmDeltaCID123"; // or "" if not using delta tracking
-
-// Submit directly as host (5 params, no signature)
-await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID);
+await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
 ```
 
 ## Treasury Functions
@@ -955,11 +873,10 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-February 4, 2026 - Signature Removal from Proof Submission
+February 22, 2026 - Post-audit remediation deployment (all 20 findings addressed)
 
 ### Recent Changes
-- **Feb 4, 2026**: **BREAKING** - Signature removed from `submitProofOfWork` (6 → 5 params). No signature generation needed.
-- **Feb 3, 2026**: Early Cancellation Fee - `minTokensFee()`, `setMinTokensFee()` - Protects hosts from instant cancellation abuse
+- **Feb 22, 2026**: **Post-audit remediation** — Fresh JM proxy `0xD067...adA4`, all 20 Hacken audit findings addressed. Signature removed from submitProofOfWork, proofTimeoutWindow added, per-model rate limits, early cancellation fees, pull-pattern refunds, shortened require strings (F202615067). ProofSystem and ModelRegistry implementations upgraded.
 - **Jan 16, 2026**: Stake slashing - `slashStake()`, `initializeSlashing()`, `setSlashingAuthority()`, `setTreasury()`, `lastSlashTime()`
 - **Jan 14, 2026**: deltaCID support - `submitProofOfWork` now 6 params, `getProofSubmission` returns 5 values
 - **Jan 10, 2026**: NodeRegistry - Added `repairCorruptNode()` admin function and safety check in `unregisterNode()`

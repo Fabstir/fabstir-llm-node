@@ -16,7 +16,7 @@ Use for SDK development. Includes Signature Removal, Early Cancellation Fee + Pe
 
 | Contract | Proxy Address | Implementation |
 |----------|---------------|----------------|
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
+| JobMarketplace | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
 | NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xF2D98D38B2dF95f4e8e4A49750823C415E795377` |
 | ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0x3F22fd532Ac051aE09b0F2e45F3DBfc835AfCD45` |
 | ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5345a926dcf3B0E1A6895406FB68210ED19AC556` |

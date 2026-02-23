@@ -1,268 +1,106 @@
 # Client ABIs Changelog
 
-## February 4, 2026 - Signature Removal from Proof Submission
+## February 22, 2026 - Post-Audit Remediation Deployment (ALL 20 FINDINGS ADDRESSED)
 
-### ⚠️ SDK BREAKING CHANGE
-**`submitProofOfWork` signature changed from 6 to 5 parameters** - Signature parameter removed.
+### PROXY ADDRESS CHANGED
+**JobMarketplace proxy address has changed** due to fresh proxy deployment (clean storage layout for `minTokensFee` + `isAuthorizedDelegate`).
 
-The redundant ECDSA signature verification has been removed. Authentication is now handled via `msg.sender == session.host` check, which provides equivalent security with ~3,000 gas savings per proof.
+| Contract | Old Proxy | New Proxy |
+|----------|-----------|-----------|
+| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` |
 
-**Old signature (no longer works):**
+### Implementation Upgrades
+| Contract | Proxy (unchanged unless noted) | New Implementation |
+|----------|-------------------------------|-------------------|
+| JobMarketplace | `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4` (FRESH) | `0x51C3F60D2e3756Cc3F119f9aE1876e2B947347ba` |
+| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0xC46C84a612Cbf4C2eAaf5A9D1411aDA6309EC963` |
+| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | `0xF12a0A07d4230E0b045dB22057433a9826d21652` |
+
+### SDK Breaking Changes
+
+**`submitProofOfWork` signature changed (signature parameter removed):**
 ```solidity
-function submitProofOfWork(
-    uint256 jobId,
-    uint256 tokensClaimed,
-    bytes32 proofHash,
-    bytes calldata signature,    // ❌ REMOVED
-    string calldata proofCID,
-    string calldata deltaCID
-)
+// Old (no longer works):
+function submitProofOfWork(uint256 jobId, uint256 tokensClaimed, bytes32 proofHash,
+    bytes calldata signature, string calldata proofCID, string calldata deltaCID)
+
+// New (required):
+function submitProofOfWork(uint256 sessionId, uint256 tokensClaimed, bytes32 proofHash,
+    string calldata proofCID, string calldata deltaCID)
 ```
 
-**New signature (required):**
+**All session creation functions now require `proofTimeoutWindow` parameter:**
+- `createSessionJob()`, `createSessionJobWithToken()`, `createSessionJobForModel()`, etc.
+- Value in seconds (60-3600), use 0 for default (300s)
+
+**Require string text changed (F202615067):**
+- Error messages shortened for EVM contract size compliance
+- Example: `"Only host can submit proof"` -> `"Not host"`
+- Behavior unchanged; only error message text differs
+
+### New Functions (Audit Remediation)
 ```solidity
-function submitProofOfWork(
-    uint256 jobId,
-    uint256 tokensClaimed,
-    bytes32 proofHash,
-    string calldata proofCID,
-    string calldata deltaCID     // 5 params total
-)
+// F202614916: Deposit-based model sessions + delegation
+function createSessionFromDepositForModel(bytes32 modelId, address host, address paymentToken,
+    uint256 amount, uint256 pricePerToken, uint256 maxDuration, uint256 proofInterval,
+    uint256 proofTimeoutWindow) external returns (uint256)
+function createSessionForModelAsDelegate(address payer, bytes32 modelId, address host,
+    address paymentToken, uint256 amount, uint256 pricePerToken, uint256 maxDuration,
+    uint256 proofInterval, uint256 proofTimeoutWindow) external returns (uint256)
+function authorizeDelegate(address delegate, bool authorized) external
+function isDelegateAuthorized(address depositor, address delegate) external view returns (bool)
+
+// F202614917: Early cancellation fee
+function setMinTokensFee(uint256 fee) external  // owner-only
+function minTokensFee() external view returns (uint256)
+
+// F202614964: Rejected proposal fee withdrawal (ModelRegistry)
+function withdrawRejectedFees() external  // owner-only
+function accumulatedRejectedFees() external view returns (uint256)
+
+// F202614913: Per-model rate limits (ModelRegistry)
+function setModelRateLimit(bytes32 modelId, uint256 maxTokensPerSecond) external  // owner-only
+function getModelRateLimit(bytes32 modelId) external view returns (uint256)
+```
+
+### New Events
+```solidity
+// F202614898: Pull-pattern refund
+event RefundCreditedToDeposit(uint256 indexed jobId, address indexed depositor, uint256 amount, address indexed token);
+
+// F202614916: Delegation
+event DelegateAuthorized(address indexed depositor, address indexed delegate, bool authorized);
+event SessionCreatedByDelegate(uint256 indexed sessionId, address indexed depositor, address indexed delegate);
+
+// F202614913: Rate limits (ModelRegistry)
+event ModelRateLimitUpdated(bytes32 indexed modelId, uint256 maxTokensPerSecond);
+
+// F202614964: Rejected fees (ModelRegistry)
+event RejectedFeesWithdrawn(address indexed to, uint256 amount);
 ```
 
 ### SDK Migration Guide
 ```javascript
-// OLD (no longer works - 6 params):
-const signature = await hostWallet.signMessage(getBytes(dataHash));
+// Update contract address
+const CONTRACTS = {
+  jobMarketplace: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4",  // CHANGED
+  proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",
+  // ... other addresses unchanged
+};
+
+// Update submitProofOfWork (signature parameter removed)
+// OLD:
 await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, signature, proofCID, deltaCID);
+// NEW:
+await marketplace.submitProofOfWork(sessionId, tokensClaimed, proofHash, proofCID, deltaCID);
 
-// NEW (required - 5 params):
-// No signature needed! Just call directly as the host
-await marketplace.submitProofOfWork(jobId, tokensClaimed, proofHash, proofCID, deltaCID);
+// Update session creation (proofTimeoutWindow added)
+// OLD:
+await marketplace.createSessionJob(host, pricePerToken, maxDuration, proofInterval, { value: deposit });
+// NEW:
+const proofTimeoutWindow = 300; // 5 minutes (or 0 for default)
+await marketplace.createSessionJob(host, pricePerToken, maxDuration, proofInterval, proofTimeoutWindow, { value: deposit });
 ```
-
-### ProofSystem Changes
-
-**Removed Functions:**
-- `verifyAndMarkComplete(bytes proof, address prover, uint256 claimedTokens, bytes32 modelId)` - REMOVED
-- `verifyHostSignature(bytes proof, address prover, uint256 claimedTokens, bytes32 modelId)` - REMOVED
-
-**New Function:**
-```solidity
-// Simple replay protection only - no signature verification
-function markProofUsed(bytes32 proofHash) external returns (bool)
-```
-
-### Implementation Upgrades (Remediation Proxy)
-| Contract | Proxy | New Implementation |
-|----------|-------|-------------------|
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x1a0436a15d2fD911b2F062D08aA312141A978955` |
-| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x5345a926dcf3B0E1A6895406FB68210ED19AC556` |
-
-### Benefits
-- ~3,000 gas savings per proof submission (no ecrecover)
-- Simpler host integration (no signature generation)
-- Equivalent security via `msg.sender == session.host` check
-- Reduced code complexity
-
-### No Other Breaking Changes
-- All other functions work as before
-- Session creation unchanged
-- Completion unchanged
-- V2 delegation unchanged
-
----
-
-## February 2, 2026 - V2 Direct Payment Delegation
-
-### New Feature: Smart Wallet Sub-Account Support
-
-Enables Coinbase Smart Wallet sub-accounts to create sessions using primary account's USDC via `transferFrom` pattern.
-
-**New Functions:**
-```solidity
-// Authorize a delegate
-function authorizeDelegate(address delegate, bool authorized) external;
-
-// Check authorization
-function isDelegateAuthorized(address payer, address delegate) external view returns (bool);
-
-// Create model session as delegate (USDC only)
-function createSessionForModelAsDelegate(
-    address payer,
-    bytes32 modelId,
-    address host,
-    address paymentToken,
-    uint256 amount,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow
-) external returns (uint256 sessionId);
-
-// Create non-model session as delegate (USDC only)
-function createSessionAsDelegate(
-    address payer,
-    address host,
-    address paymentToken,
-    uint256 amount,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow
-) external returns (uint256 sessionId);
-```
-
-**New Custom Errors:**
-```solidity
-error NotDelegate();        // Caller not authorized as delegate
-error ERC20Only();          // Direct delegation requires ERC-20 token
-error BadDelegateParams();  // Invalid parameters
-```
-
-**New Events:**
-```solidity
-event DelegateAuthorized(address indexed payer, address indexed delegate, bool authorized);
-event SessionCreatedByDelegate(uint256 indexed sessionId, address indexed payer, address indexed delegate, address host, bytes32 modelId, uint256 amount);
-```
-
-**New Storage:**
-```solidity
-mapping(address => mapping(address => bool)) public isAuthorizedDelegate;
-```
-
-### Implementation Upgrade (Remediation Proxy)
-| Contract | Proxy | New Implementation |
-|----------|-------|-------------------|
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0xf5441bda610AbCDe71B96fe6051E738d2702f071` |
-
-### Bytecode Optimization
-- Custom errors reduced bytecode from 25,453 to 24,516 bytes
-- Contract now fits within EVM 24,576 byte limit
-
-### SDK Integration
-```typescript
-// One-time setup (primary wallet)
-await usdc.approve(marketplace.address, parseUnits("1000", 6));
-await marketplace.authorizeDelegate(subAccount.address, true);
-
-// Per-session (sub-account - NO popup!)
-await marketplace.connect(subAccount).createSessionForModelAsDelegate(
-    primaryWallet.address, modelId, host, usdcAddress,
-    amount, pricePerToken, maxDuration, proofInterval, proofTimeoutWindow
-);
-```
-
-### No Breaking Changes
-- All existing functions work as before
-- V2 delegation is additive (new functions only)
-- Escrow/deposit functions retained for general wallet support
-
----
-
-## January 31, 2026 - Security Audit Remediation (AUDIT-F1 to F5)
-
-### ⚠️ BREAKING CHANGES
-
-**1. IProofSystem Interface Updated (AUDIT-F4)**
-
-All signature verification functions now require `modelId` parameter:
-
-```solidity
-// OLD (3 parameters)
-function verifyAndMarkComplete(bytes calldata proof, address prover, uint256 claimedTokens) external returns (bool);
-function verifyHostSignature(bytes calldata proof, address prover, uint256 claimedTokens) external view returns (bool);
-
-// NEW (4 parameters - BREAKING CHANGE)
-function verifyAndMarkComplete(bytes calldata proof, address prover, uint256 claimedTokens, bytes32 modelId) external returns (bool);
-function verifyHostSignature(bytes calldata proof, address prover, uint256 claimedTokens, bytes32 modelId) external view returns (bool);
-```
-
-**Host Signing Update Required:**
-- Hosts MUST include `modelId` when signing proofs
-- Signature message: `keccak256(proofHash, host, tokensClaimed, modelId)`
-- For non-model sessions: use `bytes32(0)` as modelId
-
-**2. Session Creation Functions Updated (AUDIT-F3)**
-
-All session creation functions now require `proofTimeoutWindow` parameter:
-
-```solidity
-// NEW parameter added to ALL session creation functions:
-function createSessionJob(
-    address host,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow  // NEW: 60-3600 seconds
-) external payable returns (uint256);
-
-function createSessionJobForModel(
-    address host,
-    bytes32 modelId,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow  // NEW
-) external payable returns (uint256);
-
-// Similar updates to:
-// - createSessionJobWithToken()
-// - createSessionJobForModelWithToken()
-// - createSessionFromDeposit()
-```
-
-**Constants:**
-```solidity
-uint256 public constant MIN_PROOF_TIMEOUT = 60;    // 1 minute minimum
-uint256 public constant MAX_PROOF_TIMEOUT = 3600;  // 1 hour maximum
-uint256 public constant DEFAULT_PROOF_TIMEOUT = 300; // 5 minute default
-```
-
-### New Functions
-
-**createSessionFromDepositForModel (AUDIT-F5):**
-```solidity
-function createSessionFromDepositForModel(
-    bytes32 modelId,
-    address host,
-    address paymentToken,
-    uint256 deposit,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow
-) external returns (uint256 sessionId);
-```
-
-### Security Fixes
-
-| Finding | Description | Fix |
-|---------|-------------|-----|
-| AUDIT-F1 | Dead `onlyRegisteredHost` modifier | Removed |
-| AUDIT-F2 | ProofSystem address(0) bypasses verification | Now reverts: "ProofSystem not configured" |
-| AUDIT-F3 | proofInterval used as timeout (dual interpretation) | Separate `proofTimeoutWindow` parameter |
-| AUDIT-F4 | modelId missing from signature | Now required in all signatures |
-| AUDIT-F5 | No createSessionFromDepositForModel | New function added |
-
-### Test Contract Deployments (DO NOT USE IN PRODUCTION)
-
-For testing remediation fixes only - audited contracts unchanged:
-
-| Contract | Test Proxy | Test Implementation |
-|----------|------------|---------------------|
-| ProofSystem | `0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31` | `0x56657bCBAE50AB656A9452f7B52e317650f90267` |
-| JobMarketplace | `0x95132177F964FF053C1E874b53CF74d819618E06` | `0x06dB705BcBdda50A1712635fdC64A28d75de5603` |
-
-### Audited Contracts (FROZEN)
-
-| Contract | Audited Proxy | Status |
-|----------|--------------|--------|
-| JobMarketplace | `0x3CaCbf3f448B420918A93a88706B26Ab27a3523E` | FROZEN |
-| ProofSystem | `0x5afB91977e69Cc5003288849059bc62d47E7deeb` | FROZEN |
-| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | FROZEN |
-| ModelRegistry | `0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2` | FROZEN |
-| HostEarnings | `0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0` | FROZEN |
 
 ---
 
