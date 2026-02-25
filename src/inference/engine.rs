@@ -131,6 +131,9 @@ pub struct InferenceRequest {
     /// Cancellation flag — set to true to abort generation between tokens
     #[serde(skip)]
     pub cancel_flag: Option<Arc<AtomicBool>>,
+    /// Token sender — sends each token as it's generated (for true streaming)
+    #[serde(skip)]
+    pub token_sender: Option<mpsc::Sender<Result<TokenInfo>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,12 +537,17 @@ impl LlmEngine {
                     output.push_str(&token_str);
 
                     // Store token info for streaming
-                    token_info_list.push(TokenInfo {
+                    let token_info = TokenInfo {
                         token_id: new_token_id.0 as i32,
                         text: token_str,
                         logprob: None,
                         timestamp: None,
-                    });
+                    };
+                    // Send token as it's generated (true streaming)
+                    if let Some(ref tx) = request.token_sender {
+                        let _ = tx.try_send(Ok(token_info.clone()));
+                    }
+                    token_info_list.push(token_info);
                 } else {
                     // Invalid UTF-8 - don't add to output but MUST advance model state
                     consecutive_invalid_utf8 += 1;
@@ -621,42 +629,26 @@ impl LlmEngine {
             return Err(anyhow!("Model not found: {}", request.model_id));
         }
 
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(4096);
 
         // Check if we have a real model loaded
         let has_real_model = self.models.lock().unwrap().contains_key(&request.model_id);
 
         if has_real_model {
-            // For real models, we need to run synchronously due to !Send constraint
-            // We'll generate all tokens at once and then stream them
-            // Make sure stream is false for the actual inference
-            let cancel_flag_clone = request.cancel_flag.clone();
+            // True token-by-token streaming via spawn_blocking (v8.19.1)
+            // Each token is sent over the channel as it's generated in the loop.
             let mut inference_request = request;
             inference_request.stream = false;
-            let result = self.run_inference(inference_request).await;
-
-            // Spawn a task to stream the already-generated tokens
-            tokio::spawn(async move {
-                match result {
-                    Ok(inference_result) => {
-                        for token_info in inference_result.token_info {
-                            // Check cancel flag in delivery loop
-                            if let Some(ref flag) = cancel_flag_clone {
-                                if flag.load(Ordering::Acquire) {
-                                    break;
-                                }
-                            }
-                            if tx.send(Ok(token_info)).await.is_err() {
-                                break;
-                            }
-                            // Add a small delay to simulate streaming
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Err(e)).await;
-                    }
-                }
+            inference_request.token_sender = Some(tx);
+            // Clone engine — all fields are Arc, cheap clone
+            let engine = self.clone();
+            // Run generation on blocking thread pool (solves !Send constraint)
+            tokio::task::spawn_blocking(move || {
+                let handle = tokio::runtime::Handle::current();
+                handle.block_on(async move {
+                    let _ = engine.run_inference(inference_request).await;
+                    // tx drops here → rx returns None → stream ends
+                })
             });
         } else {
             // Model not loaded in memory
@@ -754,6 +746,7 @@ impl LlmEngine {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         }
     }
 

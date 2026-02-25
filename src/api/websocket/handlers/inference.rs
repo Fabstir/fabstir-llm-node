@@ -131,6 +131,7 @@ impl InferenceHandler {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         // Run inference or use mock
@@ -241,6 +242,7 @@ impl InferenceHandler {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         // Mock response for now

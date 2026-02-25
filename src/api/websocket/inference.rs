@@ -187,6 +187,7 @@ impl InferenceEngine {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         // Generate with engine
@@ -241,6 +242,7 @@ impl InferenceEngine {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         // For streaming, we need to use the engine's stream method

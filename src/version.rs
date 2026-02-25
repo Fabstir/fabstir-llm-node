@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.19.0-stream-cancel-2026-02-25";
+pub const VERSION: &str = "v8.19.1-true-streaming-2026-02-25";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.19.0";
+pub const VERSION_NUMBER: &str = "8.19.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 19;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-25";
@@ -228,6 +228,9 @@ pub const FEATURES: &[&str] = &[
     "tokio-select-streaming",
     "stream-end-reason",
     "stream-end-tokens-used",
+    // True token-by-token streaming (v8.19.1)
+    "true-streaming",
+    "spawn-blocking-inference",
 ];
 
 /// Supported chain IDs
@@ -238,6 +241,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.19.1 - True Token-by-Token Streaming (Feb 25, 2026)
+    "FEAT: Tokens now stream to client as generated (no more batch-then-deliver delay)",
+    "FEAT: spawn_blocking + Handle::block_on for !Send llama-cpp inference on blocking thread pool",
+    "FEAT: token_sender field on InferenceRequest for per-token channel delivery",
+    "FEAT: Removed 10ms artificial streaming delay — tokens arrive at generation speed",
+    "PERF: stream_cancel now stops actual GPU generation, not just delivery",
     // v8.19.0 - Stream Cancellation (Feb 25, 2026)
     "FEAT: Node handles stream_cancel WebSocket message to stop inference mid-stream",
     "FEAT: Cancel flag (AtomicBool) checked between tokens in generation loop",
@@ -539,7 +548,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 19);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -558,6 +567,9 @@ mod tests {
         assert!(FEATURES.contains(&"stream-cancel"));
         assert!(FEATURES.contains(&"cancel-flag-inference"));
         assert!(FEATURES.contains(&"stream-end-reason"));
+        // v8.19.1 true streaming
+        assert!(FEATURES.contains(&"true-streaming"));
+        assert!(FEATURES.contains(&"spawn-blocking-inference"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -604,14 +616,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.19.0"));
+        assert!(version.contains("8.19.1"));
         assert!(version.contains("2026-02-25"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.19.0-stream-cancel-2026-02-25");
-        assert_eq!(VERSION_NUMBER, "8.19.0");
+        assert_eq!(VERSION, "v8.19.1-true-streaming-2026-02-25");
+        assert_eq!(VERSION_NUMBER, "8.19.1");
         assert_eq!(BUILD_DATE, "2026-02-25");
     }
 
