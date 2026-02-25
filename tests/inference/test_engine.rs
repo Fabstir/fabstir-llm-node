@@ -93,6 +93,7 @@ async fn test_inference_execution() {
         stop_sequences: vec!["\n\n".to_string()],
         stream: false,
         cancel_flag: None,
+        token_sender: None,
     };
 
     let result = engine
@@ -132,6 +133,7 @@ async fn test_streaming_inference() {
         stop_sequences: vec![],
         stream: true,
         cancel_flag: None,
+        token_sender: None,
     };
 
     let mut stream = engine
@@ -185,6 +187,7 @@ async fn test_multiple_concurrent_inferences() {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         let result = engine.run_inference(request).await;
@@ -224,6 +227,7 @@ async fn test_context_window_management() {
         stop_sequences: vec![],
         stream: false,
         cancel_flag: None,
+        token_sender: None,
     };
 
     // Should handle gracefully
@@ -319,6 +323,7 @@ async fn test_inference_cancellation() {
         stop_sequences: vec![],
         stream: false,
         cancel_flag: None,
+        token_sender: None,
     };
 
     let inference_handle = engine.run_inference_async(request).await;
@@ -455,6 +460,7 @@ async fn test_inference_metrics() {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         let _ = engine.run_inference(request).await;
@@ -504,6 +510,7 @@ async fn run_quick_inference(engine: &LlmEngine, model_id: &str) -> InferenceRes
         stop_sequences: vec![],
         stream: false,
         cancel_flag: None,
+        token_sender: None,
     };
 
     engine

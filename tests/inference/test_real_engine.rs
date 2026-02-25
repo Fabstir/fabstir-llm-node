@@ -93,6 +93,8 @@ async fn test_tokenization() {
             seed: Some(42),
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
+            token_sender: None,
         };
 
         let result = engine.run_inference(request).await
@@ -138,6 +140,8 @@ async fn test_generation_params() {
             seed: Some(42), // Fixed seed for reproducibility
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
+            token_sender: None,
         };
 
         let result = engine.run_inference(request).await
@@ -271,6 +275,8 @@ async fn test_streaming_generation() {
         seed: None,
         stop_sequences: vec![],
         stream: true,
+        cancel_flag: None,
+        token_sender: None,
     };
 
     let mut stream = engine.run_inference_stream(request).await
@@ -352,8 +358,10 @@ async fn test_model_unloading() {
         seed: None,
         stop_sequences: vec![],
         stream: false,
+        cancel_flag: None,
+        token_sender: None,
     };
-    
+
     let result = engine.run_inference(request).await;
     assert!(result.is_err(), "Inference should fail with unloaded model");
 }

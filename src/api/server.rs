@@ -689,6 +689,7 @@ impl ApiServer {
             stop_sequences: vec![],
             stream: false,
             cancel_flag: None,
+            token_sender: None,
         };
 
         // Run inference with real model
@@ -955,6 +956,7 @@ impl ApiServer {
             stop_sequences: vec![],
             stream: true, // Enable streaming!
             cancel_flag,
+            token_sender: None,
         };
 
         // Run streaming inference with real model

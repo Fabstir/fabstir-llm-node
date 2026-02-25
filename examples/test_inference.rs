@@ -35,6 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             seed: None,
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
+            token_sender: None,
         })
         .await?;
 

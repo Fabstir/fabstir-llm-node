@@ -169,7 +169,7 @@ async fn test_concurrent_inference_requests() {
                 max_tokens: 30,
                 temperature: Some(0.1),
                 stream: false,
-                    };
+            };
 
             engine_clone.generate(request).await
         });
@@ -216,7 +216,7 @@ async fn test_gpu_acceleration_detection() {
             max_tokens: 10,
             temperature: Some(0.1),
             stream: false,
-            };
+        };
 
         let start = std::time::Instant::now();
         let response = engine.generate(request).await.unwrap();
@@ -413,19 +413,19 @@ async fn test_batch_inference_processing() {
             max_tokens: 10,
             temperature: Some(0.1),
             stream: false,
-            },
+        },
         InferenceRequest {
             prompt: "What is 2+2?".to_string(),
             max_tokens: 10,
             temperature: Some(0.1),
             stream: false,
-            },
+        },
         InferenceRequest {
             prompt: "What is 3+3?".to_string(),
             max_tokens: 10,
             temperature: Some(0.1),
             stream: false,
-            },
+        },
     ];
 
     let responses = engine.batch_generate(requests).await.unwrap();
