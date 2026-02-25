@@ -92,6 +92,7 @@ async fn test_inference_execution() {
         seed: Some(42),
         stop_sequences: vec!["\n\n".to_string()],
         stream: false,
+        cancel_flag: None,
     };
 
     let result = engine
@@ -130,6 +131,7 @@ async fn test_streaming_inference() {
         seed: None,
         stop_sequences: vec![],
         stream: true,
+        cancel_flag: None,
     };
 
     let mut stream = engine
@@ -182,6 +184,7 @@ async fn test_multiple_concurrent_inferences() {
             seed: Some(i as u64),
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
         };
 
         let result = engine.run_inference(request).await;
@@ -220,6 +223,7 @@ async fn test_context_window_management() {
         seed: None,
         stop_sequences: vec![],
         stream: false,
+        cancel_flag: None,
     };
 
     // Should handle gracefully
@@ -314,6 +318,7 @@ async fn test_inference_cancellation() {
         seed: None,
         stop_sequences: vec![],
         stream: false,
+        cancel_flag: None,
     };
 
     let inference_handle = engine.run_inference_async(request).await;
@@ -449,6 +454,7 @@ async fn test_inference_metrics() {
             seed: Some(i as u64),
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
         };
 
         let _ = engine.run_inference(request).await;
@@ -497,6 +503,7 @@ async fn run_quick_inference(engine: &LlmEngine, model_id: &str) -> InferenceRes
         seed: Some(42),
         stop_sequences: vec![],
         stream: false,
+        cancel_flag: None,
     };
 
     engine

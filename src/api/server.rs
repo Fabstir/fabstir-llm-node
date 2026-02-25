@@ -688,6 +688,7 @@ impl ApiServer {
             seed: None,
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
         };
 
         // Run inference with real model
@@ -771,6 +772,7 @@ impl ApiServer {
         &self,
         request: InferenceRequest,
         client_ip: String,
+        cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<mpsc::Receiver<StreamingResponse>, ApiError> {
         // Validate and check limits (same as non-streaming)
         request.validate()?;
@@ -952,6 +954,7 @@ impl ApiServer {
             seed: None,
             stop_sequences: vec![],
             stream: true, // Enable streaming!
+            cancel_flag,
         };
 
         // Run streaming inference with real model
@@ -1602,8 +1605,12 @@ async fn websocket_handler(
     ws.on_upgrade(|socket| handle_websocket(socket, server))
 }
 
-async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
+async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
+    use futures::{SinkExt, StreamExt};
     use serde_json::json;
+
+    // Split ws_sender into sender + receiver for concurrent access (stream_cancel support)
+    let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Track session information for settlement
     let mut session_id: Option<String> = None;
@@ -1615,7 +1622,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
         "type": "connected",
         "message": "WebSocket connected successfully"
     });
-    if socket
+    if ws_sender
         .send(axum::extract::ws::Message::Text(welcome_msg.to_string()))
         .await
         .is_err()
@@ -1623,11 +1630,32 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
         return;
     }
 
-    while let Some(msg) = socket.recv().await {
+    while let Some(msg) = ws_receiver.next().await {
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
                 // Parse WebSocket message
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                    // Handle stream_cancel (always plaintext, processed before all other types)
+                    if json_msg["type"] == "stream_cancel" {
+                        let cancel_sid = json_msg["session_id"]
+                            .as_str()
+                            .or_else(|| json_msg["sessionId"].as_str())
+                            .map(String::from)
+                            .or(session_id.clone());
+                        if let Some(sid) = &cancel_sid {
+                            let store = server.session_store.read().await;
+                            if let Some(session) = store.get_session(sid).await {
+                                session
+                                    .inference_cancel_flag
+                                    .store(true, std::sync::atomic::Ordering::Release);
+                                info!("🛑 stream_cancel received for session {}", sid);
+                            } else {
+                                debug!("stream_cancel for unknown session {}, ignoring", sid);
+                            }
+                        }
+                        continue;
+                    }
+
                     // Track session initialization
                     if json_msg["type"] == "session_init" {
                         // Handle session_id or sessionId
@@ -1703,7 +1731,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                             response["id"] = msg_id.clone();
                         }
 
-                        if let Err(e) = socket
+                        if let Err(e) = ws_sender
                             .send(axum::extract::ws::Message::Text(response.to_string()))
                             .await
                         {
@@ -1793,7 +1821,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     error_msg["id"] = msg_id.clone();
                                                 }
 
-                                                let _ = socket
+                                                let _ = ws_sender
                                                     .send(axum::extract::ws::Message::Text(
                                                         error_msg.to_string(),
                                                     ))
@@ -1963,7 +1991,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         response["id"] = msg_id.clone();
                                                     }
 
-                                                    if let Err(e) = socket
+                                                    if let Err(e) = ws_sender
                                                         .send(axum::extract::ws::Message::Text(
                                                             response.to_string(),
                                                         ))
@@ -1985,7 +2013,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         error_msg["id"] = msg_id.clone();
                                                     }
 
-                                                    let _ = socket
+                                                    let _ = ws_sender
                                                         .send(axum::extract::ws::Message::Text(
                                                             error_msg.to_string(),
                                                         ))
@@ -2005,7 +2033,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 error_msg["id"] = msg_id.clone();
                                             }
 
-                                            let _ = socket
+                                            let _ = ws_sender
                                                 .send(axum::extract::ws::Message::Text(
                                                     error_msg.to_string(),
                                                 ))
@@ -2024,7 +2052,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         error_msg["id"] = msg_id.clone();
                                     }
 
-                                    let _ = socket
+                                    let _ = ws_sender
                                         .send(axum::extract::ws::Message::Text(
                                             error_msg.to_string(),
                                         ))
@@ -2042,7 +2070,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     error_msg["id"] = msg_id.clone();
                                 }
 
-                                let _ = socket
+                                let _ = ws_sender
                                     .send(axum::extract::ws::Message::Text(error_msg.to_string()))
                                     .await;
                             }
@@ -2065,7 +2093,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 response["id"] = msg_id.clone();
                             }
 
-                            if let Err(e) = socket
+                            if let Err(e) = ws_sender
                                 .send(axum::extract::ws::Message::Text(response.to_string()))
                                 .await
                             {
@@ -2127,7 +2155,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                         error_msg["id"] = msg_id.clone();
                                                     }
 
-                                                    let _ = socket
+                                                    let _ = ws_sender
                                                         .send(axum::extract::ws::Message::Text(
                                                             error_msg.to_string(),
                                                         ))
@@ -2208,7 +2236,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         job_id,
                                                                         json_msg.get("id"),
                                                                     ).await;
-                                                                    let _ = socket.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
+                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
                                                                     continue;
                                                                 }
 
@@ -2274,7 +2302,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         job_id,
                                                                         json_msg.get("id"),
                                                                     ).await;
-                                                                    let _ = socket.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
+                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
                                                                     continue;
                                                                     }
                                                                 }
@@ -2427,11 +2455,35 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         request_value
                                                                     )
                                                                 {
+                                                                    // Reset and clone cancel flag for this inference
+                                                                    let cancel_flag = if let Some(
+                                                                        ref sid,
+                                                                    ) =
+                                                                        current_session_id
+                                                                    {
+                                                                        let store = server
+                                                                            .session_store
+                                                                            .read()
+                                                                            .await;
+                                                                        if let Some(session) = store
+                                                                            .get_session(sid)
+                                                                            .await
+                                                                        {
+                                                                            session.inference_cancel_flag.store(false, std::sync::atomic::Ordering::Release);
+                                                                            Some(session.inference_cancel_flag.clone())
+                                                                        } else {
+                                                                            None
+                                                                        }
+                                                                    } else {
+                                                                        None
+                                                                    };
+
                                                                     // Handle streaming inference
                                                                     match server
                                                                         .handle_streaming_request(
                                                                             request,
                                                                             "ws-client".to_string(),
+                                                                            cancel_flag.clone(),
                                                                         )
                                                                         .await
                                                                     {
@@ -2442,42 +2494,69 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                             let mut chunk_index =
                                                                                 0u32;
 
-                                                                            while let Some(
-                                                                                response,
-                                                                            ) = receiver
-                                                                                .recv()
-                                                                                .await
-                                                                            {
-                                                                                // Count tokens for logging only - producer already tracks for checkpoints
-                                                                                if response.tokens
-                                                                                    > 0
+                                                                            loop {
+                                                                                let response = tokio::select! {
+                                                                                    resp = receiver.recv() => {
+                                                                                        match resp {
+                                                                                            Some(r) => r,
+                                                                                            None => break, // channel closed
+                                                                                        }
+                                                                                    }
+                                                                                    ws_msg = ws_receiver.next() => {
+                                                                                        match ws_msg {
+                                                                                            Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                                                                                                if let Ok(cj) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                                                                    if cj["type"] == "stream_cancel" {
+                                                                                                        if let Some(ref flag) = cancel_flag {
+                                                                                                            flag.store(true, std::sync::atomic::Ordering::Release);
+                                                                                                        }
+                                                                                                        info!("🛑 stream_cancel during encrypted streaming");
+                                                                                                        let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens});
+                                                                                                        if let Some(ref msg_id) = message_id { end_msg["id"] = msg_id.clone(); }
+                                                                                                        if let Some(ref sid) = current_session_id { end_msg["session_id"] = json!(sid); }
+                                                                                                        let _ = ws_sender.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                                                                                        break;
+                                                                                                    }
+                                                                                                }
+                                                                                                continue; // non-cancel message, keep streaming
+                                                                                            }
+                                                                                            Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                                                            _ => continue,
+                                                                                        }
+                                                                                    }
+                                                                                };
                                                                                 {
-                                                                                    total_tokens +=
+                                                                                    // Count tokens for logging only - producer already tracks for checkpoints
+                                                                                    if response
+                                                                                        .tokens
+                                                                                        > 0
+                                                                                    {
+                                                                                        total_tokens +=
                                                                                         response
                                                                                             .tokens
                                                                                             as u64;
-                                                                                }
+                                                                                    }
 
-                                                                                // Encrypt response chunks with session key
-                                                                                // Generate random 24-byte nonce using CSPRNG
-                                                                                let mut nonce =
-                                                                                    [0u8; 24];
-                                                                                use rand::RngCore;
-                                                                                rand::thread_rng()
+                                                                                    // Encrypt response chunks with session key
+                                                                                    // Generate random 24-byte nonce using CSPRNG
+                                                                                    let mut nonce =
+                                                                                        [0u8; 24];
+                                                                                    use rand::RngCore;
+                                                                                    rand::thread_rng()
                                                                                     .fill_bytes(
                                                                                         &mut nonce,
                                                                                     );
 
-                                                                                // Prepare AAD with chunk index for ordering validation
-                                                                                let aad = format!(
-                                                                                    "chunk_{}",
-                                                                                    chunk_index
-                                                                                );
-                                                                                let aad_bytes =
+                                                                                    // Prepare AAD with chunk index for ordering validation
+                                                                                    let aad = format!(
+                                                                                        "chunk_{}",
+                                                                                        chunk_index
+                                                                                    );
+                                                                                    let aad_bytes =
                                                                                     aad.as_bytes();
 
-                                                                                // Encrypt the response content
-                                                                                match crate::crypto::encrypt_with_aead(
+                                                                                    // Encrypt the response content
+                                                                                    match crate::crypto::encrypt_with_aead(
                                                                                     response.content.as_bytes(),
                                                                                     &nonce,
                                                                                     aad_bytes,
@@ -2514,7 +2593,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                         }
 
                                                                                         // Send encrypted chunk
-                                                                                        match socket
+                                                                                        match ws_sender
                                                                                             .send(
                                                                                                 axum::extract::ws::Message::Text(
                                                                                                     ws_msg.to_string(),
@@ -2570,7 +2649,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                     }
 
                                                                                                     // Send final encrypted_response
-                                                                                                    match socket
+                                                                                                    match ws_sender
                                                                                                         .send(
                                                                                                             axum::extract::ws::Message::Text(
                                                                                                                 end_msg.to_string(),
@@ -2580,7 +2659,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                     {
                                                                                                         Ok(_) => {
                                                                                                             // Send stream_end for SDK compatibility
-                                                                                                            let mut stream_end_msg = json!({"type": "stream_end"});
+                                                                                                            let mut stream_end_msg = json!({"type": "stream_end", "reason": "complete", "tokens_used": total_tokens});
                                                                                                             if let Some(ref msg_id) = message_id {
                                                                                                                 stream_end_msg["id"] = msg_id.clone();
                                                                                                             }
@@ -2590,7 +2669,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                             if vlm_tokens_used > 0 {
                                                                                                                 stream_end_msg["vlm_tokens"] = json!(vlm_tokens_used);
                                                                                                             }
-                                                                                                            let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                                                         }
                                                                                                         Err(e) => {
                                                                                                             error!("❌ Failed to send final encrypted_response: {}", e);
@@ -2617,21 +2696,23 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             error_msg["id"] = msg_id.clone();
                                                                                         }
 
-                                                                                        let _ = socket
+                                                                                        let _ = ws_sender
                                                                                             .send(axum::extract::ws::Message::Text(
                                                                                                 error_msg.to_string(),
                                                                                             ))
                                                                                             .await;
                                                                                         // Send stream_end after error
-                                                                                        let mut stream_end_msg = json!({"type": "stream_end"});
+                                                                                        let mut stream_end_msg = json!({"type": "stream_end", "reason": "error", "tokens_used": total_tokens});
                                                                                         if let Some(ref msg_id) = message_id {
                                                                                             stream_end_msg["id"] = msg_id.clone();
                                                                                         }
-                                                                                        let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                                        let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                                         break;
                                                                                     }
                                                                                 }
-                                                                            }
+                                                                                }
+                                                                                // close tokio::select! response block
+                                                                            } // close loop
 
                                                                             info!(
                                                                                 "📊 Encrypted session complete - Total tokens: {}",
@@ -2652,7 +2733,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     msg_id.clone();
                                                                             }
 
-                                                                            let _ = socket
+                                                                            let _ = ws_sender
                                                                                 .send(
                                                                                     axum::extract::ws::Message::Text(
                                                                                         error_msg.to_string(),
@@ -2661,7 +2742,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 .await;
 
                                                                             // CRITICAL: Send stream_end even on error so SDK knows stream is done
-                                                                            let mut stream_end_msg = json!({"type": "stream_end"});
+                                                                            let mut stream_end_msg = json!({"type": "stream_end", "reason": "error", "tokens_used": 0});
                                                                             if let Some(
                                                                                 ref msg_id,
                                                                             ) = message_id
@@ -2670,7 +2751,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     ["id"] =
                                                                                     msg_id.clone();
                                                                             }
-                                                                            let _ = socket.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                         }
                                                                     }
                                                                 }
@@ -2689,7 +2770,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                                         msg_id.clone();
                                                                 }
 
-                                                                let _ = socket
+                                                                let _ = ws_sender
                                                                     .send(
                                                                         axum::extract::ws::Message::Text(
                                                                             error_msg.to_string(),
@@ -2710,7 +2791,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                             error_msg["id"] = msg_id.clone();
                                                         }
 
-                                                        let _ = socket
+                                                        let _ = ws_sender
                                                             .send(axum::extract::ws::Message::Text(
                                                                 error_msg.to_string(),
                                                             ))
@@ -2729,7 +2810,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     error_msg["id"] = msg_id.clone();
                                                 }
 
-                                                let _ = socket
+                                                let _ = ws_sender
                                                     .send(axum::extract::ws::Message::Text(
                                                         error_msg.to_string(),
                                                     ))
@@ -2747,7 +2828,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             error_msg["id"] = msg_id.clone();
                                         }
 
-                                        let _ = socket
+                                        let _ = ws_sender
                                             .send(axum::extract::ws::Message::Text(
                                                 error_msg.to_string(),
                                             ))
@@ -2764,7 +2845,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         error_msg["id"] = msg_id.clone();
                                     }
 
-                                    let _ = socket
+                                    let _ = ws_sender
                                         .send(axum::extract::ws::Message::Text(
                                             error_msg.to_string(),
                                         ))
@@ -2781,7 +2862,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     error_msg["id"] = msg_id.clone();
                                 }
 
-                                let _ = socket
+                                let _ = ws_sender
                                     .send(axum::extract::ws::Message::Text(error_msg.to_string()))
                                     .await;
                             }
@@ -2796,7 +2877,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 error_msg["id"] = msg_id.clone();
                             }
 
-                            let _ = socket
+                            let _ = ws_sender
                                 .send(axum::extract::ws::Message::Text(error_msg.to_string()))
                                 .await;
                         }
@@ -2942,60 +3023,110 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                 }
                             }
 
+                            // Reset and clone cancel flag for this inference
+                            let cancel_flag = if let Some(ref sid) = session_id {
+                                let store = server.session_store.read().await;
+                                if let Some(session) = store.get_session(sid).await {
+                                    session
+                                        .inference_cancel_flag
+                                        .store(false, std::sync::atomic::Ordering::Release);
+                                    Some(session.inference_cancel_flag.clone())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
                             // Handle streaming inference
                             match server
-                                .handle_streaming_request(request, "ws-client".to_string())
+                                .handle_streaming_request(
+                                    request,
+                                    "ws-client".to_string(),
+                                    cancel_flag.clone(),
+                                )
                                 .await
                             {
                                 Ok(mut receiver) => {
                                     let mut total_tokens = 0u64;
 
-                                    while let Some(response) = receiver.recv().await {
-                                        // Count tokens for logging - producer already tracks for checkpoints
-                                        if response.tokens > 0 {
-                                            total_tokens += response.tokens as u64;
-                                        }
-
-                                        let mut ws_msg = json!({
-                                            "type": "stream_chunk",
-                                            "content": response.content,
-                                            "tokens": response.tokens,
-                                        });
-
-                                        // Include message ID if present for correlation
-                                        if let Some(ref msg_id) = message_id {
-                                            ws_msg["id"] = msg_id.clone();
-                                        }
-
-                                        if socket
-                                            .send(axum::extract::ws::Message::Text(
-                                                ws_msg.to_string(),
-                                            ))
-                                            .await
-                                            .is_err()
+                                    loop {
+                                        let response = tokio::select! {
+                                            resp = receiver.recv() => {
+                                                match resp {
+                                                    Some(r) => r,
+                                                    None => break,
+                                                }
+                                            }
+                                            ws_msg = ws_receiver.next() => {
+                                                match ws_msg {
+                                                    Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                                                        if let Ok(cj) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                            if cj["type"] == "stream_cancel" {
+                                                                if let Some(ref flag) = cancel_flag {
+                                                                    flag.store(true, std::sync::atomic::Ordering::Release);
+                                                                }
+                                                                info!("🛑 stream_cancel during plaintext streaming");
+                                                                let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens});
+                                                                if let Some(ref sid) = session_id { end_msg["session_id"] = json!(sid); }
+                                                                let _ = ws_sender.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                                                break;
+                                                            }
+                                                        }
+                                                        continue;
+                                                    }
+                                                    Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                    _ => continue,
+                                                }
+                                            }
+                                        };
                                         {
-                                            break;
-                                        }
+                                            // Count tokens for logging - producer already tracks for checkpoints
+                                            if response.tokens > 0 {
+                                                total_tokens += response.tokens as u64;
+                                            }
 
-                                        if response.finish_reason.is_some() {
-                                            let mut end_msg = json!({"type": "stream_end"});
+                                            let mut ws_msg = json!({
+                                                "type": "stream_chunk",
+                                                "content": response.content,
+                                                "tokens": response.tokens,
+                                            });
 
-                                            // Include message ID in end message too
+                                            // Include message ID if present for correlation
                                             if let Some(ref msg_id) = message_id {
-                                                end_msg["id"] = msg_id.clone();
-                                            }
-                                            if vlm_tokens_used > 0 {
-                                                end_msg["vlm_tokens"] = json!(vlm_tokens_used);
+                                                ws_msg["id"] = msg_id.clone();
                                             }
 
-                                            let _ = socket
+                                            if ws_sender
                                                 .send(axum::extract::ws::Message::Text(
-                                                    end_msg.to_string(),
+                                                    ws_msg.to_string(),
                                                 ))
-                                                .await;
-                                            break;
-                                        }
-                                    }
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+
+                                            if response.finish_reason.is_some() {
+                                                let mut end_msg = json!({"type": "stream_end", "reason": "complete", "tokens_used": total_tokens});
+
+                                                // Include message ID in end message too
+                                                if let Some(ref msg_id) = message_id {
+                                                    end_msg["id"] = msg_id.clone();
+                                                }
+                                                if vlm_tokens_used > 0 {
+                                                    end_msg["vlm_tokens"] = json!(vlm_tokens_used);
+                                                }
+
+                                                let _ = ws_sender
+                                                    .send(axum::extract::ws::Message::Text(
+                                                        end_msg.to_string(),
+                                                    ))
+                                                    .await;
+                                                break;
+                                            }
+                                        } // close tokio::select! response block
+                                    } // close loop
 
                                     // Log total tokens tracked for this session
                                     if total_tokens > 0 {
@@ -3014,18 +3145,18 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                         error_msg["id"] = msg_id.clone();
                                     }
 
-                                    let _ = socket
+                                    let _ = ws_sender
                                         .send(axum::extract::ws::Message::Text(
                                             error_msg.to_string(),
                                         ))
                                         .await;
 
                                     // CRITICAL: Send stream_end even on error so SDK knows stream is done
-                                    let mut stream_end_msg = json!({"type": "stream_end"});
+                                    let mut stream_end_msg = json!({"type": "stream_end", "reason": "error", "tokens_used": 0});
                                     if let Some(ref msg_id) = message_id {
                                         stream_end_msg["id"] = msg_id.clone();
                                     }
-                                    let _ = socket
+                                    let _ = ws_sender
                                         .send(axum::extract::ws::Message::Text(
                                             stream_end_msg.to_string(),
                                         ))
@@ -3073,7 +3204,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 "type": "error",
                                                 "error": format!("Failed to create RAG session: {}", e)
                                             });
-                                            if socket
+                                            if ws_sender
                                                 .send(axum::extract::ws::Message::Text(
                                                     error_msg.to_string(),
                                                 ))
@@ -3099,7 +3230,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             Ok(response_json) => {
                                                 info!("✅ uploadVectors response: {} uploaded, {} rejected",
                                                       response.uploaded, response.rejected);
-                                                if socket
+                                                if ws_sender
                                                     .send(axum::extract::ws::Message::Text(
                                                         response_json,
                                                     ))
@@ -3121,7 +3252,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             "type": "error",
                                             "error": format!("Upload vectors failed: {}", e)
                                         });
-                                        if socket
+                                        if ws_sender
                                             .send(axum::extract::ws::Message::Text(
                                                 error_msg.to_string(),
                                             ))
@@ -3139,7 +3270,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     "type": "error",
                                     "error": format!("Invalid uploadVectors request: {}", e)
                                 });
-                                if socket
+                                if ws_sender
                                     .send(axum::extract::ws::Message::Text(error_msg.to_string()))
                                     .await
                                     .is_err()
@@ -3186,7 +3317,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                     "type": "error",
                                                     "error": format!("Session {} found but RAG not enabled. Upload vectors first.", sid)
                                                 });
-                                                if socket
+                                                if ws_sender
                                                     .send(axum::extract::ws::Message::Text(
                                                         error_msg.to_string(),
                                                     ))
@@ -3205,7 +3336,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                                 "type": "error",
                                                 "error": format!("Session {} not found. Upload vectors first.", sid)
                                             });
-                                            if socket
+                                            if ws_sender
                                                 .send(axum::extract::ws::Message::Text(
                                                     error_msg.to_string(),
                                                 ))
@@ -3231,7 +3362,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             Ok(response_json) => {
                                                 info!("✅ searchVectors response: {} results in {:.2}ms",
                                                       response.results.len(), response.search_time_ms);
-                                                if socket
+                                                if ws_sender
                                                     .send(axum::extract::ws::Message::Text(
                                                         response_json,
                                                     ))
@@ -3253,7 +3384,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                             "type": "error",
                                             "error": format!("Search vectors failed: {}", e)
                                         });
-                                        if socket
+                                        if ws_sender
                                             .send(axum::extract::ws::Message::Text(
                                                 error_msg.to_string(),
                                             ))
@@ -3271,7 +3402,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                                     "type": "error",
                                     "error": format!("Invalid searchVectors request: {}", e)
                                 });
-                                if socket
+                                if ws_sender
                                     .send(axum::extract::ws::Message::Text(error_msg.to_string()))
                                     .await
                                     .is_err()
@@ -3284,7 +3415,7 @@ async fn handle_websocket(mut socket: WebSocket, server: Arc<ApiServer>) {
                 }
             }
             Ok(axum::extract::ws::Message::Ping(data)) => {
-                if socket
+                if ws_sender
                     .send(axum::extract::ws::Message::Pong(data))
                     .await
                     .is_err()

@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.18.0-set-token-pricing-2026-02-24";
+pub const VERSION: &str = "v8.19.0-stream-cancel-2026-02-25";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.18.0";
+pub const VERSION_NUMBER: &str = "8.19.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 18;
+pub const VERSION_MINOR: u32 = 19;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-24";
+pub const BUILD_DATE: &str = "2026-02-25";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -222,6 +222,12 @@ pub const FEATURES: &[&str] = &[
     "set-token-pricing",
     "per-token-erc20-pricing",
     "token-pricing-usdc-env",
+    // Stream cancellation (v8.19.0)
+    "stream-cancel",
+    "cancel-flag-inference",
+    "tokio-select-streaming",
+    "stream-end-reason",
+    "stream-end-tokens-used",
 ];
 
 /// Supported chain IDs
@@ -232,6 +238,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.19.0 - Stream Cancellation (Feb 25, 2026)
+    "FEAT: Node handles stream_cancel WebSocket message to stop inference mid-stream",
+    "FEAT: Cancel flag (AtomicBool) checked between tokens in generation loop",
+    "FEAT: tokio::select! in streaming loops enables concurrent cancel detection",
+    "FEAT: stream_end messages now include 'reason' (complete/cancelled/error) and 'tokens_used' fields",
+    "FEAT: WebSocket socket split (sender/receiver) for concurrent read/write",
     // v8.18.0 - setTokenPricing After Registration (Feb 24, 2026)
     "FEAT: Node now calls setTokenPricing(USDC, price) after registerNode() (F202614977)",
     "FEAT: TOKEN_PRICING_USDC env var for custom USDC pricing (default: 10,000 = $10/million)",
@@ -526,7 +538,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 18);
+        assert_eq!(VERSION_MINOR, 19);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -542,6 +554,10 @@ mod tests {
         assert!(FEATURES.contains(&"set-token-pricing"));
         assert!(FEATURES.contains(&"per-token-erc20-pricing"));
         assert!(FEATURES.contains(&"token-pricing-usdc-env"));
+        // v8.19.0 stream-cancel
+        assert!(FEATURES.contains(&"stream-cancel"));
+        assert!(FEATURES.contains(&"cancel-flag-inference"));
+        assert!(FEATURES.contains(&"stream-end-reason"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -588,15 +604,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.18.0"));
-        assert!(version.contains("2026-02-24"));
+        assert!(version.contains("8.19.0"));
+        assert!(version.contains("2026-02-25"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.18.0-set-token-pricing-2026-02-24");
-        assert_eq!(VERSION_NUMBER, "8.18.0");
-        assert_eq!(BUILD_DATE, "2026-02-24");
+        assert_eq!(VERSION, "v8.19.0-stream-cancel-2026-02-25");
+        assert_eq!(VERSION_NUMBER, "8.19.0");
+        assert_eq!(BUILD_DATE, "2026-02-25");
     }
 
     #[test]

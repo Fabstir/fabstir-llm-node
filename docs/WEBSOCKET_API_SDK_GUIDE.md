@@ -896,6 +896,49 @@ async function testInference() {
 testInference();
 ```
 
+### Stream Cancellation (v8.19.0+)
+
+To stop an active streaming inference mid-generation, send a `stream_cancel` message:
+
+```json
+{
+  "type": "stream_cancel",
+  "session_id": "your-session-id",
+  "reason": "user_cancelled"
+}
+```
+
+The node will:
+1. Stop the LLM generation loop between tokens (zero-latency `AtomicBool` flag)
+2. Stop delivering any pre-generated tokens
+3. Send `stream_end` with `reason: "cancelled"` and accurate `tokens_used`
+4. Free GPU/KV cache resources
+5. Reset the cancel flag so the session accepts new prompts immediately
+
+**Example with cancellation:**
+```javascript
+// Start streaming
+ws.send(JSON.stringify({ type: 'inference', request: { prompt: '...', stream: true } }));
+
+// After receiving some chunks, cancel
+ws.send(JSON.stringify({ type: 'stream_cancel', session_id: sessionId }));
+
+// Listen for the cancelled stream_end
+ws.on('message', (data) => {
+  const msg = JSON.parse(data);
+  if (msg.type === 'stream_end') {
+    console.log(msg.reason);      // "cancelled" or "complete"
+    console.log(msg.tokens_used);  // tokens generated before cancel
+  }
+});
+```
+
+**Edge cases:**
+- `stream_cancel` with no active stream → safe no-op (silently ignored)
+- Multiple `stream_cancel` messages → idempotent (second is a no-op)
+- `stream_cancel` is **always plaintext**, even during encrypted sessions
+- New prompt after cancel → works immediately, no special handling needed
+
 ### Response Format with Proofs
 
 All responses now include cryptographic proof data:

@@ -8,6 +8,7 @@ use crate::vector::hnsw::HnswIndex;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
@@ -132,6 +133,8 @@ pub struct WebSocketSession {
     /// Encryption key for this session (extracted from session_init)
     /// Used to decrypt vector_database paths if encryption is enabled
     pub encryption_key: Option<Vec<u8>>,
+    /// Cancellation flag for active inference — shared with generation loop
+    pub inference_cancel_flag: Arc<AtomicBool>,
     /// Cancellation token for background vector loading task
     /// Used to gracefully cancel loading when session disconnects
     pub cancel_token: CancellationToken,
@@ -166,6 +169,7 @@ impl WebSocketSession {
             vector_loading_status: VectorLoadingStatus::NotStarted,
             vector_index: None,
             encryption_key: None,
+            inference_cancel_flag: Arc::new(AtomicBool::new(false)),
             cancel_token: CancellationToken::new(),
             tx: None,
         }

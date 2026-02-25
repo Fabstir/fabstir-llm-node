@@ -53,6 +53,7 @@ async fn test_gpt_oss_20b_model_inference() {
         temperature: 0.1,
         top_p: 0.9,
         stream: false,
+        cancel_flag: None,
     };
 
     let result = engine.run_inference(request).await;
@@ -106,6 +107,7 @@ async fn test_gpt_oss_20b_model_inference() {
         temperature: 0.1,
         top_p: 0.9,
         stream: false,
+        cancel_flag: None,
     };
 
     let result2 = engine.run_inference(request2).await;
