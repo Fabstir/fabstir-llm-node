@@ -522,7 +522,10 @@ mod tests {
     fn test_glm4_user_system_message_not_overridden() {
         let template = ChatTemplate::Glm4;
         let messages = vec![
-            ("system".to_string(), "You are a pirate assistant.".to_string()),
+            (
+                "system".to_string(),
+                "You are a pirate assistant.".to_string(),
+            ),
             ("user".to_string(), "Hello".to_string()),
         ];
         let formatted = template.format_messages(&messages);

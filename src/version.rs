@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.17.6-glm4-rag-context-2026-02-23";
+pub const VERSION: &str = "v8.18.0-set-token-pricing-2026-02-24";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.17.6";
+pub const VERSION_NUMBER: &str = "8.18.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 17;
+pub const VERSION_MINOR: u32 = 18;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 6;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-23";
+pub const BUILD_DATE: &str = "2026-02-24";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -218,6 +218,10 @@ pub const FEATURES: &[&str] = &[
     "dispute-window-buffer",
     // GLM-4 RAG context-aware system prompt (v8.17.6)
     "glm4-context-aware-system-prompt",
+    // setTokenPricing after registration (v8.18.0)
+    "set-token-pricing",
+    "per-token-erc20-pricing",
+    "token-pricing-usdc-env",
 ];
 
 /// Supported chain IDs
@@ -228,6 +232,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.18.0 - setTokenPricing After Registration (Feb 24, 2026)
+    "FEAT: Node now calls setTokenPricing(USDC, price) after registerNode() (F202614977)",
+    "FEAT: TOKEN_PRICING_USDC env var for custom USDC pricing (default: 10,000 = $10/million)",
+    "FEAT: get_token_pricing_usdc() helper with env var + range validation + fallback",
+    "FEAT: ABI updated with setTokenPricing, customTokenPricing, TokenPricingUpdated",
+    "CONTRACT: NodeRegistry getNodePricing() now reverts for ERC20 without setTokenPricing",
     // v8.17.6 - GLM-4 RAG Context-Aware System Prompt (Feb 23, 2026)
     "FIX: GLM-4 default system prompt now instructs model to use provided reference material, search results, and document excerpts",
     "FIX: GLM-4 no longer claims 'I don't have access to external databases' when RAG context is in user message",
@@ -516,8 +526,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 17);
-        assert_eq!(VERSION_PATCH, 6);
+        assert_eq!(VERSION_MINOR, 18);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -528,6 +538,10 @@ mod tests {
         assert!(FEATURES.contains(&"dispute-window-buffer"));
         // v8.17.6 GLM-4 RAG context-aware system prompt
         assert!(FEATURES.contains(&"glm4-context-aware-system-prompt"));
+        // v8.18.0 setTokenPricing
+        assert!(FEATURES.contains(&"set-token-pricing"));
+        assert!(FEATURES.contains(&"per-token-erc20-pricing"));
+        assert!(FEATURES.contains(&"token-pricing-usdc-env"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -574,15 +588,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.17.6"));
-        assert!(version.contains("2026-02-23"));
+        assert!(version.contains("8.18.0"));
+        assert!(version.contains("2026-02-24"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.17.6-glm4-rag-context-2026-02-23");
-        assert_eq!(VERSION_NUMBER, "8.17.6");
-        assert_eq!(BUILD_DATE, "2026-02-23");
+        assert_eq!(VERSION, "v8.18.0-set-token-pricing-2026-02-24");
+        assert_eq!(VERSION_NUMBER, "8.18.0");
+        assert_eq!(BUILD_DATE, "2026-02-24");
     }
 
     #[test]
