@@ -48,7 +48,7 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
 
 ### NodeRegistryWithModelsUpgradeable
 - **Proxy Address**: `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
-- **Implementation**: `0xF2D98D38B2dF95f4e8e4A49750823C415E795377` ✅ Stake slashing (Jan 16, 2026)
+- **Implementation**: `0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b` ✅ F202614977 per-token pricing fix (Feb 24, 2026)
 - **Network**: Base Sepolia
 - **Status**: ✅ ACTIVE - UUPS Upgradeable
 - **ABI File**: `NodeRegistryWithModelsUpgradeable-CLIENT-ABI.json`
@@ -56,6 +56,11 @@ This directory contains the Application Binary Interfaces (ABIs) for client inte
   - All features from non-upgradeable version
   - UUPS proxy pattern for future upgrades
   - Owner-only upgrade authorization
+- **Breaking Change (Feb 24, 2026) — F202614977**:
+  - `getNodePricing(host, erc20Token)` now **reverts** with `"No token pricing"` if host hasn't called `setTokenPricing(token, price)`
+  - `getModelPricing(host, modelId, erc20Token)` same — reverts if no model override AND no custom token pricing
+  - Hosts **must** call `setTokenPricing(tokenAddress, price)` for each ERC20 they accept after `registerNode()`
+  - Native ETH path (`token = address(0)`) is unchanged
 - **Stake Slashing (Jan 16, 2026)**:
   - `slashStake(address, uint256, string, string)` - Slash host stake for misbehavior
   - `initializeSlashing(address)` - Initialize slashing after upgrade (owner, one-time)
@@ -873,9 +878,10 @@ const HOST_EARNINGS = '0x908962e8c6CE72610021586f85ebDE09aAc97776';
 - **Replacement**: 0xDFFDecDfa0CF5D6cbE299711C7e4559eB16F42D6
 
 ## Last Updated
-February 22, 2026 - Post-audit remediation deployment (all 20 findings addressed)
+February 24, 2026 - F202614977 per-token pricing fix deployed
 
 ### Recent Changes
+- **Feb 24, 2026**: **F202614977 per-token pricing** — NodeRegistry upgraded to `0xeeB3...D24b`. `getNodePricing()` and `getModelPricing()` now revert with `"No token pricing"` for ERC20 tokens without explicit `setTokenPricing()`. Breaking change: hosts must call `setTokenPricing(token, price)` for each ERC20.
 - **Feb 22, 2026**: **Post-audit remediation** — Fresh JM proxy `0xD067...adA4`, all 20 Hacken audit findings addressed. Signature removed from submitProofOfWork, proofTimeoutWindow added, per-model rate limits, early cancellation fees, pull-pattern refunds, shortened require strings (F202615067). ProofSystem and ModelRegistry implementations upgraded.
 - **Jan 16, 2026**: Stake slashing - `slashStake()`, `initializeSlashing()`, `setSlashingAuthority()`, `setTreasury()`, `lastSlashTime()`
 - **Jan 14, 2026**: deltaCID support - `submitProofOfWork` now 6 params, `getProofSubmission` returns 5 values

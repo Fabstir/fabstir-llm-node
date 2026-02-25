@@ -170,6 +170,41 @@ pub mod tokens {
     pub fn native_address() -> Address {
         Address::zero()
     }
+
+    /// Get USDC token pricing from env var with fallback to stable::default_price().
+    /// Reads `TOKEN_PRICING_USDC` env var. Falls back to default (10,000) if:
+    /// - env var not set
+    /// - env var not a valid integer
+    /// - value is outside stable pricing range
+    pub fn get_token_pricing_usdc() -> U256 {
+        let default = stable::default_price();
+        match std::env::var("TOKEN_PRICING_USDC") {
+            Ok(val) => match val.parse::<u64>() {
+                Ok(v) => {
+                    let price = U256::from(v);
+                    if stable::validate_price(price).is_ok() {
+                        price
+                    } else {
+                        tracing::warn!(
+                            "TOKEN_PRICING_USDC={} out of range, using default {}",
+                            v,
+                            default
+                        );
+                        default
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "TOKEN_PRICING_USDC='{}' invalid, using default {}",
+                        val,
+                        default
+                    );
+                    default
+                }
+            },
+            Err(_) => default,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -385,5 +420,45 @@ mod tests {
     #[test]
     fn test_native_address_is_zero() {
         assert_eq!(tokens::native_address(), Address::zero());
+    }
+
+    // ===========================================
+    // Token Pricing Helper Tests (Sub-phase 2.1)
+    // ===========================================
+
+    #[test]
+    fn test_get_token_pricing_usdc_default() {
+        // No env var set → should return stable::default_price() = 10,000
+        std::env::remove_var("TOKEN_PRICING_USDC");
+        let price = tokens::get_token_pricing_usdc();
+        assert_eq!(price, stable::default_price());
+        assert_eq!(price, U256::from(10_000u64));
+    }
+
+    #[test]
+    fn test_get_token_pricing_usdc_from_env() {
+        // TOKEN_PRICING_USDC=5000 → 5,000
+        std::env::set_var("TOKEN_PRICING_USDC", "5000");
+        let price = tokens::get_token_pricing_usdc();
+        assert_eq!(price, U256::from(5_000u64));
+        std::env::remove_var("TOKEN_PRICING_USDC");
+    }
+
+    #[test]
+    fn test_get_token_pricing_usdc_invalid_env() {
+        // TOKEN_PRICING_USDC=abc → fallback to default 10,000
+        std::env::set_var("TOKEN_PRICING_USDC", "abc");
+        let price = tokens::get_token_pricing_usdc();
+        assert_eq!(price, stable::default_price());
+        std::env::remove_var("TOKEN_PRICING_USDC");
+    }
+
+    #[test]
+    fn test_get_token_pricing_usdc_out_of_range() {
+        // TOKEN_PRICING_USDC=999999999 → above MAX, fallback to default 10,000
+        std::env::set_var("TOKEN_PRICING_USDC", "999999999");
+        let price = tokens::get_token_pricing_usdc();
+        assert_eq!(price, stable::default_price());
+        std::env::remove_var("TOKEN_PRICING_USDC");
     }
 }

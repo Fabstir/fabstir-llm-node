@@ -348,6 +348,31 @@ impl MultiChainRegistrar {
         status.insert(chain_id, RegistrationStatus::Pending { tx_hash });
         drop(status);
 
+        // Call setTokenPricing for USDC after registerNode (F202614977)
+        {
+            use crate::contracts::pricing_constants::tokens as pricing_tokens;
+            let usdc = pricing_tokens::usdc_address();
+            let usdc_price = pricing_tokens::get_token_pricing_usdc();
+            match self
+                .set_token_pricing_on_chain(chain_id, usdc, usdc_price)
+                .await
+            {
+                Ok(tp_hash) => {
+                    info!(
+                        "setTokenPricing(USDC, {}) sent on chain {}: {:?}",
+                        usdc_price, chain_id, tp_hash
+                    );
+                }
+                Err(e) => {
+                    // Log error but do NOT fail registration — host can retry
+                    error!(
+                        "setTokenPricing failed on chain {} (host can retry via cast or restart): {}",
+                        chain_id, e
+                    );
+                }
+            }
+        }
+
         // Wait for confirmation (but don't block indefinitely)
         // We'll spawn a task that just monitors the transaction hash
         let registration_status = self.registration_status.clone();
@@ -392,6 +417,74 @@ impl MultiChainRegistrar {
                 }
             });
         }
+
+        Ok(tx_hash)
+    }
+
+    /// Call setTokenPricing on the NodeRegistry for a specific chain (F202614977).
+    /// Required after registerNode() for ERC20 sessions to work.
+    pub async fn set_token_pricing_on_chain(
+        &self,
+        chain_id: u64,
+        token: Address,
+        price: U256,
+    ) -> Result<H256> {
+        stable::validate_price(price)
+            .map_err(|e| anyhow!("Token pricing validation failed: {}", e))?;
+
+        let chain_config = self
+            .chain_registry
+            .get_chain(chain_id)
+            .ok_or_else(|| anyhow!("Chain {} not supported", chain_id))?;
+
+        let signer = self
+            .signers
+            .get(&chain_id)
+            .ok_or_else(|| anyhow!("No signer available for chain {}", chain_id))?;
+
+        let registry_address = chain_config.contracts.node_registry;
+
+        use ethers::abi::{Function, Param, ParamType, Token as AbiToken};
+        use ethers::types::Bytes;
+
+        let function = Function {
+            name: "setTokenPricing".to_string(),
+            inputs: vec![
+                Param {
+                    name: "token".to_string(),
+                    kind: ParamType::Address,
+                    internal_type: None,
+                },
+                Param {
+                    name: "price".to_string(),
+                    kind: ParamType::Uint(256),
+                    internal_type: None,
+                },
+            ],
+            outputs: vec![],
+            constant: None,
+            state_mutability: ethers::abi::StateMutability::NonPayable,
+        };
+
+        let tokens = vec![AbiToken::Address(token), AbiToken::Uint(price)];
+        let encoded = function
+            .encode_input(&tokens)
+            .map_err(|e| anyhow!("Failed to encode setTokenPricing: {}", e))?;
+
+        let tx_request = ethers::types::TransactionRequest::new()
+            .to(registry_address)
+            .data(Bytes::from(encoded));
+
+        let pending_tx = signer
+            .send_transaction(tx_request, None)
+            .await
+            .map_err(|e| anyhow!("setTokenPricing tx failed on chain {}: {}", chain_id, e))?;
+
+        let tx_hash = pending_tx.tx_hash();
+        info!(
+            "setTokenPricing(token={:?}, price={}) sent on chain {}: {:?}",
+            token, price, chain_id, tx_hash
+        );
 
         Ok(tx_hash)
     }
@@ -457,5 +550,71 @@ impl MultiChainRegistrar {
     /// Get all chain IDs this registrar can work with
     pub async fn get_all_chain_ids(&self) -> Result<Vec<u64>> {
         Ok(self.chain_registry.get_all_chain_ids())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::abi::{Function, Param, ParamType, Token};
+
+    #[test]
+    fn test_set_token_pricing_abi_encoding() {
+        // Verify that setTokenPricing(address, uint256) encodes correctly
+        let function = Function {
+            name: "setTokenPricing".to_string(),
+            inputs: vec![
+                Param {
+                    name: "token".to_string(),
+                    kind: ParamType::Address,
+                    internal_type: None,
+                },
+                Param {
+                    name: "price".to_string(),
+                    kind: ParamType::Uint(256),
+                    internal_type: None,
+                },
+            ],
+            outputs: vec![],
+            constant: None,
+            state_mutability: ethers::abi::StateMutability::NonPayable,
+        };
+
+        let usdc_addr = Address::from_str("0x036CbD53842c5426634e7929541eC2318f3dCF7e").unwrap();
+        let price = U256::from(10_000u64);
+
+        let tokens = vec![Token::Address(usdc_addr), Token::Uint(price)];
+
+        let encoded = function
+            .encode_input(&tokens)
+            .expect("Encoding should succeed");
+
+        // Function selector is first 4 bytes
+        assert_eq!(encoded.len(), 4 + 64); // 4 selector + 2 * 32 bytes params
+
+        // Verify the function selector matches setTokenPricing(address,uint256)
+        let sig = "setTokenPricing(address,uint256)";
+        let expected_selector = &ethers::utils::keccak256(sig.as_bytes())[..4];
+        assert_eq!(&encoded[..4], expected_selector);
+    }
+
+    #[test]
+    fn test_set_token_pricing_validates_range() {
+        // Out-of-range price should be rejected by stable::validate_price
+        let zero_price = U256::from(0u64);
+        assert!(stable::validate_price(zero_price).is_err());
+
+        let over_max = U256::from(100_000_001u64);
+        assert!(stable::validate_price(over_max).is_err());
+
+        // Valid prices should pass
+        let valid = U256::from(10_000u64);
+        assert!(stable::validate_price(valid).is_ok());
+
+        let min = U256::from(1u64);
+        assert!(stable::validate_price(min).is_ok());
+
+        let max = U256::from(100_000_000u64);
+        assert!(stable::validate_price(max).is_ok());
     }
 }

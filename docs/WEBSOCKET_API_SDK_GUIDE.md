@@ -64,6 +64,24 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Auto-Routing (v8.16.1+)**: `AUTO_IMAGE_ROUTING=true` auto-detects image intent from chat and routes to diffusion sidecar
 - **89+ tests passing** across diffusion module
 
+### ✅ Phase 8.17: Thinking/Reasoning Mode + Contract Fixes (v8.17.0–v8.17.6)
+- **Thinking Mode (v8.17.0)**: Per-request `thinking` field (`"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`)
+  - Harmony template: maps to `Reasoning: none/low/medium/high` in system prompt
+  - GLM-4 template: maps to `/think` or `/no_think` prefix on last user message
+  - `DEFAULT_THINKING_MODE` env var for global default (explicit per-request overrides)
+- **GLM-4 Default Thinking (v8.17.3)**: `/think` injected by default, `/no_think` when explicitly disabled
+- **New JobMarketplace Proxy (v8.17.4)**: `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4`
+- **Dispute Window Fix (v8.17.5)**: Dispute window now queried from contract `disputeWindow()` at startup
+- **GLM-4 Context-Aware System Prompt (v8.17.6)**: Default system prompt detects RAG context
+
+### ✅ Phase 8.18: setTokenPricing After Registration (v8.18.0)
+- **Breaking Contract Change (F202614977)**: `getNodePricing()` / `getModelPricing()` now **revert** for ERC20 tokens without explicit `setTokenPricing(token, price)` call
+- **Two-Step Registration**: `registerNode()` then `setTokenPricing(usdcAddress, price)` — node handles automatically
+- **TOKEN_PRICING_USDC env var**: Override USDC per-token price (default: 10,000 = $10/M tokens)
+- **Error handling**: If `setTokenPricing` tx fails after registration, logs error but does not roll back — host retries via `cast` or node restart
+- **Native ETH sessions unaffected** — only ERC20 tokens require explicit pricing
+- **New ABI entries**: `setTokenPricing(address,uint256)`, `customTokenPricing(address,address)`, `TokenPricingUpdated` event
+
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
 - Full production inference engine connection (partially mocked)
@@ -321,6 +339,7 @@ jobMarketplace.on(filter, (jobId, host, tokensUsed, event) => {
 - Node must have `HOST_PRIVATE_KEY` configured
 - Node version v5-payment-settlement or later
 - JobMarketplace: 0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4 (v8.13.0+ AUDIT-F4 remediated)
+- Host must have called `setTokenPricing(USDC, price)` for ERC20 sessions to work (v8.18.0+, automatic on registration)
 
 ## Compression Support
 
@@ -798,6 +817,30 @@ ws.onmessage = (event) => {
 | Rate limit | Connection-level | 5/min per session (sliding window) |
 
 For the full SDK integration guide with TypeScript interfaces, billing formula, safety levels, and UI patterns, see [SDK Image Generation Integration Guide](./sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md).
+
+## Host Registration & Token Pricing (v8.18.0+)
+
+As of v8.18.0, host registration is now a two-step process on-chain:
+
+1. `registerNode(metadata, apiUrl, modelIds, minPriceNative, minPriceStable)` — registers the host
+2. `setTokenPricing(usdcAddress, price)` — sets per-token ERC20 pricing (required for USDC sessions)
+
+The node handles step 2 automatically after step 1. If `setTokenPricing` fails, the node logs an error but does NOT fail registration. The host can retry via:
+
+```bash
+# Manual retry for already-registered hosts
+cast send 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 \
+  "setTokenPricing(address,uint256)" \
+  0x036CbD53842c5426634e7929541eC2318f3dCF7e 10000 \
+  --private-key $HOST_PRIVATE_KEY \
+  --rpc-url "https://sepolia.base.org" --legacy
+```
+
+**SDK Impact**: If a host hasn't called `setTokenPricing`, ERC20 (USDC) job creation will fail with `"No token pricing"` revert from the contract. Native ETH sessions are unaffected.
+
+**Environment Variable**: Set `TOKEN_PRICING_USDC` to override the default USDC price (10,000 = $10/M tokens). Must be in range [1, 100,000,000].
+
+---
 
 ## Current Working Implementation (February 2026)
 

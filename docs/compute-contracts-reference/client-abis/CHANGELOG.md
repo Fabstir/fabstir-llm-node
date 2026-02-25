@@ -1,5 +1,54 @@
 # Client ABIs Changelog
 
+## February 24, 2026 - F202614977: Per-Token Pricing Fix (BREAKING CHANGE)
+
+### ⚠️ BREAKING CHANGE for ERC20 Sessions
+`getNodePricing()` and `getModelPricing()` no longer silently fall back to `minPricePerTokenStable` for ERC20 tokens. They now **revert** with `"No token pricing"` if the host hasn't explicitly set pricing via `setTokenPricing(token, price)`.
+
+**Why**: A 6-decimal token (USDC) and an 18-decimal token (DAI) previously got the same raw price value, enabling users to pay dust amounts for inference.
+
+### Implementation Upgrade
+| Contract | Proxy (unchanged) | New Implementation |
+|----------|-------------------|-------------------|
+| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b` |
+
+### Host Migration Required
+All registered hosts must call `setTokenPricing()` for each ERC20 they accept:
+```javascript
+// After registerNode(), set pricing for each ERC20 token
+await nodeRegistry.setTokenPricing(usdcAddress, pricePerToken);
+```
+
+```bash
+# Via cast
+cast send 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 \
+  "setTokenPricing(address,uint256)" \
+  0x036CbD53842c5426634e7929541eC2318f3dCF7e <price> \
+  --private-key $HOST_KEY --rpc-url "https://sepolia.base.org" --legacy
+```
+
+### SDK Changes Required
+```javascript
+// 1. Host registration flow — add setTokenPricing after registerNode
+await nodeRegistry.registerNode(apiUrl, metadata, models, nativePrice, stablePrice);
+await nodeRegistry.setTokenPricing(usdcAddress, stablePrice); // NEW — required
+
+// 2. Wrap getNodePricing in try/catch for ERC20 tokens
+try {
+  const price = await nodeRegistry.getNodePricing(host, usdcAddress);
+} catch (e) {
+  // Host doesn't accept this token
+  console.log("Host has not set pricing for this token");
+}
+```
+
+### Unchanged
+- Native ETH path (`token = address(0)`) — works exactly as before
+- All proxy addresses — same
+- ABI — unchanged (same function signatures, different revert behavior)
+
+---
+
 ## February 22, 2026 - Post-Audit Remediation Deployment (ALL 20 FINDINGS ADDRESSED)
 
 ### PROXY ADDRESS CHANGED
