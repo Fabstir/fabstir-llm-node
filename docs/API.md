@@ -2403,6 +2403,7 @@ The server maintains conversation context in memory during active sessions:
 | `rate_limit` | Server → Client | Rate limit warning |
 | `ping` | Bidirectional | Keep-alive |
 | `pong` | Bidirectional | Keep-alive response |
+| `stream_cancel` | Client → Server | Cancel active streaming inference (v8.19.0+) |
 | `searchRequest` | Client → Server | Web search request (v8.7.0+) |
 | `searchStarted` | Server → Client | Search started acknowledgment (v8.7.0+) |
 | `searchResults` | Server → Client | Search results (v8.7.0+) |
@@ -2467,6 +2468,40 @@ Search error codes:
 - `provider_error` - Search provider returned an error
 - `timeout` - Search request timed out
 - `no_providers` - No search providers available
+
+#### Stream Cancellation (v8.19.0+)
+
+**stream_cancel** - Cancel an active streaming inference:
+```json
+{
+  "type": "stream_cancel",
+  "session_id": "session-abc-123",
+  "reason": "user_cancelled"
+}
+```
+
+- **Always plaintext** — never encrypted, even during encrypted sessions
+- Processed before other message types in the WebSocket handler
+- Sets an `AtomicBool` cancel flag that stops the generation loop between tokens
+- Safe to send when no stream is active (no-op)
+- Safe to send multiple times (idempotent)
+
+**Enhanced stream_end** (v8.19.0+) — now includes `reason` and `tokens_used`:
+```json
+{
+  "type": "stream_end",
+  "reason": "complete",
+  "tokens_used": 42
+}
+```
+
+| `reason` value | Description |
+|----------------|-------------|
+| `"complete"` | Inference finished normally |
+| `"cancelled"` | Stopped by `stream_cancel` message |
+| `"error"` | Inference encountered an error |
+
+After cancellation, the session is immediately ready for new prompts — the cancel flag resets automatically.
 
 ### Error Codes (WebSocket)
 

@@ -41,6 +41,9 @@ pub enum MessageType {
     ImageGeneration,
     ImageGenerationResult,
 
+    // Stream cancellation (v8.19.0+)
+    StreamCancel,
+
     // Error and unknown
     Error,
     Unknown,

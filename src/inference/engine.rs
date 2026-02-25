@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
@@ -127,6 +128,9 @@ pub struct InferenceRequest {
     pub seed: Option<u64>,
     pub stop_sequences: Vec<String>,
     pub stream: bool,
+    /// Cancellation flag — set to true to abort generation between tokens
+    #[serde(skip)]
+    pub cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,7 +307,7 @@ impl LlmEngine {
         *self.inference_count.write().await += 1;
 
         // Check if we have a real model loaded and perform generation
-        let (output, tokens_generated, generation_time, token_info_list) = {
+        let (output, tokens_generated, generation_time, token_info_list, stop_reason) = {
             let mut models = self.models.lock().unwrap();
             let has_real_model = models.contains_key(&request.model_id);
 
@@ -453,6 +457,18 @@ impl LlmEngine {
             );
 
             while n_cur < prompt_tokens.len() + max_tokens {
+                // Check cancellation flag between tokens
+                if let Some(ref flag) = request.cancel_flag {
+                    if flag.load(Ordering::Acquire) {
+                        stop_reason = "cancelled";
+                        tracing::info!(
+                            "🛑 Inference cancelled after {} tokens",
+                            n_cur - prompt_tokens.len()
+                        );
+                        break;
+                    }
+                }
+
                 // Build sampler chain: temp → penalties → top_p → min_p → dist/greedy
                 let mut samplers: Vec<LlamaSampler> = Vec::new();
                 samplers.push(LlamaSampler::temp(request.temperature));
@@ -562,7 +578,13 @@ impl LlmEngine {
                 stop_reason
             );
 
-            (output, tokens_generated, generation_time, token_info_list)
+            (
+                output,
+                tokens_generated,
+                generation_time,
+                token_info_list,
+                stop_reason,
+            )
         }; // Release the mutex here before any await
 
         let tokens_per_second = tokens_generated as f32 / generation_time.as_secs_f32();
@@ -583,9 +605,13 @@ impl LlmEngine {
             generation_time,
             tokens_per_second,
             model_id: request.model_id,
-            finish_reason: "stop".to_string(),
-            token_info: token_info_list, // Use the collected tokens!
-            was_cancelled: false,
+            finish_reason: if stop_reason == "cancelled" {
+                "cancelled".to_string()
+            } else {
+                "stop".to_string()
+            },
+            token_info: token_info_list,
+            was_cancelled: stop_reason == "cancelled",
         })
     }
 
@@ -604,6 +630,7 @@ impl LlmEngine {
             // For real models, we need to run synchronously due to !Send constraint
             // We'll generate all tokens at once and then stream them
             // Make sure stream is false for the actual inference
+            let cancel_flag_clone = request.cancel_flag.clone();
             let mut inference_request = request;
             inference_request.stream = false;
             let result = self.run_inference(inference_request).await;
@@ -613,6 +640,12 @@ impl LlmEngine {
                 match result {
                     Ok(inference_result) => {
                         for token_info in inference_result.token_info {
+                            // Check cancel flag in delivery loop
+                            if let Some(ref flag) = cancel_flag_clone {
+                                if flag.load(Ordering::Acquire) {
+                                    break;
+                                }
+                            }
                             if tx.send(Ok(token_info)).await.is_err() {
                                 break;
                             }
@@ -720,6 +753,7 @@ impl LlmEngine {
             seed: None,
             stop_sequences: vec![],
             stream: false,
+            cancel_flag: None,
         }
     }
 
