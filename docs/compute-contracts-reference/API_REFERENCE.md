@@ -1,6 +1,6 @@
 # Fabstir LLM Marketplace - API Reference
 
-**Last Updated:** February 24, 2026
+**Last Updated:** February 26, 2026
 **Network:** Base Sepolia (Chain ID: 84532)
 
 ---
@@ -9,14 +9,14 @@
 
 ### Contract Addresses (Upgradeable - UUPS Proxy Pattern)
 
-> **POST-AUDIT REMEDIATION (February 22-24, 2026):** All contracts upgraded with 20 security audit findings addressed, per-token pricing fix, delegated sessions, early cancellation fees, pull-pattern refunds, and per-model rate limits.
+> **POST-AUDIT REMEDIATION (February 22-26, 2026):** All contracts upgraded with 20 security audit findings addressed, Phase 18 per-model per-token pricing, delegated sessions, early cancellation fees, pull-pattern refunds, and per-model rate limits.
 
 ```javascript
-// POST-AUDIT REMEDIATION CONTRACTS (Feb 22-24, 2026) - Use these addresses
+// POST-AUDIT REMEDIATION CONTRACTS (Feb 22-26, 2026) - Use these addresses
 const contracts = {
   // Proxy addresses (interact with these)
   jobMarketplace: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4", // FRESH PROXY — All 20 audit findings (Feb 22, 2026)
-  nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",   // Per-token pricing fix (Feb 24, 2026)
+  nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",   // Per-model per-token pricing (needs redeployment)
   modelRegistry: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2",   // Per-model rate limits (Feb 22, 2026)
   proofSystem: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31",     // markProofUsed (Feb 22, 2026)
   hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",
@@ -26,10 +26,10 @@ const contracts = {
   usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 };
 
-// Implementation addresses (for verification only) - Updated Feb 24, 2026
+// Implementation addresses (for verification only) - Updated Feb 26, 2026
 const implementations = {
   jobMarketplace: "0x51C3F60D2e3756Cc3F119f9aE1876e2B947347ba", // Full audit remediation (Feb 22)
-  nodeRegistry: "0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b",   // Per-token pricing revert (Feb 24)
+  nodeRegistry: "0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b",   // Needs redeployment for Phase 18
   modelRegistry: "0xF12a0A07d4230E0b045dB22057433a9826d21652",   // Rate limits + rejected fee (Feb 22)
   proofSystem: "0xC46C84a612Cbf4C2eAaf5A9D1411aDA6309EC963",    // markProofUsed + dead code removal (Feb 22)
   hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",    // Unchanged
@@ -63,7 +63,7 @@ const GPT_OSS_20B =
 Host registration and pricing management.
 
 **Proxy Address:** `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22`
-**Implementation:** `0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b` (Per-token pricing revert - Feb 24, 2026)
+**Implementation:** `0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b` (needs redeployment for Phase 18 per-model per-token pricing)
 
 ### Constants
 
@@ -71,10 +71,10 @@ Host registration and pricing management.
 | ---------------------------- | --------------------- | ------------------------------------- |
 | `MIN_STAKE`                  | 1000 FAB              | Minimum stake to register             |
 | `PRICE_PRECISION`            | 1000                  | Prices stored with 1000x multiplier   |
-| `MIN_PRICE_PER_TOKEN_NATIVE` | 2,272,727,273         | ~$0.00001 @ $4400 ETH                |
-| `MAX_PRICE_PER_TOKEN_NATIVE` | 22,727,272,727,273    | ~$0.1 @ $4400 ETH                    |
-| `MIN_PRICE_PER_TOKEN_STABLE` | 10                    | $0.00001 per token                    |
-| `MAX_PRICE_PER_TOKEN_STABLE` | 100,000               | $0.1 per token                        |
+| `MIN_PRICE_PER_TOKEN_NATIVE` | 227,273               | Min native price per token            |
+| `MAX_PRICE_PER_TOKEN_NATIVE` | 22,727,272,727,273,000 | Max native price per token           |
+| `MIN_PRICE_PER_TOKEN_STABLE` | 1                     | Min stable price per token            |
+| `MAX_PRICE_PER_TOKEN_STABLE` | 100,000,000           | Max stable price per token            |
 | `MAX_SLASH_PERCENTAGE`       | 50                    | Max 50% stake slashed per action      |
 | `MIN_STAKE_AFTER_SLASH`      | 100 FAB               | Auto-unregister threshold             |
 | `SLASH_COOLDOWN`             | 24 hours              | Cooldown between slashes on same host |
@@ -152,10 +152,22 @@ await nodeRegistry.registerNode(
   stablePrice
 );
 
-// 3. Set per-token pricing for USDC (REQUIRED since Feb 24, 2026)
-await nodeRegistry.setTokenPricing(
+// 3. Set per-model per-token pricing (REQUIRED for each model+token combo)
+await nodeRegistry.setModelTokenPricing(
+  TINY_VICUNA,
   contracts.usdcToken,
   5000  // $5/million tokens (with PRICE_PRECISION=1000)
+);
+await nodeRegistry.setModelTokenPricing(
+  TINY_VICUNA,
+  ethers.ZeroAddress,  // Native ETH
+  nativePrice
+);
+// Repeat for each model the host supports
+await nodeRegistry.setModelTokenPricing(
+  TINY_LLAMA,
+  contracts.usdcToken,
+  5000
 );
 ```
 
@@ -180,31 +192,15 @@ function unregisterNode() external
 
 ### Pricing Management
 
-#### `updatePricingNative`
+#### `setModelTokenPricing`
 
-Update default native token (ETH) pricing.
-
-```solidity
-function updatePricingNative(uint256 newMinPrice) external
-```
-
-#### `updatePricingStable`
-
-Update default stablecoin (USDC) pricing.
+Set pricing for a specific model+token combination. This is the primary pricing function (Phase 18).
 
 ```solidity
-function updatePricingStable(uint256 newMinPrice) external
-```
-
-#### `setModelPricing`
-
-Set model-specific pricing (overrides default).
-
-```solidity
-function setModelPricing(
-    bytes32 modelId,       // Model to set pricing for
-    uint256 nativePrice,   // Native price (0 = use default)
-    uint256 stablePrice    // Stable price (0 = use default)
+function setModelTokenPricing(
+    bytes32 modelId,   // Model to set pricing for
+    address token,     // Token address (address(0) for native ETH)
+    uint256 price      // Price per token (with PRICE_PRECISION=1000)
 ) external
 ```
 
@@ -212,89 +208,61 @@ function setModelPricing(
 
 - Caller must be registered and active
 - Model must be in caller's supported models
-- Prices must be 0 (use default) or within MIN/MAX ranges
+- Price must be within valid range for the token type
+
+> **REQUIRED (Phase 18):** Hosts MUST call this for each model+token combination they wish to accept. `getModelPricing()` reads only from `modelTokenPricing` and reverts with `"No model pricing"` if not set.
 
 **Example:**
 
 ```javascript
-// Set premium pricing for TinyVicuna model
-// With PRICE_PRECISION=1000, this is $25/million tokens
-const premiumNativePrice = 15_000_000; // ~$0.066/million @ $4400 ETH
-const premiumStablePrice = 25000; // $25/million (25 * 1000)
-
-await nodeRegistry.setModelPricing(
+// Set pricing for TinyVicuna model
+// USDC pricing: $25/million tokens (with PRICE_PRECISION=1000)
+await nodeRegistry.setModelTokenPricing(
   TINY_VICUNA,
-  premiumNativePrice,
-  premiumStablePrice
+  contracts.usdcToken,
+  25000  // $25/million (25 * 1000)
+);
+
+// Native ETH pricing: ~$0.066/million @ $4400 ETH
+await nodeRegistry.setModelTokenPricing(
+  TINY_VICUNA,
+  ethers.ZeroAddress,  // address(0) for native
+  15_000_000
 );
 ```
 
 **Events:**
 
 ```solidity
-event ModelPricingUpdated(
+event ModelTokenPricingUpdated(
     address indexed operator,
     bytes32 indexed modelId,
-    uint256 nativePrice,
-    uint256 stablePrice
-);
-```
-
-#### `clearModelPricing`
-
-Clear model-specific pricing (revert to default).
-
-```solidity
-function clearModelPricing(bytes32 modelId) external
-```
-
-#### `setTokenPricing`
-
-Set custom pricing for a specific ERC20 token.
-
-```solidity
-function setTokenPricing(
-    address token,    // Token address (e.g., USDC, USDT)
-    uint256 price     // Price per token for this stablecoin
-) external
-```
-
-> **REQUIRED (Feb 24, 2026):** Hosts MUST call this for each ERC20 token they accept (e.g., USDC). Without it, `getNodePricing()` and `getModelPricing()` will revert and session creation will fail.
-
-**Events:**
-
-```solidity
-event TokenPricingUpdated(
-    address indexed operator,
     address indexed token,
     uint256 price
 );
 ```
 
-### Query Functions
+#### `clearModelTokenPricing`
 
-#### `getNodePricing`
-
-Get host's minimum price for a token.
+Remove pricing for a specific model+token combination.
 
 ```solidity
-function getNodePricing(
-    address operator,  // Host address
-    address token      // Token address (address(0) for native)
-) external view returns (uint256)
+function clearModelTokenPricing(
+    bytes32 modelId,   // Model to clear pricing for
+    address token      // Token address (address(0) for native ETH)
+) external
 ```
 
-**Pricing Resolution (F202614977 - Feb 24, 2026):**
+**Requirements:**
 
-1. If `token == address(0)` (native) -> return `minPricePerTokenNative`
-2. If `customTokenPricing[operator][token] > 0` -> return it
-3. Otherwise -> **reverts with `"No token pricing"`**
+- Caller must be registered and active
+- Model must be in caller's supported models
 
-> **BREAKING CHANGE (Feb 24, 2026):** Hosts MUST call `setTokenPricing(token, price)` for each ERC20 token they accept. The previous silent fallback to `minPricePerTokenStable` has been removed. Queries for unconfigured tokens now revert.
+### Query Functions
 
 #### `getModelPricing`
 
-Get model-specific pricing with fallback to default.
+Get pricing for a specific model+token combination. Reads only from `modelTokenPricing` mapping (no fallback).
 
 ```solidity
 function getModelPricing(
@@ -304,17 +272,13 @@ function getModelPricing(
 ) external view returns (uint256)
 ```
 
-**Pricing Resolution (F202614977 - Feb 24, 2026):**
+**Pricing Resolution (Phase 18):**
 
-1. If `token == address(0)` (native):
-   - If model-specific native price set -> return it
-   - Else -> return `minPricePerTokenNative`
-2. If ERC20 token:
-   - If model-specific stable price set -> return it
-   - If `customTokenPricing[operator][token] > 0` -> return it
-   - Otherwise -> **reverts with `"No token pricing"`**
+1. Reads `modelTokenPricing[operator][modelId][token]`
+2. If price > 0 -> return it
+3. Otherwise -> **reverts with `"No model pricing"`**
 
-> **BREAKING CHANGE (Feb 24, 2026):** Same as `getNodePricing` -- ERC20 token pricing must be explicitly set via `setTokenPricing()`.
+> **BREAKING CHANGE (Phase 18):** No fallback to legacy pricing fields. Hosts MUST call `setModelTokenPricing(modelId, token, price)` for each model+token combo they wish to accept.
 
 **Example:**
 
@@ -331,27 +295,29 @@ console.log("Min price:", ethers.formatEther(modelPrice), "ETH per token");
 
 #### `getHostModelPrices`
 
-Batch query all model prices for a host.
+Batch query all model prices for a host for a specific token.
 
 ```solidity
-function getHostModelPrices(address operator) external view returns (
+function getHostModelPrices(
+    address operator,  // Host address
+    address token      // Token address (address(0) for native)
+) external view returns (
     bytes32[] memory modelIds,
-    uint256[] memory nativePrices,
-    uint256[] memory stablePrices
+    uint256[] memory prices
 )
 ```
 
-**Returns effective prices** (model-specific or default fallback).
+**Returns prices from `modelTokenPricing`** for all models the host supports with the given token.
 
 **Example:**
 
 ```javascript
-const [modelIds, nativePrices, stablePrices] =
-  await nodeRegistry.getHostModelPrices(hostAddress);
+const [modelIds, prices] =
+  await nodeRegistry.getHostModelPrices(hostAddress, contracts.usdcToken);
 
 for (let i = 0; i < modelIds.length; i++) {
   console.log(
-    `Model ${modelIds[i]}: Native=${nativePrices[i]}, Stable=${stablePrices[i]}`
+    `Model ${modelIds[i]}: Price=${prices[i]}`
   );
 }
 ```
@@ -556,69 +522,9 @@ Session management and payments.
 
 ### Session Creation
 
-#### `createSessionJob`
-
-Create a session with native ETH payment (uses default pricing).
-
-```solidity
-function createSessionJob(
-    address host,              // Host address
-    uint256 pricePerToken,     // Agreed price per token
-    uint256 maxDuration,       // Max session duration in seconds
-    uint256 proofInterval,     // Tokens between proofs (min 100)
-    uint256 proofTimeoutWindow // Seconds before proof times out
-) external payable returns (uint256 jobId)
-```
-
-**Requirements:**
-
-- `msg.value >= MIN_DEPOSIT` (0.0001 ETH)
-- `pricePerToken >= host's minPricePerTokenNative`
-- Host must be registered and active
-
-**Example:**
-
-```javascript
-const marketplace = new ethers.Contract(
-  contracts.jobMarketplace,
-  JobMarketplaceABI,
-  signer
-);
-
-// Query host pricing first
-const hostPrice = await nodeRegistry.getNodePricing(
-  hostAddress,
-  ethers.ZeroAddress
-);
-
-// Create session with 0.01 ETH deposit
-const tx = await marketplace.createSessionJob(
-  hostAddress,
-  hostPrice, // Must meet host's minimum
-  3600, // 1 hour max duration
-  1000, // Proof every 1000 tokens
-  300,  // 5 minute proof timeout window
-  { value: ethers.parseEther("0.01") }
-);
-
-const receipt = await tx.wait();
-const sessionId = receipt.logs[0].args.jobId;
-```
-
-**Events:**
-
-```solidity
-event SessionJobCreated(
-    uint256 indexed jobId,
-    address indexed requester,
-    address indexed host,
-    uint256 deposit
-);
-```
-
 #### `createSessionJobForModel`
 
-Create a session for a specific model with model-specific pricing validation.
+Create a session for a specific model with native ETH payment.
 
 ```solidity
 function createSessionJobForModel(
@@ -634,7 +540,8 @@ function createSessionJobForModel(
 **Requirements:**
 
 - Host must support the specified model
-- `pricePerToken >= host's model-specific minimum (or default fallback)`
+- `pricePerToken >= host's model pricing` (from `modelTokenPricing[host][modelId][address(0)]`)
+- Reverts with `"No model pricing"` if host has not set pricing for this model+native combo
 
 **Example:**
 
@@ -667,56 +574,6 @@ event SessionJobCreatedForModel(
     address indexed host,
     bytes32 modelId,
     uint256 deposit
-);
-```
-
-#### `createSessionJobWithToken`
-
-Create a session with ERC20 token payment (USDC).
-
-```solidity
-function createSessionJobWithToken(
-    address host,
-    address token,             // Payment token (e.g., USDC)
-    uint256 deposit,           // Amount to deposit
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow // Seconds before proof times out
-) external returns (uint256 jobId)
-```
-
-**Requirements:**
-
-- Token must be accepted (`acceptedTokens[token] == true`)
-- Caller must have approved tokens for transfer
-- `deposit >= tokenMinDeposits[token]`
-- `pricePerToken >= host's token-specific pricing (set via setTokenPricing)`
-
-**Example:**
-
-```javascript
-const usdc = new ethers.Contract(contracts.usdcToken, ERC20ABI, signer);
-
-// Approve USDC
-const depositAmount = ethers.parseUnits("10", 6); // 10 USDC
-await usdc.approve(contracts.jobMarketplace, depositAmount);
-
-// Query host pricing for USDC
-const hostPrice = await nodeRegistry.getNodePricing(
-  hostAddress,
-  contracts.usdcToken
-);
-
-// Create USDC session
-const tx = await marketplace.createSessionJobWithToken(
-  hostAddress,
-  contracts.usdcToken,
-  depositAmount,
-  hostPrice,
-  3600,
-  1000,
-  300  // 5 minute proof timeout window
 );
 ```
 
@@ -971,22 +828,6 @@ function getDepositBalance(address account, address token) external view returns
 
 Use `address(0)` for native ETH balance.
 
-#### `createSessionFromDeposit`
-
-Create session from pre-deposited funds.
-
-```solidity
-function createSessionFromDeposit(
-    address host,
-    address paymentToken,      // address(0) for native
-    uint256 deposit,
-    uint256 pricePerToken,
-    uint256 maxDuration,
-    uint256 proofInterval,
-    uint256 proofTimeoutWindow // Seconds before proof times out
-) external returns (uint256 jobId)
-```
-
 ### Delegated Sessions (Smart Wallet Sub-Account Support)
 
 Enables Coinbase Smart Wallet sub-accounts to create sessions using the primary account's pre-deposited funds without popups.
@@ -1087,25 +928,32 @@ await marketplace.updateTokenMinDeposit(
 // 1. Approve FAB tokens
 await fabToken.approve(nodeRegistry.address, ethers.parseEther("1000"));
 
-// 2. Register with models and pricing
+// 2. Register with models (legacy pricing fields retained for storage layout)
 await nodeRegistry.registerNode(
   JSON.stringify({ name: "My Node", gpu: "RTX 4090" }),
   "https://my-api.com/inference",
   [TINY_VICUNA, TINY_LLAMA],
-  ethers.parseUnits("0.0001", 18), // 0.0001 ETH/token
-  1000 // 0.001 USDC/token
+  ethers.parseUnits("0.0001", 18), // Legacy native field
+  1000 // Legacy stable field
 );
 
-// 3. Set per-token pricing for USDC (REQUIRED since Feb 24, 2026)
-await nodeRegistry.setTokenPricing(
+// 3. Set per-model per-token pricing (REQUIRED for each model+token combo)
+// USDC pricing for TinyVicuna
+await nodeRegistry.setModelTokenPricing(
+  TINY_VICUNA,
   contracts.usdcToken,
   5000  // $5/million tokens (with PRICE_PRECISION=1000)
 );
-
-// 4. Optionally set premium pricing for specific models
-await nodeRegistry.setModelPricing(
+// Native ETH pricing for TinyVicuna
+await nodeRegistry.setModelTokenPricing(
   TINY_VICUNA,
-  ethers.parseUnits("0.0005", 18), // 5x for TinyVicuna
+  ethers.ZeroAddress,
+  ethers.parseUnits("0.0001", 18)
+);
+// Repeat for TinyLlama
+await nodeRegistry.setModelTokenPricing(
+  TINY_LLAMA,
+  contracts.usdcToken,
   5000
 );
 ```
@@ -1194,9 +1042,7 @@ await hostEarningsContract.withdrawNative();
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | `NodeRegistered(address operator, uint256 stakedAmount, string metadata, bytes32[] models)`                                                   | New host registered                |
 | `NodeUnregistered(address operator, uint256 returnedAmount)`                                                                                  | Host unregistered                  |
-| `ModelPricingUpdated(address operator, bytes32 modelId, uint256 nativePrice, uint256 stablePrice)`                                            | Model pricing changed              |
-| `TokenPricingUpdated(address operator, address token, uint256 price)`                                                                         | Token pricing changed              |
-| `PricingUpdated(address operator, uint256 newMinPrice)`                                                                                       | Default pricing changed            |
+| `ModelTokenPricingUpdated(address operator, bytes32 modelId, address token, uint256 price)`                                                   | Per-model per-token pricing changed |
 | `ModelsUpdated(address operator, bytes32[] newModels)`                                                                                        | Supported models changed           |
 | `ApiUrlUpdated(address operator, string newApiUrl)`                                                                                           | API URL changed                    |
 | `MetadataUpdated(address operator, string newMetadata)`                                                                                       | Metadata changed                   |
@@ -1236,7 +1082,7 @@ await hostEarningsContract.withdrawNative();
 | `"Stable price below minimum"`   | Price < MIN_PRICE_PER_TOKEN_STABLE                                       |
 | `"Stable price above maximum"`   | Price > MAX_PRICE_PER_TOKEN_STABLE                                       |
 | `"Invalid model"`                | Model not approved in ModelRegistry                                      |
-| `"No token pricing"`             | Host has not set pricing for this ERC20 token via `setTokenPricing()`    |
+| `"No model pricing"`             | Host has not set pricing for this model+token combo via `setModelTokenPricing()` |
 | `"Not slashing authority"`       | Caller is not the slashing authority                                     |
 | `"Host not active"`              | Host is not active or not registered                                     |
 | `"No stake to slash"`            | Host has no stake                                                        |
@@ -1293,7 +1139,7 @@ const config = {
   rpcUrl: "https://sepolia.base.org",
   explorer: "https://sepolia.basescan.org",
 
-  // POST-AUDIT REMEDIATION CONTRACTS (Feb 22-24, 2026)
+  // POST-AUDIT REMEDIATION CONTRACTS (Feb 22-26, 2026)
   contracts: {
     jobMarketplace: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4",
     nodeRegistry: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22",
@@ -1304,10 +1150,10 @@ const config = {
     usdcToken: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   },
 
-  // Implementation addresses (for contract verification) - Feb 24, 2026
+  // Implementation addresses (for contract verification) - Feb 26, 2026
   implementations: {
     jobMarketplace: "0x51C3F60D2e3756Cc3F119f9aE1876e2B947347ba", // Full audit remediation (Feb 22)
-    nodeRegistry: "0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b",   // Per-token pricing revert (Feb 24)
+    nodeRegistry: "0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b",   // Needs redeployment for Phase 18
     modelRegistry: "0xF12a0A07d4230E0b045dB22057433a9826d21652",   // Rate limits + rejected fee (Feb 22)
     proofSystem: "0xC46C84a612Cbf4C2eAaf5A9D1411aDA6309EC963",    // markProofUsed + dead code removal (Feb 22)
     hostEarnings: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0",    // Unchanged

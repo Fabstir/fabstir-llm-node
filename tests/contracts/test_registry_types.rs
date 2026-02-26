@@ -190,8 +190,8 @@ fn test_function_selectors() {
 use fabstir_llm_node::contracts::types::NodeRegistryWithModels;
 
 #[test]
-fn test_set_token_pricing_abi_generated() {
-    // Verify that abigen! generated set_token_pricing method from the ABI update.
+fn test_set_model_token_pricing_abi_generated() {
+    // Verify that abigen! generated set_model_token_pricing method from the ABI update.
     // We create a contract binding with a dummy provider and verify the method exists
     // by calling it (encoding only — no on-chain call).
     let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(
@@ -203,18 +203,19 @@ fn test_set_token_pricing_abi_generated() {
         .unwrap();
     let contract = NodeRegistryWithModels::new(contract_addr, std::sync::Arc::new(provider));
 
+    let model_id: [u8; 32] = [0x0b; 32]; // test model ID
     let usdc: Address = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
         .parse()
         .unwrap();
     let price = U256::from(10_000u64);
 
-    // This compiles only if abigen generated set_token_pricing(address, uint256)
-    let call = contract.set_token_pricing(usdc, price);
+    // This compiles only if abigen generated set_model_token_pricing(bytes32, address, uint256)
+    let call = contract.set_model_token_pricing(model_id, usdc, price);
     let tx = call.tx;
     // Verify the tx data is non-empty (has encoded call data)
     assert!(
         tx.data().is_some(),
-        "setTokenPricing call should have encoded data"
+        "setModelTokenPricing call should have encoded data"
     );
 }
 
@@ -247,14 +248,104 @@ fn test_custom_token_pricing_abi_generated() {
 }
 
 #[test]
-fn test_token_pricing_updated_event_generated() {
-    // Verify that abigen! generated TokenPricingUpdatedFilter event type.
+fn test_model_token_pricing_updated_event_generated() {
+    // Verify that abigen! generated ModelTokenPricingUpdatedFilter event type.
     // We verify by constructing the event filter signature.
-    let sig = "TokenPricingUpdated(address,address,uint256)";
+    let sig = "ModelTokenPricingUpdated(address,bytes32,address,uint256)";
     let hash = ethers::utils::keccak256(sig.as_bytes());
     // The event topic0 should be the keccak256 of the signature
-    println!("TokenPricingUpdated topic0: 0x{}", hex::encode(hash));
+    println!("ModelTokenPricingUpdated topic0: 0x{}", hex::encode(hash));
     // If this test compiles, abigen generated the event type.
     // Verify the expected signature hash is 32 bytes
     assert_eq!(hash.len(), 32);
+}
+
+// ===========================================
+// setModelTokenPricing Encoding Tests (Phase 18 — v8.20.0)
+// ===========================================
+
+#[test]
+fn test_set_model_token_pricing_encodes_three_params() {
+    // Verify setModelTokenPricing(bytes32, address, uint256) encodes 3 ABI params
+    let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(
+        "https://sepolia.base.org",
+    )
+    .unwrap();
+    let contract_addr: Address = "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22"
+        .parse()
+        .unwrap();
+    let contract = NodeRegistryWithModels::new(contract_addr, std::sync::Arc::new(provider));
+
+    let model_id: [u8; 32] = [0x14; 32];
+    let usdc: Address = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        .parse()
+        .unwrap();
+    let price = U256::from(10_000u64);
+
+    let call = contract.set_model_token_pricing(model_id, usdc, price);
+    let data = call.tx.data().expect("should have encoded data");
+    // 4 bytes selector + 3 * 32 bytes params = 100 bytes
+    assert_eq!(
+        data.len(),
+        4 + 96,
+        "Expected 4-byte selector + 3 x 32-byte params"
+    );
+}
+
+#[test]
+fn test_set_model_token_pricing_native_uses_zero_address() {
+    // Verify that native token uses Address::zero() and encodes differently from USDC
+    let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(
+        "https://sepolia.base.org",
+    )
+    .unwrap();
+    let contract_addr: Address = "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22"
+        .parse()
+        .unwrap();
+    let contract = NodeRegistryWithModels::new(contract_addr, std::sync::Arc::new(provider));
+
+    let model_id: [u8; 32] = [0x0b; 32];
+    let price = U256::from(10_000u64);
+
+    let native_call = contract.set_model_token_pricing(model_id, Address::zero(), price);
+    let usdc: Address = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        .parse()
+        .unwrap();
+    let usdc_call = contract.set_model_token_pricing(model_id, usdc, price);
+
+    let native_data = native_call.tx.data().unwrap();
+    let usdc_data = usdc_call.tx.data().unwrap();
+    // Same selector but different token param → different encoded data
+    assert_eq!(&native_data[..4], &usdc_data[..4], "Same function selector");
+    assert_ne!(
+        native_data, usdc_data,
+        "Different token addresses produce different data"
+    );
+}
+
+#[test]
+fn test_clear_model_token_pricing_abi_generated() {
+    // Verify clearModelTokenPricing(bytes32, address) exists and encodes correctly
+    let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(
+        "https://sepolia.base.org",
+    )
+    .unwrap();
+    let contract_addr: Address = "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22"
+        .parse()
+        .unwrap();
+    let contract = NodeRegistryWithModels::new(contract_addr, std::sync::Arc::new(provider));
+
+    let model_id: [u8; 32] = [0x0b; 32];
+    let usdc: Address = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        .parse()
+        .unwrap();
+
+    let call = contract.clear_model_token_pricing(model_id, usdc);
+    let data = call.tx.data().expect("should have encoded data");
+    // 4 bytes selector + 2 * 32 bytes params = 68 bytes
+    assert_eq!(
+        data.len(),
+        4 + 64,
+        "Expected 4-byte selector + 2 x 32-byte params"
+    );
 }
