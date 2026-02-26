@@ -348,27 +348,55 @@ impl MultiChainRegistrar {
         status.insert(chain_id, RegistrationStatus::Pending { tx_hash });
         drop(status);
 
-        // Call setTokenPricing for USDC after registerNode (F202614977)
+        // Call setModelTokenPricing for each model × token after registerNode (Phase 18)
         {
             use crate::contracts::pricing_constants::tokens as pricing_tokens;
             let usdc = pricing_tokens::usdc_address();
             let usdc_price = pricing_tokens::get_token_pricing_usdc();
-            match self
-                .set_token_pricing_on_chain(chain_id, usdc, usdc_price)
-                .await
-            {
-                Ok(tp_hash) => {
-                    info!(
-                        "setTokenPricing(USDC, {}) sent on chain {}: {:?}",
-                        usdc_price, chain_id, tp_hash
-                    );
+            let native_addr = pricing_tokens::native_address();
+            for model_id in &model_ids {
+                // Native pricing for this model
+                match self
+                    .set_model_token_pricing_on_chain(
+                        chain_id,
+                        *model_id,
+                        native_addr,
+                        min_price_native,
+                    )
+                    .await
+                {
+                    Ok(h) => info!(
+                        "setModelTokenPricing(model={}, native, {}) sent on chain {}: {:?}",
+                        hex::encode(model_id),
+                        min_price_native,
+                        chain_id,
+                        h
+                    ),
+                    Err(e) => error!(
+                        "setModelTokenPricing(native) failed for model {} on chain {}: {}",
+                        hex::encode(model_id),
+                        chain_id,
+                        e
+                    ),
                 }
-                Err(e) => {
-                    // Log error but do NOT fail registration — host can retry
-                    error!(
-                        "setTokenPricing failed on chain {} (host can retry via cast or restart): {}",
-                        chain_id, e
-                    );
+                // USDC pricing for this model
+                match self
+                    .set_model_token_pricing_on_chain(chain_id, *model_id, usdc, usdc_price)
+                    .await
+                {
+                    Ok(h) => info!(
+                        "setModelTokenPricing(model={}, USDC, {}) sent on chain {}: {:?}",
+                        hex::encode(model_id),
+                        usdc_price,
+                        chain_id,
+                        h
+                    ),
+                    Err(e) => error!(
+                        "setModelTokenPricing(USDC) failed for model {} on chain {}: {}",
+                        hex::encode(model_id),
+                        chain_id,
+                        e
+                    ),
                 }
             }
         }
@@ -421,17 +449,15 @@ impl MultiChainRegistrar {
         Ok(tx_hash)
     }
 
-    /// Call setTokenPricing on the NodeRegistry for a specific chain (F202614977).
-    /// Required after registerNode() for ERC20 sessions to work.
-    pub async fn set_token_pricing_on_chain(
+    /// Call setModelTokenPricing on the NodeRegistry for a specific chain (Phase 18).
+    /// Required after registerNode() for per-model pricing to work.
+    pub async fn set_model_token_pricing_on_chain(
         &self,
         chain_id: u64,
+        model_id: [u8; 32],
         token: Address,
         price: U256,
     ) -> Result<H256> {
-        stable::validate_price(price)
-            .map_err(|e| anyhow!("Token pricing validation failed: {}", e))?;
-
         let chain_config = self
             .chain_registry
             .get_chain(chain_id)
@@ -448,8 +474,13 @@ impl MultiChainRegistrar {
         use ethers::types::Bytes;
 
         let function = Function {
-            name: "setTokenPricing".to_string(),
+            name: "setModelTokenPricing".to_string(),
             inputs: vec![
+                Param {
+                    name: "modelId".to_string(),
+                    kind: ParamType::FixedBytes(32),
+                    internal_type: None,
+                },
                 Param {
                     name: "token".to_string(),
                     kind: ParamType::Address,
@@ -466,10 +497,14 @@ impl MultiChainRegistrar {
             state_mutability: ethers::abi::StateMutability::NonPayable,
         };
 
-        let tokens = vec![AbiToken::Address(token), AbiToken::Uint(price)];
+        let tokens = vec![
+            AbiToken::FixedBytes(model_id.to_vec()),
+            AbiToken::Address(token),
+            AbiToken::Uint(price),
+        ];
         let encoded = function
             .encode_input(&tokens)
-            .map_err(|e| anyhow!("Failed to encode setTokenPricing: {}", e))?;
+            .map_err(|e| anyhow!("Failed to encode setModelTokenPricing: {}", e))?;
 
         let tx_request = ethers::types::TransactionRequest::new()
             .to(registry_address)
@@ -478,12 +513,22 @@ impl MultiChainRegistrar {
         let pending_tx = signer
             .send_transaction(tx_request, None)
             .await
-            .map_err(|e| anyhow!("setTokenPricing tx failed on chain {}: {}", chain_id, e))?;
+            .map_err(|e| {
+                anyhow!(
+                    "setModelTokenPricing tx failed on chain {}: {}",
+                    chain_id,
+                    e
+                )
+            })?;
 
         let tx_hash = pending_tx.tx_hash();
         info!(
-            "setTokenPricing(token={:?}, price={}) sent on chain {}: {:?}",
-            token, price, chain_id, tx_hash
+            "setModelTokenPricing(model={}, token={:?}, price={}) sent on chain {}: {:?}",
+            hex::encode(model_id),
+            token,
+            price,
+            chain_id,
+            tx_hash
         );
 
         Ok(tx_hash)
@@ -559,11 +604,16 @@ mod tests {
     use ethers::abi::{Function, Param, ParamType, Token};
 
     #[test]
-    fn test_set_token_pricing_abi_encoding() {
-        // Verify that setTokenPricing(address, uint256) encodes correctly
+    fn test_set_model_token_pricing_abi_encoding() {
+        // Verify that setModelTokenPricing(bytes32, address, uint256) encodes correctly
         let function = Function {
-            name: "setTokenPricing".to_string(),
+            name: "setModelTokenPricing".to_string(),
             inputs: vec![
+                Param {
+                    name: "modelId".to_string(),
+                    kind: ParamType::FixedBytes(32),
+                    internal_type: None,
+                },
                 Param {
                     name: "token".to_string(),
                     kind: ParamType::Address,
@@ -580,20 +630,25 @@ mod tests {
             state_mutability: ethers::abi::StateMutability::NonPayable,
         };
 
+        let model_id: [u8; 32] = [0x0b; 32];
         let usdc_addr = Address::from_str("0x036CbD53842c5426634e7929541eC2318f3dCF7e").unwrap();
         let price = U256::from(10_000u64);
 
-        let tokens = vec![Token::Address(usdc_addr), Token::Uint(price)];
+        let tokens = vec![
+            Token::FixedBytes(model_id.to_vec()),
+            Token::Address(usdc_addr),
+            Token::Uint(price),
+        ];
 
         let encoded = function
             .encode_input(&tokens)
             .expect("Encoding should succeed");
 
-        // Function selector is first 4 bytes
-        assert_eq!(encoded.len(), 4 + 64); // 4 selector + 2 * 32 bytes params
+        // Function selector is first 4 bytes + 3 * 32 bytes params
+        assert_eq!(encoded.len(), 4 + 96);
 
-        // Verify the function selector matches setTokenPricing(address,uint256)
-        let sig = "setTokenPricing(address,uint256)";
+        // Verify the function selector matches setModelTokenPricing(bytes32,address,uint256)
+        let sig = "setModelTokenPricing(bytes32,address,uint256)";
         let expected_selector = &ethers::utils::keccak256(sig.as_bytes())[..4];
         assert_eq!(&encoded[..4], expected_selector);
     }

@@ -320,55 +320,6 @@
   },
   {
     "type": "function",
-    "name": "createSessionFromDeposit",
-    "inputs": [
-      {
-        "name": "host",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "paymentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "deposit",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pricePerToken",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxDuration",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofInterval",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofTimeoutWindow",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sessionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "createSessionFromDepositForModel",
     "inputs": [
       {
@@ -420,45 +371,6 @@
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "createSessionJob",
-    "inputs": [
-      {
-        "name": "host",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pricePerToken",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxDuration",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofInterval",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofTimeoutWindow",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "jobId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -517,55 +429,6 @@
         "name": "modelId",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "deposit",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pricePerToken",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxDuration",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofInterval",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proofTimeoutWindow",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "jobId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "createSessionJobWithToken",
-    "inputs": [
-      {
-        "name": "host",
-        "type": "address",
-        "internalType": "address"
       },
       {
         "name": "token",

@@ -257,30 +257,6 @@
   },
   {
     "type": "function",
-    "name": "getNodePricing",
-    "inputs": [
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getNodesForModel",
     "inputs": [
       {
@@ -554,32 +530,6 @@
   },
   {
     "type": "function",
-    "name": "updatePricingNative",
-    "inputs": [
-      {
-        "name": "newMinPrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updatePricingStable",
-    "inputs": [
-      {
-        "name": "newMinPrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "updateSupportedModels",
     "inputs": [
       {
@@ -751,8 +701,13 @@
   },
   {
     "type": "function",
-    "name": "setTokenPricing",
+    "name": "setModelTokenPricing",
     "inputs": [
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
       {
         "name": "token",
         "type": "address",
@@ -762,6 +717,24 @@
         "name": "price",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "clearModelTokenPricing",
+    "inputs": [
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -793,13 +766,19 @@
   },
   {
     "type": "event",
-    "name": "TokenPricingUpdated",
+    "name": "ModelTokenPricingUpdated",
     "inputs": [
       {
         "name": "operator",
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "modelId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
       },
       {
         "name": "token",

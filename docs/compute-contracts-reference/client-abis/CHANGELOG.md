@@ -1,51 +1,121 @@
 # Client ABIs Changelog
 
-## February 24, 2026 - F202614977: Per-Token Pricing Fix (BREAKING CHANGE)
+## February 26, 2026 - Phase 18: Per-Model Per-Token Pricing Migration (BREAKING CHANGE)
 
-### ⚠️ BREAKING CHANGE for ERC20 Sessions
-`getNodePricing()` and `getModelPricing()` no longer silently fall back to `minPricePerTokenStable` for ERC20 tokens. They now **revert** with `"No token pricing"` if the host hasn't explicitly set pricing via `setTokenPricing(token, price)`.
+### ⚠️ BREAKING CHANGE — Major Pricing API Overhaul
+Phase 18 consolidates all pricing into a single per-model per-token mapping (`modelTokenPricing`), removing the layered fallback system from Phase 17. Non-model session creation functions are also removed from JobMarketplace.
 
-**Why**: A 6-decimal token (USDC) and an 18-decimal token (DAI) previously got the same raw price value, enabling users to pay dust amounts for inference.
+**Why**: The previous system had multiple overlapping pricing layers (node-level default, custom token pricing, model-level overrides) which created confusion and potential for mispricing. The new system has exactly one pricing source: `modelTokenPricing[host][modelId][token]`.
 
-### Implementation Upgrade
-| Contract | Proxy (unchanged) | New Implementation |
-|----------|-------------------|-------------------|
-| NodeRegistry | `0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22` | `0xeeB3ABad9d27Bb3a5D7ACA3c282CDD8C80aAD24b` |
+### Supersedes Phase 17 (F202614977)
+Phase 17's `setTokenPricing`/`getNodePricing` approach is entirely replaced. All Phase 17 changes are superseded by Phase 18.
+
+### NodeRegistry: Removed Functions
+| Function | Replacement |
+|----------|-------------|
+| `getNodePricing(address, address)` | `getModelPricing(address, bytes32, address)` |
+| `setTokenPricing(address, uint256)` | `setModelTokenPricing(bytes32, address, uint256)` |
+| `updatePricingNative(uint256)` | `setModelTokenPricing(modelId, address(0), price)` |
+| `updatePricingStable(uint256)` | `setModelTokenPricing(modelId, token, price)` |
+| `setModelPricing(bytes32, uint256, uint256)` | `setModelTokenPricing(bytes32, address, uint256)` |
+| `clearModelPricing(bytes32)` | `clearModelTokenPricing(bytes32, address)` |
+
+### NodeRegistry: Added Functions
+```solidity
+// Set pricing for a specific model + token combination
+function setModelTokenPricing(bytes32 modelId, address token, uint256 price) external
+
+// Clear pricing for a specific model + token combination
+function clearModelTokenPricing(bytes32 modelId, address token) external
+```
+
+### NodeRegistry: Changed Functions
+```solidity
+// getModelPricing — no fallback chain, reads modelTokenPricing directly
+// Reverts with "No model pricing" if not set (was "No token pricing" in Phase 17)
+function getModelPricing(address operator, bytes32 modelId, address token) external view returns (uint256)
+
+// getHostModelPrices — now takes a token parameter (was: no token param, returned dual native/stable)
+function getHostModelPrices(address operator, address token) external view returns (
+    bytes32[] memory modelIds,
+    uint256[] memory prices
+)
+```
+
+### NodeRegistry: New Event
+```solidity
+event ModelTokenPricingUpdated(address indexed operator, bytes32 indexed modelId, address indexed token, uint256 price);
+```
+
+### NodeRegistry: New Storage
+```solidity
+// Per-operator, per-model, per-token pricing
+mapping(address => mapping(bytes32 => mapping(address => uint256))) public modelTokenPricing;
+```
+
+### JobMarketplace: Removed Functions
+| Function | Replacement |
+|----------|-------------|
+| `createSessionJob(...)` | `createSessionJobForModel(...)` |
+| `createSessionJobWithToken(...)` | `createSessionJobForModelWithToken(...)` |
+| `createSessionFromDeposit(...)` | `createSessionFromDepositForModel(...)` |
+
+All sessions now require a model ID parameter.
 
 ### Host Migration Required
-All registered hosts must call `setTokenPricing()` for each ERC20 they accept:
+All registered hosts must call `setModelTokenPricing()` for each model+token combination they accept:
 ```javascript
-// After registerNode(), set pricing for each ERC20 token
-await nodeRegistry.setTokenPricing(usdcAddress, pricePerToken);
+// After registerNode(), set pricing for each model+token pair
+await nodeRegistry.setModelTokenPricing(modelId, usdcAddress, pricePerToken);
+await nodeRegistry.setModelTokenPricing(modelId, ethers.constants.AddressZero, nativePricePerToken);
 ```
 
 ```bash
 # Via cast
 cast send 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 \
-  "setTokenPricing(address,uint256)" \
-  0x036CbD53842c5426634e7929541eC2318f3dCF7e <price> \
+  "setModelTokenPricing(bytes32,address,uint256)" \
+  <MODEL_ID> 0x036CbD53842c5426634e7929541eC2318f3dCF7e <price> \
   --private-key $HOST_KEY --rpc-url "https://sepolia.base.org" --legacy
 ```
 
 ### SDK Changes Required
 ```javascript
-// 1. Host registration flow — add setTokenPricing after registerNode
-await nodeRegistry.registerNode(apiUrl, metadata, models, nativePrice, stablePrice);
-await nodeRegistry.setTokenPricing(usdcAddress, stablePrice); // NEW — required
+// 1. Host registration flow — add setModelTokenPricing for each model+token
+await nodeRegistry.registerNode(metadata, apiUrl, [modelId], nativePrice, stablePrice);
+await nodeRegistry.setModelTokenPricing(modelId, usdcAddress, stablePrice); // NEW — required
+await nodeRegistry.setModelTokenPricing(modelId, ethers.constants.AddressZero, nativePrice); // NEW — required
 
-// 2. Wrap getNodePricing in try/catch for ERC20 tokens
+// 2. Query pricing — use getModelPricing (getNodePricing is removed)
 try {
-  const price = await nodeRegistry.getNodePricing(host, usdcAddress);
+  const price = await nodeRegistry.getModelPricing(host, modelId, usdcAddress);
 } catch (e) {
-  // Host doesn't accept this token
-  console.log("Host has not set pricing for this token");
+  console.log("Host has not set pricing for this model+token");
 }
+
+// 3. Batch query — getHostModelPrices now takes a token parameter
+const [modelIds, prices] = await nodeRegistry.getHostModelPrices(host, usdcAddress);
+
+// 4. Session creation — use model-specific functions (non-model variants removed)
+// OLD (removed):
+// await marketplace.createSessionJob(host, price, duration, interval, timeout, { value: deposit });
+// NEW:
+await marketplace.createSessionJobForModel(modelId, host, price, duration, interval, timeout, { value: deposit });
 ```
 
-### Unchanged
-- Native ETH path (`token = address(0)`) — works exactly as before
-- All proxy addresses — same
-- ABI — unchanged (same function signatures, different revert behavior)
+### ABI Files Updated
+- `NodeRegistryWithModelsUpgradeable-CLIENT-ABI.json` — re-extracted
+- `JobMarketplaceWithModelsUpgradeable-CLIENT-ABI.json` — re-extracted
+
+---
+
+## ~~February 24, 2026 - F202614977: Per-Token Pricing Fix (BREAKING CHANGE)~~ SUPERSEDED BY PHASE 18
+
+> **Note**: This entry is superseded by Phase 18 (Feb 26, 2026) above. The `setTokenPricing`/`getNodePricing` approach has been replaced by per-model per-token pricing via `setModelTokenPricing`/`getModelPricing`.
+
+### Original Description (for historical reference)
+`getNodePricing()` and `getModelPricing()` no longer silently fall back to `minPricePerTokenStable` for ERC20 tokens. They now **revert** with `"No token pricing"` if the host hasn't explicitly set pricing via `setTokenPricing(token, price)`.
+
+**Why**: A 6-decimal token (USDC) and an 18-decimal token (DAI) previously got the same raw price value, enabling users to pay dust amounts for inference.
 
 ---
 

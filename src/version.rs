@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.19.1-true-streaming-2026-02-25";
+pub const VERSION: &str = "v8.20.0-model-token-pricing-2026-02-26";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.19.1";
+pub const VERSION_NUMBER: &str = "8.20.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 19;
+pub const VERSION_MINOR: u32 = 20;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-25";
+pub const BUILD_DATE: &str = "2026-02-26";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -231,6 +231,11 @@ pub const FEATURES: &[&str] = &[
     // True token-by-token streaming (v8.19.1)
     "true-streaming",
     "spawn-blocking-inference",
+    // Per-model token pricing (v8.20.0)
+    "model-token-pricing",
+    "set-model-token-pricing",
+    "clear-model-token-pricing",
+    "per-model-per-token-pricing",
 ];
 
 /// Supported chain IDs
@@ -241,6 +246,13 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.20.0 - Per-Model Token Pricing (Phase 18, Feb 26, 2026)
+    "BREAKING: setTokenPricing(address,uint256) removed — use setModelTokenPricing(bytes32,address,uint256)",
+    "FEAT: Per-model per-token pricing via setModelTokenPricing after registerNode()",
+    "FEAT: Pricing set for each model × each token (native + USDC) in a loop",
+    "FEAT: clearModelTokenPricing(bytes32,address) added to ABI for price removal",
+    "FEAT: ModelTokenPricingUpdated event replaces TokenPricingUpdated (adds modelId field)",
+    "CONTRACT: getNodePricing, updatePricingNative, updatePricingStable removed from ABI",
     // v8.19.1 - True Token-by-Token Streaming (Feb 25, 2026)
     "FEAT: Tokens now stream to client as generated (no more batch-then-deliver delay)",
     "FEAT: spawn_blocking + Handle::block_on for !Send llama-cpp inference on blocking thread pool",
@@ -547,8 +559,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 19);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 20);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -570,6 +582,11 @@ mod tests {
         // v8.19.1 true streaming
         assert!(FEATURES.contains(&"true-streaming"));
         assert!(FEATURES.contains(&"spawn-blocking-inference"));
+        // v8.20.0 per-model token pricing
+        assert!(FEATURES.contains(&"model-token-pricing"));
+        assert!(FEATURES.contains(&"set-model-token-pricing"));
+        assert!(FEATURES.contains(&"clear-model-token-pricing"));
+        assert!(FEATURES.contains(&"per-model-per-token-pricing"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -616,15 +633,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.19.1"));
-        assert!(version.contains("2026-02-25"));
+        assert!(version.contains("8.20.0"));
+        assert!(version.contains("2026-02-26"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.19.1-true-streaming-2026-02-25");
-        assert_eq!(VERSION_NUMBER, "8.19.1");
-        assert_eq!(BUILD_DATE, "2026-02-25");
+        assert_eq!(VERSION, "v8.20.0-model-token-pricing-2026-02-26");
+        assert_eq!(VERSION_NUMBER, "8.20.0");
+        assert_eq!(BUILD_DATE, "2026-02-26");
     }
 
     #[test]

@@ -224,23 +224,43 @@ impl NodeRegistration {
                 .ok_or_else(|| anyhow!("Transaction receipt not found"))?
         };
 
-        // Call setTokenPricing for USDC after registerNode (F202614977)
+        // Call setModelTokenPricing for each model × token after registerNode (Phase 18)
         if self.use_new_registry {
             let usdc = tokens::usdc_address();
             let usdc_price = tokens::get_token_pricing_usdc();
-            match self.set_token_pricing(usdc, usdc_price).await {
-                Ok(tp_receipt) => {
-                    info!(
-                        "setTokenPricing(USDC, {}) confirmed in tx: {:?}",
-                        usdc_price, tp_receipt.transaction_hash
-                    );
+            let native_addr = tokens::native_address();
+            let native_price = self
+                .metadata
+                .min_price_native
+                .unwrap_or_else(|| native::default_price());
+            for model_id in self.metadata.model_ids.clone() {
+                // Set native pricing for this model
+                match self
+                    .set_model_token_pricing(model_id, native_addr, native_price)
+                    .await
+                {
+                    Ok(r) => info!(
+                        "setModelTokenPricing(model={:?}, native, {}) confirmed: {:?}",
+                        model_id, native_price, r.transaction_hash
+                    ),
+                    Err(e) => error!(
+                        "setModelTokenPricing(native) failed for model {:?} (host can retry): {}",
+                        model_id, e
+                    ),
                 }
-                Err(e) => {
-                    // Log error but do NOT fail registration — host can retry
-                    error!(
-                        "setTokenPricing failed (host can retry via cast or restart): {}",
-                        e
-                    );
+                // Set USDC pricing for this model
+                match self
+                    .set_model_token_pricing(model_id, usdc, usdc_price)
+                    .await
+                {
+                    Ok(r) => info!(
+                        "setModelTokenPricing(model={:?}, USDC, {}) confirmed: {:?}",
+                        model_id, usdc_price, r.transaction_hash
+                    ),
+                    Err(e) => error!(
+                        "setModelTokenPricing(USDC) failed for model {:?} (host can retry): {}",
+                        model_id, e
+                    ),
                 }
             }
         }
@@ -524,40 +544,42 @@ impl NodeRegistration {
         stable::validate_price(price).map_err(|e| anyhow!("Token pricing validation failed: {}", e))
     }
 
-    /// Call setTokenPricing on the NodeRegistry contract for a specific ERC20 token.
-    /// Required after registerNode() for ERC20 sessions (F202614977).
-    pub async fn set_token_pricing(
+    /// Call setModelTokenPricing on the NodeRegistry contract for a specific model+token.
+    /// Required after registerNode() for per-model pricing (Phase 18).
+    pub async fn set_model_token_pricing(
         &self,
+        model_id: H256,
         token: Address,
         price: U256,
     ) -> Result<TransactionReceipt> {
         Self::validate_token_pricing(price)?;
 
         let new_contract = self.new_contract.as_ref().ok_or_else(|| {
-            anyhow!("setTokenPricing requires NodeRegistryWithModels (use_new_registry=true)")
+            anyhow!("setModelTokenPricing requires NodeRegistryWithModels (use_new_registry=true)")
         })?;
 
         info!(
-            "Calling setTokenPricing(token={:?}, price={}) on NodeRegistry",
-            token, price
+            "Calling setModelTokenPricing(model={:?}, token={:?}, price={}) on NodeRegistry",
+            model_id, token, price
         );
 
+        let model_id_bytes: [u8; 32] = model_id.into();
         let method = new_contract
-            .method::<_, ()>("setTokenPricing", (token, price))
-            .map_err(|e| anyhow!("Failed to create setTokenPricing call: {}", e))?;
+            .method::<_, ()>("setModelTokenPricing", (model_id_bytes, token, price))
+            .map_err(|e| anyhow!("Failed to create setModelTokenPricing call: {}", e))?;
 
         let tx = method
             .send()
             .await
-            .map_err(|e| anyhow!("setTokenPricing transaction failed: {}", e))?;
+            .map_err(|e| anyhow!("setModelTokenPricing transaction failed: {}", e))?;
 
         let receipt = tx
             .await
-            .map_err(|e| anyhow!("setTokenPricing receipt error: {}", e))?
-            .ok_or_else(|| anyhow!("setTokenPricing receipt not found"))?;
+            .map_err(|e| anyhow!("setModelTokenPricing receipt error: {}", e))?
+            .ok_or_else(|| anyhow!("setModelTokenPricing receipt not found"))?;
 
         info!(
-            "setTokenPricing confirmed in tx: {:?}",
+            "setModelTokenPricing confirmed in tx: {:?}",
             receipt.transaction_hash
         );
         Ok(receipt)
