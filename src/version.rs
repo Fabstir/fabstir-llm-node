@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.20.0-model-token-pricing-2026-02-26";
+pub const VERSION: &str = "v8.20.1-content-fetch-pdf-fix-2026-02-27";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.20.0";
+pub const VERSION_NUMBER: &str = "8.20.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 20;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-26";
+pub const BUILD_DATE: &str = "2026-02-27";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -236,6 +236,10 @@ pub const FEATURES: &[&str] = &[
     "set-model-token-pricing",
     "clear-model-token-pricing",
     "per-model-per-token-pricing",
+    // Content fetch PDF fix (v8.20.1)
+    "binary-url-detection",
+    "content-type-filtering",
+    "safe-string-truncation",
 ];
 
 /// Supported chain IDs
@@ -246,6 +250,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.20.1 - Content Fetch PDF Fix (Feb 27, 2026)
+    "FIX: Content fetcher no longer panics on PDF/binary URLs (was crashing on arxiv.org PDFs)",
+    "FIX: Binary URL detection skips .pdf, .zip, image, video, audio URLs before fetching",
+    "FIX: Content-Type header check filters application/pdf, image/*, video/*, audio/*",
+    "FIX: Body content sniff detects %PDF prefix as fallback for incorrect Content-Type headers",
+    "FIX: truncate_content() now uses char-boundary-safe slicing (prevents panic on multi-byte data)",
     // v8.20.0 - Per-Model Token Pricing (Phase 18, Feb 26, 2026)
     "BREAKING: setTokenPricing(address,uint256) removed — use setModelTokenPricing(bytes32,address,uint256)",
     "FEAT: Per-model per-token pricing via setModelTokenPricing after registerNode()",
@@ -560,7 +570,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 20);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -587,6 +597,10 @@ mod tests {
         assert!(FEATURES.contains(&"set-model-token-pricing"));
         assert!(FEATURES.contains(&"clear-model-token-pricing"));
         assert!(FEATURES.contains(&"per-model-per-token-pricing"));
+        // v8.20.1 content fetch PDF fix
+        assert!(FEATURES.contains(&"binary-url-detection"));
+        assert!(FEATURES.contains(&"content-type-filtering"));
+        assert!(FEATURES.contains(&"safe-string-truncation"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -633,15 +647,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.20.0"));
-        assert!(version.contains("2026-02-26"));
+        assert!(version.contains("8.20.1"));
+        assert!(version.contains("2026-02-27"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.20.0-model-token-pricing-2026-02-26");
-        assert_eq!(VERSION_NUMBER, "8.20.0");
-        assert_eq!(BUILD_DATE, "2026-02-26");
+        assert_eq!(VERSION, "v8.20.1-content-fetch-pdf-fix-2026-02-27");
+        assert_eq!(VERSION_NUMBER, "8.20.1");
+        assert_eq!(BUILD_DATE, "2026-02-27");
     }
 
     #[test]

@@ -85,6 +85,12 @@ impl ContentFetcher {
             return Err(FetchError::UnsafeUrl(url.to_string()));
         }
 
+        // Skip URLs that point to binary/non-HTML content
+        if Self::is_binary_url(url) {
+            debug!("Skipping binary URL: {}", url);
+            return Err(FetchError::NoContent(url.to_string()));
+        }
+
         // Check cache first
         if let Some(cached) = self.cache.get(url) {
             debug!("Content cache hit for: {}", url);
@@ -111,10 +117,34 @@ impl ContentFetcher {
             return Err(FetchError::HttpStatus(status.as_u16(), url.to_string()));
         }
 
+        // Check Content-Type header for binary/non-HTML content
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if content_type.contains("application/pdf")
+            || content_type.contains("application/octet-stream")
+            || content_type.contains("image/")
+            || content_type.contains("video/")
+            || content_type.contains("audio/")
+        {
+            debug!("Skipping binary content type '{}' for: {}", content_type, url);
+            return Err(FetchError::NoContent(url.to_string()));
+        }
+
         let html = response
             .text()
             .await
             .map_err(|e| FetchError::HttpError(e.to_string()))?;
+
+        // Detect PDF/binary content that wasn't caught by Content-Type header
+        if html.starts_with("%PDF") || html.starts_with("\u{0}") {
+            debug!("Skipping binary content detected in body for: {}", url);
+            return Err(FetchError::NoContent(url.to_string()));
+        }
 
         // Extract content
         let text = extract_main_content(&html, self.config.max_chars_per_page);
@@ -215,6 +245,28 @@ impl ContentFetcher {
         }
 
         true
+    }
+
+    /// Check if URL points to a binary/non-HTML file based on path extension
+    fn is_binary_url(url: &str) -> bool {
+        let parsed = match Url::parse(url) {
+            Ok(u) => u,
+            Err(_) => return false,
+        };
+
+        let path = parsed.path().to_lowercase();
+
+        // Common binary file extensions
+        let binary_extensions = [
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico",
+            ".mp3", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".wav", ".ogg",
+            ".exe", ".bin", ".dmg", ".iso",
+            ".woff", ".woff2", ".ttf", ".otf", ".eot",
+        ];
+
+        binary_extensions.iter().any(|ext| path.ends_with(ext))
     }
 
     /// Extract title from HTML
@@ -322,5 +374,64 @@ mod tests {
 
         let result = fetcher.fetch_content("http://localhost/admin").await;
         assert!(matches!(result, Err(FetchError::UnsafeUrl(_))));
+    }
+
+    #[test]
+    fn test_is_binary_url_pdf() {
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/paper.pdf"
+        ));
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/docs/report.PDF"
+        ));
+        // Note: arxiv PDF URLs like /pdf/2602.11757 don't have .pdf extension
+        // Those are caught by Content-Type header check instead
+        assert!(!ContentFetcher::is_binary_url(
+            "https://arxiv.org/pdf/2602.11757"
+        ));
+    }
+
+    #[test]
+    fn test_is_binary_url_images() {
+        assert!(ContentFetcher::is_binary_url("https://example.com/photo.jpg"));
+        assert!(ContentFetcher::is_binary_url("https://example.com/logo.png"));
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/image.webp"
+        ));
+    }
+
+    #[test]
+    fn test_is_binary_url_archives() {
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/package.zip"
+        ));
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/code.tar.gz"
+        ));
+    }
+
+    #[test]
+    fn test_is_binary_url_html_pages() {
+        assert!(!ContentFetcher::is_binary_url("https://example.com/page"));
+        assert!(!ContentFetcher::is_binary_url(
+            "https://example.com/article.html"
+        ));
+        assert!(!ContentFetcher::is_binary_url(
+            "https://en.wikipedia.org/wiki/Rust"
+        ));
+        assert!(!ContentFetcher::is_binary_url(
+            "https://github.com/user/repo"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_binary_url_blocked() {
+        let config = ContentFetchConfig::default();
+        let fetcher = ContentFetcher::new(config);
+
+        let result = fetcher
+            .fetch_content("https://example.com/document.pdf")
+            .await;
+        assert!(matches!(result, Err(FetchError::NoContent(_))));
     }
 }
