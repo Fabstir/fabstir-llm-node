@@ -22,7 +22,7 @@ pub use generate_image::{generate_image_handler, GenerateImageRequest, GenerateI
 pub use handlers::{
     ChainInfo, ChainStatistics, ChainStatsResponse, ChainsResponse, HealthResponse,
     InferenceRequest, InferenceResponse, ModelInfo, ModelsResponse, SessionInfo,
-    SessionInfoResponse, SessionStatus, TotalStatistics,
+    SessionInfoResponse, SessionStatus, TotalStatistics, UsageInfo,
 };
 pub use ocr::{ocr_handler, OcrRequest, OcrResponse};
 pub use pool::{ConnectionPool, ConnectionStats, PoolConfig};

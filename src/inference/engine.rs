@@ -114,7 +114,7 @@ pub struct ModelConfig {
     pub chat_template: Option<crate::inference::ChatTemplate>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InferenceRequest {
     pub model_id: String,
     pub prompt: String,
@@ -134,6 +134,30 @@ pub struct InferenceRequest {
     /// Token sender — sends each token as it's generated (for true streaming)
     #[serde(skip)]
     pub token_sender: Option<mpsc::Sender<Result<TokenInfo>>>,
+    /// Result sender — sends the complete InferenceResult after generation (for streaming metadata)
+    #[serde(skip)]
+    pub result_sender: Option<tokio::sync::oneshot::Sender<InferenceResult>>,
+}
+
+impl Clone for InferenceRequest {
+    fn clone(&self) -> Self {
+        Self {
+            model_id: self.model_id.clone(),
+            prompt: self.prompt.clone(),
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
+            repeat_penalty: self.repeat_penalty,
+            min_p: self.min_p,
+            seed: self.seed,
+            stop_sequences: self.stop_sequences.clone(),
+            stream: self.stream,
+            cancel_flag: self.cancel_flag.clone(),
+            token_sender: self.token_sender.clone(),
+            result_sender: None, // oneshot::Sender is not cloneable
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +176,7 @@ pub struct InferenceResult {
     pub finish_reason: String,
     pub token_info: Vec<TokenInfo>,
     pub was_cancelled: bool,
+    pub context_usage: Option<ContextUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +185,14 @@ pub struct TokenInfo {
     pub text: String,
     pub logprob: Option<f32>,
     pub timestamp: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+    pub context_window_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -298,7 +331,7 @@ impl LlmEngine {
         self.model_info.read().await.keys().cloned().collect()
     }
 
-    pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
+    pub async fn run_inference(&self, mut request: InferenceRequest) -> Result<InferenceResult> {
         let start_time = Instant::now();
 
         // Check if model exists
@@ -310,7 +343,15 @@ impl LlmEngine {
         *self.inference_count.write().await += 1;
 
         // Check if we have a real model loaded and perform generation
-        let (output, tokens_generated, generation_time, token_info_list, stop_reason) = {
+        let (
+            output,
+            tokens_generated,
+            generation_time,
+            token_info_list,
+            stop_reason,
+            total_prompt_tokens,
+            context_size,
+        ) = {
             let mut models = self.models.lock().unwrap();
             let has_real_model = models.contains_key(&request.model_id);
 
@@ -385,6 +426,17 @@ impl LlmEngine {
 
                 (tokens_list, model.context_size, eos, stop_ids)
             };
+
+            // Check for context overflow before creating context
+            if prompt_tokens.len() >= context_size {
+                let overflow = prompt_tokens.len() - context_size;
+                return Err(anyhow!(
+                    "Prompt ({} tokens) exceeds context window ({} tokens) by {} tokens",
+                    prompt_tokens.len(),
+                    context_size,
+                    overflow
+                ));
+            }
 
             // Now work with the model again for context creation and generation
             let model = models
@@ -592,6 +644,8 @@ impl LlmEngine {
                 generation_time,
                 token_info_list,
                 stop_reason,
+                total_prompt_tokens,
+                context_size,
             )
         }; // Release the mutex here before any await
 
@@ -607,29 +661,45 @@ impl LlmEngine {
                 metrics.total_tokens_generated as f32 / metrics.total_inference_time.as_secs_f32();
         }
 
-        Ok(InferenceResult {
+        let result = InferenceResult {
             text: output,
             tokens_generated,
             generation_time,
             tokens_per_second,
             model_id: request.model_id,
-            finish_reason: if stop_reason == "cancelled" {
-                "cancelled".to_string()
-            } else {
-                "stop".to_string()
+            finish_reason: match stop_reason {
+                "cancelled" => "cancelled".to_string(),
+                "loop_condition" => "length".to_string(),
+                _ => "stop".to_string(),
             },
             token_info: token_info_list,
             was_cancelled: stop_reason == "cancelled",
-        })
+            context_usage: Some(ContextUsage {
+                prompt_tokens: total_prompt_tokens,
+                completion_tokens: tokens_generated,
+                total_tokens: total_prompt_tokens + tokens_generated,
+                context_window_size: context_size,
+            }),
+        };
+
+        if let Some(sender) = request.result_sender.take() {
+            let _ = sender.send(result.clone());
+        }
+
+        Ok(result)
     }
 
-    pub async fn run_inference_stream(&self, request: InferenceRequest) -> Result<TokenStream> {
+    pub async fn run_inference_stream(
+        &self,
+        request: InferenceRequest,
+    ) -> Result<(TokenStream, tokio::sync::oneshot::Receiver<InferenceResult>)> {
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
             return Err(anyhow!("Model not found: {}", request.model_id));
         }
 
         let (tx, rx) = mpsc::channel(4096);
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
         // Check if we have a real model loaded
         let has_real_model = self.models.lock().unwrap().contains_key(&request.model_id);
@@ -640,6 +710,7 @@ impl LlmEngine {
             let mut inference_request = request;
             inference_request.stream = false;
             inference_request.token_sender = Some(tx);
+            inference_request.result_sender = Some(result_tx);
             // Clone engine — all fields are Arc, cheap clone
             let engine = self.clone();
             // Run generation on blocking thread pool (solves !Send constraint)
@@ -658,7 +729,7 @@ impl LlmEngine {
             ));
         }
 
-        Ok(ReceiverStream::new(rx))
+        Ok((ReceiverStream::new(rx), result_rx))
     }
 
     pub async fn unload_model(&mut self, model_id: &str) -> Result<()> {
@@ -747,6 +818,7 @@ impl LlmEngine {
             stream: false,
             cancel_flag: None,
             token_sender: None,
+            result_sender: None,
         }
     }
 
@@ -907,5 +979,69 @@ mod tests {
         let result = sanitize_prompt_for_tokenizer(input);
         assert_eq!(result, "PDF contentwithnullbytes and normal text");
         assert!(!result.contains('\0'));
+    }
+
+    // === ContextUsage + finish_reason Tests (Sub-phase 1.1) ===
+
+    #[test]
+    fn test_context_usage_creation() {
+        let cu = ContextUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+            context_window_size: 4096,
+        };
+        assert_eq!(cu.prompt_tokens, 100);
+        assert_eq!(cu.completion_tokens, 50);
+        assert_eq!(cu.total_tokens, 150);
+        assert_eq!(cu.context_window_size, 4096);
+    }
+
+    #[test]
+    fn test_context_usage_serialization() {
+        let cu = ContextUsage {
+            prompt_tokens: 1250,
+            completion_tokens: 150,
+            total_tokens: 1400,
+            context_window_size: 32768,
+        };
+        let json = serde_json::to_value(&cu).unwrap();
+        assert_eq!(json["prompt_tokens"], 1250);
+        assert_eq!(json["completion_tokens"], 150);
+        assert_eq!(json["total_tokens"], 1400);
+        assert_eq!(json["context_window_size"], 32768);
+    }
+
+    #[test]
+    fn test_finish_reason_loop_condition_maps_to_length() {
+        let stop_reason = "loop_condition";
+        let finish_reason = match stop_reason {
+            "cancelled" => "cancelled",
+            "loop_condition" => "length",
+            _ => "stop",
+        };
+        assert_eq!(finish_reason, "length");
+    }
+
+    #[test]
+    fn test_finish_reason_eos_maps_to_stop() {
+        let stop_reason = "eos_token";
+        let finish_reason = match stop_reason {
+            "cancelled" => "cancelled",
+            "loop_condition" => "length",
+            _ => "stop",
+        };
+        assert_eq!(finish_reason, "stop");
+    }
+
+    #[test]
+    fn test_finish_reason_cancelled_maps_to_cancelled() {
+        let stop_reason = "cancelled";
+        let finish_reason = match stop_reason {
+            "cancelled" => "cancelled",
+            "loop_condition" => "length",
+            _ => "stop",
+        };
+        assert_eq!(finish_reason, "cancelled");
     }
 }

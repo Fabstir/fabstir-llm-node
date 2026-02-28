@@ -21,7 +21,7 @@ use tracing::{debug, error, info, warn};
 
 use super::handlers::{HealthResponse, ModelInfo, ModelsResponse};
 use super::pool::{ConnectionPool, ConnectionStats, PoolConfig};
-use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse};
+use super::{ApiError, InferenceRequest, InferenceResponse, StreamingResponse, UsageInfo};
 use crate::api::token_tracker::TokenTracker;
 use crate::contracts::checkpoint_manager::CheckpointManager;
 use crate::crypto::SessionKeyStore;
@@ -690,13 +690,18 @@ impl ApiServer {
             stream: false,
             cancel_flag: None,
             token_sender: None,
+            result_sender: None,
         };
 
         // Run inference with real model
-        let result = engine
-            .run_inference(engine_request)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Inference failed: {}", e)))?;
+        let result = engine.run_inference(engine_request).await.map_err(|e| {
+            let msg = format!("{}", e);
+            if msg.contains("exceeds context window") {
+                ApiError::InvalidRequest(msg)
+            } else {
+                ApiError::InternalError(format!("Inference failed: {}", e))
+            }
+        })?;
 
         // Convert to API response (include search metadata if search was performed)
         let (web_search_performed, search_queries_count, search_provider) =
@@ -721,6 +726,12 @@ impl ApiServer {
             web_search_performed,
             search_queries_count,
             search_provider,
+            usage: result.context_usage.map(|cu| UsageInfo {
+                prompt_tokens: cu.prompt_tokens as u32,
+                completion_tokens: cu.completion_tokens as u32,
+                total_tokens: cu.total_tokens as u32,
+                context_window_size: cu.context_window_size as u32,
+            }),
         };
 
         // Phase 4: Store response hash for proof binding (non-streaming path - v8.10.0+)
@@ -774,7 +785,13 @@ impl ApiServer {
         request: InferenceRequest,
         client_ip: String,
         cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
-    ) -> Result<mpsc::Receiver<StreamingResponse>, ApiError> {
+    ) -> Result<
+        (
+            mpsc::Receiver<StreamingResponse>,
+            tokio::sync::oneshot::Receiver<crate::inference::InferenceResult>,
+        ),
+        ApiError,
+    > {
         // Validate and check limits (same as non-streaming)
         request.validate()?;
         self.rate_limiter.check_rate_limit(&client_ip).await?;
@@ -957,16 +974,18 @@ impl ApiServer {
             stream: true, // Enable streaming!
             cancel_flag,
             token_sender: None,
+            result_sender: None,
         };
 
         // Run streaming inference with real model
-        let token_stream = engine
-            .run_inference_stream(engine_request)
-            .await
-            .map_err(|e| {
-                error!("Failed to start streaming inference: {}", e);
-                ApiError::InternalError(format!("Streaming inference failed: {}", e))
-            })?;
+        let (token_stream, result_rx) =
+            engine
+                .run_inference_stream(engine_request)
+                .await
+                .map_err(|e| {
+                    error!("Failed to start streaming inference: {}", e);
+                    ApiError::InternalError(format!("Streaming inference failed: {}", e))
+                })?;
 
         let (tx, rx) = mpsc::channel(100);
 
@@ -1098,7 +1117,7 @@ impl ApiServer {
             self.circuit_breaker.record_success().await;
         }
 
-        Ok(rx)
+        Ok((rx, result_rx))
     }
 
     pub async fn get_available_models(&self) -> Result<ModelsResponse, ApiError> {
@@ -2489,7 +2508,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         )
                                                                         .await
                                                                     {
-                                                                        Ok(mut receiver) => {
+                                                                        Ok((
+                                                                            mut receiver,
+                                                                            mut result_rx,
+                                                                        )) => {
                                                                             let mut total_tokens =
                                                                                 0u64;
 
@@ -2513,7 +2535,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                             flag.store(true, std::sync::atomic::Ordering::Release);
                                                                                                         }
                                                                                                         info!("🛑 stream_cancel during encrypted streaming");
-                                                                                                        let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens});
+                                                                                                        let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens, "finish_reason": "cancelled"});
                                                                                                         if let Some(ref msg_id) = message_id { end_msg["id"] = msg_id.clone(); }
                                                                                                         if let Some(ref sid) = current_session_id { end_msg["session_id"] = json!(sid); }
                                                                                                         let _ = ws_sender.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
@@ -2671,6 +2693,18 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                             if vlm_tokens_used > 0 {
                                                                                                                 stream_end_msg["vlm_tokens"] = json!(vlm_tokens_used);
                                                                                                             }
+                                                                                                            // Add usage and finish_reason from inference result (v8.21.0)
+                                                                                                            if let Ok(meta) = result_rx.try_recv() {
+                                                                                                                stream_end_msg["finish_reason"] = json!(&meta.finish_reason);
+                                                                                                                if let Some(ref cu) = meta.context_usage {
+                                                                                                                    stream_end_msg["usage"] = json!({
+                                                                                                                        "prompt_tokens": cu.prompt_tokens,
+                                                                                                                        "completion_tokens": cu.completion_tokens,
+                                                                                                                        "total_tokens": cu.total_tokens,
+                                                                                                                        "context_window_size": cu.context_window_size
+                                                                                                                    });
+                                                                                                                }
+                                                                                                            }
                                                                                                             let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
                                                                                                         }
                                                                                                         Err(e) => {
@@ -2722,10 +2756,36 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             );
                                                                         }
                                                                         Err(e) => {
-                                                                            let mut error_msg = json!({
-                                                                                "type": "error",
-                                                                                "error": e.to_string()
-                                                                            });
+                                                                            let error_str =
+                                                                                e.to_string();
+                                                                            let mut error_msg = if error_str.contains("exceeds context window") {
+                                                                                // Parse token counts from error message for structured error
+                                                                                let mut em = json!({
+                                                                                    "type": "error",
+                                                                                    "code": "TOKEN_LIMIT_EXCEEDED",
+                                                                                    "message": error_str,
+                                                                                });
+                                                                                // Extract prompt_tokens and context_window_size from message pattern
+                                                                                // "Prompt (N tokens) exceeds context window (M tokens) by K tokens"
+                                                                                if let Some(start) = error_str.find("Prompt (") {
+                                                                                    let after = &error_str[start + 8..];
+                                                                                    if let Some(end) = after.find(" tokens)") {
+                                                                                        if let Ok(pt) = after[..end].parse::<u64>() { em["prompt_tokens"] = json!(pt); }
+                                                                                    }
+                                                                                }
+                                                                                if let Some(start) = error_str.find("context window (") {
+                                                                                    let after = &error_str[start + 16..];
+                                                                                    if let Some(end) = after.find(" tokens)") {
+                                                                                        if let Ok(cw) = after[..end].parse::<u64>() { em["context_window_size"] = json!(cw); }
+                                                                                    }
+                                                                                }
+                                                                                em
+                                                                            } else {
+                                                                                json!({
+                                                                                    "type": "error",
+                                                                                    "error": error_str
+                                                                                })
+                                                                            };
 
                                                                             if let Some(
                                                                                 ref msg_id,
@@ -3049,7 +3109,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 )
                                 .await
                             {
-                                Ok(mut receiver) => {
+                                Ok((mut receiver, mut result_rx)) => {
                                     let mut total_tokens = 0u64;
 
                                     loop {
@@ -3069,7 +3129,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     flag.store(true, std::sync::atomic::Ordering::Release);
                                                                 }
                                                                 info!("🛑 stream_cancel during plaintext streaming");
-                                                                let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens});
+                                                                let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens, "finish_reason": "cancelled"});
                                                                 if let Some(ref sid) = session_id { end_msg["session_id"] = json!(sid); }
                                                                 let _ = ws_sender.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
                                                                 break;
@@ -3119,6 +3179,19 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                 if vlm_tokens_used > 0 {
                                                     end_msg["vlm_tokens"] = json!(vlm_tokens_used);
                                                 }
+                                                // Add usage and finish_reason from inference result (v8.21.0)
+                                                if let Ok(meta) = result_rx.try_recv() {
+                                                    end_msg["finish_reason"] =
+                                                        json!(&meta.finish_reason);
+                                                    if let Some(ref cu) = meta.context_usage {
+                                                        end_msg["usage"] = json!({
+                                                            "prompt_tokens": cu.prompt_tokens,
+                                                            "completion_tokens": cu.completion_tokens,
+                                                            "total_tokens": cu.total_tokens,
+                                                            "context_window_size": cu.context_window_size
+                                                        });
+                                                    }
+                                                }
 
                                                 let _ = ws_sender
                                                     .send(axum::extract::ws::Message::Text(
@@ -3137,10 +3210,38 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                     }
                                 }
                                 Err(e) => {
-                                    let mut error_msg = json!({
-                                        "type": "error",
-                                        "error": e.to_string()
-                                    });
+                                    let error_str = e.to_string();
+                                    let mut error_msg = if error_str
+                                        .contains("exceeds context window")
+                                    {
+                                        let mut em = json!({
+                                            "type": "error",
+                                            "code": "TOKEN_LIMIT_EXCEEDED",
+                                            "message": error_str,
+                                        });
+                                        if let Some(start) = error_str.find("Prompt (") {
+                                            let after = &error_str[start + 8..];
+                                            if let Some(end) = after.find(" tokens)") {
+                                                if let Ok(pt) = after[..end].parse::<u64>() {
+                                                    em["prompt_tokens"] = json!(pt);
+                                                }
+                                            }
+                                        }
+                                        if let Some(start) = error_str.find("context window (") {
+                                            let after = &error_str[start + 16..];
+                                            if let Some(end) = after.find(" tokens)") {
+                                                if let Ok(cw) = after[..end].parse::<u64>() {
+                                                    em["context_window_size"] = json!(cw);
+                                                }
+                                            }
+                                        }
+                                        em
+                                    } else {
+                                        json!({
+                                            "type": "error",
+                                            "error": error_str
+                                        })
+                                    };
 
                                     // Include message ID in error message
                                     if let Some(ref msg_id) = message_id {

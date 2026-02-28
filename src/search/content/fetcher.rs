@@ -131,7 +131,10 @@ impl ContentFetcher {
             || content_type.contains("video/")
             || content_type.contains("audio/")
         {
-            debug!("Skipping binary content type '{}' for: {}", content_type, url);
+            debug!(
+                "Skipping binary content type '{}' for: {}",
+                content_type, url
+            );
             return Err(FetchError::NoContent(url.to_string()));
         }
 
@@ -258,12 +261,10 @@ impl ContentFetcher {
 
         // Common binary file extensions
         let binary_extensions = [
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-            ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
-            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico",
-            ".mp3", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".wav", ".ogg",
-            ".exe", ".bin", ".dmg", ".iso",
-            ".woff", ".woff2", ".ttf", ".otf", ".eot",
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz",
+            ".bz2", ".7z", ".rar", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg",
+            ".ico", ".mp3", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".wav", ".ogg", ".exe", ".bin",
+            ".dmg", ".iso", ".woff", ".woff2", ".ttf", ".otf", ".eot",
         ];
 
         binary_extensions.iter().any(|ext| path.ends_with(ext))
@@ -393,8 +394,12 @@ mod tests {
 
     #[test]
     fn test_is_binary_url_images() {
-        assert!(ContentFetcher::is_binary_url("https://example.com/photo.jpg"));
-        assert!(ContentFetcher::is_binary_url("https://example.com/logo.png"));
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/photo.jpg"
+        ));
+        assert!(ContentFetcher::is_binary_url(
+            "https://example.com/logo.png"
+        ));
         assert!(ContentFetcher::is_binary_url(
             "https://example.com/image.webp"
         ));

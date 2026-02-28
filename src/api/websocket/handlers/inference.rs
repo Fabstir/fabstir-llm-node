@@ -132,6 +132,7 @@ impl InferenceHandler {
             stream: false,
             cancel_flag: None,
             token_sender: None,
+            result_sender: None,
         };
 
         // Run inference or use mock
@@ -149,6 +150,7 @@ impl InferenceHandler {
                         finish_reason: "complete".to_string(),
                         token_info: vec![],
                         was_cancelled: false,
+                        context_usage: None,
                     }
                 }
             }
@@ -163,6 +165,7 @@ impl InferenceHandler {
                 finish_reason: "complete".to_string(),
                 token_info: vec![],
                 was_cancelled: false,
+                context_usage: None,
             }
         };
 
@@ -243,6 +246,7 @@ impl InferenceHandler {
             stream: false,
             cancel_flag: None,
             token_sender: None,
+            result_sender: None,
         };
 
         // Mock response for now
