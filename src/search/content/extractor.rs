@@ -82,14 +82,20 @@ fn clean_text(text: &str) -> String {
         .to_string()
 }
 
-/// Truncate content to max_chars, preserving word boundaries
+/// Truncate content to max_chars, preserving word and char boundaries
 fn truncate_content(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
         return text.to_string();
     }
 
-    // Find last space before max_chars
-    let truncated = &text[..max_chars];
+    // Find a valid char boundary at or before max_chars
+    let mut end = max_chars;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    // Find last space before the boundary for clean word break
+    let truncated = &text[..end];
     if let Some(last_space) = truncated.rfind(' ') {
         format!("{}...", &text[..last_space])
     } else {
@@ -198,5 +204,28 @@ mod tests {
         let short = "Short text";
         let result = truncate_content(short, 100);
         assert_eq!(result, "Short text"); // No truncation needed
+    }
+
+    #[test]
+    fn test_truncate_content_multibyte_chars() {
+        // Simulate binary/multi-byte content that could cause a panic
+        // 3-byte UTF-8 chars: each is 3 bytes, so slicing at byte 2 would be mid-char
+        let text = "ab\u{2603}\u{2603}\u{2603} rest of text"; // snowman is 3 bytes each
+        // "ab" = 2 bytes, then three 3-byte snowmen = 11 bytes total before " rest..."
+        let result = truncate_content(text, 4); // byte 4 falls inside second snowman
+        // Should not panic - should find a safe boundary
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_content_pdf_like_binary() {
+        // Simulate what happens if binary PDF data gets through as a string
+        let mut binary_like = String::from("%PDF-1.7 ");
+        for _ in 0..500 {
+            binary_like.push('A');
+        }
+        // This should not panic even with a mix of content
+        let result = truncate_content(&binary_like, 100);
+        assert!(result.ends_with("..."));
     }
 }
