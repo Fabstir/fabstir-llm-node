@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.21.0-context-usage-2026-02-28";
+pub const VERSION: &str = "v8.21.1-think-tag-passthrough-2026-02-28";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.21.0";
+pub const VERSION_NUMBER: &str = "8.21.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 21;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-02-28";
@@ -245,6 +245,8 @@ pub const FEATURES: &[&str] = &[
     "finish-reason-length",
     "token-limit-exceeded",
     "stream-end-usage",
+    // Think-tag passthrough (v8.21.1)
+    "think-tag-passthrough",
 ];
 
 /// Supported chain IDs
@@ -255,6 +257,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.21.1 - Think-tag passthrough (Feb 28, 2026)
+    "FIX: Special tokens (e.g. <think>) now rendered in output (Special::Tokenize instead of Special::Plaintext)",
     // v8.21.0 - Context Usage Reporting (Feb 28, 2026)
     "FEAT: HTTP inference responses now include 'usage' object with prompt_tokens, completion_tokens, total_tokens, context_window_size",
     "FEAT: WebSocket stream_end messages now include 'usage' and 'finish_reason' fields",
@@ -580,7 +584,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 21);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -616,6 +620,8 @@ mod tests {
         assert!(FEATURES.contains(&"finish-reason-length"));
         assert!(FEATURES.contains(&"token-limit-exceeded"));
         assert!(FEATURES.contains(&"stream-end-usage"));
+        // v8.21.1 think-tag passthrough
+        assert!(FEATURES.contains(&"think-tag-passthrough"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -662,14 +668,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.21.0"));
+        assert!(version.contains("8.21.1"));
         assert!(version.contains("2026-02-28"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.21.0-context-usage-2026-02-28");
-        assert_eq!(VERSION_NUMBER, "8.21.0");
+        assert_eq!(VERSION, "v8.21.1-think-tag-passthrough-2026-02-28");
+        assert_eq!(VERSION_NUMBER, "8.21.1");
         assert_eq!(BUILD_DATE, "2026-02-28");
     }
 

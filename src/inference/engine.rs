@@ -577,7 +577,7 @@ impl LlmEngine {
                 }
 
                 // v8.4.19 FIX: Convert token to string - handle invalid UTF-8 by still advancing model state
-                let token_str_result = model.model.token_to_str(new_token_id, Special::Plaintext);
+                let token_str_result = model.model.token_to_str(new_token_id, Special::Tokenize);
 
                 let is_valid_utf8 = token_str_result.is_ok();
                 let token_str = token_str_result.unwrap_or_else(|_| String::new());
@@ -1043,5 +1043,65 @@ mod tests {
             _ => "stop",
         };
         assert_eq!(finish_reason, "cancelled");
+    }
+
+    // === Think-tag passthrough tests (v8.21.1) ===
+
+    /// Verify that the engine source uses Special::Tokenize (not Special::Plaintext)
+    /// so that special tokens like <think> are rendered as text in output.
+    #[test]
+    fn test_token_to_str_uses_tokenize_mode() {
+        let src = include_str!("engine.rs");
+        // Count occurrences outside this test block:
+        // The actual render call should use Tokenize, not the suppressing variant.
+        // We search for the exact pattern that appears in the generation loop.
+        let pattern_tokenize = "model.token_to_str(new_token_id, Special::Tokenize)";
+        let pattern_suppress = {
+            // Build the suppress pattern dynamically to avoid include_str self-match
+            let mut p = String::from("model.token_to_str(new_token_id, Special::Plain");
+            p.push_str("text)");
+            p
+        };
+        assert!(
+            src.contains(pattern_tokenize),
+            "engine.rs must use Special::Tokenize to render special tokens (e.g. <think>)"
+        );
+        assert!(
+            !src.contains(&pattern_suppress),
+            "engine.rs must not suppress special tokens"
+        );
+    }
+
+    /// Structural invariant: stop tokens (EOS + template) are checked BEFORE
+    /// token_to_str is called, so template markers never leak into output.
+    #[test]
+    fn test_stop_tokens_checked_before_rendering() {
+        let src = include_str!("engine.rs");
+        let eos_check = src.find("if new_token_id == eos_token");
+        let stop_check = src.find("if stop_token_ids.contains(&new_token_id)");
+        let render_call = src.find("token_to_str(new_token_id,");
+        assert!(eos_check.is_some(), "EOS check must exist");
+        assert!(stop_check.is_some(), "stop token check must exist");
+        assert!(render_call.is_some(), "token_to_str call must exist");
+        assert!(
+            eos_check.unwrap() < render_call.unwrap(),
+            "EOS check must come before rendering"
+        );
+        assert!(
+            stop_check.unwrap() < render_call.unwrap(),
+            "stop token check must come before rendering"
+        );
+    }
+
+    /// GLM-4 stop tokens must include template markers so they are caught
+    /// before rendering even with Special::Tokenize.
+    #[test]
+    fn test_glm4_stop_tokens_include_template_markers() {
+        let tokens = crate::inference::ChatTemplate::Glm4.stop_tokens();
+        assert!(tokens.contains(&"<|user|>"), "GLM-4 must stop on <|user|>");
+        assert!(
+            tokens.contains(&"<|observation|>"),
+            "GLM-4 must stop on <|observation|>"
+        );
     }
 }
