@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.20.1-content-fetch-pdf-fix-2026-02-27";
+pub const VERSION: &str = "v8.21.0-context-usage-2026-02-28";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.20.1";
+pub const VERSION_NUMBER: &str = "8.21.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 20;
+pub const VERSION_MINOR: u32 = 21;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-27";
+pub const BUILD_DATE: &str = "2026-02-28";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -240,6 +240,11 @@ pub const FEATURES: &[&str] = &[
     "binary-url-detection",
     "content-type-filtering",
     "safe-string-truncation",
+    // Context usage reporting (v8.21.0)
+    "context-usage-reporting",
+    "finish-reason-length",
+    "token-limit-exceeded",
+    "stream-end-usage",
 ];
 
 /// Supported chain IDs
@@ -250,6 +255,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.21.0 - Context Usage Reporting (Feb 28, 2026)
+    "FEAT: HTTP inference responses now include 'usage' object with prompt_tokens, completion_tokens, total_tokens, context_window_size",
+    "FEAT: WebSocket stream_end messages now include 'usage' and 'finish_reason' fields",
+    "FIX: finish_reason now correctly returns 'length' when max_tokens is hit (was always 'stop')",
+    "FEAT: TOKEN_LIMIT_EXCEEDED structured error when prompt exceeds context window",
     // v8.20.1 - Content Fetch PDF Fix (Feb 27, 2026)
     "FIX: Content fetcher no longer panics on PDF/binary URLs (was crashing on arxiv.org PDFs)",
     "FIX: Binary URL detection skips .pdf, .zip, image, video, audio URLs before fetching",
@@ -569,8 +579,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 20);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 21);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.17.4 new JobMarketplace proxy
@@ -601,6 +611,11 @@ mod tests {
         assert!(FEATURES.contains(&"binary-url-detection"));
         assert!(FEATURES.contains(&"content-type-filtering"));
         assert!(FEATURES.contains(&"safe-string-truncation"));
+        // v8.21.0 context usage reporting
+        assert!(FEATURES.contains(&"context-usage-reporting"));
+        assert!(FEATURES.contains(&"finish-reason-length"));
+        assert!(FEATURES.contains(&"token-limit-exceeded"));
+        assert!(FEATURES.contains(&"stream-end-usage"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -647,15 +662,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.20.1"));
-        assert!(version.contains("2026-02-27"));
+        assert!(version.contains("8.21.0"));
+        assert!(version.contains("2026-02-28"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.20.1-content-fetch-pdf-fix-2026-02-27");
-        assert_eq!(VERSION_NUMBER, "8.20.1");
-        assert_eq!(BUILD_DATE, "2026-02-27");
+        assert_eq!(VERSION, "v8.21.0-context-usage-2026-02-28");
+        assert_eq!(VERSION_NUMBER, "8.21.0");
+        assert_eq!(BUILD_DATE, "2026-02-28");
     }
 
     #[test]

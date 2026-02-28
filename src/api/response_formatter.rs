@@ -175,6 +175,7 @@ mod tests {
             web_search_performed: None,
             search_queries_count: None,
             search_provider: None,
+            usage: None,
         };
 
         let formatted = formatter.format_inference_response(response);

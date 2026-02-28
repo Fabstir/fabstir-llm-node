@@ -67,6 +67,17 @@ pub struct InferenceResponse {
     /// Search provider used (if search was performed)
     #[serde(skip_serializing_if = "Option::is_none", alias = "searchProvider")]
     pub search_provider: Option<String>,
+    /// Context usage information (v8.21.0+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageInfo {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub context_window_size: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

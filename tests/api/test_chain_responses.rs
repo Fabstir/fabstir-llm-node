@@ -24,6 +24,10 @@ fn test_inference_response_chain() {
         chain_id: Some(84532),
         chain_name: Some("Base Sepolia".to_string()),
         native_token: Some("ETH".to_string()),
+        web_search_performed: None,
+        search_queries_count: None,
+        search_provider: None,
+        usage: None,
     };
 
     // Serialize and check
@@ -48,6 +52,10 @@ fn test_native_token_in_response() {
         chain_id: Some(84532),
         chain_name: Some("Base Sepolia".to_string()),
         native_token: Some("ETH".to_string()),
+        web_search_performed: None,
+        search_queries_count: None,
+        search_provider: None,
+        usage: None,
     };
 
     assert_eq!(base_response.native_token, Some("ETH".to_string()));
@@ -62,6 +70,10 @@ fn test_native_token_in_response() {
         chain_id: Some(5611),
         chain_name: Some("opBNB Testnet".to_string()),
         native_token: Some("BNB".to_string()),
+        web_search_performed: None,
+        search_queries_count: None,
+        search_provider: None,
+        usage: None,
     };
 
     assert_eq!(opbnb_response.native_token, Some("BNB".to_string()));
@@ -87,6 +99,10 @@ fn test_chain_name_included() {
         chain_id: Some(base_chain.chain_id),
         chain_name: Some(base_chain.name.clone()),
         native_token: Some(base_chain.native_token.symbol.clone()),
+        web_search_performed: None,
+        search_queries_count: None,
+        search_provider: None,
+        usage: None,
     };
 
     assert_eq!(response.chain_name, Some("Base Sepolia".to_string()));
@@ -160,6 +176,10 @@ fn test_response_formatting() {
         chain_id: None,
         chain_name: None,
         native_token: None,
+        web_search_performed: None,
+        search_queries_count: None,
+        search_provider: None,
+        usage: None,
     };
 
     let formatted = formatter.format_inference_response(response);

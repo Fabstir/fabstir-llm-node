@@ -211,9 +211,9 @@ mod tests {
         // Simulate binary/multi-byte content that could cause a panic
         // 3-byte UTF-8 chars: each is 3 bytes, so slicing at byte 2 would be mid-char
         let text = "ab\u{2603}\u{2603}\u{2603} rest of text"; // snowman is 3 bytes each
-        // "ab" = 2 bytes, then three 3-byte snowmen = 11 bytes total before " rest..."
+                                                              // "ab" = 2 bytes, then three 3-byte snowmen = 11 bytes total before " rest..."
         let result = truncate_content(text, 4); // byte 4 falls inside second snowman
-        // Should not panic - should find a safe boundary
+                                                // Should not panic - should find a safe boundary
         assert!(result.ends_with("..."));
     }
 

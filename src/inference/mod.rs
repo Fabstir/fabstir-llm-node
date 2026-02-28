@@ -10,7 +10,7 @@ pub mod models;
 // Re-export main types for convenience
 pub use chat_template::ChatTemplate;
 pub use engine::{
-    ChatMessage, EngineCapabilities, EngineConfig, EngineMetrics, InferenceHandle,
+    ChatMessage, ContextUsage, EngineCapabilities, EngineConfig, EngineMetrics, InferenceHandle,
     InferenceRequest, InferenceResult, LlmEngine, Model, ModelCapabilities, ModelCapability,
     ModelConfig, TokenInfo, TokenStream,
 };

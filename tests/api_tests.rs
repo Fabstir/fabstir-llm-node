@@ -7,6 +7,7 @@ mod api {
     mod test_chain_endpoints;
     mod test_chain_responses;
     mod test_context_handling;
+    mod test_context_usage;
     mod test_describe_image_endpoint;
     mod test_embed_errors;
     mod test_embed_handler;
