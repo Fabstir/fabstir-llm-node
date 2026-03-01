@@ -58,12 +58,9 @@ pub fn build_prompt_with_context(
 
     // Inject thinking directive if specified (v8.17.0+)
     // Returns Some(level) when Harmony post-processing is needed
-    // GLM-4 defaults to /think when no mode specified (v8.17.3+)
-    let resolved = resolve_thinking_mode(thinking);
-    let effective_mode = match (&resolved, &template) {
-        (None, ChatTemplate::Glm4) => Some("enabled".to_string()),
-        _ => resolved,
-    };
+    // v8.22.3: Removed GLM-4 auto-/think injection — causes degenerate meta-reasoning
+    // loops on multi-turn conversations. /think must be explicitly requested via SDK.
+    let effective_mode = resolve_thinking_mode(thinking);
     let post_process_level = if let Some(ref mode) = effective_mode {
         tracing::info!(
             "🧠 Injecting thinking directive: mode={}, template={}",
@@ -637,13 +634,15 @@ mod tests {
     }
 
     #[test]
-    fn test_glm4_default_injects_think() {
+    fn test_glm4_default_no_auto_think() {
+        // v8.22.4: GLM-4 no longer auto-injects /think — it caused degenerate
+        // meta-reasoning loops on multi-turn conversations
         std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
         std::env::remove_var("DEFAULT_THINKING_MODE");
         let result = build_prompt_with_context(&[], "Hello", None);
         assert!(
-            result.contains("/think\n"),
-            "Default mode should inject /think for GLM-4: {}",
+            !result.contains("/think"),
+            "GLM-4 must NOT auto-inject /think (v8.22.4): {}",
             result
         );
     }

@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.22.0-glm4-system-prompt-fix-2026-03-01";
+pub const VERSION: &str = "v8.22.4-glm4-disable-auto-think-2026-03-01";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.22.0";
+pub const VERSION_NUMBER: &str = "8.22.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 22;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-03-01";
@@ -258,6 +258,12 @@ pub const FEATURES: &[&str] = &[
     "sampler-chain-persistence",
     // GLM-4 system prompt fix (v8.22.0)
     "glm4-system-prompt-fix",
+    // Sampler reset after thinking (v8.22.1)
+    "sampler-reset-after-think",
+    // Fix </thought> detection for sampler reset (v8.22.2)
+    "sampler-reset-thought-tag",
+    // GLM-4 <|endoftext|> stop token to match Ollama (v8.22.3)
+    "glm4-endoftext-stop",
 ];
 
 /// Supported chain IDs
@@ -268,6 +274,13 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.22.4 - Disable GLM-4 auto /think injection (Mar 1, 2026)
+    "FIX: Removed auto /think injection on GLM-4 — caused degenerate meta-reasoning loops on multi-turn",
+    // v8.22.3 - GLM-4 <|endoftext|> stop token (Mar 1, 2026)
+    "FIX: Added <|endoftext|> (EOS) to GLM-4 stop tokens — matches Ollama template",
+    "FIX: Sampler reset uses contains() for robust thinking close tag detection",
+    // v8.22.1 - Sampler Reset After Thinking (Mar 1, 2026)
+    "FIX: Sampler penalties reset after </think> block — prevents thinking tokens from poisoning answer generation",
     // v8.22.0 - GLM-4 System Prompt Fix (Mar 1, 2026)
     "FIX: GLM-4 default system prompt simplified — removed RAG instruction that caused hallucinated 'reference material'",
     // v8.21.5 - Sampler Chain Persistence (Mar 1, 2026)
@@ -606,9 +619,15 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 22);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 4);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.22.3 GLM-4 endoftext stop token
+        assert!(FEATURES.contains(&"glm4-endoftext-stop"));
+        // v8.22.2 sampler reset thought tag fix
+        assert!(FEATURES.contains(&"sampler-reset-thought-tag"));
+        // v8.22.1 sampler reset after think
+        assert!(FEATURES.contains(&"sampler-reset-after-think"));
         // v8.22.0 GLM-4 system prompt fix
         assert!(FEATURES.contains(&"glm4-system-prompt-fix"));
         // v8.21.5 sampler chain persistence
@@ -701,14 +720,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.22.0"));
+        assert!(version.contains("8.22.4"));
         assert!(version.contains("2026-03-01"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.22.0-glm4-system-prompt-fix-2026-03-01");
-        assert_eq!(VERSION_NUMBER, "8.22.0");
+        assert_eq!(VERSION, "v8.22.4-glm4-disable-auto-think-2026-03-01");
+        assert_eq!(VERSION_NUMBER, "8.22.4");
         assert_eq!(BUILD_DATE, "2026-03-01");
     }
 

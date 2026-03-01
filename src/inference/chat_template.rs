@@ -61,7 +61,7 @@ impl ChatTemplate {
             Self::Vicuna => vec![],
             Self::Harmony => vec!["<|return|>", "<|end|>"],
             Self::ChatML => vec!["<|im_end|>"],
-            Self::Glm4 => vec!["<|user|>", "<|observation|>"],
+            Self::Glm4 => vec!["<|user|>", "<|observation|>", "<|endoftext|>"],
         }
     }
 
