@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.18.0",
-  "build": "v8.18.0-set-token-pricing-2026-02-24",
-  "date": "2026-02-24",
+  "version": "8.22.4",
+  "build": "v8.22.4-glm4-disable-auto-think-2026-03-01",
+  "date": "2026-03-01",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -218,7 +218,16 @@ GET /v1/version
     "CONTRACT: JobMarketplace fresh proxy 0xD067...adA4 (v8.17.4)",
     "FEAT: Node calls setTokenPricing(USDC, price) after registerNode() (v8.18.0, F202614977)",
     "FEAT: TOKEN_PRICING_USDC env var for custom USDC pricing (v8.18.0)",
-    "CONTRACT: NodeRegistry getNodePricing() reverts for ERC20 without setTokenPricing (v8.18.0)"
+    "CONTRACT: NodeRegistry getNodePricing() reverts for ERC20 without setTokenPricing (v8.18.0)",
+    "FEAT: Stream cancellation via stream_cancel WebSocket message (v8.19.0)",
+    "FEAT: True token-by-token streaming at generation speed (v8.19.1)",
+    "BREAKING: setTokenPricing removed — use setModelTokenPricing(bytes32,address,uint256) (v8.20.0)",
+    "FEAT: Context usage reporting with prompt_tokens, completion_tokens in responses (v8.21.0)",
+    "FIX: finish_reason correctly returns 'length' when max_tokens is hit (v8.21.0)",
+    "FEAT: Configurable penalties via REPEAT_PENALTY, FREQUENCY_PENALTY, PRESENCE_PENALTY env vars (v8.21.3)",
+    "FIX: GLM-4 default system prompt simplified — removed RAG instruction (v8.22.0)",
+    "FIX: Added <|endoftext|> to GLM-4 stop tokens to match Ollama template (v8.22.3)",
+    "FIX: Removed auto /think injection for GLM-4 — must be explicitly requested (v8.22.4)"
   ]
 }
 ```
@@ -524,7 +533,11 @@ Content-Type: application/json
 | `web_search` | Boolean | No | false | Enable web search before inference. Works with both streaming and non-streaming modes (v8.7.0+, streaming support v8.7.5+) |
 | `max_searches` | Integer | No | 5 | Maximum number of search queries (1-20) |
 | `search_queries` | Array<String> | No | null | Custom search queries (if null, derived from prompt) |
-| `thinking` | String | No | null | Thinking/reasoning mode (v8.17.0+). Values: `"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`. Harmony template maps to `Reasoning: none/low/medium/high` in system prompt. GLM-4 template maps to `/think` or `/no_think` prefix. Other templates ignore this field. Default behavior when absent: Harmony uses `medium`, GLM-4 uses no directive. Can also set globally via `DEFAULT_THINKING_MODE` env var. |
+| `thinking` | String | No | null | Thinking/reasoning mode (v8.17.0+). Values: `"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`. Harmony template maps to `Reasoning: none/low/medium/high` in system prompt. GLM-4 template maps to `/think` prefix when explicitly enabled (v8.22.4: no longer auto-injected). Can also set globally via `DEFAULT_THINKING_MODE` env var. |
+| `repeat_penalty` | Float | No | 1.1 | Repetition penalty (v8.21.3+). 1.0 = disabled. Penalizes tokens already seen in the last `penalty_last_n` tokens. Also configurable via `REPEAT_PENALTY` env var. |
+| `frequency_penalty` | Float | No | 0.0 | Frequency-based penalty (v8.21.3+). Subtracts `frequency_penalty * token_count` from logits. Also configurable via `FREQUENCY_PENALTY` env var. |
+| `presence_penalty` | Float | No | 0.0 | Presence-based penalty (v8.21.3+). Subtracts a flat value for any previously seen token. Also configurable via `PRESENCE_PENALTY` env var. |
+| `min_p` | Float | No | 0.0 | Minimum probability sampling (v8.15.0+). Filters tokens below `min_p * max_probability`. 0.0 = disabled. |
 
 #### Non-Streaming Response
 
@@ -533,7 +546,13 @@ Content-Type: application/json
   "model": "llama-2-7b",
   "content": "Quantum computing is a revolutionary approach to computation that harnesses quantum mechanical phenomena...",
   "tokens_used": 245,
-  "finish_reason": "complete",
+  "finish_reason": "stop",
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 245,
+    "total_tokens": 260,
+    "context_window_size": 202752
+  },
   "request_id": "req-12345",
   "chain_id": 84532,
   "chain_name": "Base Sepolia",

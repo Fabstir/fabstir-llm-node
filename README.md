@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.16.1-auto-image-routing (February 2026)
+**Version**: v8.22.4-glm4-disable-auto-think (March 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -31,6 +31,13 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Model Validation**: Dynamic model authorization with SHA256 verification (v8.14.0+)
 - **Image Generation**: Text-to-image via FLUX.2 Klein 4B diffusion sidecar (v8.16.0+), auto-routing from chat (v8.16.1+)
 - **VLM Vision**: GPU-accelerated OCR and image description via Qwen3-VL sidecar (v8.15.3+)
+- **Thinking/Reasoning Mode**: Per-request thinking control via SDK `thinking` field (v8.17.0+)
+- **Stream Cancellation**: Cancel inference mid-stream via WebSocket (v8.19.0+)
+- **True Streaming**: Token-by-token delivery at generation speed (v8.19.1+)
+- **Per-Model Token Pricing**: Per-model per-token ERC20 pricing via `setModelTokenPricing` (v8.20.0+)
+- **Context Usage Reporting**: Token counts and finish reasons in responses (v8.21.0+)
+- **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
+- **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 
 ## Prerequisites
 
@@ -73,7 +80,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.16.1"
+strings target/release/fabstir-llm-node | grep "v8.22"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -130,6 +137,27 @@ REQUIRE_MODEL_VALIDATION=false   # Enable model authorization enforcement
 AUTO_IMAGE_ROUTING=false         # Auto-detect image intent from chat and route to
                                  # diffusion sidecar (v8.16.1+, opt-in, default off)
 
+# Chat Template (v8.15.0+)
+MODEL_CHAT_TEMPLATE=harmony      # Chat template: harmony, glm4, chatml, llama2, vicuna, default
+MODEL_STOP_TOKENS=               # Custom stop tokens (comma-separated), overrides template defaults
+
+# Thinking Mode (v8.17.0+)
+DEFAULT_THINKING_MODE=           # Global default: enabled, disabled, low, medium, high
+                                 # GLM-4: /think prefix on user message when enabled
+                                 # Harmony: Reasoning level in system prompt
+
+# Sampler Penalties (v8.21.3+)
+REPEAT_PENALTY=1.1               # Repeat penalty (1.0 = disabled, default: 1.1)
+FREQUENCY_PENALTY=0.0            # Frequency-based penalty (default: 0.0)
+PRESENCE_PENALTY=0.0             # Presence-based penalty (default: 0.0)
+PENALTY_LAST_N=256               # Penalty lookback window (default: 256)
+
+# Per-Model Token Pricing (v8.20.0+)
+TOKEN_PRICING_USDC=10000         # USDC price per token (default: 10,000 = $10/M tokens)
+
+# KV Cache (v8.15.1+)
+KV_CACHE_TYPE=                   # KV cache quantization: q8_0, q4_0, f16, bf16, f32
+
 # Logging
 RUST_LOG=debug                   # Log level (trace, debug, info, warn, error)
 ```
@@ -151,8 +179,7 @@ cargo build --release --features real-ezkl -j 4
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.13.0-audit-remediation.tar.gz
-cd fabstir-llm-node-v8.13.0
+tar -xzf fabstir-llm-node-v8.22.4.tar.gz
 ./fabstir-llm-node --version
 ```
 
@@ -272,6 +299,10 @@ Once the node is running, it exposes the following endpoints:
   - Encrypted vector_database path support (v8.4.0+)
   - Image generation via diffusion sidecar (v8.16.0+)
   - Auto-route image intent from chat (v8.16.1+)
+  - Thinking/reasoning mode control (v8.17.0+)
+  - Stream cancellation via `stream_cancel` message (v8.19.0+)
+  - True token-by-token streaming (v8.19.1+)
+  - Context usage in `stream_end` messages (v8.21.0+)
   - Automatic settlement on disconnect
   - Message compression support
 
@@ -287,7 +318,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.16.1"
+strings target/release/fabstir-llm-node | grep "v8.22"
 ```
 
 #### Out of Memory During Build
@@ -393,7 +424,9 @@ For issues and questions:
 - [Multi-Chain Configuration Guide](docs/MULTI_CHAIN_CONFIG.md) - Configure multi-chain support
 
 ### SDK Developer Guides
-- [WebSocket API Integration](docs/sdk-reference/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
+- [WebSocket API Integration](docs/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
 - [S5 Vector Loading](docs/sdk-reference/S5_VECTOR_LOADING.md) - Load vector databases from S5 storage (v8.4.0+)
 - [SDK Encryption Integration](docs/sdk-reference/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
 - [Model Validation Compatibility](docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md) - Model authorization guide (v8.14.0+)
+- [SDK Image Generation](docs/sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md) - Image generation integration (v8.16.0+)
+- [SDK Context Usage](docs/sdk-reference/SDK_CONTEXT_USAGE_GUIDE.md) - Token usage and context reporting (v8.21.0+)

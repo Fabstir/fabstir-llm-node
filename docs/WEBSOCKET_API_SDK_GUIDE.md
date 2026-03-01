@@ -4,7 +4,7 @@
 
 This document describes the current state of the fabstir-llm-node WebSocket API implementation and provides guidance for SDK developers working with TypeScript/JavaScript to integrate with the node's capabilities. This covers all work completed from Sub-phase 8.7 through 8.12 in this session.
 
-## Current Implementation Status (Updated February 2026)
+## Current Implementation Status (Updated March 2026, v8.22.4)
 
 ### ✅ Phase 8.18: WebSocket Integration with Main HTTP Server (COMPLETED)
 - **WebSocket endpoint now available at `/v1/ws`**
@@ -67,20 +67,35 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 ### ✅ Phase 8.17: Thinking/Reasoning Mode + Contract Fixes (v8.17.0–v8.17.6)
 - **Thinking Mode (v8.17.0)**: Per-request `thinking` field (`"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`)
   - Harmony template: maps to `Reasoning: none/low/medium/high` in system prompt
-  - GLM-4 template: maps to `/think` or `/no_think` prefix on last user message
+  - GLM-4 template: maps to `/think` prefix on last user message when explicitly enabled
   - `DEFAULT_THINKING_MODE` env var for global default (explicit per-request overrides)
-- **GLM-4 Default Thinking (v8.17.3)**: `/think` injected by default, `/no_think` when explicitly disabled
+- **v8.22.4 BREAKING**: GLM-4 auto `/think` injection **removed** — was causing degenerate meta-reasoning loops on multi-turn conversations. `/think` must now be explicitly requested via the SDK `thinking` field.
 - **New JobMarketplace Proxy (v8.17.4)**: `0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4`
 - **Dispute Window Fix (v8.17.5)**: Dispute window now queried from contract `disputeWindow()` at startup
-- **GLM-4 Context-Aware System Prompt (v8.17.6)**: Default system prompt detects RAG context
 
 ### ✅ Phase 8.18: setTokenPricing After Registration (v8.18.0)
-- **Breaking Contract Change (F202614977)**: `getNodePricing()` / `getModelPricing()` now **revert** for ERC20 tokens without explicit `setTokenPricing(token, price)` call
 - **Two-Step Registration**: `registerNode()` then `setTokenPricing(usdcAddress, price)` — node handles automatically
 - **TOKEN_PRICING_USDC env var**: Override USDC per-token price (default: 10,000 = $10/M tokens)
-- **Error handling**: If `setTokenPricing` tx fails after registration, logs error but does not roll back — host retries via `cast` or node restart
-- **Native ETH sessions unaffected** — only ERC20 tokens require explicit pricing
-- **New ABI entries**: `setTokenPricing(address,uint256)`, `customTokenPricing(address,address)`, `TokenPricingUpdated` event
+
+### ✅ Phase 8.19: Stream Cancellation + True Streaming (v8.19.0–v8.19.1)
+- **Stream Cancel (v8.19.0)**: `stream_cancel` WebSocket message stops inference mid-stream
+- **True Streaming (v8.19.1)**: Tokens stream to client as generated (no batch-then-deliver delay)
+- **`stream_end` messages** now include `reason` (complete/cancelled/error) and `tokens_used` fields
+
+### ✅ Phase 8.20: Per-Model Token Pricing (v8.20.0)
+- **BREAKING**: `setTokenPricing(address,uint256)` removed — use `setModelTokenPricing(bytes32,address,uint256)`
+- Per-model per-token pricing set in a loop for each model x each token (native + USDC)
+
+### ✅ Phase 8.21: Context Usage + Penalties + Sampler Fixes (v8.21.0–v8.21.5)
+- **Context Usage (v8.21.0)**: Responses include `usage` object with `prompt_tokens`, `completion_tokens`, `total_tokens`, `context_window_size`
+- **Configurable Penalties (v8.21.3)**: `REPEAT_PENALTY`, `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `PENALTY_LAST_N` env vars
+- **Sampler Chain Persistence (v8.21.5)**: Penalties now correctly persist across tokens
+
+### ✅ Phase 8.22: GLM-4 Fixes (v8.22.0–v8.22.4)
+- **System Prompt Fix (v8.22.0)**: Simplified GLM-4 default system prompt (removed RAG instruction that caused hallucinations)
+- **`<|endoftext|>` Stop Token (v8.22.3)**: Added EOS stop token matching Ollama's GLM-4 template
+- **Sampler Reset (v8.22.1–v8.22.2)**: Sampler penalties reset after `</think>` block closes
+- **Disable Auto `/think` (v8.22.4)**: Removed auto `/think` injection for GLM-4 (see above)
 
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
@@ -715,12 +730,14 @@ The `thinking` field controls model reasoning behavior per-request. Include it i
 | Template | `"enabled"` | `"disabled"` | `"low"` | `"medium"` | `"high"` | Absent |
 |----------|------------|-------------|---------|-----------|---------|--------|
 | Harmony (GPT-OSS) | `Reasoning: medium` | `Reasoning: none` | `Reasoning: low` | `Reasoning: medium` | `Reasoning: high` | Default `medium` |
-| GLM-4 | `/think` prefix | `/no_think` prefix | `/think` | `/think` | `/think` | No prefix |
+| GLM-4 | `/think` prefix | No injection | `/think` | `/think` | `/think` | **No prefix** (v8.22.4) |
 | Others | No-op | No-op | No-op | No-op | No-op | No-op |
 
-**Global default**: Set `DEFAULT_THINKING_MODE` env var on the host to apply a default when clients omit the field. Explicit per-request values always override the env var.
+**Global default**: Set `DEFAULT_THINKING_MODE` env var on the host to apply a default when clients omit the field. Explicit per-request values always override the env var. An empty string `""` is treated as unset.
 
 **User override protection**: If a system message in the conversation context already contains `Reasoning:`, the injection is skipped to respect the user's explicit directive.
+
+**v8.22.4 Breaking Change**: GLM-4 auto `/think` injection has been removed. Previously (v8.17.3–v8.22.3), GLM-4 auto-injected `/think` when no thinking mode was specified. This caused degenerate meta-reasoning loops on multi-turn conversations. To enable thinking on GLM-4, the SDK must now explicitly set `"thinking": "enabled"` in the request.
 
 ---
 
