@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.21.1-think-tag-passthrough-2026-02-28";
+pub const VERSION: &str = "v8.22.0-glm4-system-prompt-fix-2026-03-01";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.21.1";
+pub const VERSION_NUMBER: &str = "8.22.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 21;
+pub const VERSION_MINOR: u32 = 22;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-02-28";
+pub const BUILD_DATE: &str = "2026-03-01";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -247,6 +247,17 @@ pub const FEATURES: &[&str] = &[
     "stream-end-usage",
     // Think-tag passthrough (v8.21.1)
     "think-tag-passthrough",
+    // Think-tag normalize (v8.21.2)
+    "think-tag-normalize",
+    // Configurable penalties (v8.21.3)
+    "configurable-penalties",
+    "repeat-penalty-env",
+    "frequency-penalty-env",
+    "presence-penalty-env",
+    // Sampler chain persistence (v8.21.5)
+    "sampler-chain-persistence",
+    // GLM-4 system prompt fix (v8.22.0)
+    "glm4-system-prompt-fix",
 ];
 
 /// Supported chain IDs
@@ -257,6 +268,17 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.22.0 - GLM-4 System Prompt Fix (Mar 1, 2026)
+    "FIX: GLM-4 default system prompt simplified — removed RAG instruction that caused hallucinated 'reference material'",
+    // v8.21.5 - Sampler Chain Persistence (Mar 1, 2026)
+    "FIX: Sampler chain now persists across tokens — penalties actually apply",
+    // v8.21.3 - Configurable Penalties (Feb 28, 2026)
+    "FEAT: REPEAT_PENALTY env var for configurable repeat penalty (default: 1.1)",
+    "FEAT: FREQUENCY_PENALTY env var for frequency-based token penalty (default: 0.0)",
+    "FEAT: PRESENCE_PENALTY env var for presence-based token penalty (default: 0.0)",
+    "FEAT: PENALTY_LAST_N env var for penalty lookback window (default: 256)",
+    // v8.21.2 - Think-tag normalize (Feb 28, 2026)
+    "FIX: <thought> special token normalized to <think> for consistent thinking tags",
     // v8.21.1 - Think-tag passthrough (Feb 28, 2026)
     "FIX: Special tokens (e.g. <think>) now rendered in output (Special::Tokenize instead of Special::Plaintext)",
     // v8.21.0 - Context Usage Reporting (Feb 28, 2026)
@@ -583,10 +605,19 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 21);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 22);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.22.0 GLM-4 system prompt fix
+        assert!(FEATURES.contains(&"glm4-system-prompt-fix"));
+        // v8.21.5 sampler chain persistence
+        assert!(FEATURES.contains(&"sampler-chain-persistence"));
+        // v8.21.3 configurable penalties
+        assert!(FEATURES.contains(&"configurable-penalties"));
+        assert!(FEATURES.contains(&"repeat-penalty-env"));
+        assert!(FEATURES.contains(&"frequency-penalty-env"));
+        assert!(FEATURES.contains(&"presence-penalty-env"));
         // v8.17.4 new JobMarketplace proxy
         assert!(FEATURES.contains(&"new-jobmarketplace-proxy"));
         // v8.17.5 dispute window fix
@@ -622,6 +653,8 @@ mod tests {
         assert!(FEATURES.contains(&"stream-end-usage"));
         // v8.21.1 think-tag passthrough
         assert!(FEATURES.contains(&"think-tag-passthrough"));
+        // v8.21.2 think-tag normalize
+        assert!(FEATURES.contains(&"think-tag-normalize"));
         // v8.15.5 session re-init fix
         assert!(FEATURES.contains(&"session-reinit-fix"));
         // v8.15.0 model-agnostic inference features
@@ -668,15 +701,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.21.1"));
-        assert!(version.contains("2026-02-28"));
+        assert!(version.contains("8.22.0"));
+        assert!(version.contains("2026-03-01"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.21.1-think-tag-passthrough-2026-02-28");
-        assert_eq!(VERSION_NUMBER, "8.21.1");
-        assert_eq!(BUILD_DATE, "2026-02-28");
+        assert_eq!(VERSION, "v8.22.0-glm4-system-prompt-fix-2026-03-01");
+        assert_eq!(VERSION_NUMBER, "8.22.0");
+        assert_eq!(BUILD_DATE, "2026-03-01");
     }
 
     #[test]

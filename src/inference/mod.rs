@@ -10,9 +10,9 @@ pub mod models;
 // Re-export main types for convenience
 pub use chat_template::ChatTemplate;
 pub use engine::{
-    ChatMessage, ContextUsage, EngineCapabilities, EngineConfig, EngineMetrics, InferenceHandle,
-    InferenceRequest, InferenceResult, LlmEngine, Model, ModelCapabilities, ModelCapability,
-    ModelConfig, TokenInfo, TokenStream,
+    get_penalty_defaults, ChatMessage, ContextUsage, EngineCapabilities, EngineConfig,
+    EngineMetrics, InferenceHandle, InferenceRequest, InferenceResult, LlmEngine, Model,
+    ModelCapabilities, ModelCapability, ModelConfig, TokenInfo, TokenStream,
 };
 
 // Create alias for all uses (tests expect this name)

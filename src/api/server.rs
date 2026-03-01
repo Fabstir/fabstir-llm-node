@@ -260,6 +260,11 @@ impl ApiServer {
         // Version stamp for deployment verification
         eprintln!("BUILD VERSION: {}", crate::version::VERSION);
         info!("🚀 API Server {} started", crate::version::VERSION);
+        let (rp, fp, pp, pln) = crate::inference::get_penalty_defaults();
+        info!(
+            "🎛️ Penalty defaults: repeat={}, frequency={}, presence={}, last_n={}",
+            rp, fp, pp, pln
+        );
 
         // Parse the address
         let addr: SocketAddr = config.listen_addr.parse()?;
@@ -676,6 +681,7 @@ impl ApiServer {
         }
 
         // Create inference request for the engine
+        let (repeat_pen, freq_pen, pres_pen, _) = crate::inference::get_penalty_defaults();
         let engine_request = crate::inference::InferenceRequest {
             model_id: model_id.clone(),
             prompt: full_prompt,
@@ -683,7 +689,9 @@ impl ApiServer {
             temperature: request.temperature,
             top_p: 0.9,
             top_k: 40,
-            repeat_penalty: 1.1,
+            repeat_penalty: repeat_pen,
+            frequency_penalty: freq_pen,
+            presence_penalty: pres_pen,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
@@ -960,6 +968,7 @@ impl ApiServer {
         );
 
         // Create inference request for the engine with stream=true
+        let (repeat_pen, freq_pen, pres_pen, _) = crate::inference::get_penalty_defaults();
         let engine_request = crate::inference::InferenceRequest {
             model_id: model_id.clone(),
             prompt: full_prompt,
@@ -967,7 +976,9 @@ impl ApiServer {
             temperature: request.temperature,
             top_p: 0.9,
             top_k: 40,
-            repeat_penalty: 1.1,
+            repeat_penalty: repeat_pen,
+            frequency_penalty: freq_pen,
+            presence_penalty: pres_pen,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
