@@ -5,8 +5,8 @@ use crate::api::websocket::{
     messages::{ConversationMessage, StreamToken},
 };
 use crate::inference::{
-    ChatMessage, ChatTemplate, EngineConfig, InferenceEngine, InferenceRequest, InferenceResult,
-    ModelConfig,
+    get_penalty_defaults, ChatMessage, ChatTemplate, EngineConfig, InferenceEngine,
+    InferenceRequest, InferenceResult, ModelConfig,
 };
 use anyhow::{anyhow, Result};
 use futures::stream::{Stream, StreamExt};
@@ -118,6 +118,7 @@ impl InferenceHandler {
         let model_id = "default";
 
         // Create inference request
+        let (repeat_pen, freq_pen, pres_pen, _) = get_penalty_defaults();
         let request = InferenceRequest {
             model_id: model_id.to_string(),
             prompt: self.format_prompt_for_inference(&chat_messages, None),
@@ -125,7 +126,9 @@ impl InferenceHandler {
             temperature: 0.7,
             top_p: 0.95,
             top_k: 40,
-            repeat_penalty: 1.1,
+            repeat_penalty: repeat_pen,
+            frequency_penalty: freq_pen,
+            presence_penalty: pres_pen,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
@@ -232,6 +235,7 @@ impl InferenceHandler {
         });
 
         // Create inference request
+        let (repeat_pen, freq_pen, pres_pen, _) = get_penalty_defaults();
         let request = InferenceRequest {
             model_id: "default".to_string(),
             prompt: self.format_prompt_for_inference(&chat_messages, None),
@@ -239,7 +243,9 @@ impl InferenceHandler {
             temperature: config.temperature,
             top_p: 0.95,
             top_k: 40,
-            repeat_penalty: 1.1,
+            repeat_penalty: repeat_pen,
+            frequency_penalty: freq_pen,
+            presence_penalty: pres_pen,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],

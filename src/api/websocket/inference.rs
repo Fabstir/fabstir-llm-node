@@ -174,6 +174,7 @@ impl InferenceEngine {
             .to_string();
 
         // Convert to base request
+        let (repeat_pen, freq_pen, pres_pen, _) = crate::inference::get_penalty_defaults();
         let base_request = BaseRequest {
             model_id: model_id.clone(),
             prompt: full_prompt,
@@ -181,7 +182,9 @@ impl InferenceEngine {
             temperature: request.temperature.unwrap_or(self.config.temperature),
             top_p: 0.95,
             top_k: 40,
-            repeat_penalty: 1.1,
+            repeat_penalty: repeat_pen,
+            frequency_penalty: freq_pen,
+            presence_penalty: pres_pen,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
@@ -230,6 +233,7 @@ impl InferenceEngine {
             .to_string();
 
         // Convert to base request
+        let (repeat_pen, freq_pen, pres_pen, _) = crate::inference::get_penalty_defaults();
         let base_request = BaseRequest {
             model_id: model_id.clone(),
             prompt: full_prompt,
@@ -237,7 +241,9 @@ impl InferenceEngine {
             temperature: request.temperature.unwrap_or(self.config.temperature),
             top_p: 0.95,
             top_k: 40,
-            repeat_penalty: 1.1,
+            repeat_penalty: repeat_pen,
+            frequency_penalty: freq_pen,
+            presence_penalty: pres_pen,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],

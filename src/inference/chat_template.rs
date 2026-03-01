@@ -224,7 +224,7 @@ impl ChatTemplate {
         if !has_system {
             let current_date = chrono::Local::now().format("%Y-%m-%d");
             prompt.push_str(&format!(
-                "<|system|>\nYou are a helpful assistant.\nCurrent date: {}\n\nWhen the user message contains reference material, search results, or document excerpts, use that information to answer. NEVER claim you cannot access provided context.\n",
+                "<|system|>\nYou are a helpful assistant.\nCurrent date: {}\n",
                 current_date
             ));
         }
@@ -484,26 +484,25 @@ mod tests {
         let messages = vec![("user".to_string(), "Hello".to_string())];
         let formatted = template.format_messages(&messages);
         assert!(formatted.contains("<|system|>\nYou are a helpful assistant.\nCurrent date:"));
-        assert!(formatted.contains("NEVER claim you cannot access provided context."));
+        // v8.22.0: RAG instruction removed — was causing hallucinations
+        assert!(
+            !formatted.contains("reference material"),
+            "GLM-4 default system prompt must not contain RAG instruction"
+        );
     }
 
     #[test]
-    fn test_glm4_auto_system_message_context_aware() {
+    fn test_glm4_auto_system_message_simple() {
         let template = ChatTemplate::Glm4;
         let messages = vec![("user".to_string(), "Summarise the document".to_string())];
         let formatted = template.format_messages(&messages);
-        assert!(
-            formatted.contains("reference material, search results, or document excerpts"),
-            "GLM-4 auto system prompt should instruct model to use provided context: {}",
-            formatted
-        );
-        assert!(
-            formatted.contains("NEVER claim you cannot access provided context"),
-            "GLM-4 auto system prompt should prohibit claiming no access: {}",
-            formatted
-        );
-        // Should still have the identity line
+        // v8.22.0: System prompt is simple — no RAG instruction
         assert!(formatted.contains("You are a helpful assistant."));
+        assert!(formatted.contains("Current date:"));
+        assert!(
+            !formatted.contains("NEVER claim"),
+            "System prompt must not contain RAG-specific instructions"
+        );
     }
 
     #[test]
@@ -593,6 +592,20 @@ mod tests {
         let tokens = parse_stop_tokens_env();
         std::env::remove_var("MODEL_STOP_TOKENS");
         assert_eq!(tokens, vec!["<|user|>", "<|observation|>"]);
+    }
+
+    #[test]
+    fn test_glm4_default_system_prompt_no_rag_instruction() {
+        let template = ChatTemplate::Glm4;
+        let messages = vec![("user".to_string(), "Hello".to_string())];
+        let formatted = template.format_messages(&messages);
+        assert!(formatted.contains("You are a helpful assistant."));
+        assert!(formatted.contains("Current date:"));
+        assert!(
+            !formatted.contains("reference material"),
+            "GLM-4 default system prompt must NOT contain RAG instruction: {}",
+            formatted
+        );
     }
 
     #[test]

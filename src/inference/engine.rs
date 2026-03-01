@@ -40,6 +40,18 @@ fn sanitize_prompt_for_tokenizer(prompt: &str) -> String {
         .collect()
 }
 
+/// v8.21.2: Normalize `<thought>` → `<think>` for consistent thinking tags.
+/// GLM-4 emits `<thought>` (special token) but `</think>` (text), creating a mismatch.
+fn normalize_thought_token(token: &str) -> &str {
+    if token == "<thought>" {
+        "<think>"
+    } else if token == "</thought>" {
+        "</think>"
+    } else {
+        token
+    }
+}
+
 /// Parse a KV cache type string into a KvCacheType enum.
 /// Supports: "q8_0", "q4_0", "f16", "bf16", "f32" (case-insensitive).
 /// Returns None for unrecognized types (will use llama.cpp default = fp16).
@@ -56,6 +68,37 @@ pub fn parse_kv_cache_type(s: &str) -> Option<KvCacheType> {
         "f32" => Some(KvCacheType::F32),
         _ => None,
     }
+}
+
+fn default_repeat_penalty() -> f32 {
+    get_penalty_defaults().0
+}
+fn default_frequency_penalty() -> f32 {
+    get_penalty_defaults().1
+}
+fn default_presence_penalty() -> f32 {
+    get_penalty_defaults().2
+}
+
+/// Read penalty env vars with safe fallbacks. Returns (repeat, frequency, presence, last_n).
+pub fn get_penalty_defaults() -> (f32, f32, f32, i32) {
+    let repeat = std::env::var("REPEAT_PENALTY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.1);
+    let freq = std::env::var("FREQUENCY_PENALTY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let presence = std::env::var("PRESENCE_PENALTY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let last_n = std::env::var("PENALTY_LAST_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(256);
+    (repeat, freq, presence, last_n)
 }
 
 // Wrapper around the real LLama model
@@ -122,7 +165,12 @@ pub struct InferenceRequest {
     pub temperature: f32,
     pub top_p: f32,
     pub top_k: usize,
+    #[serde(default = "default_repeat_penalty")]
     pub repeat_penalty: f32,
+    #[serde(default = "default_frequency_penalty")]
+    pub frequency_penalty: f32,
+    #[serde(default = "default_presence_penalty")]
+    pub presence_penalty: f32,
     /// Min-P sampling threshold (0.0 = disabled, typical: 0.01-0.1)
     pub min_p: f32,
     pub seed: Option<u64>,
@@ -149,6 +197,8 @@ impl Clone for InferenceRequest {
             top_p: self.top_p,
             top_k: self.top_k,
             repeat_penalty: self.repeat_penalty,
+            frequency_penalty: self.frequency_penalty,
+            presence_penalty: self.presence_penalty,
             min_p: self.min_p,
             seed: self.seed,
             stop_sequences: self.stop_sequences.clone(),
@@ -503,13 +553,46 @@ impl LlmEngine {
             const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break if stuck generating invalid tokens
             let mut stop_reason = "loop_condition"; // v8.4.18: Track why we stopped
 
+            let (_, _, _, penalty_last_n) = get_penalty_defaults();
             tracing::info!(
-                "🚀 Starting generation: prompt_tokens={}, max_tokens={}, context_size={}, limit={}",
+                "🚀 Starting generation: prompt_tokens={}, max_tokens={}, context_size={}, limit={}, penalties(repeat={}, freq={}, pres={}, last_n={})",
                 prompt_tokens.len(),
                 max_tokens,
                 context_size,
-                prompt_tokens.len() + max_tokens
+                prompt_tokens.len() + max_tokens,
+                request.repeat_penalty,
+                request.frequency_penalty,
+                request.presence_penalty,
+                penalty_last_n
             );
+
+            // Build sampler chain ONCE before loop so penalties sampler persists
+            // and accumulates token history across all generated tokens.
+            // temp → penalties → top_p → min_p → dist/greedy
+            let mut samplers: Vec<LlamaSampler> = Vec::new();
+            samplers.push(LlamaSampler::temp(request.temperature));
+            if request.repeat_penalty != 1.0
+                || request.frequency_penalty != 0.0
+                || request.presence_penalty != 0.0
+            {
+                samplers.push(LlamaSampler::penalties(
+                    penalty_last_n,
+                    request.repeat_penalty,
+                    request.frequency_penalty,
+                    request.presence_penalty,
+                ));
+            }
+            samplers.push(LlamaSampler::top_p(request.top_p, 1));
+            if request.min_p > 0.0 {
+                samplers.push(LlamaSampler::min_p(request.min_p, 1));
+            }
+            if request.temperature > 0.0 {
+                let seed = request.seed.unwrap_or(0) as u32;
+                samplers.push(LlamaSampler::dist(seed));
+            } else {
+                samplers.push(LlamaSampler::greedy());
+            }
+            let mut sampler = LlamaSampler::chain_simple(samplers);
 
             while n_cur < prompt_tokens.len() + max_tokens {
                 // Check cancellation flag between tokens
@@ -523,29 +606,6 @@ impl LlmEngine {
                         break;
                     }
                 }
-
-                // Build sampler chain: temp → penalties → top_p → min_p → dist/greedy
-                let mut samplers: Vec<LlamaSampler> = Vec::new();
-                samplers.push(LlamaSampler::temp(request.temperature));
-                if request.repeat_penalty != 1.0 {
-                    samplers.push(LlamaSampler::penalties(
-                        256,
-                        request.repeat_penalty,
-                        0.0,
-                        0.0,
-                    ));
-                }
-                samplers.push(LlamaSampler::top_p(request.top_p, 1));
-                if request.min_p > 0.0 {
-                    samplers.push(LlamaSampler::min_p(request.min_p, 1));
-                }
-                if request.temperature > 0.0 {
-                    let seed = request.seed.unwrap_or(0) as u32;
-                    samplers.push(LlamaSampler::dist(seed));
-                } else {
-                    samplers.push(LlamaSampler::greedy());
-                }
-                let mut sampler = LlamaSampler::chain_simple(samplers);
 
                 let new_token_id = sampler.sample(&context, -1);
 
@@ -581,6 +641,9 @@ impl LlmEngine {
 
                 let is_valid_utf8 = token_str_result.is_ok();
                 let token_str = token_str_result.unwrap_or_else(|_| String::new());
+
+                // v8.21.2: Normalize <thought> → <think> for consistent thinking tags
+                let token_str = normalize_thought_token(&token_str).to_string();
 
                 if is_valid_utf8 {
                     consecutive_invalid_utf8 = 0; // Reset counter on valid token
@@ -624,7 +687,7 @@ impl LlmEngine {
                     .map_err(|e| anyhow!("Decode failed: {:?}", e))?;
 
                 n_cur += 1;
-            }
+            } // end generation loop
 
             let tokens_generated = n_cur - prompt_tokens.len();
             let generation_time = start_time.elapsed();
@@ -812,6 +875,8 @@ impl LlmEngine {
             top_p: 0.9,
             top_k: 40,
             repeat_penalty: 1.0,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
             min_p: 0.0,
             seed: None,
             stop_sequences: vec![],
@@ -1102,6 +1167,163 @@ mod tests {
         assert!(
             tokens.contains(&"<|observation|>"),
             "GLM-4 must stop on <|observation|>"
+        );
+    }
+
+    // === Thought→think normalization tests (v8.21.2) ===
+
+    /// Verify that `<thought>` is normalized to `<think>`.
+    #[test]
+    fn test_thought_tag_normalized_to_think() {
+        let result = super::normalize_thought_token("<thought>");
+        assert_eq!(result, "<think>", "<thought> must be normalized to <think>");
+    }
+
+    /// Verify that `</thought>` is normalized to `</think>`.
+    #[test]
+    fn test_thought_close_tag_normalized() {
+        let result = super::normalize_thought_token("</thought>");
+        assert_eq!(
+            result, "</think>",
+            "</thought> must be normalized to </think>"
+        );
+    }
+
+    /// Verify that normal tokens are not affected by normalization.
+    #[test]
+    fn test_non_thought_tokens_unchanged() {
+        assert_eq!(super::normalize_thought_token("hello"), "hello");
+        assert_eq!(super::normalize_thought_token("<|user|>"), "<|user|>");
+        assert_eq!(super::normalize_thought_token("<think>"), "<think>");
+        assert_eq!(super::normalize_thought_token("</think>"), "</think>");
+    }
+
+    // === Configurable Penalties Tests (v8.21.3) ===
+
+    #[test]
+    fn test_get_penalty_defaults_returns_defaults() {
+        let (repeat, freq, presence, last_n) = get_penalty_defaults();
+        assert_eq!(repeat, 1.1);
+        assert_eq!(freq, 0.0);
+        assert_eq!(presence, 0.0);
+        assert_eq!(last_n, 256);
+    }
+
+    #[test]
+    fn test_get_penalty_defaults_reads_env_vars() {
+        std::env::set_var("REPEAT_PENALTY", "1.5");
+        std::env::set_var("FREQUENCY_PENALTY", "0.2");
+        std::env::set_var("PRESENCE_PENALTY", "0.3");
+        std::env::set_var("PENALTY_LAST_N", "512");
+        let (repeat, freq, presence, last_n) = get_penalty_defaults();
+        assert_eq!(repeat, 1.5);
+        assert_eq!(freq, 0.2);
+        assert_eq!(presence, 0.3);
+        assert_eq!(last_n, 512);
+        std::env::remove_var("REPEAT_PENALTY");
+        std::env::remove_var("FREQUENCY_PENALTY");
+        std::env::remove_var("PRESENCE_PENALTY");
+        std::env::remove_var("PENALTY_LAST_N");
+    }
+
+    #[test]
+    fn test_get_penalty_defaults_invalid_env_uses_fallback() {
+        std::env::set_var("REPEAT_PENALTY", "notanumber");
+        let (repeat, _, _, _) = get_penalty_defaults();
+        assert_eq!(repeat, 1.1);
+        std::env::remove_var("REPEAT_PENALTY");
+    }
+
+    #[test]
+    fn test_inference_request_has_penalty_fields() {
+        let req = InferenceRequest {
+            model_id: "test".to_string(),
+            prompt: "hi".to_string(),
+            max_tokens: 10,
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            repeat_penalty: 1.1,
+            min_p: 0.0,
+            frequency_penalty: 0.1,
+            presence_penalty: 0.2,
+            seed: None,
+            stop_sequences: vec![],
+            stream: false,
+            cancel_flag: None,
+            token_sender: None,
+            result_sender: None,
+        };
+        assert_eq!(req.frequency_penalty, 0.1);
+        assert_eq!(req.presence_penalty, 0.2);
+    }
+
+    #[test]
+    fn test_inference_request_serde_defaults() {
+        // Simulate the encrypted WS path: JSON without penalty fields
+        let json = serde_json::json!({
+            "model_id": "test",
+            "prompt": "hi",
+            "max_tokens": 10,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 40,
+            "min_p": 0.0,
+            "stop_sequences": [],
+            "stream": false
+        });
+        let req: InferenceRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            req.repeat_penalty, 1.1,
+            "serde default must use env var / 1.1 fallback"
+        );
+        assert_eq!(req.frequency_penalty, 0.0);
+        assert_eq!(req.presence_penalty, 0.0);
+    }
+
+    #[test]
+    fn test_sampler_chain_built_outside_loop() {
+        let src = include_str!("engine.rs");
+        // Only look at non-test production code
+        let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
+        let prod_src = &src[..test_mod];
+        let chain_pos = prod_src
+            .find("LlamaSampler::chain_simple(")
+            .expect("chain_simple must exist in production code");
+        let while_pos = prod_src
+            .find("while n_cur <")
+            .expect("while loop must exist");
+        assert!(
+            chain_pos < while_pos,
+            "Sampler chain_simple must be constructed BEFORE the while loop (chain_pos={} >= while_pos={})",
+            chain_pos, while_pos
+        );
+        // Also verify no chain_simple inside the loop body
+        let loop_body = &prod_src[while_pos..];
+        let end_marker = loop_body.find("// end generation loop");
+        if let Some(end) = end_marker {
+            assert!(
+                !loop_body[..end].contains("LlamaSampler::chain_simple("),
+                "chain_simple must NOT appear inside the generation loop"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sampler_chain_uses_penalty_fields() {
+        let src = include_str!("engine.rs");
+        // Find the LlamaSampler::penalties() call and verify it uses request fields
+        let penalties_call = src
+            .find("LlamaSampler::penalties(")
+            .expect("penalties call must exist");
+        let call_region = &src[penalties_call..penalties_call + 300];
+        assert!(
+            call_region.contains("request.frequency_penalty"),
+            "LlamaSampler::penalties() must use request.frequency_penalty, not hardcoded 0.0"
+        );
+        assert!(
+            call_region.contains("request.presence_penalty"),
+            "LlamaSampler::penalties() must use request.presence_penalty, not hardcoded 0.0"
         );
     }
 }
