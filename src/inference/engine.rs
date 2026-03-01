@@ -593,6 +593,7 @@ impl LlmEngine {
                 samplers.push(LlamaSampler::greedy());
             }
             let mut sampler = LlamaSampler::chain_simple(samplers);
+            let mut sampler_reset_done = false;
 
             while n_cur < prompt_tokens.len() + max_tokens {
                 // Check cancellation flag between tokens
@@ -650,6 +651,20 @@ impl LlmEngine {
 
                     // Add valid token to output
                     output.push_str(&token_str);
+
+                    // v8.22.3: Reset sampler after thinking block to clear penalty history.
+                    // Thinking tokens pollute the penalty window, causing the answer
+                    // portion to degenerate into garbage with aggressive penalties.
+                    if !sampler_reset_done
+                        && (output.contains("</think>") || output.contains("</thought>"))
+                    {
+                        sampler.reset();
+                        sampler_reset_done = true;
+                        tracing::info!(
+                            "🔄 Sampler reset after thinking block (token {})",
+                            n_cur.saturating_sub(prompt_tokens.len())
+                        );
+                    }
 
                     // Store token info for streaming
                     let token_info = TokenInfo {
@@ -1168,6 +1183,10 @@ mod tests {
             tokens.contains(&"<|observation|>"),
             "GLM-4 must stop on <|observation|>"
         );
+        assert!(
+            tokens.contains(&"<|endoftext|>"),
+            "GLM-4 must stop on <|endoftext|> (EOS, matches Ollama)"
+        );
     }
 
     // === Thought→think normalization tests (v8.21.2) ===
@@ -1307,6 +1326,39 @@ mod tests {
                 "chain_simple must NOT appear inside the generation loop"
             );
         }
+    }
+
+    #[test]
+    fn test_sampler_reset_after_think_close_tag() {
+        let src = include_str!("engine.rs");
+        let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
+        let prod_src = &src[..test_mod];
+        // Find the generation loop
+        let while_pos = prod_src
+            .find("while n_cur <")
+            .expect("while loop must exist");
+        let loop_body = &prod_src[while_pos..];
+        let end_marker = loop_body
+            .find("// end generation loop")
+            .expect("end generation loop marker must exist");
+        let loop_code = &loop_body[..end_marker];
+        // Verify sampler.reset() is called after detecting </think> or </thought>
+        assert!(
+            loop_code.contains("sampler.reset()"),
+            "Generation loop must call sampler.reset() after think tag detection to prevent penalty poisoning"
+        );
+        assert!(
+            loop_code.contains("</think>"),
+            "Generation loop must detect </think> closing tag"
+        );
+        assert!(
+            loop_code.contains("</thought>"),
+            "Generation loop must detect </thought> closing tag (GLM-4 multi-token variant)"
+        );
+        assert!(
+            loop_code.contains("sampler_reset_done"),
+            "Generation loop must guard sampler reset with a flag to prevent multiple resets"
+        );
     }
 
     #[test]
