@@ -76,8 +76,8 @@ pub fn build_prompt_with_context(
         None
     };
 
-    // Format using template
-    let mut formatted = template.format_messages(&messages);
+    // Format using template (with thinking mode control for GLM-4)
+    let mut formatted = template.format_messages_with_thinking(&messages, thinking);
 
     // Post-process: replace "Reasoning: medium" with desired level in the
     // formatted output. This preserves the full default system prompt
@@ -316,6 +316,40 @@ fn is_prompt_already_formatted(prompt: &str) -> bool {
     let has_glm4 = prompt.contains("<|system|>") && prompt.contains("<|user|>");
 
     has_harmony || has_chatml || has_llama2 || has_glm4
+}
+
+/// Extract the latest user message from a prompt that may contain inline conversation history.
+///
+/// When session history is available, the SDK's prompt often embeds the full conversation
+/// (user+assistant turns concatenated). This function strips the known history prefix
+/// so that only the latest user message remains.
+///
+/// Strategy: find the last assistant response text in the prompt and take everything after it.
+/// If no match, return the full prompt (first turn scenario).
+pub fn extract_latest_user_message(prompt: &str, session_history: &[Message]) -> String {
+    if session_history.is_empty() {
+        return prompt.to_string();
+    }
+
+    // Find the last assistant message in the session history
+    let last_assistant = session_history.iter().rev().find(|m| m.role == "assistant");
+
+    if let Some(assistant_msg) = last_assistant {
+        // Find the assistant's response text in the prompt
+        let needle = assistant_msg.content.trim();
+        if !needle.is_empty() {
+            if let Some(pos) = prompt.find(needle) {
+                let after = &prompt[pos + needle.len()..];
+                let trimmed = after.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+
+    // Fallback: return the full prompt
+    prompt.to_string()
 }
 
 /// Estimate token count for context
@@ -626,23 +660,37 @@ mod tests {
             "Disabled should NOT inject /no_think: {}",
             result
         );
+        // v8.22.5: </think> is now part of the GLM-4 template (official disable mechanism),
+        // so we check for the old /think injection, not the template's </think>
         assert!(
-            !result.contains("/think"),
-            "Disabled should NOT inject /think: {}",
+            !result.contains("\n/think"),
+            "Disabled should NOT inject /think prefix: {}",
+            result
+        );
+        // Should still have the official </think> disable marker
+        assert!(
+            result.ends_with("<|assistant|>\n</think>"),
+            "Should use official GLM-4 thinking disable: {}",
             result
         );
     }
 
     #[test]
     fn test_glm4_default_no_auto_think() {
-        // v8.22.4: GLM-4 no longer auto-injects /think — it caused degenerate
-        // meta-reasoning loops on multi-turn conversations
+        // v8.22.5: GLM-4 uses official </think> mechanism to disable thinking.
         std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
         std::env::remove_var("DEFAULT_THINKING_MODE");
         let result = build_prompt_with_context(&[], "Hello", None);
+        // Should NOT have old-style /think injection
         assert!(
-            !result.contains("/think"),
-            "GLM-4 must NOT auto-inject /think (v8.22.4): {}",
+            !result.contains("\n/think\n"),
+            "GLM-4 must NOT auto-inject /think prefix: {}",
+            result
+        );
+        // Should have official </think> disable marker
+        assert!(
+            result.ends_with("<|assistant|>\n</think>"),
+            "GLM-4 should use official </think> to disable thinking: {}",
             result
         );
     }
@@ -809,6 +857,144 @@ mod tests {
             result.contains("Platformless AI is a decentralized compute marketplace"),
             "RAG context should be preserved in user message: {}",
             result
+        );
+    }
+
+    // === extract_latest_user_message Tests ===
+
+    #[test]
+    fn test_extract_latest_user_message_no_history() {
+        let prompt = "What is the capital of Poland?";
+        let history: Vec<Message> = vec![];
+        let result = extract_latest_user_message(prompt, &history);
+        assert_eq!(result, "What is the capital of Poland?");
+    }
+
+    #[test]
+    fn test_extract_latest_user_message_with_history() {
+        let prompt = "What is the capital of Poland?\n\nThe capital of Poland is Warsaw.\n\nTell me about it";
+        let history = vec![
+            Message {
+                role: "user".to_string(),
+                content: "What is the capital of Poland?".to_string(),
+                timestamp: None,
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "The capital of Poland is Warsaw.".to_string(),
+                timestamp: None,
+            },
+        ];
+        let result = extract_latest_user_message(prompt, &history);
+        assert_eq!(result, "Tell me about it");
+    }
+
+    #[test]
+    fn test_extract_latest_user_message_first_turn() {
+        let prompt = "Hello";
+        let history: Vec<Message> = vec![];
+        let result = extract_latest_user_message(prompt, &history);
+        assert_eq!(result, "Hello");
+    }
+
+    #[test]
+    fn test_extract_latest_user_message_no_match_in_prompt() {
+        // History exists but assistant response not found in prompt (different session?)
+        let prompt = "A completely different question";
+        let history = vec![
+            Message {
+                role: "user".to_string(),
+                content: "Old question".to_string(),
+                timestamp: None,
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "Old answer".to_string(),
+                timestamp: None,
+            },
+        ];
+        let result = extract_latest_user_message(prompt, &history);
+        assert_eq!(result, "A completely different question");
+    }
+
+    #[test]
+    fn test_extract_latest_user_message_multi_turn_history() {
+        let prompt = "Q1\n\nA1\n\nQ2\n\nA2\n\nQ3";
+        let history = vec![
+            Message {
+                role: "user".to_string(),
+                content: "Q1".to_string(),
+                timestamp: None,
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "A1".to_string(),
+                timestamp: None,
+            },
+            Message {
+                role: "user".to_string(),
+                content: "Q2".to_string(),
+                timestamp: None,
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "A2".to_string(),
+                timestamp: None,
+            },
+        ];
+        let result = extract_latest_user_message(prompt, &history);
+        assert_eq!(result, "Q3");
+    }
+
+    #[test]
+    fn test_glm4_multi_turn_proper_formatting() {
+        // Verify that with proper conversation_context, GLM-4 produces correct multi-turn format
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "glm4");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+
+        let context = vec![
+            Message {
+                role: "user".to_string(),
+                content: "What is the capital of Poland?".to_string(),
+                timestamp: None,
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "The capital of Poland is Warsaw.".to_string(),
+                timestamp: None,
+            },
+        ];
+
+        let result = build_prompt_with_context(&context, "Tell me about it", None);
+
+        // Should have proper multi-turn format with separate user/assistant turns
+        assert!(
+            result.contains("<|user|>\nWhat is the capital of Poland?\n"),
+            "Should have first user turn: {}",
+            result
+        );
+        assert!(
+            result.contains("<|assistant|>\n</think>The capital of Poland is Warsaw.\n"),
+            "Should have assistant turn with </think> prefix (clear_thinking): {}",
+            result
+        );
+        assert!(
+            result.contains("<|user|>\nTell me about it\n"),
+            "Should have second user turn: {}",
+            result
+        );
+        // Should end with assistant prompt + </think> (thinking disabled by default)
+        assert!(
+            result.ends_with("<|assistant|>\n</think>"),
+            "Should end with </think> to disable thinking: {}",
+            result
+        );
+        // Should NOT have the history embedded in a single user message
+        let user_count = result.matches("<|user|>").count();
+        assert_eq!(
+            user_count, 2,
+            "Should have exactly 2 <|user|> markers (multi-turn), got {}: {}",
+            user_count, result
         );
     }
 }

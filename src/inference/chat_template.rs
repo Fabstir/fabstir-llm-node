@@ -61,7 +61,7 @@ impl ChatTemplate {
             Self::Vicuna => vec![],
             Self::Harmony => vec!["<|return|>", "<|end|>"],
             Self::ChatML => vec!["<|im_end|>"],
-            Self::Glm4 => vec!["<|user|>", "<|observation|>", "<|endoftext|>"],
+            Self::Glm4 => vec!["<|user|>", "<|observation|>", "<|endoftext|>", "</think>"],
         }
     }
 
@@ -75,13 +75,26 @@ impl ChatTemplate {
     ///
     /// Formatted prompt string ready for model inference
     pub fn format_messages(&self, messages: &[(String, String)]) -> String {
+        self.format_messages_with_thinking(messages, None)
+    }
+
+    /// Format a conversation with explicit thinking mode control
+    ///
+    /// For GLM-4: when thinking is None or disabled, appends `</think>` after `<|assistant|>`
+    /// to prevent spontaneous thinking. When thinking is explicitly enabled, appends `<think>`.
+    /// This matches the official GLM-4.7-Flash jinja template behavior.
+    pub fn format_messages_with_thinking(
+        &self,
+        messages: &[(String, String)],
+        thinking: Option<&str>,
+    ) -> String {
         match self {
             Self::Default => self.format_default(messages),
             Self::Llama2 => self.format_llama2(messages),
             Self::Vicuna => self.format_vicuna(messages),
             Self::Harmony => self.format_harmony(messages),
             Self::ChatML => self.format_chatml(messages),
-            Self::Glm4 => self.format_glm4(messages),
+            Self::Glm4 => self.format_glm4_with_thinking(messages, thinking),
         }
     }
 
@@ -219,6 +232,23 @@ impl ChatTemplate {
     /// Reference: https://huggingface.co/zai-org/GLM-4.7/blob/main/chat_template.jinja
     /// Note: [gMASK]<sop> BOS tokens are handled by llama.cpp via GGUF metadata
     fn format_glm4(&self, messages: &[(String, String)]) -> String {
+        self.format_glm4_with_thinking(messages, None)
+    }
+
+    /// GLM-4 format with thinking mode control (v8.22.5+)
+    ///
+    /// Matches the official GLM-4.7-Flash jinja chat template:
+    /// - When thinking is disabled (None or not "high"/"medium"/"low"): appends `</think>` after
+    ///   `<|assistant|>` to prevent spontaneous thinking (the official disable mechanism)
+    /// - When thinking is explicitly enabled: appends `<think>` to trigger reasoning
+    ///
+    /// For multi-turn, previous assistant messages include `</think>` prefix to match
+    /// the official template's `clear_thinking` behavior (strips thinking from history).
+    fn format_glm4_with_thinking(
+        &self,
+        messages: &[(String, String)],
+        thinking: Option<&str>,
+    ) -> String {
         let mut prompt = String::new();
         let has_system = messages.iter().any(|(role, _)| role == "system");
         if !has_system {
@@ -228,15 +258,33 @@ impl ChatTemplate {
                 current_date
             ));
         }
+
+        // Determine if thinking is explicitly enabled
+        let thinking_enabled = matches!(
+            thinking.map(|s| s.to_lowercase()).as_deref(),
+            Some("high") | Some("medium") | Some("low")
+        );
+
         for (role, content) in messages {
             match role.as_str() {
                 "system" => prompt.push_str(&format!("<|system|>\n{}\n", content)),
                 "user" => prompt.push_str(&format!("<|user|>\n{}\n", content)),
-                "assistant" => prompt.push_str(&format!("<|assistant|>\n{}\n", content)),
+                "assistant" => {
+                    // Per official jinja template: previous assistant turns get </think> prefix
+                    // (clear_thinking behavior — strip reasoning from history)
+                    prompt.push_str(&format!("<|assistant|>\n</think>{}\n", content));
+                }
                 _ => {}
             }
         }
-        prompt.push_str("<|assistant|>\n");
+
+        // Final assistant turn: control thinking via the official mechanism
+        if thinking_enabled {
+            prompt.push_str("<|assistant|>\n<think>\n");
+        } else {
+            // Official GLM-4 way to disable thinking: output </think> immediately
+            prompt.push_str("<|assistant|>\n</think>");
+        }
         prompt
     }
 
@@ -445,7 +493,12 @@ mod tests {
         let messages = vec![("user".to_string(), "What is 2+2?".to_string())];
         let formatted = template.format_messages(&messages);
         assert!(formatted.contains("<|user|>\nWhat is 2+2?\n"));
-        assert!(formatted.ends_with("<|assistant|>\n"));
+        // Default (no thinking): ends with </think> to disable spontaneous thinking
+        assert!(
+            formatted.ends_with("<|assistant|>\n</think>"),
+            "GLM-4 should end with </think> to disable thinking by default: {}",
+            formatted
+        );
     }
 
     #[test]
@@ -458,7 +511,7 @@ mod tests {
         let formatted = template.format_messages(&messages);
         assert!(formatted.contains("<|system|>\nYou are helpful.\n"));
         assert!(formatted.contains("<|user|>\nHello\n"));
-        assert!(formatted.ends_with("<|assistant|>\n"));
+        assert!(formatted.ends_with("<|assistant|>\n</think>"));
         // Should NOT auto-inject system message when one is provided
         assert_eq!(formatted.matches("<|system|>").count(), 1);
     }
@@ -473,9 +526,41 @@ mod tests {
         ];
         let formatted = template.format_messages(&messages);
         assert!(formatted.contains("<|user|>\nHi\n"));
-        assert!(formatted.contains("<|assistant|>\nHello!\n"));
+        // Previous assistant turns get </think> prefix (clear_thinking behavior)
+        assert!(
+            formatted.contains("<|assistant|>\n</think>Hello!\n"),
+            "Previous assistant turn should have </think> prefix: {}",
+            formatted
+        );
         assert!(formatted.contains("<|user|>\nHow are you?\n"));
-        assert!(formatted.ends_with("<|assistant|>\n"));
+        assert!(formatted.ends_with("<|assistant|>\n</think>"));
+    }
+
+    #[test]
+    fn test_glm4_format_thinking_enabled() {
+        let template = ChatTemplate::Glm4;
+        let messages = vec![("user".to_string(), "Solve this puzzle".to_string())];
+        let formatted =
+            template.format_messages_with_thinking(&messages, Some("high"));
+        // When thinking is enabled, should end with <think> to trigger reasoning
+        assert!(
+            formatted.ends_with("<|assistant|>\n<think>\n"),
+            "GLM-4 with thinking=high should end with <think>: {}",
+            formatted
+        );
+    }
+
+    #[test]
+    fn test_glm4_format_thinking_disabled_explicit() {
+        let template = ChatTemplate::Glm4;
+        let messages = vec![("user".to_string(), "Hello".to_string())];
+        let formatted = template.format_messages_with_thinking(&messages, Some("none"));
+        // "none" is not high/medium/low, so thinking is disabled
+        assert!(
+            formatted.ends_with("<|assistant|>\n</think>"),
+            "GLM-4 with thinking=none should end with </think>: {}",
+            formatted
+        );
     }
 
     #[test]
@@ -488,6 +573,11 @@ mod tests {
         assert!(
             !formatted.contains("reference material"),
             "GLM-4 default system prompt must not contain RAG instruction"
+        );
+        // v8.22.5: Should disable thinking by default
+        assert!(
+            formatted.ends_with("<|assistant|>\n</think>"),
+            "GLM-4 should disable thinking by default"
         );
     }
 
@@ -552,7 +642,10 @@ mod tests {
     #[test]
     fn test_stop_tokens_glm4() {
         let tokens = ChatTemplate::Glm4.stop_tokens();
-        assert_eq!(tokens, vec!["<|user|>", "<|observation|>"]);
+        assert_eq!(
+            tokens,
+            vec!["<|user|>", "<|observation|>", "<|endoftext|>", "</think>"]
+        );
     }
 
     #[test]

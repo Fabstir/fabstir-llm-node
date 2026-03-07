@@ -27,7 +27,9 @@ use crate::contracts::checkpoint_manager::CheckpointManager;
 use crate::crypto::SessionKeyStore;
 use crate::inference::LlmEngine;
 use crate::p2p::Node;
-use crate::utils::context::{build_prompt_with_context, count_context_tokens};
+use crate::utils::context::{
+    build_prompt_with_context, count_context_tokens, extract_latest_user_message,
+};
 use sha2::{Digest, Sha256};
 
 // TODO: Implement full HTTP server using axum framework
@@ -2454,9 +2456,31 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     decrypted_json.get("thinking")
                                                                 );
 
+                                                                // Fetch session conversation history for proper multi-turn formatting (v8.22.5+)
+                                                                let (effective_prompt, conversation_context_json) = if let Some(ref sid) = current_session_id {
+                                                                    let store = server.session_store.read().await;
+                                                                    if let Some(session) = store.get_session(sid).await {
+                                                                        let history = session.get_context_messages();
+                                                                        if !history.is_empty() {
+                                                                            let latest = extract_latest_user_message(&plaintext_prompt, &history);
+                                                                            info!(
+                                                                                "📝 Multi-turn: extracted latest user message ({} chars) from prompt ({} chars), {} history messages",
+                                                                                latest.len(), plaintext_prompt.len(), history.len()
+                                                                            );
+                                                                            (latest, serde_json::to_value(&history).unwrap_or(json!([])))
+                                                                        } else {
+                                                                            (plaintext_prompt.clone(), json!([]))
+                                                                        }
+                                                                    } else {
+                                                                        (plaintext_prompt.clone(), json!([]))
+                                                                    }
+                                                                } else {
+                                                                    (plaintext_prompt.clone(), json!([]))
+                                                                };
+
                                                                 let mut request_value = json!({
                                                                     "model": model,
-                                                                    "prompt": plaintext_prompt,
+                                                                    "prompt": effective_prompt,
                                                                     "job_id": job_id,
                                                                     "session_id": current_session_id,
                                                                     "max_tokens": max_tokens,
@@ -2464,7 +2488,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     "stream": stream,
                                                                     "web_search": web_search,
                                                                     "max_searches": max_searches,
-                                                                    "thinking": thinking
+                                                                    "thinking": thinking,
+                                                                    "conversation_context": conversation_context_json
                                                                 });
 
                                                                 // Add search_queries if present
@@ -2525,6 +2550,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         )) => {
                                                                             let mut total_tokens =
                                                                                 0u64;
+                                                                            let mut accumulated_text =
+                                                                                String::new();
 
                                                                             let mut chunk_index =
                                                                                 0u32;
@@ -2571,6 +2598,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             .tokens
                                                                                             as u64;
                                                                                     }
+                                                                                    // Accumulate text for session history (v8.22.5+)
+                                                                                    accumulated_text.push_str(&response.content);
 
                                                                                     // Encrypt response chunks with session key
                                                                                     // Generate random 24-byte nonce using CSPRNG
@@ -2765,6 +2794,25 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 "📊 Encrypted session complete - Total tokens: {}",
                                                                                 total_tokens
                                                                             );
+
+                                                                            // Store user prompt and assistant response in session history (v8.22.5+)
+                                                                            if let Some(ref sid) = current_session_id {
+                                                                                if !accumulated_text.is_empty() {
+                                                                                    let mut store = server.session_store.write().await;
+                                                                                    let _ = store.update_session(sid, crate::job_processor::Message {
+                                                                                        role: "user".to_string(),
+                                                                                        content: effective_prompt.clone(),
+                                                                                        timestamp: None,
+                                                                                    }).await;
+                                                                                    let _ = store.update_session(sid, crate::job_processor::Message {
+                                                                                        role: "assistant".to_string(),
+                                                                                        content: accumulated_text.clone(),
+                                                                                        timestamp: None,
+                                                                                    }).await;
+                                                                                    info!("💾 Stored multi-turn context: user ({} chars) + assistant ({} chars)", effective_prompt.len(), accumulated_text.len());
+                                                                                }
+                                                                            }
+
                                                                         }
                                                                         Err(e) => {
                                                                             let error_str =
