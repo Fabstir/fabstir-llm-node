@@ -69,3 +69,9 @@ ALL-FIXES-*.md
 docs/IMPLEMENTATION-*.md
 docs/archive/
 docs/audit/
+
+docs/sdk-reference/
+docs/vectordb-reference/
+docs/s5js-reference/
+docs/compute-contracts-reference/
+docs/ui4-reference/
