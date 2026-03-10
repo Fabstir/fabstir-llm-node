@@ -2457,10 +2457,21 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                 );
 
                                                                 // Fetch session conversation history for proper multi-turn formatting (v8.22.5+)
-                                                                let (effective_prompt, conversation_context_json) = if let Some(ref sid) = current_session_id {
-                                                                    let store = server.session_store.read().await;
-                                                                    if let Some(session) = store.get_session(sid).await {
-                                                                        let history = session.get_context_messages();
+                                                                let (
+                                                                    effective_prompt,
+                                                                    conversation_context_json,
+                                                                ) = if let Some(ref sid) =
+                                                                    current_session_id
+                                                                {
+                                                                    let store = server
+                                                                        .session_store
+                                                                        .read()
+                                                                        .await;
+                                                                    if let Some(session) =
+                                                                        store.get_session(sid).await
+                                                                    {
+                                                                        let history = session
+                                                                            .get_context_messages();
                                                                         if !history.is_empty() {
                                                                             let latest = extract_latest_user_message(&plaintext_prompt, &history);
                                                                             info!(
@@ -2469,13 +2480,24 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             );
                                                                             (latest, serde_json::to_value(&history).unwrap_or(json!([])))
                                                                         } else {
-                                                                            (plaintext_prompt.clone(), json!([]))
+                                                                            (
+                                                                                plaintext_prompt
+                                                                                    .clone(),
+                                                                                json!([]),
+                                                                            )
                                                                         }
                                                                     } else {
-                                                                        (plaintext_prompt.clone(), json!([]))
+                                                                        (
+                                                                            plaintext_prompt
+                                                                                .clone(),
+                                                                            json!([]),
+                                                                        )
                                                                     }
                                                                 } else {
-                                                                    (plaintext_prompt.clone(), json!([]))
+                                                                    (
+                                                                        plaintext_prompt.clone(),
+                                                                        json!([]),
+                                                                    )
                                                                 };
 
                                                                 let mut request_value = json!({
@@ -2550,7 +2572,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         )) => {
                                                                             let mut total_tokens =
                                                                                 0u64;
-                                                                            let mut accumulated_text =
+                                                                            let mut
+                                                                            accumulated_text =
                                                                                 String::new();
 
                                                                             let mut chunk_index =
@@ -2796,8 +2819,12 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             );
 
                                                                             // Store user prompt and assistant response in session history (v8.22.5+)
-                                                                            if let Some(ref sid) = current_session_id {
-                                                                                if !accumulated_text.is_empty() {
+                                                                            if let Some(ref sid) =
+                                                                                current_session_id
+                                                                            {
+                                                                                if !accumulated_text
+                                                                                    .is_empty()
+                                                                                {
                                                                                     let mut store = server.session_store.write().await;
                                                                                     let _ = store.update_session(sid, crate::job_processor::Message {
                                                                                         role: "user".to_string(),
@@ -2812,7 +2839,6 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     info!("💾 Stored multi-turn context: user ({} chars) + assistant ({} chars)", effective_prompt.len(), accumulated_text.len());
                                                                                 }
                                                                             }
-
                                                                         }
                                                                         Err(e) => {
                                                                             let error_str =
