@@ -52,6 +52,55 @@ fn normalize_thought_token(token: &str) -> &str {
     }
 }
 
+/// Result of flushing the UTF-8 byte buffer.
+#[derive(Debug, Default)]
+struct Utf8FlushResult {
+    text: String,
+    has_pending_bytes: bool,
+    invalid_bytes_discarded: u32,
+}
+
+/// Flush a UTF-8 byte buffer, extracting complete characters.
+/// If `force` is true, discard any incomplete trailing bytes.
+fn flush_utf8_buffer(buf: &mut Vec<u8>, force: bool) -> Utf8FlushResult {
+    let mut result = Utf8FlushResult::default();
+    while !buf.is_empty() {
+        match std::str::from_utf8(buf) {
+            Ok(valid) => {
+                result.text.push_str(valid);
+                buf.clear();
+                break;
+            }
+            Err(e) => {
+                let valid_up_to = e.valid_up_to();
+                if valid_up_to > 0 {
+                    let valid = std::str::from_utf8(&buf[..valid_up_to]).unwrap();
+                    result.text.push_str(valid);
+                    buf.drain(..valid_up_to);
+                    continue;
+                }
+                match e.error_len() {
+                    Some(n) => {
+                        result.invalid_bytes_discarded += n as u32;
+                        buf.drain(..n);
+                        continue;
+                    }
+                    None => {
+                        if force {
+                            result.invalid_bytes_discarded += buf.len() as u32;
+                            buf.clear();
+                        } else {
+                            result.has_pending_bytes = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Parse a KV cache type string into a KvCacheType enum.
 /// Supports: "q8_0", "q4_0", "f16", "bf16", "f32" (case-insensitive).
 /// Returns None for unrecognized types (will use llama.cpp default = fp16).
@@ -549,9 +598,11 @@ impl LlmEngine {
             let mut token_info_list: Vec<TokenInfo> = Vec::new();
             let mut n_cur = prompt_tokens.len();
             let max_tokens = request.max_tokens;
-            let mut consecutive_invalid_utf8 = 0; // Track consecutive invalid UTF-8 tokens
-            const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break if stuck generating invalid tokens
+            let mut consecutive_invalid_utf8: u32 = 0; // Track consecutive invalid UTF-8 bytes
+            const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break if stuck generating invalid bytes
             let mut stop_reason = "loop_condition"; // v8.4.18: Track why we stopped
+            let mut utf8_buf: Vec<u8> = Vec::new();
+            let mut utf8_token_ids: Vec<i32> = Vec::new();
 
             let (_, _, _, penalty_last_n) = get_penalty_defaults();
             tracing::info!(
@@ -637,58 +688,69 @@ impl LlmEngine {
                     break;
                 }
 
-                // v8.4.19 FIX: Convert token to string - handle invalid UTF-8 by still advancing model state
-                let token_str_result = model.model.token_to_str(new_token_id, Special::Tokenize);
+                // v8.23.0: Convert token to bytes and accumulate in UTF-8 buffer
+                match model.model.token_to_bytes(new_token_id, Special::Tokenize) {
+                    Ok(bytes) => {
+                        utf8_buf.extend_from_slice(&bytes);
+                        utf8_token_ids.push(new_token_id.0 as i32);
+                        let flush = flush_utf8_buffer(&mut utf8_buf, false);
+                        if !flush.text.is_empty() {
+                            let text = normalize_thought_token(&flush.text).to_string();
+                            output.push_str(&text);
 
-                let is_valid_utf8 = token_str_result.is_ok();
-                let token_str = token_str_result.unwrap_or_else(|_| String::new());
+                            // v8.22.3: Reset sampler after thinking block
+                            if !sampler_reset_done
+                                && (output.contains("</think>") || output.contains("</thought>"))
+                            {
+                                sampler.reset();
+                                sampler_reset_done = true;
+                                tracing::info!(
+                                    "🔄 Sampler reset after thinking block (token {})",
+                                    n_cur.saturating_sub(prompt_tokens.len())
+                                );
+                            }
 
-                // v8.21.2: Normalize <thought> → <think> for consistent thinking tags
-                let token_str = normalize_thought_token(&token_str).to_string();
-
-                if is_valid_utf8 {
-                    consecutive_invalid_utf8 = 0; // Reset counter on valid token
-
-                    // Add valid token to output
-                    output.push_str(&token_str);
-
-                    // v8.22.3: Reset sampler after thinking block to clear penalty history.
-                    // Thinking tokens pollute the penalty window, causing the answer
-                    // portion to degenerate into garbage with aggressive penalties.
-                    if !sampler_reset_done
-                        && (output.contains("</think>") || output.contains("</thought>"))
-                    {
-                        sampler.reset();
-                        sampler_reset_done = true;
-                        tracing::info!(
-                            "🔄 Sampler reset after thinking block (token {})",
-                            n_cur.saturating_sub(prompt_tokens.len())
+                            let last_id = utf8_token_ids.last().copied().unwrap_or(0);
+                            let token_info = TokenInfo {
+                                token_id: last_id,
+                                text,
+                                logprob: None,
+                                timestamp: None,
+                            };
+                            if let Some(ref tx) = request.token_sender {
+                                let _ = tx.try_send(Ok(token_info.clone()));
+                            }
+                            token_info_list.push(token_info);
+                            utf8_token_ids.clear();
+                            consecutive_invalid_utf8 = 0;
+                        }
+                        if flush.invalid_bytes_discarded > 0 {
+                            consecutive_invalid_utf8 += flush.invalid_bytes_discarded;
+                            tracing::warn!(
+                                discarded = flush.invalid_bytes_discarded,
+                                consecutive_invalid = consecutive_invalid_utf8,
+                                "Discarded invalid UTF-8 bytes during generation"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        consecutive_invalid_utf8 += 1;
+                        tracing::error!(
+                            token_id = new_token_id.0,
+                            error = %e,
+                            "token_to_bytes failed"
                         );
                     }
+                }
 
-                    // Store token info for streaming
-                    let token_info = TokenInfo {
-                        token_id: new_token_id.0 as i32,
-                        text: token_str,
-                        logprob: None,
-                        timestamp: None,
-                    };
-                    // Send token as it's generated (true streaming)
-                    if let Some(ref tx) = request.token_sender {
-                        let _ = tx.try_send(Ok(token_info.clone()));
-                    }
-                    token_info_list.push(token_info);
-                } else {
-                    // Invalid UTF-8 - don't add to output but MUST advance model state
-                    consecutive_invalid_utf8 += 1;
-                    tracing::warn!(
-                        token_id = new_token_id.0,
-                        consecutive_invalid = consecutive_invalid_utf8,
-                        output_chars = output.len(),
-                        valid_tokens = token_info_list.len(),
-                        "Invalid UTF-8 token detected - this may indicate chat template mismatch"
+                // v8.23.0: Break on too many consecutive invalid UTF-8 bytes
+                if consecutive_invalid_utf8 >= MAX_CONSECUTIVE_INVALID {
+                    stop_reason = "invalid_utf8";
+                    tracing::error!(
+                        "Breaking: {} consecutive invalid UTF-8 bytes",
+                        consecutive_invalid_utf8
                     );
-                    // DON'T add to token_info_list - we don't want to stream garbage to client
+                    break;
                 }
 
                 // CRITICAL: Always add token to batch and decode to advance model state
@@ -703,6 +765,32 @@ impl LlmEngine {
 
                 n_cur += 1;
             } // end generation loop
+
+            // v8.23.0: Force-flush any remaining bytes in the UTF-8 buffer
+            if !utf8_buf.is_empty() {
+                let flush = flush_utf8_buffer(&mut utf8_buf, true);
+                if !flush.text.is_empty() {
+                    let text = normalize_thought_token(&flush.text).to_string();
+                    output.push_str(&text);
+                    let last_id = utf8_token_ids.last().copied().unwrap_or(0);
+                    let token_info = TokenInfo {
+                        token_id: last_id,
+                        text,
+                        logprob: None,
+                        timestamp: None,
+                    };
+                    if let Some(ref tx) = request.token_sender {
+                        let _ = tx.try_send(Ok(token_info.clone()));
+                    }
+                    token_info_list.push(token_info);
+                }
+                if flush.invalid_bytes_discarded > 0 {
+                    tracing::warn!(
+                        discarded = flush.invalid_bytes_discarded,
+                        "Discarded incomplete UTF-8 bytes at end of generation"
+                    );
+                }
+            }
 
             let tokens_generated = n_cur - prompt_tokens.len();
             let generation_time = start_time.elapsed();
@@ -1130,15 +1218,11 @@ mod tests {
     /// Verify that the engine source uses Special::Tokenize (not Special::Plaintext)
     /// so that special tokens like <think> are rendered as text in output.
     #[test]
-    fn test_token_to_str_uses_tokenize_mode() {
+    fn test_token_to_bytes_uses_tokenize_mode() {
         let src = include_str!("engine.rs");
-        // Count occurrences outside this test block:
-        // The actual render call should use Tokenize, not the suppressing variant.
-        // We search for the exact pattern that appears in the generation loop.
-        let pattern_tokenize = "model.token_to_str(new_token_id, Special::Tokenize)";
+        let pattern_tokenize = "model.token_to_bytes(new_token_id, Special::Tokenize)";
         let pattern_suppress = {
-            // Build the suppress pattern dynamically to avoid include_str self-match
-            let mut p = String::from("model.token_to_str(new_token_id, Special::Plain");
+            let mut p = String::from("model.token_to_bytes(new_token_id, Special::Plain");
             p.push_str("text)");
             p
         };
@@ -1159,10 +1243,10 @@ mod tests {
         let src = include_str!("engine.rs");
         let eos_check = src.find("if new_token_id == eos_token");
         let stop_check = src.find("if stop_token_ids.contains(&new_token_id)");
-        let render_call = src.find("token_to_str(new_token_id,");
+        let render_call = src.find("token_to_bytes(new_token_id,");
         assert!(eos_check.is_some(), "EOS check must exist");
         assert!(stop_check.is_some(), "stop token check must exist");
-        assert!(render_call.is_some(), "token_to_str call must exist");
+        assert!(render_call.is_some(), "token_to_bytes call must exist");
         assert!(
             eos_check.unwrap() < render_call.unwrap(),
             "EOS check must come before rendering"
@@ -1376,6 +1460,145 @@ mod tests {
         assert!(
             call_region.contains("request.presence_penalty"),
             "LlamaSampler::penalties() must use request.presence_penalty, not hardcoded 0.0"
+        );
+    }
+
+    // === UTF-8 byte buffering tests (v8.23.0) ===
+
+    #[test]
+    fn test_flush_utf8_complete_ascii() {
+        let mut buf = b"hello".to_vec();
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "hello");
+        assert!(buf.is_empty());
+        assert_eq!(result.invalid_bytes_discarded, 0);
+    }
+
+    #[test]
+    fn test_flush_utf8_complete_multibyte() {
+        let mut buf = vec![0xE2, 0x80, 0x94]; // em dash U+2014
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "\u{2014}");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_flush_utf8_incomplete_tail() {
+        let mut buf = vec![0xE2, 0x80]; // incomplete 3-byte sequence
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "");
+        assert!(result.has_pending_bytes);
+        assert_eq!(buf.len(), 2);
+    }
+
+    #[test]
+    fn test_flush_utf8_valid_prefix_then_incomplete() {
+        let mut buf = vec![0x41, 0xE2, 0x80]; // "A" + partial em dash
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "A");
+        assert_eq!(buf, vec![0xE2, 0x80]);
+    }
+
+    #[test]
+    fn test_flush_utf8_genuinely_invalid_byte() {
+        let mut buf = vec![0x41, 0xFF, 0x42]; // "A" + invalid + "B"
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "AB");
+        assert_eq!(result.invalid_bytes_discarded, 1);
+    }
+
+    #[test]
+    fn test_flush_utf8_force_discards_incomplete() {
+        let mut buf = vec![0xE2, 0x80]; // incomplete
+        let result = super::flush_utf8_buffer(&mut buf, true);
+        assert_eq!(result.text, "");
+        assert_eq!(result.invalid_bytes_discarded, 2);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_flush_utf8_empty_buffer() {
+        let mut buf: Vec<u8> = Vec::new();
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "");
+        assert_eq!(result.invalid_bytes_discarded, 0);
+        assert!(!result.has_pending_bytes);
+    }
+
+    #[test]
+    fn test_flush_utf8_mixed_valid_invalid_valid() {
+        let mut buf = vec![0x41, 0xFF, 0xE2, 0x80, 0x94, 0x42]; // "A" + bad + em dash + "B"
+        let result = super::flush_utf8_buffer(&mut buf, false);
+        assert_eq!(result.text, "A\u{2014}B");
+        assert_eq!(result.invalid_bytes_discarded, 1);
+    }
+
+    // === Structural invariant tests for byte buffering (v8.23.0) ===
+
+    #[test]
+    fn test_generation_loop_uses_token_to_bytes() {
+        let src = include_str!("engine.rs");
+        let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
+        let prod_src = &src[..test_mod];
+        assert!(
+            prod_src.contains("model.token_to_bytes(new_token_id, Special::Tokenize)"),
+            "Generation loop must use token_to_bytes, not token_to_str"
+        );
+    }
+
+    #[test]
+    fn test_utf8_buffer_declared_before_loop() {
+        let src = include_str!("engine.rs");
+        let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
+        let prod_src = &src[..test_mod];
+        let buf_pos = prod_src.find("utf8_buf").expect("utf8_buf must exist");
+        let while_pos = prod_src
+            .find("while n_cur <")
+            .expect("while loop must exist");
+        assert!(
+            buf_pos < while_pos,
+            "utf8_buf must be declared before the while loop"
+        );
+    }
+
+    #[test]
+    fn test_utf8_buffer_flushed_after_loop() {
+        let src = include_str!("engine.rs");
+        let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
+        let prod_src = &src[..test_mod];
+        let end_loop = prod_src
+            .find("// end generation loop")
+            .expect("end marker must exist");
+        let after_loop = &prod_src[end_loop..];
+        assert!(
+            after_loop.contains("flush_utf8_buffer(&mut utf8_buf, true)"),
+            "Must force-flush utf8_buf after generation loop ends"
+        );
+    }
+
+    #[test]
+    fn test_max_consecutive_invalid_is_checked() {
+        let src = include_str!("engine.rs");
+        let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
+        let prod_src = &src[..test_mod];
+        let while_pos = prod_src
+            .find("while n_cur <")
+            .expect("while loop must exist");
+        let end_pos = prod_src
+            .find("// end generation loop")
+            .expect("end marker must exist");
+        let loop_body = &prod_src[while_pos..end_pos];
+        let check_pos = loop_body.find("consecutive_invalid_utf8 >= MAX_CONSECUTIVE_INVALID");
+        assert!(
+            check_pos.is_some(),
+            "Must check consecutive_invalid_utf8 against MAX_CONSECUTIVE_INVALID"
+        );
+        // Verify break follows within 8 lines
+        let after_check = &loop_body[check_pos.unwrap()..];
+        let next_lines: String = after_check.lines().take(8).collect::<Vec<_>>().join("\n");
+        assert!(
+            next_lines.contains("break"),
+            "Must break after MAX_CONSECUTIVE_INVALID check"
         );
     }
 }

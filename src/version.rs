@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.22.5-encrypted-multi-turn-context-2026-03-06";
+pub const VERSION: &str = "v8.23.0-utf8-byte-buffering-2026-03-10";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.22.5";
+pub const VERSION_NUMBER: &str = "8.23.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 22;
+pub const VERSION_MINOR: u32 = 23;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-03-06";
+pub const BUILD_DATE: &str = "2026-03-10";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -268,6 +268,10 @@ pub const FEATURES: &[&str] = &[
     "encrypted-multi-turn-context",
     "session-conversation-history",
     "extract-latest-user-message",
+    // UTF-8 byte buffering (v8.23.0)
+    "utf8-byte-buffering",
+    "token-to-bytes",
+    "max-consecutive-invalid-check",
 ];
 
 /// Supported chain IDs
@@ -278,6 +282,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.23.0 - UTF-8 Byte Buffering (Mar 10, 2026)
+    "FIX: Multi-byte UTF-8 characters split across BPE tokens no longer vanish from output",
+    "FIX: Generation loop uses token_to_bytes + byte buffer instead of token_to_str",
+    "FIX: MAX_CONSECUTIVE_INVALID now enforced — breaks generation after 10 invalid UTF-8 bytes",
     // v8.22.5 - Encrypted multi-turn conversation context (Mar 6, 2026)
     "FIX: Encrypted WebSocket sessions now maintain server-side conversation history for proper multi-turn formatting",
     "FIX: GLM-4 (and other models) no longer see conversation history as a single user message",
@@ -626,10 +634,14 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 22);
-        assert_eq!(VERSION_PATCH, 5);
+        assert_eq!(VERSION_MINOR, 23);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.23.0 utf8 byte buffering
+        assert!(FEATURES.contains(&"utf8-byte-buffering"));
+        assert!(FEATURES.contains(&"token-to-bytes"));
+        assert!(FEATURES.contains(&"max-consecutive-invalid-check"));
         // v8.22.5 encrypted multi-turn context
         assert!(FEATURES.contains(&"encrypted-multi-turn-context"));
         assert!(FEATURES.contains(&"session-conversation-history"));
@@ -732,18 +744,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.22.5"));
-        assert!(version.contains("2026-03-06"));
+        assert!(version.contains("8.23.0"));
+        assert!(version.contains("2026-03-10"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(
-            VERSION,
-            "v8.22.5-encrypted-multi-turn-context-2026-03-06"
-        );
-        assert_eq!(VERSION_NUMBER, "8.22.5");
-        assert_eq!(BUILD_DATE, "2026-03-06");
+        assert_eq!(VERSION, "v8.23.0-utf8-byte-buffering-2026-03-10");
+        assert_eq!(VERSION_NUMBER, "8.23.0");
+        assert_eq!(BUILD_DATE, "2026-03-10");
     }
 
     #[test]

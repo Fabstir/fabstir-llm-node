@@ -540,8 +540,7 @@ mod tests {
     fn test_glm4_format_thinking_enabled() {
         let template = ChatTemplate::Glm4;
         let messages = vec![("user".to_string(), "Solve this puzzle".to_string())];
-        let formatted =
-            template.format_messages_with_thinking(&messages, Some("high"));
+        let formatted = template.format_messages_with_thinking(&messages, Some("high"));
         // When thinking is enabled, should end with <think> to trigger reasoning
         assert!(
             formatted.ends_with("<|assistant|>\n<think>\n"),
