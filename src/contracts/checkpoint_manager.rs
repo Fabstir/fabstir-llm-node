@@ -836,80 +836,49 @@ impl CheckpointManager {
             proof_bytes.len() / 1024
         );
 
-        // Send transaction with the correct method signature
+        // Send transaction via queue for serialized nonce management
         match self
             .web3_client
-            .send_transaction(
+            .enqueue_transaction(
                 self.proof_system_address,
-                U256::zero(), // No ETH value sent
+                U256::zero(),
                 Some(data.into()),
+                &format!("checkpoint job {}", job_id),
+                true, // wait for confirmation
             )
             .await
         {
-            Ok(tx_hash) => {
+            Ok((tx_hash, receipt)) => {
                 info!(
                     "Transaction sent for job {} - tx_hash: {:?}",
                     job_id, tx_hash
                 );
-                info!(
-                    "⏳ Waiting for confirmation (this can take 15-30 seconds on Base Sepolia)..."
-                );
 
-                // CRITICAL: Wait for confirmation with proper timeout
-                // Base Sepolia can take 15-30 seconds for confirmation
-                let start_time = std::time::Instant::now();
-
-                // Use tokio timeout to wait up to 60 seconds for confirmation
-                match tokio::time::timeout(
-                    Duration::from_secs(60),
-                    self.web3_client.wait_for_confirmation(tx_hash),
-                )
-                .await
-                {
-                    Ok(Ok(receipt)) => {
-                        let elapsed = start_time.elapsed();
+                if let Some(receipt) = receipt {
+                    if receipt.status == Some(U64::from(1)) {
+                        let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE")
+                            .unwrap_or_else(|_| "90".to_string());
+                        let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE")
+                            .unwrap_or_else(|_| "10".to_string());
                         info!(
-                            "✅ Transaction confirmed after {:.1}s for job {}",
-                            elapsed.as_secs_f32(),
-                            job_id
+                            "✅ Checkpoint SUCCESS for job {} - payment distributed ({}% host, {}% treasury)",
+                            job_id, host_pct, treasury_pct
                         );
-
-                        if receipt.status == Some(U64::from(1)) {
-                            let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE")
-                                .unwrap_or_else(|_| "90".to_string());
-                            let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE")
-                                .unwrap_or_else(|_| "10".to_string());
-                            info!(
-                                "✅ Checkpoint SUCCESS for job {} - payment distributed ({}% host, {}% treasury)",
-                                job_id, host_pct, treasury_pct
-                            );
-                            info!("Transaction receipt: {:?}", receipt);
-                        } else {
-                            error!(
-                                "❌ Checkpoint transaction FAILED for job {} - status: {:?}",
-                                job_id, receipt.status
-                            );
-                            return Err(anyhow!(
-                                "Transaction failed with status: {:?}",
-                                receipt.status
-                            ));
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        error!("❌ Failed to get receipt for job {}: {}", job_id, e);
-                        return Err(anyhow!("Failed to get transaction receipt: {}", e));
-                    }
-                    Err(_) => {
+                    } else {
                         error!(
-                            "❌ TIMEOUT waiting for confirmation after 60 seconds for job {} - tx_hash: {:?}",
-                            job_id, tx_hash
+                            "❌ Checkpoint transaction FAILED for job {} - status: {:?}",
+                            job_id, receipt.status
                         );
-                        // Don't fail here - transaction might still succeed
-                        warn!(
-                            "Transaction might still be pending. Check tx_hash: {:?}",
-                            tx_hash
-                        );
+                        return Err(anyhow!(
+                            "Transaction failed with status: {:?}",
+                            receipt.status
+                        ));
                     }
+                } else {
+                    warn!(
+                        "Transaction sent but no receipt for job {} - tx may still be pending",
+                        job_id
+                    );
                 }
 
                 Ok(())
@@ -1083,61 +1052,22 @@ impl CheckpointManager {
             proof_bytes.len() / 1024
         );
 
-        // Send transaction - FIRE AND FORGET for non-blocking streaming
+        // Send transaction via queue — fire-and-forget (no confirmation wait)
         match web3_client
-            .send_transaction(
+            .enqueue_transaction(
                 proof_system_address,
-                U256::zero(), // No ETH value sent
+                U256::zero(),
                 Some(data.into()),
+                &format!("async checkpoint job {}", job_id),
+                false, // fire-and-forget
             )
             .await
         {
-            Ok(tx_hash) => {
+            Ok((tx_hash, _)) => {
                 info!(
                     "📤 [ASYNC] Transaction sent for job {} - tx_hash: {:?}",
                     job_id, tx_hash
                 );
-
-                // FIRE AND FORGET: Don't wait for confirmation to avoid blocking
-                // The transaction is on-chain and will be confirmed eventually
-                // We spawn a background task to log confirmation status
-                let web3_client_clone = web3_client.clone();
-                tokio::spawn(async move {
-                    // Wait for 1 confirmation with short timeout (15s)
-                    match tokio::time::timeout(
-                        Duration::from_secs(15),
-                        web3_client_clone.wait_for_confirmation(tx_hash),
-                    )
-                    .await
-                    {
-                        Ok(Ok(receipt)) => {
-                            if receipt.status == Some(U64::from(1)) {
-                                info!(
-                                    "✅ [ASYNC-BG] Checkpoint confirmed for job {} - tx: {:?}",
-                                    job_id, tx_hash
-                                );
-                            } else {
-                                error!(
-                                    "❌ [ASYNC-BG] Checkpoint FAILED for job {} - tx: {:?}",
-                                    job_id, tx_hash
-                                );
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            warn!(
-                                "[ASYNC-BG] Receipt error for job {}: {} - tx may still succeed",
-                                job_id, e
-                            );
-                        }
-                        Err(_) => {
-                            info!(
-                                "[ASYNC-BG] Confirmation pending for job {} - tx: {:?}",
-                                job_id, tx_hash
-                            );
-                        }
-                    }
-                });
-
                 Ok(())
             }
             Err(e) => {
@@ -1684,119 +1614,48 @@ impl CheckpointManager {
         let conversation_cid = format!("session_job_{}_completed", job_id);
         let data = encode_complete_session_call(job_id, conversation_cid);
 
-        // Use the Web3Client's send_transaction which properly signs the transaction
+        // Send via queue — nonce retries handled automatically by the queue
         match self
             .web3_client
-            .send_transaction(
+            .enqueue_transaction(
                 self.proof_system_address,
-                U256::zero(), // No ETH value, just calling a function
+                U256::zero(),
                 Some(data.clone().into()),
+                &format!("complete session job {}", job_id),
+                true, // wait for confirmation
             )
             .await
         {
-            Ok(tx_hash) => {
+            Ok((tx_hash, receipt)) => {
                 info!(
                     "Transaction sent for completing job {} - tx_hash: {:?}",
                     job_id, tx_hash
                 );
 
-                // Wait for confirmation
-                let start = std::time::Instant::now();
-                match self.web3_client.wait_for_confirmation(tx_hash).await {
-                    Ok(receipt) => {
-                        let elapsed = start.elapsed().as_secs_f32();
+                if let Some(receipt) = receipt {
+                    if receipt.status == Some(U64::from(1)) {
+                        let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE")
+                            .unwrap_or_else(|_| "90".to_string());
+                        let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE")
+                            .unwrap_or_else(|_| "10".to_string());
                         info!(
-                            "✅ Transaction confirmed after {:.1}s for job {}",
-                            elapsed, job_id
+                            "💰 Session completed and payments distributed for job {}",
+                            job_id
                         );
-
-                        if receipt.status == Some(U64::from(1)) {
-                            let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE")
-                                .unwrap_or_else(|_| "90".to_string());
-                            let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE")
-                                .unwrap_or_else(|_| "10".to_string());
-                            info!(
-                                "💰 Session completed and payments distributed for job {}",
-                                job_id
-                            );
-                            info!(
-                                "  - Host earnings ({}%) sent to HostEarnings contract",
-                                host_pct
-                            );
-                            info!("  - Treasury fee ({}%) collected", treasury_pct);
-                            info!("  - Unused deposit refunded to user");
-                        } else {
-                            error!("❌ Transaction failed for job {}", job_id);
-                        }
-                    }
-                    Err(e) => {
-                        error!("❌ Transaction error for job {}: {:?}", job_id, e);
+                        info!(
+                            "  - Host earnings ({}%) sent to HostEarnings contract",
+                            host_pct
+                        );
+                        info!("  - Treasury fee ({}%) collected", treasury_pct);
+                        info!("  - Unused deposit refunded to user");
+                    } else {
+                        error!("❌ Transaction failed for job {}", job_id);
                     }
                 }
             }
             Err(e) => {
-                // Check for nonce-related errors and retry with delay
-                if e.to_string()
-                    .contains("replacement transaction underpriced")
-                    || e.to_string().contains("nonce too low")
-                {
-                    error!("❌ Nonce conflict detected for job {}: {}", job_id, e);
-                    info!("⏳ Retrying with 5 second delay to resolve nonce conflict...");
-
-                    // Wait for previous transaction to clear
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-
-                    // Retry the transaction once
-                    match self
-                        .web3_client
-                        .send_transaction(
-                            self.proof_system_address,
-                            U256::zero(),
-                            Some(data.clone().into()),
-                        )
-                        .await
-                    {
-                        Ok(tx_hash) => {
-                            info!(
-                                "🔄 Retry successful for job {} - tx_hash: {:?}",
-                                job_id, tx_hash
-                            );
-
-                            // Wait for confirmation
-                            match self.web3_client.wait_for_confirmation(tx_hash).await {
-                                Ok(receipt) => {
-                                    if receipt.status == Some(U64::from(1)) {
-                                        info!("✅ Session completed on retry for job {}", job_id);
-                                    } else {
-                                        error!("❌ Retry transaction failed for job {}", job_id);
-                                    }
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "❌ Retry transaction error for job {}: {:?}",
-                                        job_id, e
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!(
-                                "❌ Failed to send complete session transaction for job {}: {}",
-                                job_id, e
-                            );
-                            // Clean up tracker since we failed
-                            let mut trackers = self.job_trackers.write().await;
-                            if trackers.remove(&job_id).is_some() {
-                                info!("Cleaned up tracker for job {} after retry failure", job_id);
-                            }
-                            return Err(
-                                format!("Failed to complete session after retry: {}", e).into()
-                            );
-                        }
-                    }
-                }
                 // Check if the error is due to dispute window
-                else if e.to_string().contains("dispute window") {
+                if e.to_string().contains("dispute window") {
                     let dispute_window = self.dispute_window_secs;
 
                     warn!(
@@ -1844,14 +1703,16 @@ impl CheckpointManager {
                             let data = encode_complete_session_call(job_id, conversation_cid);
 
                             match web3_client
-                                .send_transaction(
+                                .enqueue_transaction(
                                     proof_system_address,
                                     U256::zero(),
                                     Some(data.clone().into()),
+                                    &format!("dispute retry {} job {}", retry_count + 1, job_id),
+                                    true,
                                 )
                                 .await
                             {
-                                Ok(tx_hash) => {
+                                Ok((tx_hash, receipt)) => {
                                     info!(
                                         "📤 Retry {} transaction sent for job {} - tx_hash: {:?}",
                                         retry_count + 1,
@@ -1859,40 +1720,36 @@ impl CheckpointManager {
                                         tx_hash
                                     );
 
-                                    // Wait for confirmation
-                                    match web3_client.wait_for_confirmation(tx_hash).await {
-                                        Ok(receipt) => {
-                                            if receipt.status == Some(U64::from(1)) {
-                                                info!(
-                                                    "✅ Session completed for job {} after {} retries",
-                                                    job_id, retry_count + 1
-                                                );
-                                                info!("💰 Payments distributed successfully");
-
-                                                // Clean up tracker after successful completion
-                                                let mut trackers = job_trackers.write().await;
-                                                if trackers.remove(&job_id).is_some() {
-                                                    info!("Cleaned up tracker for job {} after successful retry", job_id);
-                                                }
-                                                break; // Success! Exit retry loop
-                                            } else {
-                                                error!(
-                                                    "❌ Retry {} transaction failed for job {}",
-                                                    retry_count + 1,
-                                                    job_id
-                                                );
-                                                break; // Transaction failed for non-dispute reasons
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                "❌ Retry {} transaction error for job {}: {:?}",
-                                                retry_count + 1,
+                                    if let Some(receipt) = receipt {
+                                        if receipt.status == Some(U64::from(1)) {
+                                            info!(
+                                                "✅ Session completed for job {} after {} retries",
                                                 job_id,
-                                                e
+                                                retry_count + 1
                                             );
-                                            break; // Transaction error for non-dispute reasons
+                                            info!("💰 Payments distributed successfully");
+
+                                            // Clean up tracker after successful completion
+                                            let mut trackers = job_trackers.write().await;
+                                            if trackers.remove(&job_id).is_some() {
+                                                info!("Cleaned up tracker for job {} after successful retry", job_id);
+                                            }
+                                            break; // Success! Exit retry loop
+                                        } else {
+                                            error!(
+                                                "❌ Retry {} transaction failed for job {}",
+                                                retry_count + 1,
+                                                job_id
+                                            );
+                                            break; // Transaction failed for non-dispute reasons
                                         }
+                                    } else {
+                                        warn!(
+                                            "Retry {} sent but no receipt for job {}",
+                                            retry_count + 1,
+                                            job_id
+                                        );
+                                        break;
                                     }
                                 }
                                 Err(e) => {

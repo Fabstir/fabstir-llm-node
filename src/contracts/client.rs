@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tracing::info;
 
+use super::tx_queue::{TxRequest, TxResult};
 use super::types::*;
 
 #[derive(Debug, Clone)]
@@ -68,6 +69,7 @@ pub struct Web3Client {
     contract_addresses: Arc<RwLock<HashMap<String, Address>>>,
     multicall: Arc<RwLock<Option<Multicall3<Provider<Http>>>>>,
     block_stream_sender: Arc<RwLock<Option<mpsc::Sender<Block<H256>>>>>,
+    tx_queue_sender: Option<mpsc::Sender<TxRequest>>,
 }
 
 impl Web3Client {
@@ -110,6 +112,7 @@ impl Web3Client {
             contract_addresses: Arc::new(RwLock::new(HashMap::new())),
             multicall: Arc::new(RwLock::new(None)),
             block_stream_sender: Arc::new(RwLock::new(None)),
+            tx_queue_sender: None,
         })
     }
 
@@ -313,6 +316,53 @@ impl Web3Client {
             pending_tx.tx_hash()
         );
         Ok(pending_tx.tx_hash())
+    }
+
+    /// Set the transaction queue sender for serialized nonce management.
+    pub fn set_tx_queue_sender(&mut self, sender: mpsc::Sender<TxRequest>) {
+        self.tx_queue_sender = Some(sender);
+    }
+
+    /// Submit a transaction through the queue (if available) or fall back to direct send.
+    pub async fn enqueue_transaction(
+        &self,
+        to: Address,
+        value: U256,
+        data: Option<Bytes>,
+        description: &str,
+        wait_for_confirmation: bool,
+    ) -> Result<(H256, Option<TransactionReceipt>)> {
+        if let Some(ref sender) = self.tx_queue_sender {
+            let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+            sender
+                .send(TxRequest {
+                    to,
+                    value,
+                    data,
+                    description: description.to_string(),
+                    wait_for_confirmation,
+                    result_tx,
+                })
+                .await
+                .map_err(|_| anyhow!("Transaction queue channel closed"))?;
+
+            match result_rx
+                .await
+                .map_err(|_| anyhow!("Transaction queue dropped result"))?
+            {
+                TxResult::Success { tx_hash, receipt } => Ok((tx_hash, receipt.map(|r| *r))),
+                TxResult::Failed { error } => Err(anyhow!("{}", error)),
+            }
+        } else {
+            // Fallback: direct send (backward compat for tests / no-queue config)
+            let tx_hash = self.send_transaction(to, value, data).await?;
+            let receipt = if wait_for_confirmation {
+                Some(self.wait_for_confirmation(tx_hash).await?)
+            } else {
+                None
+            };
+            Ok((tx_hash, receipt))
+        }
     }
 
     pub async fn wait_for_confirmation(&self, tx_hash: H256) -> Result<TransactionReceipt> {

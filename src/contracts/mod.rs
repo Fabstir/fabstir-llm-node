@@ -8,6 +8,7 @@ pub mod payments;
 pub mod pricing_constants;
 pub mod proofs;
 pub mod registry_monitor;
+pub mod tx_queue;
 pub mod types;
 
 pub use checkpoint_manager::{CheckpointManager, JobTokenTracker};
@@ -17,4 +18,5 @@ pub use monitor::{JobEvent, JobMonitor, JobMonitorConfig};
 pub use payments::{PaymentConfig, PaymentEvent, PaymentVerifier, TokenInfo};
 pub use proofs::{ProofConfig, ProofData, ProofEvent, ProofSubmitter};
 pub use registry_monitor::{NodeMetadata, RegistryMonitor};
+pub use tx_queue::{TransactionQueue, TxQueueConfig, TxRequest, TxResult};
 pub use types::{JobStatus, PaymentStatus, ProofStatus};
