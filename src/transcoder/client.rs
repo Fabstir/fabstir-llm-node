@@ -116,6 +116,24 @@ impl TranscoderClient {
         Ok(response.json().await?)
     }
 
+    /// Cancel a running transcode task. Returns `true` if cancelled, `false` if
+    /// the endpoint is not supported (404).
+    pub async fn cancel_transcode(&self, task_id: &str) -> Result<bool> {
+        let url = format!("{}/transcode/{}/cancel", self.endpoint, task_id);
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.jwt_token)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+        match response.status().as_u16() {
+            200 => Ok(true),
+            404 => Ok(false),
+            s => Err(anyhow::anyhow!("cancel returned status {}", s)),
+        }
+    }
+
     /// Get the configured endpoint.
     pub fn endpoint(&self) -> &str {
         &self.endpoint

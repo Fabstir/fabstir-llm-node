@@ -11,7 +11,7 @@ use serde::Deserialize;
 pub struct TranscodeHttpRequest {
     pub source_cid: String,
     pub media_formats: Vec<VideoFormat>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub is_encrypted: bool,
     #[serde(default = "default_true")]
     pub is_gpu: bool,

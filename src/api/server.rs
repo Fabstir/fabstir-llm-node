@@ -2356,6 +2356,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             .get_transcoder_client()
                                                                             .await
                                                                             .unwrap();
+                                                                        let cancel_task_id =
+                                                                            task.task_id.clone();
+                                                                        let cancel_tc = tc.clone();
                                                                         let server_arc =
                                                                             server.clone();
                                                                         // Clone formats from decrypted_json for the background task
@@ -2368,7 +2371,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 .and_then(|v| {
                                                                                     v.as_bool()
                                                                                 })
-                                                                                .unwrap_or(false);
+                                                                                .unwrap_or(true);
 
                                                                         task.spawn(
                                                                             tc,
@@ -2396,7 +2399,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             // Check for cancel
                                                                                             if let Ok(cancel_json) = serde_json::from_str::<serde_json::Value>(&txt) {
                                                                                                 if cancel_json.get("type").and_then(|v| v.as_str()) == Some("transcode_cancel") {
-                                                                                                    info!("Transcode cancel received");
+                                                                                                    info!("Transcode cancel received for task {}", cancel_task_id);
+                                                                                                    // Best-effort sidecar cancel
+                                                                                                    match cancel_tc.cancel_transcode(&cancel_task_id).await {
+                                                                                                        Ok(true) => info!("Sidecar cancel acknowledged for {}", cancel_task_id),
+                                                                                                        Ok(false) => debug!("Sidecar cancel endpoint not supported for {}", cancel_task_id),
+                                                                                                        Err(e) => warn!("Sidecar cancel failed for {}: {}", cancel_task_id, e),
+                                                                                                    }
                                                                                                     break;
                                                                                                 }
                                                                                             }

@@ -9,6 +9,7 @@ use crate::api::server::ApiServer;
 use crate::transcoder::billing::{
     calculate_transcode_units, codec_factor, resolution_factor_from_vf,
 };
+use crate::transcoder::gop::gop_info_from_progress;
 use crate::transcoder::types::VideoFormat;
 use crate::transcoder::TranscoderClient;
 use rand::RngCore;
@@ -67,12 +68,22 @@ impl TranscodeProgressTask {
                         // Send progress only when it changes
                         if status.progress != last_progress && status.progress > 0 {
                             last_progress = status.progress;
+                            let mut progress_data = json!({
+                                "type": "transcode_progress",
+                                "taskId": task_id,
+                                "progress": status.progress
+                            });
+                            if let Some(dur) = status.duration {
+                                let elapsed = start.elapsed().as_secs_f64();
+                                let gop = gop_info_from_progress(status.progress, dur, elapsed);
+                                progress_data["gopInfo"] = json!({
+                                    "currentGop": gop.current_gop,
+                                    "totalGops": gop.total_gops,
+                                    "elapsedSeconds": gop.elapsed_seconds
+                                });
+                            }
                             let progress_msg = build_encrypted_transcode_response(
-                                &json!({
-                                    "type": "transcode_progress",
-                                    "taskId": task_id,
-                                    "progress": status.progress
-                                }),
+                                &progress_data,
                                 &session_key,
                                 &session_id,
                                 None,
@@ -125,7 +136,10 @@ impl TranscodeProgressTask {
                                         "units": total_units,
                                         "tokens": tokens,
                                     },
-                                    "duration": duration
+                                    "duration": duration,
+                                    "qualityMetrics": null,
+                                    "proofTreeCID": null,
+                                    "proofTreeRootHash": null
                                 }),
                                 &session_key,
                                 &session_id,
@@ -148,6 +162,10 @@ impl TranscodeProgressTask {
                         break;
                     }
                 }
+            }
+            // Log billing freeze on any exit path
+            if let Some(jid) = job_id {
+                info!("Transcode progress loop ended for job {} — billing frozen at last checkpoint (progress={})", jid, last_progress);
             }
         });
     }
@@ -231,7 +249,7 @@ pub async fn handle_encrypted_transcode(
     let is_encrypted = decrypted_json
         .get("isEncrypted")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     // Step 2: Rate limit check
     if !server
