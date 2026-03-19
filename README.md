@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.22.4-glm4-disable-auto-think (March 2026)
+**Version**: v8.25.0-transcoder-sidecar (March 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -38,6 +38,7 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Context Usage Reporting**: Token counts and finish reasons in responses (v8.21.0+)
 - **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
+- **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
 
 ## Prerequisites
 
@@ -80,7 +81,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.22"
+strings target/release/fabstir-llm-node | grep "v8.25"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -289,6 +290,8 @@ Once the node is running, it exposes the following endpoints:
 - `GET /chain/{chain_id}` - Get specific chain configuration
 - `POST /inference` - Submit inference request (includes chain_id)
 - `POST /v1/embed` - Generate 384D embeddings (for RAG)
+- `POST /v1/transcode` - Submit transcoding job (v8.25.0+)
+- `GET /v1/transcode/:task_id` - Check transcoding status (v8.25.0+)
 
 ### WebSocket Endpoints
 - `WS /v1/ws` - WebSocket connection for streaming inference
@@ -299,6 +302,7 @@ Once the node is running, it exposes the following endpoints:
   - Encrypted vector_database path support (v8.4.0+)
   - Image generation via diffusion sidecar (v8.16.0+)
   - Auto-route image intent from chat (v8.16.1+)
+  - Video/audio transcoding with progress streaming (v8.25.0+)
   - Thinking/reasoning mode control (v8.17.0+)
   - Stream cancellation via `stream_cancel` message (v8.19.0+)
   - True token-by-token streaming (v8.19.1+)
@@ -318,7 +322,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.22"
+strings target/release/fabstir-llm-node | grep "v8.25"
 ```
 
 #### Out of Memory During Build
@@ -429,4 +433,5 @@ For issues and questions:
 - [SDK Encryption Integration](docs/sdk-reference/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
 - [Model Validation Compatibility](docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md) - Model authorization guide (v8.14.0+)
 - [SDK Image Generation](docs/sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md) - Image generation integration (v8.16.0+)
+- [SDK Transcoding Integration](docs/sdk-reference/SDK_TRANSCODING_INTEGRATION.md) - Video/audio transcoding integration (v8.25.0+)
 - [SDK Context Usage](docs/sdk-reference/SDK_CONTEXT_USAGE_GUIDE.md) - Token usage and context reporting (v8.21.0+)
