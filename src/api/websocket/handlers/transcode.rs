@@ -82,12 +82,9 @@ impl TranscodeProgressTask {
                             }
                         }
 
-                        // Check completion (progress 100 or metadata not empty/[])
-                        if status.progress >= 100
-                            || (!status.metadata.is_empty()
-                                && status.metadata != "[]"
-                                && status.metadata != "")
-                        {
+                        // Check completion (progress 100 only — metadata is unreliable
+                        // because "Transcoding in progress" is non-empty/non-[])
+                        if status.progress >= 100 {
                             // Calculate billing
                             let duration = status.duration.unwrap_or(0.0);
                             let mut total_units = 0.0;

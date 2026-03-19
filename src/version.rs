@@ -305,7 +305,7 @@ pub const BREAKING_CHANGES: &[&str] = &[
     "FEAT: WebSocket transcode handler with background progress streaming via mpsc + tokio::select!",
     "FEAT: POST /v1/transcode and GET /v1/transcode/:task_id HTTP endpoints",
     "FEAT: Docker transcoder-sidecar service in docker-compose.prod.yml",
-    "FEAT: TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_SECRET_KEY env vars",
+    "FEAT: TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_JWT env vars (pre-shared JWT token)",
     // v8.24.0 - Sequential Transaction Queue (Mar 11, 2026)
     "FEAT: Per-chain FIFO transaction queue prevents nonce collisions across checkpoint/settlement/registration",
     "FEAT: Automatic nonce retry with exponential backoff for transient nonce errors",

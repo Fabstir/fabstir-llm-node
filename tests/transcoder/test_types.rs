@@ -1,6 +1,5 @@
 use fabstir_llm_node::transcoder::{
-    TranscodeStatusResponse, TranscodeSubmitResponse, TranscodeTaskState, TranscodedFormatResult,
-    VideoFormat,
+    TranscodeStatusResponse, TranscodeSubmitResponse, TranscodeTaskState, VideoFormat,
 };
 
 #[test]
@@ -17,7 +16,9 @@ fn test_video_format_full_serialization() {
         ch: Some(2),
         vf: Some("scale=1920:1080".into()),
         b_v: Some("5M".into()),
-        ar: Some(48000),
+        ar: Some("48k".into()),
+        b_a: None,
+        c_a: None,
         minrate: Some("4M".into()),
         maxrate: Some("6M".into()),
         bufsize: Some("12M".into()),
@@ -30,7 +31,7 @@ fn test_video_format_full_serialization() {
     assert_eq!(json["id"], 1);
     assert_eq!(json["ext"], "mp4");
     assert_eq!(json["type"], "video");
-    assert_eq!(json["b:v"], "5M");
+    assert_eq!(json["b_v"], "5M");
     assert_eq!(json["vcodec"], "av1_nvenc");
     assert!(json.get("profile").is_none());
 }
@@ -50,6 +51,8 @@ fn test_video_format_minimal_serialization() {
         vf: None,
         b_v: None,
         ar: None,
+        b_a: None,
+        c_a: None,
         minrate: None,
         maxrate: None,
         bufsize: None,
@@ -71,12 +74,15 @@ fn test_video_format_deserialize_from_transcoder_json() {
         "id": 1, "ext": "mp4", "type": "video",
         "vcodec": "h264_nvenc", "acodec": "aac",
         "preset": "fast", "vf": "scale=1280:720",
-        "b:v": "2M", "dest": "s5", "encrypt": true
+        "b_v": "2M", "ar": "48k", "b_a": "129k",
+        "dest": "s5", "encrypt": true
     }"#;
     let fmt: VideoFormat = serde_json::from_str(raw).unwrap();
     assert_eq!(fmt.id, 1);
     assert_eq!(fmt.type_, Some("video".into()));
     assert_eq!(fmt.b_v, Some("2M".into()));
+    assert_eq!(fmt.ar, Some("48k".into()));
+    assert_eq!(fmt.b_a, Some("129k".into()));
     assert_eq!(fmt.encrypt, Some(true));
     assert!(fmt.profile.is_none());
 }
@@ -110,12 +116,7 @@ fn test_transcode_task_state_variants() {
     let pending = TranscodeTaskState::Pending;
     let in_progress = TranscodeTaskState::InProgress { progress: 42 };
     let completed = TranscodeTaskState::Completed {
-        metadata: vec![TranscodedFormatResult {
-            format_index: 0,
-            cid: "uEiBk".into(),
-            encryption_key: None,
-            dest: "s5".into(),
-        }],
+        metadata: serde_json::json!([{"id": 1, "ext": "mp4", "cid": "uEiBk"}]),
         duration: 60.0,
     };
     let failed = TranscodeTaskState::Failed {
@@ -128,7 +129,7 @@ fn test_transcode_task_state_variants() {
         TranscodeTaskState::InProgress { progress: 42 }
     ));
     if let TranscodeTaskState::Completed { metadata, duration } = &completed {
-        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata.as_array().unwrap().len(), 1);
         assert_eq!(*duration, 60.0);
     } else {
         panic!("expected Completed");

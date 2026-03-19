@@ -108,7 +108,7 @@ services:
 
       # Optional: Transcoder sidecar for video/audio transcoding (v8.25.0+)
       TRANSCODER_ENDPOINT: ${TRANSCODER_ENDPOINT:-http://transcoder-sidecar:8000}
-      FABSTIR_TRANSCODER_SECRET_KEY: ${FABSTIR_TRANSCODER_SECRET_KEY:-}
+      FABSTIR_TRANSCODER_JWT: ${FABSTIR_TRANSCODER_JWT:-}
 
     volumes:
       # Mount model directory
@@ -211,11 +211,13 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: ${TRANSCODER_GPU:-all}
       FABSTIR_TRANSCODER_SECRET_KEY: ${FABSTIR_TRANSCODER_SECRET_KEY:?FABSTIR_TRANSCODER_SECRET_KEY is required}
+      FABSTIR_TRANSCODER_JWT: ${FABSTIR_TRANSCODER_JWT:?FABSTIR_TRANSCODER_JWT is required}
       PORTAL_URL: ${S5_PORTAL_URL:-https://s5.platformlessai.ai}
       TOKEN: ${S5_TOKEN:-}
-      MAX_FILE_SIZE: ${TRANSCODER_MAX_FILE_SIZE:-10737418240}
-      CACHE_DIR: /app/cache
-      GC_INTERVAL_SECONDS: ${TRANSCODER_GC_INTERVAL:-3600}
+      FILE_SIZE_THRESHOLD: ${TRANSCODER_MAX_FILE_SIZE:-10737418240}
+      PATH_TO_FILE: /app/cache/sources
+      PATH_TO_TRANSCODED_FILE: /app/cache/transcoded
+      GARBAGE_COLLECTOR_INTERVAL: ${TRANSCODER_GC_INTERVAL:-3600}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8000:8000"

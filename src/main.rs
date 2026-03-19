@@ -439,12 +439,12 @@ async fn main() -> Result<()> {
     }
 
     // Initialize Transcoder Client (v8.25.0+ - transcoding sidecar)
-    // Optional: requires TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_SECRET_KEY env vars
+    // Optional: requires TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_JWT env vars
     let transcoder_endpoint = env::var("TRANSCODER_ENDPOINT").ok();
-    let transcoder_secret = env::var("FABSTIR_TRANSCODER_SECRET_KEY").ok();
+    let transcoder_jwt = env::var("FABSTIR_TRANSCODER_JWT").ok();
 
-    if let (Some(ref endpoint), Some(ref secret_key)) = (&transcoder_endpoint, &transcoder_secret) {
-        match fabstir_llm_node::transcoder::TranscoderClient::new(endpoint, secret_key) {
+    if let (Some(ref endpoint), Some(ref jwt_token)) = (&transcoder_endpoint, &transcoder_jwt) {
+        match fabstir_llm_node::transcoder::TranscoderClient::new(endpoint, jwt_token) {
             Ok(client) => {
                 let client = Arc::new(client);
                 api_server.set_transcoder_client(client).await;
