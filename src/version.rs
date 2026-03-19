@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.24.0-tx-queue-2026-03-11";
+pub const VERSION: &str = "v8.25.0-transcoder-sidecar-2026-03-19";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.24.0";
+pub const VERSION_NUMBER: &str = "8.25.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 24;
+pub const VERSION_MINOR: u32 = 25;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-03-11";
+pub const BUILD_DATE: &str = "2026-03-19";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -276,6 +276,17 @@ pub const FEATURES: &[&str] = &[
     "tx-queue",
     "nonce-collision-prevention",
     "per-chain-fifo-queue",
+    // Transcoder sidecar (v8.25.0)
+    "transcoder-sidecar",
+    "video-audio-transcoding",
+    "transcoder-rest-client",
+    "transcoder-jwt-auth",
+    "transcoder-billing",
+    "transcoder-rate-limiter",
+    "websocket-transcode-handler",
+    "transcode-progress-streaming",
+    "http-transcode-endpoints",
+    "docker-transcoder-sidecar",
 ];
 
 /// Supported chain IDs
@@ -286,6 +297,15 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.25.0 - Transcoder Sidecar Integration (Mar 19, 2026)
+    "FEAT: Transcoder sidecar integration for video/audio transcoding via REST API",
+    "FEAT: TranscoderClient with JWT auth, submit/poll, health check",
+    "FEAT: Transcoding billing (duration × resolution × codec × encryption factors)",
+    "FEAT: Per-session transcoding rate limiter (default 3 per 5-min window)",
+    "FEAT: WebSocket transcode handler with background progress streaming via mpsc + tokio::select!",
+    "FEAT: POST /v1/transcode and GET /v1/transcode/:task_id HTTP endpoints",
+    "FEAT: Docker transcoder-sidecar service in docker-compose.prod.yml",
+    "FEAT: TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_SECRET_KEY env vars",
     // v8.24.0 - Sequential Transaction Queue (Mar 11, 2026)
     "FEAT: Per-chain FIFO transaction queue prevents nonce collisions across checkpoint/settlement/registration",
     "FEAT: Automatic nonce retry with exponential backoff for transient nonce errors",
@@ -643,10 +663,17 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 24);
+        assert_eq!(VERSION_MINOR, 25);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.25.0 transcoder-sidecar
+        assert!(FEATURES.contains(&"transcoder-sidecar"));
+        assert!(FEATURES.contains(&"video-audio-transcoding"));
+        assert!(FEATURES.contains(&"transcoder-rest-client"));
+        assert!(FEATURES.contains(&"transcoder-billing"));
+        assert!(FEATURES.contains(&"websocket-transcode-handler"));
+        assert!(FEATURES.contains(&"http-transcode-endpoints"));
         // v8.24.0 tx-queue
         assert!(FEATURES.contains(&"tx-queue"));
         assert!(FEATURES.contains(&"nonce-collision-prevention"));
@@ -757,15 +784,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.24.0"));
-        assert!(version.contains("2026-03-11"));
+        assert!(version.contains("8.25.0"));
+        assert!(version.contains("2026-03-19"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.24.0-tx-queue-2026-03-11");
-        assert_eq!(VERSION_NUMBER, "8.24.0");
-        assert_eq!(BUILD_DATE, "2026-03-11");
+        assert_eq!(VERSION, "v8.25.0-transcoder-sidecar-2026-03-19");
+        assert_eq!(VERSION_NUMBER, "8.25.0");
+        assert_eq!(BUILD_DATE, "2026-03-19");
     }
 
     #[test]

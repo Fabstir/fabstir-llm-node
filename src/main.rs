@@ -438,6 +438,27 @@ async fn main() -> Result<()> {
         println!("   No DIFFUSION_ENDPOINT set — /v1/images/generate will return 503");
     }
 
+    // Initialize Transcoder Client (v8.25.0+ - transcoding sidecar)
+    // Optional: requires TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_SECRET_KEY env vars
+    let transcoder_endpoint = env::var("TRANSCODER_ENDPOINT").ok();
+    let transcoder_secret = env::var("FABSTIR_TRANSCODER_SECRET_KEY").ok();
+
+    if let (Some(ref endpoint), Some(ref secret_key)) = (&transcoder_endpoint, &transcoder_secret) {
+        match fabstir_llm_node::transcoder::TranscoderClient::new(endpoint, secret_key) {
+            Ok(client) => {
+                let client = Arc::new(client);
+                api_server.set_transcoder_client(client).await;
+                println!("🎬 Transcoder sidecar configured: endpoint={}", endpoint);
+            }
+            Err(e) => {
+                println!("⚠️  Failed to create transcoder client: {}", e);
+                println!("   Transcoding will return 503");
+            }
+        }
+    } else {
+        println!("   No TRANSCODER_ENDPOINT set — transcoding will return 503");
+    }
+
     // Initialize Web Search Service (v8.7.0+)
     // Enabled by default - DuckDuckGo requires no API key
     // Set WEB_SEARCH_ENABLED=false to disable

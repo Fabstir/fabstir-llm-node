@@ -23,6 +23,7 @@ pub struct AppState {
     pub vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
     pub search_service: Arc<RwLock<Option<Arc<crate::search::SearchService>>>>,
     pub diffusion_client: Arc<RwLock<Option<Arc<crate::diffusion::DiffusionClient>>>>,
+    pub transcoder_client: Arc<RwLock<Option<Arc<crate::transcoder::TranscoderClient>>>>,
 }
 
 impl AppState {
@@ -37,6 +38,7 @@ impl AppState {
             vision_model_manager: Arc::new(RwLock::new(None)),
             search_service: Arc::new(RwLock::new(None)),
             diffusion_client: Arc::new(RwLock::new(None)),
+            transcoder_client: Arc::new(RwLock::new(None)),
         }
     }
 }
