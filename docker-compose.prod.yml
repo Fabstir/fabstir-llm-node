@@ -106,6 +106,10 @@ services:
       # Defaults to true when DIFFUSION_ENDPOINT is set; override with false to disable
       AUTO_IMAGE_ROUTING: ${AUTO_IMAGE_ROUTING:-}
 
+      # Optional: Transcoder sidecar for video/audio transcoding (v8.25.0+)
+      TRANSCODER_ENDPOINT: ${TRANSCODER_ENDPOINT:-http://transcoder-sidecar:8000}
+      FABSTIR_TRANSCODER_SECRET_KEY: ${FABSTIR_TRANSCODER_SECRET_KEY:-}
+
     volumes:
       # Mount model directory
       - ${MODELS_DIR:-./models}:/app/models:ro
@@ -191,7 +195,46 @@ services:
     networks:
       - fabstir-network
 
+  # Transcoder Sidecar (optional - for video/audio transcoding, v8.25.0+)
+  # Uses ffmpeg + NVIDIA GPU (NVENC). Runs alongside LLM inference since
+  # NVENC encoder uses separate silicon from CUDA compute cores.
+  # To disable: set TRANSCODER_ENDPOINT= (empty) in .env or stop this service
+  transcoder-sidecar:
+    image: ewr.vultrcr.com/fabstir/transcoder:${TRANSCODER_TAG:-latest}
+    # For local dev, uncomment and comment out image above:
+    # build:
+    #   context: ../fabstir-transcoder
+    #   dockerfile: Dockerfile
+    container_name: transcoder-sidecar
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${TRANSCODER_GPU:-all}
+      FABSTIR_TRANSCODER_SECRET_KEY: ${FABSTIR_TRANSCODER_SECRET_KEY:?FABSTIR_TRANSCODER_SECRET_KEY is required}
+      PORTAL_URL: ${S5_PORTAL_URL:-https://s5.platformlessai.ai}
+      TOKEN: ${S5_TOKEN:-}
+      MAX_FILE_SIZE: ${TRANSCODER_MAX_FILE_SIZE:-10737418240}
+      CACHE_DIR: /app/cache
+      GC_INTERVAL_SECONDS: ${TRANSCODER_GC_INTERVAL:-3600}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    volumes:
+      - transcoder-cache:/app/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - fabstir-network
+
 networks:
   fabstir-network:
     name: fabstir-network
     driver: bridge
+
+volumes:
+  transcoder-cache:
