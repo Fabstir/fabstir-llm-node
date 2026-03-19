@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::chains::{ChainConfig, ChainRegistry};
 use crate::contracts::pricing_constants::{native, stable};
+use crate::contracts::tx_queue::{TxRequest, TxResult};
 use crate::contracts::types::NodeRegistryWithModels;
 
 // FAB Token stake amount
@@ -44,6 +45,7 @@ pub struct MultiChainRegistrar {
     providers: HashMap<u64, Arc<Provider<Http>>>,
     signers: HashMap<u64, Arc<SignerMiddleware<Provider<Http>, LocalWallet>>>,
     registration_status: Arc<RwLock<HashMap<u64, RegistrationStatus>>>,
+    tx_queue_senders: HashMap<u64, tokio::sync::mpsc::Sender<TxRequest>>,
 }
 
 impl MultiChainRegistrar {
@@ -104,7 +106,62 @@ impl MultiChainRegistrar {
             providers,
             signers,
             registration_status,
+            tx_queue_senders: HashMap::new(),
         })
+    }
+
+    /// Set transaction queue senders for serialized nonce management.
+    pub fn set_tx_queue_senders(
+        &mut self,
+        senders: HashMap<u64, tokio::sync::mpsc::Sender<TxRequest>>,
+    ) {
+        self.tx_queue_senders = senders;
+    }
+
+    /// Submit a transaction via queue (if available) or fall back to direct signer send.
+    async fn enqueue_tx(
+        &self,
+        chain_id: u64,
+        to: Address,
+        data: Vec<u8>,
+        description: &str,
+    ) -> Result<H256> {
+        if let Some(sender) = self.tx_queue_senders.get(&chain_id) {
+            let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+            sender
+                .send(TxRequest {
+                    to,
+                    value: U256::zero(),
+                    data: Some(Bytes::from(data)),
+                    description: description.to_string(),
+                    wait_for_confirmation: false,
+                    result_tx,
+                })
+                .await
+                .map_err(|_| anyhow!("Transaction queue channel closed"))?;
+
+            match result_rx
+                .await
+                .map_err(|_| anyhow!("Transaction queue dropped result"))?
+            {
+                TxResult::Success { tx_hash, .. } => Ok(tx_hash),
+                TxResult::Failed { error } => Err(anyhow!("{}", error)),
+            }
+        } else {
+            // Fallback: direct signer send
+            let signer = self
+                .signers
+                .get(&chain_id)
+                .ok_or_else(|| anyhow!("No signer for chain {}", chain_id))?;
+            let tx_request = ethers::types::TransactionRequest::new()
+                .to(to)
+                .data(Bytes::from(data));
+            let pending_tx = signer
+                .send_transaction(tx_request, None)
+                .await
+                .map_err(|e| anyhow!("Transaction failed on chain {}: {}", chain_id, e))?;
+            Ok(pending_tx.tx_hash())
+        }
     }
 
     /// Check FAB token balance for registration
@@ -327,18 +384,11 @@ impl MultiChainRegistrar {
             .encode_input(&tokens)
             .map_err(|e| anyhow!("Failed to encode function call: {}", e))?;
 
-        // Create transaction request
-        let tx_request = ethers::types::TransactionRequest::new()
-            .to(registry_address)
-            .data(Bytes::from(encoded));
-
-        // Send transaction
-        let pending_tx = signer
-            .send_transaction(tx_request, None)
+        // Send transaction via queue
+        let tx_hash = self
+            .enqueue_tx(chain_id, registry_address, encoded, "registerNode")
             .await
             .map_err(|e| anyhow!("Failed to send registration transaction: {}", e))?;
-
-        let tx_hash = pending_tx.tx_hash();
 
         info!(
             "Registration transaction sent on chain {}: {:?}",
@@ -463,11 +513,6 @@ impl MultiChainRegistrar {
             .get_chain(chain_id)
             .ok_or_else(|| anyhow!("Chain {} not supported", chain_id))?;
 
-        let signer = self
-            .signers
-            .get(&chain_id)
-            .ok_or_else(|| anyhow!("No signer available for chain {}", chain_id))?;
-
         let registry_address = chain_config.contracts.node_registry;
 
         use ethers::abi::{Function, Param, ParamType, Token as AbiToken};
@@ -506,12 +551,8 @@ impl MultiChainRegistrar {
             .encode_input(&tokens)
             .map_err(|e| anyhow!("Failed to encode setModelTokenPricing: {}", e))?;
 
-        let tx_request = ethers::types::TransactionRequest::new()
-            .to(registry_address)
-            .data(Bytes::from(encoded));
-
-        let pending_tx = signer
-            .send_transaction(tx_request, None)
+        let tx_hash = self
+            .enqueue_tx(chain_id, registry_address, encoded, "setModelTokenPricing")
             .await
             .map_err(|e| {
                 anyhow!(
@@ -521,7 +562,6 @@ impl MultiChainRegistrar {
                 )
             })?;
 
-        let tx_hash = pending_tx.tx_hash();
         info!(
             "setModelTokenPricing(model={}, token={:?}, price={}) sent on chain {}: {:?}",
             hex::encode(model_id),

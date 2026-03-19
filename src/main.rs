@@ -1,11 +1,14 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 use anyhow::Result;
+use ethers::signers::Signer;
 use fabstir_llm_node::{
     api::{ApiConfig, ApiServer},
     contracts::{
-        checkpoint_manager::CheckpointManager, model_registry::ModelRegistryClient, Web3Client,
-        Web3Config,
+        checkpoint_manager::CheckpointManager,
+        model_registry::ModelRegistryClient,
+        tx_queue::{TransactionQueue, TxQueueConfig},
+        Web3Client, Web3Config,
     },
     inference::{EngineConfig, LlmEngine, ModelConfig},
     model_validation::ModelValidator,
@@ -473,8 +476,31 @@ async fn main() -> Result<()> {
             ..Default::default()
         };
 
-        match Web3Client::new(web3_config).await {
-            Ok(web3_client) => {
+        match Web3Client::new(web3_config.clone()).await {
+            Ok(mut web3_client) => {
+                // Initialize transaction queue for nonce collision prevention
+                let mut _tx_queue = TransactionQueue::new(TxQueueConfig::default());
+                if let Some(ref pk) = web3_config.private_key {
+                    if let Ok(wallet) = pk.parse::<ethers::signers::LocalWallet>() {
+                        let wallet = wallet.with_chain_id(web3_config.chain_id);
+                        let signer =
+                            std::sync::Arc::new(ethers::middleware::SignerMiddleware::new(
+                                web3_client.provider.as_ref().clone(),
+                                wallet,
+                            ));
+                        let sender = _tx_queue.start_chain(
+                            web3_config.chain_id,
+                            signer,
+                            web3_client.provider.clone(),
+                        );
+                        web3_client.set_tx_queue_sender(sender);
+                        println!(
+                            "🔗 Transaction queue initialized for chain {}",
+                            web3_config.chain_id
+                        );
+                    }
+                }
+
                 let web3_client = Arc::new(web3_client);
                 match CheckpointManager::new(web3_client).await {
                     Ok(checkpoint_manager) => {
