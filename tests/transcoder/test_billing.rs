@@ -4,22 +4,27 @@ use fabstir_llm_node::transcoder::billing::{
 
 #[test]
 fn test_resolution_factor_1080p() {
-    assert_eq!(resolution_factor_from_vf("scale=1920:1080"), 1.0);
+    assert_eq!(resolution_factor_from_vf("scale=1920x1080"), 1.0);
 }
 
 #[test]
 fn test_resolution_factor_4k() {
-    assert_eq!(resolution_factor_from_vf("scale=3840:2160"), 2.0);
+    assert_eq!(resolution_factor_from_vf("scale=3840x2160"), 2.0);
 }
 
 #[test]
 fn test_resolution_factor_720p() {
-    assert_eq!(resolution_factor_from_vf("scale=1280:720"), 0.5);
+    assert_eq!(resolution_factor_from_vf("scale=1280x720"), 0.5);
 }
 
 #[test]
 fn test_resolution_factor_480p() {
-    assert_eq!(resolution_factor_from_vf("scale=854:480"), 0.25);
+    assert_eq!(resolution_factor_from_vf("scale=854x480"), 0.25);
+}
+
+#[test]
+fn test_resolution_factor_colon_fallback() {
+    assert_eq!(resolution_factor_from_vf("scale=1920:1080"), 1.0);
 }
 
 #[test]

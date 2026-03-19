@@ -3,22 +3,16 @@
 //! TranscoderClient — HTTP client for the fabstir-transcoder sidecar.
 
 use anyhow::Result;
-use jsonwebtoken::{encode, EncodingKey, Header};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::debug;
 
 use super::types::{TranscodeStatusResponse, TranscodeSubmitResponse, VideoFormat};
 
-/// JWT claims for transcoder auth.
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    iat: u64,
-    exp: u64,
-}
-
 /// Client for the fabstir-transcoder sidecar REST API.
+///
+/// Uses a pre-shared JWT token (generated once via `generate-token` binary,
+/// shared via `FABSTIR_TRANSCODER_JWT` env var to both containers).
 pub struct TranscoderClient {
     client: Client,
     endpoint: String,
@@ -26,36 +20,21 @@ pub struct TranscoderClient {
 }
 
 impl TranscoderClient {
-    /// Create a new TranscoderClient.
-    pub fn new(endpoint: &str, secret_key: &str) -> Result<Self> {
+    /// Create a new TranscoderClient with a pre-shared JWT token.
+    pub fn new(endpoint: &str, jwt_token: &str) -> Result<Self> {
+        if jwt_token.is_empty() {
+            return Err(anyhow::anyhow!("FABSTIR_TRANSCODER_JWT cannot be empty"));
+        }
         let client = Client::builder()
             .timeout(Duration::from_secs(300))
             .build()?;
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let jwt_token = Self::generate_jwt(secret_key)?;
 
         Ok(Self {
             client,
             endpoint,
-            jwt_token,
+            jwt_token: jwt_token.to_string(),
         })
-    }
-
-    /// Generate a JWT token for transcoder auth (HS256, 24h expiry).
-    pub fn generate_jwt(secret_key: &str) -> Result<String> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        let claims = Claims {
-            iat: now,
-            exp: now + 86400, // 24 hours
-        };
-        let token = encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(secret_key.as_bytes()),
-        )?;
-        Ok(token)
     }
 
     /// Check if the transcoder sidecar is healthy.

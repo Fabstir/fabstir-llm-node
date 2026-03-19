@@ -25,10 +25,14 @@ pub struct VideoFormat {
     pub ch: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vf: Option<String>,
-    #[serde(rename = "b:v", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub b_v: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ar: Option<u32>,
+    pub ar: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b_a: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub c_a: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub minrate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,16 +67,6 @@ pub struct TranscodeStatusResponse {
     pub duration: Option<f64>,
 }
 
-/// A single transcoded output result (parsed from metadata JSON).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TranscodedFormatResult {
-    pub format_index: usize,
-    pub cid: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encryption_key: Option<String>,
-    pub dest: String,
-}
-
 /// Transcoding task lifecycle state.
 #[derive(Debug, Clone)]
 pub enum TranscodeTaskState {
@@ -81,7 +75,7 @@ pub enum TranscodeTaskState {
         progress: i32,
     },
     Completed {
-        metadata: Vec<TranscodedFormatResult>,
+        metadata: serde_json::Value,
         duration: f64,
     },
     Failed {

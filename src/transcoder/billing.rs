@@ -7,12 +7,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-/// Extract resolution billing factor from a video filter string like "scale=W:H".
+/// Extract resolution billing factor from a video filter string like "scale=WxH".
+/// Supports both `x` (API format) and `:` (ffmpeg format) separators.
 /// Tier-based: height ≤480→0.25, ≤720→0.5, ≤1080→1.0, >1080→2.0.
 /// Returns 1.0 if unparseable.
 pub fn resolution_factor_from_vf(vf: &str) -> f64 {
     if let Some(scale) = vf.strip_prefix("scale=") {
-        if let Some((_w, h_str)) = scale.split_once(':') {
+        if let Some((_w, h_str)) = scale.split_once('x').or_else(|| scale.split_once(':')) {
             if let Ok(height) = h_str.parse::<u32>() {
                 return match height {
                     0..=480 => 0.25,
