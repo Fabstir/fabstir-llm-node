@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.23.0-utf8-byte-buffering-2026-03-10";
+pub const VERSION: &str = "v8.24.0-tx-queue-2026-03-11";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.23.0";
+pub const VERSION_NUMBER: &str = "8.24.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 23;
+pub const VERSION_MINOR: u32 = 24;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-03-10";
+pub const BUILD_DATE: &str = "2026-03-11";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -272,6 +272,10 @@ pub const FEATURES: &[&str] = &[
     "utf8-byte-buffering",
     "token-to-bytes",
     "max-consecutive-invalid-check",
+    // Sequential transaction queue (v8.24.0)
+    "tx-queue",
+    "nonce-collision-prevention",
+    "per-chain-fifo-queue",
 ];
 
 /// Supported chain IDs
@@ -282,6 +286,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.24.0 - Sequential Transaction Queue (Mar 11, 2026)
+    "FEAT: Per-chain FIFO transaction queue prevents nonce collisions across checkpoint/settlement/registration",
+    "FEAT: Automatic nonce retry with exponential backoff for transient nonce errors",
+    "FEAT: CheckpointManager now uses enqueue_transaction instead of send_transaction (3 call sites migrated)",
+    "FIX: Removed manual nonce retry in complete_session_job — queue handles it automatically",
     // v8.23.0 - UTF-8 Byte Buffering (Mar 10, 2026)
     "FIX: Multi-byte UTF-8 characters split across BPE tokens no longer vanish from output",
     "FIX: Generation loop uses token_to_bytes + byte buffer instead of token_to_str",
@@ -634,10 +643,14 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 23);
+        assert_eq!(VERSION_MINOR, 24);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.24.0 tx-queue
+        assert!(FEATURES.contains(&"tx-queue"));
+        assert!(FEATURES.contains(&"nonce-collision-prevention"));
+        assert!(FEATURES.contains(&"per-chain-fifo-queue"));
         // v8.23.0 utf8 byte buffering
         assert!(FEATURES.contains(&"utf8-byte-buffering"));
         assert!(FEATURES.contains(&"token-to-bytes"));
@@ -744,15 +757,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.23.0"));
-        assert!(version.contains("2026-03-10"));
+        assert!(version.contains("8.24.0"));
+        assert!(version.contains("2026-03-11"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.23.0-utf8-byte-buffering-2026-03-10");
-        assert_eq!(VERSION_NUMBER, "8.23.0");
-        assert_eq!(BUILD_DATE, "2026-03-10");
+        assert_eq!(VERSION, "v8.24.0-tx-queue-2026-03-11");
+        assert_eq!(VERSION_NUMBER, "8.24.0");
+        assert_eq!(BUILD_DATE, "2026-03-11");
     }
 
     #[test]
