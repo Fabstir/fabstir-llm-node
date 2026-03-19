@@ -82,3 +82,48 @@ pub enum TranscodeTaskState {
         error: String,
     },
 }
+
+// --- Trustless verification types (v8.26.0) ---
+
+/// Quality metrics from ffmpeg PSNR/SSIM measurement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityMetrics {
+    pub psnr_db: f64,
+    pub ssim: Option<f64>,
+    pub actual_bitrate: u64,
+}
+
+/// Proof for a single GOP (Group of Pictures).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GOPProof {
+    pub gop_index: u32,
+    pub input_gop_hash: String,
+    pub output_gop_hash: String,
+    pub psnr_db: f64,
+    pub ssim: Option<f64>,
+    pub actual_bitrate: u64,
+    pub stark_proof_hash: String,
+}
+
+/// Merkle tree over all GOP proofs for a transcode job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscodeProofTree {
+    pub root_hash: String,
+    pub gop_count: u32,
+    pub tree_cid: String,
+    pub spot_check_hashes: Vec<String>,
+}
+
+/// GOP-level progress info for streaming progress messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GOPInfo {
+    pub current_gop: u32,
+    pub total_gops: u32,
+    pub elapsed_seconds: f64,
+}
+
+/// Quality threshold constants for transcode verification.
+pub const PSNR_STANDARD_THRESHOLD: f64 = 38.0;
+pub const PSNR_HIGH_THRESHOLD: f64 = 42.0;
+pub const SSIM_STANDARD_THRESHOLD: f64 = 0.90;
+pub const SSIM_HIGH_THRESHOLD: f64 = 0.95;

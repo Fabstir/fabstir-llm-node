@@ -49,3 +49,10 @@ fn test_client_model_name() {
     let client = TranscoderClient::new("http://localhost:8000", "fake-jwt-token").unwrap();
     assert_eq!(client.model_name(), "transcoder");
 }
+
+#[test]
+fn test_cancel_url_formation() {
+    let client = TranscoderClient::new("http://localhost:8000", "fake-jwt-token").unwrap();
+    let expected = format!("{}/transcode/{}/cancel", client.endpoint(), "task-99");
+    assert_eq!(expected, "http://localhost:8000/transcode/task-99/cancel");
+}

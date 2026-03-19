@@ -3,16 +3,16 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.25.0-transcoder-sidecar-2026-03-19";
+pub const VERSION: &str = "v8.26.0-transcoder-trustless-2026-03-19";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.25.0";
+pub const VERSION_NUMBER: &str = "8.26.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 25;
+pub const VERSION_MINOR: u32 = 26;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
@@ -287,6 +287,12 @@ pub const FEATURES: &[&str] = &[
     "transcode-progress-streaming",
     "http-transcode-endpoints",
     "docker-transcoder-sidecar",
+    // Transcoding trustless verification (v8.26.0)
+    "transcoding-quality-metrics",
+    "transcoding-gop-proofs",
+    "transcoding-merkle-tree",
+    "transcoding-proof-checkpoints",
+    "transcoding-job-validation",
 ];
 
 /// Supported chain IDs
@@ -297,6 +303,17 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.26.0 - Transcoding Trustless Verification (Mar 19, 2026)
+    "FEAT: Quality metrics (PSNR/SSIM) parsing from ffmpeg for transcode verification",
+    "FEAT: GOP-level progress tracking with estimated GOP counts in progress messages",
+    "FEAT: Keccak256 Merkle tree over GOP proofs for cryptographic verification",
+    "FEAT: GOP proof builder with Risc0 STARK integration (reuses 4-hash witness)",
+    "FEAT: Transcoding checkpoint submission with billing token conversion",
+    "FEAT: Format spec hashing for contract-compatible modelId generation",
+    "FEAT: Sidecar cancel endpoint support for transcode cancellation",
+    "FEAT: isEncrypted default changed from false to true for transcoding",
+    "FEAT: transcode_complete message now includes proofTreeCID, proofTreeRootHash, qualityMetrics fields",
+    "FEAT: transcode_progress message now includes gopInfo when duration is known",
     // v8.25.0 - Transcoder Sidecar Integration (Mar 19, 2026)
     "FEAT: Transcoder sidecar integration for video/audio transcoding via REST API",
     "FEAT: TranscoderClient with JWT auth, submit/poll, health check",
@@ -663,10 +680,16 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 25);
+        assert_eq!(VERSION_MINOR, 26);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.26.0 transcoder-trustless
+        assert!(FEATURES.contains(&"transcoding-quality-metrics"));
+        assert!(FEATURES.contains(&"transcoding-gop-proofs"));
+        assert!(FEATURES.contains(&"transcoding-merkle-tree"));
+        assert!(FEATURES.contains(&"transcoding-proof-checkpoints"));
+        assert!(FEATURES.contains(&"transcoding-job-validation"));
         // v8.25.0 transcoder-sidecar
         assert!(FEATURES.contains(&"transcoder-sidecar"));
         assert!(FEATURES.contains(&"video-audio-transcoding"));
@@ -784,14 +807,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.25.0"));
+        assert!(version.contains("8.26.0"));
         assert!(version.contains("2026-03-19"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.25.0-transcoder-sidecar-2026-03-19");
-        assert_eq!(VERSION_NUMBER, "8.25.0");
+        assert_eq!(VERSION, "v8.26.0-transcoder-trustless-2026-03-19");
+        assert_eq!(VERSION_NUMBER, "8.26.0");
         assert_eq!(BUILD_DATE, "2026-03-19");
     }
 
