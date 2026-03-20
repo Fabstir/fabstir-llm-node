@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.26.0-transcoder-trustless-2026-03-19";
+pub const VERSION: &str = "v8.26.1-proof-pipeline-wired-2026-03-19";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.26.0";
+pub const VERSION_NUMBER: &str = "8.26.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 26;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-03-19";
@@ -293,6 +293,8 @@ pub const FEATURES: &[&str] = &[
     "transcoding-merkle-tree",
     "transcoding-proof-checkpoints",
     "transcoding-job-validation",
+    // Proof pipeline wired (v8.26.1)
+    "proof-pipeline-wired",
 ];
 
 /// Supported chain IDs
@@ -303,6 +305,9 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.26.1 - Proof Pipeline Wired (Mar 19, 2026)
+    "FEAT: proofTreeCID and proofTreeRootHash populated in transcode_complete when jobId provided",
+    "FEAT: STARK proof generated, Merkle tree built and uploaded to S5 on transcode completion",
     // v8.26.0 - Transcoding Trustless Verification (Mar 19, 2026)
     "FEAT: Quality metrics (PSNR/SSIM) parsing from ffmpeg for transcode verification",
     "FEAT: GOP-level progress tracking with estimated GOP counts in progress messages",
@@ -681,9 +686,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 26);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.26.1 proof pipeline wired
+        assert!(FEATURES.contains(&"proof-pipeline-wired"));
         // v8.26.0 transcoder-trustless
         assert!(FEATURES.contains(&"transcoding-quality-metrics"));
         assert!(FEATURES.contains(&"transcoding-gop-proofs"));
@@ -807,14 +814,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.26.0"));
+        assert!(version.contains("8.26.1"));
         assert!(version.contains("2026-03-19"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.26.0-transcoder-trustless-2026-03-19");
-        assert_eq!(VERSION_NUMBER, "8.26.0");
+        assert_eq!(VERSION, "v8.26.1-proof-pipeline-wired-2026-03-19");
+        assert_eq!(VERSION_NUMBER, "8.26.1");
         assert_eq!(BUILD_DATE, "2026-03-19");
     }
 

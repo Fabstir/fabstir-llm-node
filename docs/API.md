@@ -93,8 +93,8 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.25.0",
-  "build": "v8.25.0-transcoder-sidecar-2026-03-19",
+  "version": "8.26.0",
+  "build": "v8.26.0-transcoder-trustless-2026-03-19",
   "date": "2026-03-19",
   "features": [
     "multi-chain",
@@ -185,7 +185,12 @@ GET /v1/version
     "websocket-transcode-handler",
     "transcode-progress-streaming",
     "http-transcode-endpoints",
-    "docker-transcoder-sidecar"
+    "docker-transcoder-sidecar",
+    "transcoding-quality-metrics",
+    "transcoding-gop-proofs",
+    "transcoding-merkle-tree",
+    "transcoding-proof-checkpoints",
+    "transcoding-job-validation"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
@@ -230,6 +235,9 @@ GET /v1/version
     "FEAT: Transcoding billing (duration x resolution x codec x encryption factors) (v8.25.0)",
     "FEAT: Per-session transcoding rate limiter (3 per 5-min window) (v8.25.0)",
     "FEAT: TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_JWT env vars (v8.25.0)",
+    "FEAT: Transcoding trustless verification with quality metrics, GOP proofs, Merkle tree (v8.26.0)",
+    "FEAT: isEncrypted default changed from false to true for transcoding (v8.26.0)",
+    "FEAT: transcode_progress gains gopInfo field; transcode_complete gains proofTreeCID, proofTreeRootHash, qualityMetrics (v8.26.0)",
     "FIX: GLM-4 default system prompt now context-aware for RAG (v8.17.6)",
     "CONTRACT: JobMarketplace fresh proxy 0xD067...adA4 (v8.17.4)",
     "FEAT: Node calls setTokenPricing(USDC, price) after registerNode() (v8.18.0, F202614977)",
@@ -1656,7 +1664,7 @@ Content-Type: application/json
       "dest": "s5"
     }
   ],
-  "isEncrypted": false,
+  "isEncrypted": true,
   "isGpu": true
 }
 ```
@@ -1667,7 +1675,7 @@ Content-Type: application/json
 |-----------|------|----------|---------|-------------|
 | `sourceCid` | String | Yes | - | S5/IPFS CID of the source video |
 | `mediaFormats` | Array | Yes | - | Array of VideoFormat objects (at least 1) |
-| `isEncrypted` | Boolean | No | false | Encrypt transcoded outputs |
+| `isEncrypted` | Boolean | No | true | Encrypt transcoded outputs |
 | `isGpu` | Boolean | No | true | Use GPU acceleration (NVENC) |
 | `chainId` | Integer | No | 84532 | Blockchain network ID for billing context |
 | `sessionId` | String | No | - | Session ID for rate limiting tracking |
@@ -2553,8 +2561,8 @@ The server maintains conversation context in memory during active sessions:
 | `encrypted_message` (action: `transcode`) | Client → Server | Submit transcoding job (v8.25.0+) |
 | `transcode_cancel` | Client → Server | Cancel transcoding progress stream (v8.25.0+) |
 | `encrypted_response` (type: `transcode_accepted`) | Server → Client | Transcode job accepted (v8.25.0+) |
-| `encrypted_response` (type: `transcode_progress`) | Server → Client | Transcode progress update (v8.25.0+) |
-| `encrypted_response` (type: `transcode_complete`) | Server → Client | Transcode completed with output CIDs (v8.25.0+) |
+| `encrypted_response` (type: `transcode_progress`) | Server → Client | Transcode progress update (v8.25.0+, gopInfo added v8.26.0) |
+| `encrypted_response` (type: `transcode_complete`) | Server → Client | Transcode completed with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0) |
 | `encrypted_response` (type: `transcode_error`) | Server → Client | Transcode error (v8.25.0+) |
 
 #### Web Search Messages (v8.7.0+)
@@ -4905,7 +4913,19 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v8.25.0** (Current) - Transcoder Sidecar Integration (March 2026)
+- **v8.26.0** (Current) - Transcoding Trustless Verification (March 2026)
+  - Quality metrics (PSNR/SSIM) parsing from ffmpeg for transcode verification
+  - GOP-level progress tracking (`gopInfo` in `transcode_progress` messages)
+  - Keccak256 Merkle tree over GOP proofs
+  - GOP proof builder with Risc0 STARK integration (reuses 4-hash witness)
+  - Transcoding checkpoint submission with billing token conversion
+  - Format spec hashing for contract-compatible `modelId` generation
+  - Sidecar cancel endpoint support
+  - `isEncrypted` default changed from `false` to `true`
+  - `transcode_complete` gains `proofTreeCID`, `proofTreeRootHash`, `qualityMetrics`
+  - 81 tests (71 transcoder + 10 API), 0 regressions
+
+- **v8.25.0** - Transcoder Sidecar Integration (March 2026)
   - Video/audio transcoding via ffmpeg + NVIDIA NVENC transcoder sidecar
   - `POST /v1/transcode` and `GET /v1/transcode/:task_id` HTTP endpoints
   - Encrypted WebSocket transcoding with `"action": "transcode"` routing

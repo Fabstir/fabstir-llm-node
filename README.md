@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.25.0-transcoder-sidecar (March 2026)
+**Version**: v8.26.0-transcoder-trustless (March 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -39,6 +39,7 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 - **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
+- **Transcoding Trustless Verification**: Quality metrics, GOP proofs, Merkle tree, checkpoint submission (v8.26.0+)
 
 ## Prerequisites
 
@@ -81,7 +82,7 @@ cargo build --release --features real-ezkl -j 4
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
 # Check version
-strings target/release/fabstir-llm-node | grep "v8.25"
+strings target/release/fabstir-llm-node | grep "v8.26"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -322,7 +323,7 @@ cargo clean
 cargo build --release --features real-ezkl -j 4
 
 # Verify version
-strings target/release/fabstir-llm-node | grep "v8.25"
+strings target/release/fabstir-llm-node | grep "v8.26"
 ```
 
 #### Out of Memory During Build
@@ -434,4 +435,5 @@ For issues and questions:
 - [Model Validation Compatibility](docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md) - Model authorization guide (v8.14.0+)
 - [SDK Image Generation](docs/sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md) - Image generation integration (v8.16.0+)
 - [SDK Transcoding Integration](docs/sdk-reference/SDK_TRANSCODING_INTEGRATION.md) - Video/audio transcoding integration (v8.25.0+)
+- [SDK Transcoding Trustless Verification](docs/sdk-reference/SDK_TRANSCODING_TRUSTLESS_INTEGRATION.md) - Quality metrics, GOP proofs, Merkle tree (v8.26.0+)
 - [SDK Context Usage](docs/sdk-reference/SDK_CONTEXT_USAGE_GUIDE.md) - Token usage and context reporting (v8.21.0+)
