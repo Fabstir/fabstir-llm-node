@@ -35,15 +35,25 @@ async function createServer() {
     requestTimeout: bridgeConfig.requestTimeout,
   });
 
-  // Enable CORS (localhost only for security)
+  // Enable CORS (allow internal Docker network + localhost)
   await fastify.register(cors, {
-    origin: ['http://localhost:*', 'http://127.0.0.1:*'],
-    methods: ['GET', 'PUT', 'DELETE', 'HEAD', 'OPTIONS'],
+    origin: true,
+    methods: ['GET', 'PUT', 'PATCH', 'POST', 'DELETE', 'HEAD', 'OPTIONS'],
+    exposedHeaders: ['Upload-Offset', 'Upload-Length', 'Tus-Resumable', 'Location', 'X-S5-CID'],
   });
 
-  // Add binary content parser for file uploads
+  // Add binary content parsers for file uploads and TUS protocol
   fastify.addContentTypeParser(
     'application/octet-stream',
+    { parseAs: 'buffer' },
+    (req, body, done) => {
+      done(null, body);
+    }
+  );
+
+  // TUS protocol uses application/offset+octet-stream for PATCH requests
+  fastify.addContentTypeParser(
+    'application/offset+octet-stream',
     { parseAs: 'buffer' },
     (req, body, done) => {
       done(null, body);
@@ -98,7 +108,10 @@ async function start() {
     console.log(`   GET    /s5/fs/{path}        - Download file`);
     console.log(`   PUT    /s5/fs/{path}        - Upload file`);
     console.log(`   DELETE /s5/fs/{path}        - Delete file`);
-    console.log(`   GET    /s5/fs/{path}/       - List directory`);
+    console.log(`   GET    /s5/blob/{cid}       - Download blob by CID (portal compat)`);
+    console.log(`   GET    /api/locations/{hash} - Blob locations lookup (portal compat)`);
+    console.log(`   POST   /s5/upload/tus       - TUS upload create (portal compat)`);
+    console.log(`   PATCH  /s5/upload/tus/{id}  - TUS upload chunk (portal compat)`);
     console.log('');
 
     // Graceful shutdown

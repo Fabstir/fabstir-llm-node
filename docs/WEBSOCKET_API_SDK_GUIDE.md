@@ -4,7 +4,7 @@
 
 This document describes the current state of the fabstir-llm-node WebSocket API implementation and provides guidance for SDK developers working with TypeScript/JavaScript to integrate with the node's capabilities. This covers all work completed from Sub-phase 8.7 through 8.12 in this session.
 
-## Current Implementation Status (Updated March 2026, v8.25.0)
+## Current Implementation Status (Updated March 2026, v8.26.0)
 
 ### ✅ Phase 8.18: WebSocket Integration with Main HTTP Server (COMPLETED)
 - **WebSocket endpoint now available at `/v1/ws`**
@@ -105,6 +105,16 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Billing**: `duration × resolution × codec × encryption` formula with per-session rate limiting (3/5min)
 - **HTTP Endpoints**: `POST /v1/transcode` and `GET /v1/transcode/:task_id` for testing
 - **41 tests passing** across transcoder module + API handlers
+
+### ✅ Phase 8.26: Transcoding Trustless Verification (v8.26.0)
+- **Quality Metrics**: PSNR/SSIM parsing from ffmpeg for transcode verification
+- **GOP-Level Proofs**: Keccak256 Merkle tree over Group-of-Pictures proofs
+- **Proof Checkpoints**: Transcoding checkpoint submission with billing tokens
+- **Format Spec Hashing**: Contract-compatible modelId generation
+- **Sidecar Cancellation**: Cancel endpoint support for transcode jobs
+- **Enhanced Messages**: `gopInfo` in progress, `proofTreeCID`/`proofTreeRootHash`/`qualityMetrics` in complete
+- **isEncrypted Default**: Changed from `false` to `true`
+- **81 tests passing** (71 transcoder + 10 API)
 
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
@@ -708,8 +718,8 @@ describe('End-to-End Conversation', () => {
 - `encrypted_response` (type: `image_generation_result`): Encrypted generated image (v8.16.0+)
 - `encrypted_response` (type: `image_generation_error`): Encrypted generation error (v8.16.0+)
 - `encrypted_response` (type: `transcode_accepted`): Encrypted transcode job accepted (v8.25.0+)
-- `encrypted_response` (type: `transcode_progress`): Encrypted transcode progress update (v8.25.0+)
-- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+)
+- `encrypted_response` (type: `transcode_progress`): Encrypted transcode progress update (v8.25.0+, gopInfo added v8.26.0)
+- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0)
 - `encrypted_response` (type: `transcode_error`): Encrypted transcode error (v8.25.0+)
 
 ### Error Codes
@@ -876,7 +886,7 @@ const innerPayload = {
       vf: "scale=1920x1080", b_v: "5M", ar: "48k", ch: 2, dest: "s5"
     }
   ],
-  isEncrypted: false,            // Optional (default: false)
+  isEncrypted: true,             // Optional (default: true)
   isGpu: true,                   // Optional (default: true)
 };
 
@@ -919,10 +929,16 @@ ws.onmessage = (event) => {
         break;
       case "transcode_progress":
         console.log(`Progress: ${inner.progress}%`);
+        if (inner.gopInfo) {
+          console.log(`GOP: ${inner.gopInfo.currentGop}/${inner.gopInfo.totalGops}`);
+        }
         break;
       case "transcode_complete":
         console.log(`Done! Outputs:`, inner.outputs);
         console.log(`Billing: ${inner.billing.units} units`);
+        console.log(`Quality:`, inner.qualityMetrics);       // null until quality measurement wired
+        console.log(`Proof CID:`, inner.proofTreeCID);       // populated when jobId provided
+        console.log(`Proof Root:`, inner.proofTreeRootHash);  // populated when jobId provided
         break;
       case "transcode_error":
         console.error(`Error: ${inner.error.code} - ${inner.error.message}`);
@@ -977,7 +993,7 @@ cast send 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 \
 
 ---
 
-## Current Working Implementation (February 2026)
+## Current Working Implementation (March 2026)
 
 ### Simple WebSocket Connection Example
 

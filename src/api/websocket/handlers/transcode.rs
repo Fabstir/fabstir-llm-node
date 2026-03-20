@@ -10,7 +10,11 @@ use crate::transcoder::billing::{
     calculate_transcode_units, codec_factor, resolution_factor_from_vf,
 };
 use crate::transcoder::gop::gop_info_from_progress;
-use crate::transcoder::types::VideoFormat;
+use crate::transcoder::merkle::MerkleTree;
+use crate::transcoder::proof::{
+    compute_codec_params_hash, compute_proof_hash, generate_gop_stark_proof, serialize_proof_for_s5,
+};
+use crate::transcoder::types::{QualityMetrics, VideoFormat};
 use crate::transcoder::TranscoderClient;
 use rand::RngCore;
 use serde_json::{json, Value};
@@ -127,6 +131,83 @@ impl TranscodeProgressTask {
                             let outputs: Value =
                                 serde_json::from_str(&status.metadata).unwrap_or(json!([]));
 
+                            // Build proof pipeline (best-effort — fields stay null on failure)
+                            let mut quality_val: Value = json!(null);
+                            let mut proof_cid_val: Value = json!(null);
+                            let mut proof_root_val: Value = json!(null);
+
+                            if let Some(jid) = job_id {
+                                let codec_hash = compute_codec_params_hash(&formats);
+                                // Use codec hash as both input and output hash for the job-level proof
+                                // (GOP-level source/output hashing requires ffmpeg segment access — future work)
+                                let input_hash = codec_hash;
+                                let output_hash = compute_proof_hash(status.metadata.as_bytes());
+
+                                match generate_gop_stark_proof(
+                                    jid,
+                                    codec_hash,
+                                    input_hash,
+                                    output_hash,
+                                ) {
+                                    Ok(stark_bytes) => {
+                                        let metrics = QualityMetrics {
+                                            psnr_db: 0.0,
+                                            ssim: None,
+                                            actual_bitrate: 0,
+                                        };
+                                        let mut gop_proof =
+                                            crate::transcoder::proof::build_gop_proof(
+                                                0,
+                                                input_hash,
+                                                output_hash,
+                                                &metrics,
+                                            );
+                                        let proof_hash = compute_proof_hash(&stark_bytes);
+                                        gop_proof.stark_proof_hash = hex::encode(proof_hash);
+
+                                        // Build Merkle tree with single leaf
+                                        let mut tree = MerkleTree::new();
+                                        tree.add_leaf(proof_hash);
+                                        let root = tree.root();
+                                        let tree_bytes = tree.serialize();
+
+                                        // Upload proof + tree to S5
+                                        let proof_data =
+                                            serialize_proof_for_s5(&gop_proof, &stark_bytes);
+                                        if let Some(cm) = server.get_checkpoint_manager().await {
+                                            let s5 = cm.get_s5_storage();
+                                            let tree_path = format!(
+                                                "home/transcode/proof-tree/{}.json",
+                                                hex::encode(root)
+                                            );
+                                            match s5.put(&tree_path, tree_bytes).await {
+                                                Ok(cid) => {
+                                                    info!("Proof tree uploaded to S5: CID={}", cid);
+                                                    proof_cid_val = json!(cid);
+                                                    proof_root_val =
+                                                        json!(format!("0x{}", hex::encode(root)));
+                                                }
+                                                Err(e) => warn!(
+                                                    "Failed to upload proof tree to S5: {}",
+                                                    e
+                                                ),
+                                            }
+                                            let proof_path = format!(
+                                                "home/transcode/gop-proof/job_{}_gop_0.bin",
+                                                jid
+                                            );
+                                            if let Err(e) = s5.put(&proof_path, proof_data).await {
+                                                warn!("Failed to upload GOP proof to S5: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => warn!(
+                                        "STARK proof generation failed for job {}: {}",
+                                        jid, e
+                                    ),
+                                }
+                            }
+
                             let complete_msg = build_encrypted_transcode_response(
                                 &json!({
                                     "type": "transcode_complete",
@@ -137,9 +218,9 @@ impl TranscodeProgressTask {
                                         "tokens": tokens,
                                     },
                                     "duration": duration,
-                                    "qualityMetrics": null,
-                                    "proofTreeCID": null,
-                                    "proofTreeRootHash": null
+                                    "qualityMetrics": quality_val,
+                                    "proofTreeCID": proof_cid_val,
+                                    "proofTreeRootHash": proof_root_val
                                 }),
                                 &session_key,
                                 &session_id,

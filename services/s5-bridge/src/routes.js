@@ -281,17 +281,222 @@ export async function registerRoutes(fastify) {
   // Wildcard pattern /s5/fs/*/ is invalid in Fastify (wildcard must be last character)
   // TODO: Implement directory listing with query parameter instead (e.g., /s5/fs/*?list=true)
 
+  // =========================================================================
+  // S5 Portal Compatibility Routes (v8.26.1+)
+  //
+  // These routes implement the standard S5 portal API surface so that external
+  // services (e.g. the transcoder sidecar) can use this bridge as PORTAL_URL.
+  // The transcoder expects:
+  //   - POST /s5/upload/tus (TUS upload protocol)
+  //   - GET  /s5/blob/{cid} (download by CID)
+  // =========================================================================
+
+  // GET /s5/blob/{cid} - Download blob by CID (S5 portal compatibility)
+  // The transcoder downloads source videos via this endpoint.
+  // Uses S5.js P2P download (downloadByCID) — no portal auth required.
+  fastify.get('/s5/blob/:cid', async (request, reply) => {
+    const s5 = getS5Client();
+    if (!s5) {
+      return reply.code(503).send({ error: 'S5 client not initialized' });
+    }
+
+    const { cid } = request.params;
+    try {
+      fastify.log.info({ cid }, '📥 [S5-BLOB] Downloading blob by CID via P2P');
+
+      // Use the authenticated S5.js client to download via P2P network
+      // This uses the seed-phrase identity and discovers signed URLs automatically
+      const result = await s5.apiWithIdentity.downloadByCID(cid);
+
+      let data;
+      if (result instanceof Uint8Array) {
+        data = Buffer.from(result);
+      } else if (Buffer.isBuffer(result)) {
+        data = result;
+      } else if (result && result.data) {
+        data = Buffer.from(result.data);
+      } else {
+        data = Buffer.from(result);
+      }
+
+      fastify.log.info({ cid, size: data.length }, '📥 [S5-BLOB] ✅ Blob downloaded via P2P');
+
+      reply
+        .header('Content-Type', 'application/octet-stream')
+        .header('Content-Length', data.length)
+        .send(data);
+    } catch (error) {
+      fastify.log.error({ cid, error: error.message }, '📥 [S5-BLOB] ❌ Download failed');
+      reply.code(502).send({ error: 'Blob download failed', cid, message: error.message });
+    }
+  });
+
+  // GET /api/locations/:hash - S5 portal locations API (encrypted download compatibility)
+  // The transcoder calls this for encrypted files to get download URLs for blob chunks.
+  // We proxy to the upstream S5 portal which knows the actual chunk locations.
+  fastify.get('/api/locations/:hash', async (request, reply) => {
+    const s5 = getS5Client();
+    if (!s5) {
+      return reply.code(503).send({ error: 'S5 client not initialized' });
+    }
+
+    const { hash } = request.params;
+    const types = request.query.types || '5,3';
+
+    try {
+      fastify.log.info({ hash, types }, '📥 [S5-LOCATIONS] Looking up locations');
+
+      // Return a locations response pointing to our own /s5/blob/ endpoint.
+      // The transcoder will GET each URL in parts[] to download chunks.
+      // Since we serve /s5/blob/ via P2P (downloadByCID), this creates a
+      // self-referencing loop that works without external portal auth.
+      //
+      // For encrypted files, the CID in the hash is the encrypted blob's hash.
+      // The transcoder downloads all parts, concatenates, then decrypts locally.
+      const selfUrl = `http://localhost:5522`;
+      const blobUrl = `${selfUrl}/s5/blob/z${hash}`;
+
+      fastify.log.info({ hash, blobUrl }, '📥 [S5-LOCATIONS] ✅ Returning self-referencing location');
+
+      reply.send({
+        locations: [
+          { parts: [blobUrl] }
+        ]
+      });
+    } catch (error) {
+      fastify.log.error({ hash, error: error.message }, '📥 [S5-LOCATIONS] ❌ Lookup failed');
+      reply.code(502).send({ error: 'Locations lookup failed', message: error.message });
+    }
+  });
+
+  // In-memory TUS upload store (maps upload ID → { data, offset, size, path })
+  const tusUploads = new Map();
+
+  // POST /s5/upload/tus - TUS: Create upload (S5 portal compatibility)
+  // The transcoder creates a TUS upload, then PATCHes data in chunks.
+  fastify.post('/s5/upload/tus', async (request, reply) => {
+    const s5 = getS5Client();
+    if (!s5) {
+      return reply.code(503).send({ error: 'S5 client not initialized' });
+    }
+
+    const uploadLength = parseInt(request.headers['upload-length'] || '0', 10);
+    const uploadId = `tus-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    fastify.log.info({ uploadId, uploadLength }, '📤 [S5-TUS] Creating upload');
+
+    tusUploads.set(uploadId, {
+      data: Buffer.alloc(uploadLength),
+      offset: 0,
+      size: uploadLength,
+    });
+
+    reply
+      .code(201)
+      .header('Tus-Resumable', '1.0.0')
+      .header('Upload-Offset', '0')
+      .header('Location', `http://${request.headers.host || 'localhost:5522'}/s5/upload/tus/${uploadId}`)
+      .send();
+  });
+
+  // PATCH /s5/upload/tus/:id - TUS: Upload chunk
+  fastify.patch('/s5/upload/tus/:id', async (request, reply) => {
+    const s5 = getS5Client();
+    const advanced = getAdvancedClient();
+    if (!s5) {
+      return reply.code(503).send({ error: 'S5 client not initialized' });
+    }
+
+    const { id } = request.params;
+    const upload = tusUploads.get(id);
+    if (!upload) {
+      return reply.code(404).send({ error: 'Upload not found' });
+    }
+
+    const offset = parseInt(request.headers['upload-offset'] || '0', 10);
+    const chunk = request.body;
+
+    if (!chunk || chunk.length === 0) {
+      return reply.code(400).send({ error: 'Empty chunk' });
+    }
+
+    // Copy chunk into buffer at offset
+    chunk.copy(upload.data, offset);
+    upload.offset = offset + chunk.length;
+
+    fastify.log.info({ id, offset, chunkSize: chunk.length, newOffset: upload.offset, totalSize: upload.size }, '📤 [S5-TUS] Chunk received');
+
+    // If upload is complete, store to S5
+    if (upload.offset >= upload.size) {
+      try {
+        const path = `tus-uploads/${id}`;
+        fastify.log.info({ id, path, size: upload.data.length }, '📤 [S5-TUS] Upload complete, storing to S5');
+
+        await s5.fs.put(path, new Uint8Array(upload.data));
+
+        // Generate CID
+        let cid = null;
+        if (advanced) {
+          const rawHash = await advanced.pathToCID(path);
+          const hashWithPrefix = new Uint8Array(33);
+          hashWithPrefix[0] = MULTIHASH_BLAKE3;
+          hashWithPrefix.set(rawHash, 1);
+          const blobId = new BlobIdentifier(hashWithPrefix, upload.data.length);
+          cid = blobId.toBase32();
+        }
+
+        tusUploads.delete(id);
+        fastify.log.info({ id, cid }, '📤 [S5-TUS] ✅ Stored to S5');
+
+        reply
+          .code(204)
+          .header('Tus-Resumable', '1.0.0')
+          .header('Upload-Offset', String(upload.offset))
+          .header('X-S5-CID', cid || '')
+          .send();
+      } catch (error) {
+        tusUploads.delete(id);
+        fastify.log.error({ id, error: error.message }, '📤 [S5-TUS] ❌ S5 store failed');
+        reply.code(500).send({ error: 'Upload storage failed', message: error.message });
+      }
+    } else {
+      // More chunks expected
+      reply
+        .code(204)
+        .header('Tus-Resumable', '1.0.0')
+        .header('Upload-Offset', String(upload.offset))
+        .send();
+    }
+  });
+
+  // HEAD /s5/upload/tus/:id - TUS: Check upload status
+  fastify.head('/s5/upload/tus/:id', async (request, reply) => {
+    const { id } = request.params;
+    const upload = tusUploads.get(id);
+    if (!upload) {
+      return reply.code(404).send();
+    }
+
+    reply
+      .code(200)
+      .header('Tus-Resumable', '1.0.0')
+      .header('Upload-Offset', String(upload.offset))
+      .header('Upload-Length', String(upload.size))
+      .send();
+  });
+
   // Root endpoint
   fastify.get('/', async (request, reply) => {
     reply.send({
       service: 'Enhanced S5.js Bridge',
-      version: '1.0.0',
+      version: '1.2.0',
       endpoints: {
         health: 'GET /health',
         download: 'GET /s5/fs/{path}',
         upload: 'PUT /s5/fs/{path}',
         delete: 'DELETE /s5/fs/{path}',
-        list: 'GET /s5/fs/{path}/',
+        blobDownload: 'GET /s5/blob/{cid}',
+        tusUpload: 'POST /s5/upload/tus',
       },
     });
   });
