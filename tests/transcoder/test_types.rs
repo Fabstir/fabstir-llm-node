@@ -26,6 +26,7 @@ fn test_video_format_full_serialization() {
         compression_level: None,
         dest: Some("s5".into()),
         encrypt: Some(false),
+        trim_percent: None,
     };
     let json = serde_json::to_value(&fmt).unwrap();
     assert_eq!(json["id"], 1);
@@ -60,6 +61,7 @@ fn test_video_format_minimal_serialization() {
         compression_level: None,
         dest: None,
         encrypt: None,
+        trim_percent: None,
     };
     let json = serde_json::to_value(&fmt).unwrap();
     assert_eq!(json["id"], 2);

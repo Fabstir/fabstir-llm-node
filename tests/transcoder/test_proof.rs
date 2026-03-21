@@ -31,6 +31,7 @@ fn make_format(id: u32, ext: &str, vcodec: &str) -> VideoFormat {
         compression_level: None,
         dest: None,
         encrypt: None,
+        trim_percent: None,
     }
 }
 

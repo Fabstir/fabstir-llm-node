@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.26.2-encrypted-transcode-source-2026-03-21";
+pub const VERSION: &str = "v8.26.3-trim-percent-passthrough-2026-03-21";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.26.2";
+pub const VERSION_NUMBER: &str = "8.26.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 26;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-03-21";
@@ -297,6 +297,8 @@ pub const FEATURES: &[&str] = &[
     "proof-pipeline-wired",
     // Encrypted transcode source (v8.26.2)
     "encrypted-transcode-source",
+    // Trim percent passthrough (v8.26.3)
+    "trim-percent-passthrough",
 ];
 
 /// Supported chain IDs
@@ -307,6 +309,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.26.3 - Trim Percent Passthrough (Mar 21, 2026)
+    "FEAT: VideoFormat.trim_percent field passes through to transcoder sidecar for preview trimming",
     // v8.26.2 - Encrypted Transcode Source (Mar 21, 2026)
     "FIX: S5 bridge /api/locations/:hash now uses Host header instead of hardcoded localhost",
     "FEAT: S5 bridge GET /s5/download/:hash route for raw base64url hash blob download",
@@ -691,9 +695,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 26);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_PATCH, 3);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.26.3 trim percent passthrough
+        assert!(FEATURES.contains(&"trim-percent-passthrough"));
         // v8.26.2 encrypted transcode source
         assert!(FEATURES.contains(&"encrypted-transcode-source"));
         // v8.26.1 proof pipeline wired
@@ -821,14 +827,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.26.2"));
+        assert!(version.contains("8.26.3"));
         assert!(version.contains("2026-03-21"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.26.2-encrypted-transcode-source-2026-03-21");
-        assert_eq!(VERSION_NUMBER, "8.26.2");
+        assert_eq!(VERSION, "v8.26.3-trim-percent-passthrough-2026-03-21");
+        assert_eq!(VERSION_NUMBER, "8.26.3");
         assert_eq!(BUILD_DATE, "2026-03-21");
     }
 
