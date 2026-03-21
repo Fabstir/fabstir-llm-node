@@ -353,8 +353,8 @@ export async function registerRoutes(fastify) {
       //
       // For encrypted files, the CID in the hash is the encrypted blob's hash.
       // The transcoder downloads all parts, concatenates, then decrypts locally.
-      const selfUrl = `http://localhost:5522`;
-      const blobUrl = `${selfUrl}/s5/blob/z${hash}`;
+      const selfUrl = `http://${request.headers.host || 'localhost:5522'}`;
+      const blobUrl = `${selfUrl}/s5/download/${hash}`;
 
       fastify.log.info({ hash, blobUrl }, '📥 [S5-LOCATIONS] ✅ Returning self-referencing location');
 
@@ -366,6 +366,35 @@ export async function registerRoutes(fastify) {
     } catch (error) {
       fastify.log.error({ hash, error: error.message }, '📥 [S5-LOCATIONS] ❌ Lookup failed');
       reply.code(502).send({ error: 'Locations lookup failed', message: error.message });
+    }
+  });
+
+  // GET /s5/download/:hash - Download blob by raw base64url hash (encrypted download support)
+  // The transcoder calls /api/locations/:hash which returns a URL pointing here.
+  // The :hash param is a base64url-encoded byte array (type prefix + hash).
+  fastify.get('/s5/download/:hash', async (request, reply) => {
+    const s5 = getS5Client();
+    if (!s5) {
+      return reply.code(503).send({ error: 'S5 client not initialized' });
+    }
+
+    const { hash } = request.params;
+    try {
+      fastify.log.info({ hash }, '📥 [S5-DOWNLOAD] Downloading blob by raw hash');
+
+      const hashBytes = Buffer.from(hash, 'base64url');
+      const result = await s5.apiWithIdentity.downloadBlobAsBytes(hashBytes);
+      const data = Buffer.from(result);
+
+      fastify.log.info({ hash, size: data.length }, '📥 [S5-DOWNLOAD] ✅ Blob downloaded');
+
+      reply
+        .header('Content-Type', 'application/octet-stream')
+        .header('Content-Length', data.length)
+        .send(data);
+    } catch (error) {
+      fastify.log.error({ hash, error: error.message }, '📥 [S5-DOWNLOAD] ❌ Download failed');
+      reply.code(502).send({ error: 'Blob download failed', hash, message: error.message });
     }
   });
 
@@ -496,6 +525,7 @@ export async function registerRoutes(fastify) {
         upload: 'PUT /s5/fs/{path}',
         delete: 'DELETE /s5/fs/{path}',
         blobDownload: 'GET /s5/blob/{cid}',
+        blobDownloadByHash: 'GET /s5/download/{hash}',
         tusUpload: 'POST /s5/upload/tus',
       },
     });
