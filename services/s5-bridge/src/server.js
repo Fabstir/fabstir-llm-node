@@ -109,6 +109,7 @@ async function start() {
     console.log(`   PUT    /s5/fs/{path}        - Upload file`);
     console.log(`   DELETE /s5/fs/{path}        - Delete file`);
     console.log(`   GET    /s5/blob/{cid}       - Download blob by CID (portal compat)`);
+    console.log(`   GET    /s5/download/{hash}  - Download blob by raw hash (encrypted)`);
     console.log(`   GET    /api/locations/{hash} - Blob locations lookup (portal compat)`);
     console.log(`   POST   /s5/upload/tus       - TUS upload create (portal compat)`);
     console.log(`   PATCH  /s5/upload/tus/{id}  - TUS upload chunk (portal compat)`);
