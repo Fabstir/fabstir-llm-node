@@ -883,7 +883,13 @@ const innerPayload = {
   mediaFormats: [                // Required: at least one output format
     {
       id: 1, ext: "mp4", vcodec: "h264_nvenc", acodec: "aac",
-      vf: "scale=1920x1080", b_v: "5M", ar: "48k", ch: 2, dest: "s5"
+      vf: "scale=1920x1080", b_v: "5M", ar: "48k", ch: 2,
+      dest: "s5", encrypt: true          // Per-format encryption control
+    },
+    {                                      // Optional: preview for paywall pattern
+      id: 2, ext: "mp4", vcodec: "h264_nvenc", acodec: "aac",
+      vf: "scale=1280x720", b_v: "2M", ar: "48k", ch: 2,
+      dest: "s5", encrypt: false, trim_percent: 20
     }
   ],
   isEncrypted: true,             // Optional (default: true)

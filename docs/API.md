@@ -1661,7 +1661,13 @@ Content-Type: application/json
       "id": 1, "ext": "mp4", "label": "1080p", "type": "video",
       "vcodec": "h264_nvenc", "acodec": "aac", "preset": "fast",
       "vf": "scale=1920x1080", "b_v": "5M", "ar": "48k", "ch": 2,
-      "dest": "s5"
+      "dest": "s5", "encrypt": true
+    },
+    {
+      "id": 2, "ext": "mp4", "label": "preview",
+      "vcodec": "h264_nvenc", "acodec": "aac", "preset": "fast",
+      "vf": "scale=1280x720", "b_v": "2M", "ar": "48k", "ch": 2,
+      "dest": "s5", "encrypt": false, "trim_percent": 20
     }
   ],
   "isEncrypted": true,
