@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.26.3-trim-percent-passthrough-2026-03-21";
+pub const VERSION: &str = "v8.26.4-transcode-capacity-2026-03-21";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.26.3";
+pub const VERSION_NUMBER: &str = "8.26.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 26;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-03-21";
@@ -299,6 +299,8 @@ pub const FEATURES: &[&str] = &[
     "encrypted-transcode-source",
     // Trim percent passthrough (v8.26.3)
     "trim-percent-passthrough",
+    // Transcode capacity reporting & admission control (v8.26.4)
+    "transcode-capacity",
 ];
 
 /// Supported chain IDs
@@ -309,6 +311,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.26.4 - Transcode Capacity Reporting (Mar 21, 2026)
+    "FEAT: GET /v1/transcode/capacity endpoint for SDK host selection and load balancing",
+    "FEAT: TRANSCODE_CAPACITY_FULL error code when all NVENC slots in use (WS + HTTP)",
+    "FEAT: MAX_CONCURRENT_TRANSCODES env var (default 3) for GPU session limit",
+    "FEAT: RAII TranscodeSlotGuard ensures slot release on task completion, error, or panic",
     // v8.26.3 - Trim Percent Passthrough (Mar 21, 2026)
     "FEAT: VideoFormat.trim_percent field passes through to transcoder sidecar for preview trimming",
     // v8.26.2 - Encrypted Transcode Source (Mar 21, 2026)
@@ -695,9 +702,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 26);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_PATCH, 4);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.26.4 transcode capacity
+        assert!(FEATURES.contains(&"transcode-capacity"));
         // v8.26.3 trim percent passthrough
         assert!(FEATURES.contains(&"trim-percent-passthrough"));
         // v8.26.2 encrypted transcode source
@@ -827,14 +836,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.26.3"));
+        assert!(version.contains("8.26.4"));
         assert!(version.contains("2026-03-21"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.26.3-trim-percent-passthrough-2026-03-21");
-        assert_eq!(VERSION_NUMBER, "8.26.3");
+        assert_eq!(VERSION, "v8.26.4-transcode-capacity-2026-03-21");
+        assert_eq!(VERSION_NUMBER, "8.26.4");
         assert_eq!(BUILD_DATE, "2026-03-21");
     }
 

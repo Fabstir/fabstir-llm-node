@@ -9,6 +9,7 @@ use crate::api::server::ApiServer;
 use crate::transcoder::billing::{
     calculate_transcode_units, codec_factor, resolution_factor_from_vf,
 };
+use crate::transcoder::capacity::TranscodeSlotGuard;
 use crate::transcoder::gop::gop_info_from_progress;
 use crate::transcoder::merkle::MerkleTree;
 use crate::transcoder::proof::{
@@ -28,6 +29,7 @@ pub struct TranscodeProgressTask {
     pub task_id: String,
     pub poll_interval_ms: u64,
     pub timeout_seconds: u64,
+    pub slot_guard: Option<TranscodeSlotGuard>,
 }
 
 impl TranscodeProgressTask {
@@ -47,10 +49,14 @@ impl TranscodeProgressTask {
         let task_id = self.task_id.clone();
         let poll_interval = Duration::from_millis(self.poll_interval_ms);
         let timeout = Duration::from_secs(self.timeout_seconds);
+        let slot_guard = self.slot_guard;
 
         tokio::spawn(async move {
+            let _guard = slot_guard;
             let start = std::time::Instant::now();
             let mut last_progress = -1i32;
+            let mut completion_retries = 0u32;
+            const MAX_COMPLETION_RETRIES: u32 = 5;
 
             loop {
                 if start.elapsed() > timeout {
@@ -100,6 +106,25 @@ impl TranscodeProgressTask {
                         // Check completion (progress 100 only — metadata is unreliable
                         // because "Transcoding in progress" is non-empty/non-[])
                         if status.progress >= 100 {
+                            // Sidecar may report progress=100 before uploads finish.
+                            // Retry if metadata isn't a valid JSON array yet.
+                            let meta_looks_ready = status.metadata.starts_with('[');
+                            if !meta_looks_ready && completion_retries < MAX_COMPLETION_RETRIES {
+                                completion_retries += 1;
+                                debug!(
+                                    "Transcode progress=100 but metadata not ready (attempt {}/{}): {:?}",
+                                    completion_retries, MAX_COMPLETION_RETRIES,
+                                    &status.metadata[..status.metadata.len().min(80)]
+                                );
+                                continue; // poll again after sleep
+                            }
+                            if !meta_looks_ready {
+                                warn!(
+                                    "Transcode metadata still not ready after {} retries, completing with available data: {:?}",
+                                    MAX_COMPLETION_RETRIES, &status.metadata[..status.metadata.len().min(80)]
+                                );
+                            }
+
                             // Calculate billing
                             let duration = status.duration.unwrap_or(0.0);
                             let mut total_units = 0.0;
@@ -367,7 +392,27 @@ pub async fn handle_encrypted_transcode(
         }
     };
 
-    // Step 4: Submit to transcoder
+    // Step 4: Capacity check — acquire a slot before submitting
+    if !server.try_acquire_transcode_slot() {
+        warn!(
+            "Transcode capacity full ({}/{}) for session {}",
+            server.active_transcode_count(),
+            server.max_concurrent_transcodes(),
+            session_id
+        );
+        return (
+            build_encrypted_transcode_error(
+                "TRANSCODE_CAPACITY_FULL",
+                "All transcode slots are in use — try again later",
+                session_key,
+                session_id,
+                message_id,
+            ),
+            None,
+        );
+    }
+
+    // Step 5: Submit to transcoder
     match transcoder_client
         .submit_transcode(&source_cid, &formats, is_encrypted, is_gpu)
         .await
@@ -394,6 +439,9 @@ pub async fn handle_encrypted_transcode(
                 task_id: resp.task_id.clone(),
                 poll_interval_ms,
                 timeout_seconds,
+                slot_guard: Some(TranscodeSlotGuard::new(
+                    server.active_transcode_count_arc().clone(),
+                )),
             };
 
             let ack = build_encrypted_transcode_response(
@@ -410,6 +458,7 @@ pub async fn handle_encrypted_transcode(
             (ack, Some(task))
         }
         Err(e) => {
+            server.release_transcode_slot();
             error!("Failed to submit transcode: {}", e);
             (
                 build_encrypted_transcode_error(

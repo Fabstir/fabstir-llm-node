@@ -3,6 +3,7 @@
 //! Transcoder sidecar integration — client, billing, and rate limiting.
 
 pub mod billing;
+pub mod capacity;
 pub mod checkpoint;
 pub mod client;
 pub mod gop;

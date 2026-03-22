@@ -1,4 +1,5 @@
 mod test_billing;
+mod test_capacity;
 mod test_checkpoint;
 mod test_client;
 mod test_gop_tracking;
