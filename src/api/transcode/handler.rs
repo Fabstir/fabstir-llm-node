@@ -32,6 +32,18 @@ pub async fn transcode_submit_handler(
             .into_response();
     }
 
+    // Check capacity (read-only — HTTP path does not acquire/release slots)
+    if !server.has_transcode_capacity() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "TRANSCODE_CAPACITY_FULL",
+                "message": "All transcode slots are in use — try again later"
+            })),
+        )
+            .into_response();
+    }
+
     // Check sidecar availability
     let transcoder_client = match server.get_transcoder_client().await {
         Some(client) => client,
