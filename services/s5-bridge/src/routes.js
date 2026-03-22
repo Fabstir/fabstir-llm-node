@@ -458,7 +458,7 @@ export async function registerRoutes(fastify) {
     // If upload is complete, store to S5
     if (upload.offset >= upload.size) {
       try {
-        const path = `tus-uploads/${id}`;
+        const path = `home/tus-uploads/${id}`;
         fastify.log.info({ id, path, size: upload.data.length }, '📤 [S5-TUS] Upload complete, storing to S5');
 
         await s5.fs.put(path, new Uint8Array(upload.data));
