@@ -7,7 +7,7 @@ use reqwest::Client;
 use std::time::Duration;
 use tracing::debug;
 
-use super::types::{TranscodeStatusResponse, TranscodeSubmitResponse, VideoFormat};
+use super::types::{SidecarStatus, TranscodeStatusResponse, TranscodeSubmitResponse, VideoFormat};
 
 /// Client for the fabstir-transcoder sidecar REST API.
 ///
@@ -132,6 +132,28 @@ impl TranscoderClient {
             404 => Ok(false),
             s => Err(anyhow::anyhow!("cancel returned status {}", s)),
         }
+    }
+
+    /// Get the sidecar's current status (active/queued jobs, max concurrent).
+    pub async fn get_sidecar_status(&self) -> Result<SidecarStatus> {
+        let url = format!("{}/status", self.endpoint);
+        let response = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(5))
+            .bearer_auth(&self.jwt_token)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "sidecar status returned {}: {}",
+                status,
+                text
+            ));
+        }
+        Ok(response.json().await?)
     }
 
     /// Get the configured endpoint.

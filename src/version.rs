@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.26.4-transcode-capacity-2026-03-21";
+pub const VERSION: &str = "v8.27.0-sidecar-capacity-2026-03-22";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.26.4";
+pub const VERSION_NUMBER: &str = "8.27.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 26;
+pub const VERSION_MINOR: u32 = 27;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-03-21";
+pub const BUILD_DATE: &str = "2026-03-22";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -301,6 +301,8 @@ pub const FEATURES: &[&str] = &[
     "trim-percent-passthrough",
     // Transcode capacity reporting & admission control (v8.26.4)
     "transcode-capacity",
+    // Sidecar-based capacity tracking (v8.27.0)
+    "sidecar-capacity",
 ];
 
 /// Supported chain IDs
@@ -311,6 +313,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.27.0 - Sidecar Capacity Integration (Mar 22, 2026)
+    "FEAT: Real sidecar status via GET /status — replaces local atomic counter",
+    "FEAT: CachedSidecarStatus with 2s TTL and stale-on-error fallback",
+    "FEAT: /v1/transcode/capacity returns queued_jobs from sidecar",
+    "FEAT: MAX_CONCURRENT_TRANSCODES moved to sidecar env (docker-compose)",
+    "BREAKING: Removed TranscodeSlotGuard, try_acquire/release_transcode_slot, has_transcode_capacity",
     // v8.26.4 - Transcode Capacity Reporting (Mar 21, 2026)
     "FEAT: GET /v1/transcode/capacity endpoint for SDK host selection and load balancing",
     "FEAT: TRANSCODE_CAPACITY_FULL error code when all NVENC slots in use (WS + HTTP)",
@@ -701,10 +709,12 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 26);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_MINOR, 27);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.27.0 sidecar capacity
+        assert!(FEATURES.contains(&"sidecar-capacity"));
         // v8.26.4 transcode capacity
         assert!(FEATURES.contains(&"transcode-capacity"));
         // v8.26.3 trim percent passthrough
@@ -836,15 +846,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.26.4"));
-        assert!(version.contains("2026-03-21"));
+        assert!(version.contains("8.27.0"));
+        assert!(version.contains("2026-03-22"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.26.4-transcode-capacity-2026-03-21");
-        assert_eq!(VERSION_NUMBER, "8.26.4");
-        assert_eq!(BUILD_DATE, "2026-03-21");
+        assert_eq!(VERSION, "v8.27.0-sidecar-capacity-2026-03-22");
+        assert_eq!(VERSION_NUMBER, "8.27.0");
+        assert_eq!(BUILD_DATE, "2026-03-22");
     }
 
     #[test]

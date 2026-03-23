@@ -13,7 +13,6 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
@@ -200,8 +199,7 @@ pub struct ApiServer {
     transcoder_client: Arc<RwLock<Option<Arc<crate::transcoder::TranscoderClient>>>>,
     transcoding_tracker: Arc<crate::transcoder::billing::TranscodingTracker>,
     transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
-    active_transcode_count: Arc<AtomicUsize>,
-    max_concurrent_transcodes: usize,
+    sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     auto_image_routing: bool,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -262,8 +260,9 @@ impl ApiServer {
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(3),
             ),
-            active_transcode_count: Arc::new(AtomicUsize::new(0)),
-            max_concurrent_transcodes: 3,
+            sidecar_capacity_cache: Arc::new(
+                crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
+            ),
             auto_image_routing: false,
             session_store,
             shutdown_tx: None,
@@ -362,11 +361,9 @@ impl ApiServer {
                         .unwrap_or(3),
                 ),
             ),
-            active_transcode_count: Arc::new(AtomicUsize::new(0)),
-            max_concurrent_transcodes: std::env::var("MAX_CONCURRENT_TRANSCODES")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3),
+            sidecar_capacity_cache: Arc::new(
+                crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
+            ),
             auto_image_routing: match std::env::var("AUTO_IMAGE_ROUTING") {
                 Ok(v) => v == "true",
                 Err(_) => std::env::var("DIFFUSION_ENDPOINT")
@@ -433,8 +430,7 @@ impl ApiServer {
             transcoder_client: self.transcoder_client.clone(),
             transcoding_tracker: self.transcoding_tracker.clone(),
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
-            active_transcode_count: self.active_transcode_count.clone(),
-            max_concurrent_transcodes: self.max_concurrent_transcodes,
+            sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             auto_image_routing: self.auto_image_routing,
             session_store: self.session_store.clone(),
             shutdown_tx: None,
@@ -535,31 +531,18 @@ impl ApiServer {
         &self.transcoding_tracker
     }
 
-    pub fn try_acquire_transcode_slot(&self) -> bool {
-        crate::transcoder::capacity::try_acquire(
-            &self.active_transcode_count,
-            self.max_concurrent_transcodes,
-        )
+    pub async fn has_sidecar_capacity(&self) -> bool {
+        match self.get_transcoder_client().await {
+            Some(client) => self.sidecar_capacity_cache.has_capacity(&client).await,
+            None => false,
+        }
     }
 
-    pub fn release_transcode_slot(&self) {
-        crate::transcoder::capacity::release(&self.active_transcode_count);
-    }
-
-    pub fn has_transcode_capacity(&self) -> bool {
-        self.active_transcode_count.load(AtomicOrdering::Acquire) < self.max_concurrent_transcodes
-    }
-
-    pub fn active_transcode_count(&self) -> usize {
-        self.active_transcode_count.load(AtomicOrdering::Acquire)
-    }
-
-    pub fn active_transcode_count_arc(&self) -> &Arc<AtomicUsize> {
-        &self.active_transcode_count
-    }
-
-    pub fn max_concurrent_transcodes(&self) -> usize {
-        self.max_concurrent_transcodes
+    pub async fn get_sidecar_status(&self) -> Option<crate::transcoder::types::SidecarStatus> {
+        match self.get_transcoder_client().await {
+            Some(client) => self.sidecar_capacity_cache.get_or_fetch(&client).await,
+            None => None,
+        }
     }
 
     /// Get the session key store for encryption/decryption operations
@@ -1313,15 +1296,22 @@ async fn health_handler(State(server): State<Arc<ApiServer>>) -> impl IntoRespon
 }
 
 async fn transcode_capacity_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
-    let active = server.active_transcode_count();
-    let max = server.max_concurrent_transcodes();
-    let sidecar_connected = server.transcoder_client.read().await.is_some();
-    axum::response::Json(serde_json::json!({
-        "active": active,
-        "max": max,
-        "available": max.saturating_sub(active),
-        "sidecarConnected": sidecar_connected,
-    }))
+    match server.get_sidecar_status().await {
+        Some(status) => axum::response::Json(serde_json::json!({
+            "active": status.active_jobs,
+            "max": status.max_concurrent,
+            "queued": status.queued_jobs,
+            "available": status.available(),
+            "sidecarConnected": true,
+        })),
+        None => axum::response::Json(serde_json::json!({
+            "active": 0,
+            "max": 0,
+            "queued": 0,
+            "available": 0,
+            "sidecarConnected": false,
+        })),
+    }
 }
 
 async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {

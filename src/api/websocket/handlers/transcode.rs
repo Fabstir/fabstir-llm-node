@@ -9,7 +9,6 @@ use crate::api::server::ApiServer;
 use crate::transcoder::billing::{
     calculate_transcode_units, codec_factor, resolution_factor_from_vf,
 };
-use crate::transcoder::capacity::TranscodeSlotGuard;
 use crate::transcoder::gop::gop_info_from_progress;
 use crate::transcoder::merkle::MerkleTree;
 use crate::transcoder::proof::{
@@ -29,7 +28,6 @@ pub struct TranscodeProgressTask {
     pub task_id: String,
     pub poll_interval_ms: u64,
     pub timeout_seconds: u64,
-    pub slot_guard: Option<TranscodeSlotGuard>,
 }
 
 impl TranscodeProgressTask {
@@ -49,10 +47,7 @@ impl TranscodeProgressTask {
         let task_id = self.task_id.clone();
         let poll_interval = Duration::from_millis(self.poll_interval_ms);
         let timeout = Duration::from_secs(self.timeout_seconds);
-        let slot_guard = self.slot_guard;
-
         tokio::spawn(async move {
-            let _guard = slot_guard;
             let start = std::time::Instant::now();
             let mut last_progress = -1i32;
             let mut completion_retries = 0u32;
@@ -392,14 +387,9 @@ pub async fn handle_encrypted_transcode(
         }
     };
 
-    // Step 4: Capacity check — acquire a slot before submitting
-    if !server.try_acquire_transcode_slot() {
-        warn!(
-            "Transcode capacity full ({}/{}) for session {}",
-            server.active_transcode_count(),
-            server.max_concurrent_transcodes(),
-            session_id
-        );
+    // Step 4: Capacity check — ask sidecar if it can accept work
+    if !server.has_sidecar_capacity().await {
+        warn!("Sidecar capacity full for session {}", session_id);
         return (
             build_encrypted_transcode_error(
                 "TRANSCODE_CAPACITY_FULL",
@@ -439,9 +429,6 @@ pub async fn handle_encrypted_transcode(
                 task_id: resp.task_id.clone(),
                 poll_interval_ms,
                 timeout_seconds,
-                slot_guard: Some(TranscodeSlotGuard::new(
-                    server.active_transcode_count_arc().clone(),
-                )),
             };
 
             let ack = build_encrypted_transcode_response(
@@ -458,7 +445,6 @@ pub async fn handle_encrypted_transcode(
             (ack, Some(task))
         }
         Err(e) => {
-            server.release_transcode_slot();
             error!("Failed to submit transcode: {}", e);
             (
                 build_encrypted_transcode_error(

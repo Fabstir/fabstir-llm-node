@@ -14,5 +14,6 @@ pub mod quality;
 pub mod rate_limiter;
 pub mod types;
 
+pub use capacity::CachedSidecarStatus;
 pub use client::TranscoderClient;
 pub use types::*;
