@@ -1735,10 +1735,49 @@ tokens = ceil(billingUnits × 1000)
 Resolution factors: ≤480p = 0.25×, ≤720p = 0.5×, ≤1080p = 1.0×, >1080p = 2.0×.
 Codec factors: H.264 = 1.0×, HEVC = 1.2×, AV1 = 1.5×. Encryption: +10%.
 
+#### Check Transcode Capacity (v8.27.0+)
+
+```http
+GET /v1/transcode/capacity
+```
+
+Returns real-time capacity from the transcoder sidecar's `GET /status` endpoint (cached for 2 seconds).
+
+```json
+{
+  "active": 1,
+  "max": 3,
+  "queued": 0,
+  "available": 2,
+  "sidecarConnected": true
+}
+```
+
+When the sidecar is unreachable or not configured:
+
+```json
+{
+  "active": 0,
+  "max": 0,
+  "queued": 0,
+  "available": 0,
+  "sidecarConnected": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `active` | Integer | Currently running transcode jobs on sidecar |
+| `max` | Integer | Maximum concurrent jobs (sidecar's `MAX_CONCURRENT_TRANSCODES`) |
+| `queued` | Integer | Jobs queued in sidecar waiting for a slot |
+| `available` | Integer | `max - active` (slots available) |
+| `sidecarConnected` | Boolean | Whether the sidecar responded to the status query |
+
 #### Status Codes
 
-- `200 OK` - Job submitted or status returned
+- `200 OK` - Job submitted or status/capacity returned
 - `400 Bad Request` - Empty `sourceCid` or `mediaFormats`
+- `429 Too Many Requests` - Sidecar capacity full (`TRANSCODE_CAPACITY_FULL`)
 - `502 Bad Gateway` - Transcoder sidecar error
 - `503 Service Unavailable` - Transcoder sidecar not configured
 
@@ -4919,7 +4958,15 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v8.26.0** (Current) - Transcoding Trustless Verification (March 2026)
+- **v8.27.0** (Current) - Sidecar Capacity Integration (March 2026)
+  - `GET /v1/transcode/capacity` returns real sidecar status (`active`, `max`, `queued`, `available`)
+  - Capacity checks query sidecar `GET /status` instead of local atomic counter
+  - Cached sidecar status with 2-second TTL and stale-on-error fallback
+  - `429 TRANSCODE_CAPACITY_FULL` when sidecar reports no available slots
+  - `MAX_CONCURRENT_TRANSCODES` env var moved from node to sidecar (docker-compose)
+  - HTTP handler returns 503 before 429 (sidecar availability checked first)
+
+- **v8.26.0** - Transcoding Trustless Verification (March 2026)
   - Quality metrics (PSNR/SSIM) parsing from ffmpeg for transcode verification
   - GOP-level progress tracking (`gopInfo` in `transcode_progress` messages)
   - Keccak256 Merkle tree over GOP proofs

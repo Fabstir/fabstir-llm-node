@@ -1,88 +1,59 @@
-use fabstir_llm_node::transcoder::capacity::{release, try_acquire, TranscodeSlotGuard};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use fabstir_llm_node::transcoder::capacity::CachedSidecarStatus;
+use fabstir_llm_node::transcoder::client::TranscoderClient;
+use fabstir_llm_node::transcoder::types::SidecarStatus;
+use std::time::Duration;
 
-#[test]
-fn test_try_acquire_success() {
-    let counter = AtomicUsize::new(0);
-    assert!(try_acquire(&counter, 3));
-    assert_eq!(counter.load(Ordering::Relaxed), 1);
-}
-
-#[test]
-fn test_try_acquire_at_capacity() {
-    let counter = AtomicUsize::new(3);
-    assert!(!try_acquire(&counter, 3));
-    assert_eq!(counter.load(Ordering::Relaxed), 3);
-}
-
-#[test]
-fn test_release_decrements() {
-    let counter = AtomicUsize::new(2);
-    release(&counter);
-    assert_eq!(counter.load(Ordering::Relaxed), 1);
-}
-
-#[test]
-fn test_release_underflow_guard() {
-    let counter = AtomicUsize::new(0);
-    release(&counter);
-    assert_eq!(counter.load(Ordering::Relaxed), 0);
-}
-
-#[test]
-fn test_acquire_release_cycle() {
-    let counter = AtomicUsize::new(0);
-    assert!(try_acquire(&counter, 3));
-    assert!(try_acquire(&counter, 3));
-    assert!(try_acquire(&counter, 3));
-    assert!(!try_acquire(&counter, 3)); // 4th fails
-    release(&counter);
-    assert!(try_acquire(&counter, 3)); // 5th succeeds
-    assert_eq!(counter.load(Ordering::Relaxed), 3);
+#[tokio::test]
+async fn test_get_sidecar_status_unreachable() {
+    let client = TranscoderClient::new("http://127.0.0.1:1", "test-token").unwrap();
+    let result = client.get_sidecar_status().await;
+    assert!(result.is_err());
 }
 
 #[tokio::test]
-async fn test_concurrent_acquisition() {
-    let counter = Arc::new(AtomicUsize::new(0));
-    let barrier = Arc::new(tokio::sync::Barrier::new(10));
-    let mut handles = Vec::new();
-    for _ in 0..10 {
-        let c = counter.clone();
-        let b = barrier.clone();
-        handles.push(tokio::spawn(async move {
-            b.wait().await;
-            try_acquire(&c, 3)
-        }));
-    }
-    let successes = futures::future::join_all(handles)
-        .await
-        .into_iter()
-        .filter(|r| *r.as_ref().unwrap())
-        .count();
-    assert_eq!(successes, 3);
-    assert_eq!(counter.load(Ordering::Relaxed), 3);
+async fn test_cached_status_none_when_unreachable() {
+    let cache = CachedSidecarStatus::new(Duration::from_secs(2));
+    let client = TranscoderClient::new("http://127.0.0.1:1", "test-token").unwrap();
+    let result = cache.get_or_fetch(&client).await;
+    assert!(result.is_none());
 }
 
 #[test]
-fn test_slot_guard_releases_on_drop() {
-    let counter = Arc::new(AtomicUsize::new(0));
-    assert!(try_acquire(&counter, 3));
-    assert_eq!(counter.load(Ordering::Relaxed), 1);
-    {
-        let _guard = TranscodeSlotGuard::new(counter.clone());
-    }
-    assert_eq!(counter.load(Ordering::Relaxed), 0);
+fn test_sidecar_status_has_capacity_true() {
+    let s = SidecarStatus {
+        active_jobs: 1,
+        queued_jobs: 0,
+        max_concurrent: 3,
+    };
+    assert!(s.has_capacity());
 }
 
 #[test]
-fn test_slot_guard_releases_on_panic() {
-    let counter = Arc::new(AtomicUsize::new(0));
-    assert!(try_acquire(&counter, 3));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = TranscodeSlotGuard::new(counter.clone());
-        panic!("simulated panic");
-    }));
-    assert!(result.is_err());
-    assert_eq!(counter.load(Ordering::Relaxed), 0);
+fn test_sidecar_status_has_capacity_false_at_max() {
+    let s = SidecarStatus {
+        active_jobs: 3,
+        queued_jobs: 0,
+        max_concurrent: 3,
+    };
+    assert!(!s.has_capacity());
+}
+
+#[test]
+fn test_sidecar_status_has_capacity_false_over() {
+    let s = SidecarStatus {
+        active_jobs: 4,
+        queued_jobs: 1,
+        max_concurrent: 3,
+    };
+    assert!(!s.has_capacity());
+}
+
+#[test]
+fn test_sidecar_status_available() {
+    let s = SidecarStatus {
+        active_jobs: 1,
+        queued_jobs: 0,
+        max_concurrent: 3,
+    };
+    assert_eq!(s.available(), 2);
 }

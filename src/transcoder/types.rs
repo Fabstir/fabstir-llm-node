@@ -124,6 +124,23 @@ pub struct GOPInfo {
     pub elapsed_seconds: f64,
 }
 
+/// Response from GET /status on the transcoder sidecar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SidecarStatus {
+    pub active_jobs: u32,
+    pub queued_jobs: u32,
+    pub max_concurrent: u32,
+}
+
+impl SidecarStatus {
+    pub fn has_capacity(&self) -> bool {
+        self.active_jobs < self.max_concurrent
+    }
+    pub fn available(&self) -> u32 {
+        self.max_concurrent.saturating_sub(self.active_jobs)
+    }
+}
+
 /// Quality threshold constants for transcode verification.
 pub const PSNR_STANDARD_THRESHOLD: f64 = 38.0;
 pub const PSNR_HIGH_THRESHOLD: f64 = 42.0;

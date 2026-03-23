@@ -116,6 +116,14 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **isEncrypted Default**: Changed from `false` to `true`
 - **81 tests passing** (71 transcoder + 10 API)
 
+### ✅ Phase 8.27: Sidecar Capacity Integration (v8.27.0)
+- **Real Sidecar Status**: `GET /v1/transcode/capacity` returns live data from sidecar `GET /status`
+- **Cached Status**: 2-second TTL cache with stale-on-error fallback
+- **Capacity Admission**: `TRANSCODE_CAPACITY_FULL` error when sidecar has no available slots
+- **Sidecar-Owned Concurrency**: `MAX_CONCURRENT_TRANSCODES` env var moved to sidecar (default 3)
+- **Removed Local Counter**: Node no longer tracks slots via AtomicUsize/TranscodeSlotGuard
+- **81 tests passing** (no regressions)
+
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
 - Full production inference engine connection (partially mocked)
@@ -736,6 +744,7 @@ describe('End-to-End Conversation', () => {
 - `DIFFUSION_SERVICE_UNAVAILABLE`: No diffusion sidecar configured (v8.16.0+)
 - `VALIDATION_FAILED`: Invalid image generation parameters (v8.16.0+)
 - `IMAGE_GENERATION_FAILED`: Sidecar generation error (v8.16.0+)
+- `TRANSCODE_CAPACITY_FULL`: All transcode slots in use — retry later (v8.27.0+)
 - `SIDECAR_UNAVAILABLE`: Transcoder sidecar not configured (v8.25.0+)
 - `SUBMIT_FAILED`: Transcoder sidecar rejected the job (v8.25.0+)
 - `TIMEOUT`: Transcoding job exceeded timeout (v8.25.0+)

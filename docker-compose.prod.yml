@@ -223,6 +223,7 @@ services:
       MEDIA_FORMATS_FILE: /config/video_formats.json
       GARBAGE_COLLECTOR_INTERVAL: ${TRANSCODER_GC_INTERVAL:-3600}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      MAX_CONCURRENT_TRANSCODES: ${MAX_CONCURRENT_TRANSCODES:-3}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8000:8000"
