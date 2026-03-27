@@ -1,0 +1,12 @@
+mod test_billing;
+mod test_capacity;
+mod test_checkpoint;
+mod test_client;
+mod test_gop_tracking;
+mod test_job_validation;
+mod test_merkle;
+mod test_proof;
+mod test_quality;
+mod test_quality_parse;
+mod test_rate_limiter;
+mod test_types;

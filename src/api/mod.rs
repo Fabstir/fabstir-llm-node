@@ -13,6 +13,7 @@ pub mod search;
 pub mod server;
 pub mod streaming;
 pub mod token_tracker;
+pub mod transcode;
 pub mod websocket;
 
 pub use describe_image::{describe_image_handler, DescribeImageRequest, DescribeImageResponse};

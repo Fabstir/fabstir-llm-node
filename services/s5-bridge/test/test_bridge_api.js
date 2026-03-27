@@ -152,6 +152,36 @@ describe('Enhanced S5.js Bridge API', () => {
     assert.ok(data.error);
   });
 
+  test('POST+PATCH /s5/upload/tus — TUS upload completes with 204', async () => {
+    const payload = Buffer.from('TUS upload test data');
+
+    // POST to create TUS upload
+    const createRes = await fetch(`${BRIDGE_URL}/s5/upload/tus`, {
+      method: 'POST',
+      headers: {
+        'Upload-Length': String(payload.length),
+        'Tus-Resumable': '1.0.0',
+      },
+    });
+    assert.strictEqual(createRes.status, 201);
+    const location = createRes.headers.get('location');
+    assert.ok(location, 'Location header must be present');
+
+    const uploadId = location.split('/').pop();
+
+    // PATCH to send the data
+    const patchRes = await fetch(`${BRIDGE_URL}/s5/upload/tus/${uploadId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/offset+octet-stream',
+        'Upload-Offset': '0',
+        'Tus-Resumable': '1.0.0',
+      },
+      body: payload,
+    });
+    assert.strictEqual(patchRes.status, 204, 'PATCH should return 204 (not 500)');
+  });
+
   after(async () => {
     // Cleanup: Try to delete test file
     try {

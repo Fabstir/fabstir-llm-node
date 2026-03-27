@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.24.0-tx-queue-2026-03-11";
+pub const VERSION: &str = "v8.27.0-sidecar-capacity-2026-03-22";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.24.0";
+pub const VERSION_NUMBER: &str = "8.27.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 24;
+pub const VERSION_MINOR: u32 = 27;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-03-11";
+pub const BUILD_DATE: &str = "2026-03-22";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -276,6 +276,33 @@ pub const FEATURES: &[&str] = &[
     "tx-queue",
     "nonce-collision-prevention",
     "per-chain-fifo-queue",
+    // Transcoder sidecar (v8.25.0)
+    "transcoder-sidecar",
+    "video-audio-transcoding",
+    "transcoder-rest-client",
+    "transcoder-jwt-auth",
+    "transcoder-billing",
+    "transcoder-rate-limiter",
+    "websocket-transcode-handler",
+    "transcode-progress-streaming",
+    "http-transcode-endpoints",
+    "docker-transcoder-sidecar",
+    // Transcoding trustless verification (v8.26.0)
+    "transcoding-quality-metrics",
+    "transcoding-gop-proofs",
+    "transcoding-merkle-tree",
+    "transcoding-proof-checkpoints",
+    "transcoding-job-validation",
+    // Proof pipeline wired (v8.26.1)
+    "proof-pipeline-wired",
+    // Encrypted transcode source (v8.26.2)
+    "encrypted-transcode-source",
+    // Trim percent passthrough (v8.26.3)
+    "trim-percent-passthrough",
+    // Transcode capacity reporting & admission control (v8.26.4)
+    "transcode-capacity",
+    // Sidecar-based capacity tracking (v8.27.0)
+    "sidecar-capacity",
 ];
 
 /// Supported chain IDs
@@ -286,6 +313,45 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.27.0 - Sidecar Capacity Integration (Mar 22, 2026)
+    "FEAT: Real sidecar status via GET /status — replaces local atomic counter",
+    "FEAT: CachedSidecarStatus with 2s TTL and stale-on-error fallback",
+    "FEAT: /v1/transcode/capacity returns queued_jobs from sidecar",
+    "FEAT: MAX_CONCURRENT_TRANSCODES moved to sidecar env (docker-compose)",
+    "BREAKING: Removed TranscodeSlotGuard, try_acquire/release_transcode_slot, has_transcode_capacity",
+    // v8.26.4 - Transcode Capacity Reporting (Mar 21, 2026)
+    "FEAT: GET /v1/transcode/capacity endpoint for SDK host selection and load balancing",
+    "FEAT: TRANSCODE_CAPACITY_FULL error code when all NVENC slots in use (WS + HTTP)",
+    "FEAT: MAX_CONCURRENT_TRANSCODES env var (default 3) for GPU session limit",
+    "FEAT: RAII TranscodeSlotGuard ensures slot release on task completion, error, or panic",
+    // v8.26.3 - Trim Percent Passthrough (Mar 21, 2026)
+    "FEAT: VideoFormat.trim_percent field passes through to transcoder sidecar for preview trimming",
+    // v8.26.2 - Encrypted Transcode Source (Mar 21, 2026)
+    "FIX: S5 bridge /api/locations/:hash now uses Host header instead of hardcoded localhost",
+    "FEAT: S5 bridge GET /s5/download/:hash route for raw base64url hash blob download",
+    // v8.26.1 - Proof Pipeline Wired (Mar 19, 2026)
+    "FEAT: proofTreeCID and proofTreeRootHash populated in transcode_complete when jobId provided",
+    "FEAT: STARK proof generated, Merkle tree built and uploaded to S5 on transcode completion",
+    // v8.26.0 - Transcoding Trustless Verification (Mar 19, 2026)
+    "FEAT: Quality metrics (PSNR/SSIM) parsing from ffmpeg for transcode verification",
+    "FEAT: GOP-level progress tracking with estimated GOP counts in progress messages",
+    "FEAT: Keccak256 Merkle tree over GOP proofs for cryptographic verification",
+    "FEAT: GOP proof builder with Risc0 STARK integration (reuses 4-hash witness)",
+    "FEAT: Transcoding checkpoint submission with billing token conversion",
+    "FEAT: Format spec hashing for contract-compatible modelId generation",
+    "FEAT: Sidecar cancel endpoint support for transcode cancellation",
+    "FEAT: isEncrypted default changed from false to true for transcoding",
+    "FEAT: transcode_complete message now includes proofTreeCID, proofTreeRootHash, qualityMetrics fields",
+    "FEAT: transcode_progress message now includes gopInfo when duration is known",
+    // v8.25.0 - Transcoder Sidecar Integration (Mar 19, 2026)
+    "FEAT: Transcoder sidecar integration for video/audio transcoding via REST API",
+    "FEAT: TranscoderClient with JWT auth, submit/poll, health check",
+    "FEAT: Transcoding billing (duration × resolution × codec × encryption factors)",
+    "FEAT: Per-session transcoding rate limiter (default 3 per 5-min window)",
+    "FEAT: WebSocket transcode handler with background progress streaming via mpsc + tokio::select!",
+    "FEAT: POST /v1/transcode and GET /v1/transcode/:task_id HTTP endpoints",
+    "FEAT: Docker transcoder-sidecar service in docker-compose.prod.yml",
+    "FEAT: TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_JWT env vars (pre-shared JWT token)",
     // v8.24.0 - Sequential Transaction Queue (Mar 11, 2026)
     "FEAT: Per-chain FIFO transaction queue prevents nonce collisions across checkpoint/settlement/registration",
     "FEAT: Automatic nonce retry with exponential backoff for transient nonce errors",
@@ -643,10 +709,33 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 24);
+        assert_eq!(VERSION_MINOR, 27);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.27.0 sidecar capacity
+        assert!(FEATURES.contains(&"sidecar-capacity"));
+        // v8.26.4 transcode capacity
+        assert!(FEATURES.contains(&"transcode-capacity"));
+        // v8.26.3 trim percent passthrough
+        assert!(FEATURES.contains(&"trim-percent-passthrough"));
+        // v8.26.2 encrypted transcode source
+        assert!(FEATURES.contains(&"encrypted-transcode-source"));
+        // v8.26.1 proof pipeline wired
+        assert!(FEATURES.contains(&"proof-pipeline-wired"));
+        // v8.26.0 transcoder-trustless
+        assert!(FEATURES.contains(&"transcoding-quality-metrics"));
+        assert!(FEATURES.contains(&"transcoding-gop-proofs"));
+        assert!(FEATURES.contains(&"transcoding-merkle-tree"));
+        assert!(FEATURES.contains(&"transcoding-proof-checkpoints"));
+        assert!(FEATURES.contains(&"transcoding-job-validation"));
+        // v8.25.0 transcoder-sidecar
+        assert!(FEATURES.contains(&"transcoder-sidecar"));
+        assert!(FEATURES.contains(&"video-audio-transcoding"));
+        assert!(FEATURES.contains(&"transcoder-rest-client"));
+        assert!(FEATURES.contains(&"transcoder-billing"));
+        assert!(FEATURES.contains(&"websocket-transcode-handler"));
+        assert!(FEATURES.contains(&"http-transcode-endpoints"));
         // v8.24.0 tx-queue
         assert!(FEATURES.contains(&"tx-queue"));
         assert!(FEATURES.contains(&"nonce-collision-prevention"));
@@ -757,15 +846,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.24.0"));
-        assert!(version.contains("2026-03-11"));
+        assert!(version.contains("8.27.0"));
+        assert!(version.contains("2026-03-22"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.24.0-tx-queue-2026-03-11");
-        assert_eq!(VERSION_NUMBER, "8.24.0");
-        assert_eq!(BUILD_DATE, "2026-03-11");
+        assert_eq!(VERSION, "v8.27.0-sidecar-capacity-2026-03-22");
+        assert_eq!(VERSION_NUMBER, "8.27.0");
+        assert_eq!(BUILD_DATE, "2026-03-22");
     }
 
     #[test]
