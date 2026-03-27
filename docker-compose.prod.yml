@@ -106,6 +106,10 @@ services:
       # Defaults to true when DIFFUSION_ENDPOINT is set; override with false to disable
       AUTO_IMAGE_ROUTING: ${AUTO_IMAGE_ROUTING:-}
 
+      # Optional: Transcoder sidecar for video/audio transcoding (v8.25.0+)
+      TRANSCODER_ENDPOINT: ${TRANSCODER_ENDPOINT:-http://transcoder-sidecar:8000}
+      FABSTIR_TRANSCODER_JWT: ${FABSTIR_TRANSCODER_JWT:-}
+
     volumes:
       # Mount model directory
       - ${MODELS_DIR:-./models}:/app/models:ro
@@ -191,7 +195,55 @@ services:
     networks:
       - fabstir-network
 
+  # Transcoder Sidecar (optional - for video/audio transcoding, v8.25.0+)
+  # Uses ffmpeg + NVIDIA GPU (NVENC). Runs alongside LLM inference since
+  # NVENC encoder uses separate silicon from CUDA compute cores.
+  # To disable: set TRANSCODER_ENDPOINT= (empty) in .env or stop this service
+  transcoder-sidecar:
+    image: ewr.vultrcr.com/fabstir/transcoder:${TRANSCODER_TAG:-latest}
+    # For local dev, uncomment and comment out image above:
+    # build:
+    #   context: ../fabstir-transcoder
+    #   dockerfile: Dockerfile
+    container_name: transcoder-sidecar
+    restart: unless-stopped
+    runtime: nvidia
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /app/cache/sources /app/cache/transcoded && exec ./transcode-server"]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${TRANSCODER_GPU:-all}
+      FABSTIR_TRANSCODER_SECRET_KEY: ${FABSTIR_TRANSCODER_SECRET_KEY:?FABSTIR_TRANSCODER_SECRET_KEY is required}
+      FABSTIR_TRANSCODER_JWT: ${FABSTIR_TRANSCODER_JWT:?FABSTIR_TRANSCODER_JWT is required}
+      PORTAL_URL: ${TRANSCODER_S5_URL:-http://s5-bridge:5522}
+      PORTAL_ENCRYPT_URL: ${TRANSCODER_S5_ENCRYPT_URL:-http://s5-bridge:5522}
+      TOKEN: ${S5_TOKEN:-unused}
+      FILE_SIZE_THRESHOLD: ${TRANSCODER_MAX_FILE_SIZE:-1000000000}
+      TRANSCODED_FILE_SIZE_THRESHOLD: ${TRANSCODER_MAX_TRANSCODED_SIZE:-1000000000}
+      PATH_TO_FILE: /app/cache/sources
+      PATH_TO_TRANSCODED_FILE: /app/cache/transcoded
+      MEDIA_FORMATS_FILE: /config/video_formats.json
+      GARBAGE_COLLECTOR_INTERVAL: ${TRANSCODER_GC_INTERVAL:-3600}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      MAX_CONCURRENT_TRANSCODES: ${MAX_CONCURRENT_TRANSCODES:-3}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    volumes:
+      - transcoder-cache:/app/cache
+      - ./config/video_formats.json:/config/video_formats.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - fabstir-network
+
 networks:
   fabstir-network:
     name: fabstir-network
     driver: bridge
+
+volumes:
+  transcoder-cache:

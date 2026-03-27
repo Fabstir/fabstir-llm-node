@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.22.4",
-  "build": "v8.22.4-glm4-disable-auto-think-2026-03-01",
-  "date": "2026-03-01",
+  "version": "8.26.0",
+  "build": "v8.26.0-transcoder-trustless-2026-03-19",
+  "date": "2026-03-19",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -175,7 +175,22 @@ GET /v1/version
     "glm4-context-aware-system-prompt",
     "set-token-pricing",
     "per-token-erc20-pricing",
-    "token-pricing-usdc-env"
+    "token-pricing-usdc-env",
+    "transcoder-sidecar",
+    "video-audio-transcoding",
+    "transcoder-rest-client",
+    "transcoder-jwt-auth",
+    "transcoder-billing",
+    "transcoder-rate-limiter",
+    "websocket-transcode-handler",
+    "transcode-progress-streaming",
+    "http-transcode-endpoints",
+    "docker-transcoder-sidecar",
+    "transcoding-quality-metrics",
+    "transcoding-gop-proofs",
+    "transcoding-merkle-tree",
+    "transcoding-proof-checkpoints",
+    "transcoding-job-validation"
   ],
   "chains": [84532, 5611],
   "breaking_changes": [
@@ -214,6 +229,15 @@ GET /v1/version
     "FEAT: Harmony maps thinking to Reasoning: none/low/medium/high in system prompt (v8.17.0)",
     "FEAT: GLM-4 maps thinking to /think or /no_think prefix (v8.17.0)",
     "FIX: Dispute window now queried from contract disputeWindow() at startup (v8.17.5)",
+    "FEAT: Transcoder sidecar integration for video/audio transcoding via REST API (v8.25.0)",
+    "FEAT: POST /v1/transcode and GET /v1/transcode/:task_id HTTP endpoints (v8.25.0)",
+    "FEAT: Encrypted WebSocket transcoding with progress streaming via action: transcode (v8.25.0)",
+    "FEAT: Transcoding billing (duration x resolution x codec x encryption factors) (v8.25.0)",
+    "FEAT: Per-session transcoding rate limiter (3 per 5-min window) (v8.25.0)",
+    "FEAT: TRANSCODER_ENDPOINT and FABSTIR_TRANSCODER_JWT env vars (v8.25.0)",
+    "FEAT: Transcoding trustless verification with quality metrics, GOP proofs, Merkle tree (v8.26.0)",
+    "FEAT: isEncrypted default changed from false to true for transcoding (v8.26.0)",
+    "FEAT: transcode_progress gains gopInfo field; transcode_complete gains proofTreeCID, proofTreeRootHash, qualityMetrics (v8.26.0)",
     "FIX: GLM-4 default system prompt now context-aware for RAG (v8.17.6)",
     "CONTRACT: JobMarketplace fresh proxy 0xD067...adA4 (v8.17.4)",
     "FEAT: Node calls setTokenPricing(USDC, price) after registerNode() (v8.18.0, F202614977)",
@@ -1615,6 +1639,158 @@ generationUnits = (width * height / 1,048,576) * (steps / 20) * modelMultiplier
 
 ---
 
+### Video/Audio Transcoding (v8.25.0+)
+
+**Status**: Production Ready
+**Feature**: Video/audio transcoding via ffmpeg + NVIDIA NVENC transcoder sidecar
+
+Transcode video and audio files to multiple formats/resolutions. Source files are referenced by S5/IPFS CID; outputs are stored back to S5. For production use, prefer the [encrypted WebSocket transport](./WEBSOCKET_API_SDK_GUIDE.md#videoaudio-transcoding-over-encrypted-websocket-v8250) which provides progress streaming and E2E encryption. The HTTP endpoints are for testing only.
+
+#### Submit Transcode Job
+
+```http
+POST /v1/transcode
+Content-Type: application/json
+```
+
+```json
+{
+  "sourceCid": "uEiBkxyz...",
+  "mediaFormats": [
+    {
+      "id": 1, "ext": "mp4", "label": "1080p", "type": "video",
+      "vcodec": "h264_nvenc", "acodec": "aac", "preset": "fast",
+      "vf": "scale=1920x1080", "b_v": "5M", "ar": "48k", "ch": 2,
+      "dest": "s5", "encrypt": true
+    },
+    {
+      "id": 2, "ext": "mp4", "label": "preview",
+      "vcodec": "h264_nvenc", "acodec": "aac", "preset": "fast",
+      "vf": "scale=1280x720", "b_v": "2M", "ar": "48k", "ch": 2,
+      "dest": "s5", "encrypt": false, "trim_percent": 20
+    }
+  ],
+  "isEncrypted": true,
+  "isGpu": true
+}
+```
+
+#### Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `sourceCid` | String | Yes | - | S5/IPFS CID of the source video |
+| `mediaFormats` | Array | Yes | - | Array of VideoFormat objects (at least 1) |
+| `isEncrypted` | Boolean | No | true | Encrypt transcoded outputs |
+| `isGpu` | Boolean | No | true | Use GPU acceleration (NVENC) |
+| `chainId` | Integer | No | 84532 | Blockchain network ID for billing context |
+| `sessionId` | String | No | - | Session ID for rate limiting tracking |
+| `jobId` | Integer | No | - | Job ID for billing integration |
+
+#### Response
+
+```json
+{
+  "taskId": "abc-123-def",
+  "status": "accepted",
+  "message": "ok"
+}
+```
+
+#### Check Transcode Status
+
+```http
+GET /v1/transcode/:task_id
+```
+
+```json
+{
+  "taskId": "abc-123-def",
+  "progress": 100,
+  "status": "completed",
+  "outputs": [
+    {"id": 1, "ext": "mp4", "cid": "uEiBk...", "vcodec": "h264_nvenc"}
+  ],
+  "duration": 120.5
+}
+```
+
+#### Status Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `taskId` | String | Unique task identifier |
+| `progress` | Integer | Progress 0-100 |
+| `status` | String | `"in_progress"` or `"completed"` |
+| `outputs` | Array | Present when completed — format metadata with CIDs |
+| `duration` | Float | Source video duration in seconds |
+
+#### Billing Formula
+
+```
+billingUnits = duration × resolutionFactor × codecFactor × encryptionFactor
+tokens = ceil(billingUnits × 1000)
+```
+
+Resolution factors: ≤480p = 0.25×, ≤720p = 0.5×, ≤1080p = 1.0×, >1080p = 2.0×.
+Codec factors: H.264 = 1.0×, HEVC = 1.2×, AV1 = 1.5×. Encryption: +10%.
+
+#### Check Transcode Capacity (v8.27.0+)
+
+```http
+GET /v1/transcode/capacity
+```
+
+Returns real-time capacity from the transcoder sidecar's `GET /status` endpoint (cached for 2 seconds).
+
+```json
+{
+  "active": 1,
+  "max": 3,
+  "queued": 0,
+  "available": 2,
+  "sidecarConnected": true
+}
+```
+
+When the sidecar is unreachable or not configured:
+
+```json
+{
+  "active": 0,
+  "max": 0,
+  "queued": 0,
+  "available": 0,
+  "sidecarConnected": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `active` | Integer | Currently running transcode jobs on sidecar |
+| `max` | Integer | Maximum concurrent jobs (sidecar's `MAX_CONCURRENT_TRANSCODES`) |
+| `queued` | Integer | Jobs queued in sidecar waiting for a slot |
+| `available` | Integer | `max - active` (slots available) |
+| `sidecarConnected` | Boolean | Whether the sidecar responded to the status query |
+
+#### Status Codes
+
+- `200 OK` - Job submitted or status/capacity returned
+- `400 Bad Request` - Empty `sourceCid` or `mediaFormats`
+- `429 Too Many Requests` - Sidecar capacity full (`TRANSCODE_CAPACITY_FULL`)
+- `502 Bad Gateway` - Transcoder sidecar error
+- `503 Service Unavailable` - Transcoder sidecar not configured
+
+#### Performance Notes
+
+- Transcoding is long-running (seconds to minutes depending on file size)
+- NVENC encoder uses separate silicon from CUDA compute cores (concurrent with LLM inference)
+- Rate limited to 3 requests per 5-minute window per session (WebSocket only; configurable via `TRANSCODE_RATE_LIMIT`)
+- Default polling interval: 2s, timeout: 30 min (configurable via `TRANSCODE_POLL_INTERVAL_MS`, `TRANSCODE_TIMEOUT_SECONDS`)
+- For the full SDK integration guide with VideoFormat spec, format presets, and progress streaming, see [SDK Transcoding Integration Guide](./sdk-reference/SDK_TRANSCODING_INTEGRATION.md)
+
+---
+
 ### Web Search (v8.7.0+)
 
 **Status**: Production Ready
@@ -2427,6 +2603,12 @@ The server maintains conversation context in memory during active sessions:
 | `searchStarted` | Server → Client | Search started acknowledgment (v8.7.0+) |
 | `searchResults` | Server → Client | Search results (v8.7.0+) |
 | `searchError` | Server → Client | Search error (v8.7.0+) |
+| `encrypted_message` (action: `transcode`) | Client → Server | Submit transcoding job (v8.25.0+) |
+| `transcode_cancel` | Client → Server | Cancel transcoding progress stream (v8.25.0+) |
+| `encrypted_response` (type: `transcode_accepted`) | Server → Client | Transcode job accepted (v8.25.0+) |
+| `encrypted_response` (type: `transcode_progress`) | Server → Client | Transcode progress update (v8.25.0+, gopInfo added v8.26.0) |
+| `encrypted_response` (type: `transcode_complete`) | Server → Client | Transcode completed with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0) |
+| `encrypted_response` (type: `transcode_error`) | Server → Client | Transcode error (v8.25.0+) |
 
 #### Web Search Messages (v8.7.0+)
 
@@ -4776,7 +4958,38 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v8.7.5** (Current) - Streaming Web Search Support (January 2026)
+- **v8.27.0** (Current) - Sidecar Capacity Integration (March 2026)
+  - `GET /v1/transcode/capacity` returns real sidecar status (`active`, `max`, `queued`, `available`)
+  - Capacity checks query sidecar `GET /status` instead of local atomic counter
+  - Cached sidecar status with 2-second TTL and stale-on-error fallback
+  - `429 TRANSCODE_CAPACITY_FULL` when sidecar reports no available slots
+  - `MAX_CONCURRENT_TRANSCODES` env var moved from node to sidecar (docker-compose)
+  - HTTP handler returns 503 before 429 (sidecar availability checked first)
+
+- **v8.26.0** - Transcoding Trustless Verification (March 2026)
+  - Quality metrics (PSNR/SSIM) parsing from ffmpeg for transcode verification
+  - GOP-level progress tracking (`gopInfo` in `transcode_progress` messages)
+  - Keccak256 Merkle tree over GOP proofs
+  - GOP proof builder with Risc0 STARK integration (reuses 4-hash witness)
+  - Transcoding checkpoint submission with billing token conversion
+  - Format spec hashing for contract-compatible `modelId` generation
+  - Sidecar cancel endpoint support
+  - `isEncrypted` default changed from `false` to `true`
+  - `transcode_complete` gains `proofTreeCID`, `proofTreeRootHash`, `qualityMetrics`
+  - 81 tests (71 transcoder + 10 API), 0 regressions
+
+- **v8.25.0** - Transcoder Sidecar Integration (March 2026)
+  - Video/audio transcoding via ffmpeg + NVIDIA NVENC transcoder sidecar
+  - `POST /v1/transcode` and `GET /v1/transcode/:task_id` HTTP endpoints
+  - Encrypted WebSocket transcoding with `"action": "transcode"` routing
+  - Real-time progress streaming (`transcode_accepted` → `transcode_progress` → `transcode_complete`)
+  - Billing: `duration × resolution × codec × encryption` formula
+  - Per-session rate limiting (3 per 5-min sliding window)
+  - Pre-shared JWT auth via `FABSTIR_TRANSCODER_JWT` env var
+  - Docker Compose wiring for sidecar service
+  - 41 new tests (31 transcoder unit + 10 API handler), 0 regressions
+
+- **v8.7.5** - Streaming Web Search Support (January 2026)
 - **v8.7.4** - Host-Side Web Search, DuckDuckGo User-Agent fix (January 2026)
   - Added host-side web search for decentralized AI inference
   - `POST /v1/search` endpoint for direct web search

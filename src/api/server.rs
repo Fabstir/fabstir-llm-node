@@ -196,6 +196,10 @@ pub struct ApiServer {
     diffusion_client: Arc<RwLock<Option<Arc<crate::diffusion::DiffusionClient>>>>,
     image_gen_tracker: Arc<crate::diffusion::billing::ImageGenerationTracker>,
     image_gen_rate_limiter: Arc<crate::diffusion::ImageGenerationRateLimiter>,
+    transcoder_client: Arc<RwLock<Option<Arc<crate::transcoder::TranscoderClient>>>>,
+    transcoding_tracker: Arc<crate::transcoder::billing::TranscodingTracker>,
+    transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
+    sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     auto_image_routing: bool,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -251,6 +255,14 @@ impl ApiServer {
             diffusion_client: Arc::new(RwLock::new(None)),
             image_gen_tracker: Arc::new(crate::diffusion::billing::ImageGenerationTracker::new()),
             image_gen_rate_limiter: Arc::new(crate::diffusion::ImageGenerationRateLimiter::new(10)),
+            transcoder_client: Arc::new(RwLock::new(None)),
+            transcoding_tracker: Arc::new(crate::transcoder::billing::TranscodingTracker::new()),
+            transcoding_rate_limiter: Arc::new(
+                crate::transcoder::rate_limiter::TranscodingRateLimiter::new(3),
+            ),
+            sidecar_capacity_cache: Arc::new(
+                crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
+            ),
             auto_image_routing: false,
             session_store,
             shutdown_tx: None,
@@ -339,6 +351,19 @@ impl ApiServer {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(5),
             )),
+            transcoder_client: Arc::new(RwLock::new(None)),
+            transcoding_tracker: Arc::new(crate::transcoder::billing::TranscodingTracker::new()),
+            transcoding_rate_limiter: Arc::new(
+                crate::transcoder::rate_limiter::TranscodingRateLimiter::new(
+                    std::env::var("TRANSCODE_RATE_LIMIT")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(3),
+                ),
+            ),
+            sidecar_capacity_cache: Arc::new(
+                crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
+            ),
             auto_image_routing: match std::env::var("AUTO_IMAGE_ROUTING") {
                 Ok(v) => v == "true",
                 Err(_) => std::env::var("DIFFUSION_ENDPOINT")
@@ -402,6 +427,10 @@ impl ApiServer {
             diffusion_client: self.diffusion_client.clone(),
             image_gen_tracker: self.image_gen_tracker.clone(),
             image_gen_rate_limiter: self.image_gen_rate_limiter.clone(),
+            transcoder_client: self.transcoder_client.clone(),
+            transcoding_tracker: self.transcoding_tracker.clone(),
+            transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
+            sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             auto_image_routing: self.auto_image_routing,
             session_store: self.session_store.clone(),
             shutdown_tx: None,
@@ -478,6 +507,42 @@ impl ApiServer {
     /// Get the image generation billing tracker (v8.16.0+)
     pub fn image_gen_tracker(&self) -> &crate::diffusion::billing::ImageGenerationTracker {
         &self.image_gen_tracker
+    }
+
+    /// Set the transcoder client (v8.25.0+)
+    pub async fn set_transcoder_client(&self, client: Arc<crate::transcoder::TranscoderClient>) {
+        *self.transcoder_client.write().await = Some(client);
+    }
+
+    /// Get the transcoder client
+    pub async fn get_transcoder_client(&self) -> Option<Arc<crate::transcoder::TranscoderClient>> {
+        self.transcoder_client.read().await.clone()
+    }
+
+    /// Get the transcoding rate limiter (v8.25.0+)
+    pub fn transcoding_rate_limiter(
+        &self,
+    ) -> &crate::transcoder::rate_limiter::TranscodingRateLimiter {
+        &self.transcoding_rate_limiter
+    }
+
+    /// Get the transcoding billing tracker (v8.25.0+)
+    pub fn transcoding_tracker(&self) -> &crate::transcoder::billing::TranscodingTracker {
+        &self.transcoding_tracker
+    }
+
+    pub async fn has_sidecar_capacity(&self) -> bool {
+        match self.get_transcoder_client().await {
+            Some(client) => self.sidecar_capacity_cache.has_capacity(&client).await,
+            None => false,
+        }
+    }
+
+    pub async fn get_sidecar_status(&self) -> Option<crate::transcoder::types::SidecarStatus> {
+        match self.get_transcoder_client().await {
+            Some(client) => self.sidecar_capacity_cache.get_or_fetch(&client).await,
+            None => None,
+        }
     }
 
     /// Get the session key store for encryption/decryption operations
@@ -1208,6 +1273,15 @@ impl ApiServer {
             .route("/v1/embed", post(embed_handler_wrapper))
             .route("/v1/search", post(search_handler_wrapper))
             .route("/v1/images/generate", post(generate_image_handler_wrapper))
+            .route(
+                "/v1/transcode",
+                post(crate::api::transcode::handler::transcode_submit_handler),
+            )
+            .route("/v1/transcode/capacity", get(transcode_capacity_handler))
+            .route(
+                "/v1/transcode/:task_id",
+                get(crate::api::transcode::handler::transcode_status_handler),
+            )
             .nest("/v1", vision_routes)
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
@@ -1219,6 +1293,25 @@ impl ApiServer {
 // Handler functions as free functions
 async fn health_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
     axum::response::Json(server.health_check().await)
+}
+
+async fn transcode_capacity_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    match server.get_sidecar_status().await {
+        Some(status) => axum::response::Json(serde_json::json!({
+            "active": status.active_jobs,
+            "max": status.max_concurrent,
+            "queued": status.queued_jobs,
+            "available": status.available(),
+            "sidecarConnected": true,
+        })),
+        None => axum::response::Json(serde_json::json!({
+            "active": 0,
+            "max": 0,
+            "queued": 0,
+            "available": 0,
+            "sidecarConnected": false,
+        })),
+    }
 }
 
 async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
@@ -1370,6 +1463,7 @@ async fn embed_handler_wrapper(
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
         diffusion_client: server.diffusion_client.clone(),
+        transcoder_client: server.transcoder_client.clone(),
     };
 
     // Call the actual embed_handler
@@ -1403,6 +1497,7 @@ async fn ocr_handler_wrapper(
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
         diffusion_client: server.diffusion_client.clone(),
+        transcoder_client: server.transcoder_client.clone(),
     };
 
     // Call the actual ocr_handler
@@ -1436,6 +1531,7 @@ async fn describe_image_handler_wrapper(
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
         diffusion_client: server.diffusion_client.clone(),
+        transcoder_client: server.transcoder_client.clone(),
     };
 
     // Call the actual describe_image_handler
@@ -1469,6 +1565,7 @@ async fn search_handler_wrapper(
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
         diffusion_client: server.diffusion_client.clone(),
+        transcoder_client: server.transcoder_client.clone(),
     };
 
     // Call the actual search_handler
@@ -1502,6 +1599,7 @@ async fn generate_image_handler_wrapper(
         vision_model_manager: server.vision_model_manager.clone(),
         search_service: server.search_service.clone(),
         diffusion_client: server.diffusion_client.clone(),
+        transcoder_client: server.transcoder_client.clone(),
     };
 
     // Call the actual generate_image_handler
@@ -2271,6 +2369,97 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         json_msg.get("id"),
                                                                     ).await;
                                                                     let _ = ws_sender.send(axum::extract::ws::Message::Text(response_msg.to_string())).await;
+                                                                    continue;
+                                                                }
+
+                                                                // Transcoding routing (v8.25.0+)
+                                                                if decrypted_json
+                                                                    .get("action")
+                                                                    .and_then(|v| v.as_str())
+                                                                    == Some("transcode")
+                                                                {
+                                                                    info!("Routing encrypted message to transcode handler");
+                                                                    let (ack, progress_task) = crate::api::websocket::handlers::transcode::handle_encrypted_transcode(
+                                                                        &server,
+                                                                        &decrypted_json,
+                                                                        &session_key,
+                                                                        current_session_id.as_deref().unwrap_or("unknown"),
+                                                                        job_id,
+                                                                        json_msg.get("id"),
+                                                                    ).await;
+                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(ack.to_string())).await;
+
+                                                                    // If a progress task was returned, spawn it and stream progress
+                                                                    if let Some(task) =
+                                                                        progress_task
+                                                                    {
+                                                                        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<serde_json::Value>(32);
+                                                                        let tc = server
+                                                                            .get_transcoder_client()
+                                                                            .await
+                                                                            .unwrap();
+                                                                        let cancel_task_id =
+                                                                            task.task_id.clone();
+                                                                        let cancel_tc = tc.clone();
+                                                                        let server_arc =
+                                                                            server.clone();
+                                                                        // Clone formats from decrypted_json for the background task
+                                                                        let formats: Vec<crate::transcoder::VideoFormat> = decrypted_json.get("mediaFormats")
+                                                                            .and_then(|v| serde_json::from_value(v.clone()).ok())
+                                                                            .unwrap_or_default();
+                                                                        let is_encrypted_flag =
+                                                                            decrypted_json
+                                                                                .get("isEncrypted")
+                                                                                .and_then(|v| {
+                                                                                    v.as_bool()
+                                                                                })
+                                                                                .unwrap_or(true);
+
+                                                                        task.spawn(
+                                                                            tc,
+                                                                            session_key,
+                                                                            current_session_id
+                                                                                .clone()
+                                                                                .unwrap_or_default(
+                                                                                ),
+                                                                            job_id,
+                                                                            server_arc,
+                                                                            progress_tx,
+                                                                            formats,
+                                                                            is_encrypted_flag,
+                                                                        );
+
+                                                                        // Drain progress messages until task completes
+                                                                        loop {
+                                                                            tokio::select! {
+                                                                                Some(msg) = progress_rx.recv() => {
+                                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(msg.to_string())).await;
+                                                                                }
+                                                                                ws_msg = ws_receiver.next() => {
+                                                                                    match ws_msg {
+                                                                                        Some(Ok(axum::extract::ws::Message::Text(txt))) => {
+                                                                                            // Check for cancel
+                                                                                            if let Ok(cancel_json) = serde_json::from_str::<serde_json::Value>(&txt) {
+                                                                                                if cancel_json.get("type").and_then(|v| v.as_str()) == Some("transcode_cancel") {
+                                                                                                    info!("Transcode cancel received for task {}", cancel_task_id);
+                                                                                                    // Best-effort sidecar cancel
+                                                                                                    match cancel_tc.cancel_transcode(&cancel_task_id).await {
+                                                                                                        Ok(true) => info!("Sidecar cancel acknowledged for {}", cancel_task_id),
+                                                                                                        Ok(false) => debug!("Sidecar cancel endpoint not supported for {}", cancel_task_id),
+                                                                                                        Err(e) => warn!("Sidecar cancel failed for {}: {}", cancel_task_id, e),
+                                                                                                    }
+                                                                                                    break;
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                                                        _ => {}
+                                                                                    }
+                                                                                }
+                                                                                else => break,
+                                                                            }
+                                                                        }
+                                                                    }
                                                                     continue;
                                                                 }
 

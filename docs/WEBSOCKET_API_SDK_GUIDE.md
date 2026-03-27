@@ -4,7 +4,7 @@
 
 This document describes the current state of the fabstir-llm-node WebSocket API implementation and provides guidance for SDK developers working with TypeScript/JavaScript to integrate with the node's capabilities. This covers all work completed from Sub-phase 8.7 through 8.12 in this session.
 
-## Current Implementation Status (Updated March 2026, v8.22.4)
+## Current Implementation Status (Updated March 2026, v8.26.0)
 
 ### ✅ Phase 8.18: WebSocket Integration with Main HTTP Server (COMPLETED)
 - **WebSocket endpoint now available at `/v1/ws`**
@@ -96,6 +96,33 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **`<|endoftext|>` Stop Token (v8.22.3)**: Added EOS stop token matching Ollama's GLM-4 template
 - **Sampler Reset (v8.22.1–v8.22.2)**: Sampler penalties reset after `</think>` block closes
 - **Disable Auto `/think` (v8.22.4)**: Removed auto `/think` injection for GLM-4 (see above)
+
+### ✅ Phase 8.25: Transcoder Sidecar Integration (v8.25.0)
+- **Video/Audio Transcoding**: ffmpeg + NVIDIA NVENC via transcoder sidecar
+- **End-to-End Encrypted**: Same XChaCha20-Poly1305 channel as inference and image gen
+- **Routing**: `"action": "transcode"` in decrypted JSON payload
+- **Progress Streaming**: Real-time 0-100% progress via `transcode_progress` messages
+- **Billing**: `duration × resolution × codec × encryption` formula with per-session rate limiting (3/5min)
+- **HTTP Endpoints**: `POST /v1/transcode` and `GET /v1/transcode/:task_id` for testing
+- **41 tests passing** across transcoder module + API handlers
+
+### ✅ Phase 8.26: Transcoding Trustless Verification (v8.26.0)
+- **Quality Metrics**: PSNR/SSIM parsing from ffmpeg for transcode verification
+- **GOP-Level Proofs**: Keccak256 Merkle tree over Group-of-Pictures proofs
+- **Proof Checkpoints**: Transcoding checkpoint submission with billing tokens
+- **Format Spec Hashing**: Contract-compatible modelId generation
+- **Sidecar Cancellation**: Cancel endpoint support for transcode jobs
+- **Enhanced Messages**: `gopInfo` in progress, `proofTreeCID`/`proofTreeRootHash`/`qualityMetrics` in complete
+- **isEncrypted Default**: Changed from `false` to `true`
+- **81 tests passing** (71 transcoder + 10 API)
+
+### ✅ Phase 8.27: Sidecar Capacity Integration (v8.27.0)
+- **Real Sidecar Status**: `GET /v1/transcode/capacity` returns live data from sidecar `GET /status`
+- **Cached Status**: 2-second TTL cache with stale-on-error fallback
+- **Capacity Admission**: `TRANSCODE_CAPACITY_FULL` error when sidecar has no available slots
+- **Sidecar-Owned Concurrency**: `MAX_CONCURRENT_TRANSCODES` env var moved to sidecar (default 3)
+- **Removed Local Counter**: Node no longer tracks slots via AtomicUsize/TranscodeSlotGuard
+- **81 tests passing** (no regressions)
 
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
@@ -686,6 +713,8 @@ describe('End-to-End Conversation', () => {
 - `batch_prompt`: Multiple prompts
 - `session_end`: Clean termination
 - `encrypted_message` (action: `image_generation`): Generate image over encrypted channel (v8.16.0+)
+- `encrypted_message` (action: `transcode`): Submit transcoding job over encrypted channel (v8.25.0+)
+- `transcode_cancel`: Cancel transcoding progress streaming (plaintext, v8.25.0+)
 
 ### Server → Client Messages
 - `session_ready`: Initialization complete
@@ -696,6 +725,10 @@ describe('End-to-End Conversation', () => {
 - `rate_limit`: Rate limit warning
 - `encrypted_response` (type: `image_generation_result`): Encrypted generated image (v8.16.0+)
 - `encrypted_response` (type: `image_generation_error`): Encrypted generation error (v8.16.0+)
+- `encrypted_response` (type: `transcode_accepted`): Encrypted transcode job accepted (v8.25.0+)
+- `encrypted_response` (type: `transcode_progress`): Encrypted transcode progress update (v8.25.0+, gopInfo added v8.26.0)
+- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0)
+- `encrypted_response` (type: `transcode_error`): Encrypted transcode error (v8.25.0+)
 
 ### Error Codes
 - `AUTH_FAILED`: Authentication failure
@@ -711,6 +744,11 @@ describe('End-to-End Conversation', () => {
 - `DIFFUSION_SERVICE_UNAVAILABLE`: No diffusion sidecar configured (v8.16.0+)
 - `VALIDATION_FAILED`: Invalid image generation parameters (v8.16.0+)
 - `IMAGE_GENERATION_FAILED`: Sidecar generation error (v8.16.0+)
+- `TRANSCODE_CAPACITY_FULL`: All transcode slots in use — retry later (v8.27.0+)
+- `SIDECAR_UNAVAILABLE`: Transcoder sidecar not configured (v8.25.0+)
+- `SUBMIT_FAILED`: Transcoder sidecar rejected the job (v8.25.0+)
+- `TIMEOUT`: Transcoding job exceeded timeout (v8.25.0+)
+- `POLL_FAILED`: Transcoder status polling failed (v8.25.0+)
 
 ## Thinking/Reasoning Mode (v8.17.0+)
 
@@ -835,6 +873,117 @@ ws.onmessage = (event) => {
 
 For the full SDK integration guide with TypeScript interfaces, billing formula, safety levels, and UI patterns, see [SDK Image Generation Integration Guide](./sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md).
 
+## Video/Audio Transcoding over Encrypted WebSocket (v8.25.0+)
+
+Transcoding uses the same encrypted WebSocket channel as inference and image generation. The SDK sends an `encrypted_message` containing `"action": "transcode"` in the decrypted JSON payload. Unlike image generation (single response), transcoding is **long-running** — the node streams progress updates until completion.
+
+### Prerequisites
+
+- Active encrypted session (completed `encrypted_session_init` handshake)
+- Host must have `TRANSCODER_ENDPOINT` configured (check `/v1/version` for `video-audio-transcoding` feature flag)
+
+### Sending a Transcode Request
+
+```typescript
+// 1. Build inner payload with "action" routing key
+const innerPayload = {
+  action: "transcode",           // Required: routes to transcode handler
+  sourceCid: "uEiBkxyz...",     // Required: S5/IPFS CID of source video
+  mediaFormats: [                // Required: at least one output format
+    {
+      id: 1, ext: "mp4", vcodec: "h264_nvenc", acodec: "aac",
+      vf: "scale=1920x1080", b_v: "5M", ar: "48k", ch: 2,
+      dest: "s5", encrypt: true          // Per-format encryption control
+    },
+    {                                      // Optional: preview for paywall pattern
+      id: 2, ext: "mp4", vcodec: "h264_nvenc", acodec: "aac",
+      vf: "scale=1280x720", b_v: "2M", ar: "48k", ch: 2,
+      dest: "s5", encrypt: false, trim_percent: 20
+    }
+  ],
+  isEncrypted: true,             // Optional (default: true)
+  isGpu: true,                   // Optional (default: true)
+};
+
+// 2. Encrypt with session key (same as image generation)
+const plaintext = new TextEncoder().encode(JSON.stringify(innerPayload));
+const nonce = crypto.getRandomValues(new Uint8Array(24));
+const aad = new TextEncoder().encode(`message_${messageIndex}`);
+const ciphertext = xchacha20poly1305(sessionKey, nonce).encrypt(plaintext, aad);
+
+// 3. Send as encrypted_message
+ws.send(JSON.stringify({
+  type: "encrypted_message",
+  session_id: sessionId,
+  id: `tx-${Date.now()}`,
+  payload: {
+    ciphertextHex: bytesToHex(ciphertext),
+    nonceHex: bytesToHex(nonce),
+    aadHex: bytesToHex(aad),
+  }
+}));
+```
+
+### Receiving the Response Stream
+
+The node sends multiple encrypted responses over time. All use AAD `encrypted_transcode_response`.
+
+```typescript
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === "encrypted_response") {
+    const ct = hexToBytes(msg.payload.ciphertextHex);
+    const nonce = hexToBytes(msg.payload.nonceHex);
+    const aad = hexToBytes(msg.payload.aadHex);  // "encrypted_transcode_response"
+    const decrypted = xchacha20poly1305(sessionKey, nonce).decrypt(ct, aad);
+    const inner = JSON.parse(new TextDecoder().decode(decrypted));
+
+    switch (inner.type) {
+      case "transcode_accepted":
+        console.log(`Job accepted: ${inner.taskId}`);
+        break;
+      case "transcode_progress":
+        console.log(`Progress: ${inner.progress}%`);
+        if (inner.gopInfo) {
+          console.log(`GOP: ${inner.gopInfo.currentGop}/${inner.gopInfo.totalGops}`);
+        }
+        break;
+      case "transcode_complete":
+        console.log(`Done! Outputs:`, inner.outputs);
+        console.log(`Billing: ${inner.billing.units} units`);
+        console.log(`Quality:`, inner.qualityMetrics);       // null until quality measurement wired
+        console.log(`Proof CID:`, inner.proofTreeCID);       // populated when jobId provided
+        console.log(`Proof Root:`, inner.proofTreeRootHash);  // populated when jobId provided
+        break;
+      case "transcode_error":
+        console.error(`Error: ${inner.error.code} - ${inner.error.message}`);
+        break;
+    }
+  }
+};
+```
+
+### Cancelling a Transcode
+
+Send a plaintext (not encrypted) cancel message during the progress streaming phase:
+
+```typescript
+ws.send(JSON.stringify({ type: "transcode_cancel", session_id: sessionId }));
+```
+
+### Key Differences from Image Generation
+
+| Property | Image Generation | Transcoding |
+|----------|-----------------|-------------|
+| Routing | `"action": "image_generation"` | `"action": "transcode"` |
+| Response AAD | `encrypted_image_response` | `encrypted_transcode_response` |
+| Response types | Single `image_generation_result` | Stream: `transcode_accepted` → `transcode_progress` (×N) → `transcode_complete` |
+| Rate limit | 5/min per session | 3 per 5-min window per session |
+| Duration | Seconds | Seconds to minutes |
+| Cancel | Not supported | `transcode_cancel` (plaintext) |
+
+For the full SDK integration guide with TypeScript interfaces, VideoFormat spec, billing formula, and format examples, see [SDK Transcoding Integration Guide](./sdk-reference/SDK_TRANSCODING_INTEGRATION.md).
+
 ## Host Registration & Token Pricing (v8.18.0+)
 
 As of v8.18.0, host registration is now a two-step process on-chain:
@@ -859,7 +1008,7 @@ cast send 0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22 \
 
 ---
 
-## Current Working Implementation (February 2026)
+## Current Working Implementation (March 2026)
 
 ### Simple WebSocket Connection Example
 

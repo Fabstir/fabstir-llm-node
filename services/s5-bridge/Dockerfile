@@ -10,11 +10,9 @@ RUN apk add --no-cache curl
 # Create app directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install dependencies
 COPY package*.json ./
-
-# Copy pre-installed node_modules (s5js not available on npm)
-COPY node_modules/ ./node_modules/
+RUN npm install --production
 
 # Copy application code
 COPY src/ ./src/
