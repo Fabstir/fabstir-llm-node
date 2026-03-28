@@ -220,10 +220,14 @@ impl EnhancedS5Client {
 
     // Legacy constructor for backward compatibility
     pub fn new_legacy(base_url: String) -> Result<Self> {
+        let timeout_secs = std::env::var("S5_UPLOAD_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(90);
         Self::new(S5Config {
             api_url: base_url,
             api_key: None,
-            timeout_secs: 30,
+            timeout_secs,
         })
     }
 
