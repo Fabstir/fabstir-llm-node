@@ -280,90 +280,102 @@ impl CheckpointPublisher {
     ) -> Result<String> {
         let proof_hash_hex = format!("0x{}", hex::encode(proof_hash));
 
-        // 1. Get session state and messages
-        let mut sessions = self.sessions.write().await;
-        let state = sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionCheckpointState::new);
+        // Lock is released before S5 uploads to avoid blocking other methods
+        // (e.g. set_recovery_public_key) during slow network I/O.
+        let (delta_bytes, delta_path, checkpoint_index, is_encrypted) = {
+            let mut sessions = self.sessions.write().await;
+            let state = sessions
+                .entry(session_id.to_string())
+                .or_insert_with(SessionCheckpointState::new);
 
-        let mut messages = state.get_buffered_messages();
-        let checkpoint_index = state.checkpoint_index;
+            let mut messages = state.get_buffered_messages();
+            let checkpoint_index = state.checkpoint_index;
 
-        // Phase 4.3: Include streaming response as partial message if checkpoint triggers mid-stream
-        if let Some(partial_response) = state.get_streaming_response() {
-            if !partial_response.is_empty() {
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
-                messages.push(CheckpointMessage::new_assistant(
-                    partial_response.to_string(),
-                    timestamp,
-                    true, // partial - response continues in next delta
-                ));
-                info!(
-                    "Including partial streaming response ({} chars) in checkpoint",
-                    partial_response.len()
-                );
-            }
-        }
-
-        info!(
-            "Publishing checkpoint {} for session {} ({} messages, tokens {}-{})",
-            checkpoint_index,
-            session_id,
-            messages.len(),
-            start_token,
-            end_token
-        );
-
-        // 2. Create delta and sign messages
-        let mut delta = CheckpointDelta {
-            session_id: session_id.to_string(),
-            checkpoint_index,
-            proof_hash: proof_hash_hex.clone(),
-            start_token,
-            end_token,
-            messages,
-            host_signature: String::new(), // Will be filled after signing
-        };
-
-        // Sign the messages JSON (sorted keys for SDK compatibility)
-        let messages_json = delta.compute_messages_json();
-        let delta_signature = sign_checkpoint_data(private_key, &messages_json)?;
-        delta.host_signature = delta_signature;
-
-        // 3. Conditionally encrypt delta when recovery_public_key is present
-        let is_encrypted = state.recovery_public_key.is_some();
-        let delta_bytes = if let Some(recovery_pubkey) = &state.recovery_public_key {
-            // Encrypt the delta for privacy-preserving recovery
-            let encrypted_delta = encrypt_checkpoint_delta(&delta, recovery_pubkey, private_key)
-                .map_err(|e| {
-                    error!(
-                        "📤 [CHECKPOINT] ❌ Encryption FAILED: session='{}', checkpoint={}, error={}",
-                        session_id, checkpoint_index, e
+            // Phase 4.3: Include streaming response as partial message if checkpoint triggers mid-stream
+            if let Some(partial_response) = state.get_streaming_response() {
+                if !partial_response.is_empty() {
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+                    messages.push(CheckpointMessage::new_assistant(
+                        partial_response.to_string(),
+                        timestamp,
+                        true, // partial - response continues in next delta
+                    ));
+                    info!(
+                        "Including partial streaming response ({} chars) in checkpoint",
+                        partial_response.len()
                     );
-                    anyhow!("Checkpoint encryption failed - NOT uploading: {}", e)
-                })?;
+                }
+            }
 
             info!(
-                "🔐 [CHECKPOINT] Encrypting checkpoint {} for session {} (recovery key present)",
-                checkpoint_index, session_id
+                "Publishing checkpoint {} for session {} ({} messages, tokens {}-{})",
+                checkpoint_index,
+                session_id,
+                messages.len(),
+                start_token,
+                end_token
             );
 
-            serde_json::to_vec_pretty(&encrypted_delta)
-                .map_err(|e| anyhow!("Failed to serialize encrypted delta: {}", e))?
-        } else {
-            // Legacy plaintext mode (no recovery key)
-            delta.to_json_bytes()
+            // 2. Create delta and sign messages
+            let mut delta = CheckpointDelta {
+                session_id: session_id.to_string(),
+                checkpoint_index,
+                proof_hash: proof_hash_hex.clone(),
+                start_token,
+                end_token,
+                messages,
+                host_signature: String::new(), // Will be filled after signing
+            };
+
+            // Sign the messages JSON (sorted keys for SDK compatibility)
+            let messages_json = delta.compute_messages_json();
+            let delta_signature = sign_checkpoint_data(private_key, &messages_json)?;
+            delta.host_signature = delta_signature;
+
+            // 3. Conditionally encrypt delta when recovery_public_key is present
+            let is_encrypted = state.recovery_public_key.is_some();
+            let delta_bytes = if let Some(recovery_pubkey) = &state.recovery_public_key {
+                // Encrypt the delta for privacy-preserving recovery
+                let encrypted_delta =
+                    encrypt_checkpoint_delta(&delta, recovery_pubkey, private_key).map_err(
+                        |e| {
+                            error!(
+                            "📤 [CHECKPOINT] ❌ Encryption FAILED: session='{}', checkpoint={}, error={}",
+                            session_id, checkpoint_index, e
+                        );
+                            anyhow!("Checkpoint encryption failed - NOT uploading: {}", e)
+                        },
+                    )?;
+
+                info!(
+                    "🔐 [CHECKPOINT] Encrypting checkpoint {} for session {} (recovery key present)",
+                    checkpoint_index, session_id
+                );
+
+                serde_json::to_vec_pretty(&encrypted_delta)
+                    .map_err(|e| anyhow!("Failed to serialize encrypted delta: {}", e))?
+            } else {
+                // Legacy plaintext mode (no recovery key)
+                delta.to_json_bytes()
+            };
+
+            let delta_path = format!(
+                "home/checkpoints/{}/{}/delta_{}.json",
+                self.host_address, session_id, checkpoint_index
+            );
+
+            // Update state before uploads (buffer content is captured in delta_bytes)
+            state.clear_buffer();
+            state.increment_checkpoint_index();
+            state.last_checkpoint_tokens = end_token;
+
+            (delta_bytes, delta_path, checkpoint_index, is_encrypted)
         };
 
-        // 4. Upload delta to S5 (with retry)
-        let delta_path = format!(
-            "home/checkpoints/{}/{}/delta_{}.json",
-            self.host_address, session_id, checkpoint_index
-        );
-
+        // Upload delta to S5 (lock released — slow, 5-120s)
         info!(
             "📤 [CHECKPOINT] Uploading delta: session='{}', checkpoint={}, path='{}', size={} bytes, encrypted={}",
             session_id, checkpoint_index, delta_path, delta_bytes.len(), is_encrypted
@@ -393,39 +405,46 @@ impl CheckpointPublisher {
             delta_cid_raw.len()
         );
 
-        // 5. Update checkpoint index
-        let index = state.index.get_or_insert_with(|| {
-            CheckpointIndex::new(session_id.to_string(), self.host_address.clone())
-        });
+        // Re-acquire lock briefly to update index with upload results
+        let (index_path, index_bytes) = {
+            let mut sessions = self.sessions.write().await;
+            let state = sessions
+                .get_mut(session_id)
+                .expect("session must exist from phase 1");
 
-        // Use encrypted constructor when encryption is enabled
-        let entry = if is_encrypted {
-            CheckpointEntry::new_encrypted(
-                checkpoint_index,
-                proof_hash_hex,
-                delta_cid_raw.clone(),
-                start_token,
-                end_token,
-            )
-        } else {
-            CheckpointEntry::new(
-                checkpoint_index,
-                proof_hash_hex,
-                delta_cid_raw.clone(),
-                start_token,
-                end_token,
-            )
+            let index = state.index.get_or_insert_with(|| {
+                CheckpointIndex::new(session_id.to_string(), self.host_address.clone())
+            });
+
+            let entry = if is_encrypted {
+                CheckpointEntry::new_encrypted(
+                    checkpoint_index,
+                    proof_hash_hex,
+                    delta_cid_raw.clone(),
+                    start_token,
+                    end_token,
+                )
+            } else {
+                CheckpointEntry::new(
+                    checkpoint_index,
+                    proof_hash_hex,
+                    delta_cid_raw.clone(),
+                    start_token,
+                    end_token,
+                )
+            };
+            index.add_checkpoint(entry);
+
+            let checkpoints_json = index.compute_checkpoints_json();
+            let index_signature = sign_checkpoint_data(private_key, &checkpoints_json)?;
+            index.host_signature = index_signature;
+
+            let index_path = CheckpointIndex::s5_path(&self.host_address, session_id);
+            let index_bytes = index.to_json_bytes();
+            (index_path, index_bytes)
         };
-        index.add_checkpoint(entry);
 
-        // 5. Sign and upload index
-        let checkpoints_json = index.compute_checkpoints_json();
-        let index_signature = sign_checkpoint_data(private_key, &checkpoints_json)?;
-        index.host_signature = index_signature;
-
-        let index_path = CheckpointIndex::s5_path(&self.host_address, session_id);
-        let index_bytes = index.to_json_bytes();
-
+        // Upload index to S5 (lock released — slow)
         upload_with_retry(s5_storage, &index_path, index_bytes)
             .await
             .map_err(|e| {
@@ -437,11 +456,6 @@ impl CheckpointPublisher {
             })?;
 
         info!("Index uploaded to {}", index_path);
-
-        // 6. Update state for next checkpoint
-        state.clear_buffer();
-        state.increment_checkpoint_index();
-        state.last_checkpoint_tokens = end_token;
 
         Ok(delta_cid_raw)
     }

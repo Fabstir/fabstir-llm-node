@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.27.0-sidecar-capacity-2026-03-22";
+pub const VERSION: &str = "v8.27.1-checkpoint-lock-fix-2026-03-27";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.27.0";
+pub const VERSION_NUMBER: &str = "8.27.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 27;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-03-22";
+pub const BUILD_DATE: &str = "2026-03-27";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -303,6 +303,8 @@ pub const FEATURES: &[&str] = &[
     "transcode-capacity",
     // Sidecar-based capacity tracking (v8.27.0)
     "sidecar-capacity",
+    // Checkpoint lock contention fix (v8.27.1)
+    "checkpoint-lock-split",
 ];
 
 /// Supported chain IDs
@@ -313,6 +315,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.27.1 - Checkpoint Lock Contention Fix (Mar 27, 2026)
+    "FIX: publish_checkpoint() no longer holds write lock during S5 uploads",
+    "FIX: set_recovery_public_key() no longer blocked by concurrent checkpoint uploads",
+    "FIX: session_init_ack timeout during orchestration synthesise phase resolved",
     // v8.27.0 - Sidecar Capacity Integration (Mar 22, 2026)
     "FEAT: Real sidecar status via GET /status — replaces local atomic counter",
     "FEAT: CachedSidecarStatus with 2s TTL and stale-on-error fallback",
@@ -710,9 +716,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 27);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.27.1 checkpoint lock fix
+        assert!(FEATURES.contains(&"checkpoint-lock-split"));
         // v8.27.0 sidecar capacity
         assert!(FEATURES.contains(&"sidecar-capacity"));
         // v8.26.4 transcode capacity
@@ -846,15 +854,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.27.0"));
-        assert!(version.contains("2026-03-22"));
+        assert!(version.contains("8.27.1"));
+        assert!(version.contains("2026-03-27"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.27.0-sidecar-capacity-2026-03-22");
-        assert_eq!(VERSION_NUMBER, "8.27.0");
-        assert_eq!(BUILD_DATE, "2026-03-22");
+        assert_eq!(VERSION, "v8.27.1-checkpoint-lock-fix-2026-03-27");
+        assert_eq!(VERSION_NUMBER, "8.27.1");
+        assert_eq!(BUILD_DATE, "2026-03-27");
     }
 
     #[test]
