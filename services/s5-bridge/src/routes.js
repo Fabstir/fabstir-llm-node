@@ -7,6 +7,7 @@
  */
 
 import { getS5Client, getS5Status, getAdvancedClient } from './s5_client.js';
+import { acquireDirectoryLock, parentDir, activeLockCount } from './dir_mutex.js';
 import { BlobIdentifier } from '@julesl23/s5js/dist/src/identifier/blob.js';
 import { MULTIHASH_BLAKE3 } from '@julesl23/s5js/dist/src/constants.js';
 
@@ -24,6 +25,7 @@ export async function registerRoutes(fastify) {
       status: status.connected ? 'healthy' : 'unhealthy',
       service: 's5-bridge',
       timestamp: new Date().toISOString(),
+      activeDirLocks: activeLockCount(),
       ...status,
     });
   });
@@ -142,9 +144,15 @@ export async function registerRoutes(fastify) {
 
       // Store the file - this uploads blob AND updates directory structure
       const uploadStartTime = Date.now();
-      fastify.log.debug({ requestId, path }, '📤 [S5-UPLOAD] Calling s5.fs.put()...');
-
-      await s5.fs.put(path, new Uint8Array(data));
+      const dirKey = parentDir(path);
+      fastify.log.debug({ requestId, path, dirKey }, '📤 [S5-UPLOAD] Acquiring directory lock...');
+      const release = await acquireDirectoryLock(dirKey);
+      try {
+        fastify.log.debug({ requestId, path }, '📤 [S5-UPLOAD] Calling s5.fs.put()...');
+        await s5.fs.put(path, new Uint8Array(data));
+      } finally {
+        release();
+      }
 
       const uploadDuration = Date.now() - uploadStartTime;
       fastify.log.info({
@@ -264,7 +272,12 @@ export async function registerRoutes(fastify) {
     try {
       fastify.log.info({ path }, 'Deleting file from S5');
 
-      await s5.fs.delete(path);
+      const release = await acquireDirectoryLock(parentDir(path));
+      try {
+        await s5.fs.delete(path);
+      } finally {
+        release();
+      }
 
       reply.code(204).send();
     } catch (error) {
@@ -461,7 +474,12 @@ export async function registerRoutes(fastify) {
         const path = `home/tus-uploads/${id}`;
         fastify.log.info({ id, path, size: upload.data.length }, '📤 [S5-TUS] Upload complete, storing to S5');
 
-        await s5.fs.put(path, new Uint8Array(upload.data));
+        const release = await acquireDirectoryLock(parentDir(path));
+        try {
+          await s5.fs.put(path, new Uint8Array(upload.data));
+        } finally {
+          release();
+        }
 
         // Generate CID
         let cid = null;
@@ -518,7 +536,7 @@ export async function registerRoutes(fastify) {
   fastify.get('/', async (request, reply) => {
     reply.send({
       service: 'Enhanced S5.js Bridge',
-      version: '1.2.0',
+      version: '1.3.0',
       endpoints: {
         health: 'GET /health',
         download: 'GET /s5/fs/{path}',
