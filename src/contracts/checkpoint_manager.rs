@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::client::Web3Client;
 
@@ -688,8 +688,8 @@ impl CheckpointManager {
 
         #[cfg(not(feature = "real-ezkl"))]
         {
-            // Mock proof generation (for testing without real-ezkl feature)
-            warn!("🎭 Generating mock proof (real-ezkl feature not enabled)");
+            // Mock proof generation — should ONLY appear in test builds
+            warn!("🎭 Generating MOCK proof — NOT production-ready! Rebuild with default features for real STARK proofs");
             let proof_json = serde_json::json!({
                 "timestamp": chrono::Utc::now().timestamp_millis(),
                 "tokensUsed": tokens_generated,
@@ -1162,7 +1162,7 @@ impl CheckpointManager {
 
         #[cfg(not(feature = "real-ezkl"))]
         {
-            warn!("🎭 [ASYNC] Generating mock proof (real-ezkl feature not enabled)");
+            warn!("🎭 [ASYNC] Generating MOCK proof — NOT production-ready! Rebuild with default features for real STARK proofs");
             let proof_json = serde_json::json!({
                 "timestamp": chrono::Utc::now().timestamp_millis(),
                 "tokensUsed": tokens_generated,
@@ -1511,8 +1511,9 @@ impl CheckpointManager {
         // before attempting final checkpoint or settlement. This prevents the race condition
         // where settlement proceeds while a background proof task is still running.
         let max_wait = Duration::from_secs(120); // 2 minutes max wait
-        let poll_interval = Duration::from_millis(500);
+        let mut poll_interval = Duration::from_millis(500);
         let wait_start = std::time::Instant::now();
+        let mut poll_count: u32 = 0;
 
         loop {
             let in_progress = {
@@ -1524,10 +1525,18 @@ impl CheckpointManager {
             };
 
             if !in_progress {
-                info!(
-                    "[CHECKPOINT-MGR] ✅ No in-flight submission for job {} - proceeding with settlement",
-                    job_id
-                );
+                if poll_count > 0 {
+                    info!(
+                        "[CHECKPOINT-MGR] ✅ In-flight submission for job {} completed after {:.1}s - proceeding with settlement",
+                        job_id,
+                        wait_start.elapsed().as_secs_f32()
+                    );
+                } else {
+                    info!(
+                        "[CHECKPOINT-MGR] ✅ No in-flight submission for job {} - proceeding with settlement",
+                        job_id
+                    );
+                }
                 break;
             }
 
@@ -1541,12 +1550,26 @@ impl CheckpointManager {
                 break;
             }
 
-            info!(
-                "[CHECKPOINT-MGR] ⏳ Waiting for in-flight submission to complete for job {} ({:.1}s elapsed)...",
-                job_id,
-                wait_start.elapsed().as_secs_f32()
-            );
+            poll_count += 1;
+            if poll_count == 1 {
+                info!(
+                    "[CHECKPOINT-MGR] ⏳ Waiting for in-flight submission to complete for job {}...",
+                    job_id
+                );
+            } else {
+                debug!(
+                    "[CHECKPOINT-MGR] ⏳ Still waiting for in-flight submission for job {} ({:.1}s elapsed)...",
+                    job_id,
+                    wait_start.elapsed().as_secs_f32()
+                );
+            }
+
             tokio::time::sleep(poll_interval).await;
+
+            // Back off: 500ms for first 5 polls, then 2s thereafter
+            if poll_count >= 5 {
+                poll_interval = Duration::from_secs(2);
+            }
         }
 
         // First submit any pending checkpoint - FORCE submission even if < MIN_PROVEN_TOKENS
