@@ -229,11 +229,11 @@ impl EzklError {
                 )
             }
             Self::EzklNotAvailable => "EZKL library is not available. Using mock implementation. \
-                 To enable real EZKL, build with: cargo build --features real-ezkl"
+                 Real proofs are enabled by default — rebuild without --no-default-features"
                 .to_string(),
             Self::FeatureNotAvailable { feature } => {
                 format!(
-                    "Feature '{}' requires real EZKL. Build with: cargo build --features real-ezkl",
+                    "Feature '{}' requires real EZKL. Real proofs are enabled by default — rebuild without --no-default-features",
                     feature
                 )
             }

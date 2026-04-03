@@ -35,11 +35,11 @@ fn main() {
         println!("cargo:warning=✅ Risc0 guest program will be compiled (Phase 1.2 pending)");
     }
 
-    // Without real-ezkl feature, build script does nothing
+    // Mock-only build (real-ezkl disabled via --no-default-features)
     #[cfg(not(feature = "real-ezkl"))]
     {
         println!(
-            "cargo:warning=⏭️  Skipping Risc0 guest compilation (real-ezkl feature not enabled)"
+            "cargo:warning=⚠️  MOCK PROOFS ONLY — real-ezkl feature disabled. NOT suitable for production!"
         );
     }
 }
