@@ -73,7 +73,7 @@ async function start() {
   try {
     // Print banner
     console.log('╔════════════════════════════════════════╗');
-    console.log('║  Enhanced S5.js Bridge Service v1.2.0  ║');
+    console.log('║  Enhanced S5.js Bridge Service v1.3.0  ║');
     console.log('║  P2P Storage Bridge for Fabstir Node  ║');
     console.log('╚════════════════════════════════════════╝');
     console.log('');

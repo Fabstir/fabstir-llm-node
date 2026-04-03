@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 /**
- * Enhanced S5.js Client Initialization (v1.2.0)
+ * Enhanced S5.js Client Initialization (v1.3.0)
  *
  * Manages S5 P2P client lifecycle, identity, and portal registration
  * Uses high-level S5.js APIs for signing and credential storage
