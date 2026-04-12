@@ -10,188 +10,320 @@ A TypeScript SDK for interacting with the Fabstir P2P LLM Marketplace, enabling 
 - 💰 **Automated Payments** - Built-in escrow and payment handling via smart contracts
 - 🔄 **Session Management** - Stateful conversations with checkpoint proofs
 - 📦 **S5 Storage Integration** - Decentralized conversation persistence
+- 🧠 **RAG (Retrieval-Augmented Generation)** - Upload documents and enhance LLM responses with semantic search
+- 🗂️ **Vector Databases** - Host-side vector storage and cosine similarity search via WebSocket
+- 🎨 **Image Generation** - Text-to-image via FLUX.2 diffusion models over E2E encrypted WebSocket, with automatic intent detection from natural language prompts
+- 🎬 **Video Transcoding** - GPU-accelerated video transcoding (H.264/AV1) with encrypted source/output support, real-time progress, GOP-level proofs, S5 storage, and load balancing across multiple hosts
+- 🔐 **End-to-End Encryption** - XChaCha20-Poly1305 encryption enabled by default with forward secrecy
 - 🛡️ **Error Recovery** - Automatic retries and failover to ensure reliability
 - 🔌 **Browser Compatible** - Works in both Node.js and browser environments
+- 🤖 **OpenAI-Compatible Bridge** - Drop-in replacement API for any OpenAI SDK client (Cursor, Continue, OpenCode, LangChain)
+- 🎯 **Multi-Agent Orchestration** - Task decomposition, parallel execution, and result synthesis
+- 💸 **x402 Payment Protocol** - HTTP-native USDC micropayments between agents (EIP-3009)
+- 🤝 **A2A Protocol Support** - Agent discovery, delegation, and SSE streaming
+- 🔀 **Session Multiplexing** - Reuse blockchain sessions per model to reduce deposit costs
 
 ## Quick Start
 
-### WebSocket Streaming with Host Discovery
+### Streaming LLM Session
 
-Stream LLM responses in real-time with automatic host discovery:
+Stream LLM responses in real-time with end-to-end encryption (enabled by default):
 
 ```typescript
-import { FabstirSDKCore } from "@fabstir/sdk-core";
+import { FabstirSDKCore } from '@fabstir/sdk-core';
+import { ChainRegistry, ChainId } from '@fabstir/sdk-core/config';
 
 async function streamingExample() {
-  // Initialize SDK
+  // Initialize SDK with chain configuration
+  const chain = ChainRegistry.getChain(ChainId.BASE_SEPOLIA);
   const sdk = new FabstirSDKCore({
-    network: 'base-sepolia',
-    rpcUrl: process.env.RPC_URL
+    mode: 'production' as const,
+    chainId: ChainId.BASE_SEPOLIA,
+    rpcUrl: process.env.RPC_URL_BASE_SEPOLIA!,
+    contractAddresses: {
+      jobMarketplace: chain.contracts.jobMarketplace,
+      nodeRegistry: chain.contracts.nodeRegistry,
+      proofSystem: chain.contracts.proofSystem,
+      hostEarnings: chain.contracts.hostEarnings,
+      modelRegistry: chain.contracts.modelRegistry,
+      usdcToken: chain.contracts.usdcToken,
+      fabToken: chain.contracts.fabToken,
+    }
   });
 
   // Authenticate with wallet
-  await sdk.authenticate(privateKey);
+  await sdk.authenticate('privatekey', { privateKey });
 
-  // Discover available hosts automatically
-  const hostManager = sdk.getHostManager();
-  const hosts = await hostManager.discoverAllActiveHosts();
-  console.log(`Found ${hosts.length} active hosts`);
-
-  // Create session with best available host
+  // Start encrypted session with host
   const sessionManager = sdk.getSessionManager();
-  const session = await sessionManager.createSession({
-    model: 'llama-2-13b-chat',
-    temperature: 0.7
+  const { sessionId } = await sessionManager.startSession({
+    host: hostAddress,                    // Host Ethereum address
+    modelId: modelHash,                   // Model ID (bytes32 hash)
+    endpoint: 'http://host-node:8080',    // Host WebSocket URL
+    chainId: ChainId.BASE_SEPOLIA,
+    depositAmount: '0.001',
+    pricePerToken: 200,
+    paymentMethod: 'deposit',
+    duration: 3600,
+    proofInterval: 100,
+    // encryption: true is the default
   });
 
   // Stream tokens as they arrive
-  for await (const token of sessionManager.streamPrompt(
-    session.id,
-    "Explain quantum computing in simple terms"
-  )) {
-    process.stdout.write(token);
-  }
-
-  // End session
-  await sessionManager.endSession(session.id);
+  await sessionManager.sendPromptStreaming(
+    sessionId,
+    "Explain quantum computing in simple terms",
+    (chunk) => process.stdout.write(chunk.content)
+  );
 }
 
 streamingExample().catch(console.error);
 ```
 
-### Host Registration and Discovery
+### RAG-Enhanced Chat with Document Upload (Host-Side)
 
-Register your node and discover other hosts:
+Upload documents and enhance LLM responses with semantic search using host-side vector storage:
 
 ```typescript
 import { FabstirSDKCore } from "@fabstir/sdk-core";
+import { HostAdapter } from "@fabstir/sdk-core/embeddings";
+import { DocumentManager } from "@fabstir/sdk-core/documents";
 
-async function hostManagement() {
+async function ragExample() {
+  // Initialize SDK
   const sdk = new FabstirSDKCore({ network: 'base-sepolia' });
-  await sdk.authenticate(privateKey);
-  
-  const hostManager = sdk.getHostManager();
-  
-  // Register as a host provider
-  await hostManager.registerNodeWithUrl(
-    'llama-2-7b,gpt-4,inference,gpu',  // Capabilities
-    '1000',                              // Stake amount (FAB tokens)
-    'https://my-node.example.com'       // Your API endpoint
+  await sdk.authenticate('privatekey', { privateKey });
+
+  // Setup RAG with zero-cost host embeddings
+  const hostUrl = process.env.NEXT_PUBLIC_TEST_HOST_1_URL || 'http://localhost:8083';
+  const embeddingService = new HostAdapter({ hostUrl, dimensions: 384 });
+  const documentManager = new DocumentManager({ embeddingService });
+
+  // Start session with host node
+  const sessionManager = sdk.getSessionManager();
+  const { sessionId } = await sessionManager.startSession({
+    host: hostAddress,
+    modelId: modelHash,
+    endpoint: hostUrl,
+    chainId: 84532,
+    depositAmount: '0.001',
+    pricePerToken: 200,
+    paymentMethod: 'deposit',
+    duration: 3600,
+    proofInterval: 100,
+  });
+
+  // Process document: extract → chunk → embed
+  const chunks = await documentManager.processDocument(file, {
+    chunkSize: 500,
+    overlap: 50,
+    onProgress: (p) => console.log(`${p.stage}: ${p.progress}%`)
+  });
+
+  // Upload vectors to host via WebSocket
+  const vectors = chunks.map((chunk, i) => ({
+    id: `chunk-${i}`,
+    vector: chunk.embedding,
+    metadata: { text: chunk.text, index: i }
+  }));
+
+  await sessionManager.uploadVectors(sessionId, vectors);
+  console.log(`Uploaded ${vectors.length} vectors to host`);
+
+  // Ask questions - context automatically injected
+  const enhanced = await sessionManager.askWithContext(
+    sessionId,
+    "What are the key points in the uploaded document?",
+    3  // topK: retrieve top 3 similar chunks
   );
-  
-  // Discover other hosts
-  const hosts = await hostManager.discoverAllActiveHosts();
-  
-  for (const host of hosts) {
-    console.log(`Host: ${host.address}`);
-    console.log(`API: ${host.apiUrl}`);
-    console.log(`Models: ${host.metadata}`);
-    
-    // Check health
-    const health = await hostManager.checkNodeHealth(host.apiUrl);
-    console.log(`Health: ${health.healthy ? '✅' : '❌'} (${health.latency}ms)`);
-  }
+
+  await sessionManager.sendPromptStreaming(sessionId, enhanced, (chunk) => {
+    process.stdout.write(chunk.content);
+  });
+
+  // Or search manually with production-tested threshold
+  const query = "key points";
+  const queryEmbedding = await embeddingService.embed(query);
+  const results = await sessionManager.searchVectors(
+    sessionId,
+    queryEmbedding,
+    5,      // topK: return top 5 results
+    0.2     // threshold: 0.2 works best with all-MiniLM-L6-v2 (not 0.7!)
+  );
+
+  results.forEach(r => {
+    console.log(`Score: ${r.score.toFixed(3)}, Text: ${r.metadata?.text}`);
+  });
 }
 ```
 
-### Direct Inference Without Blockchain
+**Key Features:**
+- **Host-Side Storage**: Vectors stored in session memory on host node (Rust)
+- **Zero-Cost Embeddings**: Use HostAdapter for free 384-d embeddings
+- **Production-Tested**: Threshold 0.2 (not 0.7) works best with all-MiniLM-L6-v2
+- **Auto-Cleanup**: Vectors automatically deleted when session ends
+- **WebSocket Protocol**: `uploadVectors` and `searchVectors` messages over persistent connection
 
-Stream inference directly without blockchain transactions:
+See [docs/IMPLEMENTATION_CHAT_RAG.md](docs/IMPLEMENTATION_CHAT_RAG.md) for complete architecture and production configuration.
+
+### Image Generation
+
+Generate images via FLUX.2 diffusion models over E2E encrypted WebSocket. The SDK auto-detects image intent from natural language prompts:
 
 ```typescript
-async function directInference() {
-  const sdk = new FabstirSDKCore({ network: 'base-sepolia' });
-  await sdk.authenticate(privateKey);
-  
-  const inferenceManager = sdk.getInferenceManager();
-  
-  // Stream tokens with automatic host selection
-  for await (const token of inferenceManager.streamInference(
-    "Write a haiku about coding",
-    { 
-      model: 'llama-2-7b',
-      temperature: 0.9,
-      maxTokens: 100 
+// Automatic: type naturally, SDK detects intent and routes to image generation
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'Generate an image of a cat astronaut in 1024x1024',
+  (token) => console.log(token),
+  {
+    onImageGenerated: (result) => {
+      const imgSrc = `data:image/png;base64,${result.image}`;
+      console.log(`Generated ${result.size} in ${result.processingTimeMs}ms`);
     }
-  )) {
-    process.stdout.write(token);
   }
-}
+);
+
+// Explicit: call generateImage() directly for full control
+const result = await sessionManager.generateImage(
+  sessionId,
+  'A serene mountain lake at golden hour',
+  { size: '512x512', steps: 4 }
+);
+```
+
+**Auto-detected triggers:** `generate an image of`, `draw a`, `create a picture of`, `paint a`, `sketch a`, `make an image of`, `render a` — including polite forms.
+
+See [docs/SDK_API.md#image-generation](docs/SDK_API.md#image-generation) for full API reference.
+
+### OpenAI-Compatible Bridge
+
+Use any OpenAI SDK client (Cursor, Continue, OpenCode, LangChain) with Fabstir's decentralised AI network — no code changes required:
+
+```bash
+# Start the bridge (handles blockchain session + encryption automatically)
+npx fabstir-openai-bridge \
+  --private-key $PRIVATE_KEY \
+  --model "CohereForAI/TinyVicuna-1B-32k-GGUF:tiny-vicuna-1b.q4_k_m.gguf"
+
+# OpenAI Bridge running on http://localhost:3457
+# Set OPENAI_BASE_URL=http://localhost:3457/v1 in your client
+```
+
+Supports:
+- `POST /v1/chat/completions` — text chat (streaming and non-streaming)
+- `POST /v1/images/generations` — image generation via FLUX.2
+- `POST /v1/responses` — OpenAI Responses API
+- `GET /v1/models` — model listing
+- Tool use, vision (base64 images), multi-turn conversations
+
+See [packages/openai-bridge/](packages/openai-bridge/) for full documentation and CLI options.
+
+### Multi-Agent Orchestration
+
+Decompose complex tasks across multiple LLM sessions with automatic parallel execution, budget control, and result synthesis:
+
+```typescript
+import { OrchestratorManager } from '@fabstir/orchestrator';
+import { FabstirSDKCore } from '@fabstir/sdk-core';
+
+const sdk = new FabstirSDKCore({ /* chain config */ });
+await sdk.authenticate(privateKey);
+
+const orchestrator = new OrchestratorManager({
+  sdk,
+  chainId: 84532,
+  privateKey,
+  models: { fast: 'fast-model', deep: 'deep-model', planning: 'deep-model' },
+  maxConcurrentSessions: 3,
+  budget: { maxDepositPerSubTask: '0.003', maxTotalDeposit: '0.01', maxSubTasks: 5 },
+});
+
+const result = await orchestrator.run('Analyze the pros and cons of renewable energy');
+console.log(result.synthesis);
+await orchestrator.destroy();
+```
 
 ## Installation
 
-### Development Setup (npm link)
-
-For local development when working on both `fabstir-llm-sdk` and `fabstir-llm-ui`:
+### Development Setup
 
 ```bash
-# In fabstir-llm-sdk directory
-cd ~/dev/Fabstir/fabstir-llm-marketplace/fabstir-llm-sdk
-npm link
+# Clone and install (IMPORTANT: Use pnpm, not npm)
+git clone https://github.com/fabstir/fabstir-llm-sdk.git
+cd fabstir-llm-sdk
+pnpm install
 
-# In fabstir-llm-ui directory  
-cd ~/dev/Fabstir/fabstir-llm-marketplace/fabstir-llm-ui
-npm link @fabstir/llm-sdk
+# Build SDK core
+cd packages/sdk-core && pnpm build
 ```
 
-This creates a symbolic link allowing the UI to use your local SDK development version.
-
-### Production Setup
-
-Install from GitHub repository:
+### Package Installation
 
 ```bash
-npm install git+https://github.com/yourusername/fabstir-llm-sdk.git
-# or
-yarn add git+https://github.com/yourusername/fabstir-llm-sdk.git
-# or
-pnpm add git+https://github.com/yourusername/fabstir-llm-sdk.git
-```
-
-Or from npm registry (when published):
-
-```bash
-npm install @fabstir/llm-sdk
-# or
-yarn add @fabstir/llm-sdk
-# or
-pnpm add @fabstir/llm-sdk
+pnpm add @fabstir/sdk-core
+pnpm add @fabstir/orchestrator
 ```
 
 ### Prerequisites
 
-- Node.js 16.0 or higher
-- TypeScript 4.5 or higher (for TypeScript projects)
+- Node.js 18.0 or higher
+- pnpm (not npm — npm causes dependency hoisting issues)
+- TypeScript 5.0 or higher (for TypeScript projects)
 - An Ethereum wallet provider (MetaMask, WalletConnect, etc.)
 
 ## Configuration
 
-Basic configuration options:
-
 ```typescript
-const sdk = new FabstirSDK({
-  mode: "production",        // "mock" | "production"
-  network: "base-sepolia",   // Target blockchain network
-  p2pConfig: {
-    bootstrapNodes: [...],   // P2P bootstrap nodes
-    enableDHT: true,         // Enable distributed hash table
-    enableMDNS: true,        // Enable local discovery
-  },
-  retryOptions: {
-    maxRetries: 3,          // Maximum retry attempts
-    initialDelay: 1000,     // Initial retry delay (ms)
-  },
-  enablePerformanceTracking: true,
+import { FabstirSDKCore } from '@fabstir/sdk-core';
+import { ChainRegistry, ChainId } from '@fabstir/sdk-core/config';
+
+const chain = ChainRegistry.getChain(ChainId.BASE_SEPOLIA);
+const sdk = new FabstirSDKCore({
+  mode: 'production' as const,
+  chainId: ChainId.BASE_SEPOLIA,
+  rpcUrl: process.env.RPC_URL_BASE_SEPOLIA!,
+  contractAddresses: {
+    jobMarketplace: chain.contracts.jobMarketplace,
+    nodeRegistry: chain.contracts.nodeRegistry,
+    // ... other contracts from chain.contracts
+  }
 });
+
+await sdk.authenticate(privateKey);
 ```
+
+**Contract addresses**: Always read from `.env.test` (source of truth). Never hardcode.
 
 ## Documentation
 
 - [**SDK API Reference**](docs/SDK_API.md) - Complete API documentation for all managers
-- [Setup Guide](docs/SETUP_GUIDE.md) - Detailed setup instructions
-- [P2P Configuration](docs/P2P_CONFIGURATION.md) - P2P network configuration
 - [Architecture](docs/ARCHITECTURE.md) - System architecture overview
-- [Configuration](docs/CONFIGURATION.md) - All configuration options
+- [Encryption Guide](docs/ENCRYPTION_GUIDE.md) - End-to-end encryption details
+- [Encryption FAQ](docs/ENCRYPTION_FAQ.md) - Common encryption questions
+- [Multi-Chain Developer Guide](docs/MULTI_CHAIN_DEVELOPER_GUIDE.md) - Multi-chain support
+- [Host Operator Guide](docs/HOST_OPERATOR_GUIDE.md) - Running a host node
+- [Executive Summary](docs/EXECUTIVE_SUMMARY.md) - Project overview
+
+### Reference Documentation
+
+- [Contract Reference](docs/compute-contracts-reference/) - Smart contract documentation
+- [Node Reference](docs/node-reference/API.md) - Host node API
+- [Host CLI Reference](packages/host-cli/docs/API_REFERENCE.md) - Host CLI commands
+- [OpenAI Bridge](packages/openai-bridge/) - OpenAI-compatible API bridge
+- [Orchestrator Guide](packages/orchestrator/README.md) - Multi-agent orchestration
+- [x402 Payment Protocol](docs/EXECUTION-X402-PAYMENTS.md) - HTTP micropayments
+- [Session Multiplexing](docs/IMPLEMENTATION-SESSION-MULTIPLEXING.md) - Session reuse optimization
+- [Transcode Load Balancing](docs/IMPLEMENTATION-TRANSCODE-LOAD-BALANCING.md) - Multi-host transcode distribution
+- [WebSocket Protocol Guide](docs/WEBSOCKET_PROTOCOL_GUIDE.md) - WebSocket message format and encryption
+
+### Test Harness Pages
+
+The `apps/harness` Next.js app provides interactive test pages:
+
+- [`/transcode-test`](apps/harness/pages/transcode-test.tsx) - Single-job transcode with optional load balancing toggle
+- [`/transcode-lb-test`](apps/harness/pages/transcode-lb-test.tsx) - Stress test: N concurrent transcode jobs with host discovery, capacity display (including queue depth), staggered session creation, per-job progress bars, and host distribution summary
+- [`/chat-context-demo`](apps/harness/pages/chat-context-demo.tsx) - Definitive UI reference for SDK integration
 
 ## Examples
 
@@ -266,14 +398,11 @@ During the BUSL-1.1 period (until 2029-01-01), we're focusing on core developmen
 
 After 2029-01-01, the project converts to AGPL-3.0-or-later and will follow standard open-source contribution practices.
 
-## Documentation
+## Additional Documentation
 
-- 📚 [Host Discovery API](./docs/HOST_DISCOVERY_API.md) - Automatic host discovery from blockchain
 - 🔌 [WebSocket Protocol Guide](./docs/WEBSOCKET_PROTOCOL_GUIDE.md) - Real-time streaming protocol
-- 💬 [Session Manager API](./docs/SESSION_MANAGER_ENHANCED.md) - Conversation management
-- 🚀 [Inference Manager API](./docs/INFERENCE_MANAGER_API.md) - Direct inference without blockchain
-- 🔧 [Troubleshooting Guide](./docs/TROUBLESHOOTING.md) - Common issues and solutions
 - 📖 [Full SDK Documentation](./docs/SDK_API.md) - Complete API reference
+- 🔐 [Encryption Guide](./docs/ENCRYPTION_GUIDE.md) - End-to-end encryption architecture
 
 ## Support
 

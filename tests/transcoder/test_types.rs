@@ -27,6 +27,8 @@ fn test_video_format_full_serialization() {
         dest: Some("s5".into()),
         encrypt: Some(false),
         trim_percent: None,
+        hls: Some(true),
+        hls_time: Some(6),
     };
     let json = serde_json::to_value(&fmt).unwrap();
     assert_eq!(json["id"], 1);
@@ -62,6 +64,8 @@ fn test_video_format_minimal_serialization() {
         dest: None,
         encrypt: None,
         trim_percent: None,
+        hls: None,
+        hls_time: None,
     };
     let json = serde_json::to_value(&fmt).unwrap();
     assert_eq!(json["id"], 2);
@@ -137,4 +141,86 @@ fn test_transcode_task_state_variants() {
         panic!("expected Completed");
     }
     assert!(matches!(failed, TranscodeTaskState::Failed { .. }));
+}
+
+#[test]
+fn test_video_format_hls_serialization() {
+    let fmt = VideoFormat {
+        id: 1,
+        ext: "mp4".into(),
+        label: None,
+        type_: None,
+        vcodec: Some("av1_nvenc".into()),
+        acodec: Some("aac".into()),
+        preset: Some("p4".into()),
+        profile: None,
+        ch: Some(2),
+        vf: Some("scale=1920:1080".into()),
+        b_v: Some("3M".into()),
+        ar: Some("48k".into()),
+        b_a: None,
+        c_a: None,
+        minrate: None,
+        maxrate: None,
+        bufsize: None,
+        gpu: None,
+        compression_level: None,
+        dest: Some("s5".into()),
+        encrypt: None,
+        trim_percent: None,
+        hls: Some(true),
+        hls_time: Some(6),
+    };
+    let json = serde_json::to_value(&fmt).unwrap();
+    assert_eq!(json["hls"], true);
+    assert_eq!(json["hls_time"], 6);
+}
+
+#[test]
+fn test_video_format_hls_none_omitted() {
+    let fmt = VideoFormat {
+        id: 2,
+        ext: "mp4".into(),
+        label: None,
+        type_: None,
+        vcodec: None,
+        acodec: None,
+        preset: None,
+        profile: None,
+        ch: None,
+        vf: None,
+        b_v: None,
+        ar: None,
+        b_a: None,
+        c_a: None,
+        minrate: None,
+        maxrate: None,
+        bufsize: None,
+        gpu: None,
+        compression_level: None,
+        dest: None,
+        encrypt: None,
+        trim_percent: None,
+        hls: None,
+        hls_time: None,
+    };
+    let json = serde_json::to_value(&fmt).unwrap();
+    assert!(json.get("hls").is_none());
+    assert!(json.get("hls_time").is_none());
+}
+
+#[test]
+fn test_video_format_deserialize_hls_from_sdk_json() {
+    let with_hls = r#"{
+        "id": 1, "ext": "mp4", "vcodec": "av1_nvenc",
+        "hls": true, "hls_time": 6
+    }"#;
+    let fmt: VideoFormat = serde_json::from_str(with_hls).unwrap();
+    assert_eq!(fmt.hls, Some(true));
+    assert_eq!(fmt.hls_time, Some(6));
+
+    let without_hls = r#"{"id": 2, "ext": "mp4"}"#;
+    let fmt2: VideoFormat = serde_json::from_str(without_hls).unwrap();
+    assert_eq!(fmt2.hls, None);
+    assert_eq!(fmt2.hls_time, None);
 }

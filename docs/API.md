@@ -93,9 +93,9 @@ GET /v1/version
 
 ```json
 {
-  "version": "8.26.0",
-  "build": "v8.26.0-transcoder-trustless-2026-03-19",
-  "date": "2026-03-19",
+  "version": "8.28.0",
+  "build": "v8.28.0-hls-passthrough-2026-04-11",
+  "date": "2026-04-11",
   "features": [
     "multi-chain",
     "base-sepolia",
@@ -1675,6 +1675,33 @@ Content-Type: application/json
 }
 ```
 
+**HLS example** (v8.28.0+) — segmented fMP4 output with per-segment encryption:
+
+```json
+{
+  "sourceCid": "uEiBkxyz...",
+  "mediaFormats": [
+    {
+      "id": 1, "ext": "mp4", "vcodec": "av1_nvenc", "acodec": "aac",
+      "preset": "p4", "vf": "scale=1920x1080", "b_v": "3M",
+      "ar": "48k", "ch": 2, "dest": "s5",
+      "hls": true, "hls_time": 6
+    },
+    {
+      "id": 2, "ext": "mp4", "vcodec": "av1_nvenc", "acodec": "aac",
+      "preset": "p4", "vf": "scale=1280x720", "b_v": "1.5M",
+      "ar": "48k", "ch": 2, "dest": "s5",
+      "hls": true, "hls_time": 6
+    }
+  ],
+  "previewPercent": 15,
+  "isEncrypted": true,
+  "isGpu": true
+}
+```
+
+When `hls: true`, the `encrypt` and `trim_percent` fields on that format are ignored — encryption is per-segment via `previewPercent`. See [SDK HLS Integration Guide](./sdk-reference/SDK_HLS_INTEGRATION.md) for full details.
+
 #### Request Parameters
 
 | Parameter | Type | Required | Default | Description |
@@ -1683,9 +1710,17 @@ Content-Type: application/json
 | `mediaFormats` | Array | Yes | - | Array of VideoFormat objects (at least 1) |
 | `isEncrypted` | Boolean | No | true | Encrypt transcoded outputs |
 | `isGpu` | Boolean | No | true | Use GPU acceleration (NVENC) |
+| `previewPercent` | Integer | No | 0 | First N% of HLS segments uploaded unencrypted (v8.28.0+) |
 | `chainId` | Integer | No | 84532 | Blockchain network ID for billing context |
 | `sessionId` | String | No | - | Session ID for rate limiting tracking |
 | `jobId` | Integer | No | - | Job ID for billing integration |
+
+#### VideoFormat HLS Fields (v8.28.0+)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `hls` | Boolean | false | When `true`, output fMP4 segments instead of a single file |
+| `hls_time` | Integer | 6 | Target segment duration in seconds |
 
 #### Response
 
@@ -1703,6 +1738,8 @@ Content-Type: application/json
 GET /v1/transcode/:task_id
 ```
 
+Non-HLS response:
+
 ```json
 {
   "taskId": "abc-123-def",
@@ -1715,6 +1752,28 @@ GET /v1/transcode/:task_id
 }
 ```
 
+HLS response (v8.28.0+) — when any format has `hls: true`:
+
+```json
+{
+  "taskId": "abc-123-def",
+  "progress": 100,
+  "status": "completed",
+  "outputs": [
+    {
+      "id": 1, "hls": true,
+      "initSegmentCid": "zInitSeg1080p...",
+      "segments": [
+        {"index": 0, "cid": "zSeg0...", "duration": 6.006, "encrypted": false},
+        {"index": 15, "cid": "uSeg15...", "duration": 6.006, "encrypted": true}
+      ],
+      "previewSegments": 15, "totalSegments": 100, "totalDuration": 598.764
+    }
+  ],
+  "duration": 598.764
+}
+```
+
 #### Status Response Fields
 
 | Field | Type | Description |
@@ -1722,7 +1781,7 @@ GET /v1/transcode/:task_id
 | `taskId` | String | Unique task identifier |
 | `progress` | Integer | Progress 0-100 |
 | `status` | String | `"in_progress"` or `"completed"` |
-| `outputs` | Array | Present when completed — format metadata with CIDs |
+| `outputs` | Array | Present when completed — format metadata with CIDs (see HLS shape above) |
 | `duration` | Float | Source video duration in seconds |
 
 #### Billing Formula
@@ -1788,6 +1847,7 @@ When the sidecar is unreachable or not configured:
 - Rate limited to 3 requests per 5-minute window per session (WebSocket only; configurable via `TRANSCODE_RATE_LIMIT`)
 - Default polling interval: 2s, timeout: 30 min (configurable via `TRANSCODE_POLL_INTERVAL_MS`, `TRANSCODE_TIMEOUT_SECONDS`)
 - For the full SDK integration guide with VideoFormat spec, format presets, and progress streaming, see [SDK Transcoding Integration Guide](./sdk-reference/SDK_TRANSCODING_INTEGRATION.md)
+- For HLS adaptive bitrate streaming (v8.28.0+), see [SDK HLS Integration Guide](./sdk-reference/SDK_HLS_INTEGRATION.md)
 
 ---
 
@@ -4958,7 +5018,16 @@ Future versions will maintain backward compatibility where possible. Breaking ch
 
 ### Version History
 
-- **v8.27.0** (Current) - Sidecar Capacity Integration (March 2026)
+- **v8.28.0** (Current) - HLS Pass-Through (April 2026)
+  - `hls` and `hls_time` optional fields on `VideoFormat` for segmented fMP4 output
+  - `previewPercent` request-level field for per-segment encryption boundary
+  - `submit_transcode()` conditionally includes `preview_percent` query param
+  - HLS outputs in `transcode_complete` contain `initSegmentCid`, `segments[]`, `previewSegments`, `totalSegments`, `totalDuration`
+  - Non-HLS metadata continues to pass through as opaque JSON (unchanged)
+  - Fully backward compatible — omitting `hls` produces single-file output as before
+  - 84 transcoder tests + 13 API tests, 0 regressions
+
+- **v8.27.0** - Sidecar Capacity Integration (March 2026)
   - `GET /v1/transcode/capacity` returns real sidecar status (`active`, `max`, `queued`, `available`)
   - Capacity checks query sidecar `GET /status` instead of local atomic counter
   - Cached sidecar status with 2-second TTL and stale-on-error fallback

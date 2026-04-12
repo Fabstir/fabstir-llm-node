@@ -27,19 +27,43 @@ impl S5Storage for SlowMockS5 {
         tokio::time::sleep(Duration::from_secs(2)).await;
         self.0.put(path, data).await
     }
-    async fn put_with_metadata(&self, path: &str, data: Vec<u8>, _meta: HashMap<String, String>) -> Result<String, StorageError> {
+    async fn put_with_metadata(
+        &self,
+        path: &str,
+        data: Vec<u8>,
+        _meta: HashMap<String, String>,
+    ) -> Result<String, StorageError> {
         self.put(path, data).await
     }
-    async fn get(&self, path: &str) -> Result<Vec<u8>, StorageError> { self.0.get(path).await }
-    async fn get_metadata(&self, path: &str) -> Result<HashMap<String, String>, StorageError> { self.0.get_metadata(path).await }
-    async fn get_by_cid(&self, cid: &str) -> Result<Vec<u8>, StorageError> { self.0.get_by_cid(cid).await }
-    async fn list(&self, path: &str) -> Result<Vec<S5Entry>, StorageError> { self.0.list(path).await }
-    async fn list_with_options(&self, path: &str, limit: Option<usize>, cursor: Option<String>) -> Result<S5ListResult, StorageError> {
+    async fn get(&self, path: &str) -> Result<Vec<u8>, StorageError> {
+        self.0.get(path).await
+    }
+    async fn get_metadata(&self, path: &str) -> Result<HashMap<String, String>, StorageError> {
+        self.0.get_metadata(path).await
+    }
+    async fn get_by_cid(&self, cid: &str) -> Result<Vec<u8>, StorageError> {
+        self.0.get_by_cid(cid).await
+    }
+    async fn list(&self, path: &str) -> Result<Vec<S5Entry>, StorageError> {
+        self.0.list(path).await
+    }
+    async fn list_with_options(
+        &self,
+        path: &str,
+        limit: Option<usize>,
+        cursor: Option<String>,
+    ) -> Result<S5ListResult, StorageError> {
         self.0.list_with_options(path, limit, cursor).await
     }
-    async fn delete(&self, path: &str) -> Result<(), StorageError> { self.0.delete(path).await }
-    async fn exists(&self, path: &str) -> Result<bool, StorageError> { self.0.exists(path).await }
-    fn clone(&self) -> Box<dyn S5Storage> { Box::new(SlowMockS5(MockS5Backend::new())) }
+    async fn delete(&self, path: &str) -> Result<(), StorageError> {
+        self.0.delete(path).await
+    }
+    async fn exists(&self, path: &str) -> Result<bool, StorageError> {
+        self.0.exists(path).await
+    }
+    fn clone(&self) -> Box<dyn S5Storage> {
+        Box::new(SlowMockS5(MockS5Backend::new()))
+    }
 }
 
 fn generate_test_private_key() -> [u8; 32] {
@@ -57,7 +81,10 @@ async fn test_failed_upload_does_not_write_index_entry() {
     mock.set_quota_limit(0).await;
 
     publisher
-        .buffer_message("sess-fail", CheckpointMessage::new_user("test".to_string(), 100))
+        .buffer_message(
+            "sess-fail",
+            CheckpointMessage::new_user("test".to_string(), 100),
+        )
         .await;
     publisher
         .buffer_message(
@@ -74,9 +101,15 @@ async fn test_failed_upload_does_not_write_index_entry() {
     let state = publisher.get_session_state("sess-fail").await.unwrap();
     // Buffer cleared and index incremented (lock phase 1 ran), but no index entry
     assert!(state.message_buffer.is_empty(), "buffer should be cleared");
-    assert_eq!(state.checkpoint_index, 1, "checkpoint_index should be incremented");
+    assert_eq!(
+        state.checkpoint_index, 1,
+        "checkpoint_index should be incremented"
+    );
     assert!(
-        state.index.as_ref().map_or(true, |idx| idx.checkpoints.is_empty()),
+        state
+            .index
+            .as_ref()
+            .map_or(true, |idx| idx.checkpoints.is_empty()),
         "index must have no entries after failed upload"
     );
 }
@@ -92,10 +125,16 @@ async fn test_set_recovery_key_not_blocked_by_publish() {
 
     // Buffer messages so publish_checkpoint has work to do
     publisher
-        .buffer_message("sess-lock", CheckpointMessage::new_user("hello".to_string(), 100))
+        .buffer_message(
+            "sess-lock",
+            CheckpointMessage::new_user("hello".to_string(), 100),
+        )
         .await;
     publisher
-        .buffer_message("sess-lock", CheckpointMessage::new_assistant("world".to_string(), 200, false))
+        .buffer_message(
+            "sess-lock",
+            CheckpointMessage::new_assistant("world".to_string(), 200, false),
+        )
         .await;
 
     // Spawn publish_checkpoint — acquires write lock, then sleeps 2s per upload
@@ -132,7 +171,10 @@ async fn test_buffer_message_during_upload_not_lost() {
     let publisher = Arc::new(CheckpointPublisher::new("0xbuf_test".to_string()));
 
     publisher
-        .buffer_message("sess-buf", CheckpointMessage::new_user("first".to_string(), 100))
+        .buffer_message(
+            "sess-buf",
+            CheckpointMessage::new_user("first".to_string(), 100),
+        )
         .await;
     publisher
         .buffer_message(
@@ -167,6 +209,10 @@ async fn test_buffer_message_during_upload_not_lost() {
 
     // The new message must survive — it was added after clear_buffer ran
     let state = publisher.get_session_state("sess-buf").await.unwrap();
-    assert_eq!(state.message_buffer.len(), 1, "new message should be in buffer");
+    assert_eq!(
+        state.message_buffer.len(),
+        1,
+        "new message should be in buffer"
+    );
     assert_eq!(state.message_buffer[0].content, "second message");
 }

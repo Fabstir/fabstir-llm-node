@@ -124,6 +124,15 @@ This document describes the current state of the fabstir-llm-node WebSocket API 
 - **Removed Local Counter**: Node no longer tracks slots via AtomicUsize/TranscodeSlotGuard
 - **81 tests passing** (no regressions)
 
+### ✅ Phase 8.28: HLS Pass-Through (v8.28.0)
+- **HLS Adaptive Bitrate**: `hls` and `hls_time` fields on `VideoFormat` for segmented fMP4 output
+- **Per-Segment Encryption**: `previewPercent` request field sets the preview boundary (first N% unencrypted)
+- **Segmented Response**: HLS outputs contain `initSegmentCid`, `segments[]` array, `previewSegments`, `totalSegments`, `totalDuration`
+- **Metadata Pass-Through**: HLS response metadata flows through as opaque JSON — no new types needed
+- **Backward Compatible**: Omitting `hls` produces single-file output as before
+- **84 transcoder tests + 13 API tests** (no regressions)
+- **SDK Guide**: [SDK HLS Integration](./sdk-reference/SDK_HLS_INTEGRATION.md)
+
 ### ⚠️ Phase 8.11: Core Functionality (Skipped - To Be Done)
 - Real blockchain job verification (currently using mock)
 - Full production inference engine connection (partially mocked)
@@ -905,6 +914,28 @@ const innerPayload = {
   isGpu: true,                   // Optional (default: true)
 };
 
+// HLS variant (v8.28.0+) — segmented fMP4 with per-segment encryption:
+const hlsPayload = {
+  action: "transcode",
+  sourceCid: "uEiBkxyz...",
+  mediaFormats: [
+    {
+      id: 1, ext: "mp4", vcodec: "av1_nvenc", acodec: "aac",
+      preset: "p4", vf: "scale=1920x1080", b_v: "3M", ar: "48k", ch: 2,
+      dest: "s5", hls: true, hls_time: 6   // Segmented fMP4 output
+    },
+    {
+      id: 2, ext: "mp4", vcodec: "av1_nvenc", acodec: "aac",
+      preset: "p4", vf: "scale=1280x720", b_v: "1.5M", ar: "48k", ch: 2,
+      dest: "s5", hls: true, hls_time: 6
+    }
+  ],
+  previewPercent: 15,            // First 15% of segments unencrypted (v8.28.0+)
+  isEncrypted: true,
+  isGpu: true,
+};
+// See SDK HLS Integration Guide for full details: docs/sdk-reference/SDK_HLS_INTEGRATION.md
+
 // 2. Encrypt with session key (same as image generation)
 const plaintext = new TextEncoder().encode(JSON.stringify(innerPayload));
 const nonce = crypto.getRandomValues(new Uint8Array(24));
@@ -949,11 +980,18 @@ ws.onmessage = (event) => {
         }
         break;
       case "transcode_complete":
-        console.log(`Done! Outputs:`, inner.outputs);
-        console.log(`Billing: ${inner.billing.units} units`);
-        console.log(`Quality:`, inner.qualityMetrics);       // null until quality measurement wired
-        console.log(`Proof CID:`, inner.proofTreeCID);       // populated when jobId provided
-        console.log(`Proof Root:`, inner.proofTreeRootHash);  // populated when jobId provided
+        console.log(`Done! Billing: ${inner.billing.units} units`);
+        for (const output of inner.outputs) {
+          if (output.hls) {
+            // HLS output (v8.28.0+): segments array instead of single CID
+            console.log(`Format ${output.id}: HLS, ${output.totalSegments} segments`);
+            console.log(`  Init: ${output.initSegmentCid}`);
+            console.log(`  Preview: ${output.previewSegments} segments unencrypted`);
+          } else {
+            // Legacy single-file output
+            console.log(`Format ${output.id}: ${output.cid}`);
+          }
+        }
         break;
       case "transcode_error":
         console.error(`Error: ${inner.error.code} - ${inner.error.message}`);
@@ -981,8 +1019,11 @@ ws.send(JSON.stringify({ type: "transcode_cancel", session_id: sessionId }));
 | Rate limit | 5/min per session | 3 per 5-min window per session |
 | Duration | Seconds | Seconds to minutes |
 | Cancel | Not supported | `transcode_cancel` (plaintext) |
+| HLS mode | N/A | `hls: true` on format + `previewPercent` on request (v8.28.0+) |
 
 For the full SDK integration guide with TypeScript interfaces, VideoFormat spec, billing formula, and format examples, see [SDK Transcoding Integration Guide](./sdk-reference/SDK_TRANSCODING_INTEGRATION.md).
+
+For HLS adaptive bitrate streaming with per-segment encryption, M3U8 playlist generation, and migration from Phase 1, see [SDK HLS Integration Guide](./sdk-reference/SDK_HLS_INTEGRATION.md).
 
 ## Host Registration & Token Pricing (v8.18.0+)
 

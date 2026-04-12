@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.27.2-default-real-proofs-2026-04-03";
+pub const VERSION: &str = "v8.28.0-hls-passthrough-2026-04-11";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.27.2";
+pub const VERSION_NUMBER: &str = "8.28.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 27;
+pub const VERSION_MINOR: u32 = 28;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-04-03";
+pub const BUILD_DATE: &str = "2026-04-11";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -307,6 +307,11 @@ pub const FEATURES: &[&str] = &[
     "checkpoint-lock-split",
     // Default real proofs (v8.27.2)
     "default-real-proofs",
+    // HLS pass-through (v8.28.0)
+    "hls-passthrough",
+    "hls-adaptive-bitrate",
+    "preview-percent",
+    "per-segment-encryption",
 ];
 
 /// Supported chain IDs
@@ -317,6 +322,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.28.0 - HLS Pass-Through (Apr 11, 2026)
+    "FEAT: VideoFormat.hls and VideoFormat.hls_time fields for HLS adaptive bitrate streaming",
+    "FEAT: previewPercent request field for per-segment encryption boundary",
+    "FEAT: submit_transcode() conditionally includes preview_percent query param",
     // v8.27.2 - Default Real Proofs (Apr 3, 2026)
     "BREAKING: real-ezkl feature now included in default features — cargo build --release produces real STARK proofs",
     "BREAKING: Mock proofs require explicit opt-in via --no-default-features --features inference",
@@ -720,8 +729,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 27);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_MINOR, 28);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.27.1 checkpoint lock fix
@@ -865,9 +874,9 @@ mod tests {
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.27.2-default-real-proofs-2026-04-03");
-        assert_eq!(VERSION_NUMBER, "8.27.2");
-        assert_eq!(BUILD_DATE, "2026-04-03");
+        assert_eq!(VERSION, "v8.28.0-hls-passthrough-2026-04-11");
+        assert_eq!(VERSION_NUMBER, "8.28.0");
+        assert_eq!(BUILD_DATE, "2026-04-11");
     }
 
     #[test]

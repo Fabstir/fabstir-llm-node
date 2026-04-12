@@ -90,3 +90,27 @@ async fn test_http_transcode_status_endpoint() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn test_http_transcode_with_preview_percent_503() {
+    let app = test_app();
+    let body = json!({
+        "sourceCid": "uEiBkTestHls",
+        "mediaFormats": [{"id": 1, "ext": "mp4", "vcodec": "av1_nvenc", "hls": true, "hls_time": 6}],
+        "isGpu": true,
+        "isEncrypted": true,
+        "previewPercent": 20
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/transcode")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

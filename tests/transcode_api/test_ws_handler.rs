@@ -116,3 +116,55 @@ fn test_transcode_error_message_format() {
     assert_eq!(msg["error"]["code"], "SIDECAR_UNAVAILABLE");
     assert!(msg["error"]["message"].is_string());
 }
+
+#[tokio::test]
+async fn test_transcode_request_with_preview_percent() {
+    let server = ApiServer::new_for_test();
+    let key = test_session_key();
+    let request = json!({
+        "action": "transcode",
+        "sourceCid": "uEiBkTestHls",
+        "mediaFormats": [{"id": 1, "ext": "mp4", "vcodec": "av1_nvenc", "hls": true, "hls_time": 6}],
+        "isGpu": true,
+        "isEncrypted": true,
+        "previewPercent": 15
+    });
+    let (ack, task) =
+        handle_encrypted_transcode(&server, &request, &key, "sess-hls", None, None).await;
+    assert!(task.is_none(), "no task when sidecar unavailable");
+    let inner = decrypt_inner(&ack, &key);
+    assert_eq!(inner["type"], "transcode_error");
+    assert_eq!(inner["error"]["code"], "SIDECAR_UNAVAILABLE");
+}
+
+#[test]
+fn test_transcode_complete_hls_message_format() {
+    let msg = json!({
+        "type": "transcode_complete",
+        "taskId": "task-hls-456",
+        "outputs": [{
+            "id": 1,
+            "hls": true,
+            "initSegmentCid": "zInitSeg1080p...",
+            "segments": [
+                {"index": 0, "cid": "zSeg0Plain...", "duration": 6.006, "encrypted": false},
+                {"index": 1, "cid": "zSeg1Plain...", "duration": 6.006, "encrypted": false},
+                {"index": 15, "cid": "uSeg15Enc...", "duration": 6.006, "encrypted": true}
+            ],
+            "previewSegments": 15,
+            "totalSegments": 100,
+            "totalDuration": 598.764
+        }],
+        "billing": {"units": 120.0, "tokens": 120000},
+        "duration": 598.764
+    });
+    assert_eq!(msg["type"], "transcode_complete");
+    let output = &msg["outputs"][0];
+    assert_eq!(output["hls"], true);
+    assert!(output["initSegmentCid"].is_string());
+    assert!(output["segments"].is_array());
+    assert_eq!(output["segments"].as_array().unwrap().len(), 3);
+    assert_eq!(output["previewSegments"], 15);
+    assert_eq!(output["totalSegments"], 100);
+    assert_eq!(output["totalDuration"], 598.764);
+}

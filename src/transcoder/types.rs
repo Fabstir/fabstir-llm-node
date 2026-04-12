@@ -49,6 +49,10 @@ pub struct VideoFormat {
     pub encrypt: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trim_percent: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hls_time: Option<u32>,
 }
 
 /// Response from POST /transcode.

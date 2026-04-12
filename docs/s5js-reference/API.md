@@ -7,6 +7,10 @@
   - [Overview](#overview)
   - [Installation](#installation)
   - [Quick Start](#quick-start)
+  - [Connection API](#connection-api)
+    - [getConnectionStatus()](#getconnectionstatus)
+    - [onConnectionChange(callback)](#onconnectionchangecallback)
+    - [reconnect()](#reconnect)
   - [Core API Methods](#core-api-methods)
     - [get(path, options?)](#getpath-options)
       - [Parameters](#parameters)
@@ -144,6 +148,571 @@ console.log(content); // "Hello, S5!"
 // List directory contents
 for await (const item of s5.fs.list("home/documents")) {
   console.log(`${item.type}: ${item.name}`);
+}
+```
+
+## Connection API
+
+The Connection API provides methods for monitoring and managing WebSocket connections to the S5 peer-to-peer network. This is particularly useful for mobile applications where connections can be interrupted by background tabs, network switching, or device sleep.
+
+### ConnectionStatus Type
+
+```typescript
+type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+```
+
+- **`connected`**: At least one peer has completed the handshake
+- **`connecting`**: At least one peer socket is open but handshake not complete
+- **`disconnected`**: No peers or all sockets closed
+
+### getConnectionStatus()
+
+Get the current connection status to the S5 network.
+
+```typescript
+getConnectionStatus(): ConnectionStatus
+```
+
+#### Returns
+
+- `'connected'` if at least one peer has completed handshake
+- `'connecting'` if at least one peer socket is open but handshake not complete
+- `'disconnected'` if no peers or all sockets closed
+
+#### Example
+
+```typescript
+const s5 = await S5.create({ initialPeers: [...] });
+
+const status = s5.getConnectionStatus();
+console.log(`Current status: ${status}`);
+
+if (status === 'disconnected') {
+  console.log('Not connected to network');
+} else if (status === 'connecting') {
+  console.log('Connection in progress...');
+} else {
+  console.log('Connected and ready');
+}
+```
+
+### onConnectionChange(callback)
+
+Subscribe to connection status changes. The callback is called immediately with the current status, then again whenever the status changes.
+
+```typescript
+onConnectionChange(callback: (status: ConnectionStatus) => void): () => void
+```
+
+#### Parameters
+
+- **callback** `(status: ConnectionStatus) => void`: Function called when connection status changes
+
+#### Returns
+
+- Unsubscribe function that removes the listener when called
+
+#### Example
+
+```typescript
+const s5 = await S5.create({ initialPeers: [...] });
+
+// Subscribe to changes
+const unsubscribe = s5.onConnectionChange((status) => {
+  console.log(`Connection status: ${status}`);
+
+  if (status === 'disconnected') {
+    showOfflineIndicator();
+  } else if (status === 'connected') {
+    hideOfflineIndicator();
+  }
+});
+
+// Later: stop listening
+unsubscribe();
+```
+
+#### Multiple Listeners
+
+Multiple listeners can subscribe independently:
+
+```typescript
+// UI listener
+const unsubscribe1 = s5.onConnectionChange((status) => {
+  updateStatusBadge(status);
+});
+
+// Analytics listener
+const unsubscribe2 = s5.onConnectionChange((status) => {
+  trackConnectionEvent(status);
+});
+
+// Cleanup both
+unsubscribe1();
+unsubscribe2();
+```
+
+#### Error Isolation
+
+Listener errors are isolated - one failing listener won't break others:
+
+```typescript
+s5.onConnectionChange((status) => {
+  throw new Error('This error is caught');
+});
+
+s5.onConnectionChange((status) => {
+  // This still runs even if above listener throws
+  console.log(status);
+});
+```
+
+### reconnect()
+
+Force reconnection to the S5 network. Closes all existing connections and re-establishes them to the initial peer URIs.
+
+```typescript
+async reconnect(): Promise<void>
+```
+
+#### Throws
+
+- `Error` if reconnection fails after 10 second timeout
+
+#### Example
+
+```typescript
+const s5 = await S5.create({ initialPeers: [...] });
+
+// Detect disconnection and reconnect
+s5.onConnectionChange(async (status) => {
+  if (status === 'disconnected') {
+    try {
+      await s5.reconnect();
+      console.log('Reconnected successfully');
+    } catch (error) {
+      console.error('Reconnection failed:', error.message);
+    }
+  }
+});
+```
+
+#### Manual Reconnection
+
+```typescript
+// Force reconnect (e.g., when app returns to foreground)
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    if (s5.getConnectionStatus() === 'disconnected') {
+      try {
+        await s5.reconnect();
+      } catch (error) {
+        console.error('Failed to reconnect:', error);
+      }
+    }
+  }
+});
+```
+
+#### Concurrent Calls
+
+Concurrent `reconnect()` calls are handled safely - subsequent calls wait for the first to complete:
+
+```typescript
+// These don't create duplicate connections
+const promise1 = s5.reconnect();
+const promise2 = s5.reconnect();
+
+await Promise.all([promise1, promise2]); // Both resolve when first completes
+```
+
+## Identity & Signing API
+
+The Identity & Signing API provides methods for cryptographic signing and portal authentication. This enables backend-mediated registration flows where a server with a master token handles portal registration while the browser holds the signing keys.
+
+### getSigningPublicKey(seed?)
+
+Get the Ed25519 public key for signing operations.
+
+```typescript
+async getSigningPublicKey(seed?: string): Promise<string>
+```
+
+#### Parameters
+
+- **seed** (optional string): Base64url-encoded seed for purpose-specific key derivation
+  - If omitted: Returns the identity's main signing public key
+  - If provided: Derives a purpose-specific keypair (e.g., for portal auth)
+
+#### Returns
+
+- Base64url-encoded Ed25519 public key with multikey prefix (0xed)
+
+#### Example
+
+```typescript
+// Main signing key
+const mainPubKey = await s5.getSigningPublicKey();
+
+// Purpose-specific key for portal registration
+const seed = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+const portalPubKey = await s5.getSigningPublicKey(seed);
+```
+
+### sign(data, seed?)
+
+Sign data with the identity's Ed25519 signing key.
+
+```typescript
+async sign(data: Uint8Array, seed?: string): Promise<string>
+```
+
+#### Parameters
+
+- **data** (Uint8Array): The data to sign
+- **seed** (optional string): Base64url-encoded seed for purpose-specific key derivation
+
+#### Returns
+
+- Base64url-encoded Ed25519 signature (already encoded, do NOT encode again)
+
+#### Example
+
+```typescript
+const message = new TextEncoder().encode("Hello, S5!");
+const signature = await s5.sign(message);
+
+// With purpose-specific key
+const signature2 = await s5.sign(message, seed);
+```
+
+### setPortalAuth(portalUrl, authToken)
+
+Set portal auth token for immediate use in the current session. Does NOT persist the token.
+
+```typescript
+setPortalAuth(portalUrl: string, authToken: string): void
+```
+
+#### Parameters
+
+- **portalUrl** (string): The portal URL (e.g., `'https://s5.example.com'`)
+- **authToken** (string): The auth token for uploads
+
+#### Example
+
+```typescript
+// After receiving authToken from backend
+s5.setPortalAuth('https://s5.example.com', authToken);
+
+// Now uploads work immediately
+await s5.fs.put('home/file.txt', 'Hello!');
+```
+
+### storePortalCredentials(portalUrl, seed, authToken)
+
+Store portal credentials for persistence across sessions AND configure for immediate use.
+
+```typescript
+async storePortalCredentials(
+  portalUrl: string,
+  seed: string,
+  authToken: string
+): Promise<void>
+```
+
+#### Parameters
+
+- **portalUrl** (string): The portal URL
+- **seed** (string): Base64url-encoded seed used for key derivation
+- **authToken** (string): The auth token from registration
+
+#### Example
+
+```typescript
+// After backend-mediated registration completes
+await s5.storePortalCredentials(
+  'https://s5.example.com',
+  seed,
+  authToken
+);
+```
+
+### Challenge Type Constants
+
+Exported constants for portal challenge-response authentication:
+
+```typescript
+import { CHALLENGE_TYPE_REGISTER, CHALLENGE_TYPE_LOGIN } from '@julesl23/s5js';
+
+// CHALLENGE_TYPE_REGISTER = 1 (for new account registration)
+// CHALLENGE_TYPE_LOGIN = 2 (for existing account login)
+```
+
+### Backend-Mediated Registration Flow
+
+Complete example of secure portal registration where the master token stays server-side:
+
+```typescript
+// === BROWSER ===
+import { S5, CHALLENGE_TYPE_REGISTER } from '@julesl23/s5js';
+
+// 1. Generate purpose-specific seed
+const seedBytes = crypto.getRandomValues(new Uint8Array(32));
+const seed = base64UrlEncode(seedBytes);
+
+// 2. Get public key for this seed
+const pubKey = await s5.getSigningPublicKey(seed);
+
+// 3. Send pubKey to backend, get challenge
+const { challenge } = await fetch('/api/s5/register-start', {
+  method: 'POST',
+  body: JSON.stringify({ pubKey })
+}).then(r => r.json());
+
+// 4. Build and sign the challenge message
+const challengeBytes = base64UrlDecode(challenge);
+const portalHostHash = await blake3(new TextEncoder().encode('s5.example.com'));
+const message = new Uint8Array([
+  CHALLENGE_TYPE_REGISTER,
+  ...challengeBytes,
+  ...portalHostHash
+]);
+const signature = await s5.sign(message, seed);
+
+// 5. Send signature to backend, get authToken
+const { authToken } = await fetch('/api/s5/register-complete', {
+  method: 'POST',
+  body: JSON.stringify({
+    pubKey,
+    response: base64UrlEncode(message),
+    signature  // Already base64url encoded!
+  })
+}).then(r => r.json());
+
+// 6. Configure S5 for immediate use
+s5.setPortalAuth('https://s5.example.com', authToken);
+
+// 7. Optionally persist for future sessions
+await s5.storePortalCredentials('https://s5.example.com', seed, authToken);
+```
+
+```typescript
+// === BACKEND (has master token) ===
+app.post('/api/s5/register-start', async (req, res) => {
+  const { pubKey } = req.body;
+
+  // Get challenge from portal using master token
+  const response = await fetch(
+    `https://s5.example.com/s5/account/register?pubKey=${pubKey}`,
+    { headers: { Authorization: `Bearer ${MASTER_TOKEN}` } }
+  );
+  const { challenge } = await response.json();
+
+  res.json({ challenge });
+});
+
+app.post('/api/s5/register-complete', async (req, res) => {
+  const { pubKey, response, signature } = req.body;
+
+  // Complete registration with portal using master token
+  const result = await fetch('https://s5.example.com/s5/account/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${MASTER_TOKEN}`
+    },
+    body: JSON.stringify({ pubKey, response, signature })
+  });
+
+  const authToken = result.headers.get('set-cookie')?.match(/s5-auth-token=([^;]+)/)?.[1];
+  res.json({ authToken });
+});
+```
+
+## Public Download API
+
+The Public Download API enables downloading content by CID (Content Identifier) from S5 portals. This allows users to share content publicly - one user uploads and shares a CID, another user downloads by that CID.
+
+### downloadByCID(cid)
+
+Download content by its CID from S5 portals.
+
+```typescript
+async downloadByCID(cid: string | Uint8Array): Promise<Uint8Array>
+```
+
+#### Parameters
+
+- **cid** (string | Uint8Array): The CID to download
+  - String formats accepted:
+    - 53-character base32 (raw hash): `"baaaa..."`
+    - 59+ character base32 (BlobIdentifier): `"uJh9d..."`
+  - Uint8Array: 32-byte raw BLAKE3 hash
+
+#### Returns
+
+- `Uint8Array` - The downloaded content
+
+#### Throws
+
+- `Error` if no identity/portals configured
+- `Error` if CID format is invalid
+- `Error` if all portals fail to serve the content
+- `Error` if downloaded content hash doesn't match CID (integrity failure)
+
+#### Features
+
+- **Portal Fallback**: Tries each configured portal until one succeeds
+- **Hash Verification**: Verifies downloaded data matches CID using BLAKE3
+- **Format Detection**: Automatically detects CID format (raw hash vs BlobIdentifier)
+
+#### Example
+
+```typescript
+import { S5, FS5Advanced, formatCID } from '@julesl23/s5js';
+
+// User A: Upload and share content
+const s5a = await S5.create({ initialPeers: [...] });
+await s5a.recoverIdentityFromSeedPhrase(seedPhrase);
+await s5a.registerOnNewPortal('https://s5.ninja');
+
+// Store a file
+await s5a.fs.put('home/public/photo.jpg', imageData);
+
+// Get the CID to share
+const advanced = new FS5Advanced(s5a.fs);
+const cid = await advanced.pathToCID('home/public/photo.jpg');
+const cidString = formatCID(cid);
+console.log('Share this CID:', cidString);
+// "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+
+// User B: Download by CID
+const s5b = await S5.create({ initialPeers: [...] });
+await s5b.recoverIdentityFromSeedPhrase(seedPhrase);
+await s5b.registerOnNewPortal('https://s5.ninja');
+
+const data = await s5b.downloadByCID(cidString);
+console.log('Downloaded', data.length, 'bytes');
+```
+
+#### Error Handling
+
+```typescript
+try {
+  const data = await s5.downloadByCID(cidString);
+} catch (error) {
+  if (error.message.includes('No identity configured')) {
+    // Need to call recoverIdentityFromSeedPhrase() first
+  } else if (error.message.includes('No portals configured')) {
+    // Need to call registerOnNewPortal() first
+  } else if (error.message.includes('Invalid CID')) {
+    // CID format is wrong
+  } else if (error.message.includes('Hash verification failed')) {
+    // Downloaded data was corrupted or tampered
+  } else if (error.message.includes('Failed to download CID from all portals')) {
+    // Content not available on any portal
+  }
+}
+```
+
+### CID Format Utilities
+
+**Important:** S5 portals require BlobIdentifier CIDs (which include file size) for download endpoints. The `downloadByCID()` method handles both CID formats - it passes BlobIdentifier CIDs through unchanged and converts raw hash CIDs to base32 format.
+
+Additional utilities are available for working with CID formats:
+
+```typescript
+import { detectCIDFormat, cidStringToHash, cidToDownloadFormat } from '@julesl23/s5js';
+
+// Detect CID format
+const format = detectCIDFormat(cidString);
+console.log(format); // 'raw' or 'blob'
+
+// Extract raw 32-byte hash from any CID format
+const hash = cidStringToHash(cidString);
+console.log(hash); // Uint8Array(32)
+
+// Convert CID to download-compatible format
+// - BlobIdentifier CIDs pass through unchanged (portal requires this format)
+// - Uint8Array inputs are converted to base32 string
+const downloadCID = cidToDownloadFormat(blobIdentifierCID);
+console.log(downloadCID); // Same BlobIdentifier CID (unchanged)
+```
+
+**CID Formats Explained:**
+
+| Format | Example Prefix | Length | Contains | Use Case |
+|--------|---------------|--------|----------|----------|
+| Raw Hash | `b...` | 53 chars | BLAKE3 hash only | Verification, deduplication |
+| BlobIdentifier | `blob...` or `u...` | 59+ chars | Hash + file size | Portal downloads, sharing |
+
+Both formats are accepted by `downloadByCID()`. For portal downloads, use `pathToBlobCID()` which returns BlobIdentifier format with size metadata.
+
+### Mobile App Example
+
+Complete example for handling connection in a mobile web app:
+
+```typescript
+import { S5, ConnectionStatus } from '@julesl23/s5js';
+
+class S5ConnectionManager {
+  private s5: S5;
+  private unsubscribe?: () => void;
+
+  async initialize() {
+    this.s5 = await S5.create({
+      initialPeers: [
+        'wss://z2Das8aEF7oNoxkcrfvzerZ1iBPWfm6D7gy3hVE4ALGSpVB@node.sfive.net/s5/p2p'
+      ]
+    });
+
+    // Monitor connection
+    this.unsubscribe = this.s5.onConnectionChange((status) => {
+      this.handleStatusChange(status);
+    });
+
+    // Handle app lifecycle
+    document.addEventListener('visibilitychange', () => {
+      this.handleVisibilityChange();
+    });
+  }
+
+  private handleStatusChange(status: ConnectionStatus) {
+    switch (status) {
+      case 'connected':
+        this.showOnline();
+        break;
+      case 'connecting':
+        this.showConnecting();
+        break;
+      case 'disconnected':
+        this.showOffline();
+        break;
+    }
+  }
+
+  private async handleVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      // App came to foreground - check connection
+      if (this.s5.getConnectionStatus() === 'disconnected') {
+        try {
+          await this.s5.reconnect();
+        } catch (error) {
+          this.showReconnectionFailed();
+        }
+      }
+    }
+  }
+
+  private showOnline() { /* Update UI */ }
+  private showConnecting() { /* Update UI */ }
+  private showOffline() { /* Update UI */ }
+  private showReconnectionFailed() { /* Update UI */ }
+
+  destroy() {
+    this.unsubscribe?.();
+  }
 }
 ```
 
@@ -879,6 +1448,50 @@ async function cleanupTempFiles(basePath: string) {
 
   console.log(`Cleaned ${cleaned} temporary files`);
 }
+```
+
+## Blob Upload Methods
+
+### `s5.fs.uploadBlobWithoutEncryption(blob)`
+
+Uploads a blob without encryption and returns the plaintext hash and size.
+
+```typescript
+const blob = new Blob([data]);
+const result = await s5.fs.uploadBlobWithoutEncryption(blob);
+// result: { hash: Uint8Array, size: number }
+// hash: 32-byte BLAKE3 hash (multihash prefix removed)
+```
+
+### `s5.fs.uploadBlobEncrypted(blob)`
+
+Uploads a blob with XChaCha20-Poly1305 encryption. The blob is split into 256 KiB chunks, each encrypted individually, then uploaded as a single encrypted blob.
+
+```typescript
+const blob = new Blob([sensitiveData]);
+const result = await s5.fs.uploadBlobEncrypted(blob);
+// result: {
+//   hash: Uint8Array,             // 32-byte plaintext BLAKE3 hash
+//   size: number,                 // original plaintext size
+//   encryptionKey: Uint8Array,    // 32-byte encryption key
+//   encryptedBlobHash: Uint8Array, // 32-byte BLAKE3 hash of the encrypted blob
+//   padding: number               // padding bytes added for size obfuscation
+// }
+```
+
+The returned components can be used to construct the full `0xae` encrypted CID externally:
+
+```typescript
+const encryptedCID = new Uint8Array([
+  0xae,                              // CID type: encrypted static
+  0x01,                              // encryption algorithm: XChaCha20-Poly1305
+  18,                                // chunk size exponent: 2^18 = 256 KiB
+  0x1f,                              // hash type prefix
+  ...result.encryptedBlobHash,       // 32 bytes
+  ...result.encryptionKey,           // 32 bytes
+  ...encodeLittleEndian(result.padding, 4), // 4 bytes
+  ...plaintextCID,                   // plaintext blob reference (built from hash + size)
+]);
 ```
 
 ## Integration with FS5 Class Methods
@@ -1828,6 +2441,90 @@ This design makes the API:
 
 For advanced use cases requiring content addressing, access the internal `FileRef` structures through the S5Node API.
 
+## Cross-Identity Public Directory Read (beta.46)
+
+Enables reading files from another user's public (unencrypted) directory tree. This powers multi-user workflows where operators publish data and viewers read it via a shared public key.
+
+### How It Works
+
+FS5 child directories are stored unencrypted — only the root directory is encrypted. The barrier to cross-identity reads is that outsiders cannot compute the directory's registry public key (derived from the owner's identity). These two methods solve that:
+
+1. **Operator** extracts the directory's public key and shares it
+2. **Viewer** uses that key to read files from the directory (no identity required)
+
+### getPublicDirectoryKey()
+
+Extract the 32-byte Ed25519 public key for a directory's registry entry. Requires an initialized identity.
+
+```typescript
+async getPublicDirectoryKey(path: string): Promise<Uint8Array>
+```
+
+**Parameters:**
+- `path` — Directory path (e.g., `"home/public/storefront"`)
+
+**Returns:** 32-byte `Uint8Array` (Ed25519 public key without the 0xed multikey prefix)
+
+```typescript
+// Operator: extract and share the key
+const pubKey = await s5.fs.getPublicDirectoryKey("home/public/storefront");
+const keyString = base64url(pubKey); // Share this with viewers
+```
+
+### readFromPublicDirectory()
+
+Read a file from another user's unencrypted directory tree. Does **not** require identity — only needs network access (`this.api`).
+
+```typescript
+async readFromPublicDirectory(
+  remotePubKey: Uint8Array,
+  subpath: string
+): Promise<Uint8Array | undefined>
+```
+
+**Parameters:**
+- `remotePubKey` — 32-byte Ed25519 public key (from `getPublicDirectoryKey`)
+- `subpath` — Path within the remote directory (e.g., `"config/brand.json"`)
+
+**Returns:** Raw file bytes as `Uint8Array`, or `undefined` if not found, path is invalid, or file is encrypted.
+
+**Throws:** If `remotePubKey` is not exactly 32 bytes.
+
+```typescript
+// Viewer: read from operator's public directory
+const data = await viewerFs.readFromPublicDirectory(operatorPubKey, "config/brand.json");
+if (data) {
+  const config = JSON.parse(new TextDecoder().decode(data));
+}
+```
+
+### Behaviour Details
+
+| Scenario | Result |
+|----------|--------|
+| File found | `Uint8Array` (raw bytes) |
+| File not found | `undefined` |
+| Directory segment missing | `undefined` |
+| No registry entry for key | `undefined` |
+| Encrypted file | `undefined` (viewer cannot decrypt) |
+| Encrypted directory | `undefined` (defensive — child dirs are unencrypted in practice) |
+| Empty subpath | `undefined` |
+| Invalid key length | Throws `Error` |
+
+### End-to-End Example
+
+```typescript
+// === Operator (one-time setup) ===
+await operatorFs.put("home/storefront/catalogue.json", catalogueData);
+const pubKey = await operatorFs.getPublicDirectoryKey("home/storefront");
+// Share pubKey with viewers (e.g., store in platform config)
+
+// === Viewer (reading) ===
+const viewerFs = new FS5(api); // No identity needed
+const data = await viewerFs.readFromPublicDirectory(pubKey, "catalogue.json");
+const catalogue = JSON.parse(new TextDecoder().decode(data!));
+```
+
 ## Performance Considerations
 
 - **Directory Caching**: Directory metadata is cached during path traversal
@@ -1999,6 +2696,52 @@ console.log(cid); // Uint8Array(32) [...]
 const formatted = formatCID(cid, 'base32');
 console.log(formatted); // "bafybeig..."
 ```
+
+#### pathToBlobCID(path)
+
+Get the full BlobIdentifier CID for a file path. Unlike `pathToCID()` which returns the raw 32-byte hash, this method returns the full BlobIdentifier string that includes the file size, which is required by S5 portals for downloading.
+
+```typescript
+async pathToBlobCID(path: string): Promise<string>
+```
+
+**Parameters:**
+- `path: string` - The file path (not directories)
+
+**Returns:**
+- `Promise<string>` - The BlobIdentifier CID as a base32 string (59 chars)
+
+**Throws:**
+- `Error` if path does not exist
+- `Error` if path is a directory (only works for files)
+
+**Example:**
+
+```typescript
+const s5 = await S5.create();
+await s5.recoverIdentityFromSeedPhrase(seedPhrase);
+
+const advanced = new FS5Advanced(s5.fs);
+
+// Store a file
+await s5.fs.put('home/photo.jpg', imageData);
+
+// Get BlobIdentifier CID for sharing/downloading
+const blobCID = await advanced.pathToBlobCID('home/photo.jpg');
+console.log(blobCID); // "uaah6c..." (59 chars with file size encoded)
+
+// Use with downloadByCID
+const data = await s5.downloadByCID(blobCID);
+```
+
+**CID Format Comparison:**
+
+| Method | Returns | Length | Use Case |
+|--------|---------|--------|----------|
+| `pathToCID()` | Raw BLAKE3 hash | 32 bytes | Verification, deduplication |
+| `pathToBlobCID()` | BlobIdentifier string | 59 chars | Portal downloads, sharing |
+
+For most download/sharing use cases, use `pathToBlobCID()` as it contains the file size metadata required by portals.
 
 #### cidToPath(cid)
 
