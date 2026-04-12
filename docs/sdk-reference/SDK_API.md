@@ -6,11 +6,20 @@
 - [Core SDK](#core-sdk)
 - [Authentication](#authentication)
 - [Session Management](#session-management)
+- [Web Search Integration](#web-search-integration)
+- [Image Generation](#image-generation)
+  - [OpenAI-Compatible Bridge](#openai-compatible-bridge)
+- [Video Transcoding](#video-transcoding)
 - [Payment Management](#payment-management)
 - [Model Governance](#model-governance)
 - [Host Management](#host-management)
 - [Storage Management](#storage-management)
   - [User Settings Storage](#user-settings-storage)
+- [RAG and Vector Databases](#rag-and-vector-databases)
+  - [VectorRAGManager](#vectorragmanager)
+  - [DocumentManager](#documentmanager)
+  - [Embedding Services](#embedding-services)
+  - [Permissions and Sharing](#permissions-and-sharing)
 - [Treasury Management](#treasury-management)
 - [Client Manager](#client-manager)
 - [WebSocket Communication](#websocket-communication)
@@ -19,6 +28,7 @@
 - [Error Handling](#error-handling)
 - [Types and Interfaces](#types-and-interfaces)
 - [Usage Examples](#usage-examples)
+- [Multi-Agent Orchestration](#multi-agent-orchestration-fabstirorchestrator)
 
 ## Overview
 
@@ -28,12 +38,18 @@ The Fabstir SDK provides a comprehensive interface for interacting with the Fabs
 - Browser-compatible core functionality
 - USDC and ETH payment support
 - Session-based LLM interactions with context preservation
+- **RAG (Retrieval-Augmented Generation)** with vector databases, document upload, and semantic search
+- **Image Generation** via FLUX.2 diffusion models (encrypted WebSocket + HTTP paths)
+- **Video Transcoding** with GPU acceleration, encrypted source/output support, and real-time progress
 - Model governance and validation
 - WebSocket real-time streaming
 - S5 decentralized storage integration
 - Base Account Kit for gasless transactions
 - Multi-chain support (Base Sepolia, opBNB testnet)
 - Chain-aware wallet providers (EOA and Smart Accounts)
+- Multi-agent orchestration with LLM-driven task decomposition
+- x402 HTTP payment protocol for agent-to-agent USDC micropayments
+- A2A protocol for agent discovery and delegation
 
 ## Multi-Chain Support
 
@@ -183,47 +199,41 @@ const sdk = new FabstirSDKCore({
 **Multi-Chain Configuration Examples:**
 
 ```typescript
+import { ChainRegistry, ChainId } from '@fabstir/sdk-core/config';
+
 // Base Sepolia Configuration (Default)
+// Contract addresses from ChainRegistry (populated from .env.test)
+const chain = ChainRegistry.getChain(ChainId.BASE_SEPOLIA);
 const baseSepolia = new FabstirSDKCore({
-  rpcUrl: 'https://sepolia.base.org',
-  chainId: 84532, // Optional, this is the default
+  rpcUrl: process.env.RPC_URL_BASE_SEPOLIA!,
+  chainId: ChainId.BASE_SEPOLIA, // 84532
   contractAddresses: {
-    jobMarketplace: '0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f',
-    nodeRegistry: '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218',
-    proofSystem: '0x2ACcc60893872A499700908889B38C5420CBcFD1',
-    hostEarnings: '0x908962e8c6CE72610021586f85ebDE09aAc97776',
-    usdcToken: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    fabToken: '0xC78949004B4EB6dEf2D66e49Cd81231472612D62',
-    modelRegistry: '0x92b2De840bB2171203011A6dBA928d855cA8183E'
+    jobMarketplace: chain.contracts.jobMarketplace,
+    nodeRegistry: chain.contracts.nodeRegistry,
+    proofSystem: chain.contracts.proofSystem,
+    hostEarnings: chain.contracts.hostEarnings,
+    usdcToken: chain.contracts.usdcToken,
+    fabToken: chain.contracts.fabToken,
+    modelRegistry: chain.contracts.modelRegistry
   }
 });
 
-// opBNB Testnet Configuration
+// opBNB Testnet Configuration (post-MVP)
+const opBNBChain = ChainRegistry.getChain(ChainId.OPBNB_TESTNET);
 const opBNBTestnet = new FabstirSDKCore({
   rpcUrl: 'https://opbnb-testnet-rpc.bnbchain.org',
-  chainId: 5611, // Required for opBNB
+  chainId: ChainId.OPBNB_TESTNET, // 5611
   contractAddresses: {
-    // Note: These are placeholder addresses for opBNB testnet
-    jobMarketplace: '0x0000000000000000000000000000000000000001',
-    nodeRegistry: '0x0000000000000000000000000000000000000002',
-    proofSystem: '0x0000000000000000000000000000000000000003',
-    hostEarnings: '0x0000000000000000000000000000000000000004',
-    usdcToken: '0x0000000000000000000000000000000000000006',
-    modelRegistry: '0x0000000000000000000000000000000000000005',
-    fabToken: '0x0000000000000000000000000000000000000007'
+    // Addresses will be in ChainRegistry when opBNB contracts are deployed
+    ...opBNBChain.contracts
   }
 });
 ```
 
-**Current Contract Addresses (Base Sepolia):**
-```
-JobMarketplace: 0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f
-NodeRegistry: 0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218
-ProofSystem: 0x2ACcc60893872A499700908889B38C5420CBcFD1
-HostEarnings: 0x908962e8c6CE72610021586f85ebDE09aAc97776
-USDCToken: 0x036CbD53842c5426634e7929541eC2318f3dCF7e
-FABToken: 0xC78949004B4EB6dEf2D66e49Cd81231472612D62
-ModelRegistry: 0x92b2De840bB2171203011A6dBA928d855cA8183E
+**Contract Addresses:**
+```bash
+# Source of truth: .env.test - never hardcode addresses
+cat .env.test | grep CONTRACT_
 ```
 
 ## Authentication
@@ -376,7 +386,7 @@ const accounts = await provider.request({
 
 const smartWallet = accounts[0]; // Primary account
 const contracts = {
-  USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+  USDC: process.env.CONTRACT_USDC_TOKEN! // From .env.test
 };
 
 // 2. Ensure sub-account exists with spend permissions
@@ -523,7 +533,7 @@ async function setupPopupFreeTransactions() {
 
   // 3. Ensure sub-account with spend permissions (SDK utility)
   const contracts = {
-    USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    USDC: process.env.CONTRACT_USDC_TOKEN! // From .env.test
   };
 
   const subAccountResult = await ensureSubAccount(baseProvider, smartWallet, {
@@ -580,7 +590,8 @@ async function setupPopupFreeTransactions() {
       depositAmount: "1.0",
       pricePerToken: 200,
       duration: 3600,
-      proofInterval: 100
+      proofInterval: 100,
+      proofTimeoutWindow: 300 // 5 min proof timeout
     }
   );
 
@@ -807,6 +818,7 @@ interface SessionConfig {
   pricePerToken: number;     // Price per token (e.g., 200)
   duration: number;          // Session duration in seconds (e.g., 3600)
   proofInterval: number;     // Checkpoint interval in tokens (e.g., 100)
+  proofTimeoutWindow?: number; // Proof timeout window in seconds (60-3600, default: 300)
   encryption?: boolean;      // Enable end-to-end encryption (default: true)
 ```
 
@@ -820,6 +832,7 @@ const { sessionId, jobId } = await sessionManager.startSession(
     pricePerToken: 200,      // 0.0002 USDC per token (0.02 cents)
     duration: 3600,          // 1 hour session timeout
     proofInterval: 100,      // Checkpoint every 100 tokens
+    proofTimeoutWindow: 300, // 5 min proof timeout (60-3600, default: 300)
     encryption: true         // Enable E2EE (default, can be omitted)
   },
   'http://localhost:8080'   // Optional: Host WebSocket endpoint
@@ -867,8 +880,37 @@ Sends a prompt and receives streaming response via WebSocket.
 async sendPromptStreaming(
   sessionId: bigint,
   prompt: string,
-  onToken?: (token: string) => void
+  onToken?: (token: string) => void,
+  options?: PromptOptions
 ): Promise<string>
+```
+
+**PromptOptions:**
+```typescript
+interface PromptOptions {
+  images?: ImageAttachment[];
+  thinking?: ThinkingMode;
+  onTokenUsage?: (usage: TokenUsageInfo) => void;
+  onImageGenerated?: (result: ImageGenerationResult) => void;
+  rawQuery?: string;
+  signal?: AbortSignal;
+  onContextWarning?: (usage: TokenUsageInfo) => void;
+  contextWarningThreshold?: number;  // default 0.8
+}
+```
+
+**TokenUsageInfo:**
+```typescript
+interface TokenUsageInfo {
+  llmTokens: number;
+  vlmTokens: number;
+  imageGenTokens: number;
+  totalTokens: number;
+  promptTokens?: number;          // from node usage.prompt_tokens
+  contextWindowSize?: number;     // from node usage.context_window_size
+  contextUtilization?: number;    // 0.0-1.0 ratio
+  finishReason?: 'stop' | 'length' | 'cancelled';
+}
 ```
 
 **Example:**
@@ -876,12 +918,20 @@ async sendPromptStreaming(
 const response = await sessionManager.sendPromptStreaming(
   sessionId,
   "Tell me a story",
-  (token) => {
-    // Handle each token as it arrives
-    process.stdout.write(token);
+  (token) => process.stdout.write(token),
+  {
+    onTokenUsage: (usage) => {
+      console.log(`Context: ${Math.round((usage.contextUtilization ?? 0) * 100)}%`);
+      if (usage.finishReason === 'length') {
+        console.log('Response was truncated (max_tokens reached).');
+      }
+    },
+    contextWarningThreshold: 0.75,
+    onContextWarning: (usage) => {
+      console.warn(`Context ${Math.round(usage.contextUtilization! * 100)}% full — trim history soon`);
+    }
   }
 );
-console.log('\nFull response:', response);
 ```
 
 ### submitCheckpoint
@@ -917,6 +967,156 @@ async completeSession(
 ): Promise<string>
 ```
 
+### uploadVectors (Host-Side RAG)
+
+Uploads vectors to the host node's session memory via WebSocket for RAG functionality.
+
+```typescript
+async uploadVectors(
+  sessionId: string | BigInt,
+  vectors: Vector[],
+  replace?: boolean
+): Promise<UploadVectorsResult>
+```
+
+**Parameters:**
+- `sessionId`: Active session ID
+- `vectors`: Array of vector objects with id, vector (384-d), and metadata
+- `replace`: If true, replace all existing vectors (default: false)
+
+**Returns:**
+```typescript
+interface UploadVectorsResult {
+  uploaded: number;
+  status: 'success' | 'error';
+  error?: string;
+}
+```
+
+**Example:**
+```typescript
+// Convert document chunks to vectors
+const vectors = chunks.map((chunk, i) => ({
+  id: `chunk-${i}`,
+  vector: chunk.embedding,  // 384-dimensional array
+  metadata: { text: chunk.text, index: i, source: 'doc.pdf' }
+}));
+
+// Upload to host (auto-batched at 1K vectors)
+const result = await sessionManager.uploadVectors(sessionId, vectors);
+console.log(`Uploaded ${result.uploaded} vectors`);
+```
+
+**Notes:**
+- Vectors stored in session memory on host node (Rust)
+- Auto-batched: 1000 vectors per WebSocket message
+- Auto-cleanup: Vectors deleted when session ends
+- No persistence: Host is stateless
+
+### searchVectors (Host-Side RAG)
+
+Searches for similar vectors on the host node via WebSocket.
+
+```typescript
+async searchVectors(
+  sessionId: string | BigInt,
+  queryVector: number[],
+  k?: number,
+  threshold?: number
+): Promise<SearchResult[]>
+```
+
+**Parameters:**
+- `sessionId`: Active session ID
+- `queryVector`: Query embedding (384 dimensions)
+- `k`: Number of results to return (default: 5, max: 20)
+- `threshold`: Minimum similarity score (default: 0.2, range: 0.0-1.0)
+
+**Returns:**
+```typescript
+interface SearchResult {
+  id: string;
+  score: number;           // Cosine similarity (0-1)
+  metadata: Record<string, any>;
+  vector?: number[];       // Optional: include full vector
+}
+```
+
+**Example:**
+```typescript
+// Generate query embedding
+const queryEmbedding = await embeddingService.embed('What is RAG?');
+
+// Search with production-tested threshold
+const results = await sessionManager.searchVectors(
+  sessionId,
+  queryEmbedding,
+  5,    // topK: return top 5 results
+  0.2   // threshold: 0.2 works best with all-MiniLM-L6-v2 (not 0.7!)
+);
+
+results.forEach(r => {
+  console.log(`Score: ${r.score.toFixed(3)}, Text: ${r.metadata?.text}`);
+});
+```
+
+**Threshold Selection Guide:**
+- **0.0**: Accept all results (debugging only)
+- **0.2**: Balanced filtering (recommended for production)
+- **0.4**: Strict filtering (may miss relevant results)
+- **0.7**: Too strict (returns 0 results with all-MiniLM-L6-v2)
+
+**Performance:** ~100ms for 10K vectors (Rust implementation)
+
+### askWithContext (RAG Helper)
+
+Helper method that combines embedding generation, vector search, and context injection.
+
+```typescript
+async askWithContext(
+  sessionId: string | BigInt,
+  question: string,
+  topK?: number
+): Promise<string>
+```
+
+**Parameters:**
+- `sessionId`: Active session ID
+- `question`: User's question
+- `topK`: Number of context chunks to retrieve (default: 5)
+
+**Returns:** Enhanced prompt with RAG context injected
+
+**Example:**
+```typescript
+// Automatic workflow: embed → search → format
+const enhanced = await sessionManager.askWithContext(
+  sessionId,
+  'What are the key findings?',
+  3  // Retrieve top 3 relevant chunks
+);
+
+// Send enhanced prompt to LLM
+await sessionManager.sendPromptStreaming(sessionId, enhanced, (chunk) => {
+  process.stdout.write(chunk.content);
+});
+```
+
+**Context Format:**
+```
+Context:
+[Document 1] <text from metadata>
+
+[Document 2] <text from metadata>
+
+Question: <original question>
+```
+
+**Notes:**
+- Falls back to original question if no results found
+- Automatically handles embedding generation
+- Uses production-tested threshold (0.2)
+
 ### getSessionHistory
 
 Retrieves conversation history for a session.
@@ -948,6 +1148,846 @@ Pauses an active session.
 async pauseSession(sessionId: bigint): Promise<void>
 ```
 
+### generateEmbeddings
+
+Generates vector embeddings for document content using the host's embedding model. Part of the **deferred embeddings workflow** where documents are uploaded without embeddings and processed later during an active session.
+
+```typescript
+async generateEmbeddings(
+  sessionId: bigint,
+  fileContent: string,
+  options?: {
+    chunkSize?: number;
+    chunkOverlap?: number;
+    chainId?: number;
+  }
+): Promise<Vector[]>
+```
+
+**Parameters:**
+- `sessionId` - Active session ID (must be started with a host)
+- `fileContent` - Raw document text to chunk and embed
+- `options.chunkSize` - Characters per chunk (default: 512)
+- `options.chunkOverlap` - Overlap between chunks (default: 50)
+- `options.chainId` - Blockchain chain ID (default: from session)
+
+**Returns:** Array of vectors with embeddings and metadata
+
+**Throws:**
+- `SESSION_NOT_FOUND` - Session does not exist
+- `SESSION_INACTIVE` - Session must be active
+- `INVALID_CONTENT` - No valid chunks generated
+- `EMBEDDING_TIMEOUT` - Operation exceeded 120 seconds
+- `NETWORK_ERROR` - Failed to reach host embedding endpoint
+- `EMBEDDING_FAILED` - Host returned error response
+
+**Example:**
+```typescript
+// 1. Start session with host
+const { sessionId } = await sessionManager.startSession({
+  hostUrl: 'http://localhost:8080',
+  jobId: 123n,
+  modelName: 'llama-3',
+  chainId: ChainId.BASE_SEPOLIA
+});
+
+// 2. Read document content
+const fileContent = await file.text();
+
+// 3. Generate embeddings via host
+const vectors = await sessionManager.generateEmbeddings(
+  sessionId,
+  fileContent,
+  {
+    chunkSize: 512,      // Characters per chunk
+    chunkOverlap: 50     // Overlap for context continuity
+  }
+);
+
+console.log(`Generated ${vectors.length} embeddings`);
+// vectors[0].values = [0.12, -0.45, ...] // 384D embedding
+// vectors[0].metadata.text = "chunk text..."
+// vectors[0].metadata.chunkIndex = 0
+// vectors[0].metadata.model = "all-MiniLM-L6-v2"
+
+// 4. Add to vector database
+await vectorRAGManager.addVectors(databaseName, vectors);
+```
+
+**Architecture:**
+- Calls host's `/v1/embed` endpoint (requires active session)
+- Uses `all-MiniLM-L6-v2` model (384 dimensions)
+- Automatic chunking with overlap for semantic continuity
+- 120-second timeout for large documents
+- Returns vectors ready to add to VectorRAGManager
+
+**When to Use:**
+- **Deferred embeddings workflow**: Upload documents without embeddings, process during session
+- **Background processing**: Generate embeddings after document upload
+- **Progress tracking**: Show real-time progress as chunks are embedded
+- **Host-side processing**: Leverage host's GPU/CPU for embedding generation
+
+**See Also:**
+- `VectorRAGManager.getPendingDocuments()` - Get documents awaiting embeddings
+- `VectorRAGManager.updateDocumentStatus()` - Update document embedding status
+
+### getLastTokenUsage
+
+Returns the token usage info from the last completed prompt for a session.
+
+```typescript
+getLastTokenUsage(sessionId: bigint): TokenUsageInfo | undefined
+```
+
+**Example:**
+```typescript
+const usage = sessionManager.getLastTokenUsage(sessionId);
+if (usage) {
+  console.log(`Last prompt used ${usage.totalTokens} tokens`);
+  console.log(`Context: ${Math.round((usage.contextUtilization ?? 0) * 100)}%`);
+}
+```
+
+### getContextInfo
+
+Returns context window utilization info for a session. Returns `null` if no prompt has been sent yet or the node didn't report context usage.
+
+```typescript
+getContextInfo(sessionId: bigint): ContextInfo | null
+```
+
+**ContextInfo:**
+```typescript
+interface ContextInfo {
+  promptTokens: number;
+  completionTokens: number;
+  contextWindowSize: number;
+  utilization: number;              // 0.0-1.0
+  finishReason: 'stop' | 'length' | 'cancelled' | null;
+}
+```
+
+**Example:**
+```typescript
+const ctx = sessionManager.getContextInfo(sessionId);
+if (ctx && ctx.utilization > 0.9) {
+  // Trim conversation history before next message
+}
+```
+
+### Checkpoint Recovery
+
+The SDK provides methods to recover conversation state from checkpoint data when sessions are interrupted.
+
+#### recoverFromBlockchainEvents (Recommended)
+
+Recovers conversation from blockchain ProofSubmitted events. This decentralized method does NOT require the host to be online - deltaCIDs are permanently recorded on-chain.
+
+```typescript
+async recoverFromBlockchainEvents(
+  jobId: bigint,
+  options?: CheckpointQueryOptions
+): Promise<BlockchainRecoveredConversation>
+```
+
+**Parameters:**
+- `jobId`: The job/session ID to recover
+- `options`: Optional query options (block range)
+  - `fromBlock`: Starting block (default: auto-calculated for RPC limits)
+  - `toBlock`: Ending block (default: 'latest')
+
+**Returns:**
+```typescript
+interface BlockchainRecoveredConversation {
+  messages: Message[];           // Recovered conversation messages
+  tokenCount: number;            // Total tokens from last checkpoint
+  checkpoints: BlockchainCheckpointEntry[];  // On-chain checkpoint data
+}
+```
+
+**Example:**
+```typescript
+// After a session timeout or disconnect
+const recovered = await sessionManager.recoverFromBlockchainEvents(jobId);
+
+console.log(`Recovered ${recovered.messages.length} messages`);
+console.log(`Total tokens: ${recovered.tokenCount}`);
+console.log(`From ${recovered.checkpoints.length} on-chain checkpoints`);
+
+// Display recovered conversation
+recovered.messages.forEach(msg => {
+  console.log(`[${msg.role}]: ${msg.content}`);
+});
+```
+
+**Features:**
+- **Decentralized**: Works without host being online
+- **Encrypted**: Automatically decrypts deltas using user's recovery key
+- **On-chain**: Data permanently recorded in ProofSubmitted events
+- **Block Range**: Auto-calculates safe block range to avoid RPC limits
+
+**Error Codes:**
+- `DELTA_FETCH_FAILED`: Could not fetch delta from S5 storage
+- `DECRYPTION_FAILED`: Decryption failed (wrong key or tampered data)
+- `SIGNER_NOT_AVAILABLE`: SDK not properly authenticated
+
+#### recoverFromCheckpoints (Deprecated)
+
+> **Deprecated**: Use `recoverFromBlockchainEvents()` instead for decentralized recovery.
+
+Recovers conversation via HTTP API from the host node. Requires host to be online.
+
+```typescript
+async recoverFromCheckpoints(
+  sessionId: bigint
+): Promise<RecoveredConversation>
+```
+
+This method is kept for backward compatibility with pre-Phase 9 sessions.
+
+## Web Search Integration
+
+The SDK provides automatic web search integration that enhances LLM responses with real-time information from the web. **Web search works seamlessly with both plaintext and encrypted sessions** (requires node v8.7.5+).
+
+### Automatic Intent Detection
+
+The SDK automatically detects when a prompt requires web search based on trigger patterns:
+
+```typescript
+// Triggers detected: "search for", "latest"
+await sessionManager.sendPromptStreaming(sessionId, 'Search for latest NVIDIA GPU specs', onToken);
+// → web_search: true (auto-enabled)
+
+// No triggers detected
+await sessionManager.sendPromptStreaming(sessionId, 'What is 2+2?', onToken);
+// → web_search: false (no search overhead)
+```
+
+**Trigger Patterns:**
+- Keywords: `search`, `find`, `look up`, `google`, `check online`
+- Time references: `latest`, `recent`, `current`, `today`, `2025`, `2026`
+- News patterns: `news about`, `what happened`
+
+### Override Controls
+
+Configure web search behavior on a per-prompt basis:
+
+```typescript
+// Force-enable web search (even without triggers)
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'Tell me about quantum computing',
+  onToken,
+  { webSearch: { forceEnabled: true } }
+);
+
+// Force-disable web search (even with triggers)
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'Search for the news',
+  onToken,
+  { webSearch: { forceDisabled: true } }
+);
+
+// Disable automatic detection
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'Latest AI developments',
+  onToken,
+  { webSearch: { autoDetect: false } }
+);
+
+// Custom search configuration
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'What is happening in tech?',
+  onToken,
+  {
+    webSearch: {
+      forceEnabled: true,
+      maxSearches: 3,              // Limit number of searches
+      queries: ['tech news 2026']  // Custom search queries
+    }
+  }
+);
+```
+
+### searchDirect (HTTP Path)
+
+Performs a direct web search via HTTP endpoint:
+
+```typescript
+const results = await sessionManager.searchDirect(
+  sessionId,
+  'NVIDIA RTX 5090 specifications',
+  {
+    numResults: 10,  // 1-20, default 10
+    chainId: 84532   // Optional, uses session's chainId
+  }
+);
+
+// Results structure
+interface SearchApiResponse {
+  results: Array<{
+    title: string;
+    url: string;
+    content: string;
+    score?: number;
+  }>;
+  query: string;
+  search_provider: 'brave' | 'duckduckgo' | 'bing';
+  timestamp: number;
+}
+```
+
+### webSearch (WebSocket Path)
+
+Performs a web search via WebSocket (real-time feedback):
+
+```typescript
+const results = await sessionManager.webSearch(
+  sessionId,
+  'latest AI breakthroughs'
+);
+// Returns same SearchApiResponse as searchDirect
+```
+
+### getWebSearchCapabilities
+
+Check if a host supports web search:
+
+```typescript
+const hostManager = sdk.getHostManager();
+const capabilities = await hostManager.getWebSearchCapabilities('http://host:8080');
+
+interface WebSearchCapabilities {
+  supportsWebSearch: boolean;        // Host has web search feature
+  supportsInferenceSearch: boolean;  // Can inject search into inference
+  supportsStreamingSearch: boolean;  // v8.7.5+ streaming support
+  supportsWebSocketSearch: boolean;  // v8.7.5+ WebSocket integration
+  provider: 'brave' | 'duckduckgo' | 'bing' | null;
+  rateLimitPerMinute: number;
+}
+
+if (capabilities.supportsWebSearch) {
+  console.log(`Provider: ${capabilities.provider}`);
+  console.log(`Rate limit: ${capabilities.rateLimitPerMinute}/min`);
+}
+```
+
+### searchWithRetry Utility
+
+Retry search with exponential backoff:
+
+```typescript
+import { searchWithRetry } from '@fabstir/sdk-core';
+
+const results = await searchWithRetry(
+  () => sessionManager.searchDirect(sessionId, 'query'),
+  {
+    maxRetries: 3,           // Default: 3
+    initialDelayMs: 1000,    // Default: 1000ms
+    maxDelayMs: 30000        // Default: 30000ms
+  }
+);
+```
+
+### WebSearchError
+
+Handle web search errors:
+
+```typescript
+import { WebSearchError } from '@fabstir/sdk-core';
+
+try {
+  await sessionManager.searchDirect(sessionId, 'query');
+} catch (error) {
+  if (error instanceof WebSearchError) {
+    switch (error.code) {
+      case 'rate_limited':
+        // Wait for Retry-After header or backoff
+        break;
+      case 'timeout':
+        // Search timed out (30s default)
+        break;
+      case 'provider_error':
+        // Search provider returned error
+        break;
+      case 'not_supported':
+        // Host doesn't support web search
+        break;
+    }
+  }
+}
+```
+
+### Encrypted Session Support
+
+Web search works transparently with encrypted sessions (v8.7.5+ nodes):
+
+```typescript
+// Start encrypted session (default)
+const { sessionId } = await sessionManager.startSession({
+  hostUrl: 'http://localhost:8080',
+  jobId: 123n,
+  modelName: 'llama-3',
+  chainId: ChainId.BASE_SEPOLIA
+  // encryption: true is default
+});
+
+// Web search auto-detected, works with encryption
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'Search for the latest GPU prices',
+  onToken
+);
+// → Encrypted message with web_search: true at message level
+```
+
+**Important**: The `web_search`, `max_searches`, and `search_queries` fields are sent at the message level (not inside the encrypted payload), allowing the node to perform web search before processing the encrypted content.
+
+## Image Generation
+
+The SDK supports text-to-image generation using host-side diffusion models (FLUX.2 Klein 4B). Image generation uses the same E2E encrypted WebSocket channel as inference, with an HTTP path available for testing.
+
+### generateImage (Encrypted WebSocket)
+
+Generate an image via the encrypted WebSocket session (production path):
+
+```typescript
+const sessionManager = await sdk.getSessionManager();
+
+const result = await sessionManager.generateImage(
+  sessionId,
+  'A cat astronaut floating in space',
+  {
+    size: '512x512',    // Default: '1024x1024'
+    steps: 4,           // Default: 4 (range: 1-100)
+    model: 'flux-1-schnell',  // Optional model override
+    seed: 42,           // Optional seed for reproducibility
+    negativePrompt: 'blurry, low quality',  // Optional
+    safetyLevel: 'strict'  // 'strict' | 'moderate' | 'permissive'
+  }
+);
+
+// Display image
+const imgSrc = `data:image/png;base64,${result.image}`;
+
+console.log(`Size: ${result.size}`);
+console.log(`Steps: ${result.steps}`);
+console.log(`Seed: ${result.seed}`);
+console.log(`Processing: ${result.processingTimeMs}ms`);
+console.log(`Billing: ${result.billing.generationUnits} units`);
+```
+
+**Parameters:**
+- `sessionId` (string) - Active encrypted session ID
+- `prompt` (string) - Text description (1-2000 characters)
+- `options` (ImageGenerationOptions, optional) - Generation options
+
+**Returns:** `Promise<ImageGenerationResult>`
+
+```typescript
+interface ImageGenerationResult {
+  image: string;           // Base64-encoded PNG
+  model: string;           // Model used
+  size: string;            // e.g. '512x512'
+  steps: number;           // Diffusion steps
+  seed: number;            // Seed used
+  processingTimeMs: number;
+  safety: SafetyInfo;      // { promptSafe, outputSafe, safetyLevel }
+  billing: BillingInfo;    // { generationUnits, modelMultiplier, megapixels, steps }
+  provider: string;        // Host address
+  chainId: number;
+  chainName: string;
+  nativeToken: string;
+}
+```
+
+**Throws:** `ImageGenerationError` with codes:
+- `VALIDATION_FAILED` - Invalid prompt, size, or steps
+- `PROMPT_BLOCKED` - Safety classifier rejected the prompt
+- `DIFFUSION_SERVICE_UNAVAILABLE` - Host diffusion sidecar is down
+- `IMAGE_GENERATION_FAILED` - Generation failed (retryable)
+- `RATE_LIMIT_EXCEEDED` - Client-side rate limit (5 req/min, retryable)
+- `ENCRYPTION_FAILED` - Encryption/decryption error
+
+### generateImageHttpRequest (HTTP Path)
+
+Generate an image via HTTP POST (testing/CI path, no E2E encryption):
+
+```typescript
+const result = await sessionManager.generateImageHttpRequest(
+  'http://host:8080',
+  'A serene mountain lake at golden hour',
+  { size: '512x512', steps: 4 }
+);
+```
+
+**Parameters:**
+- `hostUrl` (string) - Base URL of the host node
+- `prompt` (string) - Text description (1-2000 characters)
+- `options` (ImageGenerationOptions, optional) - Generation options
+
+**Returns:** `Promise<ImageGenerationResult>` (same as `generateImage`)
+
+### getImageGenerationCapabilities
+
+Check if a host supports image generation:
+
+```typescript
+const hostManager = sdk.getHostManager();
+const capabilities = await hostManager.getImageGenerationCapabilities(hostAddress, apiUrl);
+
+interface ImageGenerationCapabilities {
+  supportsImageGeneration: boolean;      // Host has diffusion sidecar
+  supportsEncryptedWebSocket: boolean;   // Encrypted WebSocket path available
+  supportsHttp: boolean;                 // HTTP path available
+  hasSafetyClassifier: boolean;          // Prompt safety checking
+  hasOutputClassifier: boolean;          // Output safety checking
+  hasBilling: boolean;                   // Billing computation
+  hasContentHashes: boolean;             // Content hash generation
+}
+
+if (capabilities.supportsImageGeneration) {
+  console.log(`WebSocket: ${capabilities.supportsEncryptedWebSocket}`);
+  console.log(`HTTP: ${capabilities.supportsHttp}`);
+}
+```
+
+### ImageGenerationError
+
+Handle image generation errors:
+
+```typescript
+import { ImageGenerationError } from '@fabstir/sdk-core';
+
+try {
+  await sessionManager.generateImage(sessionId, prompt);
+} catch (error) {
+  if (error instanceof ImageGenerationError) {
+    switch (error.code) {
+      case 'RATE_LIMIT_EXCEEDED':
+        console.log(`Retry in ${Math.ceil(error.retryAfter! / 1000)}s`);
+        break;
+      case 'PROMPT_BLOCKED':
+        console.log('Prompt rejected by safety classifier');
+        break;
+      case 'DIFFUSION_SERVICE_UNAVAILABLE':
+        console.log('Diffusion sidecar not running on host');
+        break;
+      case 'IMAGE_GENERATION_FAILED':
+        console.log('Generation failed, retryable:', error.isRetryable);
+        break;
+    }
+  }
+}
+```
+
+### Allowed Image Sizes
+
+```typescript
+import { ALLOWED_IMAGE_SIZES, isValidImageSize } from '@fabstir/sdk-core';
+
+// ALLOWED_IMAGE_SIZES = ['256x256', '512x512', '768x768', '1024x1024', '1024x768', '768x1024']
+
+if (isValidImageSize('512x512')) {
+  // Valid size
+}
+```
+
+### Automatic Image Intent Detection (v1.14.10+)
+
+The SDK auto-detects image generation intent from natural language prompts in `sendPromptStreaming()`. When detected, it routes to `generateImage()` automatically — no UI toggle required.
+
+```typescript
+// Auto-detected: routes to generateImage(), fires callback
+await sessionManager.sendPromptStreaming(
+  sessionId,
+  'Generate an image of a cat astronaut in 1024x1024',
+  (token) => process.stdout.write(token),
+  {
+    onImageGenerated: (result) => {
+      // result.image = base64 PNG
+      const imgSrc = `data:image/png;base64,${result.image}`;
+      console.log(`Generated ${result.size} in ${result.processingTimeMs}ms`);
+    }
+  }
+);
+// Returns "Image generated successfully" as text response
+
+// NOT detected: goes to normal LLM inference
+await sessionManager.sendPromptStreaming(sessionId, 'What is in this image?', onToken);
+// → Normal LLM response (no false positive)
+```
+
+**Trigger patterns:** `generate an image of`, `draw a`, `create a picture of`, `paint a`, `sketch a`, `make an image of`, `render a` — including polite forms (`please generate`, `can you draw`).
+
+**Not triggered by:** `describe the image`, `what is in this image`, `how to draw in CSS`, `image processing algorithm`, etc.
+
+**Parameters auto-extracted from prompt:**
+- Size: `"...in 1024x1024"` → `{ size: '1024x1024' }`
+- Steps: `"...with 20 steps"` → `{ steps: 20 }`
+
+**Fallback:** If image generation fails, the prompt silently falls back to normal LLM inference.
+
+**Direct usage:**
+
+```typescript
+import { analyzePromptForImageIntent } from '@fabstir/sdk-core';
+
+const result = analyzePromptForImageIntent('Generate an image of a cat in 512x512');
+// { isImageIntent: true, cleanPrompt: 'a cat', extractedOptions: { size: '512x512' } }
+```
+
+### Billing Estimation
+
+```typescript
+import { estimateGenerationUnits, parseSize } from '@fabstir/sdk-core';
+
+const { width, height } = parseSize('1024x1024');
+const units = estimateGenerationUnits(width, height, 4);
+// Formula: (width * height / 1_048_576) * (steps / 20) * modelMultiplier
+// 1024x1024, 4 steps = 0.2 units
+```
+
+### OpenAI-Compatible Bridge
+
+The `@fabstir/openai-bridge` package exposes Fabstir's AI infrastructure via standard OpenAI API endpoints. Any OpenAI SDK client (Cursor, Continue, OpenCode, LangChain) can use Fabstir hosts without code changes.
+
+```bash
+npx fabstir-openai-bridge --private-key $KEY --model "repo:file"
+# Listens on http://localhost:3457
+# Client sets OPENAI_BASE_URL=http://localhost:3457/v1
+```
+
+Supported endpoints:
+- `POST /v1/chat/completions` — streaming and non-streaming text, tool use, vision
+- `POST /v1/images/generations` — image generation (maps to `SessionManager.generateImage()`)
+- `POST /v1/responses` — OpenAI Responses API format
+- `GET /v1/models` — model listing
+
+The bridge handles blockchain session management, host discovery, E2E encryption, and session re-keying automatically. See [`packages/openai-bridge/`](../packages/openai-bridge/) for CLI options and configuration.
+
+## Video Transcoding
+
+GPU-accelerated video transcoding via encrypted WebSocket. Source videos are uploaded to S5 (optionally encrypted), transcoded by the host's sidecar, and output CIDs returned for download.
+
+### Get TranscodeManager
+
+```typescript
+const transcodeManager = sdk.getTranscodeManager();
+```
+
+### Feature Detection
+
+```typescript
+const hasTranscoding = await transcodeManager.isTranscodingAvailable(hostUrl);
+const hasTrustless = await transcodeManager.isTrustlessAvailable(hostUrl);
+```
+
+### Price Estimation
+
+```typescript
+const estimate = await transcodeManager.estimateTranscodePrice(hostAddress, formatSpec, durationSeconds);
+// { totalCost, breakdown: { duration, pricePerSecond, resolution, codec, quality } }
+```
+
+### Submit Transcode via SessionManager
+
+`submitTranscode` is on the concrete `SessionManager` class (not `ISessionManager`), following the same pattern as `generateImage`:
+
+```typescript
+const sessionManager = sdk.getSessionManager() as any; // Cast to access submitTranscode
+
+const handle = await sessionManager.submitTranscode(sessionId, sourceCid, formats, {
+  isGpu: true,
+  isEncrypted: true, // true if source is encrypted on S5
+  onProgress: (progress, gopInfo) => {
+    console.log(`${progress}% — GOP ${gopInfo?.currentGop}/${gopInfo?.totalGops}`);
+  },
+});
+
+console.log(`Task: ${handle.taskId}`);
+handle.cancel(); // Cancel mid-transcode
+
+const result = await handle.result;
+// { taskId, outputs: [{ id, ext, cid }], billing: { units, tokens }, duration, qualityMetrics, proofTreeCID, proofTreeRootHash }
+```
+
+### TranscodeSubmitOptions
+
+```typescript
+interface TranscodeSubmitOptions {
+  isEncrypted?: boolean;   // Source video encrypted on S5 (default: true)
+  isGpu?: boolean;         // Use GPU acceleration (default: true)
+  chainId?: number;        // Blockchain context
+  onProgress?: (progress: number, gopInfo?: GOPInfo) => void;
+  timeoutMs?: number;      // Default: 300000 (5 min)
+}
+```
+
+### Load-Balanced Transcode Submission
+
+`submitTranscodeWithLoadBalancing` on `TranscodeManager` ranks available hosts, checks capacity, and submits to the best host with available slots. If the preferred host is full, it overflows to the next ranked host automatically.
+
+```typescript
+const transcodeManager = sdk.getTranscodeManager() as any; // Cast — not on ITranscodeManager interface
+const handle = await transcodeManager.submitTranscodeWithLoadBalancing(sourceCid, formats, modelId, {
+  hostSelectionMode: HostSelectionMode.AUTO,
+  maxHostRetries: 5,
+  isGpu: true,
+  isEncrypted: true,
+  depositAmount: '0.0002',
+  onHostSelected: (address, url) => console.log(`Selected: ${address} @ ${url}`),
+  onProgress: (progress, gopInfo) => console.log(`${progress}%`),
+});
+const result = await handle.result;
+```
+
+**Pending job tracking**: The load balancer tracks in-flight jobs per host so that rapid sequential submissions don't all land on the same host. `effectiveAvailable = capacity.available - pendingJobs` ensures overflow to secondary hosts even when the capacity endpoint hasn't yet updated.
+
+**Per-transcode WebSocket connections**: Each `submitTranscode` call creates its own WebSocket connection and session key, enabling multiple concurrent transcode jobs without WebSocket message clobbering.
+
+### TranscodeLoadBalancedOptions
+
+```typescript
+interface TranscodeLoadBalancedOptions extends TranscodeSubmitOptions {
+  maxHostRetries?: number;       // Max hosts to try (default: 3)
+  hostSelectionMode?: HostSelectionMode; // AUTO, CHEAPEST, RELIABLE, FASTEST
+  onHostSelected?: (hostAddress: string, hostUrl: string) => void;
+  depositAmount?: string;        // Session deposit (default: '0.0002')
+  duration?: number;             // Session duration in seconds (default: 3600)
+  proofInterval?: number;        // Proof interval (default: 100)
+  encryption?: boolean;          // E2E encryption (default: true)
+}
+```
+
+### TranscodeCapacity
+
+Runtime capacity snapshot from a host's transcode sidecar, returned by `fetchTranscodeCapacity(hostUrl)`:
+
+```typescript
+interface TranscodeCapacity {
+  active: number;           // Currently running transcode jobs
+  max: number;              // Maximum concurrent slots
+  queued: number;           // Jobs waiting in sidecar queue (node v8.27.0+)
+  available: number;        // Slots available for new jobs
+  sidecarConnected: boolean; // Whether transcoder sidecar is connected
+}
+```
+
+**HTTP 429 handling**: When a host's sidecar is full, the capacity endpoint returns HTTP 429. The SDK maps this to `TranscodeError` with code `CAPACITY_FULL` (retryable), causing the load balancer to try the next host.
+
+### VideoFormat
+
+Formats use `VideoFormat[]` matching the node's ffmpeg parameters:
+
+```typescript
+const formats: VideoFormat[] = [{
+  id: 1, ext: 'mp4', vcodec: 'h264_nvenc', acodec: 'aac',
+  preset: 'fast', vf: 'scale=1920x1080', b_v: '5M',
+  ar: '48k', ch: 2, dest: 's5',
+  encrypt: true,        // Per-format encryption (encrypts output on S5)
+  trim_percent: 15,     // Transcode only first N% of source duration
+}];
+```
+
+**Streaming fields:**
+- `encrypt` (boolean, optional): When `true`, the output is encrypted on S5. Used to produce encrypted full-length outputs alongside unencrypted previews.
+- `trim_percent` (number, optional): Transcode only the first N% of the source video. The node sidecar computes `-t <duration * trim_percent / 100>` for ffmpeg. Used to produce free preview clips.
+
+### Streaming Content Pipeline
+
+For streaming content with free previews, use `buildStreamingFormats()` to produce two outputs per resolution — an encrypted full-length version and an unencrypted trimmed preview:
+
+```typescript
+import { buildStreamingFormats, selectResolution, assembleContentMetadata } from '@fabstir/sdk-core';
+
+// Build format array: 2 outputs per resolution (full + preview)
+const formats = buildStreamingFormats(['720p', '1080p'], 'h264', 15);
+// Returns 4 formats (ordered by the resolutions array):
+//   id 1: 720p full (encrypt: true)
+//   id 2: 720p preview (encrypt: false, trim_percent: 15)
+//   id 3: 1080p full (encrypt: true)
+//   id 4: 1080p preview (encrypt: false, trim_percent: 15)
+
+// When previewPercent is 0, produces 1 output per resolution (no encrypt/trim flags)
+const simpleFormats = buildStreamingFormats(['1080p'], 'h264', 0);
+// Returns 1 format: id 1, 1080p (same as legacy single-output behavior)
+```
+
+**After transcode completes**, assemble metadata pairing preview and full CIDs:
+
+```typescript
+const result = await handle.result;
+const metadata = assembleContentMetadata(result, formats, sourceCid, 15, jobId);
+// metadata: {
+//   sourceCid, transcodedAt, freePreviewPercent: 15, jobId,
+//   sources: [
+//     { resolution: '1080p', previewCid: '...', fullCid: '...', codec: 'h264', container: 'mp4', bitrateKbps: 5000 },
+//     { resolution: '720p',  previewCid: '...', fullCid: '...', codec: 'h264', container: 'mp4', bitrateKbps: 2000 },
+//   ]
+// }
+```
+
+**Select best resolution** for playback based on device/bandwidth:
+
+```typescript
+const best = selectResolution(metadata.sources, { maxHeight: 720, bandwidthKbps: 3000 });
+// Returns the TranscodedSource for the best matching resolution
+```
+
+**Types:**
+
+```typescript
+interface TranscodedSource {
+  resolution: string;      // '480p' | '720p' | '1080p' | '2160p'
+  previewCid: string;      // Unencrypted, first N% — freely accessible
+  fullCid: string;         // Encrypted, complete — requires purchase/key
+  codec: string;           // 'h264' | 'hevc' | 'av1'
+  container: string;       // 'mp4' | 'webm'
+  bitrateKbps: number;
+  proofTreeCid?: string;
+}
+
+interface TranscodedContentMetadata {
+  sourceCid: string;
+  transcodedAt: number;        // Unix timestamp
+  freePreviewPercent: number;  // e.g. 15
+  sources: TranscodedSource[];
+  jobId: number;               // On-chain job ID
+}
+```
+
+### Model IDs for Transcoding
+
+Transcode model IDs are computed from the canonical JSON of the `VideoFormat[]` array — not from a model name string. Use the SDK utility:
+
+```typescript
+import { computeTranscodeModelId } from '@fabstir/sdk-core';
+
+const modelId = computeTranscodeModelId(formats);
+// Internally: sorts by id, maps to canonical field order, JSON.stringify, keccak256
+// Deterministic — same formats always produce the same model ID
+```
+
+### Encrypted Source Upload
+
+Upload source video encrypted to S5 using `uploadBlobEncrypted`, then construct the S5 encrypted CID (0xae format) which embeds the decryption key:
+
+```typescript
+const s5 = storageManager.getS5Client();
+const result = await s5.fs.uploadBlobEncrypted(blob);
+// result: { hash, size, encryptionKey, encryptedBlobHash, padding }
+
+// Construct encrypted CID (0xae format — sidecar extracts key automatically)
+const encCID = new Uint8Array([0xae, 0x01, 18, 0x1f, ...result.encryptedBlobHash, ...result.encryptionKey, ...paddingLE, ...plaintextCIDTail]);
+const sourceCid = `s5://${base64url.encode(encCID)}`; // u-prefix
+```
+
+---
+
 ## Payment Management
 
 Handles ETH and USDC payments for jobs.
@@ -970,6 +2010,7 @@ async createSessionJobWithUSDC(
     pricePerToken: number;
     duration: number;
     proofInterval: number;
+    proofTimeoutWindow?: number; // 60-3600 seconds, default: 300
   }
 ): Promise<{
     sessionId: bigint;
@@ -985,7 +2026,8 @@ const result = await paymentManager.createSessionJobWithUSDC(
   {
     pricePerToken: 200,
     duration: 3600,
-    proofInterval: 100
+    proofInterval: 100,
+    proofTimeoutWindow: 300 // 5 min proof timeout (60-3600)
   }
 );
 ```
@@ -1002,6 +2044,7 @@ async createSessionJobWithETH(
     pricePerToken: number;
     duration: number;
     proofInterval: number;
+    proofTimeoutWindow?: number; // 60-3600 seconds, default: 300
   }
 ): Promise<{
     sessionId: bigint;
@@ -1439,6 +2482,84 @@ async verifyModelHash(
 ): Promise<boolean>
 ```
 
+### getAvailableModelsWithHosts
+
+Gets all approved models with host availability and pricing information.
+
+```typescript
+async getAvailableModelsWithHosts(): Promise<ModelWithAvailability[]>
+```
+
+**Returns:**
+```typescript
+interface ModelWithAvailability {
+  model: ModelInfo;
+  hostCount: number;        // Number of hosts serving this model
+  priceRange: {
+    min: bigint;            // Lowest host price
+    max: bigint;            // Highest host price
+    avg: bigint;            // Average price
+  };
+  isAvailable: boolean;     // hostCount > 0
+}
+```
+
+**Throws:**
+- `Error` if HostManager not set via `setHostManager()`
+
+**Example:**
+```typescript
+const modelManager = sdk.getModelManager();
+modelManager.setHostManager(sdk.getHostManager());
+
+const models = await modelManager.getAvailableModelsWithHosts();
+
+// Show available models
+models
+  .filter(m => m.isAvailable)
+  .forEach(m => {
+    console.log(`${m.model.fileName}: ${m.hostCount} hosts`);
+    console.log(`  Price range: ${m.priceRange.min} - ${m.priceRange.max}`);
+  });
+```
+
+### getModelPriceRange
+
+Gets price range for a specific model across all hosts.
+
+```typescript
+async getModelPriceRange(modelId: string): Promise<{
+  min: bigint;
+  max: bigint;
+  avg: bigint;
+  hostCount: number;
+}>
+```
+
+**Parameters:**
+- `modelId` - Model ID to get pricing for
+
+**Returns:**
+- Price range with min, max, avg, and host count
+- All values are 0 if no hosts serve this model
+
+**Example:**
+```typescript
+const modelManager = sdk.getModelManager();
+modelManager.setHostManager(sdk.getHostManager());
+
+const pricing = await modelManager.getModelPriceRange(modelId);
+
+if (pricing.hostCount > 0) {
+  console.log(`${pricing.hostCount} hosts available`);
+  console.log(`Cheapest: ${pricing.min} (raw USDC units)`);
+  console.log(`Average: ${pricing.avg}`);
+  console.log(`Most expensive: ${pricing.max}`);
+} else {
+  console.log('No hosts available for this model');
+}
+```
+
 ## Host Management
 
 The HostManager provides comprehensive host management with model governance support.
@@ -1630,46 +2751,71 @@ Withdraws accumulated earnings for a host.
 async withdrawEarnings(tokenAddress: string): Promise<string>
 ```
 
-### updatePricingNative
+### setModelTokenPricing
 
-Updates the native token pricing for the current host.
+Sets per-model per-token pricing for a specific model. Phase 18 replacement for `updatePricingNative`, `updatePricingStable`, and `setModelPricing`.
 
 ```typescript
-async updatePricingNative(newPrice: string): Promise<string>
+async setModelTokenPricing(modelId: string, tokenAddress: string, price: string): Promise<string>
 ```
 
 **Parameters:**
-- `newPrice`: New minimum price in wei (string)
-- Must be within range: `2272727273` to `22727272727273`
+- `modelId`: bytes32 model ID hash
+- `tokenAddress`: Token address — USDC address for stablecoin, `0x0000...0000` for native ETH
+- `price`: Price value — USDC uses PRICE_PRECISION (1000 = $1/million tokens), native uses wei
 
 **Example:**
 ```typescript
 const hostManager = sdk.getHostManager();
 
-// Update native pricing to ~$0.00007 @ $4400 ETH
-const txHash = await hostManager.updatePricingNative('15909090909091');
-console.log('Native pricing updated:', txHash);
+// Set USDC price to $5/million tokens (5 * 1000 = 5000)
+const usdcAddr = process.env.CONTRACT_USDC_TOKEN;
+const tx1 = await hostManager.setModelTokenPricing(modelId, usdcAddr, '5000');
+
+// Set ETH price (in wei per million tokens)
+const zeroAddr = '0x0000000000000000000000000000000000000000';
+const tx2 = await hostManager.setModelTokenPricing(modelId, zeroAddr, '15909090909091');
 ```
 
-### updatePricingStable
+### clearModelTokenPricing
 
-Updates the stablecoin pricing for the current host.
+Clears per-model pricing for a specific token. Must be called per-token (native and USDC separately).
 
 ```typescript
-async updatePricingStable(newPrice: string): Promise<string>
+async clearModelTokenPricing(modelId: string, tokenAddress: string): Promise<string>
 ```
 
 **Parameters:**
-- `newPrice`: New minimum price in raw USDC units (string)
-- Must be within range: `10` to `100000`
+- `modelId`: bytes32 model ID hash
+- `tokenAddress`: Token address to clear pricing for
 
 **Example:**
 ```typescript
 const hostManager = sdk.getHostManager();
 
-// Update stable pricing to 0.0005 USDC
-const txHash = await hostManager.updatePricingStable('500');
-console.log('Stable pricing updated:', txHash);
+// Clear USDC pricing for a model
+const tx = await hostManager.clearModelTokenPricing(modelId, usdcAddr);
+```
+
+### getHostModelPrices
+
+Fetches all per-model prices for a host for a specific token.
+
+```typescript
+async getHostModelPrices(hostAddress: string, tokenAddress: string): Promise<ModelPricing[]>
+```
+
+**Returns:** Array of `{ modelId: string, price: bigint }` — entries with `price === 0n` are filtered out.
+
+**Example:**
+```typescript
+const hostManager = sdk.getHostManager();
+
+// Get all USDC model prices
+const usdcPrices = await hostManager.getHostModelPrices(hostAddress, usdcAddr);
+
+// Get all native model prices
+const nativePrices = await hostManager.getHostModelPrices(hostAddress, zeroAddr);
 ```
 
 ## Storage Management
@@ -1969,7 +3115,31 @@ The SDK supports schema migrations for future UserSettings versions:
 **Current Version:**
 ```typescript
 export enum UserSettingsVersion {
-  V1 = 1  // Initial version
+  V1 = 1,  // Initial version
+  V2 = 2   // Model/host selection preferences
+}
+```
+
+**Version 2 New Fields:**
+```typescript
+// Host selection mode (added in V2)
+export enum HostSelectionMode {
+  AUTO = 'auto',           // Weighted algorithm (default)
+  CHEAPEST = 'cheapest',   // Lowest price first
+  RELIABLE = 'reliable',   // Highest stake + reputation
+  FASTEST = 'fastest',     // Lowest latency (placeholder)
+  SPECIFIC = 'specific'    // Use preferredHostAddress
+}
+
+interface UserSettingsV2 {
+  // ... V1 fields preserved ...
+
+  // Model Preferences (NEW in V2)
+  defaultModelId: string | null;     // User's default model
+
+  // Host Preferences (NEW in V2)
+  hostSelectionMode: HostSelectionMode;  // Selection algorithm
+  preferredHostAddress: string | null;   // For SPECIFIC mode
 }
 ```
 
@@ -2006,6 +3176,134 @@ try {
     });
   }
 }
+```
+
+### AI Preference Helper Methods
+
+The StorageManager provides convenience methods for managing model and host selection preferences.
+
+#### getDefaultModel(): Promise<ModelInfo | null>
+
+Get the user's default model. Returns `null` if no default is set.
+
+**Returns:**
+- `ModelInfo` if a default model is set and exists
+- `null` if no default is set or model doesn't exist
+
+**Throws:**
+- `Error` if ModelManager not set via `setModelManager()`
+
+**Example:**
+```typescript
+const storageManager = await sdk.getStorageManager();
+storageManager.setModelManager(sdk.getModelManager());
+
+const defaultModel = await storageManager.getDefaultModel();
+if (defaultModel) {
+  console.log('Default model:', defaultModel.fileName);
+} else {
+  console.log('No default model set');
+}
+```
+
+#### setDefaultModel(modelId: string | null): Promise<void>
+
+Set the user's default model. Pass `null` to clear the default.
+
+**Parameters:**
+- `modelId` - Model ID to set as default, or `null` to clear
+
+**Throws:**
+- `Error` if ModelManager not set
+- `Error` if model not found in registry
+
+**Example:**
+```typescript
+const storageManager = await sdk.getStorageManager();
+storageManager.setModelManager(sdk.getModelManager());
+
+// Set a default model
+await storageManager.setDefaultModel('0xabc123...'); // Model ID
+
+// Clear the default
+await storageManager.setDefaultModel(null);
+```
+
+#### getHostSelectionMode(): Promise<HostSelectionMode>
+
+Get the user's host selection mode. Returns `AUTO` if not set.
+
+**Returns:**
+- `HostSelectionMode` - Current selection mode
+
+**Example:**
+```typescript
+import { HostSelectionMode } from '@fabstir/sdk-core';
+
+const storageManager = await sdk.getStorageManager();
+const mode = await storageManager.getHostSelectionMode();
+
+switch (mode) {
+  case HostSelectionMode.AUTO:
+    console.log('Using weighted algorithm');
+    break;
+  case HostSelectionMode.CHEAPEST:
+    console.log('Selecting cheapest hosts');
+    break;
+  case HostSelectionMode.RELIABLE:
+    console.log('Selecting most reliable hosts');
+    break;
+  case HostSelectionMode.SPECIFIC:
+    console.log('Using specific preferred host');
+    break;
+}
+```
+
+#### setHostSelectionMode(mode: HostSelectionMode, preferredHostAddress?: string): Promise<void>
+
+Set the user's host selection mode.
+
+**Parameters:**
+- `mode` - HostSelectionMode to set
+- `preferredHostAddress` - Required for `SPECIFIC` mode
+
+**Throws:**
+- `Error` if `SPECIFIC` mode without `preferredHostAddress`
+
+**Example:**
+```typescript
+import { HostSelectionMode } from '@fabstir/sdk-core';
+
+const storageManager = await sdk.getStorageManager();
+
+// Use cheapest hosts
+await storageManager.setHostSelectionMode(HostSelectionMode.CHEAPEST);
+
+// Use a specific host
+await storageManager.setHostSelectionMode(
+  HostSelectionMode.SPECIFIC,
+  '0x1234567890123456789012345678901234567890'
+);
+
+// Back to auto
+await storageManager.setHostSelectionMode(HostSelectionMode.AUTO);
+```
+
+#### clearAIPreferences(): Promise<void>
+
+Reset all AI preferences to defaults without affecting other settings.
+
+**Behavior:**
+- `defaultModelId` → `null`
+- `hostSelectionMode` → `AUTO`
+- `preferredHostAddress` → `null`
+
+**Example:**
+```typescript
+const storageManager = await sdk.getStorageManager();
+
+// Reset AI preferences (keeps theme, payment token, etc.)
+await storageManager.clearAIPreferences();
 ```
 
 ### Encrypted Storage (Phase 5.3)
@@ -2210,6 +3508,1094 @@ console.log('Encrypted conversation saved with CID:', cid);
 const loaded = await sdk.loadConversation(cid);
 console.log('Loaded messages:', loaded.messages.length);
 ```
+
+### S5 Connection Handling (v1.4.24+)
+
+The StorageManager includes robust connection handling for mobile browsers where WebSocket connections frequently die due to background tab throttling, device sleep, or network switching.
+
+#### Connection Status
+
+##### getConnectionStatus(): S5ConnectionStatus
+
+Get the current S5 WebSocket connection status.
+
+**Returns:**
+- `'connected'` - WebSocket is open and ready
+- `'connecting'` - WebSocket is establishing connection
+- `'disconnected'` - WebSocket is closed or in error state
+
+**Example:**
+```typescript
+const storageManager = await sdk.getStorageManager();
+const status = storageManager.getConnectionStatus();
+console.log('S5 connection:', status); // 'connected' | 'connecting' | 'disconnected'
+```
+
+#### Sync Status
+
+##### getSyncStatus(): SyncStatus
+
+Get the current sync status for UI indicators.
+
+**Returns:**
+- `'synced'` - All operations completed successfully
+- `'syncing'` - Currently processing queued operations
+- `'pending'` - Operations queued, waiting for connection
+- `'error'` - Last operation failed after retries
+
+**Example:**
+```typescript
+const status = storageManager.getSyncStatus();
+if (status === 'pending') {
+  console.log(`${storageManager.getPendingOperationCount()} operations waiting`);
+}
+```
+
+##### getPendingOperationCount(): number
+
+Get the number of operations waiting in the queue.
+
+**Returns:**
+- `number` - Count of pending PUT/DELETE operations
+
+##### getLastError(): Error | null
+
+Get the last error if sync status is 'error'.
+
+**Returns:**
+- `Error` - The error that caused the 'error' status
+- `null` - No error (status is not 'error')
+
+##### onSyncStatusChange(callback): () => void
+
+Subscribe to sync status changes. Callback fires immediately with current status.
+
+**Parameters:**
+- `callback` (function) - Called with new status on each change
+
+**Returns:**
+- `() => void` - Unsubscribe function
+
+**Example:**
+```typescript
+const unsubscribe = storageManager.onSyncStatusChange((status) => {
+  switch (status) {
+    case 'synced':
+      hideSpinner();
+      showGreenCheck();
+      break;
+    case 'syncing':
+      showSpinner();
+      break;
+    case 'pending':
+      showYellowWarning(`${storageManager.getPendingOperationCount()} pending`);
+      break;
+    case 'error':
+      showRedError(storageManager.getLastError()?.message);
+      break;
+  }
+});
+
+// Cleanup on component unmount
+useEffect(() => unsubscribe, []);
+```
+
+#### Retry Operations
+
+##### putWithRetry(path, data): Promise<void>
+
+PUT operation with automatic retry and queue support.
+
+**Behavior:**
+- If connected: Executes with up to 5 retries (exponential backoff: 1s, 2s, 4s, 8s, 16s)
+- If disconnected: Queues operation, resolves when connection restored and operation succeeds
+
+**Parameters:**
+- `path` (string) - S5 storage path
+- `data` (any) - Data to store
+
+**Throws:**
+- `SDKError` with code `STORAGE_NOT_INITIALIZED` - StorageManager not initialized
+- `SDKError` with code `STORAGE_RETRY_EXHAUSTED` - Failed after 5 retries
+- `SDKError` with code `STORAGE_QUEUE_FULL` - Queue exceeded 100 operations
+
+##### getWithRetry(path): Promise<any>
+
+GET operation with automatic retry (no queue - reads need immediate response).
+
+**Parameters:**
+- `path` (string) - S5 storage path
+
+**Returns:**
+- `Promise<any>` - Retrieved data
+
+**Throws:**
+- `SDKError` with code `STORAGE_NOT_INITIALIZED` - StorageManager not initialized
+- `SDKError` with code `STORAGE_RETRY_EXHAUSTED` - Failed after 5 retries
+
+##### deleteWithRetry(path): Promise<boolean>
+
+DELETE operation with automatic retry and queue support.
+
+**Parameters:**
+- `path` (string) - S5 storage path
+
+**Returns:**
+- `Promise<boolean>` - True if deleted
+
+**Throws:**
+- `SDKError` with code `STORAGE_NOT_INITIALIZED` - StorageManager not initialized
+- `SDKError` with code `STORAGE_RETRY_EXHAUSTED` - Failed after 5 retries
+- `SDKError` with code `STORAGE_QUEUE_FULL` - Queue exceeded 100 operations
+
+#### Manual Sync
+
+##### forceSync(): Promise<void>
+
+Manually trigger reconnection and flush queued operations. Useful for UI "retry" buttons.
+
+**Example:**
+```typescript
+// Retry button handler
+retryButton.onclick = async () => {
+  try {
+    await storageManager.forceSync();
+    console.log('Sync successful');
+  } catch (error) {
+    console.error('Sync failed:', error.message);
+  }
+};
+```
+
+#### Cleanup
+
+##### cleanup(): void
+
+Clean up connection handlers and reject pending operations. Call when disposing the SDK.
+
+**Example:**
+```typescript
+// On app shutdown
+storageManager.cleanup();
+```
+
+#### Auto-Reconnect Behavior
+
+The SDK automatically attempts to reconnect in these scenarios:
+
+1. **Tab becomes visible** - When user returns to the tab after it was backgrounded
+2. **Network comes online** - When device regains network connectivity
+
+When reconnection succeeds, queued operations are automatically flushed.
+
+#### Complete UI Integration Example
+
+```typescript
+import { FabstirSDKCore, SyncStatus } from '@fabstir/sdk-core';
+
+function ChatApp() {
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('synced');
+  const [pendingCount, setPendingCount] = useState(0);
+  const storageManagerRef = useRef<StorageManager | null>(null);
+
+  useEffect(() => {
+    const init = async () => {
+      const sdk = new FabstirSDKCore({ /* config */ });
+      await sdk.authenticate('privatekey', { privateKey });
+      const storageManager = await sdk.getStorageManager();
+      storageManagerRef.current = storageManager;
+
+      // Subscribe to sync status
+      const unsubscribe = storageManager.onSyncStatusChange((status) => {
+        setSyncStatus(status);
+        setPendingCount(storageManager.getPendingOperationCount());
+      });
+
+      return () => {
+        unsubscribe();
+        storageManager.cleanup();
+      };
+    };
+
+    init();
+  }, []);
+
+  const handleRetry = async () => {
+    await storageManagerRef.current?.forceSync();
+  };
+
+  return (
+    <div>
+      {/* Sync status indicator */}
+      <SyncIndicator status={syncStatus} pendingCount={pendingCount} />
+
+      {syncStatus === 'error' && (
+        <button onClick={handleRetry}>Retry Sync</button>
+      )}
+
+      {/* Chat UI */}
+    </div>
+  );
+}
+
+function SyncIndicator({ status, pendingCount }: { status: SyncStatus; pendingCount: number }) {
+  switch (status) {
+    case 'synced':
+      return <span className="text-green-500">✓ Synced</span>;
+    case 'syncing':
+      return <span className="text-blue-500">⟳ Syncing...</span>;
+    case 'pending':
+      return <span className="text-yellow-500">⏳ {pendingCount} pending</span>;
+    case 'error':
+      return <span className="text-red-500">✗ Sync error</span>;
+  }
+}
+```
+
+#### Types
+
+```typescript
+// Connection status from S5.js
+export type S5ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+
+// Sync status for UI
+export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'error';
+```
+
+## RAG and Vector Databases
+
+The SDK includes a complete **Retrieval-Augmented Generation (RAG)** system that enhances LLM responses by retrieving relevant context from user documents.
+
+### Quick Start
+
+```typescript
+// 1. Get RAG managers
+const vectorRAGManager = sdk.getVectorRAGManager();
+const embeddingService = new HostAdapter({ hostUrl: 'http://host:8080' });
+const documentManager = new DocumentManager({
+  embeddingService,
+  vectorManager: vectorRAGManager,
+  databaseName: 'my-knowledge-base'
+});
+
+// 2. Create vector database
+await vectorRAGManager.createSession('my-knowledge-base');
+
+// 3. Upload document
+const result = await documentManager.processDocument(file);
+console.log(`Added ${result.chunks} chunks`);
+
+// 4. Start RAG-enhanced session
+sessionManager.setVectorRAGManager(vectorRAGManager);
+sessionManager.setEmbeddingService(embeddingService);
+
+const { sessionId } = await sessionManager.startSession({
+  hostUrl: process.env.NEXT_PUBLIC_TEST_HOST_1_URL || 'http://localhost:8083',
+  jobId: 123n,
+  modelName: 'llama-3',
+  chainId: ChainId.BASE_SEPOLIA,
+  ragConfig: {
+    enabled: true,
+    databaseName: 'my-knowledge-base',
+    topK: 5,
+    threshold: 0.2  // Production-tested with all-MiniLM-L6-v2 embeddings
+  }
+});
+
+// 5. Send prompts - RAG context automatically injected
+await sessionManager.sendPrompt(sessionId, 'What does the document say about...?');
+```
+
+### VectorRAGManager
+
+Manages vector databases and semantic search operations.
+
+**Architecture**: VectorRAGManager uses a hybrid approach:
+- **Storage**: S5VectorStore for decentralized persistence (S5 network)
+- **Search**: In-memory native JavaScript vector database for fast semantic search
+- **Deferred Embeddings**: Uploads documents without embeddings, generates them later during sessions
+
+**Key Features**:
+- ✅ Cross-device sync via S5 decentralized storage
+- ✅ Chunked storage (10K vectors per chunk for efficiency)
+- ✅ Virtual folder hierarchies for organization
+- ✅ Pending/ready document tracking for deferred embeddings
+- ✅ Browser and Node.js compatible
+
+**Storage Layer**: See [S5VectorStore API](./S5_VECTOR_STORE_API.md) for detailed storage documentation.
+
+#### Get VectorRAGManager
+
+```typescript
+const vectorRAGManager = sdk.getVectorRAGManager();
+```
+
+#### createSession
+
+Creates a new vector database.
+
+```typescript
+async createSession(databaseName: string, config?: DatabaseConfig): Promise<string>
+```
+
+**Parameters:**
+- `databaseName` - Unique identifier for the database
+- `config` - Optional configuration (dimensions, metric, encryption)
+
+**Returns:** Database session ID
+
+**Example:**
+```typescript
+const sessionId = await vectorRAGManager.createSession('my-docs', {
+  dimensions: 384,
+  metric: 'cosine',
+  encryption: true
+});
+```
+
+#### addVector / addVectors
+
+Adds vector(s) to database.
+
+```typescript
+async addVector(
+  databaseName: string,
+  id: string,
+  vector: number[],
+  metadata?: VectorMetadata
+): Promise<void>
+
+async addVectors(
+  databaseName: string,
+  vectors: VectorInput[]
+): Promise<AddVectorResult>
+```
+
+**Example:**
+```typescript
+// Single vector
+await vectorRAGManager.addVector('docs', 'doc-1', embedding, {
+  content: 'Document text...',
+  title: 'Getting Started',
+  category: 'tutorial'
+});
+
+// Batch vectors
+const result = await vectorRAGManager.addVectors('docs', [
+  { id: 'doc-1', vector: emb1, metadata: { content: '...' } },
+  { id: 'doc-2', vector: emb2, metadata: { content: '...' } }
+]);
+console.log(`Added ${result.added}, failed ${result.failed}`);
+```
+
+#### search
+
+Searches for similar vectors.
+
+```typescript
+async search(
+  databaseName: string,
+  queryVector: number[],
+  topK: number,
+  options?: SearchOptions
+): Promise<SearchResult[]>
+```
+
+**Parameters:**
+- `queryVector` - Query embedding (384 dimensions)
+- `topK` - Number of results to return
+- `options.threshold` - Minimum similarity score (0-1)
+- `options.filter` - Metadata filter (MongoDB-style)
+- `options.includeVectors` - Include vector arrays in results
+
+**Returns:**
+```typescript
+interface SearchResult {
+  id: string;
+  score: number;
+  metadata: VectorMetadata;
+  vector?: number[];
+}
+```
+
+**Example:**
+```typescript
+const queryEmbedding = await embeddingService.embed('search query');
+const results = await vectorRAGManager.search('docs', queryEmbedding, 5, {
+  threshold: 0.2,  // Production-tested: 0.2 works best with all-MiniLM-L6-v2
+  filter: {
+    $and: [
+      { category: 'tutorial' },
+      { $gte: { createdAt: Date.now() - 86400000 * 30 } }
+    ]
+  }
+});
+
+results.forEach(r => {
+  console.log(`${r.metadata.title} (score: ${r.score})`);
+});
+```
+
+#### searchMultipleDatabases
+
+Searches across multiple databases simultaneously.
+
+```typescript
+async searchMultipleDatabases(
+  databaseNames: string[],
+  queryVector: number[],
+  options: SearchOptions
+): Promise<SearchResult[]>
+```
+
+**Example:**
+```typescript
+const results = await vectorRAGManager.searchMultipleDatabases(
+  ['user-docs', 'shared-docs', 'public-wiki'],
+  queryEmbedding,
+  { topK: 10, threshold: 0.2 }  // Production-tested threshold
+);
+```
+
+#### deleteVector / deleteByMetadata
+
+Deletes vectors from database.
+
+```typescript
+async deleteVector(databaseName: string, id: string): Promise<void>
+
+async deleteByMetadata(
+  databaseName: string,
+  filter: MetadataFilter
+): Promise<DeleteResult>
+```
+
+**Example:**
+```typescript
+// Delete single vector
+await vectorRAGManager.deleteVector('docs', 'doc-1');
+
+// Delete by metadata
+const result = await vectorRAGManager.deleteByMetadata('docs', {
+  $lt: { createdAt: Date.now() - 86400000 * 365 } // Older than 1 year
+});
+console.log(`Deleted ${result.deletedCount} old documents`);
+```
+
+#### Folder Operations
+
+Organize vectors in virtual folder hierarchies.
+
+```typescript
+// Move to folder
+await vectorRAGManager.moveToFolder('docs', 'doc-1', '/tutorials/python');
+
+// Search in folder
+const results = await vectorRAGManager.searchInFolder(
+  'docs',
+  '/tutorials',
+  queryVector,
+  5,
+  { recursive: true }
+);
+
+// List folders
+const folders = vectorRAGManager.listFolders('docs');
+console.log('Folders:', folders);
+
+// Folder statistics
+const stats = vectorRAGManager.getFolderStatistics('docs', '/tutorials');
+console.log('Vectors in folder:', stats.vectorCount);
+```
+
+#### Database Management
+
+```typescript
+// Get metadata
+const metadata = vectorRAGManager.getDatabaseMetadata('docs');
+console.log('Created:', metadata.createdAt);
+
+// Get statistics
+const stats = vectorRAGManager.getDatabaseStats('docs');
+console.log('Total vectors:', stats.vectorCount);
+
+// List all databases
+const databases = vectorRAGManager.listDatabases();
+databases.forEach(db => console.log(db.databaseName));
+
+// Delete database
+await vectorRAGManager.deleteDatabase('old-docs');
+
+// Vacuum (reclaim storage)
+const vacuumStats = await vectorRAGManager.vacuum('docs');
+console.log(`Freed ${vacuumStats.spaceFreed} bytes`);
+```
+
+#### Deferred Embeddings
+
+Methods for managing documents in the **deferred embeddings workflow**, where documents are uploaded without embeddings and processed later during an active session.
+
+##### getPendingDocuments
+
+Gets all documents awaiting embedding generation across all vector databases.
+
+```typescript
+async getPendingDocuments(sessionGroupId?: string): Promise<PendingDocument[]>
+```
+
+**Parameters:**
+- `sessionGroupId` - Optional: Filter by session group (currently not implemented)
+
+**Returns:** Array of pending documents with database context
+
+```typescript
+interface PendingDocument {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  uploadedAt: number;
+  status: 'pending' | 'processing' | 'failed';
+  embeddingProgress?: number;  // 0-100 percentage
+  embeddingError?: string;
+  vectorCount?: number;
+  databaseName: string;  // Which database this document belongs to
+}
+```
+
+**Example:**
+```typescript
+// Get all pending documents
+const pending = await vectorRAGManager.getPendingDocuments();
+console.log(`Found ${pending.length} documents awaiting embeddings`);
+
+pending.forEach(doc => {
+  console.log(`${doc.fileName} (${doc.databaseName}): ${doc.status}`);
+  if (doc.embeddingProgress !== undefined) {
+    console.log(`  Progress: ${doc.embeddingProgress}%`);
+  }
+  if (doc.embeddingError) {
+    console.log(`  Error: ${doc.embeddingError}`);
+  }
+});
+```
+
+**When to Use:**
+- Display pending documents UI
+- Start background embedding generation during session
+- Show progress indicators for embedding processing
+- Identify failed documents needing retry
+
+**See Also:**
+- `SessionManager.generateEmbeddings()` - Generate embeddings for pending documents
+- `VectorRAGManager.updateDocumentStatus()` - Update document status after processing
+
+##### updateDocumentStatus
+
+Updates the embedding status of a document. Automatically moves document from `pendingDocuments[]` to `readyDocuments[]` when status is set to 'ready'.
+
+```typescript
+async updateDocumentStatus(
+  documentId: string,
+  status: 'pending' | 'processing' | 'ready' | 'failed',
+  updates?: {
+    vectorCount?: number;
+    embeddingProgress?: number;
+    embeddingError?: string;
+  }
+): Promise<void>
+```
+
+**Parameters:**
+- `documentId` - Unique document identifier
+- `status` - New embedding status
+- `updates.vectorCount` - Number of vectors generated (for 'ready' status)
+- `updates.embeddingProgress` - Progress percentage (0-100, for 'processing' status)
+- `updates.embeddingError` - Error message (for 'failed' status)
+
+**Example:**
+```typescript
+// Update to processing status
+await vectorRAGManager.updateDocumentStatus(
+  'doc-123',
+  'processing',
+  { embeddingProgress: 45 }
+);
+
+// Update to ready status (moves to readyDocuments[])
+await vectorRAGManager.updateDocumentStatus(
+  'doc-123',
+  'ready',
+  { vectorCount: 150 }
+);
+
+// Update to failed status
+await vectorRAGManager.updateDocumentStatus(
+  'doc-456',
+  'failed',
+  { embeddingError: 'Host disconnected during embedding generation' }
+);
+
+// Retry failed document (reset to pending)
+await vectorRAGManager.updateDocumentStatus(
+  'doc-456',
+  'pending'
+);
+```
+
+**Workflow:**
+```typescript
+// 1. Upload document (UI adds to pendingDocuments[])
+const fileContent = await file.text();
+const docId = `doc-${Date.now()}`;
+
+// 2. Start session with host
+const { sessionId } = await sessionManager.startSession({...});
+
+// 3. Get pending documents
+const pending = await vectorRAGManager.getPendingDocuments();
+
+// 4. Process each pending document
+for (const doc of pending) {
+  try {
+    // Update to processing
+    await vectorRAGManager.updateDocumentStatus(
+      doc.id,
+      'processing',
+      { embeddingProgress: 0 }
+    );
+
+    // Generate embeddings
+    const vectors = await sessionManager.generateEmbeddings(
+      sessionId,
+      doc.fileContent
+    );
+
+    // Update progress
+    await vectorRAGManager.updateDocumentStatus(
+      doc.id,
+      'processing',
+      { embeddingProgress: 50 }
+    );
+
+    // Add to vector database
+    await vectorRAGManager.addVectors(doc.databaseName, vectors);
+
+    // Update to ready (moves to readyDocuments[])
+    await vectorRAGManager.updateDocumentStatus(
+      doc.id,
+      'ready',
+      { vectorCount: vectors.length }
+    );
+  } catch (error) {
+    // Update to failed
+    await vectorRAGManager.updateDocumentStatus(
+      doc.id,
+      'failed',
+      { embeddingError: error.message }
+    );
+  }
+}
+```
+
+**Status Transitions:**
+- `pending` → `processing` → `ready` (success path)
+- `pending` → `processing` → `failed` (error path)
+- `failed` → `pending` (retry)
+- `ready` documents are moved to `readyDocuments[]` array
+
+**See Also:**
+- `SessionManager.generateEmbeddings()` - Generate embeddings for document
+- `VectorRAGManager.getPendingDocuments()` - Get all pending documents
+
+### DocumentManager
+
+Handles document processing, text extraction, chunking, and embedding generation for RAG.
+
+**Supported File Types:**
+
+| Format | Extension | Processing Method |
+|--------|-----------|-------------------|
+| Plain Text | `.txt` | Direct text extraction |
+| Markdown | `.md` | Direct text extraction |
+| HTML | `.html` | Tag stripping + text |
+| PDF | `.pdf` | Client-side pdfjs extraction |
+| PNG | `.png` | Host OCR + Description |
+| JPEG | `.jpg`, `.jpeg` | Host OCR + Description |
+| WebP | `.webp` | Host OCR + Description |
+| GIF | `.gif` | Host OCR + Description |
+
+#### Constructor
+
+```typescript
+import { DocumentManager } from '@fabstir/sdk-core';
+
+const documentManager = new DocumentManager({
+  embeddingService: hostAdapter  // Required for processDocument
+});
+```
+
+**Options:**
+- `embeddingService` - EmbeddingService instance (HostAdapter, OpenAIAdapter, or CohereAdapter)
+
+#### processDocument
+
+Processes a document or image: extracts text, chunks it, and generates embeddings.
+
+**For images**, automatically uses HostAdapter's `processImage()` to call host OCR and description endpoints.
+
+```typescript
+async processDocument(
+  file: File,
+  options?: ChunkingOptions & UploadOptions
+): Promise<ChunkResult[]>
+```
+
+**Options:**
+- `chunkSize` - Tokens per chunk (default: 500)
+- `overlap` - Token overlap between chunks (default: 50)
+- `splitBySentence` - Split on sentence boundaries
+- `splitByParagraph` - Split on paragraph boundaries
+- `onProgress` - Progress callback
+
+**Returns:**
+```typescript
+interface ChunkResult {
+  chunk: DocumentChunk;
+  embedding: number[];  // 384-dimensional vector
+}
+
+interface DocumentChunk {
+  id: string;
+  text: string;
+  metadata: {
+    documentId: string;
+    documentName: string;
+    documentType: DocumentType;
+    index: number;
+    startOffset: number;
+    endOffset: number;
+    tokenCount?: number;
+  };
+}
+```
+
+**Example (Text Document):**
+```typescript
+const chunks = await documentManager.processDocument(pdfFile, {
+  chunkSize: 500,
+  overlap: 50,
+  onProgress: (progress) => {
+    // progress.currentStep: "Extracted 1,234 words"
+    console.log(`${progress.stage}: ${progress.progress}%`);
+  }
+});
+
+console.log(`Processed ${chunks.length} chunks`);
+```
+
+**Example (Image - automatic OCR):**
+```typescript
+// Images work the same way - SDK handles OCR automatically
+const chunks = await documentManager.processDocument(screenshotPng, {
+  onProgress: (progress) => {
+    // progress.currentStep: "Image processed: OCR confidence 95%"
+    console.log(`${progress.stage}: ${progress.progress}%`);
+  }
+});
+
+// chunks[0].chunk.text contains extracted OCR text
+```
+
+#### embedText
+
+Embeds a single text string for RAG query embedding.
+
+```typescript
+async embedText(
+  text: string,
+  type?: 'document' | 'query'
+): Promise<{ embedding: number[]; text: string; tokenCount: number }>
+```
+
+**Example:**
+```typescript
+// Embed user's question for vector search
+const queryEmbedding = await documentManager.embedText(
+  "What is the main topic?",
+  'query'
+);
+
+// Use queryEmbedding.embedding for vector similarity search
+const results = await sessionManager.searchVectors(
+  sessionId,
+  queryEmbedding.embedding,
+  5,     // topK
+  0.3    // threshold
+);
+```
+
+#### uploadDocument
+
+Uploads a document to S5 storage (requires initialization).
+
+```typescript
+async uploadDocument(
+  file: File,
+  databaseName: string,
+  options?: UploadOptions
+): Promise<UploadResult>
+```
+
+#### uploadBatch
+
+Uploads multiple documents in parallel.
+
+```typescript
+async uploadBatch(
+  files: File[],
+  databaseName: string,
+  options?: BatchOptions
+): Promise<BatchResult[]>
+```
+
+**Example:**
+```typescript
+const results = await documentManager.uploadBatch(files, 'my-docs', {
+  concurrency: 3,
+  continueOnError: true,
+  onProgress: ({ completed, total, currentFile }) => {
+    console.log(`${completed}/${total}: ${currentFile}`);
+  }
+});
+
+const successful = results.filter(r => r.success).length;
+console.log(`Uploaded ${successful}/${results.length} files`);
+```
+
+#### deleteDocument
+
+Deletes a document from registry and S5 storage.
+
+```typescript
+async deleteDocument(databaseName: string, documentId: string): Promise<void>
+```
+
+#### listDocuments
+
+Lists all documents in a database.
+
+```typescript
+async listDocuments(databaseName: string): Promise<DocumentMetadata[]>
+```
+
+### Embedding Services
+
+Three embedding adapters for different deployment scenarios.
+
+#### HostAdapter (Recommended for Production)
+
+Zero-cost, host-side embeddings using local models. Also supports **image processing** via OCR and description endpoints.
+
+```typescript
+import { HostAdapter } from '@fabstir/sdk-core/embeddings';
+
+const hostAdapter = new HostAdapter({
+  hostUrl: 'https://your-host:8080',
+  chainId: 84532,  // Optional, defaults to Base Sepolia
+  model: 'all-MiniLM-L6-v2',
+  dimensions: 384
+});
+```
+
+**Benefits:**
+- Zero API costs
+- 9x faster than target (11ms vs 100ms)
+- No third-party data exposure
+- GDPR compliant
+- **Image OCR support** (PNG, JPEG, WebP, GIF)
+
+##### processImage
+
+Processes an image using host's `/v1/ocr` and `/v1/describe-image` endpoints in parallel.
+
+```typescript
+async processImage(file: File): Promise<ImageProcessingResult>
+```
+
+**Returns:**
+```typescript
+interface ImageProcessingResult {
+  description: string;        // From /v1/describe-image (Florence-2)
+  extractedText: string;      // From /v1/ocr (PaddleOCR)
+  ocrConfidence: number;      // 0.0-1.0
+  combinedText: string;       // "[Image Description]\n...\n\n[Extracted Text]\n..."
+  processingTimeMs: number;
+}
+```
+
+**Example:**
+```typescript
+const result = await hostAdapter.processImage(screenshotFile);
+
+console.log(`OCR confidence: ${(result.ocrConfidence * 100).toFixed(0)}%`);
+console.log(`Extracted text: ${result.extractedText}`);
+console.log(`Description: ${result.description}`);
+
+// Combined text is ready for chunking/embedding
+console.log(`Combined: ${result.combinedText}`);
+```
+
+**Note:** `processImage()` is called automatically by `DocumentManager.processDocument()` when the file is an image type. You typically don't need to call it directly.
+
+#### OpenAIAdapter
+
+External API using OpenAI embeddings.
+
+```typescript
+import { OpenAIAdapter } from '@fabstir/sdk-core/embeddings';
+
+const embeddingService = new OpenAIAdapter({
+  apiKey: process.env.OPENAI_API_KEY,
+  model: 'text-embedding-3-small',
+  dimensions: 384,
+  maxRetries: 3
+});
+```
+
+**Cost:** ~$0.02 per 1M tokens
+
+**Note:** OpenAIAdapter does not support image processing. Use HostAdapter for image RAG.
+
+#### CohereAdapter
+
+External API using Cohere embeddings.
+
+```typescript
+import { CohereAdapter } from '@fabstir/sdk-core/embeddings';
+
+const embeddingService = new CohereAdapter({
+  apiKey: process.env.COHERE_API_KEY,
+  model: 'embed-english-v3.0',
+  dimensions: 384
+});
+```
+
+**Cost:** ~$0.10 per 1M tokens
+
+**Note:** CohereAdapter does not support image processing. Use HostAdapter for image RAG.
+
+### Permissions and Sharing
+
+Control access to vector databases with fine-grained permissions.
+
+#### PermissionManager
+
+```typescript
+import { PermissionManager } from '@fabstir/sdk-core/permissions';
+
+const permissionManager = new PermissionManager(ownerAddress, {
+  auditLogger: true
+});
+
+// Grant permissions
+permissionManager.grant('docs', readerAddress, 'reader');
+permissionManager.grant('docs', writerAddress, 'writer');
+
+// Check permissions
+const canWrite = permissionManager.check('docs', 'write', userAddress);
+
+// Revoke permissions
+permissionManager.revoke('docs', userAddress);
+
+// List permissions
+const permissions = permissionManager.listPermissions('docs');
+
+// Get audit logs
+const logs = permissionManager.getAuditLogs('docs');
+```
+
+**Permission Levels:**
+- **reader** - Read-only access (search)
+- **writer** - Read + write access (add/update/delete vectors)
+- **owner** - Full control (manage permissions, delete database)
+
+#### SharingManager
+
+```typescript
+import { SharingManager } from '@fabstir/sdk-core/sharing';
+
+const sharingManager = new SharingManager({
+  permissionManager: sdk.getPermissionManager()
+});
+
+// Create invitation
+const invitation = await sharingManager.createInvitation({
+  databaseName: 'docs',
+  recipientAddress: '0x123...',
+  role: 'reader',
+  expiresIn: 86400000 // 24 hours
+});
+
+console.log('Invitation code:', invitation.invitationCode);
+
+// Generate access token
+const token = await sharingManager.generateAccessToken({
+  databaseName: 'docs',
+  role: 'reader',
+  expiresIn: 3600000,   // 1 hour
+  usageLimit: 100       // Max 100 uses
+});
+
+// Revoke invitation
+await sharingManager.revokeInvitation(invitationId);
+```
+
+### RAG Configuration in Sessions
+
+Enable RAG when starting LLM sessions.
+
+```typescript
+const { sessionId } = await sessionManager.startSession({
+  hostUrl: process.env.NEXT_PUBLIC_TEST_HOST_1_URL || 'http://localhost:8083',
+  jobId: 123n,
+  modelName: 'llama-3',
+  chainId: ChainId.BASE_SEPOLIA,
+  ragConfig: {
+    enabled: true,
+    databaseName: 'my-knowledge-base',
+    topK: 5,                    // Retrieve top 5 most similar chunks
+    threshold: 0.2,             // Production-tested: 0.2 works with all-MiniLM-L6-v2
+    conversationMemory: {
+      enabled: true,
+      maxMessages: 10,          // Store last 10 messages
+      includeRecent: 5,         // Always include 5 most recent
+      similarityThreshold: 0.8  // For historical retrieval
+    }
+  }
+});
+```
+
+### Monitoring RAG Performance
+
+```typescript
+const session = sessionManager.getSession(sessionId.toString());
+console.log('RAG Metrics:', {
+  contextsRetrieved: session.ragMetrics.contextsRetrieved,
+  avgSimilarity: session.ragMetrics.avgSimilarityScore,
+  retrievalTime: session.ragMetrics.retrievalTimeMs,
+  tokensAdded: session.ragMetrics.tokensAdded
+});
+```
+
+### Comprehensive Documentation
+
+For complete RAG documentation, see:
+
+- **[RAG API Reference](./RAG_API_REFERENCE.md)** - Complete API documentation
+- **[RAG Implementation Plan](./IMPLEMENTATION_CHAT_RAG.md)** - Implementation progress and architecture
+- **[RAG Manual Testing](./RAG_MANUAL_TESTING_GUIDE.md)** - Testing host embedding endpoints
+- **[RAG Node Integration](./node-reference/RAG_SDK_INTEGRATION.md)** - Host-side integration guide
 
 ## Treasury Management
 
@@ -2521,10 +4907,12 @@ interface SessionJobParams {
   signer: ethers.Signer;
   tokenAddress: string;     // USDC address
   depositAmount: string;     // Amount in smallest units
+  modelId: string;           // Required bytes32 model ID (Phase 18: modelless sessions removed)
   sessionConfig: {
     pricePerToken: bigint;
     duration: bigint;
     proofInterval: bigint;
+    proofTimeoutWindow?: number; // Proof timeout in seconds (60-3600, default: 300)
   };
 }
 
@@ -2539,14 +4927,24 @@ interface SessionResult {
 
 Submits checkpoint proof as provider.
 
+**February 2026 Update:** Signature parameter removed. Authentication is now via `msg.sender == session.host` check on-chain.
+
 ```typescript
 async submitCheckpointProof(
   sessionId: bigint,
-  checkpointNumber: number,
-  tokensUsed: number,
-  proofData: string
+  tokensClaimed: number,
+  proofHash: string,
+  proofCID: string,
+  deltaCID: string = ''
 ): Promise<string>
 ```
+
+**Parameters:**
+- `sessionId` - The session/job ID
+- `tokensClaimed` - Number of tokens being claimed
+- `proofHash` - bytes32 keccak256 hash of the proof data
+- `proofCID` - S5 CID pointing to the full proof data
+- `deltaCID` - Optional S5 CID for delta/incremental proof data
 
 #### completeSessionJob
 
@@ -2557,6 +4955,52 @@ async completeSessionJob(
   sessionId: bigint,
   conversationCID: string
 ): Promise<string>
+```
+
+### V2 Direct Payment Delegation (February 2026)
+
+These methods enable Smart Wallet sub-accounts and delegated session creation.
+
+#### authorizeDelegate
+
+Authorizes or revokes a delegate address for session creation on behalf of payer.
+
+```typescript
+async authorizeDelegate(delegate: string, authorized: boolean): Promise<string>
+```
+
+#### isDelegateAuthorized
+
+Checks if a delegate is authorized for a payer.
+
+```typescript
+async isDelegateAuthorized(payer: string, delegate: string): Promise<boolean>
+```
+
+#### createSessionForModelAsDelegate
+
+Creates a session as delegate for a payer (model-specific).
+
+```typescript
+async createSessionForModelAsDelegate(
+  payer: string,
+  modelId: string,
+  host: string,
+  paymentToken: string,
+  amount: bigint,
+  pricePerToken: bigint,
+  maxDuration: number,
+  proofInterval: number,
+  proofTimeoutWindow: number
+): Promise<SessionResult>
+```
+
+#### getMinTokensFee
+
+Gets the minimum token fee for early cancellation.
+
+```typescript
+async getMinTokensFee(): Promise<bigint>
 ```
 
 ## Services
@@ -2615,6 +5059,141 @@ if (capabilities.hasP2P) {
 if (capabilities.hasWebSockets) {
   // WebSocket features available
 }
+```
+
+### HostSelectionService
+
+Provides intelligent host selection with weighted scoring algorithm.
+
+```typescript
+import { HostSelectionService, HostSelectionMode } from '@fabstir/sdk-core';
+
+const hostSelectionService = new HostSelectionService();
+hostSelectionService.setHostManager(sdk.getHostManager());
+```
+
+#### selectHostForModel
+
+Select the best host for a model based on user preferences.
+
+```typescript
+async selectHostForModel(
+  modelId: string,
+  mode: HostSelectionMode,
+  preferredHostAddress?: string
+): Promise<HostInfo | null>
+```
+
+**Parameters:**
+- `modelId` - Model ID to find hosts for
+- `mode` - Selection mode (AUTO, CHEAPEST, RELIABLE, FASTEST, SPECIFIC)
+- `preferredHostAddress` - Required for SPECIFIC mode
+
+**Returns:**
+- `HostInfo` if a host is found
+- `null` if no hosts available (for non-SPECIFIC modes)
+
+**Throws:**
+- `Error` for SPECIFIC mode when host unavailable or doesn't support model
+
+**Example:**
+```typescript
+// Auto mode - weighted random selection
+const host = await hostSelectionService.selectHostForModel(
+  modelId,
+  HostSelectionMode.AUTO
+);
+
+// Cheapest mode - prioritize low price
+const cheapHost = await hostSelectionService.selectHostForModel(
+  modelId,
+  HostSelectionMode.CHEAPEST
+);
+
+// Specific mode - use preferred host (throws if unavailable)
+const specificHost = await hostSelectionService.selectHostForModel(
+  modelId,
+  HostSelectionMode.SPECIFIC,
+  '0x1234...'
+);
+```
+
+#### getRankedHostsForModel
+
+Get all hosts for a model with scores and ranking.
+
+```typescript
+async getRankedHostsForModel(
+  modelId: string,
+  mode: HostSelectionMode,
+  limit?: number
+): Promise<RankedHost[]>
+```
+
+**Parameters:**
+- `modelId` - Model ID to find hosts for
+- `mode` - Selection mode for scoring weights
+- `limit` - Maximum hosts to return (default: 10)
+
+**Returns:**
+```typescript
+interface RankedHost {
+  host: HostInfo;
+  score: number;          // 0-1 composite score
+  factors: {
+    stakeScore: number;   // 0-1 (higher stake = higher score)
+    priceScore: number;   // 0-1 (lower price = higher score)
+    uptimeScore: number;  // 0-1 (placeholder: 0.95)
+    latencyScore: number; // 0-1 (placeholder: 0.9)
+  };
+}
+```
+
+**Example:**
+```typescript
+// Get top 5 hosts ranked for cheapest mode
+const rankedHosts = await hostSelectionService.getRankedHostsForModel(
+  modelId,
+  HostSelectionMode.CHEAPEST,
+  5
+);
+
+// Display options to user
+rankedHosts.forEach((rh, i) => {
+  console.log(`${i + 1}. ${rh.host.address}`);
+  console.log(`   Score: ${(rh.score * 100).toFixed(1)}%`);
+  console.log(`   Price: ${rh.host.minPricePerTokenStable}`);
+  console.log(`   Stake: ${rh.host.stake}`);
+});
+```
+
+#### calculateHostScore
+
+Calculate a host's score for a given mode.
+
+```typescript
+calculateHostScore(host: HostInfo, mode: HostSelectionMode): number
+```
+
+**Weighted Scoring Algorithm:**
+
+| Mode | Stake | Price | Uptime | Latency |
+|------|-------|-------|--------|---------|
+| AUTO | 35% | 30% | 20% | 15% |
+| CHEAPEST | 15% | 70% | 10% | 5% |
+| RELIABLE | 50% | 5% | 40% | 5% |
+| FASTEST | 10% | 20% | 10% | 60% |
+
+**Note:** Uptime (95%) and latency (0.9) are placeholder values until metrics system is implemented.
+
+**Example:**
+```typescript
+const host = await hostManager.getHostInfo('0x1234...');
+const autoScore = hostSelectionService.calculateHostScore(host, HostSelectionMode.AUTO);
+const cheapScore = hostSelectionService.calculateHostScore(host, HostSelectionMode.CHEAPEST);
+
+console.log(`Auto score: ${(autoScore * 100).toFixed(1)}%`);
+console.log(`Cheap score: ${(cheapScore * 100).toFixed(1)}%`);
 ```
 
 ## Error Handling
@@ -2682,7 +5261,14 @@ enum SDKErrorCode {
   CHAIN_MISMATCH = 'CHAIN_MISMATCH',
   INSUFFICIENT_DEPOSIT = 'INSUFFICIENT_DEPOSIT',
   NODE_CHAIN_MISMATCH = 'NODE_CHAIN_MISMATCH',
-  DEPOSIT_ACCOUNT_UNAVAILABLE = 'DEPOSIT_ACCOUNT_UNAVAILABLE'
+  DEPOSIT_ACCOUNT_UNAVAILABLE = 'DEPOSIT_ACCOUNT_UNAVAILABLE',
+
+  // Transcoding
+  CAPACITY_FULL = 'CAPACITY_FULL',             // Host transcode queue full (HTTP 429, retryable)
+  TRANSCODE_FAILED = 'TRANSCODE_FAILED',       // Transcode operation failed
+  TRANSCODE_TIMEOUT = 'TRANSCODE_TIMEOUT',     // Transcode timed out (retryable)
+  SIDECAR_DISCONNECTED = 'SIDECAR_DISCONNECTED', // Transcoder sidecar not connected
+  NO_AVAILABLE_HOSTS = 'NO_AVAILABLE_HOSTS'    // All hosts exhausted during load balancing
 }
 ```
 
@@ -2703,6 +5289,32 @@ class InsufficientDepositError extends Error {
 
 class NodeChainMismatchError extends Error {
   constructor(nodeChainId: number, sdkChainId: number);
+}
+
+class ContextLimitError extends Error {
+  readonly code: 'TOKEN_LIMIT_EXCEEDED';
+  readonly promptTokens: number;
+  readonly contextWindowSize: number;
+  readonly excess: number;  // promptTokens - contextWindowSize
+  constructor(message: string, promptTokens: number, contextWindowSize: number);
+}
+```
+
+### Context Limit Error Handling
+
+When the prompt exceeds the model's context window, the node returns `TOKEN_LIMIT_EXCEEDED` and the SDK throws `ContextLimitError`. The `excess` field tells the UI how many tokens to trim.
+
+```typescript
+import { ContextLimitError } from '@fabstir/sdk-core';
+
+try {
+  await sessionManager.sendPromptStreaming(sessionId, prompt, onToken, opts);
+} catch (err) {
+  if (err instanceof ContextLimitError) {
+    console.log(`Over limit by ${err.excess} tokens`);
+    const trimmed = trimOldestMessages(messages, err.excess);
+    await sessionManager.sendPromptStreaming(sessionId, buildPrompt(trimmed), onToken, opts);
+  } else throw err;
 }
 ```
 
@@ -2754,6 +5366,7 @@ interface SessionConfig {
   pricePerToken: number;  // Price per token in smallest units
   duration: number;       // Session duration in seconds
   proofInterval: number;  // Checkpoint interval in tokens
+  proofTimeoutWindow?: number; // Proof timeout window (60-3600 seconds, default: 300)
 }
 
 interface SessionJob {
@@ -2823,6 +5436,48 @@ interface HostMetadata {
   location: string;
   maxConcurrent: number;
   costPerToken: number;
+}
+
+// Document Types
+type DocumentType = 'txt' | 'md' | 'html' | 'pdf' | 'docx' | 'png' | 'jpeg' | 'webp' | 'gif';
+
+interface DocumentMetadata {
+  id: string;
+  name: string;
+  type: DocumentType;
+  size: number;
+  uploadedAt: number;
+  s5Path: string;
+}
+
+interface DocumentChunk {
+  id: string;
+  text: string;
+  metadata: ChunkMetadata;
+}
+
+interface ChunkMetadata {
+  documentId: string;
+  documentName: string;
+  documentType: DocumentType;
+  index: number;
+  startOffset: number;
+  endOffset: number;
+  tokenCount?: number;
+}
+
+interface ChunkResult {
+  chunk: DocumentChunk;
+  embedding: number[];  // 384-dimensional vector
+}
+
+// Image Processing Types (HostAdapter)
+interface ImageProcessingResult {
+  description: string;        // From /v1/describe-image (Florence-2)
+  extractedText: string;      // From /v1/ocr (PaddleOCR)
+  ocrConfidence: number;      // 0.0-1.0
+  combinedText: string;       // Combined text for embedding
+  processingTimeMs: number;
 }
 
 // Chat/Conversation Types
@@ -3317,7 +5972,7 @@ export const WS_MAX_RECONNECT_ATTEMPTS = 5;
 export const WS_HEARTBEAT_INTERVAL = 30000;    // 30 seconds
 
 // S5 Storage Configuration
-export const DEFAULT_S5_PORTAL = 'wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p';
+export const DEFAULT_S5_PORTAL = 'wss://z2DcjTLqfj6PTMsDbFfgtuHtYmrKeibFTkvqY8QZeyR3YmE@s5.platformlessai.ai/s5/p2p';
 export const S5_UPLOAD_TIMEOUT = 60000;        // 60 seconds
 export const S5_DOWNLOAD_TIMEOUT = 30000;      // 30 seconds
 ```
@@ -3333,18 +5988,19 @@ import { FabstirSDKCore, EOAProvider, WalletProviderFactory } from '@fabstir/sdk
 import { ChainId } from '@fabstir/sdk-core/types';
 
 // Initialize SDK with specific chain
+// Contract addresses from ChainRegistry (populated from .env.test)
+const chain = ChainRegistry.getChain(ChainId.BASE_SEPOLIA);
 const sdk = new FabstirSDKCore({
-  rpcUrl: 'https://sepolia.base.org',
+  rpcUrl: process.env.RPC_URL_BASE_SEPOLIA!,
   chainId: ChainId.BASE_SEPOLIA, // 84532
   contractAddresses: {
-    // Base Sepolia addresses
-    jobMarketplace: '0xaa38e7fcf5d7944ef7c836e8451f3bf93b98364f',
-    nodeRegistry: '0x2AA37Bb6E9f0a5d0F3b2836f3a5F656755906218',
-    proofSystem: '0x2ACcc60893872A499700908889B38C5420CBcFD1',
-    hostEarnings: '0x908962e8c6CE72610021586f85ebDE09aAc97776',
-    usdcToken: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-    fabToken: '0xC78949004B4EB6dEf2D66e49Cd81231472612D62',
-    modelRegistry: '0x92b2De840bB2171203011A6dBA928d855cA8183E'
+    jobMarketplace: chain.contracts.jobMarketplace,
+    nodeRegistry: chain.contracts.nodeRegistry,
+    proofSystem: chain.contracts.proofSystem,
+    hostEarnings: chain.contracts.hostEarnings,
+    usdcToken: chain.contracts.usdcToken,
+    fabToken: chain.contracts.fabToken,
+    modelRegistry: chain.contracts.modelRegistry
   }
 });
 
@@ -3591,6 +6247,152 @@ Based on treasury configuration (.env.test):
 - **Host**: 90% of payment (HOST_EARNINGS_PERCENTAGE)
 - **Treasury**: 10% of payment (TREASURY_FEE_PERCENTAGE)
 - **User**: Refund of unused deposit
+
+## Multi-Agent Orchestration (`@fabstir/orchestrator`)
+
+The orchestrator package coordinates multiple SDK sessions for complex, multi-step tasks using LLM-driven planning.
+
+### Installation
+
+```bash
+pnpm add @fabstir/orchestrator
+```
+
+### OrchestratorManager
+
+The main entry point for multi-agent orchestration.
+
+```typescript
+import { OrchestratorManager } from '@fabstir/orchestrator';
+
+const orchestrator = new OrchestratorManager({
+  sdk,                          // FabstirSDKCore instance
+  chainId: 84532,               // Base Sepolia
+  privateKey: '0x...',          // Or use signer for Account Kit
+  models: {
+    fast: 'fast-model',         // For simple analysis tasks
+    deep: 'deep-model',        // For reasoning/synthesis
+    planning: 'deep-model',    // For task decomposition
+  },
+  maxConcurrentSessions: 3,
+  budget: {
+    maxDepositPerSubTask: '0.003',
+    maxTotalDeposit: '0.01',
+    maxSubTasks: 5,
+  },
+});
+
+const result = await orchestrator.run('Analyze renewable energy pros and cons');
+// result.synthesis — Final combined answer
+// result.subTaskResults — Individual task outputs
+// result.totalTokensUsed — Token usage across all tasks
+await orchestrator.destroy();
+```
+
+### OrchestratorConfig
+
+```typescript
+interface OrchestratorConfig {
+  sdk: FabstirSDKCore;
+  chainId: number;
+  privateKey?: string;           // EOA authentication
+  signer?: SignerLike;           // Account Kit authentication
+  models: {
+    fast?: string;               // Quick tasks
+    deep?: string;               // Complex reasoning
+    planning?: string;           // Task decomposition
+  };
+  maxConcurrentSessions: number; // Pool size (>= 2)
+  budget: BudgetConfig;
+  proofGracePeriodMs?: number;   // Grace period for proof submission
+  x402?: X402Config;             // Optional x402 payment config
+}
+
+interface BudgetConfig {
+  maxDepositPerSubTask: string;  // USDC per task
+  maxTotalDeposit: string;       // Total USDC budget
+  maxSubTasks: number;           // Max parallel tasks
+}
+```
+
+### Orchestration Patterns
+
+Three reusable execution patterns:
+
+```typescript
+import { fanOut, pipeline, mapReduce } from '@fabstir/orchestrator';
+
+// Fan-out: N independent tasks in parallel
+const results = await fanOut(pool, tasks, options, signal);
+
+// Pipeline: Sequential, each receives prior result
+const result = await pipeline(pool, tasks, options, signal);
+
+// Map-reduce: Parallel mappers + single reducer
+const result = await mapReduce(pool, mapTasks, reduceTask, options, signal);
+```
+
+### Session Multiplexing
+
+SessionPool automatically caches sessions per model. When a subtask finishes, its session is cached instead of destroyed. The next subtask using the same model reuses it — no new deposit required.
+
+| Scenario | Sessions Before | After | Savings |
+|----------|----------------|-------|---------|
+| 1 plan + 3 tasks (2 fast, 1 deep) | 4 | 3 | 25% |
+| 1 plan + 4 tasks (2 fast, 2 deep) | 5 | 3 | 40% |
+| 1 plan + 5 tasks (all fast) | 6 | 2 | 67% |
+
+### A2A Protocol (Agent-to-Agent)
+
+#### Running as A2A Server
+
+```typescript
+import { OrchestratorA2AServer } from '@fabstir/orchestrator';
+
+const server = new OrchestratorA2AServer(orchestrator, { port: 3100 });
+await server.start();
+// GET  /.well-known/agent.json  — Agent discovery
+// POST /v1/orchestrate           — Execute orchestration
+// DELETE /v1/orchestrate/:taskId — Cancel task
+```
+
+#### Discovering External Agents
+
+```typescript
+import { AgentDiscovery, A2AClientPool } from '@fabstir/orchestrator';
+
+const discovery = new AgentDiscovery();
+await discovery.register('https://other-agent.example.com');
+const agents = discovery.findBySkill('code-review');
+```
+
+### x402 Payment Protocol
+
+HTTP-native USDC micropayments between agents using EIP-3009 `transferWithAuthorization`.
+
+#### Server (receiving payments)
+
+```typescript
+import { x402PaymentGate, X402PaymentValidator } from '@fabstir/orchestrator';
+
+// Express middleware — returns 402 if payment missing
+app.use('/v1/orchestrate', x402PaymentGate({
+  pricing: { amount: '0.01', currency: 'USDC', network: 'base-sepolia' },
+  payTo: '0xYourAddress',
+}));
+```
+
+#### Client (sending payments)
+
+```typescript
+import { X402PaymentHandler, X402BudgetTracker } from '@fabstir/orchestrator';
+
+const handler = new X402PaymentHandler(signerProvider, usdcAddress);
+const budget = new X402BudgetTracker(1.0); // $1 max spend
+
+// Automatically handles 402 responses
+const header = await handler.createPaymentHeader(paymentRequirements);
+```
 
 ## Support
 

@@ -351,6 +351,10 @@ pub async fn handle_encrypted_transcode(
         .get("isEncrypted")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let preview_percent: Option<u32> = decrypted_json
+        .get("previewPercent")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
 
     // Step 2: Rate limit check
     if !server
@@ -404,7 +408,7 @@ pub async fn handle_encrypted_transcode(
 
     // Step 5: Submit to transcoder
     match transcoder_client
-        .submit_transcode(&source_cid, &formats, is_encrypted, is_gpu)
+        .submit_transcode(&source_cid, &formats, is_encrypted, is_gpu, preview_percent)
         .await
     {
         Ok(resp) => {

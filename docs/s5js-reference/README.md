@@ -16,6 +16,9 @@ An enhanced JavaScript/TypeScript SDK for the S5 decentralized storage network, 
 - 🖼️ **Media Processing**: WASM-based image metadata extraction with Canvas fallback
 - 🎨 **Color Analysis**: Dominant color extraction and palette generation
 - 📊 **Bundle Optimization**: Code-splitting support (~70KB gzipped total)
+- 📡 **Connection API**: Monitor and manage P2P connections for mobile apps
+- ✍️ **Identity & Signing API**: Backend-mediated portal registration with Ed25519 signing
+- 👥 **Cross-Identity Read**: Read files from another user's public directory via shared public key
 - ✅ **Real S5 Portal Integration**: Fully tested with s5.vup.cx portal
 
 ## Key Components
@@ -24,6 +27,9 @@ An enhanced JavaScript/TypeScript SDK for the S5 decentralized storage network, 
 - **S5**: Main client class for connection and identity management
 - **FS5**: File system operations with path-based API
 - **S5UserIdentity**: User identity and authentication
+- **Connection API**: `getConnectionStatus()`, `onConnectionChange()`, `reconnect()` for mobile apps
+- **Signing API**: `getSigningPublicKey()`, `sign()`, `setPortalAuth()` for backend-mediated registration
+- **Cross-Identity Read**: `getPublicDirectoryKey()`, `readFromPublicDirectory()` for multi-user public data sharing
 
 ### Utility Classes
 - **DirectoryWalker**: Recursive directory traversal with cursor support
@@ -133,6 +139,97 @@ const metadata = await MediaProcessor.extractMetadata(imageBlob);
 console.log(`Image: ${metadata.width}x${metadata.height} ${metadata.format}`);
 console.log(`Dominant colors:`, metadata.dominantColors);
 ```
+
+### Connection Management (Mobile Apps)
+
+```typescript
+import { S5, ConnectionStatus } from "@julesl23/s5js";
+
+const s5 = await S5.create({ initialPeers: [...] });
+
+// Check current connection status
+const status = s5.getConnectionStatus();
+console.log(status); // 'connected' | 'connecting' | 'disconnected'
+
+// Subscribe to connection changes
+const unsubscribe = s5.onConnectionChange((status) => {
+  if (status === 'disconnected') {
+    showOfflineIndicator();
+  } else if (status === 'connected') {
+    hideOfflineIndicator();
+  }
+});
+
+// Handle app returning to foreground
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    if (s5.getConnectionStatus() === 'disconnected') {
+      try {
+        await s5.reconnect();
+        console.log('Reconnected successfully');
+      } catch (error) {
+        console.error('Reconnection failed:', error.message);
+      }
+    }
+  }
+});
+
+// Cleanup when done
+unsubscribe();
+```
+
+### Cross-Identity Public Directory Read
+
+Read files from another user's public directory without needing their identity:
+
+```typescript
+// === Operator (one-time setup) ===
+// Write data to a directory
+await operatorFs.put("home/storefront/catalogue.json", catalogueData);
+
+// Extract the directory's public key and share it with viewers
+const pubKey = await operatorFs.getPublicDirectoryKey("home/storefront");
+
+// === Viewer (reading — no identity needed) ===
+const viewerFs = new FS5(api); // No identity required
+const data = await viewerFs.readFromPublicDirectory(pubKey, "catalogue.json");
+if (data) {
+  const catalogue = JSON.parse(new TextDecoder().decode(data));
+}
+
+// Returns undefined for missing files, encrypted files, or invalid keys
+const missing = await viewerFs.readFromPublicDirectory(pubKey, "nonexistent.txt");
+// missing === undefined
+```
+
+### Debugging
+
+Enable debug output using the standard `DEBUG` environment variable:
+
+```bash
+# All S5.js debug output
+DEBUG=s5js:* node app.js
+
+# Specific categories only
+DEBUG=s5js:registry,s5js:fs5 node app.js
+
+# Everything except verbose CBOR logs
+DEBUG=s5js:*,-s5js:cbor node app.js
+```
+
+Available debug namespaces:
+- `s5js:node` - Node initialization
+- `s5js:registry` - Registry operations
+- `s5js:api` - API operations
+- `s5js:fs5` - File system operations
+- `s5js:upload` - Blob uploads
+- `s5js:download` - Blob downloads
+- `s5js:cache` - Blob caching
+- `s5js:cbor` - CBOR serialization
+- `s5js:batch` - Batch operations
+- `s5js:walker` - Directory walker
+
+In browser, set `localStorage.debug = 's5js:*'` before loading.
 
 ## Testing with Real S5 Portal
 

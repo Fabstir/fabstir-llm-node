@@ -63,6 +63,7 @@ pub async fn transcode_submit_handler(
             &request.media_formats,
             request.is_encrypted,
             request.is_gpu,
+            request.preview_percent,
         )
         .await
     {

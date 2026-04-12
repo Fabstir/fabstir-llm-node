@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.27.0-sidecar-capacity (March 2026)
+**Version**: v8.28.0-hls-passthrough (April 2026)
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -40,6 +40,7 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 - **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
 - **Transcoding Trustless Verification**: Quality metrics, GOP proofs, Merkle tree, checkpoint submission (v8.26.0+)
+- **HLS Adaptive Bitrate Streaming**: Segmented fMP4 output with per-segment encryption and free preview support (v8.28.0+)
 
 ## Prerequisites
 

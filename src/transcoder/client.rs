@@ -61,20 +61,26 @@ impl TranscoderClient {
         formats: &[VideoFormat],
         is_encrypted: bool,
         is_gpu: bool,
+        preview_percent: Option<u32>,
     ) -> Result<TranscodeSubmitResponse> {
         let url = format!("{}/transcode", self.endpoint);
         let media_formats_json = serde_json::to_string(formats)?;
+
+        let mut params: Vec<(&str, String)> = vec![
+            ("source_cid", source_cid.to_string()),
+            ("media_formats", media_formats_json),
+            ("is_encrypted", is_encrypted.to_string()),
+            ("is_gpu", is_gpu.to_string()),
+        ];
+        if let Some(pp) = preview_percent {
+            params.push(("preview_percent", pp.to_string()));
+        }
 
         let response = self
             .client
             .post(&url)
             .bearer_auth(&self.jwt_token)
-            .query(&[
-                ("source_cid", source_cid),
-                ("media_formats", &media_formats_json),
-                ("is_encrypted", &is_encrypted.to_string()),
-                ("is_gpu", &is_gpu.to_string()),
-            ])
+            .query(&params)
             .send()
             .await?;
 

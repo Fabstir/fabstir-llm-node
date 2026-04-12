@@ -18,6 +18,7 @@ pub struct TranscodeHttpRequest {
     pub chain_id: Option<u64>,
     pub session_id: Option<String>,
     pub job_id: Option<u64>,
+    pub preview_percent: Option<u32>,
 }
 
 fn default_true() -> bool {
