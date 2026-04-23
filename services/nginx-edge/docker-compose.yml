@@ -1,0 +1,22 @@
+# FabCDN edge — local mock for smoke tests + fabstir-v2 dev integration.
+#
+#   cd services/nginx-edge && docker compose up -d
+#   bash tests/smoke-test.sh http://localhost:${FABCDN_MOCK_PORT:-8090}/fabcdn
+#
+# Not used in production — host2.fabstir.net runs nginx at host level.
+
+services:
+  nginx-edge-mock:
+    image: nginx:alpine
+    container_name: fabcdn-edge-mock
+    ports:
+      - "${FABCDN_MOCK_PORT:-8090}:80"
+    volumes:
+      - ./mock/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./host2/10-fabcdn-map.conf:/etc/nginx/conf.d/10-fabcdn-map.conf:ro
+      - ./host2/fabcdn-location.conf:/etc/nginx/snippets/fabcdn-location.conf:ro
+      - edge-cache:/var/cache/fabcdn
+    restart: unless-stopped
+
+volumes:
+  edge-cache:
