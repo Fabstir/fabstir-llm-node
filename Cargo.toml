@@ -39,7 +39,7 @@ hyper = "1.0"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # LLM Inference  
-llama-cpp-2 = { version = "0.1.55", features = ["cuda"] }
+llama-cpp-2 = { version = "=0.1.146", features = ["cuda"] }
 
 # Model Management
 hf-hub = "0.3"
