@@ -20,6 +20,12 @@
 // Guest method directories are specified in Cargo.toml under [package.metadata.risc0]
 
 fn main() {
+    // Workaround for upstream llama-cpp-sys-2 0.1.146 build script that forgets
+    // to emit `cargo:rustc-link-lib=nccl` even though bundled llama.cpp now calls
+    // ncclGroupStart/ncclAllReduce/ncclGroupEnd in its CUDA backend.
+    println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+    println!("cargo:rustc-link-lib=nccl");
+
     // Only compile guest program when real-ezkl feature is enabled
     #[cfg(feature = "real-ezkl")]
     {
