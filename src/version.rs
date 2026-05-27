@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.28.0-hls-passthrough-2026-04-11";
+pub const VERSION: &str = "v8.29.0-qwen36-llamacpp146-2026-05-21";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.28.0";
+pub const VERSION_NUMBER: &str = "8.29.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 28;
+pub const VERSION_MINOR: u32 = 29;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-04-11";
+pub const BUILD_DATE: &str = "2026-05-21";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -312,6 +312,12 @@ pub const FEATURES: &[&str] = &[
     "hls-adaptive-bitrate",
     "preview-percent",
     "per-segment-encryption",
+    // Qwen3.6-35B-A3B support (v8.29.0)
+    "qwen35moe-architecture",
+    "qwen36-35b-a3b",
+    "llama-cpp-2-0-1-146",
+    "cuda-13-runtime",
+    "nccl-cumem-disable-wsl2",
 ];
 
 /// Supported chain IDs
@@ -322,6 +328,13 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.29.0 - Qwen3.6-35B-A3B Support (May 21, 2026)
+    "FEAT: llama-cpp-2 bumped 0.1.122 -> 0.1.146 — adds qwen35moe (Qwen3.6-35B-A3B) architecture support",
+    "BUILD: pinned llama-cpp-2 =0.1.146 in Cargo.toml (Cargo.lock is gitignored)",
+    "BUILD: Dockerfile.production base -> nvidia/cuda:13.0.0-runtime (matches NCCL 2.27+cuda13; libnccl2 from base image)",
+    "BUILD: build.rs emits cargo:rustc-link-lib=nccl — upstream llama-cpp-sys-2 0.1.146 omits it though bundled llama.cpp now calls ncclCommInitAll/ncclAllReduce",
+    "DEPLOY: WSL2 single-GPU hosts require NCCL_CUMEM_ENABLE=0 + shm_size/ipc:host in docker-compose (cuMem VMM unsupported under WSL2 GPU passthrough)",
+    "DEVCONTAINER: .devcontainer/Dockerfile now installs rzup + cargo-risczero for --features real-ezkl builds",
     // v8.28.0 - HLS Pass-Through (Apr 11, 2026)
     "FEAT: VideoFormat.hls and VideoFormat.hls_time fields for HLS adaptive bitrate streaming",
     "FEAT: previewPercent request field for per-segment encryption boundary",
@@ -729,10 +742,15 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 28);
+        assert_eq!(VERSION_MINOR, 29);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.29.0 Qwen3.6 support
+        assert!(FEATURES.contains(&"qwen35moe-architecture"));
+        assert!(FEATURES.contains(&"llama-cpp-2-0-1-146"));
+        assert!(FEATURES.contains(&"cuda-13-runtime"));
+        assert!(FEATURES.contains(&"nccl-cumem-disable-wsl2"));
         // v8.27.1 checkpoint lock fix
         assert!(FEATURES.contains(&"checkpoint-lock-split"));
         // v8.27.0 sidecar capacity
@@ -868,15 +886,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.27.1"));
-        assert!(version.contains("2026-03-27"));
+        assert!(version.contains("8.29.0"));
+        assert!(version.contains("2026-05-21"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.28.0-hls-passthrough-2026-04-11");
-        assert_eq!(VERSION_NUMBER, "8.28.0");
-        assert_eq!(BUILD_DATE, "2026-04-11");
+        assert_eq!(VERSION, "v8.29.0-qwen36-llamacpp146-2026-05-21");
+        assert_eq!(VERSION_NUMBER, "8.29.0");
+        assert_eq!(BUILD_DATE, "2026-05-21");
     }
 
     #[test]
