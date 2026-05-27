@@ -471,26 +471,17 @@ export async function registerRoutes(fastify) {
     // If upload is complete, store to S5
     if (upload.offset >= upload.size) {
       try {
-        const path = `home/tus-uploads/${id}`;
-        fastify.log.info({ id, path, size: upload.data.length }, '📤 [S5-TUS] Upload complete, storing to S5');
+        fastify.log.info({ id, size: upload.data.length }, '📤 [S5-TUS] Upload complete, storing to S5');
 
-        const release = await acquireDirectoryLock(parentDir(path));
-        try {
-          await s5.fs.put(path, new Uint8Array(upload.data));
-        } finally {
-          release();
-        }
-
-        // Generate CID
-        let cid = null;
-        if (advanced) {
-          const rawHash = await advanced.pathToCID(path);
-          const hashWithPrefix = new Uint8Array(33);
-          hashWithPrefix[0] = MULTIHASH_BLAKE3;
-          hashWithPrefix.set(rawHash, 1);
-          const blobId = new BlobIdentifier(hashWithPrefix, upload.data.length);
-          cid = blobId.toBase32();
-        }
+        // Store as a direct content-addressed blob. Transcode segments are
+        // retrieved by CID (GET /s5/blob/:cid), not by directory path, and
+        // Enhanced S5.js does not garbage-collect uploaded blobs — so we skip
+        // s5.fs.put() entirely. That avoids the per-file directory-registry
+        // rewrite (the slow, serialized step behind the dir mutex), letting
+        // segments upload fully in parallel across renditions and users.
+        const blob = new Blob([new Uint8Array(upload.data)]);
+        const blobId = await s5.apiWithIdentity.uploadBlob(blob);
+        const cid = blobId.toBase32();
 
         tusUploads.delete(id);
         fastify.log.info({ id, cid }, '📤 [S5-TUS] ✅ Stored to S5');
@@ -536,7 +527,7 @@ export async function registerRoutes(fastify) {
   fastify.get('/', async (request, reply) => {
     reply.send({
       service: 'Enhanced S5.js Bridge',
-      version: '1.3.0',
+      version: '1.4.0',
       endpoints: {
         health: 'GET /health',
         download: 'GET /s5/fs/{path}',
