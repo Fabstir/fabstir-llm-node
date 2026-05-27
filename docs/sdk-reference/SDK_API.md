@@ -24,6 +24,7 @@
 - [Client Manager](#client-manager)
 - [WebSocket Communication](#websocket-communication)
 - [Contract Integration](#contract-integration)
+  - [Delegate-Pays Authorization](#delegate-pays-authorization-sdk-level-sdk-core-1210)
 - [Services](#services)
 - [Error Handling](#error-handling)
 - [Types and Interfaces](#types-and-interfaces)
@@ -243,21 +244,22 @@ cat .env.test | grep CONTRACT_
 Authenticates the SDK with various providers.
 
 ```typescript
-// Method 1: Authenticate with private key
-async authenticate(privateKey: string): Promise<void>
-
-// Method 2: Authenticate with method name and options
-async authenticate(method: string, options: AuthOptions): Promise<void>
+async authenticate(
+  method?: 'metamask' | 'privatekey' | 'signer' | 'aa-signer',
+  options?: any,
+): Promise<void>
 ```
 
 **Parameters:**
-- `privateKey`: Private key string (Method 1)
-- `method`: Authentication method - "signer" or "privateKey" (Method 2)
-- `options`: Authentication options including signer (Method 2)
+- `method`: Authentication method — `'metamask'` (default), `'privatekey'`, `'signer'`, or `'aa-signer'` (added in 1.19.0).
+- `options`: Mode-specific options.
+  - For `'privatekey'`: `{ privateKey: string }`
+  - For `'signer'`: `{ signer: ethers.Signer }`
+  - For `'aa-signer'`: `{ smartAccountAddress, eoaPrivateKey, sendUserOp, rpcUrl, chainId }` — see Method 3 below.
 
 **Example 1: Private Key Authentication:**
 ```typescript
-await sdk.authenticate('0x...');
+await sdk.authenticate('privatekey', { privateKey: '0x...' });
 ```
 
 **Example 2: Custom Signer Authentication (Base Account Kit):**
@@ -306,6 +308,51 @@ await sdk.authenticate("signer", {
   signer: baseSigner,
 });
 ```
+
+**Example 3: ERC-4337 Smart Account Authentication (`'aa-signer'` mode, since 1.19.0):**
+
+For users whose Smart Account holds funds but whose EOA holds no ETH (email-only sign-in via Biconomy MEE, ZeroDev, Pimlico, etc.). All on-chain transactions route through a caller-supplied `sendUserOp` callback (bundler-agnostic); the EOA private key is used internally for off-chain signing only (`signMessage`, `signTypedData`, encrypted session init).
+
+```typescript
+import { FabstirSDKCore, type SendUserOpFn } from '@fabstir/sdk-core';
+
+const sendUserOp: SendUserOpFn = async ({ to, data, value }) => {
+  // Build + submit UserOp via your AA stack (Biconomy / ZeroDev / Pimlico / etc.)
+  const { transactionHash } = await myBundler.sendUserOp({ to, data, value: value ?? 0n });
+  return { transactionHash };  // sdk-core fetches the receipt itself
+};
+
+const sdk = new FabstirSDKCore({ /* ...config */ });
+await sdk.authenticate('aa-signer', {
+  smartAccountAddress: '0xSA...',  // 0x… — used as msg.sender for all chain tx
+  eoaPrivateKey:        '0xEOA...', // 0x… — used ONLY for off-chain signing
+  sendUserOp,
+  rpcUrl:               'https://...',
+  chainId:              84532,
+});
+```
+
+**`SendUserOpFn` types** (importable from `@fabstir/sdk-core`):
+
+```typescript
+type SendUserOpCall   = { to: string; data: string; value?: bigint };  // value defaults to 0n
+type SendUserOpResult = { transactionHash: string; [k: string]: unknown };  // extra fields permitted
+type SendUserOpFn     = (call: SendUserOpCall) => Promise<SendUserOpResult>;
+```
+
+**Behavioral notes specific to `'aa-signer'` mode:**
+
+- **Asymmetric address surface**: `sdk.getAddress()` returns the Smart Account address (the chain-side identity, used as `msg.sender` for every contract call). `sdk.getSigner()` returns the internal EOA `ethers.Wallet` for off-chain signing — `sdk.getSigner().getAddress()` returns the EOA address. **Do NOT** call `sendTransaction` on `sdk.getSigner()` — the EOA holds no ETH and the call will revert.
+- **`tx.from` semantics**: when methods like `pm.depositNative` / `pm.sendEth` resolve, the returned `TransactionResponse.from` is the Smart Account address (matching `msg.sender` of the inner contract call), NOT the bundler relayer EOA that broadcast the on-chain tx. Use `tx.hash` for tx identity, not `tx.from`.
+- **`switchChain()` not supported in 1.19.0**: throws `SDKError` with code `AA_SWITCH_CHAIN_UNSUPPORTED`. Workaround: `disconnect()` then re-`authenticate('aa-signer', { ...newChainOptions })`. Native AA-mode chain-switching is planned for v1.20.0.
+- **Cross-RPC race tolerance**: when the caller's bundler RPC differs from sdk-core's `rpcUrl`, the SDK retries `getTransactionReceipt` up to 5× with 500ms backoff before throwing `AA_RECEIPT_NOT_VISIBLE`.
+
+**SDKError codes from `authenticate('aa-signer', ...)`** (wrapped at the public-API layer as `AUTH_FAILED` with the inner code in the error message):
+- `AA_SMART_ACCOUNT_MISSING`, `AA_EOA_KEY_MISSING`, `AA_SEND_USEROP_MISSING`, `AA_RPC_URL_MISSING`
+- `AA_RECEIPT_NOT_VISIBLE` (cross-RPC race — bundler mined the tx but sdk-core's RPC hadn't seen it after 5 attempts)
+- `AA_SIGN_TRANSACTION_UNSUPPORTED` (raised if anything tries to call `signTransaction` on the AA signer — use `sendTransaction` which routes through `sendUserOp`)
+
+See `docs/fabstir-v2-reference/IMPLEMENTATION-AA-TRANSCODE-PAYMENT.md` Section A for the full design rationale.
 
 ### Base Account Kit Integration
 
@@ -1812,7 +1859,8 @@ console.log(`Task: ${handle.taskId}`);
 handle.cancel(); // Cancel mid-transcode
 
 const result = await handle.result;
-// { taskId, outputs: [{ id, ext, cid }], billing: { units, tokens }, duration, qualityMetrics, proofTreeCID, proofTreeRootHash }
+// { taskId, outputs: TranscodeOutputUnion[], billing: { units, tokens }, duration, qualityMetrics, proofTreeCID, proofTreeRootHash }
+// Each output is either { id, ext, cid } (standard) or { id, hls: true, initSegmentCid, segments, ... } (HLS)
 ```
 
 ### TranscodeSubmitOptions
@@ -1824,6 +1872,7 @@ interface TranscodeSubmitOptions {
   chainId?: number;        // Blockchain context
   onProgress?: (progress: number, gopInfo?: GOPInfo) => void;
   timeoutMs?: number;      // Default: 300000 (5 min)
+  previewPercent?: number; // HLS: first N% of segments uploaded unencrypted (default: 0)
 }
 ```
 
@@ -1893,9 +1942,13 @@ const formats: VideoFormat[] = [{
 }];
 ```
 
-**Streaming fields:**
+**Streaming fields (Phase 1 — whole-file):**
 - `encrypt` (boolean, optional): When `true`, the output is encrypted on S5. Used to produce encrypted full-length outputs alongside unencrypted previews.
 - `trim_percent` (number, optional): Transcode only the first N% of the source video. The node sidecar computes `-t <duration * trim_percent / 100>` for ffmpeg. Used to produce free preview clips.
+
+**HLS fields (Phase 2 — segmented):**
+- `hls` (boolean, optional): When `true`, output fMP4 segments instead of a single file. `encrypt` and `trim_percent` are ignored for HLS formats.
+- `hls_time` (number, optional): Target segment duration in seconds (default: 6).
 
 ### Streaming Content Pipeline
 
@@ -1957,6 +2010,128 @@ interface TranscodedContentMetadata {
   freePreviewPercent: number;  // e.g. 15
   sources: TranscodedSource[];
   jobId: number;               // On-chain job ID
+}
+```
+
+### HLS Adaptive Bitrate Streaming
+
+For adaptive bitrate streaming with per-segment encryption, use `buildHlsFormats()`. Unlike `buildStreamingFormats()` (which produces two outputs per resolution), HLS produces one format per resolution — the preview/paid split is handled per-segment via `previewPercent` at the request level.
+
+```typescript
+import { buildHlsFormats, buildMasterPlaylist, buildVariantPlaylist,
+  assembleHlsContentMetadata, isHlsOutput } from '@fabstir/sdk-core';
+
+// Build format array: 1 format per resolution with hls: true
+const formats = buildHlsFormats(['720p', '1080p', '2160p'], 'av1', 6);
+// Returns 3 formats:
+//   id 1: 720p  (hls: true, hls_time: 6)
+//   id 2: 1080p (hls: true, hls_time: 6)
+//   id 3: 2160p (hls: true, hls_time: 6)
+
+// Submit with previewPercent (first 15% of segments unencrypted)
+const handle = await (sessionManager as any).submitTranscode(
+  sessionId.toString(), sourceCid, formats, {
+    isGpu: true, isEncrypted: true, previewPercent: 15,
+    onProgress: (p, gop) => console.log(`${p}%`),
+  },
+);
+const result = await handle.result;
+```
+
+**After transcode completes**, assemble HLS metadata:
+
+```typescript
+const metadata = assembleHlsContentMetadata(result, formats, sourceCid, 15, jobId);
+// metadata: {
+//   sourceCid, transcodedAt, freePreviewPercent: 15, jobId,
+//   sources: [
+//     { resolution: '720p', codec: 'av1', container: 'mp4', bitrateKbps: 1500,
+//       initSegmentCid: 'z...', segments: [...], previewSegments: 15, totalDuration: 598 },
+//     { resolution: '1080p', ... },
+//     { resolution: '2160p', ... },
+//   ]
+// }
+```
+
+**Generate M3U8 playlists** client-side:
+
+```typescript
+// Master playlist (adaptive bitrate switching)
+const master = buildMasterPlaylist(metadata.sources, res => `${res}/index.m3u8`);
+// #EXTM3U
+// #EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720
+// 720p/index.m3u8
+// #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1920x1080
+// 1080p/index.m3u8
+// ...
+
+// Variant playlist (single resolution, all segments)
+const variant = buildVariantPlaylist(metadata.sources[0], cid => `https://s5.example/${cid}`);
+// #EXTM3U
+// #EXT-X-VERSION:7
+// #EXT-X-TARGETDURATION:7
+// #EXT-X-MAP:URI="https://s5.example/zInitSeg..."
+// #EXTINF:6.006000,
+// https://s5.example/zSeg0...
+// ...
+// #EXT-X-ENDLIST
+```
+
+**Discriminate HLS from standard outputs** using the type guard:
+
+```typescript
+for (const output of result.outputs) {
+  if (isHlsOutput(output)) {
+    // output: HlsOutput — has initSegmentCid, segments[], previewSegments, etc.
+    console.log(`HLS: ${output.segments.length} segments`);
+  } else {
+    // output: TranscodedOutput — has cid (single file)
+    console.log(`Standard: ${output.cid}`);
+  }
+}
+```
+
+**HLS Types:**
+
+```typescript
+interface HlsSegment {
+  index: number;           // 0-based segment position
+  cid: string;             // z-prefix (unencrypted) or u-prefix (encrypted)
+  duration: number;        // Actual segment duration in seconds
+  encrypted: boolean;      // true if segment is encrypted on S5
+}
+
+interface HlsOutput {
+  id: number;
+  hls: true;               // Literal true — discriminant for type guard
+  initSegmentCid: string;  // fMP4 init segment (always unencrypted, z-prefix)
+  segments: HlsSegment[];
+  previewSegments: number; // Count of unencrypted preview segments
+  totalSegments: number;
+  totalDuration: number;   // Sum of all segment durations
+}
+
+type TranscodeOutputUnion = TranscodedOutput | HlsOutput;
+
+function isHlsOutput(o: TranscodeOutputUnion): o is HlsOutput;
+
+interface HlsTranscodedSource {
+  resolution: string;      // '480p' | '720p' | '1080p' | '2160p'
+  codec: string;           // 'h264' | 'av1'
+  container: string;       // 'mp4'
+  bitrateKbps: number;
+  initSegmentCid: string;
+  segments: HlsSegment[];
+  previewSegments: number;
+  totalDuration: number;
+}
+
+interface HlsContentMetadata {
+  sourceCid: string;
+  transcodedAt: number;
+  freePreviewPercent: number;
+  sources: HlsTranscodedSource[];
+  jobId: number;
 }
 ```
 
@@ -4957,9 +5132,106 @@ async completeSessionJob(
 ): Promise<string>
 ```
 
+### Delegate-Pays Authorization (SDK-level, sdk-core 1.21.0+)
+
+High-level API for the **delegate-pays** model: a generated hot EOA (the "delegate") spends a payer's **on-chain-capped USDC allowance** — no host pinning, no raw private-key custody. The user keeps control via a hard on-chain cap (`usdc.approve(jobMarketplace, cap)`); a looping agent physically cannot overspend it. These methods wrap the contract-level calls in [V2 Direct Payment Delegation](#v2-direct-payment-delegation-february-2026) below.
+
+> **Delegated sessions are USDC-only** (V2 delegation rejects native token) and the **delegate never settles** — the host settles the job on WebSocket disconnect. Only the payer or host may complete a delegated session.
+>
+> **The `payer` MUST be an account distinct from the chat primary** (use the existing Coinbase sub-account). ERC-20 allowance is keyed `(owner=payer, spender=marketplace)` and shared across all of that payer's delegates, so reusing the chat primary would let a coding agent drain chat's allowance, and `revokeDelegate`'s `approve(0)` would break chat.
+
+#### authenticateAsDelegate
+
+Authenticates with a plain EOA delegate `signer` while recording the `payer` whose USDC funds sessions. Reuses the `'signer'` auth path (managers initialise as normal), then sets `authMode = 'delegate'` and propagates the payer to the PaymentManager. After this, `startSession` routes through the delegate path transparently — `SessionManager` is unchanged.
+
+```typescript
+await sdk.authenticateAsDelegate({ signer: ethers.Signer, payer: string }): Promise<void>
+sdk.getDelegatePayer(): string | undefined   // the payer recorded in delegate mode
+```
+
+Throws `SDKError` `DELEGATE_SIGNER_MISSING` (no signer) or `DELEGATE_PAYER_MISSING` (missing/zero payer) before authenticating. `disconnect()` clears the delegate state.
+
+#### createDelegateAuthorization
+
+Authorizes a delegate to spend the payer's USDC up to `allowanceCap` (in **base units** — bigint, USDC has 6 decimals). Performs `approveToken(marketplace, cap)` **then** `authorizeDelegate(delegate, true)`. Signed by the bridge-payer (sub-account).
+
+```typescript
+await sdk.getPaymentManager().createDelegateAuthorization({
+  delegate: string,
+  allowanceCap: bigint,        // e.g. 50_000_000n = 50 USDC
+  token?: string,              // defaults to the chain's USDC
+  chainId?: number,
+}): Promise<{ approveTxHash: string; authorizeTxHash: string }>
+```
+
+Throws `DELEGATE_USDC_REQUIRED` for a zero/native token (no `ZeroAddress` fallback).
+
+#### getDelegateAuthorization
+
+Reads whether `delegate` is authorized for `payer` and the live remaining allowance (the authoritative on-chain cap).
+
+```typescript
+await sdk.getPaymentManager().getDelegateAuthorization({
+  payer: string,
+  delegate: string,
+  token?: string,
+  chainId?: number,
+}): Promise<{ authorized: boolean; remaining: bigint }>   // remaining = USDC base units
+```
+
+#### revokeDelegate
+
+Revokes a delegate by bundling **both** on-chain actions so the UI cannot half-revoke: `authorizeDelegate(delegate, false)` **then** `approveToken(marketplace, 0n)`. Because it operates on the bridge-payer sub-account, zeroing its allowance never touches chat's `allowance[primary][marketplace]`.
+
+```typescript
+await sdk.getPaymentManager().revokeDelegate({
+  delegate: string,
+  token?: string,
+  chainId?: number,
+}): Promise<{ revokeTxHash: string; approveTxHash: string }>
+```
+
+If the `approve(0)` leg fails after deauthorization, throws `SDKError` `DELEGATE_REVOKE_INCOMPLETE` carrying the `revokeTxHash` in `details`.
+
+#### setDelegatePayer / getDelegatePayer (PaymentManager)
+
+```typescript
+sdk.getPaymentManager().setDelegatePayer(payer: string): void   // enter delegate mode
+sdk.getPaymentManager().getDelegatePayer(): string | undefined
+```
+
+#### Delegate session pre-flight & error codes
+
+When `delegatePayer` is set, `createSessionJob` (used by `startSession`) takes a delegate branch that pre-checks **before** any chain write and maps contract reverts to typed `SDKError` codes:
+
+| Code | Cause |
+|------|-------|
+| `DELEGATE_USDC_REQUIRED` | zero/native `paymentToken`, or contract `ERC20Only` revert |
+| `DELEGATE_NOT_AUTHORIZED` | delegate not authorized for payer, or contract `NotDelegate` revert |
+| `DELEGATE_ALLOWANCE_INSUFFICIENT` | remaining allowance < session amount (`details` has `remaining`/`needed`) |
+| `DELEGATE_BALANCE_INSUFFICIENT` | payer USDC balance < session amount |
+| `DELEGATE_BAD_PARAMS` | contract `BadDelegateParams` revert |
+| `DELEGATE_SIGNER_MISSING` / `DELEGATE_PAYER_MISSING` | `authenticateAsDelegate` validation |
+| `DELEGATE_REVOKE_INCOMPLETE` | `revokeDelegate`'s `approve(0)` leg failed |
+
+#### Minimal flow
+
+```typescript
+// UI (signed by the bridge sub-account = payer):
+await sdk.getPaymentManager().createDelegateAuthorization({ delegate: delegateAddress, allowanceCap: 50_000_000n });
+
+// Daemon (delegate hot EOA):
+await sdk.authenticateAsDelegate({ signer: delegateWallet, payer: subAccountAddress });
+const { sessionId } = await (await sdk.getSessionManager()).startSession({ /* USDC paymentToken */ });
+// … run prompts … then end the session; the HOST settles on disconnect.
+
+// Revoke when done:
+await sdk.getPaymentManager().revokeDelegate({ delegate: delegateAddress });
+```
+
 ### V2 Direct Payment Delegation (February 2026)
 
-These methods enable Smart Wallet sub-accounts and delegated session creation.
+These contract-level methods (on the JobMarketplace wrapper) back the [Delegate-Pays Authorization](#delegate-pays-authorization-sdk-level-sdk-core-1210) API above. Use the SDK-level API for app code; reach for these only for low-level/CLI use.
 
 #### authorizeDelegate
 

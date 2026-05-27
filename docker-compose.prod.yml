@@ -44,6 +44,8 @@ services:
       context: .
       dockerfile: Dockerfile.production
     container_name: llm-node-prod
+    shm_size: "4g"
+    ipc: host
     restart: unless-stopped
     runtime: nvidia
     env_file:
@@ -57,6 +59,9 @@ services:
       # NVIDIA GPU
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      NCCL_P2P_DISABLE: "1"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_DEBUG: "WARN"
 
       # S5 Storage - connects to s5-bridge service
       ENHANCED_S5_URL: http://s5-bridge:5522
@@ -223,6 +228,9 @@ services:
       MEDIA_FORMATS_FILE: /config/video_formats.json
       GARBAGE_COLLECTOR_INTERVAL: ${TRANSCODER_GC_INTERVAL:-3600}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      NCCL_P2P_DISABLE: "1"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_DEBUG: "WARN"
       MAX_CONCURRENT_TRANSCODES: ${MAX_CONCURRENT_TRANSCODES:-3}
       RUST_LOG: ${RUST_LOG:-info}
     ports:

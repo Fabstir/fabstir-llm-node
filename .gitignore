@@ -62,6 +62,7 @@ node_modules/
 dist/
 
 fabstir-llm-node
+fabstir-llm-node-*
 *.tgz
 .env.contracts
 
@@ -77,3 +78,6 @@ docs/compute-contracts-reference/
 docs/ui4-reference/
 docs/development/
 docs/transcode-reference/
+docs/fabstir-v2/
+docs/fabstir-v2-reference/
+
