@@ -238,34 +238,61 @@ below is the switch that turns enforcement on. The block itself is
 route-agnostic — it proxies the whole prefix, so `/geo` needs no config change
 once the reader ships it.
 
-### Deploy the block
+### Deploy the block (replace-inline)
 
-Same pattern as the fabcdn snippet — stage, drop into `/etc/nginx/snippets/`,
-add one `include` line to the host1.fabstir.net server block, validate, reload:
+host1 **already has an inline `location /fabdiscover/`** — an earlier,
+pre-hardening version without the geo strips. Deploy is therefore a **replace of
+that inline block**, *not* an `include`: a second `location /fabdiscover/` in the
+same server is an nginx "duplicate location" error that aborts the reload. This
+`.conf` is the canonical content for that inline block (it is a valid standalone
+location block, but here it lives inline rather than as an `include`d snippet).
+
+Locate the server-block file, replace the block's body, validate, reload:
 
 ```bash
-scp host1/fabdiscover-location.conf "$USER"@host1.fabstir.net:/tmp/
-sudo cp /tmp/fabdiscover-location.conf /etc/nginx/snippets/
-# inside the server { } block for host1.fabstir.net, add:
-#   include /etc/nginx/snippets/fabdiscover-location.conf;
+# find the file (resolves through any sites-enabled symlink):
+sudo nginx -T | awk '/# configuration file/{f=$0} /location \/fabdiscover\//{print f; exit}'
+
+# in that file, REPLACE the body of the existing `location /fabdiscover/ { … }`
+# with host1/fabdiscover-location.conf — i.e. add the 3 strip lines to the live
+# block. Do NOT add an `include`; that creates a duplicate location.
+
 sudo nginx -t && sudo nginx -s reload
 ```
 
-### Harden :7700 to loopback (REQUIRED)
+### Rollback
 
-The reader binds `0.0.0.0:7700`, so `:7700` is directly reachable today — a
-client could hit `host1:7700/search` to bypass the nginx geo-header strip and
-spoof their region. Two fixes, do both:
+Unlike the fabcdn block there is no `include` to comment out — rollback is
+restoring the prior inline block, i.e. **delete the three
+`proxy_set_header …Country "";` lines** and reload:
 
-- **Box (this side):** firewall `:7700` to loopback so only nginx reaches it.
-  ```bash
-  sudo ufw deny 7700/tcp                                    # ufw allows lo by default
-  # or, iptables:
-  sudo iptables -A INPUT -p tcp --dport 7700 ! -i lo -j DROP
-  ```
-  nginx → `127.0.0.1:7700` is unaffected.
-- **Reader (v2 side):** the reader will default its listen to `127.0.0.1`
-  (Phase 4.6) so it is never internet-facing by design.
+```bash
+sudo nginx -t && sudo nginx -s reload    # after removing the 3 strip lines
+```
+
+Safe while enforcement is inert: without the strips the block reverts to plain
+passthrough, and every viewer still resolves `XX` → permissive regardless.
+
+### Restrict :7700 to loopback
+
+The reader binds `0.0.0.0:7700`, so a client *on a network that can reach the
+box* could hit `:7700/search` directly and bypass the nginx geo-header strip.
+In this deployment `:7700` is **not** internet-reachable (NAT forwards only
+80/443 — verified externally), so the residual is LAN-local only.
+
+The primary fix is at the app layer: the reader defaults its listen to
+`127.0.0.1` (Phase 4.2 — `listen(config.port, config.bindHost ?? '127.0.0.1')`),
+so it is never internet-facing by design. (`GET /geo` itself is Phase 4.6.)
+
+A box firewall is **optional** defense-in-depth — not needed where `:7700` isn't
+exposed, but if you want it anyway:
+
+```bash
+sudo ufw deny 7700/tcp                                    # ufw allows lo by default
+# or, iptables:
+sudo iptables -A INPUT -p tcp --dport 7700 ! -i lo -j DROP
+```
+nginx → `127.0.0.1:7700` is unaffected either way.
 
 ### Turn enforcement on: GeoLite2 DB
 
