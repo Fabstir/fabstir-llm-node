@@ -277,12 +277,18 @@ passthrough, and every viewer still resolves `XX` → permissive regardless.
 
 The reader binds `0.0.0.0:7700`, so a client *on a network that can reach the
 box* could hit `:7700/search` directly and bypass the nginx geo-header strip.
-In this deployment `:7700` is **not** internet-reachable (NAT forwards only
-80/443 — verified externally), so the residual is LAN-local only.
 
-The primary fix is at the app layer: the reader defaults its listen to
-`127.0.0.1` (Phase 4.2 — `listen(config.port, config.bindHost ?? '127.0.0.1')`),
-so it is never internet-facing by design. (`GET /geo` itself is Phase 4.6.)
+The **durable, topology-independent** control is the app-layer bind: the reader
+defaults its listen to `127.0.0.1` (Phase 4.2 —
+`listen(config.port, config.bindHost ?? '127.0.0.1')`), so it is never
+internet-facing by design. (`GET /geo` itself is Phase 4.6.)
+
+On this host `:7700` also isn't internet-reachable (NAT forwards only 80/443 —
+verified externally), so the residual is LAN-local and a box firewall is
+optional here. But that NAT fact is **host-specific** — re-confirm `:7700`
+exposure on any cloud/k8s migration (the exact portability case the
+`X-Geo-Country` contract targets); the loopback bind is what stays load-bearing
+across that move.
 
 A box firewall is **optional** defense-in-depth — not needed where `:7700` isn't
 exposed, but if you want it anyway:
