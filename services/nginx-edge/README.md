@@ -221,6 +221,85 @@ ssh host2.fabstir.net 'sudo find /var/cache/fabcdn -type f | wc -l'   # 0
 ssh host2.fabstir.net 'systemctl is-active nginx'                     # active
 ```
 
+## FabDiscover Edge (Geo-Fencing Trust Boundary)
+
+Separate from the `/fabcdn/` blob cache, the host1.fabstir.net nginx also fronts
+the local **fabdiscover-search** reader (`127.0.0.1:7700`) at `/fabdiscover/`,
+proxying `POST /search`, `GET /health`, and (Phase 4.6) `GET /geo`. The block —
+`host1/fabdiscover-location.conf` — is the **security trust boundary** for
+territorial geo-fencing.
+
+The geo design **ships inert**: the reader resolves the viewer's country from a
+precedence chain (`X-Geo-Country` → `CF-IPCountry` → `CloudFront-Viewer-Country`
+→ app-layer MaxMind on the rightmost `X-Forwarded-For` hop → `XX`) and treats
+`XX` (unknown) as **permissive**. With no MaxMind DB and the client geo-headers
+stripped, every viewer resolves `XX` → no filtering, nothing breaks. The infra
+below is the switch that turns enforcement on. The block itself is
+route-agnostic — it proxies the whole prefix, so `/geo` needs no config change
+once the reader ships it.
+
+### Deploy the block
+
+Same pattern as the fabcdn snippet — stage, drop into `/etc/nginx/snippets/`,
+add one `include` line to the host1.fabstir.net server block, validate, reload:
+
+```bash
+scp host1/fabdiscover-location.conf "$USER"@host1.fabstir.net:/tmp/
+sudo cp /tmp/fabdiscover-location.conf /etc/nginx/snippets/
+# inside the server { } block for host1.fabstir.net, add:
+#   include /etc/nginx/snippets/fabdiscover-location.conf;
+sudo nginx -t && sudo nginx -s reload
+```
+
+### Harden :7700 to loopback (REQUIRED)
+
+The reader binds `0.0.0.0:7700`, so `:7700` is directly reachable today — a
+client could hit `host1:7700/search` to bypass the nginx geo-header strip and
+spoof their region. Two fixes, do both:
+
+- **Box (this side):** firewall `:7700` to loopback so only nginx reaches it.
+  ```bash
+  sudo ufw deny 7700/tcp                                    # ufw allows lo by default
+  # or, iptables:
+  sudo iptables -A INPUT -p tcp --dport 7700 ! -i lo -j DROP
+  ```
+  nginx → `127.0.0.1:7700` is unaffected.
+- **Reader (v2 side):** the reader will default its listen to `127.0.0.1`
+  (Phase 4.6) so it is never internet-facing by design.
+
+### Turn enforcement on: GeoLite2 DB
+
+App-layer resolution needs a MaxMind GeoLite2-Country database on the box,
+pointed at by `GEOIP_DB_PATH` on the `fabdiscover-search` systemd unit. Until it
+exists, geo stays inert (everyone `XX` → permissive).
+
+```bash
+# Option A — MaxMind (free account + license key), kept fresh by geoipupdate:
+sudo apt install geoipupdate
+# /etc/GeoIP.conf:  AccountID / LicenseKey / EditionIDs GeoLite2-Country
+sudo geoipupdate                        # → /usr/share/GeoIP/GeoLite2-Country.mmdb
+# Option B — no account: DB-IP Lite Country (CC-BY) or IP2Location LITE .mmdb.
+
+# Point the reader at it (systemd drop-in for fabdiscover-search):
+#   Environment=GEOIP_DB_PATH=/usr/share/GeoIP/GeoLite2-Country.mmdb
+sudo systemctl daemon-reload && sudo systemctl restart fabdiscover-search
+```
+
+`XX` (DB miss / private IP / no DB) is permissive by design — a geo miss shows
+the title rather than punishing legit users (corporate proxies, IPv6 quirks).
+VPN users bypass it; that is the intended soft-enforcement norm.
+
+### CORS & TLS
+
+- **CORS:** do **not** add CORS headers in this block — the reader sets
+  `Access-Control-Allow-Origin` itself via `CORS_ORIGIN`, which must include
+  `https://v2.fabstir.io` (the UI hits `/geo` cross-origin). Double-ACAO breaks
+  browsers (same rule as the fabcdn note above).
+- **TLS:** `/search` and `/geo` both ride host1 HTTPS. A lapsed cert makes the
+  region gate **fail open** (and can break search) — keep host1 cert
+  auto-renewal healthy (`certbot renew --dry-run`; watch for a `:80` Caddy
+  squatter blocking the HTTP-01 challenge).
+
 ## Known Limitations (Demo Scope)
 
 - **No client-side edge→S5 fallback.** If the edge returns 502/504 mid-demo,
