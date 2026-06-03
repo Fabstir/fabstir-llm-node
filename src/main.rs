@@ -243,6 +243,7 @@ async fn main() -> Result<()> {
             rope_freq_base: 10000.0,
             rope_freq_scale: 1.0,
             chat_template: None, // Use model's default chat template
+            encrypted: false,    // plain (non-TEE) load; encrypted path wired separately
         };
 
         // Pass semantic_model_id if validation was performed

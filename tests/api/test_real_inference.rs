@@ -40,6 +40,8 @@ async fn setup_test_server() -> Result<(), Box<dyn std::error::Error>> {
         gpu_layers: 0,
         rope_freq_base: 10000.0,
         rope_freq_scale: 1.0,
+        chat_template: None,
+        encrypted: false,
     };
     
     let model_id = engine.load_model(model_config).await?;
@@ -96,6 +98,8 @@ async fn test_load_real_model_on_startup() {
         gpu_layers: 0,
         rope_freq_base: 10000.0,
         rope_freq_scale: 1.0,
+        chat_template: None,
+        encrypted: false,
     };
     
     let model_id = engine.load_model(model_config).await

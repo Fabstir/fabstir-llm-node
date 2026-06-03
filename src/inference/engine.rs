@@ -204,6 +204,11 @@ pub struct ModelConfig {
     pub rope_freq_base: f32,
     pub rope_freq_scale: f32,
     pub chat_template: Option<crate::inference::ChatTemplate>,
+    /// True iff these weights came from a TEE-encrypted container (decrypted to
+    /// tmpfs by `tee::model_source::prepare_encrypted_model`). Drives the
+    /// verify-then-load TOCTOU warning below; the non-TEE fail-closed refusal is
+    /// enforced upstream at decrypt time, so reaching here implies TEE was enabled.
+    pub encrypted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -376,6 +381,19 @@ impl LlmEngine {
 
     pub async fn load_model(&mut self, config: ModelConfig) -> Result<String> {
         let model_id = Uuid::new_v4().to_string();
+
+        // 4.3.2 — encrypted weights are hash-verified (verify-then-load) before this
+        // call, but llama.cpp re-opens the file here, leaving a TOCTOU gap a host
+        // could exploit by swapping the tmpfs file between verify and load. Phase 5
+        // closes it (fd-based load / file sealing / re-verify before mmap). Logged so
+        // the window is explicit to operators. (Non-TEE refusal is upstream.)
+        if config.encrypted {
+            tracing::warn!(
+                target: "tee",
+                "loading ENCRYPTED model from {} — verify→load TOCTOU window is open (Phase-4 risk; closed in Phase 5)",
+                config.model_path.display()
+            );
+        }
 
         // Update model info
         let model = Model {

@@ -132,6 +132,7 @@ impl InferenceEngine {
             rope_freq_base: 10000.0,
             rope_freq_scale: 1.0,
             chat_template: None, // Use model's default chat template
+            encrypted: false,    // plain (non-TEE) load; encrypted path wired separately
         };
 
         let model_id = base_engine.load_model(model_config).await?;
