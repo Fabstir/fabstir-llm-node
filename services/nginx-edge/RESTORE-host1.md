@@ -206,6 +206,38 @@ restart or reboot can scramble container/cluster networking and drop DNS state:
   networking is scrambled.
 - **Restart `s5-bridge`** so it re-resolves the portal (gotcha #4).
 - The `/etc/hosts` pin (B4) and DNS A record persist a reboot, so the reader/nginx recover on their own.
+- **`fabdiscover-search` races the LLM node's `/v1/embed` on boot.** It probes the embed
+  backend once at startup; if `llm-node-prod` isn't serving `/v1/embed` yet, the reader comes
+  up `"embeddings":"disabled"` and `POST /search` returns **503** (can't vectorize the query) —
+  S5/geo are fine, only search is down. Quick recovery: once `curl …:8080/v1/embed` is 200,
+  `sudo systemctl restart fabdiscover-search` (wait ~95s, confirm `/health` → `embeddings:enabled`).
+
+### Reboot-proof fix for the embed race (install once)
+Make the reader block until `/v1/embed` is ready, so it boots `embeddings:enabled`:
+```bash
+sudo tee /usr/local/bin/wait-for-embed.sh >/dev/null <<'EOF'
+#!/bin/bash
+for _ in $(seq 1 60); do
+  curl -sf -o /dev/null -X POST http://localhost:8080/v1/embed \
+    -H 'content-type: application/json' -d '{"texts":["ping"],"chainId":84532}' && { echo embed-ready; exit 0; }
+  sleep 5
+done
+echo "embed not ready after 5min; starting anyway"; exit 0
+EOF
+sudo chmod +x /usr/local/bin/wait-for-embed.sh
+
+sudo mkdir -p /etc/systemd/system/fabdiscover-search.service.d
+sudo tee /etc/systemd/system/fabdiscover-search.service.d/wait-for-embed.conf >/dev/null <<'EOF'
+[Unit]
+After=docker.service
+Wants=docker.service
+[Service]
+ExecStartPre=/usr/local/bin/wait-for-embed.sh
+TimeoutStartSec=400
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart fabdiscover-search
+```
+Reader then waits up to 5 min for `/v1/embed` before starting, so reboots come up `embeddings:enabled`. (`/usr/local/bin/wait-for-embed.sh` + the drop-in are included in the §"Making the backup" tar via `etc/systemd/system` — add `usr/local/bin/wait-for-embed.sh` to that tar too.)
 
 ---
 

@@ -47,5 +47,9 @@ RUN npm config set prefix "$HOME/.npm-global" \
 
 RUN echo 'export PATH="$HOME/.npm-global/bin:$HOME/.risc0/bin:/usr/local/cargo/bin:$PATH"' >> ~/.bashrc
 
+USER root
+RUN mkdir -p /home/developer/.claude && chown developer:developer /home/developer/.claude
+USER developer
+
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
