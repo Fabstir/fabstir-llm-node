@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.29.0-qwen36-llamacpp146-2026-05-21";
+pub const VERSION: &str = "v8.30.0-tee-confidential-inference-2026-06-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.29.0";
+pub const VERSION_NUMBER: &str = "8.30.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 29;
+pub const VERSION_MINOR: u32 = 30;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-05-21";
+pub const BUILD_DATE: &str = "2026-06-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -318,6 +318,16 @@ pub const FEATURES: &[&str] = &[
     "llama-cpp-2-0-1-146",
     "cuda-13-runtime",
     "nccl-cumem-disable-wsl2",
+    // TEE / confidential inference — mock backend, Phase 1-4 (v8.30.0)
+    "tee-confidential-inference",
+    "tee-attestation-mock",
+    "encrypted-model-at-rest",
+    "attested-dek-release",
+    "tmpfs-weight-decrypt",
+    "verify-then-load",
+    "model-hash-binding",
+    "policy-signer-binding",
+    "tee-capability",
 ];
 
 /// Supported chain IDs
@@ -742,10 +752,19 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 29);
+        assert_eq!(VERSION_MINOR, 30);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.30.0 TEE / confidential inference (mock backend, Phase 1-4)
+        assert!(FEATURES.contains(&"tee-confidential-inference"));
+        assert!(FEATURES.contains(&"tee-attestation-mock"));
+        assert!(FEATURES.contains(&"encrypted-model-at-rest"));
+        assert!(FEATURES.contains(&"attested-dek-release"));
+        assert!(FEATURES.contains(&"tmpfs-weight-decrypt"));
+        assert!(FEATURES.contains(&"verify-then-load"));
+        assert!(FEATURES.contains(&"model-hash-binding"));
+        assert!(FEATURES.contains(&"tee-capability"));
         // v8.29.0 Qwen3.6 support
         assert!(FEATURES.contains(&"qwen35moe-architecture"));
         assert!(FEATURES.contains(&"llama-cpp-2-0-1-146"));
@@ -886,15 +905,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.29.0"));
-        assert!(version.contains("2026-05-21"));
+        assert!(version.contains("8.30.0"));
+        assert!(version.contains("2026-06-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.29.0-qwen36-llamacpp146-2026-05-21");
-        assert_eq!(VERSION_NUMBER, "8.29.0");
-        assert_eq!(BUILD_DATE, "2026-05-21");
+        assert_eq!(VERSION, "v8.30.0-tee-confidential-inference-2026-06-03");
+        assert_eq!(VERSION_NUMBER, "8.30.0");
+        assert_eq!(BUILD_DATE, "2026-06-03");
     }
 
     #[test]

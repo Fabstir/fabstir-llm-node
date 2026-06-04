@@ -14,6 +14,22 @@ use crate::contracts::model_registry::ModelRegistryClient;
 use crate::contracts::pricing_constants::{native, stable, tokens};
 use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
 
+/// The capabilities this node advertises in its **new-registry** registration
+/// metadata (`build_metadata_json`, `use_new_registry` branch) and its WebSocket
+/// handshake (`SessionProtocol`). `tee-attested` is appended iff the node will
+/// actually honor TEE-encrypted models (`HOST_TEE_ENABLED`,
+/// [`crate::tee::host_tee_enabled`]) — so a client filtering for attested nodes
+/// (Phase 4.2 / §8) never selects a node that would refuse the encrypted model.
+/// (The deprecated legacy-registry metadata branch emits no `capabilities` key at
+/// all; TEE deployments use the new registry.) Pure + total for direct testing.
+pub(crate) fn node_capabilities(tee_attested: bool) -> Vec<String> {
+    let mut caps = vec!["inference".to_string(), "streaming".to_string()];
+    if tee_attested {
+        caps.push("tee-attested".to_string());
+    }
+    caps
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
     pub models: Vec<String>,            // Model file paths
@@ -488,7 +504,7 @@ impl NodeRegistration {
                     "vram": 24, // Mock VRAM value
                     "ram_gb": self.metadata.ram_gb,
                 },
-                "capabilities": ["inference", "streaming"],
+                "capabilities": node_capabilities(crate::tee::host_tee_enabled()),
                 "location": "us-east",
                 "maxConcurrent": self.metadata.max_concurrent_jobs,
                 "cost_per_token": self.metadata.cost_per_token,
@@ -628,6 +644,43 @@ mod tests {
         assert_eq!(metadata.ram_gb, metadata2.ram_gb);
         assert_eq!(metadata.min_price_native, metadata2.min_price_native);
         assert_eq!(metadata.min_price_stable, metadata2.min_price_stable);
+    }
+
+    // Phase 4.2 — `tee-attested` capability advertisement.
+    #[test]
+    fn test_capabilities_include_tee_attested_when_enabled() {
+        let caps = node_capabilities(true);
+        assert!(
+            caps.contains(&"tee-attested".to_string()),
+            "a TEE node must advertise tee-attested; got {caps:?}"
+        );
+        assert!(caps.contains(&"inference".to_string()));
+        assert!(caps.contains(&"streaming".to_string()));
+    }
+
+    #[test]
+    fn test_capabilities_exclude_tee_attested_when_disabled() {
+        let caps = node_capabilities(false);
+        assert!(
+            !caps.contains(&"tee-attested".to_string()),
+            "a non-TEE node must NOT advertise tee-attested; got {caps:?}"
+        );
+        // The base capabilities are unchanged.
+        assert_eq!(caps, vec!["inference".to_string(), "streaming".to_string()]);
+    }
+
+    #[test]
+    fn test_metadata_json_capabilities_reflect_helper() {
+        // The new-registry metadata JSON must serialize exactly the helper's output.
+        let caps = node_capabilities(crate::tee::host_tee_enabled());
+        let json = serde_json::json!({ "capabilities": caps });
+        let parsed: Vec<String> = serde_json::from_value(json["capabilities"].clone()).unwrap();
+        assert!(parsed.contains(&"inference".to_string()));
+        assert_eq!(
+            parsed.contains(&"tee-attested".to_string()),
+            crate::tee::host_tee_enabled(),
+            "advertised tee-attested must equal HOST_TEE_ENABLED"
+        );
     }
 
     #[test]

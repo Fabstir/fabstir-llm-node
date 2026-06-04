@@ -198,14 +198,20 @@ pub struct SessionProtocol {
 impl SessionProtocol {
     pub fn new() -> Self {
         let store_config = super::session_store::SessionStoreConfig::default();
+        let mut capabilities = vec![
+            "streaming".to_string(),
+            "context_management".to_string(),
+            "compression".to_string(),
+            "batching".to_string(),
+        ];
+        // Phase 4.2 — advertise `tee-attested` iff this node will honor encrypted
+        // models (HOST_TEE_ENABLED), so clients can discover+select attested nodes.
+        if crate::tee::host_tee_enabled() {
+            capabilities.push("tee-attested".to_string());
+        }
         Self {
             sessions: Arc::new(RwLock::new(SessionStore::new(store_config))),
-            capabilities: Arc::new(RwLock::new(vec![
-                "streaming".to_string(),
-                "context_management".to_string(),
-                "compression".to_string(),
-                "batching".to_string(),
-            ])),
+            capabilities: Arc::new(RwLock::new(capabilities)),
             version: "1.0.0".to_string(),
         }
     }
@@ -479,5 +485,37 @@ impl SessionProtocol {
             .get_session(session_id)
             .await
             .ok_or_else(|| anyhow!("Session not found: {}", session_id))
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    // Phase 4.2 — the handshake advertises `tee-attested` iff HOST_TEE_ENABLED.
+    #[tokio::test]
+    async fn server_capabilities_advertise_tee_attested_iff_host_flag() {
+        let protocol = SessionProtocol::new();
+        let ack = protocol
+            .handle_capabilities(ProtocolMessage {
+                msg_type: MessageType::Capabilities,
+                command: None,
+                session_id: None,
+                metadata: None,
+                payload: None,
+            })
+            .await
+            .expect("handle_capabilities");
+        let caps: Vec<String> =
+            serde_json::from_value(ack.metadata.unwrap()["server_capabilities"].clone()).unwrap();
+        assert_eq!(
+            caps.contains(&"tee-attested".to_string()),
+            crate::tee::host_tee_enabled(),
+            "server must advertise tee-attested iff HOST_TEE_ENABLED; got {caps:?}"
+        );
+        assert!(
+            caps.contains(&"streaming".to_string()),
+            "base capabilities must remain"
+        );
     }
 }
