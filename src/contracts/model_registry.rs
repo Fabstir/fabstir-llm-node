@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
+use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::utils::keccak256;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -135,6 +136,47 @@ impl ModelRegistryClient {
             active: model_data.4,
             timestamp: model_data.5,
         })
+    }
+
+    /// Resolve a model's on-chain provider — the address allowed to sign its TEE
+    /// `SignedModelPolicy` (Phase 4.1.1 / Q2 interim: `proposals(modelId).proposer`).
+    ///
+    /// Returns `Err(NoProviderBound)` if no proposer is set (e.g. direct/legacy
+    /// approvals, which is the case for the current deployment's models — the
+    /// `setModelProvider` binding is a Phase-5 addition). Callers fall back to the
+    /// node-config `ProviderRegistry` (`tee::policy_source`) for those models.
+    ///
+    /// Decodes only the `proposer` word (2nd 32-byte slot) via a raw `eth_call`, to
+    /// avoid decoding `proposals()`'s full nested-tuple return.
+    pub async fn get_model_provider(&self, model_id: H256) -> Result<Address> {
+        let mut data = keccak256(b"proposals(bytes32)")[..4].to_vec();
+        data.extend_from_slice(model_id.as_bytes());
+        let tx: TypedTransaction = TransactionRequest::new()
+            .to(self.contract.address())
+            .data(data)
+            .into();
+        let raw = self
+            .contract
+            .client()
+            .call(&tx, None)
+            .await
+            .map_err(|e| anyhow!("proposals({:?}) call failed: {}", model_id, e))?;
+        let bytes = raw.as_ref();
+        if bytes.len() < 64 {
+            return Err(anyhow!(
+                "proposals() returned {} bytes (expected >= 64)",
+                bytes.len()
+            ));
+        }
+        // tuple head: word0 = modelId, word1 = proposer (address in the low 20 bytes).
+        let proposer = Address::from_slice(&bytes[44..64]);
+        if proposer.is_zero() {
+            return Err(anyhow!(
+                "model {:?} has no on-chain provider (proposals().proposer is zero)",
+                model_id
+            ));
+        }
+        Ok(proposer)
     }
 
     /// Get all approved model IDs
