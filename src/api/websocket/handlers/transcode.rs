@@ -120,6 +120,46 @@ impl TranscodeProgressTask {
                                 );
                             }
 
+                            // ── Moderation gate (host-reachable half of seam #2) ──
+                            // Withholds completion/billing/proof for non-cleared jobs.
+                            // Placed BEFORE billing/proof so a blocked job leaks no S5
+                            // proof artifact (R6). Does NOT stop the external
+                            // transcoder's HLS upload (Part A/A4) or the SDK publish
+                            // (seam #3) — all three are required to fully close the gate
+                            // (§8a). Absent verdict / missing job_id ⇒ HOLD (fail-closed).
+                            //
+                            // Activation is dark-launched behind MODERATION_ENFORCE: the
+                            // verdict-producing ingest (seam #1) lives in another repo, so
+                            // until it is wired, enforcing would hold ALL transcodes. Flip
+                            // MODERATION_ENFORCE=true at go-live. The gate LOGIC is always
+                            // fail-closed; only its activation is toggled.
+                            if server.moderation_enforce() {
+                                match crate::moderation::gate::Gate::transcode_decision(
+                                    server.moderation_store(),
+                                    job_id,
+                                ) {
+                                    crate::moderation::gate::GateOutcome::Release => {}
+                                    crate::moderation::gate::GateOutcome::Hold {
+                                        code,
+                                        message,
+                                    } => {
+                                        server.moderation_metrics().record_held(); // §8 #7
+                                        let _ = progress_tx
+                                            .send(build_encrypted_transcode_error(
+                                                code,
+                                                &message,
+                                                &session_key,
+                                                &session_id,
+                                                None,
+                                            ))
+                                            .await;
+                                        break; // skip billing, proof, transcode_complete
+                                    }
+                                }
+                            } else {
+                                warn!("⚠️ Moderation enforcement DISABLED (set MODERATION_ENFORCE=true to enable); transcode completing WITHOUT the host-slice moderation gate (§8a)");
+                            }
+
                             // Calculate billing
                             let duration = status.duration.unwrap_or(0.0);
                             let mut total_units = 0.0;

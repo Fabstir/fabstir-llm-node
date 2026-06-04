@@ -198,6 +198,18 @@ pub struct ApiServer {
     image_gen_rate_limiter: Arc<crate::diffusion::ImageGenerationRateLimiter>,
     transcoder_client: Arc<RwLock<Option<Arc<crate::transcoder::TranscoderClient>>>>,
     transcoding_tracker: Arc<crate::transcoder::billing::TranscodingTracker>,
+    /// Host-reachable seam-#2 moderation verdicts (job_id → result). Absent ⇒ HOLD.
+    moderation_store: Arc<crate::moderation::verdict_store::VerdictStore>,
+    /// Dark-launch switch (MODERATION_ENFORCE) for the transcode moderation gate.
+    /// Default off so merging the gate doesn't brick transcoding before seam #1 is
+    /// wired; the gate logic itself is always fail-closed when this is on.
+    moderation_enforce: bool,
+    /// Encrypted, append-only-audited evidence store for matched material (B6).
+    moderation_quarantine: Arc<std::sync::Mutex<crate::moderation::csam::quarantine::Quarantine>>,
+    /// NCMEC report sink (mock at launch; the real CyberTipline client swaps in at go-live).
+    moderation_report_sink: Arc<dyn crate::moderation::csam::report::ReportSink + Send + Sync>,
+    /// Moderation observability counters (§8 #7).
+    moderation_metrics: Arc<crate::monitoring::moderation_metrics::ModerationMetrics>,
     transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     auto_image_routing: bool,
@@ -257,6 +269,18 @@ impl ApiServer {
             image_gen_rate_limiter: Arc::new(crate::diffusion::ImageGenerationRateLimiter::new(10)),
             transcoder_client: Arc::new(RwLock::new(None)),
             transcoding_tracker: Arc::new(crate::transcoder::billing::TranscodingTracker::new()),
+            moderation_store: Arc::new(crate::moderation::verdict_store::VerdictStore::new()),
+            moderation_enforce: false,
+            moderation_quarantine: Arc::new(std::sync::Mutex::new(
+                crate::moderation::csam::quarantine::Quarantine::new(
+                    b"test-quarantine-key".to_vec(),
+                    90,
+                ),
+            )),
+            moderation_report_sink: Arc::new(crate::moderation::csam::report::MockReportSink::new()),
+            moderation_metrics: Arc::new(
+                crate::monitoring::moderation_metrics::ModerationMetrics::new(),
+            ),
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(3),
             ),
@@ -353,6 +377,22 @@ impl ApiServer {
             )),
             transcoder_client: Arc::new(RwLock::new(None)),
             transcoding_tracker: Arc::new(crate::transcoder::billing::TranscodingTracker::new()),
+            moderation_store: Arc::new(crate::moderation::verdict_store::VerdictStore::new()),
+            moderation_enforce: std::env::var("MODERATION_ENFORCE")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            moderation_quarantine: Arc::new(std::sync::Mutex::new(
+                crate::moderation::csam::quarantine::Quarantine::new(
+                    std::env::var("MODERATION_QUARANTINE_KEY")
+                        .map(|s| s.into_bytes())
+                        .unwrap_or_else(|_| b"launch-quarantine-key".to_vec()),
+                    90,
+                ),
+            )),
+            moderation_report_sink: Arc::new(crate::moderation::csam::report::MockReportSink::new()),
+            moderation_metrics: Arc::new(
+                crate::monitoring::moderation_metrics::ModerationMetrics::new(),
+            ),
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(
                     std::env::var("TRANSCODE_RATE_LIMIT")
@@ -429,6 +469,11 @@ impl ApiServer {
             image_gen_rate_limiter: self.image_gen_rate_limiter.clone(),
             transcoder_client: self.transcoder_client.clone(),
             transcoding_tracker: self.transcoding_tracker.clone(),
+            moderation_store: self.moderation_store.clone(),
+            moderation_enforce: self.moderation_enforce,
+            moderation_quarantine: self.moderation_quarantine.clone(),
+            moderation_report_sink: self.moderation_report_sink.clone(),
+            moderation_metrics: self.moderation_metrics.clone(),
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             auto_image_routing: self.auto_image_routing,
@@ -529,6 +574,49 @@ impl ApiServer {
     /// Get the transcoding billing tracker (v8.25.0+)
     pub fn transcoding_tracker(&self) -> &crate::transcoder::billing::TranscodingTracker {
         &self.transcoding_tracker
+    }
+
+    /// Host-reachable seam-#2 moderation verdict store (job_id → result). An absent
+    /// verdict ⇒ the transcode gate HOLDs (fail-closed, §3.2).
+    pub fn moderation_store(&self) -> &crate::moderation::verdict_store::VerdictStore {
+        &self.moderation_store
+    }
+
+    /// Whether the transcode moderation gate is enforced (MODERATION_ENFORCE).
+    /// Default off (dark-launch) until seam-#1 ingest is wired; see [`Self::moderation_store`].
+    pub fn moderation_enforce(&self) -> bool {
+        self.moderation_enforce
+    }
+
+    /// Build the launch asset moderator (B8). Until the real NCMEC list is wired at
+    /// go-live (Phase-7 glue), the NCMEC snapshot is `Unavailable` ⇒ image assets
+    /// HOLD (fail-closed); the subtitle text-scan list is the launch mock (§4-Q2).
+    pub fn build_asset_moderator(&self) -> crate::moderation::asset::AssetModerator {
+        crate::moderation::asset::AssetModerator::new(
+            crate::moderation::csam::hashlist::HashListSnapshot::unavailable(),
+            crate::moderation::csam::ownhash::OwnHashList::new(),
+            31,
+            crate::moderation::asset::TextScanList::launch_mock(),
+        )
+    }
+
+    /// The CSAM evidence quarantine (B6). Populated when blocking is wired (Phase 7).
+    pub fn moderation_quarantine(
+        &self,
+    ) -> &std::sync::Mutex<crate::moderation::csam::quarantine::Quarantine> {
+        &self.moderation_quarantine
+    }
+
+    /// The NCMEC report sink (B7). Mock at launch; real client swaps in at go-live.
+    pub fn moderation_report_sink(
+        &self,
+    ) -> Arc<dyn crate::moderation::csam::report::ReportSink + Send + Sync> {
+        self.moderation_report_sink.clone()
+    }
+
+    /// Moderation observability counters (§8 #7), exposable at `/metrics`.
+    pub fn moderation_metrics(&self) -> &crate::monitoring::moderation_metrics::ModerationMetrics {
+        &self.moderation_metrics
     }
 
     pub async fn has_sidecar_capacity(&self) -> bool {
@@ -1256,11 +1344,24 @@ impl ApiServer {
     /// Maximum body size for vision endpoints (20MB to support ~15MB raw images after base64 encoding)
     const VISION_BODY_LIMIT: usize = 20 * 1024 * 1024;
 
-    fn create_router(server: Arc<Self>) -> Router {
+    pub fn create_router(server: Arc<Self>) -> Router {
         // Vision routes need higher body limit for large images
         let vision_routes = Router::new()
             .route("/ocr", post(ocr_handler_wrapper))
             .route("/describe-image", post(describe_image_handler_wrapper))
+            .layer(DefaultBodyLimit::max(Self::VISION_BODY_LIMIT))
+            .with_state(server.clone());
+
+        // Moderation asset endpoint (B8) — same large body limit as vision (images).
+        let moderation_routes = Router::new()
+            .route(
+                "/asset",
+                post(crate::api::moderation::moderate_asset_handler),
+            )
+            .route(
+                "/review",
+                post(crate::api::moderation::moderate_review_handler),
+            )
             .layer(DefaultBodyLimit::max(Self::VISION_BODY_LIMIT))
             .with_state(server.clone());
 
@@ -1283,6 +1384,7 @@ impl ApiServer {
                 get(crate::api::transcode::handler::transcode_status_handler),
             )
             .nest("/v1", vision_routes)
+            .nest("/v1/moderate", moderation_routes)
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(CorsLayer::permissive())

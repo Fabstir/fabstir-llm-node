@@ -6,6 +6,7 @@ pub mod alerting;
 pub mod dashboards;
 pub mod health_checks;
 pub mod metrics;
+pub mod moderation_metrics;
 pub mod s5_metrics;
 
 // Re-export main types
@@ -36,4 +37,5 @@ pub use dashboards::{
     Visualization, Widget, WidgetType,
 };
 
+pub use moderation_metrics::{ModerationCounts, ModerationMetrics};
 pub use s5_metrics::S5Metrics;
