@@ -33,6 +33,27 @@ impl VerdictStore {
         map.insert(job_id, result);
     }
 
+    /// Record the verdict, but NEVER downgrade a block to a clear (C4). Rejects the
+    /// write iff the incoming verdict is `Cleared` AND an existing verdict is not
+    /// `Cleared`; otherwise writes. The read-decide-write runs under a single write
+    /// lock so there is no TOCTOU race (a read-probe-then-separate-write could let two
+    /// `/frames` POSTs interleave and clear a block). The `/frames` path uses ONLY
+    /// this method — never the blind `set` (which `ingest::record_pending` uses).
+    pub fn set_if_not_downgrade(&self, job_id: u64, result: ModerationResult) {
+        let mut map = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        // `releases()` is true only for Cleared. Reject a Cleared write over a
+        // non-Cleared existing verdict; everything else (block-over-anything,
+        // any-over-absent, clear-over-clear) writes.
+        if result.verdict.releases() {
+            if let Some(existing) = map.get(&job_id) {
+                if !existing.verdict.releases() {
+                    return;
+                }
+            }
+        }
+        map.insert(job_id, result);
+    }
+
     /// Look up the verdict for a job. Absent ⇒ `None` ⇒ the gate HOLDs.
     pub fn get(&self, job_id: u64) -> Option<ModerationResult> {
         let map = self.inner.read().unwrap_or_else(|e| e.into_inner());

@@ -39,6 +39,41 @@ fn overwrite_to_blocked() {
 }
 
 #[test]
+fn cleared_over_blocked_rejected() {
+    // C4: a Cleared verdict must NEVER downgrade an existing non-Cleared (Blocked)
+    // verdict — a later benign /frames POST cannot release a job already blocked.
+    let store = VerdictStore::new();
+    store.set(7, ModerationResult::blocked("csam"));
+    store.set_if_not_downgrade(7, ModerationResult::cleared());
+    let r = store.get(7).expect("entry");
+    assert_eq!(
+        r.verdict,
+        Verdict::Blocked,
+        "Cleared must not overwrite an existing Blocked"
+    );
+}
+
+#[test]
+fn blocked_over_cleared_writes() {
+    // The reverse IS allowed: a block always overwrites a prior clear (escalation).
+    let store = VerdictStore::new();
+    store.set(7, ModerationResult::cleared());
+    store.set_if_not_downgrade(7, ModerationResult::blocked("csam"));
+    assert_eq!(store.get(7).unwrap().verdict, Verdict::Blocked);
+}
+
+#[test]
+fn blocked_over_absent_writes() {
+    // First write of any kind (including the common Cleared) lands when absent.
+    let store = VerdictStore::new();
+    store.set_if_not_downgrade(7, ModerationResult::cleared());
+    assert_eq!(store.get(7).unwrap().verdict, Verdict::Cleared);
+    let store2 = VerdictStore::new();
+    store2.set_if_not_downgrade(9, ModerationResult::blocked("csam"));
+    assert_eq!(store2.get(9).unwrap().verdict, Verdict::Blocked);
+}
+
+#[test]
 fn concurrent_absent_lookups_all_hold() {
     // N concurrent readers of an absent job_id must all see None (hold). No race
     // may produce a spurious clear.

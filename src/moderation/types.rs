@@ -90,7 +90,25 @@ impl Verdict {
     pub fn releases(&self) -> bool {
         matches!(self, Verdict::Cleared)
     }
+
+    /// The wire string for this verdict (`"cleared"`/`"blocked"`/`"flagged"`). Shared
+    /// by the asset + frames response DTOs so they cannot drift.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Verdict::Cleared => "cleared",
+            Verdict::Blocked => "blocked",
+            Verdict::Flagged => "flagged",
+        }
+    }
 }
+
+/// The `reason` a genuine Track-1 content MATCH sets on a `Blocked` result (the match
+/// sentinel). Used to distinguish a real match — which warrants preserving evidence —
+/// from a fail-closed HOLD (list unavailable / undecodable / hash-compute failure /
+/// empty), whose `Blocked` carries a different reason and must NOT preserve. A shared
+/// named constant (not ad-hoc string parsing): the producer (`csam::entry`) and the
+/// consumer (`ModerationResult::is_genuine_hit`) reference the same symbol (R8/R9).
+pub const REASON_CSAM_MATCH: &str = "csam-match";
 
 /// The result the node records per job/asset (B9). `reason` carries a category or
 /// rule id only — **never raw matched content** (CSAM isolation, §2).
@@ -121,6 +139,21 @@ impl ModerationResult {
             verdict: Verdict::Flagged,
             reason: Some(reason.into()),
             report_id: None,
+        }
+    }
+
+    /// True iff this verdict is a genuine content MATCH/flag that warrants preserving
+    /// evidence — as opposed to a fail-closed HOLD (list unavailable / undecodable /
+    /// hash-compute failure / empty), which must NOT preserve and is retryable (the API
+    /// surfaces it as `503`). A `Flagged` is always a real text flag; a `Blocked` is a
+    /// genuine match ONLY when its reason is the match sentinel [`REASON_CSAM_MATCH`]
+    /// (an own-hash or NCMEC exact/PDQ hit — including an own-hash hit while the NCMEC
+    /// list is unavailable, and an undecodable exact-SHA hit), never a can't-scan reason.
+    pub fn is_genuine_hit(&self) -> bool {
+        match self.verdict {
+            Verdict::Flagged => true,
+            Verdict::Blocked => self.reason.as_deref() == Some(REASON_CSAM_MATCH),
+            Verdict::Cleared => false,
         }
     }
 }

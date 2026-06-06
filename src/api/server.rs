@@ -210,6 +210,15 @@ pub struct ApiServer {
     moderation_report_sink: Arc<dyn crate::moderation::csam::report::ReportSink + Send + Sync>,
     /// Moderation observability counters (§8 #7).
     moderation_metrics: Arc<crate::monitoring::moderation_metrics::ModerationMetrics>,
+    /// Seam-#1 `task_id → job_id` map (the transcoder's own task id → the node's u64
+    /// job id). Recorded at transcode submit; an unknown `task_id` at
+    /// `/v1/moderate/frames` ⇒ 404 ⇒ the transcoder HOLDs (fail-closed). In-memory
+    /// like `moderation_store` (a node restart loses it ⇒ unknown ⇒ hold).
+    moderation_task_jobs: Arc<std::sync::Mutex<HashMap<String, u64>>>,
+    /// Shared secret authenticating `/v1/moderate/frames` (MODERATION_INGEST_TOKEN).
+    /// `None`/empty ⇒ every frame POST is rejected (401): an unset secret never means
+    /// "accept all" (fail-closed, R3-C1).
+    moderation_ingest_token: Option<String>,
     transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     auto_image_routing: bool,
@@ -281,6 +290,8 @@ impl ApiServer {
             moderation_metrics: Arc::new(
                 crate::monitoring::moderation_metrics::ModerationMetrics::new(),
             ),
+            moderation_task_jobs: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            moderation_ingest_token: None,
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(3),
             ),
@@ -393,6 +404,11 @@ impl ApiServer {
             moderation_metrics: Arc::new(
                 crate::monitoring::moderation_metrics::ModerationMetrics::new(),
             ),
+            moderation_task_jobs: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            // Unset OR empty ⇒ None ⇒ /v1/moderate/frames rejects every POST (401).
+            moderation_ingest_token: std::env::var("MODERATION_INGEST_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(
                     std::env::var("TRANSCODE_RATE_LIMIT")
@@ -474,6 +490,8 @@ impl ApiServer {
             moderation_quarantine: self.moderation_quarantine.clone(),
             moderation_report_sink: self.moderation_report_sink.clone(),
             moderation_metrics: self.moderation_metrics.clone(),
+            moderation_task_jobs: self.moderation_task_jobs.clone(),
+            moderation_ingest_token: self.moderation_ingest_token.clone(),
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             auto_image_routing: self.auto_image_routing,
@@ -617,6 +635,82 @@ impl ApiServer {
     /// Moderation observability counters (§8 #7), exposable at `/metrics`.
     pub fn moderation_metrics(&self) -> &crate::monitoring::moderation_metrics::ModerationMetrics {
         &self.moderation_metrics
+    }
+
+    /// Record the seam-#1 `task_id → job_id` mapping at transcode submit (C1). A
+    /// `task_id` is single-use (a fresh one is minted per submit), so a re-alias to a
+    /// DIFFERENT `job_id` is rejected (logged + ignored) — never silently re-pointed,
+    /// which could make a `/frames` POST write `VerdictStore[wrong_job]` (R2-F5).
+    pub fn record_task_job(&self, task_id: String, job_id: u64) {
+        let mut map = self
+            .moderation_task_jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match map.get(&task_id) {
+            Some(&existing) if existing != job_id => {
+                warn!(
+                    "refusing to re-alias moderation task_id {} from job {} to job {}",
+                    task_id, existing, job_id
+                );
+            }
+            _ => {
+                map.insert(task_id, job_id);
+            }
+        }
+    }
+
+    /// Resolve a transcoder `task_id` to the node's `job_id` (C1). Unknown ⇒ `None`
+    /// ⇒ `/v1/moderate/frames` returns 404 ⇒ the transcoder HOLDs (fail-closed).
+    pub fn job_for_task(&self, task_id: &str) -> Option<u64> {
+        let map = self
+            .moderation_task_jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.get(task_id).copied()
+    }
+
+    /// The configured `/v1/moderate/frames` ingest secret, if set (non-empty).
+    pub fn moderation_ingest_token(&self) -> Option<&str> {
+        self.moderation_ingest_token.as_deref()
+    }
+
+    /// Verify a presented `/v1/moderate/frames` ingest token (C2 / R3-C1). Returns
+    /// `false` (reject) when the server's token is unset/empty OR the presented token
+    /// is empty; otherwise a plain `==` (a long random shared service secret,
+    /// mirroring `reviewer_token`; no constant-time dep — R4-D2). 🔒 An unset secret
+    /// NEVER means "accept all".
+    pub fn verify_ingest_token(&self, presented: &str) -> bool {
+        match self.moderation_ingest_token.as_deref() {
+            Some(configured) if !configured.is_empty() && !presented.is_empty() => {
+                configured == presented
+            }
+            _ => false,
+        }
+    }
+
+    /// Build the launch frames match-state (C5): the SAME `Unavailable` NCMEC
+    /// snapshot, own-hash list, and PDQ `max_distance` (31) as
+    /// [`Self::build_asset_moderator`], so `/frames` cannot drift from `/asset`.
+    pub fn build_frames_match_state(
+        &self,
+    ) -> (
+        crate::moderation::csam::hashlist::HashListSnapshot,
+        crate::moderation::csam::ownhash::OwnHashList,
+        u32,
+    ) {
+        (
+            crate::moderation::csam::hashlist::HashListSnapshot::unavailable(),
+            crate::moderation::csam::ownhash::OwnHashList::new(),
+            31,
+        )
+    }
+
+    /// 🧪 Test-only: set the ingest token after construction (mirrors `set_node`'s
+    /// `&mut self` pattern). NOT `#[cfg(test)]` — the integration-test crate compiles
+    /// the lib without the test cfg; `#[doc(hidden)]` keeps it off the public surface.
+    #[doc(hidden)]
+    pub fn set_ingest_token(&mut self, token: Option<String>) {
+        self.moderation_ingest_token = token;
     }
 
     pub async fn has_sidecar_capacity(&self) -> bool {
@@ -1362,6 +1456,12 @@ impl ApiServer {
                 "/review",
                 post(crate::api::moderation::moderate_review_handler),
             )
+            // Seam #1: the transcoder's keyframe handoff. The handler checks the
+            // body-field `ingestToken` itself (no global auth layer on this nest).
+            .route(
+                "/frames",
+                post(crate::api::moderation::moderate_frames_handler),
+            )
             .layer(DefaultBodyLimit::max(Self::VISION_BODY_LIMIT))
             .with_state(server.clone());
 
@@ -1529,13 +1629,35 @@ async fn simple_inference_handler(
     }
 }
 
-async fn metrics_handler() -> impl IntoResponse {
-    let metrics = "# HELP http_requests_total Total HTTP requests\n\
-                  # TYPE http_requests_total counter\n\
-                  http_requests_total 0\n\
-                  # HELP http_request_duration_seconds Request duration\n\
-                  # TYPE http_request_duration_seconds histogram\n\
-                  http_request_duration_seconds_bucket{le=\"0.1\"} 0\n";
+async fn metrics_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    // Surface the moderation observability counters (§8 #7) in Prometheus text format —
+    // they are incremented in-process by the moderation handlers/gate and must be visible
+    // to operators (cleared/blocked/flagged verdicts, fail-closed holds, Track-1 matches,
+    // NCMEC reports filed).
+    let m = server.moderation_metrics().snapshot();
+    let metrics = format!(
+        "# HELP http_requests_total Total HTTP requests\n\
+         # TYPE http_requests_total counter\n\
+         http_requests_total 0\n\
+         # HELP http_request_duration_seconds Request duration\n\
+         # TYPE http_request_duration_seconds histogram\n\
+         http_request_duration_seconds_bucket{{le=\"0.1\"}} 0\n\
+         # HELP moderation_verdicts_total Moderation verdicts by outcome\n\
+         # TYPE moderation_verdicts_total counter\n\
+         moderation_verdicts_total{{outcome=\"cleared\"}} {}\n\
+         moderation_verdicts_total{{outcome=\"blocked\"}} {}\n\
+         moderation_verdicts_total{{outcome=\"flagged\"}} {}\n\
+         # HELP moderation_holds_total Fail-closed moderation holds\n\
+         # TYPE moderation_holds_total counter\n\
+         moderation_holds_total {}\n\
+         # HELP moderation_matches_total Track-1 content matches\n\
+         # TYPE moderation_matches_total counter\n\
+         moderation_matches_total {}\n\
+         # HELP moderation_reports_filed_total NCMEC reports filed\n\
+         # TYPE moderation_reports_filed_total counter\n\
+         moderation_reports_filed_total {}\n",
+        m.cleared, m.blocked, m.flagged, m.held, m.matches, m.reports_filed
+    );
 
     (
         StatusCode::OK,

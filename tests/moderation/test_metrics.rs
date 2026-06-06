@@ -56,3 +56,55 @@ async fn asset_endpoint_increments_metrics() {
         "a cleared asset must increment the cleared counter"
     );
 }
+
+#[tokio::test]
+async fn metrics_endpoint_exposes_moderation_counters() {
+    // §8 #7: the moderation counters must be VISIBLE at /metrics (not just incremented
+    // in-process). Drive a cleared asset, then scrape /metrics and assert the counters are
+    // both present and reflect the increment (R10-1: /metrics was a hardcoded stub).
+    let server = Arc::new(ApiServer::new_for_test());
+    let app = ApiServer::create_router(Arc::clone(&server));
+    let body = serde_json::to_string(&ModerateAssetRequest {
+        kind: "subtitle".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(b"WEBVTT\n\nclean line\n"),
+    })
+    .unwrap();
+    let post = Request::builder()
+        .method("POST")
+        .uri("/v1/moderate/asset")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(post).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    let get = Request::builder()
+        .method("GET")
+        .uri("/metrics")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(get).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        text.contains("moderation_verdicts_total"),
+        "the moderation verdict counters must be exposed at /metrics"
+    );
+    assert!(
+        text.contains("moderation_matches_total"),
+        "the Track-1 matches counter must be exposed at /metrics"
+    );
+    assert!(
+        text.contains("moderation_holds_total"),
+        "the fail-closed holds counter must be exposed at /metrics"
+    );
+    assert!(
+        text.contains("moderation_verdicts_total{outcome=\"cleared\"} 1"),
+        "the cleared increment must be visible at /metrics; body was:\n{text}"
+    );
+}

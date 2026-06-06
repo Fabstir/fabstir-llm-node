@@ -79,3 +79,77 @@ fn acceptance_4_never_auto_delete_5_audited() {
         "retention >= 90 days"
     );
 }
+
+#[test]
+fn acceptance_6_live_path_csam_match_preserves_evidence() {
+    // 🚨 B6 live-path closure (§8 #4/#5): a CSAM match through the PRODUCTION handler
+    // core preserves evidence — the ORIGINAL received bytes, encrypted, never-deleted,
+    // audited, with the kind-derived `Csam` category — not merely in an isolated
+    // quarantine unit test. The committed node detected+blocked but never preserved in
+    // the live path; this asserts the wiring is now present.
+    use std::sync::Mutex;
+
+    use base64::Engine;
+    use fabstir_llm_node::api::moderation::{
+        moderate_asset_inner_preserving, ModerateAssetRequest,
+    };
+    use fabstir_llm_node::moderation::asset::{AssetModerator, TextScanList};
+    use fabstir_llm_node::moderation::csam::quarantine::Role;
+
+    // A known-bad image (seed its SHA into the mock list ⇒ exact match ⇒ blocked).
+    let rgb = image::RgbImage::from_pixel(8, 8, image::Rgb([9, 8, 7]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(rgb)
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .unwrap();
+    let png = buf.into_inner();
+    let sha = Matcher::sha256(&png);
+
+    let snapshot = MockHashListSource::loaded(vec![sha], vec![])
+        .refresh()
+        .unwrap();
+    let am = AssetModerator::new(
+        snapshot,
+        OwnHashList::new(),
+        31,
+        TextScanList::launch_mock(),
+    );
+    let req = ModerateAssetRequest {
+        kind: "image".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(&png),
+    };
+    let q = Mutex::new(Quarantine::new(b"acceptance-key".to_vec(), 90));
+
+    let resp = moderate_asset_inner_preserving(&am, &req, 20 * 1024 * 1024, &q, at()).unwrap();
+    assert_eq!(
+        resp.verdict, "blocked",
+        "a CSAM match blocks in the live path"
+    );
+
+    let mut guard = q.lock().unwrap();
+    assert_eq!(
+        guard.len(),
+        1,
+        "the blocked content is PRESERVED in the live path (B6), not just detected"
+    );
+    assert_eq!(
+        guard.category("case-0"),
+        Some(Category::Csam),
+        "kind-derived Csam category (not reason-parsed)"
+    );
+    assert!(
+        guard.retain_until("case-0").unwrap() >= at() + Duration::days(90),
+        "retention >= 90 days, never-deleted"
+    );
+    assert!(
+        !guard.audit_log().is_empty(),
+        "the live-path preserve is audited"
+    );
+    let got = guard
+        .retrieve("case-0", Role::Reviewer, "acceptance", at())
+        .unwrap();
+    assert_eq!(
+        got, png,
+        "the ORIGINAL received bytes are preserved (re-hashable evidence)"
+    );
+}

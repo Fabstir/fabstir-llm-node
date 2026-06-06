@@ -9,13 +9,13 @@ use super::matcher::Matcher;
 use super::ownhash::OwnHashList;
 use super::pdq;
 use crate::moderation::ingest::IngestItem;
-use crate::moderation::types::{MatchResult, ModerationResult, Result};
+use crate::moderation::types::{MatchResult, ModerationResult, Result, REASON_CSAM_MATCH};
 
 /// Map a single match attempt to a terminal verdict: a hit blocks; an error holds
 /// (fail-closed); a clean miss returns `None` so the caller keeps scanning.
 fn check(res: Result<MatchResult>) -> Option<ModerationResult> {
     match res {
-        Ok(m) if m.is_match => Some(ModerationResult::blocked("csam-match")),
+        Ok(m) if m.is_match => Some(ModerationResult::blocked(REASON_CSAM_MATCH)),
         Ok(_) => None,
         Err(_) => Some(ModerationResult::blocked("moderation unavailable")),
     }
@@ -48,7 +48,7 @@ pub fn moderate_asset_bytes(
         }
     };
     match matcher.match_content(&sha, pdq_hash.as_ref(), max_distance) {
-        Ok(m) if m.is_match => ModerationResult::blocked("csam-match"),
+        Ok(m) if m.is_match => ModerationResult::blocked(REASON_CSAM_MATCH),
         Ok(_) if pdq_hash.is_some() => ModerationResult::cleared(),
         Ok(_) => ModerationResult::blocked("asset could not be decoded for scanning"),
         Err(_) => ModerationResult::blocked("moderation unavailable"),
