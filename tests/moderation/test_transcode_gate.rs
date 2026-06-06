@@ -6,6 +6,9 @@
 //! `VerdictStore`. It releases ONLY on a recorded `Cleared`; every other state
 //! (blocked / flagged / absent / no-job_id) HOLDs with the right protocol code.
 
+use serde_json::json;
+
+use fabstir_llm_node::api::websocket::handlers::transcode::is_publishable_completion;
 use fabstir_llm_node::moderation::gate::{Gate, GateOutcome};
 use fabstir_llm_node::moderation::types::ModerationResult;
 use fabstir_llm_node::moderation::verdict_store::VerdictStore;
@@ -78,6 +81,56 @@ fn blocked_skips_billing_and_proof() {
             GateOutcome::Release
         ),
         "a blocked job must hold (skipping billing + proof)"
+    );
+}
+
+// --- Sub-phase 3.2: zero-output billing defence (the publishability predicate) ---
+
+#[test]
+fn empty_or_null_or_nonarray_outputs_are_not_publishable() {
+    // F3b: empty / null / non-array all ⇒ NOT publishable ⇒ HOLD (fail-closed).
+    assert!(!is_publishable_completion(&json!([])));
+    assert!(!is_publishable_completion(&json!(null)));
+    assert!(!is_publishable_completion(&json!({ "cid": "x" })));
+    assert!(!is_publishable_completion(&json!(
+        "Transcoding in progress"
+    )));
+}
+
+#[test]
+fn unparseable_metadata_coerced_to_empty_is_not_publishable() {
+    // F3b: a metadata parse failure is coerced to json!([]) BEFORE this predicate, so
+    // the coerced value must read as non-publishable (HOLD), never publishable.
+    let coerced = serde_json::from_str::<serde_json::Value>("not json").unwrap_or(json!([]));
+    assert!(!is_publishable_completion(&coerced));
+}
+
+#[test]
+fn non_empty_array_outputs_are_publishable() {
+    assert!(is_publishable_completion(
+        &json!([{ "cid": "bafyabc", "ext": "mp4" }])
+    ));
+}
+
+#[test]
+fn not_ready_transient_must_not_be_treated_as_publishable() {
+    // The regression concern behind 3.2.1(b): a sidecar "progress=100 but metadata not
+    // ready" transient carries a NON-array metadata string. If the publishability guard
+    // ran on THAT it would wrongly HOLD a legit job — which is why the guard sits
+    // strictly AFTER the metadata-not-ready retry (the loop `continue`s until metadata
+    // is a JSON array or retries exhaust). Driving the spawned async poll loop to assert
+    // "not_ready→populated still bills" is out of unit-test scope (same posture as
+    // `blocked_skips_billing_and_proof`); placement is verified by code review + the
+    // transcode_api_tests completion suite + the Phase-4 adversarial gate.
+    let transient =
+        serde_json::from_str::<serde_json::Value>("Transcoding in progress").unwrap_or(json!([]));
+    assert!(
+        !is_publishable_completion(&transient),
+        "a transient not-ready metadata must read as non-publishable"
+    );
+    assert!(
+        is_publishable_completion(&json!([{ "cid": "bafy", "ext": "mp4" }])),
+        "once populated, outputs are publishable and the job bills normally"
     );
 }
 

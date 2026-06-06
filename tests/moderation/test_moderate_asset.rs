@@ -163,3 +163,25 @@ async fn route_registered_and_serves_clean_subtitle() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn route_image_on_unavailable_list_returns_503() {
+    // PRODUCTION path: build_asset_moderator() installs an Unavailable NCMEC snapshot, so
+    // an image POST to /v1/moderate/asset must HOLD as 503 (retryable infra hold) and
+    // preserve nothing — NOT 200-blocked-and-preserved (the over-preserve fix).
+    let server = Arc::new(ApiServer::new_for_test());
+    let app = ApiServer::create_router(server);
+    let body = serde_json::to_string(&ModerateAssetRequest {
+        kind: "image".into(),
+        data: b64(&png([7, 8, 9])),
+    })
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/moderate/asset")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::moderation::types::{ModerationResult, Verdict};
+use crate::moderation::types::ModerationResult;
 
 /// `POST /v1/moderate/asset` response. Mirrors the node-side `ModerationResult`
 /// (`reason` is a category/rule id only — never raw matched content).
@@ -20,13 +20,8 @@ pub struct ModerateAssetResponse {
 
 impl From<ModerationResult> for ModerateAssetResponse {
     fn from(r: ModerationResult) -> Self {
-        let verdict = match r.verdict {
-            Verdict::Cleared => "cleared",
-            Verdict::Blocked => "blocked",
-            Verdict::Flagged => "flagged",
-        };
         Self {
-            verdict: verdict.to_string(),
+            verdict: r.verdict.as_str().to_string(),
             reason: r.reason,
             report_id: r.report_id,
         }
