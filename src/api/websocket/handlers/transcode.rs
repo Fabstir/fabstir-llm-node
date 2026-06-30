@@ -23,6 +23,15 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+/// A transcode completion is *publishable* iff `outputs` is a **non-empty JSON
+/// array** (F3b). Empty / null / non-array / (unparseable, already coerced to `[]`
+/// upstream) ⇒ NOT publishable ⇒ HOLD (fail-closed). Phrased as "non-empty array",
+/// never "confirmed `[]`", so a parse failure and a genuine empty array are treated
+/// identically (both hold).
+pub fn is_publishable_completion(outputs: &Value) -> bool {
+    outputs.as_array().map(|a| !a.is_empty()).unwrap_or(false)
+}
+
 /// Background progress polling task spawned after transcode submission.
 pub struct TranscodeProgressTask {
     pub task_id: String,
@@ -120,6 +129,82 @@ impl TranscodeProgressTask {
                                 );
                             }
 
+                            // F3b: parse `outputs` ONCE here — hoisted above billing so the
+                            // zero-output guard (below) and the completion message share one
+                            // parse. A parse failure is coerced to `[]` ⇒ treated as
+                            // non-publishable (HOLD), indistinguishable from a genuine empty
+                            // array (both fail-closed).
+                            let outputs: Value =
+                                serde_json::from_str(&status.metadata).unwrap_or(json!([]));
+
+                            // F3a/F3b zero-output guard (defensive, INDEPENDENT of
+                            // MODERATION_ENFORCE): a completion with no publishable outputs
+                            // (empty/null/non-array/unparseable) is a held/failed job — do
+                            // NOT bill/prove/complete it. Placed strictly BELOW the
+                            // metadata-not-ready retry so a transient never trips it (F3a),
+                            // and ABOVE billing so it gates billing+proof+complete. It catches
+                            // the transcoder's coupled `metadata="[]"` held signal even with
+                            // enforcement off; it does NOT close the non-empty-Blocked case
+                            // (that needs MODERATION_ENFORCE=true at go-live — accepted
+                            // dark-launch gap F3c). This slice does NOT fully close the gate.
+                            if !is_publishable_completion(&outputs) {
+                                warn!(
+                                    "Transcode completion has no publishable outputs (job_id={:?}); withholding billing/proof/completion (held)",
+                                    job_id
+                                );
+                                server.moderation_metrics().record_held(); // §8 #7 (parity with the gate Hold)
+                                let _ = progress_tx
+                                    .send(build_encrypted_transcode_error(
+                                        "MODERATION_UNAVAILABLE",
+                                        "transcode held: no publishable outputs",
+                                        &session_key,
+                                        &session_id,
+                                        None,
+                                    ))
+                                    .await;
+                                break; // skip billing, proof, transcode_complete
+                            }
+
+                            // ── Moderation gate (host-reachable half of seam #2) ──
+                            // Withholds completion/billing/proof for non-cleared jobs.
+                            // Placed BEFORE billing/proof so a blocked job leaks no S5
+                            // proof artifact (R6). Does NOT stop the external
+                            // transcoder's HLS upload (Part A/A4) or the SDK publish
+                            // (seam #3) — all three are required to fully close the gate
+                            // (§8a). Absent verdict / missing job_id ⇒ HOLD (fail-closed).
+                            //
+                            // Activation is dark-launched behind MODERATION_ENFORCE: the
+                            // verdict-producing ingest (seam #1) lives in another repo, so
+                            // until it is wired, enforcing would hold ALL transcodes. Flip
+                            // MODERATION_ENFORCE=true at go-live. The gate LOGIC is always
+                            // fail-closed; only its activation is toggled.
+                            if server.moderation_enforce() {
+                                match crate::moderation::gate::Gate::transcode_decision(
+                                    server.moderation_store(),
+                                    job_id,
+                                ) {
+                                    crate::moderation::gate::GateOutcome::Release => {}
+                                    crate::moderation::gate::GateOutcome::Hold {
+                                        code,
+                                        message,
+                                    } => {
+                                        server.moderation_metrics().record_held(); // §8 #7
+                                        let _ = progress_tx
+                                            .send(build_encrypted_transcode_error(
+                                                code,
+                                                &message,
+                                                &session_key,
+                                                &session_id,
+                                                None,
+                                            ))
+                                            .await;
+                                        break; // skip billing, proof, transcode_complete
+                                    }
+                                }
+                            } else {
+                                warn!("⚠️ Moderation enforcement DISABLED (set MODERATION_ENFORCE=true to enable); transcode completing WITHOUT the host-slice moderation gate (§8a)");
+                            }
+
                             // Calculate billing
                             let duration = status.duration.unwrap_or(0.0);
                             let mut total_units = 0.0;
@@ -147,9 +232,8 @@ impl TranscodeProgressTask {
 
                             let tokens = (total_units * 1000.0).ceil() as u64;
 
-                            // Parse metadata for outputs
-                            let outputs: Value =
-                                serde_json::from_str(&status.metadata).unwrap_or(json!([]));
+                            // (`outputs` is parsed once, hoisted above the zero-output
+                            // guard near the top of this completion block — F3b.)
 
                             // Build proof pipeline (best-effort — fields stay null on failure)
                             let mut quality_val: Value = json!(null);
@@ -416,6 +500,14 @@ pub async fn handle_encrypted_transcode(
                 "Transcode submitted: task_id={}, session={}",
                 resp.task_id, session_id
             );
+
+            // Seam-#1 (C1 / task 2.1.3): map the transcoder's task_id → our job_id at
+            // submit — BEFORE the transcoder begins POSTing keyframes to
+            // /v1/moderate/frames, so the mapping is already present when they arrive.
+            // A `None` job_id records nothing ⇒ a later /frames POST ⇒ 404 ⇒ HOLD.
+            if let Some(j) = job_id {
+                server.record_task_job(resp.task_id.clone(), j);
+            }
 
             // Record rate limit
             server.transcoding_rate_limiter().record_request(session_id);
