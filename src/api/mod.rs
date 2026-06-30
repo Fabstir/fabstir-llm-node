@@ -6,6 +6,7 @@ pub mod errors;
 pub mod generate_image;
 pub mod handlers;
 pub mod http_server;
+pub mod moderation;
 pub mod ocr;
 pub mod pool;
 pub mod response_formatter;

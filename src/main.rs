@@ -320,6 +320,17 @@ async fn main() -> Result<()> {
 
     // Create API server and pass the loaded model ID
     let api_server = ApiServer::new(api_config).await?;
+
+    // Moderation enforce-coupling visibility (3.1.1): make fail-closed-but-
+    // misconfigured states loud at startup, so an operator can't silently run with the
+    // gate off or with /v1/moderate/frames rejecting every POST.
+    if !api_server.moderation_enforce() {
+        tracing::warn!("⚠️ MODERATION_ENFORCE is OFF — the transcode moderation gate is NOT enforced (dark-launch). Set MODERATION_ENFORCE=true at go-live once seam-#1 ingest is wired.");
+    }
+    if api_server.moderation_ingest_token().is_none() {
+        tracing::warn!("⚠️ MODERATION_INGEST_TOKEN is unset — POST /v1/moderate/frames will REJECT every request (401). Set it on every node the transcoder POSTs to, independent of MODERATION_ENFORCE.");
+    }
+
     api_server.set_engine(Arc::new(llm_engine)).await;
     api_server
         .set_default_model_id(if model_id.is_empty() {

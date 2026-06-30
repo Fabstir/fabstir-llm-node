@@ -18,6 +18,7 @@ pub mod job_claim;
 pub mod job_processor;
 pub mod model_validation;
 pub mod models;
+pub mod moderation;
 pub mod monitoring;
 pub mod p2p;
 pub mod p2p_config;
