@@ -89,6 +89,38 @@ impl ComfyClient {
         Ok(parsed.prompt_id)
     }
 
+    /// POST `/upload/image` (multipart) so an input image lands in ComfyUI's
+    /// `input/` folder for a `LoadImage` node to reference (M1a image-to-video).
+    /// Returns the name ComfyUI stored it under — which the patcher then
+    /// substitutes into the graph, so we always follow ComfyUI's authoritative
+    /// name rather than assuming `filename` survived unchanged. Pass a
+    /// content-addressed `filename` (e.g. keccak of the plaintext) so identical
+    /// images map to one stable input file under `overwrite`.
+    pub async fn upload_image(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
+        let url = format!("{}/upload/image", self.endpoint);
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
+        let form = reqwest::multipart::Form::new()
+            .part("image", part)
+            .text("type", "input")
+            .text("overwrite", "true");
+        let response = self.client.post(&url).multipart(form).send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "comfyui /upload/image returned {}: {}",
+                status,
+                text
+            ));
+        }
+        #[derive(Deserialize)]
+        struct UploadResponse {
+            name: String,
+        }
+        let parsed: UploadResponse = response.json().await?;
+        Ok(parsed.name)
+    }
+
     /// Stream progress for `prompt_id` over `/ws` into `tx` until the prompt
     /// finishes (`executing{node:null}`). Enforces `timeout_secs`, hard-killing a
     /// stuck graph via `/interrupt`. One `ComfyClient` should own one in-flight

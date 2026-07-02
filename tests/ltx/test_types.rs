@@ -18,6 +18,7 @@ fn sample_job() -> LtxJob {
         resolution: Resolution { w: 1280, h: 720 },
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
+        images: None,
     }
 }
 
@@ -55,6 +56,25 @@ fn test_job_roundtrip() {
     assert_eq!(v["seed"], "4815162342");
     let back: LtxJob = serde_json::from_value(v).unwrap();
     assert_eq!(back, job);
+}
+
+#[test]
+fn test_job_images_optional_and_roundtrips() {
+    // M0 (t2v): no images -> the key is OMITTED on the wire (byte-identical output),
+    // and absent-key input parses back to None.
+    let t2v = sample_job();
+    let v = serde_json::to_value(&t2v).unwrap();
+    assert!(v.get("images").is_none(), "t2v must not emit an images key");
+    let back: LtxJob = serde_json::from_value(v).unwrap();
+    assert_eq!(back.images, None);
+
+    // M1a (image template): ordered capability CIDs round-trip under the `images` key.
+    let mut i2v = sample_job();
+    i2v.images = Some(vec!["uCidFirst".to_string(), "uCidSecond".to_string()]);
+    let v = serde_json::to_value(&i2v).unwrap();
+    assert_eq!(v["images"], json!(["uCidFirst", "uCidSecond"]));
+    let back: LtxJob = serde_json::from_value(v).unwrap();
+    assert_eq!(back, i2v);
 }
 
 #[test]

@@ -20,6 +20,31 @@ async fn spawn_prompt_server() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_upload_server() -> String {
+    use axum::{routing::post, Json, Router};
+    let app = Router::new().route(
+        "/upload/image",
+        post(|| async { Json(json!({ "name": "img_abc.png", "subfolder": "", "type": "input" })) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn test_upload_image_returns_stored_name() {
+    let url = spawn_upload_server().await;
+    let client = ComfyClient::new(&url).unwrap();
+    // ComfyUI is authoritative on the stored name; the client returns whatever it assigns.
+    let name = client
+        .upload_image("egyptian_queen.png", b"\x89PNG\r\n\x1a\n".to_vec())
+        .await
+        .unwrap();
+    assert_eq!(name, "img_abc.png");
+}
+
 #[test]
 fn test_new_trims_trailing_slash() {
     let c = ComfyClient::new("http://localhost:8188/").unwrap();

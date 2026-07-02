@@ -29,6 +29,7 @@ fn sample_job(frames: u32) -> LtxJob {
         resolution: Resolution { w: 1920, h: 1080 },
         lora: "".to_string(),
         output: OutputKind::ExrSequence,
+        images: None,
     }
 }
 

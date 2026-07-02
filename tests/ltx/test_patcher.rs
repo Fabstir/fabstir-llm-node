@@ -26,6 +26,7 @@ fn job() -> LtxJob {
         resolution: Resolution { w: 1280, h: 720 },
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
+        images: None,
     }
 }
 
