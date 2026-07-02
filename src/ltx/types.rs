@@ -36,6 +36,14 @@ pub struct LtxJob {
     pub resolution: Resolution,
     pub lora: String,
     pub output: OutputKind,
+    /// Ordered S5 capability CIDs of the input images (M1a). Absent/empty for t2v;
+    /// present for image-conditioned templates (i2v/flf2v/style_transition). The
+    /// commitment binds `keccak256(plaintext bytes)` of each image, NOT the CID
+    /// (see `attestation::commitment_for`). `#[serde(default)]` keeps M0 wire (no
+    /// `images` key) parsing to `None`; `skip_serializing_if` keeps M0 output
+    /// byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
 }
 
 impl LtxJob {

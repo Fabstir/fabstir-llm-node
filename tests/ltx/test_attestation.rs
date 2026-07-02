@@ -43,6 +43,7 @@ fn sample_job() -> LtxJob {
         resolution: Resolution { w: 1280, h: 720 },
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
+        images: None,
     }
 }
 
@@ -323,6 +324,7 @@ fn sample_i2v_job() -> LtxJob {
         resolution: Resolution { w: 1280, h: 720 },
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
+        images: None,
     }
 }
 
@@ -340,6 +342,7 @@ fn sample_flf2v_job() -> LtxJob {
         resolution: Resolution { w: 768, h: 512 },
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
+        images: None,
     }
 }
 
