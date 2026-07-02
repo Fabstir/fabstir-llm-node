@@ -204,8 +204,50 @@ pub async fn handle_encrypted_ltx_generate(
         return reject("VALIDATION_FAILED", "job params out of allow-list bounds");
     }
 
-    // Patch params into the pinned graph (substitution only).
-    let patched_graph = match patcher::patch(&graph, &job, None) {
+    // Input-image validation (M1a), fail-closed BEFORE a slot is spent. The
+    // template's `imageInputs` is the commitment format selector: the job MUST
+    // carry exactly that many images (0 for t2v). Each image's size is checked
+    // from the capability CID's own length field — parse only, NO network fetch —
+    // so an oversize image is rejected without a wasted portal GET.
+    let image_inputs = store.image_inputs(&job.template_id).unwrap_or(0);
+    let images = job.images.clone().unwrap_or_default();
+    if images.len() != image_inputs as usize {
+        return reject(
+            "VALIDATION_FAILED",
+            &format!(
+                "template {:?} expects {} input image(s), got {}",
+                job.template_id,
+                image_inputs,
+                images.len()
+            ),
+        );
+    }
+    let image_max_bytes = store.bundle().bounds.image_max_bytes;
+    for cid in &images {
+        let env = match crate::ltx::input_image::parse_capability_cid(cid) {
+            Ok(e) => e,
+            Err(e) => {
+                return reject(
+                    "VALIDATION_FAILED",
+                    &format!("invalid image capability CID: {e}"),
+                )
+            }
+        };
+        if image_max_bytes > 0 && env.plaintext_len as u64 > image_max_bytes {
+            return reject(
+                "VALIDATION_FAILED",
+                &format!(
+                    "input image is {} bytes, exceeds imageMaxBytes {}",
+                    env.plaintext_len, image_max_bytes
+                ),
+            );
+        }
+    }
+
+    // Patch scalar params into the pinned graph (substitution only). Image inputs
+    // (LoadImage) are patched post-accept in the spawn, once the images are
+    // fetched from S5 and uploaded to ComfyUI (they need the stored filenames).
+    let patched_graph = match patcher::patch(&graph, &job, &[]) {
         Ok(g) => g,
         Err(e) => return reject("VALIDATION_FAILED", &format!("patch failed: {e}")),
     };
@@ -292,6 +334,52 @@ fn env_or(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
 
+/// The S5 portal base URL for blob READS (`S5_NODE_URL`, default the production
+/// portal). Portal-direct, no auth — deliberately NOT the local `ENHANCED_S5_URL`
+/// bridge, which only does FS-path put/get.
+fn s5_portal_url() -> String {
+    std::env::var("S5_NODE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://s5.platformlessai.ai".to_string())
+}
+
+/// Resolve an image-conditioned job's inputs (M1a). For each ordered capability
+/// CID: fetch + integrity-check + decrypt it from the S5 portal, upload the
+/// plaintext to ComfyUI under a content-addressed name (`keccak256(plaintext)` ⇒
+/// stable under `overwrite`), and record `keccak256(plaintext)` into
+/// `image_hashes` (the v2 commitment input). Finally patch the `LoadImage` nodes
+/// with the stored names. A t2v job (no `images`) returns the graph untouched and
+/// leaves `image_hashes` empty. Pre-accept validation has already checked the
+/// image count and per-image size, so any failure here is post-accept
+/// (`GENERATION_FAILED`).
+async fn prepare_input_images(
+    client: &ComfyClient,
+    job: &LtxJob,
+    graph: crate::ltx::Graph,
+    image_hashes: &mut Vec<[u8; 32]>,
+) -> Result<crate::ltx::Graph, String> {
+    let images = match &job.images {
+        Some(imgs) if !imgs.is_empty() => imgs,
+        _ => return Ok(graph),
+    };
+    let portal = s5_portal_url();
+    let mut stored_names = Vec::with_capacity(images.len());
+    for cid in images {
+        let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&portal, cid)
+            .await
+            .map_err(|e| format!("input image fetch failed: {e}"))?;
+        let filename = format!("{}.png", hex::encode(hash));
+        let name = client
+            .upload_image(&filename, plaintext)
+            .await
+            .map_err(|e| format!("input image upload failed: {e}"))?;
+        stored_names.push(name);
+        image_hashes.push(hash);
+    }
+    patcher::patch(&graph, job, &stored_names).map_err(|e| format!("image patch failed: {e}"))
+}
+
 impl LtxGenerateTask {
     /// Submit the pinned graph to ComfyUI, stream progress, then run the EXR
     /// pipeline (collect → encrypt+upload → manifest → attestation) over the same
@@ -318,6 +406,19 @@ impl LtxGenerateTask {
             let _permit = permit; // hold the VRAM slot for the whole job
             let rid = request_id.as_deref();
             let (key, sid) = (&session_key, session_id.as_str());
+
+            // Image-conditioned templates (M1a): fetch each input image from S5,
+            // upload it to ComfyUI, patch the LoadImage nodes, and collect the
+            // per-image `keccak256(plaintext)` for the v2 commitment. Empty for t2v.
+            let mut image_hashes: Vec<[u8; 32]> = Vec::new();
+            let patched_graph =
+                match prepare_input_images(&client, &job, patched_graph, &mut image_hashes).await {
+                    Ok(g) => g,
+                    Err(e) => {
+                        send_err(&progress_tx, "GENERATION_FAILED", &e, key, sid, rid).await;
+                        return;
+                    }
+                };
 
             // 1. Submit graph → prompt_id.
             let prompt_id = match client.submit(&patched_graph).await {
@@ -566,6 +667,7 @@ impl LtxGenerateTask {
                 job.template_hash.clone(),
                 env_hash,
                 &job,
+                &image_hashes,
                 output_cid.clone(),
                 manifest.clone(),
                 session_id.clone(),

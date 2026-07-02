@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.31.4-ltx-video-t2v-2026-07-01";
+pub const VERSION: &str = "v8.31.5-ltx-video-i2v-2026-07-02";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.31.4";
+pub const VERSION_NUMBER: &str = "8.31.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 31;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-01";
+pub const BUILD_DATE: &str = "2026-07-02";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -32,6 +32,13 @@ pub const FEATURES: &[&str] = &[
     "disable-llm-sidecar-only",
     // v8.31.4: publish the LTX allow-list bundle to S5 at startup, log the bundleCID.
     "ltx-bundle-s5-publish",
+    // v8.31.5 LTX image-to-video (M1a): image-conditioned templates. Fetch the input
+    // image from the S5 portal by capability CID (blake3-gated), decrypt, hash, upload
+    // to ComfyUI, patch the LoadImage node(s), and bind imageHashes into a v2
+    // inputCommitment. t2v stays byte-identical (empty imageHashes ⇒ M0 seven-field).
+    "ltx-i2v",
+    "ltx-s5-blob-fetch",
+    "inputcommitment-v2",
     // v8.31.0 LTX 2.3 generation sidecar (M0)
     "ltx-video-sidecar",
     "comfyui-generation",
@@ -770,7 +777,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 31);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_PATCH, 5);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.31.0 LTX 2.3 generation sidecar (M0)
@@ -780,6 +787,10 @@ mod tests {
         assert!(FEATURES.contains(&"keyless-attestation"));
         assert!(FEATURES.contains(&"megapixel-frame-billing"));
         assert!(FEATURES.contains(&"fixed-field-commitments"));
+        // v8.31.5 LTX image-to-video (M1a)
+        assert!(FEATURES.contains(&"ltx-i2v"));
+        assert!(FEATURES.contains(&"ltx-s5-blob-fetch"));
+        assert!(FEATURES.contains(&"inputcommitment-v2"));
         // v8.30.0 TEE / confidential inference (mock backend, Phase 1-4)
         assert!(FEATURES.contains(&"tee-confidential-inference"));
         assert!(FEATURES.contains(&"tee-attestation-mock"));
@@ -929,15 +940,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.31.4"));
-        assert!(version.contains("2026-07-01"));
+        assert!(version.contains("8.31.5"));
+        assert!(version.contains("2026-07-02"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.31.4-ltx-video-t2v-2026-07-01");
-        assert_eq!(VERSION_NUMBER, "8.31.4");
-        assert_eq!(BUILD_DATE, "2026-07-01");
+        assert_eq!(VERSION, "v8.31.5-ltx-video-i2v-2026-07-02");
+        assert_eq!(VERSION_NUMBER, "8.31.5");
+        assert_eq!(BUILD_DATE, "2026-07-02");
     }
 
     #[test]

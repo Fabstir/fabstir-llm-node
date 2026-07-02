@@ -9,9 +9,16 @@ use fabstir_llm_node::ltx::Graph;
 use serde_json::Value;
 
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
+const ARCHIVE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/archive/comfyui");
 
 fn fixture_graph() -> Graph {
     let raw = std::fs::read(format!("{DIR}/ltx-t2v-hdr/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+/// The real exported i2v graph (one `LoadImage`, node `269`).
+fn i2v_graph() -> Graph {
+    let raw = std::fs::read(format!("{ARCHIVE}/video_ltx2_3_i2v_20260701.json")).unwrap();
     Graph(serde_json::from_slice(&raw).unwrap())
 }
 
@@ -48,7 +55,7 @@ fn nodes_by_class<'a>(g: &'a Graph, class: &str) -> Vec<&'a Value> {
 
 #[test]
 fn test_patch_prompt_into_prompt_box() {
-    let g = patch(&fixture_graph(), &job(), None).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
     let text = node_by_title(&g, "Prompt")
         .pointer("/inputs/value")
         .unwrap();
@@ -57,7 +64,7 @@ fn test_patch_prompt_into_prompt_box() {
 
 #[test]
 fn test_patch_seed_into_every_randomnoise() {
-    let g = patch(&fixture_graph(), &job(), None).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
     let rn = nodes_by_class(&g, "RandomNoise");
     assert!(!rn.is_empty(), "template has RandomNoise seed node(s)");
     for n in rn {
@@ -70,7 +77,7 @@ fn test_patch_seed_into_every_randomnoise() {
 
 #[test]
 fn test_patch_dims_into_primitives() {
-    let g = patch(&fixture_graph(), &job(), None).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
     assert_eq!(
         node_by_title(&g, "Width")
             .pointer("/inputs/value")
@@ -101,7 +108,7 @@ fn test_patch_dims_into_primitives() {
 fn test_seed_out_of_range_rejected() {
     let mut j = job();
     j.seed = "18446744073709551616".to_string(); // > u64::MAX, valid uint256 on the wire
-    assert!(patch(&fixture_graph(), &j, None).is_err());
+    assert!(patch(&fixture_graph(), &j, &[]).is_err());
 }
 
 #[test]
@@ -113,7 +120,7 @@ fn test_missing_required_prompt_is_error() {
         }
     }
     assert!(
-        patch(&g, &job(), None).is_err(),
+        patch(&g, &job(), &[]).is_err(),
         "missing prompt handle -> fail closed"
     );
 }
@@ -127,7 +134,7 @@ fn test_missing_required_seed_is_error() {
         }
     }
     assert!(
-        patch(&g, &job(), None).is_err(),
+        patch(&g, &job(), &[]).is_err(),
         "no seed node -> fail closed"
     );
 }
@@ -144,7 +151,7 @@ fn test_optional_dims_absent_still_ok() {
         }
     }
     assert!(
-        patch(&g, &job(), None).is_ok(),
+        patch(&g, &job(), &[]).is_ok(),
         "optional dims absent -> patch still succeeds"
     );
 }
@@ -158,15 +165,84 @@ fn test_refuses_to_patch_a_wired_connection() {
         }
     }
     assert!(
-        patch(&g, &job(), None).is_err(),
+        patch(&g, &job(), &[]).is_err(),
         "leaf-only: never overwrite a wired connection"
+    );
+}
+
+#[test]
+fn test_patch_single_loadimage() {
+    // i2v: the one image name lands on the single LoadImage node (269).
+    let g = patch(&i2v_graph(), &job(), &["egyptian.png".to_string()]).unwrap();
+    assert_eq!(
+        g.0.pointer("/269/inputs/image").unwrap().as_str().unwrap(),
+        "egyptian.png"
+    );
+}
+
+#[test]
+fn test_patch_two_loadimages_by_nodeid_order() {
+    // flf2v-shaped: two LoadImage nodes; images[0] -> the lexicographically-first
+    // node id (31 = first frame), images[1] -> the next (39 = last frame). A
+    // faithful synthetic graph (the real flf2v uses a CLIPTextEncode prompt the M0
+    // scalar patcher does not drive; here we isolate the LoadImage ordering rule).
+    let graph = Graph(serde_json::json!({
+        "39": { "class_type": "LoadImage", "_meta": { "title": "Load Last Frame" },
+                "inputs": { "image": "old_last.png" } },
+        "31": { "class_type": "LoadImage", "_meta": { "title": "Load First Frame" },
+                "inputs": { "image": "old_first.png" } },
+        "p":  { "class_type": "PrimitiveStringMultiline", "_meta": { "title": "Prompt" },
+                "inputs": { "value": "" } },
+        "n":  { "class_type": "RandomNoise", "_meta": { "title": "RandomNoise" },
+                "inputs": { "noise_seed": 0 } }
+    }));
+    let names = vec!["first.png".to_string(), "last.png".to_string()];
+    let g = patch(&graph, &job(), &names).unwrap();
+    assert_eq!(g.0.pointer("/31/inputs/image").unwrap(), "first.png");
+    assert_eq!(g.0.pointer("/39/inputs/image").unwrap(), "last.png");
+}
+
+#[test]
+fn test_patch_loadimage_refuses_wired() {
+    // A LoadImage.image wired to another node's output must never be overwritten
+    // by a value patch (same leaf-only guarantee as the scalar handles).
+    let mut g = i2v_graph();
+    g.0["269"]["inputs"]["image"] = serde_json::json!(["12", 0]);
+    assert!(patch(&g, &job(), &["x.png".to_string()]).is_err());
+}
+
+#[test]
+fn test_patch_loadimage_count_mismatch_errors() {
+    // Defence in depth: image name count must equal the template's LoadImage count.
+    let two = vec!["a.png".to_string(), "b.png".to_string()];
+    assert!(
+        patch(&i2v_graph(), &job(), &two).is_err(),
+        "1 LoadImage vs 2 names -> fail closed"
+    );
+}
+
+#[test]
+fn test_no_images_no_op() {
+    // t2v: no image names, no LoadImage nodes. Scalars still patched; nothing added.
+    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
+    assert_eq!(
+        node_by_title(&g, "Prompt")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "a derelict spaceship corridor"
+    );
+    assert!(
+        nodes_by_class(&g, "LoadImage").is_empty(),
+        "t2v has (and gains) no LoadImage node"
     );
 }
 
 #[test]
 fn test_no_structural_edits() {
     let before = fixture_graph();
-    let after = patch(&before, &job(), None).unwrap();
+    let after = patch(&before, &job(), &[]).unwrap();
     let b = before.0.as_object().unwrap();
     let a = after.0.as_object().unwrap();
     assert_eq!(

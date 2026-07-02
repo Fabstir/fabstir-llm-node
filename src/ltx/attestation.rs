@@ -165,7 +165,9 @@ pub fn sig_digest(att: &Attestation) -> Result<[u8; 32]> {
     Ok(keccak256(encode(&tokens)))
 }
 
-/// Assemble the attestation: compute `inputCommitment`, and if a node key is
+/// Assemble the attestation: compute `inputCommitment` (format-selected by
+/// `image_hashes` via [`commitment_for`] — empty ⇒ the byte-identical M0
+/// seven-field form, non-empty ⇒ the v2 image form), and if a node key is
 /// provided, EIP-191-sign `sigDigest`. The signature is set BEFORE the bytes are
 /// taken, because `proofHash` is SHA256 over the stored bytes INCLUDING it.
 #[allow(clippy::too_many_arguments)]
@@ -174,6 +176,7 @@ pub fn assemble(
     template_hash: String,
     env_hash: String,
     job: &LtxJob,
+    image_hashes: &[[u8; 32]],
     output_cid: String,
     manifest: FrameManifest,
     session_id: String,
@@ -185,7 +188,7 @@ pub fn assemble(
         model_id,
         template_hash,
         env_hash,
-        input_commitment: input_commitment(job)?,
+        input_commitment: commitment_for(job, image_hashes)?,
         output_cid,
         manifest,
         session_id,

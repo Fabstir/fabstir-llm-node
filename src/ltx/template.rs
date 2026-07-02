@@ -21,11 +21,22 @@ use crate::ltx::types::Resolution;
 pub struct Graph(pub serde_json::Value);
 
 /// Param bounds advertised in the bundle; the handler validates against these.
+/// `rename_all = camelCase` is a no-op on the single-word M0 fields (so the wire
+/// is byte-unchanged), and gives the M1a image fields their `imageMaxBytes` /
+/// `imageFormats` keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Bounds {
     pub frames: FrameBounds,
     pub fps: Vec<u32>,
     pub resolutions: Vec<Resolution>,
+    /// Max plaintext bytes for ONE input image (M1a). `default` keeps a t2v-only
+    /// allow-list (no image fields) parsing to 0.
+    #[serde(default)]
+    pub image_max_bytes: u64,
+    /// Accepted input-image container formats (M1a; advisory).
+    #[serde(default)]
+    pub image_formats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +51,15 @@ pub struct FrameBounds {
 pub struct TemplateEntry {
     pub template_id: String,
     pub template_hash: String,
+    /// Number of input images the template consumes (M1a). This is the
+    /// `inputCommitment` FORMAT SELECTOR: 0 ⇒ M0 seven-field, >0 ⇒ v2. ALWAYS
+    /// serialised (even 0 for t2v) so the selector is explicit on the wire.
+    #[serde(default)]
+    pub image_inputs: u32,
+    /// Advisory per-slot meaning (e.g. `["firstFrame","lastFrame"]`), in the same
+    /// order the node binds `images[i]` to `LoadImage` nodes. Empty ⇒ omitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_semantics: Vec<String>,
 }
 
 /// Versioned allow-list bundle: advertised in NodeRegistry metadata and echoed
@@ -70,6 +90,11 @@ struct AllowListConfig {
 struct ConfigEntry {
     template_id: String,
     version: String,
+    /// M1a; optional so a t2v-only entry (no image fields) still parses to 0.
+    #[serde(default)]
+    image_inputs: u32,
+    #[serde(default)]
+    image_semantics: Vec<String>,
 }
 
 /// Loads and pins the allow-listed templates at startup.
@@ -112,6 +137,8 @@ impl TemplateStore {
             templates.push(TemplateEntry {
                 template_id: entry.template_id.clone(),
                 template_hash: hash,
+                image_inputs: entry.image_inputs,
+                image_semantics: entry.image_semantics.clone(),
             });
         }
         // Canonical order so bundleHash is independent of allowlist.json ordering.
@@ -146,6 +173,17 @@ impl TemplateStore {
     /// The computed hash of a pinned template (for advertisement / tests).
     pub fn template_hash(&self, id: &str) -> Option<&str> {
         self.graphs.get(id).map(|(_, h)| h.as_str())
+    }
+
+    /// The number of input images template `id` consumes — the `inputCommitment`
+    /// format selector the handler validates `job.images.len()` against (M1a).
+    /// `None` for an unknown id.
+    pub fn image_inputs(&self, id: &str) -> Option<u32> {
+        self.bundle
+            .templates
+            .iter()
+            .find(|t| t.template_id == id)
+            .map(|t| t.image_inputs)
     }
 
     pub fn bundle(&self) -> &AllowListBundle {
