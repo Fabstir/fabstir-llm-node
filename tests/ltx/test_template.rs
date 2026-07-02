@@ -103,3 +103,67 @@ fn emit_bundle_fixture() {
     std::fs::write(path, serde_json::to_vec_pretty(bundle).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
+
+/// Emit `tests/ltx/bundle-fixture-v2.json` — the M1a allow-list bundle. Adds
+/// `template.imageInputs` (the commitment format selector), `imageSemantics`
+/// (advisory ordering), and `bounds.imageMaxBytes` / `imageFormats`. Carries a
+/// t2v (imageInputs 0) AND image templates so format-selection is fixture-tested.
+///
+/// Template hashes here are DETERMINISTIC PLACEHOLDERS, not production pins: the
+/// real i2v hash lands at the v2 re-pin (once prompt-enhance is baked off). What
+/// this fixture proves is (a) the v2 schema shape and (b) that `bundleHash`
+/// recomputes under the SAME canonical rule the node uses (drop `bundleHash` ->
+/// recursively sort keys -> compact -> keccak256).
+#[test]
+fn emit_bundle_fixture_v2() {
+    let th_t2v = format!("0x{}", "11".repeat(32));
+    let th_i2v = format!("0x{}", "22".repeat(32));
+    let th_flf = format!("0x{}", "33".repeat(32));
+
+    let mut bundle = serde_json::json!({
+        "allowListVersion": 2,
+        "bundleHash": "",
+        // Sorted by templateId, mirroring the node's `templates.sort_by` before hashing.
+        "templates": [
+            { "templateId": "ltx-flf2v-hdr", "templateHash": th_flf, "imageInputs": 2,
+              "imageSemantics": ["firstFrame", "lastFrame"] },
+            { "templateId": "ltx-i2v-hdr",   "templateHash": th_i2v, "imageInputs": 1,
+              "imageSemantics": ["firstFrame"] },
+            { "templateId": "ltx-t2v-hdr",   "templateHash": th_t2v, "imageInputs": 0 }
+        ],
+        "loras": ["ltx-iclora-hdr@v1"],
+        "bounds": {
+            // Delivered = 5·fps + 1, so 121 at fps 24 .. 126 at fps 25 (§G honesty).
+            "frames": { "min": 121, "max": 126 },
+            "fps": [24, 25, 30],
+            "resolutions": [ { "w": 768, "h": 512 }, { "w": 1280, "h": 720 } ],
+            "imageMaxBytes": 8388608,
+            "imageFormats": ["png", "jpeg", "webp"]
+        }
+    });
+
+    // Canonical bundleHash: remove the hash field -> sort keys -> compact -> keccak.
+    let mut without = bundle.clone();
+    without.as_object_mut().unwrap().remove("bundleHash");
+    let hash = keccak_hex(serde_json::to_vec(&sort_json_keys(&without)).unwrap());
+    bundle.as_object_mut().unwrap().insert(
+        "bundleHash".to_string(),
+        serde_json::Value::String(hash.clone()),
+    );
+
+    // Self-prove the canonical recompute, so a broken rule fails the node test too.
+    let mut re = bundle.clone();
+    re.as_object_mut().unwrap().remove("bundleHash");
+    assert_eq!(
+        keccak_hex(serde_json::to_vec(&sort_json_keys(&re)).unwrap()),
+        hash,
+        "v2 bundleHash canonical recompute"
+    );
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/ltx/bundle-fixture-v2.json"
+    );
+    std::fs::write(path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+    assert!(std::path::Path::new(path).exists());
+}
