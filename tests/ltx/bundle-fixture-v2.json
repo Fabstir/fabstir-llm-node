@@ -1,0 +1,58 @@
+{
+  "allowListVersion": 2,
+  "bounds": {
+    "fps": [
+      24,
+      25,
+      30
+    ],
+    "frames": {
+      "max": 126,
+      "min": 121
+    },
+    "imageFormats": [
+      "png",
+      "jpeg",
+      "webp"
+    ],
+    "imageMaxBytes": 8388608,
+    "resolutions": [
+      {
+        "h": 512,
+        "w": 768
+      },
+      {
+        "h": 720,
+        "w": 1280
+      }
+    ]
+  },
+  "bundleHash": "0x2662a43421e42709e36adacb90fbf23c6eb7acc218b97754acb02f586843e4d4",
+  "loras": [
+    "ltx-iclora-hdr@v1"
+  ],
+  "templates": [
+    {
+      "imageInputs": 2,
+      "imageSemantics": [
+        "firstFrame",
+        "lastFrame"
+      ],
+      "templateHash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+      "templateId": "ltx-flf2v-hdr"
+    },
+    {
+      "imageInputs": 1,
+      "imageSemantics": [
+        "firstFrame"
+      ],
+      "templateHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "templateId": "ltx-i2v-hdr"
+    },
+    {
+      "imageInputs": 0,
+      "templateHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "templateId": "ltx-t2v-hdr"
+    }
+  ]
+}

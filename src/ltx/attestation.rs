@@ -79,6 +79,51 @@ pub fn input_commitment(job: &LtxJob) -> Result<String> {
     Ok(keccak_hex(&encode(&tokens)))
 }
 
+/// `inputCommitment` **v2** (image-conditioned templates, M1a): the M0 seven
+/// fields plus a trailing `bytes32[] imageHashes` in job order, where
+/// `imageHashes[i] = keccak256(plaintext bytes of images[i])`. Used ONLY for
+/// templates whose bundle entry has `imageInputs > 0` (i2v/flf2v/style_transition).
+///
+/// CRITICAL: appending a dynamic field shifts the ABI head offsets of the earlier
+/// dynamic fields (`prompt`, `lora`), so this is NOT byte-equal to
+/// [`input_commitment`] even when `image_hashes` is empty. t2v MUST keep calling
+/// the seven-field [`input_commitment`]; never route it through here with an empty
+/// slice (see [`commitment_for`], which enforces the split).
+pub fn input_commitment_v2(job: &LtxJob, image_hashes: &[[u8; 32]]) -> Result<String> {
+    let seed = job.seed_u256().map_err(|e| anyhow!(e))?;
+    let hashes = Token::Array(
+        image_hashes
+            .iter()
+            .map(|h| Token::FixedBytes(h.to_vec()))
+            .collect(),
+    );
+    let tokens = [
+        Token::String(job.prompt.clone()),
+        Token::Uint(seed),
+        Token::Uint(U256::from(job.frames)),
+        Token::Uint(U256::from(job.fps)),
+        Token::Uint(U256::from(job.resolution.w)),
+        Token::Uint(U256::from(job.resolution.h)),
+        Token::String(job.lora.clone()),
+        hashes,
+    ];
+    Ok(keccak_hex(&encode(&tokens)))
+}
+
+/// Format-selected commitment, keyed by the template's image-input count. Zero
+/// images (t2v) → the byte-identical M0 seven-field [`input_commitment`]; one or
+/// more (image templates) → [`input_commitment_v2`]. The `image_hashes.is_empty()`
+/// test is exactly the `imageInputs == 0` selector once the upstream
+/// `images.len() == imageInputs` check has run, and it is what keeps deployed M0
+/// attestations byte-for-byte unchanged.
+pub fn commitment_for(job: &LtxJob, image_hashes: &[[u8; 32]]) -> Result<String> {
+    if image_hashes.is_empty() {
+        input_commitment(job)
+    } else {
+        input_commitment_v2(job, image_hashes)
+    }
+}
+
 /// `outputCommitment = keccak256(utf8 bytes of the outputCID STRING)` — the CID
 /// string incl. its multibase prefix, NOT the decoded multibase payload.
 pub fn output_commitment(output_cid: &str) -> [u8; 32] {

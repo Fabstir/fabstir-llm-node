@@ -10,7 +10,8 @@ use ethers::utils::keccak256;
 use fabstir_llm_node::crypto::proof_signer::{eip191_prehash, sign_eip191_digest};
 use fabstir_llm_node::crypto::recover_client_address;
 use fabstir_llm_node::ltx::attestation::{
-    assemble, env_hash, input_commitment, output_commitment, proof_hash, sig_digest, EnvMeta,
+    assemble, commitment_for, env_hash, input_commitment, input_commitment_v2, output_commitment,
+    proof_hash, sig_digest, EnvMeta,
 };
 use fabstir_llm_node::ltx::submit::{ltx_tokens, submit_calldata};
 use fabstir_llm_node::ltx::types::{Attestation, FrameManifest, LtxJob, OutputKind, Resolution};
@@ -266,6 +267,198 @@ fn emit_vectors_json() {
         );
     }
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors.json");
+    std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
+    assert!(std::path::Path::new(path).exists());
+}
+
+// ---------------------------------------------------------------------------
+// M1a image-to-video: inputCommitment v2 conformance + `vectors-i2v.json`.
+// ---------------------------------------------------------------------------
+
+/// Deterministic stand-in plaintext for input image `i`. Self-contained so the
+/// SDK can recompute `keccak256` without decrypting an 819KB capability blob;
+/// the same machinery points at real decrypted bytes in production.
+fn img_plain(i: u8) -> Vec<u8> {
+    format!("fabstir-ltx-i2v-vector::image-{i}").into_bytes()
+}
+
+fn img_hash(plain: &[u8]) -> [u8; 32] {
+    keccak256(plain)
+}
+
+fn hx(bytes: &[u8]) -> String {
+    format!("0x{}", hex::encode(bytes))
+}
+
+/// The v2 pre-image (seven M0 fields + trailing `bytes32[] imageHashes`), so a
+/// divergence localises to encoder vs hasher exactly as the M0 vector does.
+fn v2_preimage(job: &LtxJob, hashes: &[[u8; 32]]) -> Vec<u8> {
+    encode(&[
+        Token::String(job.prompt.clone()),
+        Token::Uint(U256::from_dec_str(&job.seed).unwrap()),
+        Token::Uint(U256::from(job.frames)),
+        Token::Uint(U256::from(job.fps)),
+        Token::Uint(U256::from(job.resolution.w)),
+        Token::Uint(U256::from(job.resolution.h)),
+        Token::String(job.lora.clone()),
+        Token::Array(
+            hashes
+                .iter()
+                .map(|h| Token::FixedBytes(h.to_vec()))
+                .collect(),
+        ),
+    ])
+}
+
+/// i2v (one LoadImage). 720p / fps 25 / 126 frames = the i2v template's own
+/// 5s·fps+1 default; seed exceeds 2^32 to exercise the wide range.
+fn sample_i2v_job() -> LtxJob {
+    LtxJob {
+        template_id: "ltx-i2v-hdr".to_string(),
+        template_hash: b32(0x03),
+        prompt: "egyptian royal walking forward through desert, robot soldiers".to_string(),
+        seed: "60540193790228".to_string(),
+        frames: 126,
+        fps: 25,
+        resolution: Resolution { w: 1280, h: 720 },
+        lora: "ltx-iclora-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+    }
+}
+
+/// flf2v / style_transition (two LoadImage). The two-image case is the
+/// highest-value vector: `bytes32[]` ordering is the one place the ABI encoders
+/// could disagree.
+fn sample_flf2v_job() -> LtxJob {
+    LtxJob {
+        template_id: "ltx-flf2v-hdr".to_string(),
+        template_hash: b32(0x04),
+        prompt: "morph smoothly from the first still to the last".to_string(),
+        seed: "42".to_string(),
+        frames: 121,
+        fps: 24,
+        resolution: Resolution { w: 768, h: 512 },
+        lora: "ltx-iclora-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+    }
+}
+
+#[test]
+fn test_input_commitment_v2_appends_image_hashes() {
+    let job = sample_i2v_job();
+    let h0 = img_hash(&img_plain(0));
+    let got = input_commitment_v2(&job, &[h0]).unwrap();
+    assert_eq!(got, hx(&keccak256(v2_preimage(&job, &[h0]))));
+}
+
+#[test]
+fn test_commitment_v2_empty_differs_from_v1() {
+    // The trap: an eight-field encode with an EMPTY array is not the M0
+    // seven-field encode (appending a dynamic field shifts prompt/lora offsets).
+    let job = sample_i2v_job();
+    assert_ne!(
+        input_commitment_v2(&job, &[]).unwrap(),
+        input_commitment(&job).unwrap(),
+        "empty-array v2 must differ from v1 — t2v must keep the seven-field path"
+    );
+}
+
+#[test]
+fn test_commitment_v2_order_sensitive() {
+    let job = sample_flf2v_job();
+    let a = img_hash(&img_plain(0));
+    let b = img_hash(&img_plain(1));
+    assert_ne!(
+        input_commitment_v2(&job, &[a, b]).unwrap(),
+        input_commitment_v2(&job, &[b, a]).unwrap(),
+        "swapping images[0]/[1] must change the commitment"
+    );
+}
+
+#[test]
+fn test_commitment_for_dispatches_on_image_count() {
+    let job = sample_i2v_job();
+    // zero images -> byte-identical M0 seven-field
+    assert_eq!(
+        commitment_for(&job, &[]).unwrap(),
+        input_commitment(&job).unwrap()
+    );
+    // one image -> v2 eight-field
+    let h0 = img_hash(&img_plain(0));
+    assert_eq!(
+        commitment_for(&job, &[h0]).unwrap(),
+        input_commitment_v2(&job, &[h0]).unwrap()
+    );
+}
+
+/// Emit `tests/ltx/vectors-i2v.json` from the SAME code paths (mirror of
+/// `emit_vectors_json`): single-image, two-image ordering, and the
+/// format-selection guard, so the SDK conformance-checks one fixture set.
+#[test]
+fn emit_i2v_vectors_json() {
+    // -- single image (i2v) --
+    let s_job = sample_i2v_job();
+    let s_plain = img_plain(0);
+    let s_hash = img_hash(&s_plain);
+    let s_pre = v2_preimage(&s_job, &[s_hash]);
+    let s_commit = input_commitment_v2(&s_job, &[s_hash]).unwrap();
+    assert_eq!(s_commit, hx(&keccak256(&s_pre)));
+
+    // -- two images (flf2v / style_transition) --
+    let d_job = sample_flf2v_job();
+    let d_plain0 = img_plain(0);
+    let d_plain1 = img_plain(1);
+    let d_h0 = img_hash(&d_plain0);
+    let d_h1 = img_hash(&d_plain1);
+    let d_pre = v2_preimage(&d_job, &[d_h0, d_h1]);
+    let d_commit = input_commitment_v2(&d_job, &[d_h0, d_h1]).unwrap();
+    let d_swapped = input_commitment_v2(&d_job, &[d_h1, d_h0]).unwrap();
+    assert_ne!(d_commit, d_swapped);
+
+    // -- format guard: v2-empty is NOT the M0 seven-field encoding --
+    let g_v1 = input_commitment(&s_job).unwrap();
+    let g_v2_empty = input_commitment_v2(&s_job, &[]).unwrap();
+    assert_ne!(g_v1, g_v2_empty);
+
+    let vectors = serde_json::json!({
+        "_note": "Generated by tests/ltx/test_attestation.rs::emit_i2v_vectors_json. Do not hand-edit.",
+        "_scheme": "inputCommitment v2 = keccak256(abi.encode(string prompt, uint256 seed, uint32 frames, uint32 fps, uint32 w, uint32 h, string lora, bytes32[] imageHashes)). imageHashes[i]=keccak256(plaintext bytes of images[i]). Format is selected by the template's bundle entry imageInputs: 0 -> M0 seven-field (see vectors.json), >0 -> this eight-field form. The capability CID is transport only and is NOT hashed into the commitment.",
+        "singleImage": {
+            "imageInputs": 1,
+            "job": s_job,
+            "images": ["uCapabilityCidPlaceholder0"],
+            "imagePlaintext": [
+                { "utf8": String::from_utf8(s_plain.clone()).unwrap(), "hex": hx(&s_plain) }
+            ],
+            "imageHashes": [hx(&s_hash)],
+            "inputCommitment": { "abiEncoded": hx(&s_pre), "hash": s_commit },
+        },
+        "dualImage": {
+            "imageInputs": 2,
+            "imageSemantics": ["firstFrame", "lastFrame"],
+            "job": d_job,
+            "images": ["uCapabilityCidPlaceholder0", "uCapabilityCidPlaceholder1"],
+            "imagePlaintext": [
+                { "utf8": String::from_utf8(d_plain0.clone()).unwrap(), "hex": hx(&d_plain0) },
+                { "utf8": String::from_utf8(d_plain1.clone()).unwrap(), "hex": hx(&d_plain1) }
+            ],
+            "imageHashes": [hx(&d_h0), hx(&d_h1)],
+            "inputCommitment": { "abiEncoded": hx(&d_pre), "hash": d_commit },
+            "orderMatters": {
+                "swappedImageHashes": [hx(&d_h1), hx(&d_h0)],
+                "swappedHash": d_swapped,
+                "note": "images[0]/images[1] are order-significant. The node pins images[i] to a fixed LoadImage slot per imageSemantics; a swap here binds the wrong image and changes the commitment."
+            },
+        },
+        "formatGuard": {
+            "note": "v2 with an EMPTY imageHashes array is NOT byte-equal to the M0 seven-field commitment (a trailing dynamic field shifts the prompt/lora offsets). t2v (imageInputs 0) MUST use the seven-field path; only imageInputs>0 uses v2.",
+            "v1SevenField": g_v1,
+            "v2EmptyArray": g_v2_empty,
+            "equal": false
+        }
+    });
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors-i2v.json");
     std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
