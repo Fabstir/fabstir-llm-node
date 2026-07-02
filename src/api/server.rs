@@ -221,6 +221,14 @@ pub struct ApiServer {
     moderation_ingest_token: Option<String>,
     transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
+    // LTX 2.3 generation sidecar (mirror of the transcoder fields).
+    ltx_client: Arc<RwLock<Option<Arc<crate::ltx::ComfyClient>>>>,
+    ltx_template_store: Arc<RwLock<Option<Arc<crate::ltx::TemplateStore>>>>,
+    ltx_tracker: Arc<crate::ltx::billing::LtxTracker>,
+    ltx_rate_limiter: Arc<crate::ltx::rate_limiter::LtxRateLimiter>,
+    /// VRAM admission: `MAX_CONCURRENT_GENERATIONS` slots. ComfyUI has no status
+    /// endpoint, so LTX gates locally rather than via the transcoder capacity cache.
+    ltx_semaphore: Arc<tokio::sync::Semaphore>,
     auto_image_routing: bool,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -298,6 +306,11 @@ impl ApiServer {
             sidecar_capacity_cache: Arc::new(
                 crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
             ),
+            ltx_client: Arc::new(RwLock::new(None)),
+            ltx_template_store: Arc::new(RwLock::new(None)),
+            ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
+            ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::LtxRateLimiter::new(3)),
+            ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             auto_image_routing: false,
             session_store,
             shutdown_tx: None,
@@ -420,6 +433,16 @@ impl ApiServer {
             sidecar_capacity_cache: Arc::new(
                 crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
             ),
+            ltx_client: Arc::new(RwLock::new(None)),
+            ltx_template_store: Arc::new(RwLock::new(None)),
+            ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
+            ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::ltx_rate_limiter()),
+            ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                std::env::var("MAX_CONCURRENT_GENERATIONS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1),
+            )),
             auto_image_routing: match std::env::var("AUTO_IMAGE_ROUTING") {
                 Ok(v) => v == "true",
                 Err(_) => std::env::var("DIFFUSION_ENDPOINT")
@@ -494,6 +517,11 @@ impl ApiServer {
             moderation_ingest_token: self.moderation_ingest_token.clone(),
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
+            ltx_client: self.ltx_client.clone(),
+            ltx_template_store: self.ltx_template_store.clone(),
+            ltx_tracker: self.ltx_tracker.clone(),
+            ltx_rate_limiter: self.ltx_rate_limiter.clone(),
+            ltx_semaphore: self.ltx_semaphore.clone(),
             auto_image_routing: self.auto_image_routing,
             session_store: self.session_store.clone(),
             shutdown_tx: None,
@@ -592,6 +620,77 @@ impl ApiServer {
     /// Get the transcoding billing tracker (v8.25.0+)
     pub fn transcoding_tracker(&self) -> &crate::transcoder::billing::TranscodingTracker {
         &self.transcoding_tracker
+    }
+
+    /// Set the LTX (ComfyUI) generation client.
+    pub async fn set_ltx_client(&self, client: Arc<crate::ltx::ComfyClient>) {
+        *self.ltx_client.write().await = Some(client);
+    }
+
+    /// Get the LTX generation client (None ⇒ sidecar unconfigured ⇒ 503).
+    pub async fn get_ltx_client(&self) -> Option<Arc<crate::ltx::ComfyClient>> {
+        self.ltx_client.read().await.clone()
+    }
+
+    /// Set the pinned LTX template store.
+    pub async fn set_ltx_template_store(&self, store: Arc<crate::ltx::TemplateStore>) {
+        *self.ltx_template_store.write().await = Some(store);
+    }
+
+    /// Get the pinned LTX template store.
+    pub async fn get_ltx_template_store(&self) -> Option<Arc<crate::ltx::TemplateStore>> {
+        self.ltx_template_store.read().await.clone()
+    }
+
+    /// Publish the pinned LTX allow-list bundle to S5 so clients can fetch and
+    /// authenticate it; the content-addressed CID is the `bundleCID` advertised
+    /// on-chain / used for the paid E2E. Returns the CID, or `None` if LTX or S5
+    /// isn't configured. Idempotent: identical bundle bytes yield the same CID.
+    pub async fn publish_ltx_bundle(&self) -> Option<String> {
+        use crate::storage::s5_client::S5Storage;
+        let store = self.get_ltx_template_store().await?;
+        let cm = self.get_checkpoint_manager().await?;
+        let bundle = store.bundle();
+        let bytes = match serde_json::to_vec_pretty(bundle) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("⚠️  LTX bundle serialise failed: {e}");
+                return None;
+            }
+        };
+        match cm
+            .get_s5_storage()
+            .put("home/ltx/allowlist-bundle.json", bytes)
+            .await
+        {
+            Ok(cid) => {
+                println!(
+                    "📦 LTX allow-list bundle published to S5: bundleCID={} (bundleHash={}, allowListVersion={})",
+                    cid, bundle.bundle_hash, bundle.allow_list_version
+                );
+                Some(cid)
+            }
+            Err(e) => {
+                println!("⚠️  LTX bundle publish to S5 failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Get the LTX per-session rate limiter.
+    pub fn ltx_rate_limiter(&self) -> &crate::ltx::rate_limiter::LtxRateLimiter {
+        &self.ltx_rate_limiter
+    }
+
+    /// Get the LTX billing tracker.
+    pub fn ltx_tracker(&self) -> &crate::ltx::billing::LtxTracker {
+        &self.ltx_tracker
+    }
+
+    /// VRAM admission semaphore (`MAX_CONCURRENT_GENERATIONS`). Acquire an owned
+    /// permit for the generation's lifetime; `try_acquire_owned().is_err()` ⇒ full.
+    pub fn ltx_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
+        self.ltx_semaphore.clone()
     }
 
     /// Host-reachable seam-#2 moderation verdict store (job_id → result). An absent
@@ -2672,6 +2771,87 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                         Ok(false) => debug!("Sidecar cancel endpoint not supported for {}", cancel_task_id),
                                                                                                         Err(e) => warn!("Sidecar cancel failed for {}: {}", cancel_task_id, e),
                                                                                                     }
+                                                                                                    break;
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                                                        _ => {}
+                                                                                    }
+                                                                                }
+                                                                                else => break,
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    continue;
+                                                                }
+
+                                                                // LTX 2.3 generation routing
+                                                                if decrypted_json
+                                                                    .get("action")
+                                                                    .and_then(|v| v.as_str())
+                                                                    == Some("ltx_generate")
+                                                                {
+                                                                    info!("Routing encrypted message to ltx_generate handler");
+                                                                    let (ack, gen_task) = crate::api::websocket::handlers::ltx::handle_encrypted_ltx_generate(
+                                                                        &server,
+                                                                        &decrypted_json,
+                                                                        &session_key,
+                                                                        current_session_id.as_deref().unwrap_or("unknown"),
+                                                                        job_id,
+                                                                        json_msg.get("id"),
+                                                                    ).await;
+                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(ack.to_string())).await;
+
+                                                                    if let Some(task) = gen_task {
+                                                                        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<serde_json::Value>(32);
+                                                                        // Graceful re-fetch (never None in practice; client is set once
+                                                                        // at startup). If it vanished, give the client a terminal error
+                                                                        // rather than silence (it already got the "processing" ack).
+                                                                        let Some(lc) = server
+                                                                            .get_ltx_client()
+                                                                            .await
+                                                                        else {
+                                                                            let err = crate::api::websocket::handlers::ltx::build_ltx_error(
+                                                                                "SIDECAR_UNAVAILABLE",
+                                                                                "LTX sidecar became unavailable",
+                                                                                &session_key,
+                                                                                current_session_id.as_deref().unwrap_or("unknown"),
+                                                                                decrypted_json.get("requestId").and_then(|v| v.as_str()),
+                                                                                json_msg.get("id"),
+                                                                            );
+                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(err.to_string())).await;
+                                                                            continue;
+                                                                        };
+                                                                        let cancel_lc = lc.clone();
+                                                                        let server_arc =
+                                                                            server.clone();
+                                                                        task.spawn(
+                                                                            lc,
+                                                                            session_key,
+                                                                            current_session_id
+                                                                                .clone()
+                                                                                .unwrap_or_else(|| "unknown".to_string()),
+                                                                            server_arc,
+                                                                            progress_tx,
+                                                                        );
+
+                                                                        // Drain progress until the generation task completes.
+                                                                        loop {
+                                                                            tokio::select! {
+                                                                                msg = progress_rx.recv() => {
+                                                                                    match msg {
+                                                                                        Some(m) => { let _ = ws_sender.send(axum::extract::ws::Message::Text(m.to_string())).await; }
+                                                                                        None => break, // task finished (sender dropped)
+                                                                                    }
+                                                                                }
+                                                                                ws_msg = ws_receiver.next() => {
+                                                                                    match ws_msg {
+                                                                                        Some(Ok(axum::extract::ws::Message::Text(txt))) => {
+                                                                                            if let Ok(cancel_json) = serde_json::from_str::<serde_json::Value>(&txt) {
+                                                                                                if cancel_json.get("type").and_then(|v| v.as_str()) == Some("ltx_cancel") {
+                                                                                                    info!("LTX cancel received");
+                                                                                                    let _ = cancel_lc.interrupt().await;
                                                                                                     break;
                                                                                                 }
                                                                                             }

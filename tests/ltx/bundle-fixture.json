@@ -1,0 +1,34 @@
+{
+  "allowListVersion": 1,
+  "bundleHash": "0x2d3367be958b2f6132b0b7e090f7e0db3ff508b3a6feac099c0d86b8ff43241d",
+  "templates": [
+    {
+      "templateId": "ltx-t2v-hdr",
+      "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078"
+    }
+  ],
+  "loras": [
+    "ltx-iclora-hdr@v1"
+  ],
+  "bounds": {
+    "frames": {
+      "min": 1,
+      "max": 257
+    },
+    "fps": [
+      24,
+      25,
+      30
+    ],
+    "resolutions": [
+      {
+        "w": 768,
+        "h": 512
+      },
+      {
+        "w": 1280,
+        "h": 720
+      }
+    ]
+  }
+}
