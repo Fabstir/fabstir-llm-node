@@ -50,6 +50,110 @@ fn valid_job(hash: &str) -> Value {
     })
 }
 
+/// A store carrying the M1a (v2) allow-list, plus the i2v templateHash.
+fn store_i2v() -> (Arc<TemplateStore>, String) {
+    let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
+    let hash = store.template_hash("ltx-i2v-hdr").unwrap().to_string();
+    (Arc::new(store), hash)
+}
+
+/// A real capability CID (from the M0 interop fixture) — a valid single input
+/// image, 302144 plaintext bytes (well under `imageMaxBytes`).
+fn fixture_capability_cid() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/ltx/capability-fixture.json"
+    );
+    let v: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    v["capabilityCid"].as_str().unwrap().to_string()
+}
+
+/// A well-formed `0xae` envelope whose plaintextCID length field claims 9 MB
+/// (> `imageMaxBytes` 8 MB). The pre-fetch gate reads only this length, so the
+/// oversize reject needs no 9 MB allocation.
+fn oversize_capability_cid() -> String {
+    let mut env = vec![0xaeu8, 0xa6, 18, 0x1f];
+    env.extend_from_slice(&[0u8; 32]); // ct_hash
+    env.extend_from_slice(&[0u8; 32]); // key
+    env.extend_from_slice(&[0u8; 4]); // padding
+    env.push(0x26);
+    env.push(0x1f);
+    env.extend_from_slice(&[0u8; 32]); // pt_hash
+    let mut sle = 9_000_000u64.to_le_bytes().to_vec();
+    while sle.len() > 1 && *sle.last().unwrap() == 0 {
+        sle.pop();
+    }
+    env.extend_from_slice(&sle);
+    format!(
+        "u{}",
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &env)
+    )
+}
+
+fn i2v_job(hash: &str, images: Value) -> Value {
+    json!({
+        "action": "ltx_generate",
+        "requestId": "r-i2v",
+        "templateId": "ltx-i2v-hdr",
+        "templateHash": hash,
+        "prompt": "egyptian royal walking forward through desert",
+        "seed": "60540193790228",
+        "frames": 126,
+        "fps": 25,
+        "resolution": { "w": 1280, "h": 720 },
+        "lora": "ltx-iclora-hdr@v1",
+        "output": "exr-sequence",
+        "images": images
+    })
+}
+
+#[tokio::test]
+async fn test_i2v_accepted_ack() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_i2v();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    let job = i2v_job(&hash, json!([fixture_capability_cid()]));
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v", Some(9), None).await;
+    assert!(task.is_some(), "valid one-image i2v job is accepted");
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["type"], "ltx_accepted");
+    assert_eq!(inner["allowListVersion"], 2, "v2 allow-list echoed");
+}
+
+#[tokio::test]
+async fn test_i2v_wrong_image_count() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_i2v();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    // i2v expects 1 image; supply 0 -> fail closed BEFORE a slot is taken.
+    let job = i2v_job(&hash, json!([]));
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v-c", Some(9), None).await;
+    assert!(task.is_none());
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+}
+
+#[tokio::test]
+async fn test_i2v_oversize_image_rejected() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_i2v();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    let job = i2v_job(&hash, json!([oversize_capability_cid()]));
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v-o", Some(9), None).await;
+    assert!(task.is_none(), "oversize image rejected pre-escrow");
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+}
+
 #[tokio::test]
 async fn test_validation_unknown_template() {
     let server = ApiServer::new_for_test();

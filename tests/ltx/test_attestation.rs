@@ -93,6 +93,7 @@ fn sample_attestation(signed: bool) -> Attestation {
         b32(0x02),
         env_hash(&sample_meta()),
         &sample_job(),
+        &[],
         OUTPUT_CID.to_string(),
         sample_manifest(),
         "0x05".to_string(),
@@ -101,6 +102,47 @@ fn sample_attestation(signed: bool) -> Attestation {
         node_key,
     )
     .unwrap()
+}
+
+#[test]
+fn test_assemble_empty_images_byte_identical() {
+    // t2v path: no images ⇒ assemble's commitment IS the M0 seven-field form.
+    let att = sample_attestation(false);
+    assert_eq!(
+        att.input_commitment,
+        input_commitment(&sample_job()).unwrap(),
+        "empty image_hashes ⇒ byte-identical M0 commitment"
+    );
+}
+
+#[test]
+fn test_assemble_i2v_uses_v2() {
+    // i2v path: assemble binds the v2 (eight-field) commitment, not the M0 form.
+    let job = sample_i2v_job();
+    let h0 = img_hash(&img_plain(0));
+    let att = assemble(
+        b32(0x01),
+        b32(0x02),
+        env_hash(&sample_meta()),
+        &job,
+        &[h0],
+        OUTPUT_CID.to_string(),
+        sample_manifest(),
+        "0x05".to_string(),
+        ANVIL0_ADDR.to_string(),
+        1_790_000_000,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        att.input_commitment,
+        input_commitment_v2(&job, &[h0]).unwrap()
+    );
+    assert_ne!(
+        att.input_commitment,
+        input_commitment(&job).unwrap(),
+        "i2v must not fall back to the seven-field form"
+    );
 }
 
 #[test]

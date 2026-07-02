@@ -1,10 +1,19 @@
 {
-  "allowListVersion": 1,
-  "bundleHash": "0x2d3367be958b2f6132b0b7e090f7e0db3ff508b3a6feac099c0d86b8ff43241d",
+  "allowListVersion": 2,
+  "bundleHash": "0xa1deab6fcafab6e986788ee55ed4179abd78cf8b3fdb578dae1210dd32ebfe94",
   "templates": [
     {
+      "templateId": "ltx-i2v-hdr",
+      "templateHash": "0x1074478991672ae0e0c668c1adf13f9e04dcd79edaaebfa5ae25f8d63c7831bd",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "firstFrame"
+      ]
+    },
+    {
       "templateId": "ltx-t2v-hdr",
-      "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078"
+      "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078",
+      "imageInputs": 0
     }
   ],
   "loras": [
@@ -29,6 +38,12 @@
         "w": 1280,
         "h": 720
       }
+    ],
+    "imageMaxBytes": 8388608,
+    "imageFormats": [
+      "png",
+      "jpeg",
+      "webp"
     ]
   }
 }

@@ -15,15 +15,16 @@ use serde_json::{Map, Value};
 use crate::ltx::template::Graph;
 use crate::ltx::types::LtxJob;
 
-/// Patch `job`'s params into the pinned `graph`. `control_path` is the M1 hook for
-/// control-image conditioning; ignored in M0.
+/// Patch `job`'s params into the pinned `graph`. `image_names` are the ComfyUI
+/// stored filenames for image-conditioned templates (M1a), assigned to the
+/// `LoadImage` nodes in node-id order; pass `&[]` for t2v (no LoadImage nodes).
 ///
 /// Required handles (fail closed if absent): the positive prompt (`_meta.title ==
 /// "Prompt"`) and at least one `RandomNoise` seed node. Optional (patched only if
 /// present): `Width`, `Height`, `Frame Rate`. `frames` is advisory in this pass —
 /// the pinned graph controls clip length until the EXR pass exposes a direct
 /// frame-count handle.
-pub fn patch(graph: &Graph, job: &LtxJob, _control_path: Option<&str>) -> Result<Graph> {
+pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Graph> {
     let mut value = graph.0.clone();
     let obj = value
         .as_object_mut()
@@ -50,6 +51,30 @@ pub fn patch(graph: &Graph, job: &LtxJob, _control_path: Option<&str>) -> Result
     patch_by_title(obj, "Width", "value", Value::from(job.resolution.w), false)?;
     patch_by_title(obj, "Height", "value", Value::from(job.resolution.h), false)?;
     patch_by_title(obj, "Frame Rate", "value", Value::from(job.fps), false)?;
+
+    // Image inputs (M1a): assign `image_names[i]` to the i-th `LoadImage` node,
+    // ordering nodes by their id lexicographically ascending. This is universal
+    // across the image template family — i2v has one `LoadImage`; flf2v `31` <
+    // `39` binds (first, last); style_transition `137` < `138` — with no reliance
+    // on node titles. t2v passes `&[]` and has no `LoadImage`, so this is a no-op.
+    if !image_names.is_empty() {
+        let mut load_ids: Vec<String> = obj
+            .iter()
+            .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some("LoadImage"))
+            .map(|(id, _)| id.clone())
+            .collect();
+        load_ids.sort();
+        if load_ids.len() != image_names.len() {
+            return Err(anyhow!(
+                "template has {} LoadImage node(s) but {} image name(s) supplied",
+                load_ids.len(),
+                image_names.len()
+            ));
+        }
+        for (name, id) in image_names.iter().zip(load_ids.iter()) {
+            set_input(obj, id, "image", Value::from(name.clone()))?;
+        }
+    }
 
     Ok(Graph(value))
 }

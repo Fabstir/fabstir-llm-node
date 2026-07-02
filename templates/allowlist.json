@@ -1,7 +1,8 @@
 {
-  "allowListVersion": 1,
+  "allowListVersion": 2,
   "templates": [
-    { "templateId": "ltx-t2v-hdr", "version": "v1" }
+    { "templateId": "ltx-t2v-hdr", "version": "v1" },
+    { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] }
   ],
   "loras": ["ltx-iclora-hdr@v1"],
   "bounds": {
@@ -10,6 +11,8 @@
     "resolutions": [
       { "w": 768, "h": 512 },
       { "w": 1280, "h": 720 }
-    ]
+    ],
+    "imageMaxBytes": 8388608,
+    "imageFormats": ["png", "jpeg", "webp"]
   }
 }

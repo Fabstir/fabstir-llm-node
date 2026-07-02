@@ -7,6 +7,7 @@ pub mod billing;
 pub mod capacity;
 pub mod client;
 pub mod exr;
+pub mod input_image;
 pub mod patcher;
 pub mod rate_limiter;
 pub mod submit;
