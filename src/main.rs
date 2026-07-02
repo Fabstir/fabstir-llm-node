@@ -89,7 +89,16 @@ async fn main() -> Result<()> {
         .map(|v| v.to_lowercase() == "true" || v == "1")
         .unwrap_or(false);
 
-    if validation_enabled {
+    // DISABLE_LLM turns this into a sidecar-only node (e.g. a dedicated LTX/ComfyUI
+    // box): skip the LLM GGUF load entirely so no VRAM is spent on inference the host
+    // isn't serving. Downstream already tolerates an unloaded engine (the load-failure
+    // path continues with an empty model_id), so this is the same state, reached on
+    // purpose. Sidecars, the API and the WS/LTX pipeline all still start.
+    let disable_llm = env::var("DISABLE_LLM")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false);
+
+    if validation_enabled && !disable_llm {
         println!("🔒 Model validation ENABLED - validating before loading...");
 
         // Check if HOST_PRIVATE_KEY is available (needed for host address)
@@ -233,7 +242,12 @@ async fn main() -> Result<()> {
     // ========================================================================
     let mut model_id = String::new();
 
-    if model_path_buf.exists() {
+    if disable_llm {
+        println!(
+            "🚫 DISABLE_LLM set — skipping LLM model load (sidecar-only node; \
+             LLM inference disabled, sidecars/API still active)"
+        );
+    } else if model_path_buf.exists() {
         println!("📦 Loading model: {}", model_path);
         let model_config = ModelConfig {
             model_path: model_path_buf,
@@ -471,6 +485,39 @@ async fn main() -> Result<()> {
         println!("   No TRANSCODER_ENDPOINT set — transcoding will return 503");
     }
 
+    // Initialize LTX 2.3 generation sidecar (ComfyUI). Optional: requires COMFY_URL.
+    let comfy_url = env::var("COMFY_URL").ok();
+    if let Some(ref url) = comfy_url {
+        let template_dir = env::var("TEMPLATE_DIR").unwrap_or_else(|_| "./templates".to_string());
+        match fabstir_llm_node::ltx::ComfyClient::new(url) {
+            Ok(client) => {
+                api_server.set_ltx_client(Arc::new(client)).await;
+                match fabstir_llm_node::ltx::TemplateStore::new(&template_dir) {
+                    Ok(store) => {
+                        api_server.set_ltx_template_store(Arc::new(store)).await;
+                        println!(
+                            "🎬 LTX sidecar configured: endpoint={}, templates={}",
+                            url, template_dir
+                        );
+                    }
+                    Err(e) => {
+                        println!(
+                            "⚠️  LTX template store failed to load from {}: {}",
+                            template_dir, e
+                        );
+                        println!("   ltx_generate will reject (no pinned templates)");
+                    }
+                }
+            }
+            Err(e) => {
+                println!("⚠️  Failed to create LTX client: {}", e);
+                println!("   ltx_generate will return 503");
+            }
+        }
+    } else {
+        println!("   No COMFY_URL set — ltx_generate will return 503");
+    }
+
     // Initialize Web Search Service (v8.7.0+)
     // Enabled by default - DuckDuckGo requires no API key
     // Set WEB_SEARCH_ENABLED=false to disable
@@ -541,6 +588,10 @@ async fn main() -> Result<()> {
                             .set_checkpoint_manager(Arc::new(checkpoint_manager))
                             .await;
                         println!("✅ Checkpoint manager initialized - payments enabled!");
+                        // With S5 now available, publish the LTX allow-list bundle (if the
+                        // sidecar is configured) so clients can fetch + authenticate it;
+                        // the logged bundleCID is what registerNode advertises / the E2E uses.
+                        let _ = api_server.publish_ltx_bundle().await;
                     }
                     Err(e) => {
                         println!("⚠️  Failed to initialize checkpoint manager: {}", e);

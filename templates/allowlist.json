@@ -1,0 +1,15 @@
+{
+  "allowListVersion": 1,
+  "templates": [
+    { "templateId": "ltx-t2v-hdr", "version": "v1" }
+  ],
+  "loras": ["ltx-iclora-hdr@v1"],
+  "bounds": {
+    "frames": { "min": 1, "max": 257 },
+    "fps": [24, 25, 30],
+    "resolutions": [
+      { "w": 768, "h": 512 },
+      { "w": 1280, "h": 720 }
+    ]
+  }
+}

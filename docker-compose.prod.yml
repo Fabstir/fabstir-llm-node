@@ -115,11 +115,27 @@ services:
       TRANSCODER_ENDPOINT: ${TRANSCODER_ENDPOINT:-http://transcoder-sidecar:8000}
       FABSTIR_TRANSCODER_JWT: ${FABSTIR_TRANSCODER_JWT:-}
 
+      # Optional: LTX 2.3 ComfyUI sidecar for text/image-to-video (Phase 10)
+      # The node drives ComfyUI over COMFY_URL and enumerates rendered EXR frames
+      # from the shared COMFY_OUTPUT_DIR volume. 22b + HDR is VRAM-heavy, so cap
+      # concurrent generations at 1 (L40S 48GB still has headroom).
+      COMFY_URL: ${COMFY_URL:-http://ltx-sidecar:8188}
+      TEMPLATE_DIR: ${TEMPLATE_DIR:-/app/templates/ltx}
+      COMFY_OUTPUT_DIR: ${COMFY_OUTPUT_DIR:-/app/comfy-output}
+      MAX_CONCURRENT_GENERATIONS: ${MAX_CONCURRENT_GENERATIONS:-1}
+      LTX_JOB_TIMEOUT_SECS: ${LTX_JOB_TIMEOUT_SECS:-1800}
+      LTX_MODEL_NAME: ${LTX_MODEL_NAME:-ltx-2.3-22b-hdr}
+      LTX_RATE_LIMIT: ${LTX_RATE_LIMIT:-3}
+
     volumes:
       # Mount model directory
       - ${MODELS_DIR:-./models}:/app/models:ro
       # Mount pre-built binary (from tarball)
       - ./target/release/fabstir-llm-node:/usr/local/bin/fabstir-llm-node:ro
+      # Shared LTX output (EXR frames) the node enumerates after generation (Phase 10)
+      - ltx-output:/app/comfy-output:ro
+      # LTX ComfyUI workflow templates the node fills per job (Phase 10)
+      - ${LTX_TEMPLATE_DIR:-./templates/ltx}:/app/templates/ltx:ro
     depends_on:
       s5-bridge:
         condition: service_healthy
@@ -248,6 +264,45 @@ services:
     networks:
       - fabstir-network
 
+  # LTX 2.3 ComfyUI Sidecar (optional - text/image-to-video, 22b + HDR IC-LoRA, Phase 10)
+  # Headless ComfyUI on :8188; the node drives it via COMFY_URL and reads rendered
+  # EXR frames from the shared ltx-output volume (COMFY_OUTPUT_DIR on the node).
+  # 22b + HDR is VRAM-heavy — keep MAX_CONCURRENT_GENERATIONS=1 (L40S 48GB has headroom).
+  # Weights are NOT baked into the image — run scripts/download_ltx_models.sh first.
+  # To disable: set COMFY_URL= (empty) in .env or stop this service
+  # First build: docker-compose -f docker-compose.prod.yml build ltx-sidecar
+  ltx-sidecar:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ltx-sidecar
+    container_name: ltx-sidecar
+    restart: unless-stopped
+    runtime: nvidia
+    shm_size: '16g'
+    ipc: host
+    environment:
+      # GPU reservation (matches the diffusion/transcoder sidecars' runtime: nvidia idiom)
+      NVIDIA_VISIBLE_DEVICES: ${LTX_GPU:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      # Return freed VRAM to the driver so the LLM can reclaim KV cache contexts
+      PYTORCH_NO_CUDA_MEMORY_CACHING: "1"
+    ports:
+      # localhost-only: ComfyUI must not be reachable off-host
+      - "127.0.0.1:8188:8188"
+    volumes:
+      # LTX weights + HDR IC-LoRA (read-only) — populated by scripts/download_ltx_models.sh
+      - ${LTX_MODELS_DIR:-./models/ltx}:/opt/ComfyUI/models:ro
+      # Shared output volume so the node can enumerate rendered EXR frames
+      - ltx-output:/opt/ComfyUI/output
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/system_stats"]
+      interval: 30s
+      timeout: 10s
+      start_period: 240s
+      retries: 3
+    networks:
+      - fabstir-network
+
 networks:
   fabstir-network:
     name: fabstir-network
@@ -255,3 +310,5 @@ networks:
 
 volumes:
   transcoder-cache:
+  # Shared LTX render output (EXR frames): written by ltx-sidecar, read by the node
+  ltx-output:

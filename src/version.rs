@@ -3,25 +3,42 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.30.0-tee-confidential-inference-2026-06-03";
+pub const VERSION: &str = "v8.31.4-ltx-video-t2v-2026-07-01";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.30.0";
+pub const VERSION_NUMBER: &str = "8.31.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 30;
+pub const VERSION_MINOR: u32 = 31;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-06-03";
+pub const BUILD_DATE: &str = "2026-07-01";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.31.2 LTX real-template text-to-video (patch on the M0 sidecar): patch by the
+    // template's own node names, accept a video output, advisory frame count, and pull
+    // rendered files over ComfyUI's /view HTTP endpoint (no shared output volume).
+    "ltx-real-template-t2v",
+    "ltx-video-output",
+    "ltx-http-view-fetch",
+    // v8.31.3: DISABLE_LLM runs the node sidecar-only (no LLM GGUF load).
+    "disable-llm-sidecar-only",
+    // v8.31.4: publish the LTX allow-list bundle to S5 at startup, log the bundleCID.
+    "ltx-bundle-s5-publish",
+    // v8.31.0 LTX 2.3 generation sidecar (M0)
+    "ltx-video-sidecar",
+    "comfyui-generation",
+    "hdr-exr-output",
+    "keyless-attestation",
+    "megapixel-frame-billing",
+    "fixed-field-commitments",
     "multi-chain",
     "base-sepolia",
     "opbnb-testnet",
@@ -752,10 +769,17 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 30);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_MINOR, 31);
+        assert_eq!(VERSION_PATCH, 4);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.31.0 LTX 2.3 generation sidecar (M0)
+        assert!(FEATURES.contains(&"ltx-video-sidecar"));
+        assert!(FEATURES.contains(&"comfyui-generation"));
+        assert!(FEATURES.contains(&"hdr-exr-output"));
+        assert!(FEATURES.contains(&"keyless-attestation"));
+        assert!(FEATURES.contains(&"megapixel-frame-billing"));
+        assert!(FEATURES.contains(&"fixed-field-commitments"));
         // v8.30.0 TEE / confidential inference (mock backend, Phase 1-4)
         assert!(FEATURES.contains(&"tee-confidential-inference"));
         assert!(FEATURES.contains(&"tee-attestation-mock"));
@@ -905,15 +929,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.30.0"));
-        assert!(version.contains("2026-06-03"));
+        assert!(version.contains("8.31.4"));
+        assert!(version.contains("2026-07-01"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.30.0-tee-confidential-inference-2026-06-03");
-        assert_eq!(VERSION_NUMBER, "8.30.0");
-        assert_eq!(BUILD_DATE, "2026-06-03");
+        assert_eq!(VERSION, "v8.31.4-ltx-video-t2v-2026-07-01");
+        assert_eq!(VERSION_NUMBER, "8.31.4");
+        assert_eq!(BUILD_DATE, "2026-07-01");
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod inference;
 pub mod job_assignment_types;
 pub mod job_claim;
 pub mod job_processor;
+pub mod ltx;
 pub mod model_validation;
 pub mod models;
 pub mod moderation;

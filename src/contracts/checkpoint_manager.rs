@@ -1993,7 +1993,7 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
 // ABI encoding helper for submitProofOfWork (v8.14.0 - Post-Remediation)
 // Signature parameter REMOVED per BREAKING_CHANGES.md (Feb 4, 2026)
 // Authentication now via msg.sender == session.host check in contract
-fn encode_checkpoint_call(
+pub(crate) fn encode_checkpoint_call(
     job_id: u64,
     tokens_generated: u64,
     proof_hash: [u8; 32],
