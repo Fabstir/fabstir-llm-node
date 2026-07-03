@@ -1,7 +1,16 @@
 {
-  "allowListVersion": 2,
-  "bundleHash": "0xa1deab6fcafab6e986788ee55ed4179abd78cf8b3fdb578dae1210dd32ebfe94",
+  "allowListVersion": 3,
+  "bundleHash": "0x6407a1c0ae48ce7f85d67a1777fd82e514a6469dc65d5b7eef5e79685124cf09",
   "templates": [
+    {
+      "templateId": "ltx-flf2v-hdr",
+      "templateHash": "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721",
+      "imageInputs": 2,
+      "imageSemantics": [
+        "firstFrame",
+        "lastFrame"
+      ]
+    },
     {
       "templateId": "ltx-i2v-hdr",
       "templateHash": "0x1074478991672ae0e0c668c1adf13f9e04dcd79edaaebfa5ae25f8d63c7831bd",
