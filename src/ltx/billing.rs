@@ -17,6 +17,12 @@ use crate::ltx::types::LtxJob;
 /// Any real clip clears this by orders of magnitude (121×1280×720 = 111,514).
 pub const MIN_PROVEN_TOKENS: u64 = 100;
 
+/// How long the accept path treats a dispatched `completeSessionJob` as in
+/// flight (`is_completing`). Long enough to cover queue + confirmation + the
+/// once-retry; short enough that a false latch (completion reported Ok but the
+/// tx actually reverted) self-heals instead of wedging the session's LTX use.
+pub const COMPLETING_LATCH_SECS: u64 = 120;
+
 /// Estimate the on-chain cost of a job: `tokens × price_per_token`.
 ///
 /// Straight multiply with no PRICE_PRECISION scaling — `price_per_token` already
@@ -51,6 +57,11 @@ pub struct LtxJobInfo {
     pub completion_deferred: bool,
     /// Landed proofs on this session (index 0 is gated by `proofInterval`).
     pub proofs_submitted: u32,
+    /// When a `completeSessionJob` was dispatched for this session. The accept
+    /// path rejects new clips while this is fresher than
+    /// [`COMPLETING_LATCH_SECS`] — a clip accepted mid-completion would be
+    /// settled under (its proof reverts, the clip delivers free).
+    pub completing_since: Option<Instant>,
 }
 
 impl LtxJobInfo {
@@ -66,6 +77,7 @@ impl LtxJobInfo {
             last_confirmed_at: None,
             completion_deferred: false,
             proofs_submitted: 0,
+            completing_since: None,
         }
     }
 }
@@ -88,6 +100,11 @@ impl LtxTracker {
         let entry = jobs
             .entry(job_id)
             .or_insert_with(|| LtxJobInfo::new(job_id, session_id.clone()));
+        // Backfill: `mark_proof_pending` (at accept) creates the entry with no
+        // session_id; the first `track` (at clip end) knows it.
+        if entry.session_id.is_none() {
+            entry.session_id = session_id;
+        }
         entry.total_tokens += tokens;
         entry.total_cost += cost;
         entry.generation_count += 1;
@@ -109,13 +126,25 @@ impl LtxTracker {
     /// if this is the session's first clip. Also CLEARS a stale deferral — a new
     /// clip on a reconnected session cancels it; this clip's own lifecycle now
     /// owns completion.
-    pub async fn mark_proof_pending(&self, job_id: u64) {
+    ///
+    /// ATOMIC ACCEPT GATE: returns `false` (and marks NOTHING) when a
+    /// `completeSessionJob` was dispatched less than `completing_latch` ago —
+    /// a clip accepted mid-completion would be settled under (its proof
+    /// reverts, the clip delivers free, the session dies mid-use). Check and
+    /// mark share one lock, so a completion cannot slip between them.
+    pub async fn mark_proof_pending(&self, job_id: u64, completing_latch: Duration) -> bool {
         let mut jobs = self.jobs.write().await;
         let entry = jobs
             .entry(job_id)
             .or_insert_with(|| LtxJobInfo::new(job_id, None));
+        if let Some(at) = entry.completing_since {
+            if at.elapsed() < completing_latch {
+                return false;
+            }
+        }
         entry.pending_count += 1;
         entry.completion_deferred = false;
+        true
     }
 
     /// The clip's proof tx CONFIRMED (receipt status 1).
@@ -153,17 +182,78 @@ impl LtxTracker {
         }
     }
 
+    /// Read-only: a proof outcome is currently unresolved for this job. Used
+    /// by the completion paths to re-check at wake after a dispute-window
+    /// sleep — a clip accepted mid-sleep must not get settled under.
+    pub async fn has_pending(&self, job_id: u64) -> bool {
+        self.jobs
+            .read()
+            .await
+            .get(&job_id)
+            .map(|e| e.pending_count > 0)
+            .unwrap_or(false)
+    }
+
+    /// Read-only peek of `take_deferred_if_idle` (does NOT clear the flag):
+    /// completion was deferred and nothing is pending. The cleanup peeks
+    /// before its dispute-window sleep and only TAKES at wake, so a clip
+    /// accepted mid-sleep (which clears the flag at accept) transfers
+    /// completion ownership to its own lifecycle.
+    pub async fn deferred_idle(&self, job_id: u64) -> bool {
+        self.jobs
+            .read()
+            .await
+            .get(&job_id)
+            .map(|e| e.completion_deferred && e.pending_count == 0)
+            .unwrap_or(false)
+    }
+
     /// `true` iff completion was deferred AND no proof is pending any more;
-    /// clears the flag so the deferred completion runs exactly once.
+    /// clears the flag so the deferred completion runs exactly once — and SETS
+    /// the completing latch in the same lock (taking ownership IS the start of
+    /// completing; the accept gate then rejects new clips for the latch
+    /// window). The latch is never cleared: it self-expires (a completion that
+    /// failed silently cannot wedge the session forever).
     pub async fn take_deferred_if_idle(&self, job_id: u64) -> bool {
         let mut jobs = self.jobs.write().await;
         match jobs.get_mut(&job_id) {
             Some(entry) if entry.completion_deferred && entry.pending_count == 0 => {
                 entry.completion_deferred = false;
+                entry.completing_since = Some(Instant::now());
                 true
             }
             _ => false,
         }
+    }
+
+    /// Atomic guard for the disconnect path's `completeSessionJob` dispatch:
+    /// if no proof is pending, set the completing latch and return `true`;
+    /// else return `false` — a clip is in flight and ITS lifecycle owns
+    /// completion. Called immediately before each completion attempt (covers
+    /// the zero-wait branch, the post-sleep wake and the retry).
+    pub async fn mark_completing_if_idle(&self, job_id: u64) -> bool {
+        let mut jobs = self.jobs.write().await;
+        let entry = jobs
+            .entry(job_id)
+            .or_insert_with(|| LtxJobInfo::new(job_id, None));
+        if entry.pending_count > 0 {
+            return false;
+        }
+        entry.completing_since = Some(Instant::now());
+        true
+    }
+
+    /// Read-only: a completion was dispatched less than `within` ago (the
+    /// accept-gate condition inside `mark_proof_pending`, exposed for tests
+    /// and observability).
+    pub async fn is_completing(&self, job_id: u64, within: Duration) -> bool {
+        self.jobs
+            .read()
+            .await
+            .get(&job_id)
+            .and_then(|e| e.completing_since)
+            .map(|at| at.elapsed() < within)
+            .unwrap_or(false)
     }
 
     /// Landed proofs on this session (the first-proof `proofInterval` gate).

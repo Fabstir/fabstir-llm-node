@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.32.0-ltx-payout-2026-07-03";
+pub const VERSION: &str = "v8.32.1-ltx-payout-hardening-2026-07-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.32.0";
+pub const VERSION_NUMBER: &str = "8.32.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 32;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-07-03";
@@ -31,6 +31,14 @@ pub const FEATURES: &[&str] = &[
     "ltx-payout",
     "ltx-proof-submit",
     "ltx-deferred-settlement",
+    // v8.32.1 post-implementation review hardening: atomic accept gate
+    // (mark_proof_pending rejects while a completeSessionJob is in flight —
+    // the completing latch, self-expiring), take-at-wake deferral (peek →
+    // dispute-window sleep → atomic take), post-render disconnect gates on the
+    // stage sends (never bill a clip whose ltx_complete provably cannot land),
+    // bounded recomputing "Too many" retry (3 attempts — lastProofTime moves
+    // when sibling clips land), VRAM permit released before settlement sleeps.
+    "ltx-payout-race-hardening",
     // v8.31.2 LTX real-template text-to-video (patch on the M0 sidecar): patch by the
     // template's own node names, accept a video output, advisory frame count, and pull
     // rendered files over ComfyUI's /view HTTP endpoint (no shared output volume).
@@ -798,13 +806,15 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 32);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.32.0 LTX M1 economics (submitProofOfWork per clip)
         assert!(FEATURES.contains(&"ltx-payout"));
         assert!(FEATURES.contains(&"ltx-proof-submit"));
         assert!(FEATURES.contains(&"ltx-deferred-settlement"));
+        // v8.32.1 review hardening (atomic accept gate, delivery gates)
+        assert!(FEATURES.contains(&"ltx-payout-race-hardening"));
         // v8.31.0 LTX 2.3 generation sidecar (M0)
         assert!(FEATURES.contains(&"ltx-video-sidecar"));
         assert!(FEATURES.contains(&"comfyui-generation"));
@@ -968,14 +978,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.32.0"));
+        assert!(version.contains("8.32.1"));
         assert!(version.contains("2026-07-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.32.0-ltx-payout-2026-07-03");
-        assert_eq!(VERSION_NUMBER, "8.32.0");
+        assert_eq!(VERSION, "v8.32.1-ltx-payout-hardening-2026-07-03");
+        assert_eq!(VERSION_NUMBER, "8.32.1");
         assert_eq!(BUILD_DATE, "2026-07-03");
     }
 

@@ -112,18 +112,21 @@ impl ProofSubmit for MockSubmit {
     }
 }
 
+/// Accept-gate latch window (mirrors `COMPLETING_LATCH_SECS`); never set here.
+const LATCH: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Marks a pending for job 42 (as the handler does at accept) and returns the
 /// pieces every finalize test needs.
 async fn pending_setup() -> (MockS5Backend, LtxTracker, Attestation) {
     let tracker = LtxTracker::new();
-    tracker.mark_proof_pending(42).await;
+    tracker.mark_proof_pending(42, LATCH).await;
     (MockS5Backend::new(), tracker, sample_attestation())
 }
 
 /// The tracker's pending count, read back through the public API: a leftover
 /// pending is exactly the state in which a disconnect would defer.
 async fn pending_unresolved(tracker: &LtxTracker, job_id: u64) -> bool {
-    tracker.defer_completion(job_id).await
+    tracker.has_pending(job_id).await
 }
 
 #[tokio::test]
@@ -203,7 +206,7 @@ async fn test_finalize_clip_later_proof_below_interval_submits() {
     // MIN_PROVEN_TOKENS floor (100).
     let (s5, tracker, att) = pending_setup().await;
     // A first proof already landed on this session.
-    tracker.mark_proof_pending(42).await;
+    tracker.mark_proof_pending(42, LATCH).await;
     tracker.mark_proof_submitted(42).await;
     let mock = MockSubmit::ok(1000);
 
@@ -258,7 +261,7 @@ async fn test_finalize_clip_submit_failure_still_returns_proof_cid() {
 #[tokio::test(start_paused = true)]
 async fn test_finalize_clip_too_many_retries_once_then_succeeds() {
     // Rate limit: tokensClaimed ≤ elapsed_secs × 2000 reverts "Too many"; the
-    // node waits ≈ tokens/2000 (+5s buffer) and retries ONCE.
+    // node waits ≈ tokens/2000 (+5s buffer) and retries.
     let (s5, tracker, att) = pending_setup().await;
     let mock = MockSubmit::scripted(1000, vec![Some("revert: Too many".into()), None]);
 
@@ -282,11 +285,48 @@ async fn test_finalize_clip_too_many_retries_once_then_succeeds() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn test_finalize_clip_too_many_twice_forfeits() {
+async fn test_finalize_clip_too_many_twice_succeeds_on_third() {
+    // lastProofTime MOVES when a sibling clip's proof lands during the sleep
+    // (MAX_CONCURRENT_GENERATIONS > 1), so one fixed wait is not always
+    // enough — the retry loop recomputes and goes again, bounded at 3.
     let (s5, tracker, att) = pending_setup().await;
     let mock = MockSubmit::scripted(
         1000,
         vec![
+            Some("revert: Too many".into()),
+            Some("revert: Too many".into()),
+            None,
+        ],
+    );
+
+    let (_cid, submitted) = finalize_clip(
+        &s5,
+        Some(&mock),
+        &tracker,
+        Some(42),
+        true,
+        "42-p",
+        &att,
+        111_514,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        submitted,
+        "third attempt after two rate-limit waits must land"
+    );
+    assert_eq!(mock.calls().len(), 3);
+    assert_eq!(tracker.proofs_submitted(42).await, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_finalize_clip_too_many_thrice_forfeits() {
+    let (s5, tracker, att) = pending_setup().await;
+    let mock = MockSubmit::scripted(
+        1000,
+        vec![
+            Some("revert: Too many".into()),
             Some("revert: Too many".into()),
             Some("revert: Too many".into()),
         ],
@@ -305,9 +345,9 @@ async fn test_finalize_clip_too_many_twice_forfeits() {
     .await
     .unwrap();
 
-    assert!(!submitted, "ONE retry only — then forfeit");
+    assert!(!submitted, "THREE attempts max — then forfeit");
     assert!(!proof_cid.is_empty());
-    assert_eq!(mock.calls().len(), 2);
+    assert_eq!(mock.calls().len(), 3);
     assert!(!pending_unresolved(&tracker, 42).await);
 }
 

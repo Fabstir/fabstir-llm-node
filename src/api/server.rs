@@ -2847,11 +2847,20 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         );
 
                                                                         // Drain progress until the generation task completes.
+                                                                        // Breaking this loop drops progress_rx, which is what the
+                                                                        // spawn's disconnect gates detect — so a failed WS write and
+                                                                        // a read error must BREAK (not be swallowed), or the spawn
+                                                                        // would bill a clip whose ltx_complete provably cannot land.
                                                                         loop {
                                                                             tokio::select! {
                                                                                 msg = progress_rx.recv() => {
                                                                                     match msg {
-                                                                                        Some(m) => { let _ = ws_sender.send(axum::extract::ws::Message::Text(m.to_string())).await; }
+                                                                                        Some(m) => {
+                                                                                            if ws_sender.send(axum::extract::ws::Message::Text(m.to_string())).await.is_err() {
+                                                                                                info!("LTX progress write failed — client gone, dropping progress channel");
+                                                                                                break;
+                                                                                            }
+                                                                                        }
                                                                                         None => break, // task finished (sender dropped)
                                                                                     }
                                                                                 }
@@ -2866,7 +2875,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                 }
                                                                                             }
                                                                                         }
-                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => break,
                                                                                         _ => {}
                                                                                     }
                                                                                 }
@@ -4295,6 +4304,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                 .await;
 
             // ASYNC: Spawn session completion in background to avoid blocking
+            let ltx_tracker = server.ltx_tracker.clone();
             tokio::spawn(async move {
                 info!(
                     "[WS-BG] 🚀 Starting background session completion for job_id: {}",
@@ -4307,6 +4317,21 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         jid
                     );
                     tokio::time::sleep(ltx_wait).await;
+                }
+
+                // Atomic pre-dispatch guard: if a clip was accepted (on a fast
+                // RECONNECT) since the defer check — including mid-sleep — its
+                // lifecycle owns completion; otherwise set the completing
+                // latch so the accept path rejects new clips for the tx
+                // duration. No-op effect on LLM-only sessions (nothing
+                // consults the latch there).
+                if !ltx_tracker.mark_completing_if_idle(jid).await {
+                    info!(
+                        "[WS-BG] ⏸ New LTX clip in flight for job {} — completion ownership \
+                         moved to its lifecycle",
+                        jid
+                    );
+                    return;
                 }
 
                 // Stringify errors: complete_session_job's Box<dyn Error> is
@@ -4331,6 +4356,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             jid, window_secs
                         );
                         tokio::time::sleep(std::time::Duration::from_secs(window_secs)).await;
+                        // Atomically re-latch for the retry; false = a newer
+                        // clip owns completion now.
+                        if !ltx_tracker.mark_completing_if_idle(jid).await {
+                            info!(
+                                "[WS-BG] ⏸ New LTX clip in flight for job {} — abandoning the \
+                                 completion retry to its lifecycle",
+                                jid
+                            );
+                            return;
+                        }
                         if let Err(e2) = checkpoint_manager
                             .complete_session_job(jid)
                             .await
