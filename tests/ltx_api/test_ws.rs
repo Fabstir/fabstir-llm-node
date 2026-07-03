@@ -120,7 +120,7 @@ async fn test_i2v_accepted_ack() {
     assert!(task.is_some(), "valid one-image i2v job is accepted");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 4, "v4 allow-list echoed");
+    assert_eq!(inner["allowListVersion"], 5, "v5 allow-list echoed");
 }
 
 #[tokio::test]
@@ -268,12 +268,77 @@ async fn test_out_of_bounds_rejected() {
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
     let mut job = valid_job(&hash);
-    job["frames"] = json!(99_999); // > the allow-list bounds max (257)
+    job["frames"] = json!(99_999); // > the allow-list bounds max (751)
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-c", Some(1), None).await;
     assert!(task.is_none());
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+}
+
+/// Drive one `frames`/`fps` combo through the full handler against the live v5
+/// bundle. Fresh server each call so the single VRAM permit never leaks across
+/// cases. Returns `(accepted, inner_json)`.
+async fn submit_frames_fps(frames: u32, fps: u32) -> (bool, Value) {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_hash();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    let mut job = valid_job(&hash);
+    job["frames"] = json!(frames);
+    job["fps"] = json!(fps);
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-dur", Some(1), None).await;
+    let inner = decrypt_envelope(&resp, &k);
+    (task.is_some(), inner)
+}
+
+#[tokio::test]
+async fn test_duration_accepts_valid_matrix() {
+    // 5..=15 s clips across the corrected fps set [24,25,48,50], each landing on
+    // fps·secs + 1 frames within the v5 bounds {121,751}.
+    for (frames, fps) in [
+        (121u32, 24u32),
+        (361, 24),
+        (126, 25),
+        (241, 48),
+        (251, 50),
+        (751, 50),
+    ] {
+        let (accepted, inner) = submit_frames_fps(frames, fps).await;
+        assert!(accepted, "{frames}@{fps} should be accepted: {inner:?}");
+    }
+}
+
+#[tokio::test]
+async fn test_duration_rejects_matrix() {
+    // Bounds-level rejects (frame min/max, fps membership) — 151@30 proves the
+    // dropped 30 fps is gone from the v5 bundle. Generic bounds message.
+    for (frames, fps) in [(97u32, 24u32), (757, 50), (151, 30)] {
+        let (accepted, inner) = submit_frames_fps(frames, fps).await;
+        assert!(!accepted, "{frames}@{fps} must reject");
+        assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+    }
+    // validate_duration divisibility rejects (in range, not a whole second).
+    for (frames, fps) in [(200u32, 24u32), (122, 24)] {
+        let (accepted, inner) = submit_frames_fps(frames, fps).await;
+        assert!(!accepted, "{frames}@{fps} must reject");
+        assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+        let msg = inner["error"]["message"].as_str().unwrap();
+        assert!(
+            msg.contains("whole"),
+            "divisibility msg for {frames}@{fps}: {msg}"
+        );
+    }
+    // validate_duration range rejects (2.4 s < 5 s; 16 s > 15 s).
+    for (frames, fps) in [(121u32, 50u32), (385, 24)] {
+        let (accepted, inner) = submit_frames_fps(frames, fps).await;
+        assert!(!accepted, "{frames}@{fps} must reject");
+        assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+        let msg = inner["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("range"), "range msg for {frames}@{fps}: {msg}");
+    }
 }
 
 #[tokio::test]

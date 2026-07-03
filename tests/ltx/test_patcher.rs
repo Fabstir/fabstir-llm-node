@@ -303,6 +303,140 @@ fn test_no_images_no_op() {
     );
 }
 
+/// Clone the base job with a specific (frames, fps) so the Duration derivation
+/// `(frames-1)/fps` is exercised with clean, whole-second values.
+fn job_frames_fps(frames: u32, fps: u32) -> LtxJob {
+    LtxJob {
+        frames,
+        fps,
+        ..job()
+    }
+}
+
+#[test]
+fn test_patch_duration_t2v() {
+    // 10 s @ 24 fps -> frames 241 -> Duration 10 (the pinned graph's a*b+1 then
+    // recomputes length = 10*24+1 = 241, equal to the billed frame count).
+    let g = patch(&fixture_graph(), &job_frames_fps(241, 24), &[]).unwrap();
+    assert_eq!(
+        node_by_title(&g, "Duration")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        10
+    );
+}
+
+#[test]
+fn test_patch_duration_i2v() {
+    // 15 s @ 25 fps -> frames 376 -> Duration 15, on the real i2v graph.
+    let g = patch(
+        &i2v_graph(),
+        &job_frames_fps(376, 25),
+        &["egyptian.png".to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        node_by_title(&g, "Duration")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        15
+    );
+}
+
+#[test]
+fn test_patch_duration_flf2v() {
+    // 5 s @ 48 fps -> frames 241 -> Duration 5, on the curated flf2v graph.
+    let names = vec!["first.png".to_string(), "last.png".to_string()];
+    let g = patch(&flf2v_graph(), &job_frames_fps(241, 48), &names).unwrap();
+    assert_eq!(
+        node_by_title(&g, "Duration")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        5
+    );
+}
+
+#[test]
+fn test_patch_panic_guard_fps_zero() {
+    // fps 0 would divide-by-zero in (frames-1)/fps -> fail closed, no panic.
+    assert!(patch(&fixture_graph(), &job_frames_fps(121, 0), &[]).is_err());
+}
+
+#[test]
+fn test_patch_panic_guard_frames_zero() {
+    // frames 0 would underflow (frames-1) on u32 -> fail closed, no panic.
+    assert!(patch(&fixture_graph(), &job_frames_fps(0, 24), &[]).is_err());
+}
+
+/// Every pinned template must carry the Duration wiring the patcher relies on: a
+/// `Duration`-titled PrimitiveInt feeding an `a * b + 1` ComfyMathExpression whose
+/// other input is the `Frame Rate` node, whose output drives an
+/// `EmptyLTXVLatentVideo.length`. If a re-pin ever severs this, billed frames and
+/// rendered length would diverge silently — so guard it structurally.
+#[test]
+fn test_all_templates_have_duration_wiring() {
+    for id in ["ltx-t2v-hdr", "ltx-i2v-hdr", "ltx-flf2v-hdr"] {
+        let raw = std::fs::read(format!("{DIR}/{id}/v1.json")).unwrap();
+        let v: Value = serde_json::from_slice(&raw).unwrap();
+        let obj = v.as_object().unwrap();
+        let id_by_title = |title: &str| -> Option<String> {
+            obj.iter()
+                .find(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
+                .map(|(nid, _)| nid.clone())
+        };
+        let dur = id_by_title("Duration").unwrap_or_else(|| panic!("{id}: Duration node"));
+        let fr = id_by_title("Frame Rate").unwrap_or_else(|| panic!("{id}: Frame Rate node"));
+        assert_eq!(
+            obj[&dur].pointer("/class_type").and_then(Value::as_str),
+            Some("PrimitiveInt"),
+            "{id}: Duration is a PrimitiveInt leaf"
+        );
+        // The a*b+1 math node fed by Duration (a) and Frame Rate (b).
+        let math_id = obj
+            .iter()
+            .find_map(|(nid, n)| {
+                if n.get("class_type").and_then(Value::as_str) != Some("ComfyMathExpression") {
+                    return None;
+                }
+                let expr = n
+                    .pointer("/inputs/expression")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if !expr.replace(' ', "").contains("a*b+1") {
+                    return None;
+                }
+                let a = n
+                    .pointer("/inputs/values.a")
+                    .and_then(|x| x.get(0))
+                    .and_then(Value::as_str);
+                let b = n
+                    .pointer("/inputs/values.b")
+                    .and_then(|x| x.get(0))
+                    .and_then(Value::as_str);
+                (a == Some(dur.as_str()) && b == Some(fr.as_str())).then(|| nid.clone())
+            })
+            .unwrap_or_else(|| panic!("{id}: a*b+1 math fed by Duration and Frame Rate"));
+        // That math output feeds at least one EmptyLTXVLatentVideo.length.
+        let feeds_length = obj.values().any(|n| {
+            n.get("class_type").and_then(Value::as_str) == Some("EmptyLTXVLatentVideo")
+                && n.pointer("/inputs/length")
+                    .and_then(|x| x.get(0))
+                    .and_then(Value::as_str)
+                    == Some(math_id.as_str())
+        });
+        assert!(
+            feeds_length,
+            "{id}: math output feeds EmptyLTXVLatentVideo.length"
+        );
+    }
+}
+
 #[test]
 fn test_no_structural_edits() {
     let before = fixture_graph();

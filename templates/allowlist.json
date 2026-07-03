@@ -1,5 +1,5 @@
 {
-  "allowListVersion": 4,
+  "allowListVersion": 5,
   "templates": [
     { "templateId": "ltx-t2v-hdr", "version": "v1" },
     { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
@@ -7,8 +7,8 @@
   ],
   "loras": ["ltx-iclora-hdr@v1"],
   "bounds": {
-    "frames": { "min": 1, "max": 257 },
-    "fps": [24, 25, 30],
+    "frames": { "min": 121, "max": 751 },
+    "fps": [24, 25, 48, 50],
     "resolutions": [
       { "w": 768, "h": 512 },
       { "w": 1280, "h": 720 },
