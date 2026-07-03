@@ -46,6 +46,126 @@ fn test_real_clip_clears_floor() {
     );
 }
 
+// -----------------------------------------------------------------------------
+// M1 economics — proof-state race machine (a pending COUNT, not an enum:
+// MAX_CONCURRENT_GENERATIONS may exceed 1, so two clips of one session overlap)
+// -----------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_pending_defer_complete_after_confirm() {
+    let t = LtxTracker::new();
+    t.mark_proof_pending(1).await;
+    assert!(
+        t.defer_completion(1).await,
+        "proof in flight ⇒ disconnect must defer"
+    );
+    assert!(
+        !t.take_deferred_if_idle(1).await,
+        "still pending ⇒ completion stays deferred"
+    );
+    t.mark_proof_submitted(1).await;
+    assert_eq!(t.proofs_submitted(1).await, 1);
+    assert!(
+        t.take_deferred_if_idle(1).await,
+        "proof landed + deferred ⇒ the finishing task completes"
+    );
+    assert!(
+        !t.take_deferred_if_idle(1).await,
+        "take clears the flag — completion runs once"
+    );
+}
+
+#[tokio::test]
+async fn test_error_forfeit_still_releases_deferred_completion() {
+    // error ⇒ no proof ⇒ deferred completion still runs (settles at 0 — correct:
+    // no work was delivered).
+    let t = LtxTracker::new();
+    t.mark_proof_pending(1).await;
+    assert!(t.defer_completion(1).await);
+    t.mark_proof_forfeited(1).await;
+    assert_eq!(t.proofs_submitted(1).await, 0);
+    assert!(
+        t.take_deferred_if_idle(1).await,
+        "forfeit drops the count to 0 ⇒ deferred completion released"
+    );
+}
+
+#[tokio::test]
+async fn test_overlapping_clips_first_submit_does_not_release_deferral() {
+    let t = LtxTracker::new();
+    t.mark_proof_pending(1).await;
+    t.mark_proof_pending(1).await; // clip B of the same session
+    assert!(t.defer_completion(1).await);
+    t.mark_proof_submitted(1).await; // clip A lands
+    assert!(
+        !t.take_deferred_if_idle(1).await,
+        "clip B still pending — settling now would revert B's proof"
+    );
+    t.mark_proof_submitted(1).await; // clip B lands
+    assert!(t.take_deferred_if_idle(1).await);
+    assert_eq!(t.proofs_submitted(1).await, 2);
+}
+
+#[tokio::test]
+async fn test_new_pending_clears_stale_deferral() {
+    // A reconnected session starting a new clip cancels the stale deferral: the
+    // new clip's own lifecycle now owns completion.
+    let t = LtxTracker::new();
+    t.mark_proof_pending(1).await;
+    assert!(t.defer_completion(1).await);
+    t.mark_proof_submitted(1).await; // count 0, flag still set
+    t.mark_proof_pending(1).await; // new clip on reconnect
+    t.mark_proof_submitted(1).await; // count back to 0
+    assert!(
+        !t.take_deferred_if_idle(1).await,
+        "new pending must have cleared the stale deferral"
+    );
+}
+
+#[tokio::test]
+async fn test_no_entry_defer_is_false_and_wait_is_zero() {
+    let t = LtxTracker::new();
+    assert!(
+        !t.defer_completion(9).await,
+        "LLM-only session (no LTX entry) must not defer"
+    );
+    assert!(!t.take_deferred_if_idle(9).await);
+    assert_eq!(t.proofs_submitted(9).await, 0);
+    assert_eq!(
+        t.proof_wait_remaining(9, 35).await,
+        std::time::Duration::ZERO
+    );
+}
+
+#[tokio::test]
+async fn test_forfeit_is_saturating_and_noop_on_missing() {
+    let t = LtxTracker::new();
+    t.mark_proof_forfeited(9).await; // missing entry: no-op, no underflow
+    assert!(!t.defer_completion(9).await);
+    t.mark_proof_pending(1).await;
+    t.mark_proof_forfeited(1).await;
+    t.mark_proof_forfeited(1).await; // double-forfeit: saturates at 0
+    assert!(!t.defer_completion(1).await, "count must be 0, not wrapped");
+}
+
+#[tokio::test]
+async fn test_proof_wait_remaining_counts_down_from_window() {
+    let t = LtxTracker::new();
+    t.mark_proof_pending(1).await;
+    // Before any landed proof: nothing to wait on.
+    assert_eq!(
+        t.proof_wait_remaining(1, 35).await,
+        std::time::Duration::ZERO
+    );
+    t.mark_proof_submitted(1).await;
+    let remaining = t.proof_wait_remaining(1, 35).await;
+    assert!(
+        remaining > std::time::Duration::from_secs(34)
+            && remaining <= std::time::Duration::from_secs(35),
+        "immediately after a landed proof the full window (≈35s) remains, got {remaining:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_tracker_accumulates_across_records() {
     let tracker = LtxTracker::new();

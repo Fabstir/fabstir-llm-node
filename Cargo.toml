@@ -156,6 +156,7 @@ data-encoding = "2.10.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
+tokio = { version = "1.35", features = ["test-util"] }
 mockall = "0.12"
 futures-util = "0.3"
 ethers = { version = "2.0", features = ["ws", "rustls"] }

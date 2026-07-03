@@ -2812,6 +2812,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             .get_ltx_client()
                                                                             .await
                                                                         else {
+                                                                            // The task dies unspawned: resolve the pending the
+                                                                            // handler marked at accept, or a disconnect would
+                                                                            // defer completion to a task that never runs.
+                                                                            if task.pending_marked {
+                                                                                if let Some(jid) =
+                                                                                    task.job_id
+                                                                                {
+                                                                                    server.ltx_tracker().mark_proof_forfeited(jid).await;
+                                                                                }
+                                                                            }
                                                                             let err = crate::api::websocket::handlers::ltx::build_ltx_error(
                                                                                 "SIDECAR_UNAVAILABLE",
                                                                                 "LTX sidecar became unavailable",
@@ -4248,6 +4258,19 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         info!("   Session ID: {:?}", session_id);
         info!("   Chain ID: {:?}", chain_id);
 
+        // M1 economics: an LTX proof in flight means completing NOW would
+        // settle at 0 tokens under a rendering/submitting clip. Defer — the
+        // finishing generation task (single-exit cleanup) owns completion.
+        // LLM-only sessions have no LTX entry and never defer.
+        if server.ltx_tracker().defer_completion(jid).await {
+            info!(
+                "[WS-BG] ⏸ LTX proof in flight for job {} — completion deferred to the \
+                 generation task",
+                jid
+            );
+            return;
+        }
+
         // Get checkpoint manager and complete the session job
         let cm = server.checkpoint_manager.read().await;
         info!("   Checkpoint manager available: {}", cm.is_some());
@@ -4259,14 +4282,40 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
             );
             drop(cm); // Release lock before spawning
 
+            // LTX: a proof landed shortly before this disconnect ⇒ the host
+            // caller reverts "Dispute wait" until window (+ buffer) elapses
+            // since that proof. Snapshot the remaining wait now; the spawned
+            // task sleeps it out first. Zero for LLM-only sessions (the LLM
+            // wait machinery lives inside complete_session_job).
+            let window_secs = checkpoint_manager.dispute_window_secs()
+                + crate::contracts::checkpoint_manager::DISPUTE_WINDOW_BUFFER_SECS;
+            let ltx_wait = server
+                .ltx_tracker()
+                .proof_wait_remaining(jid, window_secs)
+                .await;
+
             // ASYNC: Spawn session completion in background to avoid blocking
             tokio::spawn(async move {
                 info!(
                     "[WS-BG] 🚀 Starting background session completion for job_id: {}",
                     jid
                 );
+                if !ltx_wait.is_zero() {
+                    info!(
+                        "[WS-BG] ⏳ LTX dispute window: waiting {}s before completing job {}",
+                        ltx_wait.as_secs(),
+                        jid
+                    );
+                    tokio::time::sleep(ltx_wait).await;
+                }
 
-                match checkpoint_manager.complete_session_job(jid).await {
+                // Stringify errors: complete_session_job's Box<dyn Error> is
+                // not Send across the retry-sleep await.
+                match checkpoint_manager
+                    .complete_session_job(jid)
+                    .await
+                    .map_err(|e| e.to_string())
+                {
                     Ok(()) => {
                         info!(
                             "[WS-BG] 💰 Settlement completed successfully for job_id: {}",
@@ -4275,6 +4324,20 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                     }
                     Err(e) => {
                         error!("[WS-BG] ❌ Failed to complete session job {}: {}", jid, e);
+                        // Belt-and-braces for the LTX path (cm may itself retry
+                        // internally): wait one window and retry ONCE.
+                        warn!(
+                            "[WS-BG] Retrying completion for job {} once after {}s",
+                            jid, window_secs
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(window_secs)).await;
+                        if let Err(e2) = checkpoint_manager
+                            .complete_session_job(jid)
+                            .await
+                            .map_err(|e| e.to_string())
+                        {
+                            error!("[WS-BG] ❌ Completion retry failed for job {}: {}", jid, e2);
+                        }
                     }
                 }
             });

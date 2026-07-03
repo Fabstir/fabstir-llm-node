@@ -3,25 +3,34 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.31.8-ltx-flf2v-2026-07-03";
+pub const VERSION: &str = "v8.32.0-ltx-payout-2026-07-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.31.8";
+pub const VERSION_NUMBER: &str = "8.32.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 31;
+pub const VERSION_MINOR: u32 = 32;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 8;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-07-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.32.0 LTX M1 economics: one submitProofOfWork per clip (5-param v8.14.0
+    // form, host-wallet auth) through a ProofSubmit seam on CheckpointManager —
+    // success strictly gated on a confirmed status-1 receipt. tokensClaimed ==
+    // wire billing.tokens (§B). Disconnect-race machine on LtxTracker (pending
+    // COUNT + deferred completion + dispute-window wait); mid-render disconnect
+    // deterministically abandons (interrupt, forfeit, settle at 0).
+    "ltx-payout",
+    "ltx-proof-submit",
+    "ltx-deferred-settlement",
     // v8.31.2 LTX real-template text-to-video (patch on the M0 sidecar): patch by the
     // template's own node names, accept a video output, advisory frame count, and pull
     // rendered files over ComfyUI's /view HTTP endpoint (no shared output volume).
@@ -788,10 +797,14 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 31);
-        assert_eq!(VERSION_PATCH, 8);
+        assert_eq!(VERSION_MINOR, 32);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.32.0 LTX M1 economics (submitProofOfWork per clip)
+        assert!(FEATURES.contains(&"ltx-payout"));
+        assert!(FEATURES.contains(&"ltx-proof-submit"));
+        assert!(FEATURES.contains(&"ltx-deferred-settlement"));
         // v8.31.0 LTX 2.3 generation sidecar (M0)
         assert!(FEATURES.contains(&"ltx-video-sidecar"));
         assert!(FEATURES.contains(&"comfyui-generation"));
@@ -955,14 +968,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.31.8"));
+        assert!(version.contains("8.32.0"));
         assert!(version.contains("2026-07-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.31.8-ltx-flf2v-2026-07-03");
-        assert_eq!(VERSION_NUMBER, "8.31.8");
+        assert_eq!(VERSION, "v8.32.0-ltx-payout-2026-07-03");
+        assert_eq!(VERSION_NUMBER, "8.32.0");
         assert_eq!(BUILD_DATE, "2026-07-03");
     }
 
