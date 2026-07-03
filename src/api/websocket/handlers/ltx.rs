@@ -223,6 +223,16 @@ pub async fn handle_encrypted_ltx_generate(
         );
     }
     let image_max_bytes = store.bundle().bounds.image_max_bytes;
+    // Fail closed if a template accepts images but advertises no size bound —
+    // `imageMaxBytes` unset (0) must NOT mean "unlimited" (that would re-open an
+    // unbounded fetch on a client-influenced size). A correctly configured image
+    // template always sets it.
+    if !images.is_empty() && image_max_bytes == 0 {
+        return reject(
+            "VALIDATION_FAILED",
+            "template accepts images but no imageMaxBytes bound is configured",
+        );
+    }
     for cid in &images {
         let env = match crate::ltx::input_image::parse_capability_cid(cid) {
             Ok(e) => e,
@@ -233,7 +243,7 @@ pub async fn handle_encrypted_ltx_generate(
                 )
             }
         };
-        if image_max_bytes > 0 && env.plaintext_len as u64 > image_max_bytes {
+        if env.plaintext_len as u64 > image_max_bytes {
             return reject(
                 "VALIDATION_FAILED",
                 &format!(
@@ -334,14 +344,20 @@ fn env_or(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
 
-/// The S5 portal base URL for blob READS (`S5_NODE_URL`, default the production
-/// portal). Portal-direct, no auth — deliberately NOT the local `ENHANCED_S5_URL`
-/// bridge, which only does FS-path put/get.
-fn s5_portal_url() -> String {
-    std::env::var("S5_NODE_URL")
+/// The base URL the input-image ciphertext is fetched from. This is the LOCAL S5
+/// BRIDGE (`ENHANCED_S5_URL`, default `http://localhost:5522`), whose
+/// `GET /s5/blob/{cid}` route resolves the blob over the S5 protocol
+/// (`downloadByCID`, P2P) — the same transport the node's uploads and the
+/// transcoder's client-source downloads already use. A raw portal HTTP GET is NOT
+/// a supported transport (it 500s even for blobs that exist), so we go through the
+/// bridge's real S5 client. NOTE (deploy): the bridge must peer with the portal
+/// the client uploads to (`S5_INITIAL_PEERS` must include the
+/// `s5.platformlessai.ai` P2P node) so it can pull a client blob on demand.
+fn s5_blob_source_url() -> String {
+    std::env::var("ENHANCED_S5_URL")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://s5.platformlessai.ai".to_string())
+        .unwrap_or_else(|| "http://localhost:5522".to_string())
 }
 
 /// Resolve an image-conditioned job's inputs (M1a). For each ordered capability
@@ -363,10 +379,10 @@ async fn prepare_input_images(
         Some(imgs) if !imgs.is_empty() => imgs,
         _ => return Ok(graph),
     };
-    let portal = s5_portal_url();
+    let blob_source = s5_blob_source_url();
     let mut stored_names = Vec::with_capacity(images.len());
     for cid in images {
-        let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&portal, cid)
+        let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, cid)
             .await
             .map_err(|e| format!("input image fetch failed: {e}"))?;
         let filename = format!("{}.png", hex::encode(hash));

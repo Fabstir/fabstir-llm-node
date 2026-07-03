@@ -10,8 +10,9 @@ RUN apk add --no-cache curl
 # Create app directory
 WORKDIR /app
 
-# Copy package files and install dependencies
-COPY package*.json ./
+# Copy package files + the vendored s5.js tarball (self-contained build), then install
+COPY package.json ./
+COPY julesl23-s5js-0.9.0-beta.45.tgz ./
 RUN npm install --production
 
 # Copy application code

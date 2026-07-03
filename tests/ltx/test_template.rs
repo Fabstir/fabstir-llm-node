@@ -105,6 +105,22 @@ fn test_i2v_template_hash_stable() {
         Some(&serde_json::Value::Bool(false)),
         "Enable Prompt Enhance must be baked OFF"
     );
+    // ...and that OFF must actually select the RAW prompt: the enhance boolean
+    // (320:328) drives the ComfySwitchNode (320:327) whose `on_false` is the
+    // patched Prompt node (320:319) and `on_true` is the gemma rewrite (320:325).
+    // This is the provenance contract — `inputCommitment` binds 320:319's text, so
+    // switch=false is what makes the committed prompt the one that conditions the
+    // render. (The templateHash golden also locks it, but assert intent explicitly.)
+    assert_eq!(
+        v.pointer("/320:327/inputs/switch").and_then(|s| s.get(0)),
+        Some(&serde_json::Value::String("320:328".to_string())),
+        "enhance switch must be driven by the enhance boolean"
+    );
+    assert_eq!(
+        v.pointer("/320:327/inputs/on_false").and_then(|s| s.get(0)),
+        Some(&serde_json::Value::String("320:319".to_string())),
+        "switch=false must route the RAW patched Prompt node"
+    );
     if I2V_TEMPLATE_HASH != "0x__TBD__" {
         assert_eq!(h, I2V_TEMPLATE_HASH, "golden i2v templateHash drifted");
     }

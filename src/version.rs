@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.31.5-ltx-video-i2v-2026-07-02";
+pub const VERSION: &str = "v8.31.7-ltx-i2v-bridge-fetch-2026-07-02";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.31.5";
+pub const VERSION_NUMBER: &str = "8.31.7";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 31;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 5;
+pub const VERSION_PATCH: u32 = 7;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-07-02";
@@ -39,6 +39,14 @@ pub const FEATURES: &[&str] = &[
     "ltx-i2v",
     "ltx-s5-blob-fetch",
     "inputcommitment-v2",
+    // v8.31.6: portal blob-download CID now uses the BlobIdentifier blake3 multihash
+    // 0x1e (was 0x1f), matching s5.js BlobIdentifier(hash,0).toBase58() — fixes the
+    // i2v input-image portal fetch 404.
+    "ltx-i2v-blobcid-fix",
+    // v8.31.7: input-image blob is fetched through the local S5 bridge's
+    // downloadByCID (P2P) via ENHANCED_S5_URL, not a raw portal HTTP GET (which is
+    // not a supported transport). Bridge must peer with the client's portal.
+    "ltx-i2v-bridge-fetch",
     // v8.31.0 LTX 2.3 generation sidecar (M0)
     "ltx-video-sidecar",
     "comfyui-generation",
@@ -777,7 +785,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 31);
-        assert_eq!(VERSION_PATCH, 5);
+        assert_eq!(VERSION_PATCH, 7);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.31.0 LTX 2.3 generation sidecar (M0)
@@ -791,6 +799,8 @@ mod tests {
         assert!(FEATURES.contains(&"ltx-i2v"));
         assert!(FEATURES.contains(&"ltx-s5-blob-fetch"));
         assert!(FEATURES.contains(&"inputcommitment-v2"));
+        assert!(FEATURES.contains(&"ltx-i2v-blobcid-fix"));
+        assert!(FEATURES.contains(&"ltx-i2v-bridge-fetch"));
         // v8.30.0 TEE / confidential inference (mock backend, Phase 1-4)
         assert!(FEATURES.contains(&"tee-confidential-inference"));
         assert!(FEATURES.contains(&"tee-attestation-mock"));
@@ -940,14 +950,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.31.5"));
+        assert!(version.contains("8.31.7"));
         assert!(version.contains("2026-07-02"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.31.5-ltx-video-i2v-2026-07-02");
-        assert_eq!(VERSION_NUMBER, "8.31.5");
+        assert_eq!(VERSION, "v8.31.7-ltx-i2v-bridge-fetch-2026-07-02");
+        assert_eq!(VERSION_NUMBER, "8.31.7");
         assert_eq!(BUILD_DATE, "2026-07-02");
     }
 
