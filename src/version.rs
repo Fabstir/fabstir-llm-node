@@ -3,16 +3,16 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.33.0-ltx-resolution-ladder-2026-07-03";
+pub const VERSION: &str = "v8.34.0-ltx-duration-2026-07-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.33.0";
+pub const VERSION_NUMBER: &str = "8.34.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 33;
+pub const VERSION_MINOR: u32 = 34;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
@@ -22,6 +22,16 @@ pub const BUILD_DATE: &str = "2026-07-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.34.0 LTX user-selectable clip duration + fps correction (allow-list
+    // bundle v5). Clients pick 5..=15 s at the LTX 2.3 native rates [24,25,48,50]
+    // (the bundle previously advertised a never-supported 30 and omitted 48/50);
+    // frames = fps·secs + 1, bounds.frames widened to {121,751}. The patcher
+    // drives the pinned graphs' existing `Duration` PrimitiveInt (× Frame Rate + 1
+    // → EmptyLTXVLatentVideo.length), so rendered length == billed frames by
+    // construction; NO template file edited (zero templateHash movement). The new
+    // validate_duration enforces exact whole seconds in range; the patcher fails
+    // closed on fps==0 / frames==0.
+    "ltx-duration",
     // v8.33.0 allow-list bundle v4: the full LTX 2.3 resolution ladder up to 4K
     // (landscape 768×512…3840×2160, portrait mirrors, 1024×1024 square) and a
     // 32 MiB input-image cap for 4K stills. Bundle-only change: bundleHash and
@@ -398,6 +408,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.34.0 - LTX Duration + fps correction (Jul 3, 2026)
+    "FEAT: User-selectable LTX clip duration 5..=15s — frames = fps·secs + 1 (allow-list bundle v5)",
+    "FEAT: Corrected advertised fps to LTX 2.3 native rates [24,25,48,50] (dropped never-supported 30, added 48/50)",
+    "FEAT: bounds.frames widened to {121,751}; new validate_duration enforces exact whole seconds in range",
+    "FEAT: Patcher drives the pinned graphs' existing Duration handle so rendered length == billed frames (no template/hash change)",
+    "BUNDLE: allowListVersion 4 -> 5; bundleHash moves; the three templateHashes are UNCHANGED",
     // v8.29.0 - Qwen3.6-35B-A3B Support (May 21, 2026)
     "FEAT: llama-cpp-2 bumped 0.1.122 -> 0.1.146 — adds qwen35moe (Qwen3.6-35B-A3B) architecture support",
     "BUILD: pinned llama-cpp-2 =0.1.146 in Cargo.toml (Cargo.lock is gitignored)",
@@ -812,10 +828,12 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 33);
+        assert_eq!(VERSION_MINOR, 34);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.34.0 LTX duration + fps correction (bundle v5)
+        assert!(FEATURES.contains(&"ltx-duration"));
         // v8.32.0 LTX M1 economics (submitProofOfWork per clip)
         assert!(FEATURES.contains(&"ltx-payout"));
         assert!(FEATURES.contains(&"ltx-proof-submit"));
@@ -987,14 +1005,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.33.0"));
+        assert!(version.contains("8.34.0"));
         assert!(version.contains("2026-07-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.33.0-ltx-resolution-ladder-2026-07-03");
-        assert_eq!(VERSION_NUMBER, "8.33.0");
+        assert_eq!(VERSION, "v8.34.0-ltx-duration-2026-07-03");
+        assert_eq!(VERSION_NUMBER, "8.34.0");
         assert_eq!(BUILD_DATE, "2026-07-03");
     }
 

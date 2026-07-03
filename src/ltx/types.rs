@@ -52,6 +52,20 @@ impl LtxJob {
     pub fn seed_u256(&self) -> Result<U256, String> {
         U256::from_dec_str(&self.seed).map_err(|e| format!("invalid seed {:?}: {e}", self.seed))
     }
+
+    /// Clip length in whole seconds, `(frames - 1) / fps` — the value the pinned
+    /// graph's `Duration` handle takes (it recomputes `Duration * fps + 1` back
+    /// into the latent length). `None` when `fps == 0` or `frames == 0`, which
+    /// would divide by zero / underflow `frames - 1`. Both the patcher and the
+    /// handler's `validate_duration` derive the second-count through THIS one
+    /// method, so billed frames and rendered length can never drift apart from
+    /// two divergent copies of the formula.
+    pub fn duration_secs(&self) -> Option<u32> {
+        if self.fps == 0 || self.frames == 0 {
+            return None;
+        }
+        Some((self.frames - 1) / self.fps)
+    }
 }
 
 /// PUBLIC, KEYLESS frame manifest. Commits to ciphertext frame hashes and a

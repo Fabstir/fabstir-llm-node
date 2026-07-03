@@ -21,14 +21,22 @@ use crate::ltx::types::LtxJob;
 ///
 /// Required handles (fail closed if absent): the positive prompt (`_meta.title ==
 /// "Prompt"`) and at least one `RandomNoise` seed node. Optional (patched only if
-/// present): `Width`, `Height`, `Frame Rate`. `frames` is advisory in this pass —
-/// the pinned graph controls clip length until the EXR pass exposes a direct
-/// frame-count handle.
+/// present): `Width`, `Height`, `Frame Rate`, `Duration`. `Duration` = the clip
+/// length in whole seconds `(frames-1)/fps`; the pinned graph recomputes
+/// `Duration * FrameRate + 1` into `EmptyLTXVLatentVideo.length`, so patching both
+/// `Duration` and `Frame Rate` makes the rendered length equal the billed
+/// `frames`.
 pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Graph> {
     let mut value = graph.0.clone();
     let obj = value
         .as_object_mut()
         .ok_or_else(|| anyhow!("graph is not a node-id object"))?;
+
+    // Duration derives from (frames, fps); `duration_secs()` fails closed on a
+    // zero fps/frames (divide-by-zero / `frames - 1` underflow) before any patch.
+    let duration_secs = job
+        .duration_secs()
+        .ok_or_else(|| anyhow!("invalid frames/fps: frames={}, fps={}", job.frames, job.fps))?;
 
     // Seed: the wire allows a uint256-sized decimal string, but the sampler takes a
     // bounded integer — reject anything outside ComfyUI's u64 noise_seed range.
@@ -45,6 +53,12 @@ pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Grap
     patch_by_title(obj, "Width", "value", Value::from(job.resolution.w), false)?;
     patch_by_title(obj, "Height", "value", Value::from(job.resolution.h), false)?;
     patch_by_title(obj, "Frame Rate", "value", Value::from(job.fps), false)?;
+    // The pinned graph multiplies Duration back by Frame Rate (+1) into
+    // EmptyLTXVLatentVideo.length, so patching BOTH makes the rendered clip length
+    // equal the billed frame count by construction (the handler's
+    // `validate_duration` guarantees (frames-1) % fps == 0). Same optional handle
+    // as the dims — a synthetic graph without it is a no-op.
+    patch_by_title(obj, "Duration", "value", Value::from(duration_secs), false)?;
 
     // Image inputs (M1a): assign `image_names[i]` to the i-th `LoadImage` node,
     // ordering nodes by their id lexicographically ascending. This is universal

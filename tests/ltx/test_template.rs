@@ -19,8 +19,9 @@ const I2V_TEMPLATE_HASH: &str =
 const FLF2V_TEMPLATE_HASH: &str =
     "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721";
 /// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
-/// ladder + 32 MiB image cap); the t2v/i2v/flf2v graph hashes above must NOT move.
-const BUNDLE_HASH: &str = "0xc43974a8e0f1f7201affce950f6bf4408ee2a1626d775c4e2a1e57bf654f39fc";
+/// ladder + 32 MiB image cap; v5 the clip-duration bounds frames {121,751} and
+/// corrected fps [24,25,48,50]); the t2v/i2v/flf2v graph hashes above must NOT move.
+const BUNDLE_HASH: &str = "0xc6f1091dc3d4fbae2a757db1a43141443e593107b697ff895c52f3ee712664b7";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -183,7 +184,7 @@ fn test_flf2v_template_hash_stable() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 4, "v4 allow-list");
+    assert_eq!(b.allow_list_version, 5, "v5 allow-list");
     let flf = b
         .templates
         .iter()
@@ -205,7 +206,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 4, "v4 allow-list");
+    assert_eq!(b.allow_list_version, 5, "v5 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -232,8 +233,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 4,
-        "v4 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 5,
+        "v5 allow-list (t2v/i2v entries unchanged)"
     );
     let t2v = b
         .templates

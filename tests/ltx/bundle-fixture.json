@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 4,
-  "bundleHash": "0xc43974a8e0f1f7201affce950f6bf4408ee2a1626d775c4e2a1e57bf654f39fc",
+  "allowListVersion": 5,
+  "bundleHash": "0xc6f1091dc3d4fbae2a757db1a43141443e593107b697ff895c52f3ee712664b7",
   "templates": [
     {
       "templateId": "ltx-flf2v-hdr",
@@ -30,13 +30,14 @@
   ],
   "bounds": {
     "frames": {
-      "min": 1,
-      "max": 257
+      "min": 121,
+      "max": 751
     },
     "fps": [
       24,
       25,
-      30
+      48,
+      50
     ],
     "resolutions": [
       {

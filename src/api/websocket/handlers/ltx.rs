@@ -150,6 +150,33 @@ fn validate_bounds(job: &LtxJob, b: &Bounds) -> bool {
         && b.resolutions.contains(&job.resolution)
 }
 
+/// Enforce the clip-duration contract on top of [`validate_bounds`]. The bundle's
+/// `frames` min/max and `fps` membership are already checked there; here `frames`
+/// must land on an exact whole second at the job's fps and the derived duration
+/// must be 5..=15 s. The range is checked on the integer-divided second count
+/// FIRST (so a sub-5 s clip reports a duration-range error even when it also fails
+/// divisibility), then the exact-whole-second divisibility. `fps == 0` is guarded
+/// so this never divides by zero even if a future bounds change lets 0 through.
+fn validate_duration(job: &LtxJob) -> Result<(), String> {
+    // `duration_secs()` owns the (frames-1)/fps derivation and its zero-guard, so
+    // the patcher and this check can never diverge. `None` = zero fps/frames.
+    let secs = job
+        .duration_secs()
+        .ok_or_else(|| format!("invalid frames/fps: frames={}, fps={}", job.frames, job.fps))?;
+    if !(5..=15).contains(&secs) {
+        return Err(format!(
+            "clip duration {secs}s is out of range (must be 5..=15s)"
+        ));
+    }
+    if (job.frames - 1) % job.fps != 0 {
+        return Err(format!(
+            "frames {} is not a whole number of seconds at {} fps",
+            job.frames, job.fps
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Handler: validate + accept (immediate ack) or reject
 // ---------------------------------------------------------------------------
@@ -204,6 +231,12 @@ pub async fn handle_encrypted_ltx_generate(
     };
     if !validate_bounds(&job, &store.bundle().bounds) {
         return reject("VALIDATION_FAILED", "job params out of allow-list bounds");
+    }
+    // Clip-duration contract (5..=15 s, exact whole seconds at the job's fps) —
+    // enforced after the bundle bounds so fps membership / frame min-max fire
+    // first with their own message.
+    if let Err(msg) = validate_duration(&job) {
+        return reject("VALIDATION_FAILED", &msg);
     }
 
     // Input-image validation (M1a), fail-closed BEFORE a slot is spent. The
@@ -937,5 +970,36 @@ impl LtxGenerateTask {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_duration;
+    use crate::ltx::types::{LtxJob, OutputKind, Resolution};
+
+    fn job(frames: u32, fps: u32) -> LtxJob {
+        LtxJob {
+            template_id: "ltx-t2v-hdr".to_string(),
+            template_hash: "0x00".to_string(),
+            prompt: "p".to_string(),
+            seed: "1".to_string(),
+            frames,
+            fps,
+            resolution: Resolution { w: 1280, h: 720 },
+            lora: "ltx-iclora-hdr@v1".to_string(),
+            output: OutputKind::ExrSequence,
+            images: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_duration_guards_zero() {
+        // The one validate_duration case the handler pipeline can't reach
+        // (validate_bounds rejects a 0 frame count first); the accept /
+        // divisibility / range matrix is exercised end-to-end in
+        // tests/ltx_api/test_ws.rs::test_duration_{accepts,rejects}_matrix.
+        assert!(validate_duration(&job(121, 0)).is_err(), "fps 0 guarded");
+        assert!(validate_duration(&job(0, 24)).is_err(), "frames 0 guarded");
     }
 }
