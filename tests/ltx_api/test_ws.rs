@@ -120,7 +120,7 @@ async fn test_i2v_accepted_ack() {
     assert!(task.is_some(), "valid one-image i2v job is accepted");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 2, "v2 allow-list echoed");
+    assert_eq!(inner["allowListVersion"], 3, "v3 allow-list echoed");
 }
 
 #[tokio::test]

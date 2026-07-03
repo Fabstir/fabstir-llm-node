@@ -1,8 +1,9 @@
 {
-  "allowListVersion": 2,
+  "allowListVersion": 3,
   "templates": [
     { "templateId": "ltx-t2v-hdr", "version": "v1" },
-    { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] }
+    { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
+    { "templateId": "ltx-flf2v-hdr", "version": "v1", "imageInputs": 2, "imageSemantics": ["firstFrame", "lastFrame"] }
   ],
   "loras": ["ltx-iclora-hdr@v1"],
   "bounds": {

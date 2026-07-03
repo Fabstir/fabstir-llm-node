@@ -14,9 +14,13 @@ const HDR_TEMPLATE_HASH: &str =
 /// i2v graph hash (prompt-enhance baked OFF).
 const I2V_TEMPLATE_HASH: &str =
     "0x1074478991672ae0e0c668c1adf13f9e04dcd79edaaebfa5ae25f8d63c7831bd";
-/// Bundle hash MOVES at the v2 bump (adds the i2v template + image fields); the
-/// t2v graph hash above must NOT move.
-const BUNDLE_HASH: &str = "0xa1deab6fcafab6e986788ee55ed4179abd78cf8b3fdb578dae1210dd32ebfe94";
+/// flf2v graph hash (curated: positive CLIPTextEncode retitled Prompt, height/Frame
+/// Rate retitled to match the patcher handles).
+const FLF2V_TEMPLATE_HASH: &str =
+    "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721";
+/// Bundle hash MOVES at each bundle bump (v3 adds flf2v); the t2v/i2v graph hashes
+/// above must NOT move.
+const BUNDLE_HASH: &str = "0x6407a1c0ae48ce7f85d67a1777fd82e514a6469dc65d5b7eef5e79685124cf09";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -132,10 +136,75 @@ fn test_i2v_template_hash_stable() {
 }
 
 #[test]
+fn test_flf2v_template_hash_stable() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let h = store
+        .template_hash("ltx-flf2v-hdr")
+        .expect("flf2v template present");
+    eprintln!("GOLD FLF2V_TEMPLATE_HASH={h}");
+    assert!(h.starts_with("0x") && h.len() == 66, "hash shape: {h}");
+    let raw = std::fs::read(format!("{DIR}/ltx-flf2v-hdr/v1.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let expect = keccak_hex(serde_json::to_vec(&sort_json_keys(&v)).unwrap());
+    assert_eq!(h, expect);
+    // Curated so the patcher's handles match: exactly one "Prompt"-titled node
+    // (the POSITIVE CLIPTextEncode 129:128), plus Height / Frame Rate.
+    let titles: Vec<&str> = v
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(|n| n.pointer("/_meta/title").and_then(|t| t.as_str()))
+        .collect();
+    assert_eq!(
+        titles.iter().filter(|t| **t == "Prompt").count(),
+        1,
+        "exactly one Prompt handle"
+    );
+    assert_eq!(
+        v.pointer("/129:128/_meta/title").and_then(|t| t.as_str()),
+        Some("Prompt"),
+        "the positive CLIPTextEncode is the Prompt handle"
+    );
+    if FLF2V_TEMPLATE_HASH != "0x__TBD__" {
+        assert_eq!(h, FLF2V_TEMPLATE_HASH, "golden flf2v templateHash drifted");
+    }
+    // t2v + i2v graph hashes are unmoved by adding flf2v.
+    assert_eq!(
+        store.template_hash("ltx-t2v-hdr").unwrap(),
+        HDR_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-i2v-hdr").unwrap(),
+        I2V_TEMPLATE_HASH
+    );
+}
+
+#[test]
+fn test_bundle_v3_has_flf2v() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let b = store.bundle();
+    assert_eq!(b.allow_list_version, 3, "v3 allow-list");
+    let flf = b
+        .templates
+        .iter()
+        .find(|t| t.template_id == "ltx-flf2v-hdr")
+        .unwrap();
+    assert_eq!(flf.image_inputs, 2);
+    assert_eq!(
+        flf.image_semantics,
+        vec!["firstFrame".to_string(), "lastFrame".to_string()]
+    );
+    assert_eq!(store.image_inputs("ltx-flf2v-hdr"), Some(2));
+}
+
+#[test]
 fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 2, "v2 allow-list");
+    assert_eq!(
+        b.allow_list_version, 3,
+        "v3 allow-list (t2v/i2v entries unchanged)"
+    );
     let t2v = b
         .templates
         .iter()
