@@ -422,17 +422,25 @@ fn test_all_templates_have_duration_wiring() {
                 (a == Some(dur.as_str()) && b == Some(fr.as_str())).then(|| nid.clone())
             })
             .unwrap_or_else(|| panic!("{id}: a*b+1 math fed by Duration and Frame Rate"));
-        // That math output feeds at least one EmptyLTXVLatentVideo.length.
-        let feeds_length = obj.values().any(|n| {
-            n.get("class_type").and_then(Value::as_str) == Some("EmptyLTXVLatentVideo")
-                && n.pointer("/inputs/length")
-                    .and_then(|x| x.get(0))
-                    .and_then(Value::as_str)
-                    == Some(math_id.as_str())
-        });
+        // That math output must feed BOTH the video latent `length` AND the audio
+        // `frames_number` (video and audio in lockstep) — a re-export that drops
+        // or rewires only one of the two still fails CI.
+        let feeds = |class: &str, input: &str| {
+            obj.values().any(|n| {
+                n.get("class_type").and_then(Value::as_str) == Some(class)
+                    && n.pointer(&format!("/inputs/{input}"))
+                        .and_then(|x| x.get(0))
+                        .and_then(Value::as_str)
+                        == Some(math_id.as_str())
+            })
+        };
         assert!(
-            feeds_length,
+            feeds("EmptyLTXVLatentVideo", "length"),
             "{id}: math output feeds EmptyLTXVLatentVideo.length"
+        );
+        assert!(
+            feeds("LTXVEmptyLatentAudio", "frames_number"),
+            "{id}: math output feeds LTXVEmptyLatentAudio.frames_number"
         );
     }
 }
