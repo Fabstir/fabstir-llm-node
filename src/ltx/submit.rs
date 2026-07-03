@@ -141,47 +141,47 @@ pub async fn finalize_clip(
         return Ok((proof_cid, false));
     }
 
-    match sub
-        .submit_ltx_proof(jid, tokens, proof_hash, proof_cid.clone())
-        .await
-    {
-        Ok(tx) => {
-            info!("LTX job {jid}: proof landed ({tokens} tokens, tx {tx:?})");
-            tracker.mark_proof_submitted(jid).await;
-            Ok((proof_cid, true))
-        }
-        Err(e) if e.to_string().contains("Too many") => {
-            // Rate limit: tokensClaimed ≤ elapsed_secs × 2000. Bounded retry:
-            // one wait of ≈ tokens/2000 (+5s). Holds the VRAM permit (~60s worst
-            // case on a 110k-token clip) — accepted.
-            let wait = tokens / 2000 + 5;
-            warn!(
-                "LTX job {jid}: rate-limited (\"Too many\"), retrying once in {wait}s \
-                 (holding the generation slot)"
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-            match sub
-                .submit_ltx_proof(jid, tokens, proof_hash, proof_cid.clone())
-                .await
-            {
-                Ok(tx) => {
-                    info!("LTX job {jid}: proof landed on retry ({tokens} tokens, tx {tx:?})");
-                    tracker.mark_proof_submitted(jid).await;
-                    Ok((proof_cid, true))
-                }
-                Err(e2) => {
-                    error!(
-                        "LTX job {jid}: proof submit failed after retry — revenue forfeited: {e2}"
-                    );
-                    tracker.mark_proof_forfeited(jid).await;
-                    Ok((proof_cid, false))
-                }
+    // Submit with a bounded rate-limit retry loop. "Too many" means
+    // tokensClaimed > elapsed×2000 since lastProofTime — and lastProofTime
+    // MOVES if a sibling clip's proof lands during our sleep
+    // (MAX_CONCURRENT_GENERATIONS > 1), so one fixed wait is not always
+    // enough. Recompute-and-retry, at most MAX_SUBMIT_ATTEMPTS; the sleeps
+    // hold the VRAM permit (worst ≈2min on a 110k-token clip) — accepted and
+    // logged. Non-rate-limit errors never retry (a mined status-0 revert
+    // carries no reason string, so it lands here too — conservative forfeit).
+    const MAX_SUBMIT_ATTEMPTS: u32 = 3;
+    let mut attempt = 1u32;
+    loop {
+        match sub
+            .submit_ltx_proof(jid, tokens, proof_hash, proof_cid.clone())
+            .await
+        {
+            Ok(tx) => {
+                info!(
+                    "LTX job {jid}: proof landed ({tokens} tokens, tx {tx:?}, \
+                     attempt {attempt})"
+                );
+                tracker.mark_proof_submitted(jid).await;
+                return Ok((proof_cid, true));
             }
-        }
-        Err(e) => {
-            error!("LTX job {jid}: proof submit failed — revenue forfeited: {e}");
-            tracker.mark_proof_forfeited(jid).await;
-            Ok((proof_cid, false))
+            Err(e) if e.to_string().contains("Too many") && attempt < MAX_SUBMIT_ATTEMPTS => {
+                let wait = tokens / 2000 + 5;
+                warn!(
+                    "LTX job {jid}: rate-limited (\"Too many\"), attempt \
+                     {attempt}/{MAX_SUBMIT_ATTEMPTS} — retrying in {wait}s \
+                     (holding the generation slot)"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                attempt += 1;
+            }
+            Err(e) => {
+                error!(
+                    "LTX job {jid}: proof submit failed (attempt {attempt}) — \
+                     revenue forfeited: {e}"
+                );
+                tracker.mark_proof_forfeited(jid).await;
+                return Ok((proof_cid, false));
+            }
         }
     }
 }

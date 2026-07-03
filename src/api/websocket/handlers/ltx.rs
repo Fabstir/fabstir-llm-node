@@ -275,9 +275,17 @@ pub async fn handle_encrypted_ltx_generate(
     // gap a disconnect could settle through (0-token settle under a rendering
     // clip). Sessionless requests and cm-less nodes (tests) mark nothing. Also
     // cancels a stale deferral on a reconnected session (see LtxTracker).
+    // ATOMIC accept gate: the mark fails while a completeSessionJob dispatched
+    // within the latch window is in flight (disconnect + fast reconnect) — a
+    // clip accepted mid-completion would be settled under (proof reverts, clip
+    // delivers free, session dead). Maps to CAPACITY (retryable; the latch
+    // self-expires). The permit drops with the reject.
+    let latch = std::time::Duration::from_secs(crate::ltx::billing::COMPLETING_LATCH_SECS);
     let pending_marked = match job_id {
         Some(jid) if server.get_checkpoint_manager().await.is_some() => {
-            server.ltx_tracker().mark_proof_pending(jid).await;
+            if !server.ltx_tracker().mark_proof_pending(jid, latch).await {
+                return reject("CAPACITY", "session settlement in progress — retry shortly");
+            }
             true
         }
         _ => false,
@@ -627,7 +635,20 @@ impl LtxGenerateTask {
                     prompt_id
                 );
 
-                let _ = send_stage(&progress_tx, "encrypting", 0, key, sid, rid).await;
+                // Stage-transition sends double as DISCONNECT GATES: a failed
+                // send means the client is gone, and every capability CID
+                // delivered only in `ltx_complete` would die unsent — billing
+                // an undeliverable clip. Abandon at each cheap gate BEFORE the
+                // next irreversible step (S5 uploads / the proof submit); the
+                // single-exit cleanup forfeits and settles at 0 for this clip.
+                // (The per-frame pct sends stay fire-and-forget; the next gate
+                // catches a mid-loop disconnect before the submit.) Residual
+                // accepted window: a disconnect after the finalising gate, i.e.
+                // during upload+submit itself.
+                if !send_stage(&progress_tx, "encrypting", 0, key, sid, rid).await {
+                    warn!("LTX job abandoned post-render: client disconnected before delivery");
+                    return;
+                }
                 let total = output_refs.len();
                 let mut caps = Vec::with_capacity(total);
                 let mut hashes = Vec::with_capacity(total);
@@ -672,7 +693,10 @@ impl LtxGenerateTask {
                     let _ = send_stage(&progress_tx, "encrypting", pct, key, sid, rid).await;
                 }
 
-                let _ = send_stage(&progress_tx, "uploading", 0, key, sid, rid).await;
+                if !send_stage(&progress_tx, "uploading", 0, key, sid, rid).await {
+                    warn!("LTX job abandoned post-encrypt: client disconnected before delivery");
+                    return;
+                }
                 let manifest = match exr::build_manifest(&hashes, &job) {
                     Ok(m) => m,
                     Err(e) => {
@@ -710,7 +734,13 @@ impl LtxGenerateTask {
                     }
                 };
 
-                let _ = send_stage(&progress_tx, "finalising", 0, key, sid, rid).await;
+                // The LAST gate before the proof submit — after this the clip
+                // is billed, so an unsendable ltx_complete must be ruled out
+                // as late as detection allows.
+                if !send_stage(&progress_tx, "finalising", 0, key, sid, rid).await {
+                    warn!("LTX job abandoned pre-submit: client disconnected before delivery");
+                    return;
+                }
                 // TODO(GPU-acceptance): real reproduction hashes hydrate envHash.
                 let env_meta = EnvMeta {
                     weights_hash: env_or("LTX_WEIGHTS_HASH"),
@@ -803,6 +833,9 @@ impl LtxGenerateTask {
                 if let Some(jid) = job_id {
                     let ppt = U256::from_dec_str(&price).unwrap_or_default();
                     let cost = U256::from(tokens).checked_mul(ppt).unwrap_or(U256::MAX);
+                    // Metrics/observability totals: includes clips whose submit
+                    // was forfeited (delivered but unproven) — the on-chain
+                    // claim is what finalize_clip actually submitted.
                     server
                         .ltx_tracker()
                         .track(jid, Some(session_id.clone()), tokens, cost)
@@ -826,6 +859,9 @@ impl LtxGenerateTask {
                 );
             };
             core.await;
+            // Render is over on every core exit — release the VRAM slot before
+            // any settlement sleeps (the deferred path can wait 35s+).
+            drop(_permit);
 
             // SINGLE-EXIT cleanup — every core exit funnels through here.
             // (a) An exit before finalize_clip leaves the clip's pending
@@ -836,11 +872,15 @@ impl LtxGenerateTask {
             //     dispute window since the last landed proof (host caller
             //     reverts "Dispute wait" inside it), then complete — one
             //     belt-and-braces retry (cm may also retry internally).
+            //     PEEK (read-only) before the sleep, TAKE only at wake: a clip
+            //     accepted on a reconnected session mid-sleep clears the flag
+            //     at accept, so the take fails and completion ownership moves
+            //     to that clip's own lifecycle — never settle under it.
             if let Some(jid) = job_id {
                 if pending_marked && !pending_resolved {
                     server.ltx_tracker().mark_proof_forfeited(jid).await;
                 }
-                if server.ltx_tracker().take_deferred_if_idle(jid).await {
+                if server.ltx_tracker().deferred_idle(jid).await {
                     if let Some(cm) = server.get_checkpoint_manager().await {
                         let window = cm.dispute_window_secs()
                             + crate::contracts::checkpoint_manager::DISPUTE_WINDOW_BUFFER_SECS;
@@ -851,6 +891,15 @@ impl LtxGenerateTask {
                                 wait.as_secs()
                             );
                             tokio::time::sleep(wait).await;
+                        }
+                        // The take also SETS the completing latch (same lock):
+                        // accepts are rejected while the completion runs.
+                        if !server.ltx_tracker().take_deferred_if_idle(jid).await {
+                            info!(
+                                "LTX job {jid}: deferred completion ownership moved to a newer \
+                                 clip — skipping"
+                            );
+                            return;
                         }
                         info!("LTX job {jid}: running deferred session completion");
                         // complete_session_job's error is a non-Send Box<dyn
@@ -865,6 +914,15 @@ impl LtxGenerateTask {
                                  after {window}s"
                             );
                             tokio::time::sleep(std::time::Duration::from_secs(window)).await;
+                            // Atomically re-latch for the retry; false = a
+                            // newer clip owns completion now.
+                            if !server.ltx_tracker().mark_completing_if_idle(jid).await {
+                                info!(
+                                    "LTX job {jid}: a newer clip is in flight — abandoning the \
+                                     completion retry to its lifecycle"
+                                );
+                                return;
+                            }
                             let retry = cm
                                 .complete_session_job(jid)
                                 .await
