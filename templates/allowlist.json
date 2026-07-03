@@ -1,5 +1,5 @@
 {
-  "allowListVersion": 3,
+  "allowListVersion": 4,
   "templates": [
     { "templateId": "ltx-t2v-hdr", "version": "v1" },
     { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
@@ -11,9 +11,16 @@
     "fps": [24, 25, 30],
     "resolutions": [
       { "w": 768, "h": 512 },
-      { "w": 1280, "h": 720 }
+      { "w": 1280, "h": 720 },
+      { "w": 1920, "h": 1080 },
+      { "w": 2560, "h": 1440 },
+      { "w": 3840, "h": 2160 },
+      { "w": 512, "h": 768 },
+      { "w": 720, "h": 1280 },
+      { "w": 1080, "h": 1920 },
+      { "w": 1024, "h": 1024 }
     ],
-    "imageMaxBytes": 8388608,
+    "imageMaxBytes": 33554432,
     "imageFormats": ["png", "jpeg", "webp"]
   }
 }

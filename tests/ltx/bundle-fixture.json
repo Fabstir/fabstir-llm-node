@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 3,
-  "bundleHash": "0x6407a1c0ae48ce7f85d67a1777fd82e514a6469dc65d5b7eef5e79685124cf09",
+  "allowListVersion": 4,
+  "bundleHash": "0xc43974a8e0f1f7201affce950f6bf4408ee2a1626d775c4e2a1e57bf654f39fc",
   "templates": [
     {
       "templateId": "ltx-flf2v-hdr",
@@ -46,9 +46,37 @@
       {
         "w": 1280,
         "h": 720
+      },
+      {
+        "w": 1920,
+        "h": 1080
+      },
+      {
+        "w": 2560,
+        "h": 1440
+      },
+      {
+        "w": 3840,
+        "h": 2160
+      },
+      {
+        "w": 512,
+        "h": 768
+      },
+      {
+        "w": 720,
+        "h": 1280
+      },
+      {
+        "w": 1080,
+        "h": 1920
+      },
+      {
+        "w": 1024,
+        "h": 1024
       }
     ],
-    "imageMaxBytes": 8388608,
+    "imageMaxBytes": 33554432,
     "imageFormats": [
       "png",
       "jpeg",

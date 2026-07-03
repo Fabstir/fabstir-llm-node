@@ -18,9 +18,9 @@ const I2V_TEMPLATE_HASH: &str =
 /// Rate retitled to match the patcher handles).
 const FLF2V_TEMPLATE_HASH: &str =
     "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721";
-/// Bundle hash MOVES at each bundle bump (v3 adds flf2v); the t2v/i2v graph hashes
-/// above must NOT move.
-const BUNDLE_HASH: &str = "0x6407a1c0ae48ce7f85d67a1777fd82e514a6469dc65d5b7eef5e79685124cf09";
+/// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
+/// ladder + 32 MiB image cap); the t2v/i2v/flf2v graph hashes above must NOT move.
+const BUNDLE_HASH: &str = "0xc43974a8e0f1f7201affce950f6bf4408ee2a1626d775c4e2a1e57bf654f39fc";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -183,7 +183,7 @@ fn test_flf2v_template_hash_stable() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 3, "v3 allow-list");
+    assert_eq!(b.allow_list_version, 4, "v4 allow-list");
     let flf = b
         .templates
         .iter()
@@ -198,12 +198,42 @@ fn test_bundle_v3_has_flf2v() {
 }
 
 #[test]
+fn test_bundle_v4_resolution_ladder() {
+    // v4: the full ladder up to 4K (LTX 2.3 renders it; the old list was the
+    // M0 conservative pair). Landscape + portrait mirrors + square. COST NOTE:
+    // 3840×2160×121f = 1,003,623 tokens ≈ $0.91 gross at price 904 — ABOVE the
+    // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
+    let store = TemplateStore::new(DIR).unwrap();
+    let b = store.bundle();
+    assert_eq!(b.allow_list_version, 4, "v4 allow-list");
+    let expect = [
+        (768u32, 512u32),
+        (1280, 720),
+        (1920, 1080),
+        (2560, 1440),
+        (3840, 2160),
+        (512, 768),
+        (720, 1280),
+        (1080, 1920),
+        (1024, 1024),
+    ];
+    for (w, h) in expect {
+        assert!(
+            b.bounds.resolutions.iter().any(|r| r.w == w && r.h == h),
+            "resolution {w}x{h} missing from the v4 ladder"
+        );
+    }
+    // 4K input stills for i2v/flf2v need headroom over the old 8 MiB.
+    assert_eq!(b.bounds.image_max_bytes, 33_554_432, "32 MiB image cap");
+}
+
+#[test]
 fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 3,
-        "v3 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 4,
+        "v4 allow-list (t2v/i2v entries unchanged)"
     );
     let t2v = b
         .templates
@@ -219,8 +249,8 @@ fn test_bundle_v2_has_image_inputs() {
         .unwrap();
     assert_eq!(i2v.image_inputs, 1);
     assert_eq!(i2v.image_semantics, vec!["firstFrame".to_string()]);
-    // Image bounds advertised.
-    assert_eq!(b.bounds.image_max_bytes, 8_388_608);
+    // Image bounds advertised (v4 raised the cap for 4K stills).
+    assert_eq!(b.bounds.image_max_bytes, 33_554_432);
     assert_eq!(b.bounds.image_formats, vec!["png", "jpeg", "webp"]);
     // The handler's format-selector accessor.
     assert_eq!(store.image_inputs("ltx-i2v-hdr"), Some(1));

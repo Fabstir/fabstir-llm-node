@@ -68,9 +68,9 @@ fn fixture_capability_cid() -> String {
     v["capabilityCid"].as_str().unwrap().to_string()
 }
 
-/// A well-formed `0xae` envelope whose plaintextCID length field claims 9 MB
-/// (> `imageMaxBytes` 8 MB). The pre-fetch gate reads only this length, so the
-/// oversize reject needs no 9 MB allocation.
+/// A well-formed `0xae` envelope whose plaintextCID length field claims 34 MB
+/// (> the v4 `imageMaxBytes` 32 MiB). The pre-fetch gate reads only this
+/// length, so the oversize reject needs no real allocation.
 fn oversize_capability_cid() -> String {
     let mut env = vec![0xaeu8, 0xa6, 18, 0x1f];
     env.extend_from_slice(&[0u8; 32]); // ct_hash
@@ -79,7 +79,7 @@ fn oversize_capability_cid() -> String {
     env.push(0x26);
     env.push(0x1f);
     env.extend_from_slice(&[0u8; 32]); // pt_hash
-    let mut sle = 9_000_000u64.to_le_bytes().to_vec();
+    let mut sle = 34_000_000u64.to_le_bytes().to_vec();
     while sle.len() > 1 && *sle.last().unwrap() == 0 {
         sle.pop();
     }
@@ -120,7 +120,7 @@ async fn test_i2v_accepted_ack() {
     assert!(task.is_some(), "valid one-image i2v job is accepted");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 3, "v3 allow-list echoed");
+    assert_eq!(inner["allowListVersion"], 4, "v4 allow-list echoed");
 }
 
 #[tokio::test]
