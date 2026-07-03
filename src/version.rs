@@ -3,25 +3,32 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.32.1-ltx-payout-hardening-2026-07-03";
+pub const VERSION: &str = "v8.33.0-ltx-resolution-ladder-2026-07-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.32.1";
+pub const VERSION_NUMBER: &str = "8.33.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 32;
+pub const VERSION_MINOR: u32 = 33;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-07-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.33.0 allow-list bundle v4: the full LTX 2.3 resolution ladder up to 4K
+    // (landscape 768×512…3840×2160, portrait mirrors, 1024×1024 square) and a
+    // 32 MiB input-image cap for 4K stills. Bundle-only change: bundleHash and
+    // allowListVersion move; NO template/commitment/wire change. NOTE: a 4K
+    // 121-frame clip is ~1,003,623 tokens ≈ $0.91 gross at price 904 — the SDK
+    // must size deposits from ltxTokens(job), the $0.50 floor cannot cover it.
+    "ltx-resolution-ladder-4k",
     // v8.32.0 LTX M1 economics: one submitProofOfWork per clip (5-param v8.14.0
     // form, host-wallet auth) through a ProofSubmit seam on CheckpointManager —
     // success strictly gated on a confirmed status-1 receipt. tokensClaimed ==
@@ -805,8 +812,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 32);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 33);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.32.0 LTX M1 economics (submitProofOfWork per clip)
@@ -815,6 +822,8 @@ mod tests {
         assert!(FEATURES.contains(&"ltx-deferred-settlement"));
         // v8.32.1 review hardening (atomic accept gate, delivery gates)
         assert!(FEATURES.contains(&"ltx-payout-race-hardening"));
+        // v8.33.0 bundle v4 resolution ladder
+        assert!(FEATURES.contains(&"ltx-resolution-ladder-4k"));
         // v8.31.0 LTX 2.3 generation sidecar (M0)
         assert!(FEATURES.contains(&"ltx-video-sidecar"));
         assert!(FEATURES.contains(&"comfyui-generation"));
@@ -978,14 +987,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.32.1"));
+        assert!(version.contains("8.33.0"));
         assert!(version.contains("2026-07-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.32.1-ltx-payout-hardening-2026-07-03");
-        assert_eq!(VERSION_NUMBER, "8.32.1");
+        assert_eq!(VERSION, "v8.33.0-ltx-resolution-ladder-2026-07-03");
+        assert_eq!(VERSION_NUMBER, "8.33.0");
         assert_eq!(BUILD_DATE, "2026-07-03");
     }
 
