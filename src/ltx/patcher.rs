@@ -39,13 +39,7 @@ pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Grap
     let seed = seed.as_u64();
 
     // Required.
-    patch_by_title(
-        obj,
-        "Prompt",
-        "value",
-        Value::from(job.prompt.clone()),
-        true,
-    )?;
+    patch_prompt(obj, &job.prompt)?;
     patch_by_class(obj, "RandomNoise", "noise_seed", Value::from(seed), true)?;
     // Optional (patched only where the pinned graph exposes them as literals).
     patch_by_title(obj, "Width", "value", Value::from(job.resolution.w), false)?;
@@ -77,6 +71,48 @@ pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Grap
     }
 
     Ok(Graph(value))
+}
+
+/// Set the positive prompt on the `Prompt`-titled node(s), writing whichever leaf
+/// text input the node exposes: `value` (a `PrimitiveStringMultiline`, as t2v/i2v
+/// use) or `text` (a `CLIPTextEncode`, as flf2v's curated positive node uses).
+/// Required: fail closed if there is no `Prompt` handle, or it has neither leaf
+/// (which also preserves the never-overwrite-a-wired-connection guarantee).
+fn patch_prompt(graph: &mut Map<String, Value>, prompt: &str) -> Result<()> {
+    let ids: Vec<String> = graph
+        .iter()
+        .filter(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some("Prompt"))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if ids.is_empty() {
+        return Err(anyhow!(
+            "template is missing the required handle \"Prompt\""
+        ));
+    }
+    for id in ids {
+        let key = prompt_input_key(graph, &id)?;
+        set_input(graph, &id, key, Value::from(prompt.to_string()))?;
+    }
+    Ok(())
+}
+
+/// The leaf text-input key on a `Prompt` node: `value` if present as a leaf, else
+/// `text`. Errors if neither is a patchable leaf, so a wired connection can never
+/// be overwritten (same guarantee as [`set_input`]).
+fn prompt_input_key(graph: &Map<String, Value>, node_id: &str) -> Result<&'static str> {
+    let inputs = graph
+        .get(node_id)
+        .and_then(|n| n.get("inputs"))
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("node {node_id} has no inputs object"))?;
+    for key in ["value", "text"] {
+        if inputs.get(key).is_some_and(|v| !v.is_array()) {
+            return Ok(key);
+        }
+    }
+    Err(anyhow!(
+        "Prompt node {node_id} has no patchable leaf `value`/`text` input"
+    ))
 }
 
 /// Set `key` on every node whose `_meta.title` equals `title`. If none match and

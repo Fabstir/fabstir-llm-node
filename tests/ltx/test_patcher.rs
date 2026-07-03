@@ -22,6 +22,13 @@ fn i2v_graph() -> Graph {
     Graph(serde_json::from_slice(&raw).unwrap())
 }
 
+/// The curated, pinned flf2v graph (two `LoadImage` 31/39; positive prompt is the
+/// `CLIPTextEncode` 129:128 retitled `Prompt`; `Height`/`Frame Rate` retitled).
+fn flf2v_graph() -> Graph {
+    let raw = std::fs::read(format!("{DIR}/ltx-flf2v-hdr/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
 fn job() -> LtxJob {
     LtxJob {
         template_id: "ltx-t2v-hdr".to_string(),
@@ -209,6 +216,63 @@ fn test_patch_loadimage_refuses_wired() {
     let mut g = i2v_graph();
     g.0["269"]["inputs"]["image"] = serde_json::json!(["12", 0]);
     assert!(patch(&g, &job(), &["x.png".to_string()]).is_err());
+}
+
+#[test]
+fn test_patch_flf2v_prompt_images_and_dims() {
+    // flf2v: two images, and the positive prompt is a CLIPTextEncode (.text), not
+    // a PrimitiveStringMultiline (.value) — the patcher must drive both.
+    let names = vec!["first.png".to_string(), "last.png".to_string()];
+    let g = patch(&flf2v_graph(), &job(), &names).unwrap();
+    // Prompt -> the POSITIVE CLIPTextEncode's .text (129:128).
+    assert_eq!(
+        g.0.pointer("/129:128/inputs/text")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "a derelict spaceship corridor"
+    );
+    // The negative prompt (129:112) is baked into the pin, untouched.
+    assert_ne!(
+        g.0.pointer("/129:112/inputs/text")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "a derelict spaceship corridor"
+    );
+    // Images by node-id ascending: 31 = first, 39 = last.
+    assert_eq!(g.0.pointer("/31/inputs/image").unwrap(), "first.png");
+    assert_eq!(g.0.pointer("/39/inputs/image").unwrap(), "last.png");
+    // Dims/fps via the retitled Width / Height / Frame Rate handles.
+    assert_eq!(
+        g.0.pointer("/129:113/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        1280
+    );
+    assert_eq!(
+        g.0.pointer("/129:98/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        720
+    );
+    assert_eq!(
+        g.0.pointer("/129:114/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        25
+    );
+    // Seed into RandomNoise.
+    assert_eq!(
+        g.0.pointer("/129:100/inputs/noise_seed")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        4_815_162_342
+    );
 }
 
 #[test]

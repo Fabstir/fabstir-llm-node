@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.31.7-ltx-i2v-bridge-fetch-2026-07-02";
+pub const VERSION: &str = "v8.31.8-ltx-flf2v-2026-07-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.31.7";
+pub const VERSION_NUMBER: &str = "8.31.8";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 31;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 7;
+pub const VERSION_PATCH: u32 = 8;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-02";
+pub const BUILD_DATE: &str = "2026-07-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -47,6 +47,10 @@ pub const FEATURES: &[&str] = &[
     // downloadByCID (P2P) via ENHANCED_S5_URL, not a raw portal HTTP GET (which is
     // not a supported transport). Bridge must peer with the client's portal.
     "ltx-i2v-bridge-fetch",
+    // v8.31.8 LTX first-last-frame to video (flf2v): two input images
+    // (firstFrame/lastFrame) in a v3 bundle; patcher drives a CLIPTextEncode
+    // positive prompt (.text) in addition to PrimitiveStringMultiline (.value).
+    "ltx-flf2v",
     // v8.31.0 LTX 2.3 generation sidecar (M0)
     "ltx-video-sidecar",
     "comfyui-generation",
@@ -785,7 +789,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 31);
-        assert_eq!(VERSION_PATCH, 7);
+        assert_eq!(VERSION_PATCH, 8);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.31.0 LTX 2.3 generation sidecar (M0)
@@ -801,6 +805,7 @@ mod tests {
         assert!(FEATURES.contains(&"inputcommitment-v2"));
         assert!(FEATURES.contains(&"ltx-i2v-blobcid-fix"));
         assert!(FEATURES.contains(&"ltx-i2v-bridge-fetch"));
+        assert!(FEATURES.contains(&"ltx-flf2v"));
         // v8.30.0 TEE / confidential inference (mock backend, Phase 1-4)
         assert!(FEATURES.contains(&"tee-confidential-inference"));
         assert!(FEATURES.contains(&"tee-attestation-mock"));
@@ -950,15 +955,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.31.7"));
-        assert!(version.contains("2026-07-02"));
+        assert!(version.contains("8.31.8"));
+        assert!(version.contains("2026-07-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.31.7-ltx-i2v-bridge-fetch-2026-07-02");
-        assert_eq!(VERSION_NUMBER, "8.31.7");
-        assert_eq!(BUILD_DATE, "2026-07-02");
+        assert_eq!(VERSION, "v8.31.8-ltx-flf2v-2026-07-03");
+        assert_eq!(VERSION_NUMBER, "8.31.8");
+        assert_eq!(BUILD_DATE, "2026-07-03");
     }
 
     #[test]
