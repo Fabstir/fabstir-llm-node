@@ -8,9 +8,10 @@
 //!   1. [`parse_capability_cid`] — inverse of `capability_cid`: recover
 //!      `ct_hash`, `key`, `padding`, `plaintext_len`, `pt_hash` from the envelope.
 //!   2. [`blob_download_cid`] — the S5 blob-download CID for the ciphertext
-//!      (`z` + base58btc of `[0x5b,0x82,0x1f] ++ ct_hash ++ 0x00`).
-//!   3. [`download_blob`] — a **portal-direct** `GET {portal}/s5/blob/{cid}` (no
-//!      auth), gated by `blake3(body) == ct_hash` BEFORE any decrypt.
+//!      (`z` + base58btc of `[0x5b,0x82,0x1e] ++ ct_hash ++ 0x00`).
+//!   3. [`download_blob`] — `GET {base}/s5/blob/{cid}` against the LOCAL S5 bridge
+//!      (`downloadByCID`, P2P — the working S5 transport, NOT a raw portal GET),
+//!      gated by `blake3(body) == ct_hash` BEFORE any decrypt.
 //!   4. [`fetch_image_hash`] — compose the above, decrypt, verify
 //!      `blake3(plaintext) == pt_hash`, and return `(imageHash, plaintext)`.
 //!
@@ -25,17 +26,31 @@ use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ethers::utils::keccak256;
+use futures::StreamExt;
 
-use crate::ltx::exr::decrypt_frame;
+use crate::ltx::exr::{decrypt_frame, padding_for, CHUNK};
 
 /// Envelope bytes (must match [`crate::ltx::exr`] `capability_cid`).
 const CID_TYPE_ENCRYPTED_STATIC: u8 = 0xae;
 const ENC_ALG_XCHACHA20POLY1305: u8 = 0xa6;
+/// `maxChunkSizeAsPowerOf2` — fixed at 18 (256 KiB) in both s5.js and `exr`; a
+/// different value cannot be decrypted by our fixed-stride `decrypt_frame`.
+const MAX_CHUNK_SIZE_AS_POW2: u8 = 18;
+/// Marker byte inside the `0xae` capability envelope's plaintextCID: a MODIFIED
+/// blake3 tag (`0x1f`), NOT the code used in a standalone BlobIdentifier.
 const BLAKE3_MARKER: u8 = 0x1f;
+/// The real blake3 multihash code (`MULTIHASH_BLAKE3` in s5.js), used in a
+/// BlobIdentifier's 33-byte hash. This is `0x1e`, NOT the envelope's `0x1f`: the
+/// portal blob-download CID MUST use `0x1e` or the portal 404s.
+const MULTIHASH_BLAKE3: u8 = 0x1e;
 const LEGACY_CID_PREFIX: u8 = 0x26;
-/// The S5 blob CID's leading bytes (the ciphertext BlobIdentifier form the portal
-/// keys on): `raw-blob` type `0x5b`, size-class `0x82`, then the blake3 marker.
-const BLOB_CID_PREFIX: [u8; 3] = [0x5b, 0x82, BLAKE3_MARKER];
+/// Poly1305 tag bytes appended per chunk (matches `exr`); used to size the fetch cap.
+const TAG: usize = 16;
+/// The S5 BlobIdentifier prefix the portal keys on: `blobIdentifierPrefixBytes`
+/// `[0x5b, 0x82]` then the blake3 multihash `0x1e`. Mirrors s5.js
+/// `new BlobIdentifier(hash, 0).toBase58()` (the portal-download fallback in
+/// `@julesl23/s5js` `identity/api.js`), where `hash = [0x1e] ++ blake3(32)`.
+const BLOB_CID_PREFIX: [u8; 3] = [0x5b, 0x82, MULTIHASH_BLAKE3];
 
 const HTTP_TIMEOUT_SECS: u64 = 120;
 
@@ -77,9 +92,10 @@ pub fn parse_capability_cid(cid: &str) -> Result<CapEnvelope> {
     }
     if env[0] != CID_TYPE_ENCRYPTED_STATIC
         || env[1] != ENC_ALG_XCHACHA20POLY1305
+        || env[2] != MAX_CHUNK_SIZE_AS_POW2
         || env[3] != BLAKE3_MARKER
     {
-        return Err(anyhow!("not a 0xae/XChaCha20 capability envelope"));
+        return Err(anyhow!("not a 0xae/XChaCha20/256KiB capability envelope"));
     }
 
     let mut ct_hash = [0u8; 32];
@@ -115,9 +131,11 @@ pub fn parse_capability_cid(cid: &str) -> Result<CapEnvelope> {
 }
 
 /// The S5 blob-download CID for a ciphertext blob keyed by `ct_hash`:
-/// `"z" + base58btc([0x5b, 0x82, 0x1f] ++ ct_hash(32) ++ 0x00)`. The portal
-/// resolves purely on the embedded 32-byte blake3 hash (the type/size/pad bytes
-/// are not load-bearing for the GET), matching `@julesl23/s5js`.
+/// `"z" + base58btc([0x5b, 0x82, 0x1e] ++ ct_hash(32) ++ 0x00)`. Byte-for-byte
+/// `new BlobIdentifier([0x1e] ++ ct_hash, 0).toBase58()` from `@julesl23/s5js`
+/// (the raw-portal download fallback in `identity/api.js`): base58btc, the size
+/// field set to 0 (the portal resolves on the 32-byte blake3 hash), and the blake3
+/// multihash `0x1e` — NOT the capability envelope's `0x1f`.
 pub fn blob_download_cid(ct_hash: &[u8; 32]) -> String {
     let mut raw = Vec::with_capacity(3 + 32 + 1);
     raw.extend_from_slice(&BLOB_CID_PREFIX);
@@ -126,25 +144,57 @@ pub fn blob_download_cid(ct_hash: &[u8; 32]) -> String {
     format!("z{}", bs58::encode(raw).into_string())
 }
 
-/// `GET {portal_url}/s5/blob/{cid}` (portal-direct, no auth) and return the raw
-/// ciphertext, hard-failing if `blake3(body) != ct_hash`. The integrity gate runs
-/// BEFORE the bytes are handed to any decrypt, so a portal that serves the wrong
-/// or tampered blob can never reach the AEAD. `portal_url` is a parameter so the
-/// same code path is exercised against a mock server in tests.
-pub async fn download_blob(portal_url: &str, ct_hash: &[u8; 32]) -> Result<Vec<u8>> {
+/// The exact ciphertext-blob length `encrypt_frame` produces for `plaintext_len`:
+/// `plaintext_len + padding_for(plaintext_len) + ceil(len/CHUNK)*TAG`. Used to cap
+/// the portal fetch tightly — a valid blob is EXACTLY this size. Saturating so a
+/// bogus (huge) claimed length can never overflow-panic in a debug build.
+fn expected_ciphertext_len(plaintext_len: usize) -> usize {
+    if plaintext_len == 0 {
+        return 0;
+    }
+    let chunks = plaintext_len.div_ceil(CHUNK);
+    plaintext_len
+        .saturating_add(padding_for(plaintext_len))
+        .saturating_add(chunks.saturating_mul(TAG))
+}
+
+/// `GET {base_url}/s5/blob/{cid}` and return the raw ciphertext, hard-failing if
+/// `blake3(body) != ct_hash`. `base_url` is the LOCAL S5 bridge (`ENHANCED_S5_URL`),
+/// whose `/s5/blob/{cid}` route resolves the blob over the S5 protocol
+/// (`downloadByCID`, P2P); a raw portal HTTP GET is not a supported transport. The
+/// body is streamed and bounded to `max_bytes` (reject as soon as it is exceeded)
+/// so a capability CID that claims a small size but commits to a huge blob cannot
+/// force an unbounded download — the integrity gate would still catch the mismatch,
+/// but only after the bytes were already in memory. The gate runs BEFORE the bytes
+/// reach any decrypt. `base_url` is a parameter so the same path is tested.
+pub async fn download_blob(
+    base_url: &str,
+    ct_hash: &[u8; 32],
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
     let cid = blob_download_cid(ct_hash);
-    let url = format!("{}/s5/blob/{}", portal_url.trim_end_matches('/'), cid);
+    let url = format!("{}/s5/blob/{}", base_url.trim_end_matches('/'), cid);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
         .build()?;
     let response = client.get(&url).send().await?;
     if !response.status().is_success() {
         return Err(anyhow!(
-            "portal /s5/blob returned {} for {cid}",
+            "s5 /s5/blob returned {} for {cid}",
             response.status()
         ));
     }
-    let body = response.bytes().await?.to_vec();
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len() + chunk.len() > max_bytes {
+            return Err(anyhow!(
+                "blob {cid} exceeds the expected {max_bytes} bytes (claimed-size / blob-size mismatch)"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
     if blake3::hash(&body).as_bytes() != ct_hash {
         return Err(anyhow!(
             "blob integrity check failed: blake3(body) != ct_hash for {cid}"
@@ -154,13 +204,27 @@ pub async fn download_blob(portal_url: &str, ct_hash: &[u8; 32]) -> Result<Vec<u
 }
 
 /// Full input-image resolution: parse the capability CID, fetch + integrity-check
-/// the ciphertext from the portal, decrypt, verify `blake3(plaintext) == pt_hash`,
-/// and return `(imageHash, plaintext)` where `imageHash = keccak256(plaintext)`.
-/// The plaintext is returned so the caller can upload the exact bytes to ComfyUI
+/// the ciphertext from the portal (bounded to the exact size the claimed
+/// `plaintext_len` implies), decrypt, verify `blake3(plaintext) == pt_hash`, and
+/// return `(imageHash, plaintext)` where `imageHash = keccak256(plaintext)`. The
+/// plaintext is returned so the caller can upload the exact bytes to ComfyUI
 /// without re-fetching.
-pub async fn fetch_image_hash(portal_url: &str, cid: &str) -> Result<([u8; 32], Vec<u8>)> {
+pub async fn fetch_image_hash(base_url: &str, cid: &str) -> Result<([u8; 32], Vec<u8>)> {
     let env = parse_capability_cid(cid)?;
-    let ciphertext = download_blob(portal_url, &env.ct_hash).await?;
+    // The chunk scheme pads the FINAL chunk, so an exact CHUNK-multiple plaintext
+    // yields a blob the fixed-stride `decrypt_frame` cannot read (`encrypt_frame`
+    // rejects it on the write side for the same reason). Fail fast with an
+    // actionable message instead of a cryptic downstream AEAD error. Rare
+    // (~1/CHUNK for arbitrary sizes); the client can re-save to shift the size.
+    if env.plaintext_len != 0 && env.plaintext_len % CHUNK == 0 {
+        return Err(anyhow!(
+            "input image is an exact {CHUNK}-byte multiple ({} bytes); the chunked \
+             encryption cannot represent it — re-save to change its size by a byte",
+            env.plaintext_len
+        ));
+    }
+    let max_bytes = expected_ciphertext_len(env.plaintext_len);
+    let ciphertext = download_blob(base_url, &env.ct_hash, max_bytes).await?;
     let plaintext = decrypt_frame(&ciphertext, &env.key, env.plaintext_len)?;
     if blake3::hash(&plaintext).as_bytes() != &env.pt_hash {
         return Err(anyhow!(
