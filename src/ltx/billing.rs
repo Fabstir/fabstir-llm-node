@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ethers::types::U256;
 use tokio::sync::RwLock;
@@ -29,6 +29,11 @@ pub fn estimate_cost(job: &LtxJob, price_per_token: U256) -> U256 {
 }
 
 /// Per-job LTX billing info (mirrors `transcoder::billing::TranscodingJobInfo`).
+///
+/// M1 economics adds per-job proof state. `pending_count` is a COUNT, not an
+/// enum: `MAX_CONCURRENT_GENERATIONS` may exceed 1, so two clips of one session
+/// can overlap — clip A's landed proof must not mask clip B's in-flight one
+/// (settling early would revert B's proof).
 #[derive(Debug, Clone)]
 pub struct LtxJobInfo {
     pub job_id: u64,
@@ -37,6 +42,32 @@ pub struct LtxJobInfo {
     pub total_cost: U256,
     pub generation_count: u32,
     pub last_update: Instant,
+    /// Clips accepted whose proof outcome (submitted/forfeited) is unresolved.
+    pub pending_count: u32,
+    /// When the most recent proof tx CONFIRMED (drives the dispute-window wait).
+    pub last_confirmed_at: Option<Instant>,
+    /// A disconnect arrived while a proof was pending; the finishing generation
+    /// task owns `completeSessionJob` once the count drains to 0.
+    pub completion_deferred: bool,
+    /// Landed proofs on this session (index 0 is gated by `proofInterval`).
+    pub proofs_submitted: u32,
+}
+
+impl LtxJobInfo {
+    fn new(job_id: u64, session_id: Option<String>) -> Self {
+        Self {
+            job_id,
+            session_id,
+            total_tokens: 0,
+            total_cost: U256::zero(),
+            generation_count: 0,
+            last_update: Instant::now(),
+            pending_count: 0,
+            last_confirmed_at: None,
+            completion_deferred: false,
+            proofs_submitted: 0,
+        }
+    }
 }
 
 /// Tracks LTX generation tokens/cost per job for billing.
@@ -54,14 +85,9 @@ impl LtxTracker {
     /// Record tokens and cost for a job, accumulating across generations.
     pub async fn track(&self, job_id: u64, session_id: Option<String>, tokens: u64, cost: U256) {
         let mut jobs = self.jobs.write().await;
-        let entry = jobs.entry(job_id).or_insert_with(|| LtxJobInfo {
-            job_id,
-            session_id: session_id.clone(),
-            total_tokens: 0,
-            total_cost: U256::zero(),
-            generation_count: 0,
-            last_update: Instant::now(),
-        });
+        let entry = jobs
+            .entry(job_id)
+            .or_insert_with(|| LtxJobInfo::new(job_id, session_id.clone()));
         entry.total_tokens += tokens;
         entry.total_cost += cost;
         entry.generation_count += 1;
@@ -71,6 +97,94 @@ impl LtxTracker {
     /// Get tracking info for a job.
     pub async fn get_job_info(&self, job_id: u64) -> Option<LtxJobInfo> {
         self.jobs.read().await.get(&job_id).cloned()
+    }
+
+    // -------------------------------------------------------------------------
+    // M1 economics — proof-state race machine (see LtxJobInfo docs). Pending is
+    // marked at ACCEPT (in the handler, before the spawn detaches) and resolved
+    // on every path by `finalize_clip`/the spawn's single-exit cleanup.
+    // -------------------------------------------------------------------------
+
+    /// A clip was accepted: its proof outcome is now pending. Creates the entry
+    /// if this is the session's first clip. Also CLEARS a stale deferral — a new
+    /// clip on a reconnected session cancels it; this clip's own lifecycle now
+    /// owns completion.
+    pub async fn mark_proof_pending(&self, job_id: u64) {
+        let mut jobs = self.jobs.write().await;
+        let entry = jobs
+            .entry(job_id)
+            .or_insert_with(|| LtxJobInfo::new(job_id, None));
+        entry.pending_count += 1;
+        entry.completion_deferred = false;
+    }
+
+    /// The clip's proof tx CONFIRMED (receipt status 1).
+    pub async fn mark_proof_submitted(&self, job_id: u64) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(entry) = jobs.get_mut(&job_id) {
+            entry.pending_count = entry.pending_count.saturating_sub(1);
+            entry.last_confirmed_at = Some(Instant::now());
+            entry.proofs_submitted += 1;
+        }
+    }
+
+    /// The clip's revenue is forfeited (error path, skipped submit, failed tx).
+    /// Saturating and a NO-OP on a missing entry — must never underflow when a
+    /// pending was never marked.
+    pub async fn mark_proof_forfeited(&self, job_id: u64) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(entry) = jobs.get_mut(&job_id) {
+            entry.pending_count = entry.pending_count.saturating_sub(1);
+        }
+    }
+
+    /// Disconnect gate: `true` (and the deferral flag set) iff a proof is in
+    /// flight — the caller must then SKIP `completeSessionJob`; the finishing
+    /// generation task completes instead. `false` for LLM-only sessions (no
+    /// entry) and for idle LTX sessions.
+    pub async fn defer_completion(&self, job_id: u64) -> bool {
+        let mut jobs = self.jobs.write().await;
+        match jobs.get_mut(&job_id) {
+            Some(entry) if entry.pending_count > 0 => {
+                entry.completion_deferred = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `true` iff completion was deferred AND no proof is pending any more;
+    /// clears the flag so the deferred completion runs exactly once.
+    pub async fn take_deferred_if_idle(&self, job_id: u64) -> bool {
+        let mut jobs = self.jobs.write().await;
+        match jobs.get_mut(&job_id) {
+            Some(entry) if entry.completion_deferred && entry.pending_count == 0 => {
+                entry.completion_deferred = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Landed proofs on this session (the first-proof `proofInterval` gate).
+    pub async fn proofs_submitted(&self, job_id: u64) -> u32 {
+        self.jobs
+            .read()
+            .await
+            .get(&job_id)
+            .map(|e| e.proofs_submitted)
+            .unwrap_or(0)
+    }
+
+    /// Time still to wait (of `window_secs` since the last CONFIRMED proof)
+    /// before the host may call `completeSessionJob` without a "Dispute wait"
+    /// revert. Zero when no proof ever landed (nothing gates completion).
+    pub async fn proof_wait_remaining(&self, job_id: u64, window_secs: u64) -> Duration {
+        let jobs = self.jobs.read().await;
+        match jobs.get(&job_id).and_then(|e| e.last_confirmed_at) {
+            Some(at) => Duration::from_secs(window_secs).saturating_sub(at.elapsed()),
+            None => Duration::ZERO,
+        }
     }
 }
 

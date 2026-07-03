@@ -5,9 +5,11 @@
 //! Mirrors `transcode.rs`: a two-phase reply (an immediate encrypted `ltx_accepted`
 //! ack plus a background [`LtxGenerateTask`] that streams encrypted progress and a
 //! terminal `ltx_complete`/`ltx_error`). The background task reuses the SAME S5
-//! access the transcode spawn uses (`CheckpointManager::get_s5_storage`); the
-//! on-chain submit is TODO'd (GPU-acceptance) because `Web3Client` is not exposed
-//! from `CheckpointManager`, exactly as the transcode spawn defers chain submit.
+//! access the transcode spawn uses (`CheckpointManager::get_s5_storage`) and (M1
+//! economics) submits one `submitProofOfWork` per clip through the
+//! [`ProofSubmit`](crate::ltx::submit::ProofSubmit) seam on `CheckpointManager`,
+//! with a pending/deferred race machine on `LtxTracker` so a WS disconnect can
+//! never settle the session at 0 tokens under an in-flight proof.
 
 use crate::api::server::ApiServer;
 use crate::ltx::attestation::EnvMeta;
@@ -268,6 +270,19 @@ pub async fn handle_encrypted_ltx_generate(
         Err(_) => return reject("CAPACITY", "all generation slots are in use"),
     };
 
+    // M1 economics: mark the clip's proof PENDING at accept — HERE in the
+    // handler, not the detached spawn body, which would leave an accept→spawn
+    // gap a disconnect could settle through (0-token settle under a rendering
+    // clip). Sessionless requests and cm-less nodes (tests) mark nothing. Also
+    // cancels a stale deferral on a reconnected session (see LtxTracker).
+    let pending_marked = match job_id {
+        Some(jid) if server.get_checkpoint_manager().await.is_some() => {
+            server.ltx_tracker().mark_proof_pending(jid).await;
+            true
+        }
+        _ => false,
+    };
+
     // Accept.
     server.ltx_rate_limiter().record_request(session_id);
     let allow_list_version = store.bundle().allow_list_version;
@@ -295,6 +310,7 @@ pub async fn handle_encrypted_ltx_generate(
         timeout_secs,
         job_id,
         permit,
+        pending_marked,
     };
     (ack, Some(task))
 }
@@ -313,6 +329,10 @@ pub struct LtxGenerateTask {
     pub timeout_secs: u64,
     pub job_id: Option<u64>,
     pub permit: OwnedSemaphorePermit,
+    /// The handler marked `mark_proof_pending(job_id)` at accept. The spawn's
+    /// single-exit cleanup resolves it; if the caller DROPS this task without
+    /// spawning it, the caller must `mark_proof_forfeited(job_id)` first.
+    pub pending_marked: bool,
 }
 
 async fn send_stage(
@@ -417,102 +437,151 @@ impl LtxGenerateTask {
             timeout_secs,
             job_id,
             permit,
+            pending_marked,
         } = self;
         tokio::spawn(async move {
             let _permit = permit; // hold the VRAM slot for the whole job
             let rid = request_id.as_deref();
             let (key, sid) = (&session_key, session_id.as_str());
+            // Set once `finalize_clip` has run (it resolves the pending itself
+            // on every internal path); the single-exit cleanup below forfeits
+            // the pending for any exit taken BEFORE it.
+            let mut pending_resolved = false;
 
-            // Image-conditioned templates (M1a): fetch each input image from S5,
-            // upload it to ComfyUI, patch the LoadImage nodes, and collect the
-            // per-image `keccak256(plaintext)` for the v2 commitment. Empty for t2v.
-            let mut image_hashes: Vec<[u8; 32]> = Vec::new();
-            let patched_graph =
-                match prepare_input_images(&client, &job, patched_graph, &mut image_hashes).await {
-                    Ok(g) => g,
+            // The core runs as an inner future so that EVERY exit (there are
+            // ~10 early returns) funnels through the ONE cleanup below —
+            // without it, any error path taken after a disconnect deferred
+            // completion would leave the session unsettled until job timeout.
+            let core = async {
+                // Image-conditioned templates (M1a): fetch each input image from S5,
+                // upload it to ComfyUI, patch the LoadImage nodes, and collect the
+                // per-image `keccak256(plaintext)` for the v2 commitment. Empty for t2v.
+                let mut image_hashes: Vec<[u8; 32]> = Vec::new();
+                let patched_graph =
+                    match prepare_input_images(&client, &job, patched_graph, &mut image_hashes)
+                        .await
+                    {
+                        Ok(g) => g,
+                        Err(e) => {
+                            send_err(&progress_tx, "GENERATION_FAILED", &e, key, sid, rid).await;
+                            return;
+                        }
+                    };
+
+                // 1. Submit graph → prompt_id.
+                let prompt_id = match client.submit(&patched_graph).await {
+                    Ok(p) => p,
                     Err(e) => {
-                        send_err(&progress_tx, "GENERATION_FAILED", &e, key, sid, rid).await;
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            &format!("submit failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
                         return;
                     }
                 };
 
-            // 1. Submit graph → prompt_id.
-            let prompt_id = match client.submit(&patched_graph).await {
-                Ok(p) => p,
-                Err(e) => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        &format!("submit failed: {e}"),
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
-                }
-            };
-
-            // 2. Watch + stream generating progress.
-            let (watch_tx, mut watch_rx) = mpsc::channel::<Progress>(64);
-            let (wc, pid) = (client.clone(), prompt_id.clone());
-            let watch_handle =
-                tokio::spawn(async move { wc.watch(&pid, watch_tx, timeout_secs).await });
-            while let Some(p) = watch_rx.recv().await {
-                if let Progress::Progress { value, max } = p {
-                    let pct = if max > 0 {
-                        ((value as u64 * 100) / max as u64) as u32
-                    } else {
-                        0
-                    };
-                    if !send_stage(&progress_tx, "generating", pct, key, sid, rid).await {
-                        break;
+                // 2. Watch + stream generating progress. A failed send_stage means
+                // the OUTER progress channel is gone (WS disconnect) — but watch_rx
+                // would stay alive, so `watch` would block until job timeout (the
+                // 64-slot channel fills) or complete and bill an undeliverable
+                // clip. Make abandonment DETERMINISTIC instead: drop the receiver
+                // (watch's sender then errors → watch returns promptly), interrupt
+                // ComfyUI (stop wasting GPU), and take a "client disconnected"
+                // error exit BEFORE any billing/submit — the single-exit cleanup
+                // turns that into forfeit → deferred completion at 0 tokens (user
+                // refunded, host eats the GPU time; deliver-after-disconnect is a
+                // future milestone).
+                let (watch_tx, mut watch_rx) = mpsc::channel::<Progress>(64);
+                let (wc, pid) = (client.clone(), prompt_id.clone());
+                let watch_handle =
+                    tokio::spawn(async move { wc.watch(&pid, watch_tx, timeout_secs).await });
+                let mut client_gone = false;
+                while let Some(p) = watch_rx.recv().await {
+                    if let Progress::Progress { value, max } = p {
+                        let pct = if max > 0 {
+                            ((value as u64 * 100) / max as u64) as u32
+                        } else {
+                            0
+                        };
+                        if !send_stage(&progress_tx, "generating", pct, key, sid, rid).await {
+                            client_gone = true;
+                            break;
+                        }
                     }
                 }
-            }
-            match watch_handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    let code = if e.to_string().contains("timed out") {
-                        "TIMEOUT"
-                    } else {
-                        "GENERATION_FAILED"
-                    };
-                    send_err(
-                        &progress_tx,
-                        code,
-                        &format!("generation failed: {e}"),
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
+                if client_gone {
+                    drop(watch_rx);
+                    let _ = client.interrupt().await;
+                    let _ = watch_handle.await;
+                    warn!("LTX job abandoned mid-render: client disconnected (render interrupted)");
                     return;
                 }
-                Err(_) => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        "watch task panicked",
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
+                match watch_handle.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        let code = if e.to_string().contains("timed out") {
+                            "TIMEOUT"
+                        } else {
+                            "GENERATION_FAILED"
+                        };
+                        send_err(
+                            &progress_tx,
+                            code,
+                            &format!("generation failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                    Err(_) => {
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            "watch task panicked",
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
                 }
-            }
 
-            // 3. EXR pipeline. Enumerate THIS prompt's outputs (scoped by prompt_id) —
-            // NOT a glob of the shared output dir, which would leak other concurrent
-            // jobs' frames into this manifest/capability set.
-            let mut output_refs = match client.outputs(&prompt_id).await {
-                Ok(r) => r,
-                Err(e) => {
+                // 3. EXR pipeline. Enumerate THIS prompt's outputs (scoped by prompt_id) —
+                // NOT a glob of the shared output dir, which would leak other concurrent
+                // jobs' frames into this manifest/capability set.
+                let mut output_refs = match client.outputs(&prompt_id).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            &format!("output enumeration failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                // Keep only final "output" frames (drop "temp" previews) so a preview can't
+                // pollute the manifest or trip the count check.
+                output_refs.retain(|r| r.type_ == "output");
+                // Deterministic order (ComfyUI writes zero-padded frame indices).
+                output_refs.sort_by(|a, b| a.filename.cmp(&b.filename));
+                if output_refs.is_empty() {
                     send_err(
                         &progress_tx,
                         "GENERATION_FAILED",
-                        &format!("output enumeration failed: {e}"),
+                        "no frames produced",
                         key,
                         sid,
                         rid,
@@ -520,77 +589,97 @@ impl LtxGenerateTask {
                     .await;
                     return;
                 }
-            };
-            // Keep only final "output" frames (drop "temp" previews) so a preview can't
-            // pollute the manifest or trip the count check.
-            output_refs.retain(|r| r.type_ == "output");
-            // Deterministic order (ComfyUI writes zero-padded frame indices).
-            output_refs.sort_by(|a, b| a.filename.cmp(&b.filename));
-            if output_refs.is_empty() {
-                send_err(
-                    &progress_tx,
-                    "GENERATION_FAILED",
-                    "no frames produced",
-                    key,
-                    sid,
-                    rid,
-                )
-                .await;
-                return;
-            }
-            // The output count is advisory this pass: the pinned graph controls clip
-            // length (a single video file, or an EXR sequence), so `job.frames` need not
-            // equal the delivered count. Billing still uses `job.frames`; just surface any
-            // divergence in the logs rather than failing a legitimate video artefact.
-            if output_refs.len() != job.frames as usize {
-                warn!(
-                    "LTX output count {} differs from requested frames {} (advisory this pass)",
-                    output_refs.len(),
-                    job.frames
+                // The output count is advisory this pass: the pinned graph controls clip
+                // length (a single video file, or an EXR sequence), so `job.frames` need not
+                // equal the delivered count. Billing still uses `job.frames`; just surface any
+                // divergence in the logs rather than failing a legitimate video artefact.
+                if output_refs.len() != job.frames as usize {
+                    warn!(
+                        "LTX output count {} differs from requested frames {} (advisory this pass)",
+                        output_refs.len(),
+                        job.frames
+                    );
+                }
+                let cm = match server.get_checkpoint_manager().await {
+                    Some(cm) => cm,
+                    None => {
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            "storage unavailable",
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                let s5 = cm.get_s5_storage();
+                // Fold the always-present, always-unique prompt_id into the S5 path so
+                // concurrent jobs (or job_id-less requests) can never collide on the same
+                // `home/ltx/...` prefix; job_id stays in front for operator correlation.
+                let job_tag = format!(
+                    "{}-{}",
+                    job_id
+                        .map(|j| j.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    prompt_id
                 );
-            }
-            let cm = match server.get_checkpoint_manager().await {
-                Some(cm) => cm,
-                None => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        "storage unavailable",
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
-                }
-            };
-            let s5 = cm.get_s5_storage();
-            // Fold the always-present, always-unique prompt_id into the S5 path so
-            // concurrent jobs (or job_id-less requests) can never collide on the same
-            // `home/ltx/...` prefix; job_id stays in front for operator correlation.
-            let job_tag = format!(
-                "{}-{}",
-                job_id
-                    .map(|j| j.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                prompt_id
-            );
 
-            let _ = send_stage(&progress_tx, "encrypting", 0, key, sid, rid).await;
-            let total = output_refs.len();
-            let mut caps = Vec::with_capacity(total);
-            let mut hashes = Vec::with_capacity(total);
-            for (i, r) in output_refs.iter().enumerate() {
-                let dest = format!("home/ltx/job_{job_tag}/frame_{i:05}.bin");
-                // Pull the rendered file over ComfyUI's /view (no shared volume), then
-                // encrypt+upload its bytes.
-                let bytes = match client.download(r).await {
-                    Ok(b) => b,
+                let _ = send_stage(&progress_tx, "encrypting", 0, key, sid, rid).await;
+                let total = output_refs.len();
+                let mut caps = Vec::with_capacity(total);
+                let mut hashes = Vec::with_capacity(total);
+                for (i, r) in output_refs.iter().enumerate() {
+                    let dest = format!("home/ltx/job_{job_tag}/frame_{i:05}.bin");
+                    // Pull the rendered file over ComfyUI's /view (no shared volume), then
+                    // encrypt+upload its bytes.
+                    let bytes = match client.download(r).await {
+                        Ok(b) => b,
+                        Err(e) => {
+                            send_err(
+                                &progress_tx,
+                                "GENERATION_FAILED",
+                                &format!("fetch {} from comfyui failed: {e}", r.filename),
+                                key,
+                                sid,
+                                rid,
+                            )
+                            .await;
+                            return;
+                        }
+                    };
+                    match exr::encrypt_bytes_and_upload(bytes, s5, &dest).await {
+                        Ok((cap, h)) => {
+                            caps.push(cap);
+                            hashes.push(h);
+                        }
+                        Err(e) => {
+                            send_err(
+                                &progress_tx,
+                                "GENERATION_FAILED",
+                                &format!("frame upload failed: {e}"),
+                                key,
+                                sid,
+                                rid,
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+                    let pct = (((i + 1) * 100) / total) as u32;
+                    let _ = send_stage(&progress_tx, "encrypting", pct, key, sid, rid).await;
+                }
+
+                let _ = send_stage(&progress_tx, "uploading", 0, key, sid, rid).await;
+                let manifest = match exr::build_manifest(&hashes, &job) {
+                    Ok(m) => m,
                     Err(e) => {
                         send_err(
                             &progress_tx,
                             "GENERATION_FAILED",
-                            &format!("fetch {} from comfyui failed: {e}", r.filename),
+                            &format!("manifest build failed: {e}"),
                             key,
                             sid,
                             rid,
@@ -599,164 +688,196 @@ impl LtxGenerateTask {
                         return;
                     }
                 };
-                match exr::encrypt_bytes_and_upload(bytes, s5, &dest).await {
-                    Ok((cap, h)) => {
-                        caps.push(cap);
-                        hashes.push(h);
-                    }
-                    Err(e) => {
-                        send_err(
-                            &progress_tx,
-                            "GENERATION_FAILED",
-                            &format!("frame upload failed: {e}"),
-                            key,
-                            sid,
-                            rid,
-                        )
-                        .await;
-                        return;
-                    }
-                }
-                let pct = (((i + 1) * 100) / total) as u32;
-                let _ = send_stage(&progress_tx, "encrypting", pct, key, sid, rid).await;
-            }
-
-            let _ = send_stage(&progress_tx, "uploading", 0, key, sid, rid).await;
-            let manifest = match exr::build_manifest(&hashes, &job) {
-                Ok(m) => m,
-                Err(e) => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        &format!("manifest build failed: {e}"),
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
-                }
-            };
-            let output_cid = match exr::upload_manifest(
-                &manifest,
-                s5,
-                &format!("home/ltx/job_{job_tag}/manifest.json"),
-            )
-            .await
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        &format!("manifest upload failed: {e}"),
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
-                }
-            };
-
-            let _ = send_stage(&progress_tx, "finalising", 0, key, sid, rid).await;
-            // TODO(GPU-acceptance): real reproduction hashes hydrate envHash.
-            let env_meta = EnvMeta {
-                weights_hash: env_or("LTX_WEIGHTS_HASH"),
-                lora_hash: env_or("LTX_LORA_HASH"),
-                comfy_commit: env_or("LTX_COMFY_COMMIT"),
-                node_commit: env_or("LTX_NODE_COMMIT"),
-                cuda_version: env_or("LTX_CUDA_VERSION"),
-                gpu_class: env_or("LTX_GPU_CLASS"),
-            };
-            let env_hash = attestation::env_hash(&env_meta);
-            // TODO(GPU-acceptance): real registered modelId + node signing key (None ⇒ unsigned).
-            let model_id =
-                std::env::var("LTX_MODEL_ID").unwrap_or_else(|_| ZERO_BYTES32.to_string());
-            let host = cm.get_host_address();
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let att = match attestation::assemble(
-                model_id,
-                job.template_hash.clone(),
-                env_hash,
-                &job,
-                &image_hashes,
-                output_cid.clone(),
-                manifest.clone(),
-                session_id.clone(),
-                host,
-                timestamp,
-                None,
-            ) {
-                Ok(a) => a,
-                Err(e) => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        &format!("attestation failed: {e}"),
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
-                }
-            };
-            // proofCID = S5-stored attestation (same S5 access transcode uses).
-            // TODO(GPU-acceptance): submit::submit_attestation on-chain — Web3Client is
-            // NOT exposed by CheckpointManager, so the spawn does S5 only, exactly like
-            // the transcode spawn (which S5-puts its Merkle tree and defers chain submit).
-            let proof_cid = match s5
-                .put(
-                    &format!("home/ltx/job_{job_tag}_attestation.json"),
-                    att.stored_bytes(),
+                let output_cid = match exr::upload_manifest(
+                    &manifest,
+                    s5,
+                    &format!("home/ltx/job_{job_tag}/manifest.json"),
                 )
                 .await
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    send_err(
-                        &progress_tx,
-                        "GENERATION_FAILED",
-                        &format!("proof upload failed: {e}"),
-                        key,
-                        sid,
-                        rid,
-                    )
-                    .await;
-                    return;
-                }
-            };
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            &format!("manifest upload failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                };
 
-            let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
-            let price = std::env::var("LTX_PRICE_PER_TOKEN").unwrap_or_else(|_| "0".to_string());
-            if let Some(jid) = job_id {
-                let ppt = U256::from_dec_str(&price).unwrap_or_default();
-                let cost = U256::from(tokens).checked_mul(ppt).unwrap_or(U256::MAX);
-                server
-                    .ltx_tracker()
-                    .track(jid, Some(session_id.clone()), tokens, cost)
+                let _ = send_stage(&progress_tx, "finalising", 0, key, sid, rid).await;
+                // TODO(GPU-acceptance): real reproduction hashes hydrate envHash.
+                let env_meta = EnvMeta {
+                    weights_hash: env_or("LTX_WEIGHTS_HASH"),
+                    lora_hash: env_or("LTX_LORA_HASH"),
+                    comfy_commit: env_or("LTX_COMFY_COMMIT"),
+                    node_commit: env_or("LTX_NODE_COMMIT"),
+                    cuda_version: env_or("LTX_CUDA_VERSION"),
+                    gpu_class: env_or("LTX_GPU_CLASS"),
+                };
+                let env_hash = attestation::env_hash(&env_meta);
+                // TODO(GPU-acceptance): real registered modelId + node signing key (None ⇒ unsigned).
+                let model_id =
+                    std::env::var("LTX_MODEL_ID").unwrap_or_else(|_| ZERO_BYTES32.to_string());
+                let host = cm.get_host_address();
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let att = match attestation::assemble(
+                    model_id,
+                    job.template_hash.clone(),
+                    env_hash,
+                    &job,
+                    &image_hashes,
+                    output_cid.clone(),
+                    manifest.clone(),
+                    session_id.clone(),
+                    host,
+                    timestamp,
+                    None,
+                ) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            &format!("attestation failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                // M1 economics: upload the attestation (proofCID) and submit ONE
+                // submitProofOfWork per clip through the ProofSubmit seam on cm
+                // (strict success: tx confirmed with receipt status 1). `tokens` is
+                // the ONE variable feeding tokensClaimed, the wire billing.tokens
+                // and the tracker (§B triple equality). finalize_clip resolves the
+                // pending on every internal path; a submit failure still returns
+                // the proof_cid (clip delivery ≥ revenue — the client paid for and
+                // receives its clip; the node forfeits that clip's revenue).
+                let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
+                let proof_cid = match submit::finalize_clip(
+                    s5,
+                    Some(&*cm),
+                    server.ltx_tracker(),
+                    job_id,
+                    pending_marked,
+                    &job_tag,
+                    &att,
+                    tokens,
+                )
+                .await
+                {
+                    Ok((cid, _submitted)) => {
+                        pending_resolved = true;
+                        cid
+                    }
+                    Err(e) => {
+                        // Upload failure: no proofCID exists at all — the one
+                        // finalize failure that stays an error (pending already
+                        // forfeited inside finalize_clip).
+                        pending_resolved = true;
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            &format!("proof upload failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                let price =
+                    std::env::var("LTX_PRICE_PER_TOKEN").unwrap_or_else(|_| "0".to_string());
+                if let Some(jid) = job_id {
+                    let ppt = U256::from_dec_str(&price).unwrap_or_default();
+                    let cost = U256::from(tokens).checked_mul(ppt).unwrap_or(U256::MAX);
+                    server
+                        .ltx_tracker()
+                        .track(jid, Some(session_id.clone()), tokens, cost)
+                        .await;
+                }
+                let inner = ltx_complete_inner(
+                    &output_cid,
+                    &proof_cid,
+                    &caps,
+                    &manifest,
+                    tokens,
+                    &price,
+                    rid,
+                );
+                let _ = progress_tx
+                    .send(build_encrypted_ltx_response(&inner, key, sid, None))
                     .await;
+                info!(
+                    "LTX job {job_tag} complete: {} frames, outputCID={output_cid}",
+                    caps.len()
+                );
+            };
+            core.await;
+
+            // SINGLE-EXIT cleanup — every core exit funnels through here.
+            // (a) An exit before finalize_clip leaves the clip's pending
+            //     unresolved: forfeit it (no work delivered ⇒ that clip settles
+            //     at 0 — correct).
+            // (b) If a disconnect deferred completion and no proof is pending
+            //     any more, THIS task owns completeSessionJob: wait out the
+            //     dispute window since the last landed proof (host caller
+            //     reverts "Dispute wait" inside it), then complete — one
+            //     belt-and-braces retry (cm may also retry internally).
+            if let Some(jid) = job_id {
+                if pending_marked && !pending_resolved {
+                    server.ltx_tracker().mark_proof_forfeited(jid).await;
+                }
+                if server.ltx_tracker().take_deferred_if_idle(jid).await {
+                    if let Some(cm) = server.get_checkpoint_manager().await {
+                        let window = cm.dispute_window_secs()
+                            + crate::contracts::checkpoint_manager::DISPUTE_WINDOW_BUFFER_SECS;
+                        let wait = server.ltx_tracker().proof_wait_remaining(jid, window).await;
+                        if !wait.is_zero() {
+                            info!(
+                                "LTX job {jid}: deferred completion waiting {}s dispute window",
+                                wait.as_secs()
+                            );
+                            tokio::time::sleep(wait).await;
+                        }
+                        info!("LTX job {jid}: running deferred session completion");
+                        // complete_session_job's error is a non-Send Box<dyn
+                        // Error>: stringify before holding it across an await.
+                        let first = cm
+                            .complete_session_job(jid)
+                            .await
+                            .map_err(|e| e.to_string());
+                        if let Err(e) = first {
+                            warn!(
+                                "LTX job {jid}: deferred completion failed ({e}); retrying once \
+                                 after {window}s"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(window)).await;
+                            let retry = cm
+                                .complete_session_job(jid)
+                                .await
+                                .map_err(|e| e.to_string());
+                            if let Err(e2) = retry {
+                                error!("LTX job {jid}: deferred completion retry failed: {e2}");
+                            }
+                        }
+                    } else {
+                        error!("LTX job {jid}: completion deferred but no checkpoint manager");
+                    }
+                }
             }
-            let inner = ltx_complete_inner(
-                &output_cid,
-                &proof_cid,
-                &caps,
-                &manifest,
-                tokens,
-                &price,
-                rid,
-            );
-            let _ = progress_tx
-                .send(build_encrypted_ltx_response(&inner, key, sid, None))
-                .await;
-            info!(
-                "LTX job {job_tag} complete: {} frames, outputCID={output_cid}",
-                caps.len()
-            );
         });
     }
 }
