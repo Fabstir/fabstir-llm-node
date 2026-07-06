@@ -30,6 +30,7 @@ fn sample_job(frames: u32) -> LtxJob {
         lora: "".to_string(),
         output: OutputKind::ExrSequence,
         images: None,
+        videos: None,
     }
 }
 

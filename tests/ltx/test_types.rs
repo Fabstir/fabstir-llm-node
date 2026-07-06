@@ -19,6 +19,7 @@ fn sample_job() -> LtxJob {
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
         images: None,
+        videos: None,
     }
 }
 
@@ -132,4 +133,25 @@ fn test_stored_bytes_deterministic() {
     let s = String::from_utf8(att.stored_bytes()).unwrap();
     assert!(s.contains("outputCID"));
     assert!(s.contains("signature"));
+}
+
+#[test]
+fn test_job_videos_optional_and_roundtrips() {
+    // Pre-video wire: no videos -> the key is OMITTED (byte-identical output),
+    // absent-key input parses back to None.
+    let t2v = sample_job();
+    let v = serde_json::to_value(&t2v).unwrap();
+    assert!(v.get("videos").is_none(), "t2v must not emit a videos key");
+    let back: LtxJob = serde_json::from_value(v).unwrap();
+    assert_eq!(back.videos, None);
+
+    // BL3 (video template): ordered capability CIDs round-trip under `videos`,
+    // alongside the reference image.
+    let mut iclora = sample_job();
+    iclora.images = Some(vec!["uCidReference".to_string()]);
+    iclora.videos = Some(vec!["uCidControl".to_string()]);
+    let v = serde_json::to_value(&iclora).unwrap();
+    assert_eq!(v["videos"], json!(["uCidControl"]));
+    let back: LtxJob = serde_json::from_value(v).unwrap();
+    assert_eq!(back, iclora);
 }

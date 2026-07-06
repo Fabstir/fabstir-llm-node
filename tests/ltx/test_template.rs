@@ -11,17 +11,28 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
 /// an intentional template or canonicalisation change.
 const HDR_TEMPLATE_HASH: &str =
     "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078";
-/// i2v graph hash (prompt-enhance baked OFF).
+/// i2v graph hash (prompt-enhance baked ON — the BL2 grey-output fix; matches the
+/// template deployed live in bundle v5).
 const I2V_TEMPLATE_HASH: &str =
-    "0x1074478991672ae0e0c668c1adf13f9e04dcd79edaaebfa5ae25f8d63c7831bd";
+    "0xa4c890fd5f9a24a778c2a2ab00be2141dcb2c801a339d390016924292dff128c";
 /// flf2v graph hash (curated: positive CLIPTextEncode retitled Prompt, height/Frame
 /// Rate retitled to match the patcher handles).
 const FLF2V_TEMPLATE_HASH: &str =
     "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721";
+/// iclora graph hash (authored at BL3 U1 from the archive IC-LoRA union-control
+/// workflow docs/archive/comfyui/video_ltx2_3_ic_lora_20260701.json: Prompt
+/// handle wired to both consumers, Height / Frame Rate retitles, Duration
+/// primitive into Video Slice, prompt-enhance baked ON; the U0 preflight
+/// 2026-07-06 proved the archive graph live on 3XS-Z — styled motion following
+/// the control clip + audible audio).
+const ICLORA_TEMPLATE_HASH: &str =
+    "0x55885abe431493a1b523a20b4a86a36c38dd2a748df946ba79d78f02f7d95fb4";
 /// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
 /// ladder + 32 MiB image cap; v5 the clip-duration bounds frames {121,751} and
-/// corrected fps [24,25,48,50]); the t2v/i2v/flf2v graph hashes above must NOT move.
-const BUNDLE_HASH: &str = "0xc6f1091dc3d4fbae2a757db1a43141443e593107b697ff895c52f3ee712664b7";
+/// corrected fps [24,25,48,50], with the i2v enhance=true re-pin landing within
+/// v5 as the LIVE on-chain 0xb44beb2c…; v6 adds ltx-iclora-hdr + the video
+/// bounds/videoInputs fields); the t2v/i2v/flf2v graph hashes above must NOT move.
+const BUNDLE_HASH: &str = "0x265d5bdde30d03814f7d35a268c237cb7e5a837e5bce0ba0c443563d1d1b8058";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -104,18 +115,22 @@ fn test_i2v_template_hash_stable() {
     let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     let expect = keccak_hex(serde_json::to_vec(&sort_json_keys(&v)).unwrap());
     assert_eq!(h, expect);
-    // The pinned i2v template must ship prompt-enhance OFF (provenance honesty).
+    // The pinned i2v template must ship prompt-enhance ON: LTX 2.3 conditions on
+    // the TextGenerateLTX2Prompt rewrite of the prompt; with the switch OFF the raw
+    // prompt reaches the encoder and the model renders grey (proven live, sessions
+    // 827-830 grey vs 831 real content after this flip). Provenance holds because
+    // the patched Prompt node (320:319) — whose text `inputCommitment` binds — is
+    // the INPUT to the rewrite (320:325): committed prompt -> deterministic-graph
+    // rewrite -> conditioning.
     assert_eq!(
         v.pointer("/320:328/inputs/value"),
-        Some(&serde_json::Value::Bool(false)),
-        "Enable Prompt Enhance must be baked OFF"
+        Some(&serde_json::Value::Bool(true)),
+        "Enable Prompt Enhance must be baked ON (raw prompt renders grey)"
     );
-    // ...and that OFF must actually select the RAW prompt: the enhance boolean
-    // (320:328) drives the ComfySwitchNode (320:327) whose `on_false` is the
-    // patched Prompt node (320:319) and `on_true` is the gemma rewrite (320:325).
-    // This is the provenance contract — `inputCommitment` binds 320:319's text, so
-    // switch=false is what makes the committed prompt the one that conditions the
-    // render. (The templateHash golden also locks it, but assert intent explicitly.)
+    // The enhance boolean (320:328) drives the ComfySwitchNode (320:327) whose
+    // `on_false` is the patched Prompt node (320:319) and `on_true` is the gemma
+    // rewrite (320:325). (The templateHash golden also locks it, but assert intent
+    // explicitly.)
     assert_eq!(
         v.pointer("/320:327/inputs/switch").and_then(|s| s.get(0)),
         Some(&serde_json::Value::String("320:328".to_string())),
@@ -181,10 +196,198 @@ fn test_flf2v_template_hash_stable() {
 }
 
 #[test]
+fn test_iclora_template_hash_stable() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let h = store
+        .template_hash("ltx-iclora-hdr")
+        .expect("iclora template present");
+    eprintln!("GOLD ICLORA_TEMPLATE_HASH={h}");
+    assert!(h.starts_with("0x") && h.len() == 66, "hash shape: {h}");
+    // Independent recompute (same canonical path the impl uses).
+    let raw = std::fs::read(format!("{DIR}/ltx-iclora-hdr/v1.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let expect = keccak_hex(serde_json::to_vec(&sort_json_keys(&v)).unwrap());
+    assert_eq!(h, expect);
+    // Prompt-enhance baked ON (the BL2 grey-output lesson; the U0 preflight ran
+    // with it ON and produced real styled AV output).
+    assert_eq!(
+        v.pointer("/129:212/inputs/value"),
+        Some(&serde_json::Value::Bool(true)),
+        "Enable Prompt Enhance must be baked ON"
+    );
+    if ICLORA_TEMPLATE_HASH != "0x__TBD__" {
+        assert_eq!(
+            h, ICLORA_TEMPLATE_HASH,
+            "golden iclora templateHash drifted"
+        );
+    }
+    // The three existing graph hashes are unmoved by adding iclora.
+    assert_eq!(
+        store.template_hash("ltx-t2v-hdr").unwrap(),
+        HDR_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-i2v-hdr").unwrap(),
+        I2V_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-flf2v-hdr").unwrap(),
+        FLF2V_TEMPLATE_HASH
+    );
+}
+
+#[test]
+fn test_iclora_handles() {
+    let raw = std::fs::read(format!("{DIR}/ltx-iclora-hdr/v1.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let obj = v.as_object().unwrap();
+    let title_of = |n: &serde_json::Value| {
+        n.pointer("/_meta/title")
+            .and_then(|t| t.as_str())
+            .map(String::from)
+    };
+    let class_of = |n: &serde_json::Value| {
+        n.get("class_type")
+            .and_then(|c| c.as_str())
+            .map(String::from)
+    };
+
+    // Exactly one Prompt-titled node: a PrimitiveStringMultiline with a leaf
+    // value, wired into BOTH prompt consumers (authoring may rewire; runtime
+    // patching may not — the archive graph inlined the prompt as two literals).
+    let prompt_ids: Vec<&String> = obj
+        .iter()
+        .filter(|(_, n)| title_of(n).as_deref() == Some("Prompt"))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(prompt_ids.len(), 1, "exactly one Prompt handle");
+    let pid = prompt_ids[0].clone();
+    assert_eq!(
+        class_of(&v[&pid]).as_deref(),
+        Some("PrimitiveStringMultiline"),
+        "Prompt node class"
+    );
+    assert!(
+        v.pointer(&format!("/{pid}/inputs/value"))
+            .and_then(|s| s.as_str())
+            .is_some(),
+        "Prompt has a leaf value"
+    );
+    let link = serde_json::json!([pid, 0]);
+    assert_eq!(
+        v.pointer("/129:209/inputs/prompt"),
+        Some(&link),
+        "TextGenerateLTX2Prompt reads the Prompt node"
+    );
+    assert_eq!(
+        v.pointer("/129:211/inputs/on_false"),
+        Some(&link),
+        "enhance-switch on_false reads the Prompt node"
+    );
+    assert_eq!(
+        v.pointer("/129:211/inputs/switch").and_then(|s| s.get(0)),
+        Some(&serde_json::Value::String("129:212".to_string())),
+        "switch driven by the enhance boolean"
+    );
+
+    // Dim/rate/duration handles: the exact titles the patcher matches, once each.
+    for title in ["Width", "Height", "Frame Rate", "Duration"] {
+        let n = obj
+            .values()
+            .filter(|n| title_of(n).as_deref() == Some(title))
+            .count();
+        assert_eq!(n, 1, "exactly one {title} handle");
+    }
+    // Duration drives the Video Slice: output frames derive from the sliced
+    // control clip, so patching Duration keeps sliced length == billed seconds.
+    let did = obj
+        .iter()
+        .find(|(_, n)| title_of(n).as_deref() == Some("Duration"))
+        .map(|(id, _)| id.clone())
+        .unwrap();
+    assert_eq!(
+        v.pointer("/692/inputs/duration"),
+        Some(&serde_json::json!([did, 0])),
+        "Duration drives Video Slice.duration"
+    );
+
+    // Seed lives in the plain KSampler (no RandomNoise anywhere) — the target of
+    // the D3 seed-handle widening; the sampler chain is NOT re-plumbed.
+    assert!(
+        !obj.values()
+            .any(|n| class_of(n).as_deref() == Some("RandomNoise")),
+        "no RandomNoise in this graph"
+    );
+    let ksamplers: Vec<&serde_json::Value> = obj
+        .values()
+        .filter(|n| class_of(n).as_deref() == Some("KSampler"))
+        .collect();
+    assert_eq!(ksamplers.len(), 1, "exactly one KSampler");
+    assert!(
+        ksamplers[0]
+            .pointer("/inputs/seed")
+            .and_then(|s| s.as_u64())
+            .is_some(),
+        "KSampler seed is a numeric leaf"
+    );
+
+    // One reference still + one control video.
+    let count = |cls: &str| {
+        obj.values()
+            .filter(|n| class_of(n).as_deref() == Some(cls))
+            .count()
+    };
+    assert_eq!(count("LoadImage"), 1, "one reference still");
+    assert_eq!(count("LoadVideo"), 1, "one control video");
+}
+
+#[test]
+fn test_bundle_v6_has_iclora() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let b = store.bundle();
+    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    let ic = b
+        .templates
+        .iter()
+        .find(|t| t.template_id == "ltx-iclora-hdr")
+        .unwrap();
+    assert_eq!(ic.image_inputs, 1);
+    assert_eq!(ic.image_semantics, vec!["reference".to_string()]);
+    assert_eq!(ic.video_inputs, 1);
+    assert_eq!(ic.video_semantics, vec!["controlVideo".to_string()]);
+    // First video input on the seam ⇒ video bounds advertised.
+    assert_eq!(b.bounds.video_max_bytes, 134_217_728, "128 MiB video cap");
+    assert_eq!(b.bounds.video_formats, vec!["mp4"]);
+    // The old three carry an explicit videoInputs 0 and no semantics.
+    for id in ["ltx-t2v-hdr", "ltx-i2v-hdr", "ltx-flf2v-hdr"] {
+        let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
+        assert_eq!(t.video_inputs, 0, "{id} has no video input");
+        assert!(t.video_semantics.is_empty(), "{id} has no video semantics");
+    }
+    // The handler's video-count accessor mirrors image_inputs.
+    assert_eq!(store.video_inputs("ltx-iclora-hdr"), Some(1));
+    assert_eq!(store.video_inputs("ltx-t2v-hdr"), Some(0));
+    assert_eq!(store.video_inputs("nope"), None);
+    // THE v6 invariant: the three pre-existing templateHash VALUES equal the
+    // LIVE v5 values (regression against an accidental re-pin — presupposes the
+    // U0 i2v enhance=true reconciliation).
+    let hash_of = |id: &str| {
+        &b.templates
+            .iter()
+            .find(|t| t.template_id == id)
+            .unwrap()
+            .template_hash
+    };
+    assert_eq!(hash_of("ltx-t2v-hdr"), HDR_TEMPLATE_HASH);
+    assert_eq!(hash_of("ltx-i2v-hdr"), I2V_TEMPLATE_HASH);
+    assert_eq!(hash_of("ltx-flf2v-hdr"), FLF2V_TEMPLATE_HASH);
+}
+
+#[test]
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 5, "v5 allow-list");
+    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
     let flf = b
         .templates
         .iter()
@@ -206,7 +409,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 5, "v5 allow-list");
+    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -233,8 +436,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 5,
-        "v5 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 6,
+        "v6 allow-list (t2v/i2v entries unchanged)"
     );
     let t2v = b
         .templates

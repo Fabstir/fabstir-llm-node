@@ -110,17 +110,63 @@ pub fn input_commitment_v2(job: &LtxJob, image_hashes: &[[u8; 32]]) -> Result<St
     Ok(keccak_hex(&encode(&tokens)))
 }
 
-/// Format-selected commitment, keyed by the template's image-input count. Zero
-/// images (t2v) → the byte-identical M0 seven-field [`input_commitment`]; one or
-/// more (image templates) → [`input_commitment_v2`]. The `image_hashes.is_empty()`
-/// test is exactly the `imageInputs == 0` selector once the upstream
-/// `images.len() == imageInputs` check has run, and it is what keeps deployed M0
-/// attestations byte-for-byte unchanged.
-pub fn commitment_for(job: &LtxJob, image_hashes: &[[u8; 32]]) -> Result<String> {
-    if image_hashes.is_empty() {
-        input_commitment(job)
-    } else {
+/// `inputCommitment` **v3** (video-conditioned templates, BL3): the v2 eight
+/// fields plus a trailing `bytes32[] videoHashes` in job order, where
+/// `videoHashes[i] = keccak256(plaintext bytes of videos[i])`. Used ONLY for
+/// templates whose bundle entry has `videoInputs > 0` (iclora).
+///
+/// CRITICAL: the same byte-inequality rule as the v1/v2 split — appending the
+/// dynamic `videoHashes` shifts the earlier dynamic heads, so v3 with an empty
+/// `video_hashes` is NOT byte-equal to v2. Templates without video inputs MUST
+/// keep their v1/v2 form; never route an empty `video_hashes` through here (see
+/// [`commitment_for`], which enforces the split).
+pub fn input_commitment_v3(
+    job: &LtxJob,
+    image_hashes: &[[u8; 32]],
+    video_hashes: &[[u8; 32]],
+) -> Result<String> {
+    let seed = job.seed_u256().map_err(|e| anyhow!(e))?;
+    let as_array = |hashes: &[[u8; 32]]| {
+        Token::Array(
+            hashes
+                .iter()
+                .map(|h| Token::FixedBytes(h.to_vec()))
+                .collect(),
+        )
+    };
+    let tokens = [
+        Token::String(job.prompt.clone()),
+        Token::Uint(seed),
+        Token::Uint(U256::from(job.frames)),
+        Token::Uint(U256::from(job.fps)),
+        Token::Uint(U256::from(job.resolution.w)),
+        Token::Uint(U256::from(job.resolution.h)),
+        Token::String(job.lora.clone()),
+        as_array(image_hashes),
+        as_array(video_hashes),
+    ];
+    Ok(keccak_hex(&encode(&tokens)))
+}
+
+/// Format-selected commitment, keyed by the template's input counts. No videos
+/// and no images (t2v) → the byte-identical M0 seven-field [`input_commitment`];
+/// images only (i2v/flf2v/style_transition) → [`input_commitment_v2`]; any video
+/// (iclora) → [`input_commitment_v3`]. The emptiness tests are exactly the
+/// bundle's `videoInputs`/`imageInputs` selectors once the upstream
+/// `videos.len() == videoInputs` / `images.len() == imageInputs` checks have
+/// run, and they are what keep deployed M0/M1a attestations byte-for-byte
+/// unchanged.
+pub fn commitment_for(
+    job: &LtxJob,
+    image_hashes: &[[u8; 32]],
+    video_hashes: &[[u8; 32]],
+) -> Result<String> {
+    if !video_hashes.is_empty() {
+        input_commitment_v3(job, image_hashes, video_hashes)
+    } else if !image_hashes.is_empty() {
         input_commitment_v2(job, image_hashes)
+    } else {
+        input_commitment(job)
     }
 }
 
@@ -166,10 +212,11 @@ pub fn sig_digest(att: &Attestation) -> Result<[u8; 32]> {
 }
 
 /// Assemble the attestation: compute `inputCommitment` (format-selected by
-/// `image_hashes` via [`commitment_for`] — empty ⇒ the byte-identical M0
-/// seven-field form, non-empty ⇒ the v2 image form), and if a node key is
-/// provided, EIP-191-sign `sigDigest`. The signature is set BEFORE the bytes are
-/// taken, because `proofHash` is SHA256 over the stored bytes INCLUDING it.
+/// `image_hashes`/`video_hashes` via [`commitment_for`] — both empty ⇒ the
+/// byte-identical M0 seven-field form, images only ⇒ v2, any video ⇒ v3), and
+/// if a node key is provided, EIP-191-sign `sigDigest`. The signature is set
+/// BEFORE the bytes are taken, because `proofHash` is SHA256 over the stored
+/// bytes INCLUDING it.
 #[allow(clippy::too_many_arguments)]
 pub fn assemble(
     model_id: String,
@@ -177,6 +224,7 @@ pub fn assemble(
     env_hash: String,
     job: &LtxJob,
     image_hashes: &[[u8; 32]],
+    video_hashes: &[[u8; 32]],
     output_cid: String,
     manifest: FrameManifest,
     session_id: String,
@@ -188,7 +236,7 @@ pub fn assemble(
         model_id,
         template_hash,
         env_hash,
-        input_commitment: commitment_for(job, image_hashes)?,
+        input_commitment: commitment_for(job, image_hashes, video_hashes)?,
         output_cid,
         manifest,
         session_id,

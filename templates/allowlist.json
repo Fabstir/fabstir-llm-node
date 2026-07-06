@@ -1,9 +1,10 @@
 {
-  "allowListVersion": 5,
+  "allowListVersion": 6,
   "templates": [
     { "templateId": "ltx-t2v-hdr", "version": "v1" },
     { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
-    { "templateId": "ltx-flf2v-hdr", "version": "v1", "imageInputs": 2, "imageSemantics": ["firstFrame", "lastFrame"] }
+    { "templateId": "ltx-flf2v-hdr", "version": "v1", "imageInputs": 2, "imageSemantics": ["firstFrame", "lastFrame"] },
+    { "templateId": "ltx-iclora-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["reference"], "videoInputs": 1, "videoSemantics": ["controlVideo"] }
   ],
   "loras": ["ltx-iclora-hdr@v1"],
   "bounds": {
@@ -21,6 +22,8 @@
       { "w": 1024, "h": 1024 }
     ],
     "imageMaxBytes": 33554432,
-    "imageFormats": ["png", "jpeg", "webp"]
+    "imageFormats": ["png", "jpeg", "webp"],
+    "videoMaxBytes": 134217728,
+    "videoFormats": ["mp4"]
   }
 }

@@ -120,7 +120,7 @@ async fn test_i2v_accepted_ack() {
     assert!(task.is_some(), "valid one-image i2v job is accepted");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 5, "v5 allow-list echoed");
+    assert_eq!(inner["allowListVersion"], 6, "v6 allow-list echoed");
 }
 
 #[tokio::test]
@@ -362,4 +362,116 @@ async fn test_capacity_when_full() {
     let inner = decrypt_envelope(&resp2, &k);
     assert_eq!(inner["error"]["code"], "CAPACITY");
     drop(task1);
+}
+
+// ---------------------------------------------------------------------------
+// BL3 iclora: one reference image + one control video across the seam.
+// ---------------------------------------------------------------------------
+
+/// A store carrying the v6 allow-list, plus the iclora templateHash.
+fn store_iclora() -> (Arc<TemplateStore>, String) {
+    let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
+    let hash = store.template_hash("ltx-iclora-hdr").unwrap().to_string();
+    (Arc::new(store), hash)
+}
+
+fn iclora_job(hash: &str, images: Value, videos: Value) -> Value {
+    json!({
+        "action": "ltx_generate",
+        "requestId": "r-iclora",
+        "templateId": "ltx-iclora-hdr",
+        "templateHash": hash,
+        "prompt": "restyle the control clip as a hand-painted cartoon child",
+        "seed": "60540193790228",
+        "frames": 126,
+        "fps": 25,
+        "resolution": { "w": 768, "h": 512 },
+        "lora": "ltx-iclora-hdr@v1",
+        "output": "exr-sequence",
+        "images": images,
+        "videos": videos
+    })
+}
+
+#[tokio::test]
+async fn test_iclora_accepted_ack() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_iclora();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    // 1 reference image + 1 control video (the capability envelope is
+    // media-agnostic; format is enforced on the decrypted bytes post-accept).
+    let job = iclora_job(
+        &hash,
+        json!([fixture_capability_cid()]),
+        json!([fixture_capability_cid()]),
+    );
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-iclora", Some(9), None).await;
+    assert!(
+        task.is_some(),
+        "valid 1-image+1-video iclora job is accepted"
+    );
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["type"], "ltx_accepted");
+    assert_eq!(inner["allowListVersion"], 6, "v6 allow-list echoed");
+}
+
+#[tokio::test]
+async fn test_iclora_wrong_video_count() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_iclora();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    // iclora expects 1 video; supply 0 -> fail closed BEFORE a slot is taken.
+    let job = iclora_job(&hash, json!([fixture_capability_cid()]), json!([]));
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-iclora-c", Some(9), None).await;
+    assert!(task.is_none());
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+    assert!(
+        inner["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("video"),
+        "reject names the video count: {}",
+        inner["error"]["message"]
+    );
+}
+
+#[tokio::test]
+async fn test_iclora_oversize_video_rejected() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_iclora();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    // 34 MB claims fit under videoMaxBytes (128 MiB) — so build a 200 MB claim.
+    let big = {
+        let mut env = vec![0xaeu8, 0xa6, 18, 0x1f];
+        env.extend_from_slice(&[0u8; 32]);
+        env.extend_from_slice(&[0u8; 32]);
+        env.extend_from_slice(&[0u8; 4]);
+        env.push(0x26);
+        env.push(0x1f);
+        env.extend_from_slice(&[0u8; 32]);
+        let mut sle = 200_000_000u64.to_le_bytes().to_vec();
+        while sle.len() > 1 && *sle.last().unwrap() == 0 {
+            sle.pop();
+        }
+        env.extend_from_slice(&sle);
+        format!(
+            "u{}",
+            base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &env)
+        )
+    };
+    let job = iclora_job(&hash, json!([fixture_capability_cid()]), json!([big]));
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-iclora-o", Some(9), None).await;
+    assert!(task.is_none(), "oversize video rejected pre-escrow");
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
 }

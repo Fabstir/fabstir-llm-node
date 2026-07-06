@@ -44,6 +44,14 @@ pub struct LtxJob {
     /// byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,
+    /// Ordered S5 capability CIDs of the input videos (BL3). Absent/empty for
+    /// everything before iclora; present for video-conditioned templates. Same
+    /// transport and commitment rule as `images`: the commitment binds
+    /// `keccak256(plaintext bytes)` of each video, NOT the CID. The serde attrs
+    /// keep the pre-video wire parsing (`None`) and output (key omitted)
+    /// byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub videos: Option<Vec<String>>,
 }
 
 impl LtxJob {
