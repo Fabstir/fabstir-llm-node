@@ -710,9 +710,9 @@
   },
   "901": {
     "inputs": {
-      "value": 5
+      "value": 5.0
     },
-    "class_type": "PrimitiveInt",
+    "class_type": "PrimitiveFloat",
     "_meta": {
       "title": "Duration"
     }
