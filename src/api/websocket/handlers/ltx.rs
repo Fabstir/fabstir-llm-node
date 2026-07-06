@@ -244,94 +244,27 @@ pub async fn handle_encrypted_ltx_generate(
     // carry exactly that many images (0 for t2v). Each image's size is checked
     // from the capability CID's own length field — parse only, NO network fetch —
     // so an oversize image is rejected without a wasted portal GET.
-    let image_inputs = store.image_inputs(&job.template_id).unwrap_or(0);
-    let images = job.images.clone().unwrap_or_default();
-    if images.len() != image_inputs as usize {
-        return reject(
-            "VALIDATION_FAILED",
-            &format!(
-                "template {:?} expects {} input image(s), got {}",
-                job.template_id,
-                image_inputs,
-                images.len()
-            ),
-        );
+    if let Err(msg) = validate_input_cids(
+        &job.template_id,
+        "image",
+        "imageMaxBytes",
+        job.images.as_deref().unwrap_or_default(),
+        store.image_inputs(&job.template_id).unwrap_or(0),
+        store.bundle().bounds.image_max_bytes,
+    ) {
+        return reject("VALIDATION_FAILED", &msg);
     }
-    let image_max_bytes = store.bundle().bounds.image_max_bytes;
-    // Fail closed if a template accepts images but advertises no size bound —
-    // `imageMaxBytes` unset (0) must NOT mean "unlimited" (that would re-open an
-    // unbounded fetch on a client-influenced size). A correctly configured image
-    // template always sets it.
-    if !images.is_empty() && image_max_bytes == 0 {
-        return reject(
-            "VALIDATION_FAILED",
-            "template accepts images but no imageMaxBytes bound is configured",
-        );
-    }
-    for cid in &images {
-        let env = match crate::ltx::input_image::parse_capability_cid(cid) {
-            Ok(e) => e,
-            Err(e) => {
-                return reject(
-                    "VALIDATION_FAILED",
-                    &format!("invalid image capability CID: {e}"),
-                )
-            }
-        };
-        if env.plaintext_len as u64 > image_max_bytes {
-            return reject(
-                "VALIDATION_FAILED",
-                &format!(
-                    "input image is {} bytes, exceeds imageMaxBytes {}",
-                    env.plaintext_len, image_max_bytes
-                ),
-            );
-        }
-    }
-
-    // Input-video validation (BL3), the exact mirror of the images block above:
-    // count == the template's `videoInputs` (the v3 commitment selector), size
-    // from the capability CID's own length field (parse only, NO network fetch),
-    // fail closed on a missing bound.
-    let video_inputs = store.video_inputs(&job.template_id).unwrap_or(0);
-    let videos = job.videos.clone().unwrap_or_default();
-    if videos.len() != video_inputs as usize {
-        return reject(
-            "VALIDATION_FAILED",
-            &format!(
-                "template {:?} expects {} input video(s), got {}",
-                job.template_id,
-                video_inputs,
-                videos.len()
-            ),
-        );
-    }
-    let video_max_bytes = store.bundle().bounds.video_max_bytes;
-    if !videos.is_empty() && video_max_bytes == 0 {
-        return reject(
-            "VALIDATION_FAILED",
-            "template accepts videos but no videoMaxBytes bound is configured",
-        );
-    }
-    for cid in &videos {
-        let env = match crate::ltx::input_image::parse_capability_cid(cid) {
-            Ok(e) => e,
-            Err(e) => {
-                return reject(
-                    "VALIDATION_FAILED",
-                    &format!("invalid video capability CID: {e}"),
-                )
-            }
-        };
-        if env.plaintext_len as u64 > video_max_bytes {
-            return reject(
-                "VALIDATION_FAILED",
-                &format!(
-                    "input video is {} bytes, exceeds videoMaxBytes {}",
-                    env.plaintext_len, video_max_bytes
-                ),
-            );
-        }
+    // Input-video validation (BL3): same gate, `videoInputs` is the v3 commitment
+    // selector.
+    if let Err(msg) = validate_input_cids(
+        &job.template_id,
+        "video",
+        "videoMaxBytes",
+        job.videos.as_deref().unwrap_or_default(),
+        store.video_inputs(&job.template_id).unwrap_or(0),
+        store.bundle().bounds.video_max_bytes,
+    ) {
+        return reject("VALIDATION_FAILED", &msg);
     }
 
     // Patch scalar params into the pinned graph (substitution only). Image/video
@@ -467,6 +400,70 @@ fn s5_blob_source_url() -> String {
         .unwrap_or_else(|| "http://localhost:5522".to_string())
 }
 
+/// Pre-accept gate for one media kind (M1a images / BL3 videos), fail-closed
+/// BEFORE a slot is spent: count == the template's selector (`imageInputs`/
+/// `videoInputs` — also the commitment format selector), a missing size bound
+/// rejects (unset must NOT mean "unlimited": that would re-open an unbounded
+/// fetch on a client-influenced size), and each capability CID's own claimed
+/// length is checked — parse only, NO network fetch.
+fn validate_input_cids(
+    template_id: &str,
+    kind: &str,
+    bound_name: &str,
+    cids: &[String],
+    expected: u32,
+    max_bytes: u64,
+) -> Result<(), String> {
+    if cids.len() != expected as usize {
+        return Err(format!(
+            "template {:?} expects {} input {}(s), got {}",
+            template_id,
+            expected,
+            kind,
+            cids.len()
+        ));
+    }
+    if !cids.is_empty() && max_bytes == 0 {
+        return Err(format!(
+            "template accepts {kind}s but no {bound_name} bound is configured"
+        ));
+    }
+    for cid in cids {
+        let env = crate::ltx::input_image::parse_capability_cid(cid)
+            .map_err(|e| format!("invalid {kind} capability CID: {e}"))?;
+        if env.plaintext_len as u64 > max_bytes {
+            return Err(format!(
+                "input {} is {} bytes, exceeds {} {}",
+                kind, env.plaintext_len, bound_name, max_bytes
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One staged input: fetch + integrity-check + decrypt the capability CID from
+/// the S5 portal, run the kind-specific plaintext check, upload to ComfyUI under
+/// the content-addressed name (`keccak256(plaintext)` ⇒ stable under
+/// `overwrite`). Returns (stored name, plaintext keccak) — the commitment input.
+async fn stage_input(
+    client: &ComfyClient,
+    blob_source: &str,
+    cid: &str,
+    kind: &str,
+    ext: &str,
+    check: impl Fn(&[u8]) -> Result<(), String>,
+) -> Result<(String, [u8; 32]), String> {
+    let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(blob_source, cid)
+        .await
+        .map_err(|e| format!("input {kind} fetch failed: {e}"))?;
+    check(&plaintext)?;
+    let name = client
+        .upload_input(&format!("{}.{ext}", hex::encode(hash)), plaintext)
+        .await
+        .map_err(|e| format!("input {kind} upload failed: {e}"))?;
+    Ok((name, hash))
+}
+
 /// Resolve a conditioned job's inputs (M1a images + BL3 videos). For each
 /// ordered capability CID: fetch + integrity-check + decrypt it from the S5
 /// portal, upload the plaintext to ComfyUI under a content-addressed name
@@ -476,6 +473,34 @@ fn s5_blob_source_url() -> String {
 /// stored names. A t2v job (no inputs) returns the graph untouched and leaves
 /// both hash vecs empty. Pre-accept validation has already checked the counts
 /// and per-input sizes, so any failure here is post-accept (`GENERATION_FAILED`).
+/// The control-video plaintext gate, run on the decrypted bytes BEFORE any
+/// ComfyUI upload or GPU work: (1) the bundle's `videoFormats` is `["mp4"]` —
+/// enforce the container (an ISO BMFF file has "ftyp" at offset 4; the
+/// capability CID itself carries no format, so this is the earliest the node
+/// can check it); (2) the graph derives the RENDERED frame count from this clip
+/// while billing uses `job.frames`, so the clip's own sample count must sit in
+/// the billed range [frames−1, frames] (the conform ±1: content-true fps·d vs
+/// billed fps·d+1). Without this a direct-WS client could upload a higher-fps
+/// clip and make the GPU render a multiple of the billed frames — the TS helper
+/// enforces the same rule client-side, which a direct client can skip.
+fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), String> {
+    if plaintext.len() < 12 || &plaintext[4..8] != b"ftyp" {
+        return Err("input video is not an mp4 (ISO BMFF) container".to_string());
+    }
+    let samples = crate::ltx::mp4::video_sample_count(plaintext).map_err(|e| {
+        format!("input video frame count unreadable ({e}) — refusing unbounded render")
+    })?;
+    let billed = u64::from(billed_frames);
+    if samples + 1 < billed || samples > billed {
+        return Err(format!(
+            "control video has {samples} frame(s) but the job bills {billed} — \
+             conform the clip to the job (frames must be {}..{billed})",
+            billed.saturating_sub(1)
+        ));
+    }
+    Ok(())
+}
+
 async fn prepare_inputs(
     client: &ComfyClient,
     job: &LtxJob,
@@ -491,34 +516,17 @@ async fn prepare_inputs(
     let blob_source = s5_blob_source_url();
     let mut image_names = Vec::with_capacity(images.len());
     for cid in images {
-        let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, cid)
-            .await
-            .map_err(|e| format!("input image fetch failed: {e}"))?;
-        let filename = format!("{}.png", hex::encode(hash));
-        let name = client
-            .upload_image(&filename, plaintext)
-            .await
-            .map_err(|e| format!("input image upload failed: {e}"))?;
+        let (name, hash) =
+            stage_input(client, &blob_source, cid, "image", "png", |_| Ok(())).await?;
         image_names.push(name);
         image_hashes.push(hash);
     }
     let mut video_names = Vec::with_capacity(videos.len());
     for cid in videos {
-        let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, cid)
-            .await
-            .map_err(|e| format!("input video fetch failed: {e}"))?;
-        // The bundle's videoFormats is ["mp4"]; enforce the container on the
-        // decrypted bytes (an ISO BMFF file has "ftyp" at offset 4) — the
-        // capability CID itself carries no format, so this is the earliest the
-        // node can check it.
-        if plaintext.len() < 12 || &plaintext[4..8] != b"ftyp" {
-            return Err("input video is not an mp4 (ISO BMFF) container".to_string());
-        }
-        let filename = format!("{}.mp4", hex::encode(hash));
-        let name = client
-            .upload_video(&filename, plaintext)
-            .await
-            .map_err(|e| format!("input video upload failed: {e}"))?;
+        let (name, hash) = stage_input(client, &blob_source, cid, "video", "mp4", |plaintext| {
+            check_control_video(plaintext, job.frames)
+        })
+        .await?;
         video_names.push(name);
         video_hashes.push(hash);
     }

@@ -5,6 +5,7 @@ mod test_billing;
 mod test_client;
 mod test_exr;
 mod test_input_image;
+mod test_mp4;
 mod test_patcher;
 mod test_submit;
 mod test_template;

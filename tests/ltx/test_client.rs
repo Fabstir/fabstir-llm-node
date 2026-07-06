@@ -34,12 +34,12 @@ async fn spawn_upload_server() -> String {
 }
 
 #[tokio::test]
-async fn test_upload_image_returns_stored_name() {
+async fn test_upload_input_returns_stored_name() {
     let url = spawn_upload_server().await;
     let client = ComfyClient::new(&url).unwrap();
     // ComfyUI is authoritative on the stored name; the client returns whatever it assigns.
     let name = client
-        .upload_image("egyptian_queen.png", b"\x89PNG\r\n\x1a\n".to_vec())
+        .upload_input("egyptian_queen.png", b"\x89PNG\r\n\x1a\n".to_vec())
         .await
         .unwrap();
     assert_eq!(name, "img_abc.png");
@@ -57,6 +57,54 @@ async fn test_submit_returns_prompt_id() {
     let client = ComfyClient::new(&url).unwrap();
     let graph = Graph(json!({ "1": { "class_type": "X", "inputs": {} } }));
     assert_eq!(client.submit(&graph).await.unwrap(), "p-xyz");
+}
+
+/// ComfyUI answers 200 + `prompt_id` even when SOME output nodes fail validation
+/// (it executes only the valid subset, listing failures in `node_errors`) — the
+/// exact shape of the live session-847 loss. A non-empty `node_errors` must be a
+/// hard submit failure, before any GPU work.
+#[tokio::test]
+async fn test_submit_rejects_partial_graph_with_node_errors() {
+    use axum::{routing::post, Json, Router};
+    let app = Router::new().route(
+        "/prompt",
+        post(|| async {
+            Json(json!({
+                "prompt_id": "p-partial",
+                "number": 7,
+                "node_errors": { "692": { "errors": [{ "type": "return_type_mismatch" }] } }
+            }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = ComfyClient::new(&format!("http://{addr}")).unwrap();
+    let graph = Graph(json!({ "1": { "class_type": "X", "inputs": {} } }));
+    let err = client.submit(&graph).await.unwrap_err().to_string();
+    assert!(err.contains("692"), "error names the failing node: {err}");
+    assert!(err.contains("refusing the partial graph"), "{err}");
+}
+
+/// An explicitly EMPTY node_errors object (what ComfyUI sends on full success)
+/// must not trip the guard.
+#[tokio::test]
+async fn test_submit_accepts_empty_node_errors() {
+    use axum::{routing::post, Json, Router};
+    let app = Router::new().route(
+        "/prompt",
+        post(|| async { Json(json!({ "prompt_id": "p-ok", "node_errors": {} })) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = ComfyClient::new(&format!("http://{addr}")).unwrap();
+    let graph = Graph(json!({ "1": { "class_type": "X", "inputs": {} } }));
+    assert_eq!(client.submit(&graph).await.unwrap(), "p-ok");
 }
 
 #[test]

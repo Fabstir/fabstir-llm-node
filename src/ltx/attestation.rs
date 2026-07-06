@@ -66,8 +66,15 @@ fn session_u256(s: &str) -> Result<U256> {
 /// uint32 frames, uint32 fps, uint32 w, uint32 h, string lora))`. seed parsed
 /// from the decimal-string wire value to uint256.
 pub fn input_commitment(job: &LtxJob) -> Result<String> {
+    Ok(keccak_hex(&encode(&scalar_tokens(job)?)))
+}
+
+/// The seven scalar tokens every commitment version starts with, in the FROZEN
+/// v1 order — the single transcription of the field list (v2/v3 append their
+/// hash arrays to it, so a field-order slip cannot silently fork the formats).
+fn scalar_tokens(job: &LtxJob) -> Result<Vec<Token>> {
     let seed = job.seed_u256().map_err(|e| anyhow!(e))?;
-    let tokens = [
+    Ok(vec![
         Token::String(job.prompt.clone()),
         Token::Uint(seed),
         Token::Uint(U256::from(job.frames)),
@@ -75,8 +82,16 @@ pub fn input_commitment(job: &LtxJob) -> Result<String> {
         Token::Uint(U256::from(job.resolution.w)),
         Token::Uint(U256::from(job.resolution.h)),
         Token::String(job.lora.clone()),
-    ];
-    Ok(keccak_hex(&encode(&tokens)))
+    ])
+}
+
+fn hashes_token(hashes: &[[u8; 32]]) -> Token {
+    Token::Array(
+        hashes
+            .iter()
+            .map(|h| Token::FixedBytes(h.to_vec()))
+            .collect(),
+    )
 }
 
 /// `inputCommitment` **v2** (image-conditioned templates, M1a): the M0 seven
@@ -90,23 +105,8 @@ pub fn input_commitment(job: &LtxJob) -> Result<String> {
 /// the seven-field [`input_commitment`]; never route it through here with an empty
 /// slice (see [`commitment_for`], which enforces the split).
 pub fn input_commitment_v2(job: &LtxJob, image_hashes: &[[u8; 32]]) -> Result<String> {
-    let seed = job.seed_u256().map_err(|e| anyhow!(e))?;
-    let hashes = Token::Array(
-        image_hashes
-            .iter()
-            .map(|h| Token::FixedBytes(h.to_vec()))
-            .collect(),
-    );
-    let tokens = [
-        Token::String(job.prompt.clone()),
-        Token::Uint(seed),
-        Token::Uint(U256::from(job.frames)),
-        Token::Uint(U256::from(job.fps)),
-        Token::Uint(U256::from(job.resolution.w)),
-        Token::Uint(U256::from(job.resolution.h)),
-        Token::String(job.lora.clone()),
-        hashes,
-    ];
+    let mut tokens = scalar_tokens(job)?;
+    tokens.push(hashes_token(image_hashes));
     Ok(keccak_hex(&encode(&tokens)))
 }
 
@@ -125,26 +125,9 @@ pub fn input_commitment_v3(
     image_hashes: &[[u8; 32]],
     video_hashes: &[[u8; 32]],
 ) -> Result<String> {
-    let seed = job.seed_u256().map_err(|e| anyhow!(e))?;
-    let as_array = |hashes: &[[u8; 32]]| {
-        Token::Array(
-            hashes
-                .iter()
-                .map(|h| Token::FixedBytes(h.to_vec()))
-                .collect(),
-        )
-    };
-    let tokens = [
-        Token::String(job.prompt.clone()),
-        Token::Uint(seed),
-        Token::Uint(U256::from(job.frames)),
-        Token::Uint(U256::from(job.fps)),
-        Token::Uint(U256::from(job.resolution.w)),
-        Token::Uint(U256::from(job.resolution.h)),
-        Token::String(job.lora.clone()),
-        as_array(image_hashes),
-        as_array(video_hashes),
-    ];
+    let mut tokens = scalar_tokens(job)?;
+    tokens.push(hashes_token(image_hashes));
+    tokens.push(hashes_token(video_hashes));
     Ok(keccak_hex(&encode(&tokens)))
 }
 

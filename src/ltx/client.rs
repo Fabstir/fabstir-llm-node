@@ -72,6 +72,13 @@ impl ComfyClient {
     }
 
     /// POST `/prompt` with the pinned graph; returns ComfyUI's `prompt_id`.
+    ///
+    /// ComfyUI answers 200 whenever AT LEAST ONE output node validates, listing any
+    /// failed nodes in `node_errors` and then executing only the valid subset — a
+    /// partially-valid graph would burn GPU on the wrong branch and can even bill a
+    /// wrong artefact (caught live: session 847's INT/FLOAT link mismatch). A
+    /// non-empty `node_errors` is therefore a hard submit failure, BEFORE any GPU
+    /// work.
     pub async fn submit(&self, graph: &Graph) -> Result<String> {
         let url = format!("{}/prompt", self.endpoint);
         let body = serde_json::json!({ "prompt": graph.0, "client_id": self.client_id });
@@ -84,32 +91,30 @@ impl ComfyClient {
         #[derive(Deserialize)]
         struct PromptResponse {
             prompt_id: String,
+            #[serde(default)]
+            node_errors: serde_json::Map<String, Value>,
         }
         let parsed: PromptResponse = response.json().await?;
+        if !parsed.node_errors.is_empty() {
+            let nodes: Vec<&String> = parsed.node_errors.keys().collect();
+            return Err(anyhow!(
+                "comfyui accepted the prompt but failed validation on {} node(s) ({:?}) — refusing the partial graph",
+                nodes.len(),
+                nodes
+            ));
+        }
         Ok(parsed.prompt_id)
     }
 
-    /// POST `/upload/image` (multipart) so an input image lands in ComfyUI's
-    /// `input/` folder for a `LoadImage` node to reference (M1a image-to-video).
-    /// Returns the name ComfyUI stored it under — which the patcher then
-    /// substitutes into the graph, so we always follow ComfyUI's authoritative
-    /// name rather than assuming `filename` survived unchanged. Pass a
-    /// content-addressed `filename` (e.g. keccak of the plaintext) so identical
-    /// images map to one stable input file under `overwrite`.
-    pub async fn upload_image(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
-        self.upload_input(filename, bytes).await
-    }
-
-    /// POST an input VIDEO into ComfyUI's `input/` folder for a `LoadVideo` node
-    /// to reference (BL3 iclora control video). Same `/upload/image` endpoint —
-    /// ComfyUI's upload route is format-blind and stores whatever bytes arrive
-    /// under `input/`; only the referencing node cares about the container. Same
-    /// content-addressed-`filename` guidance as [`Self::upload_image`].
-    pub async fn upload_video(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
-        self.upload_input(filename, bytes).await
-    }
-
-    async fn upload_input(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
+    /// POST an input (image OR video, multipart) into ComfyUI's `input/` folder
+    /// for a `LoadImage`/`LoadVideo` node to reference. The `/upload/image` route
+    /// is format-blind — it stores whatever bytes arrive under `input/`; only the
+    /// referencing node cares about the container. Returns the name ComfyUI stored
+    /// it under — which the patcher then substitutes into the graph, so we always
+    /// follow ComfyUI's authoritative name rather than assuming `filename`
+    /// survived unchanged. Pass a content-addressed `filename` (e.g. keccak of the
+    /// plaintext) so identical inputs map to one stable file under `overwrite`.
+    pub async fn upload_input(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
         let url = format!("{}/upload/image", self.endpoint);
         let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
         let form = reqwest::multipart::Form::new()

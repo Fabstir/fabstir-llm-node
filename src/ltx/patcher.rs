@@ -85,49 +85,48 @@ pub fn patch(
     // across the image template family — i2v has one `LoadImage`; flf2v `31` <
     // `39` binds (first, last); style_transition `137` < `138` — with no reliance
     // on node titles. t2v passes `&[]` and has no `LoadImage`, so this is a no-op.
-    if !image_names.is_empty() {
-        let mut load_ids: Vec<String> = obj
-            .iter()
-            .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some("LoadImage"))
-            .map(|(id, _)| id.clone())
-            .collect();
-        load_ids.sort();
-        if load_ids.len() != image_names.len() {
-            return Err(anyhow!(
-                "template has {} LoadImage node(s) but {} image name(s) supplied",
-                load_ids.len(),
-                image_names.len()
-            ));
-        }
-        for (name, id) in image_names.iter().zip(load_ids.iter()) {
-            set_input(obj, id, "image", Value::from(name.clone()))?;
-        }
-    }
+    bind_inputs_by_class(obj, "LoadImage", "image", "image", image_names)?;
 
     // Video inputs (BL3): assign `video_names[i]` to the i-th `LoadVideo` node's
-    // `file`, node-id order — the exact mirror of the images block, same
-    // count-mismatch fail-closed rule. iclora has one `LoadVideo` (the control
-    // video); templates without one pass `&[]` and this is a no-op.
-    if !video_names.is_empty() {
-        let mut load_ids: Vec<String> = obj
-            .iter()
-            .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some("LoadVideo"))
-            .map(|(id, _)| id.clone())
-            .collect();
-        load_ids.sort();
-        if load_ids.len() != video_names.len() {
-            return Err(anyhow!(
-                "template has {} LoadVideo node(s) but {} video name(s) supplied",
-                load_ids.len(),
-                video_names.len()
-            ));
-        }
-        for (name, id) in video_names.iter().zip(load_ids.iter()) {
-            set_input(obj, id, "file", Value::from(name.clone()))?;
-        }
-    }
+    // `file` — same node-id-order + count-mismatch fail-closed rule. iclora has
+    // one `LoadVideo` (the control video); templates without one pass `&[]`.
+    bind_inputs_by_class(obj, "LoadVideo", "file", "video", video_names)?;
 
     Ok(Graph(value))
+}
+
+/// Assign `names[i]` to the i-th node of `class`'s `key` input, ordering nodes by
+/// id lexicographically ascending — universal across the template family with no
+/// reliance on node titles (i2v has one `LoadImage`; flf2v `31` < `39` binds
+/// (first, last)). Fails CLOSED on a count mismatch; an empty `names` is a no-op
+/// (t2v has no `LoadImage`).
+fn bind_inputs_by_class(
+    obj: &mut serde_json::Map<String, Value>,
+    class: &str,
+    key: &str,
+    noun: &str,
+    names: &[String],
+) -> anyhow::Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut load_ids: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some(class))
+        .map(|(id, _)| id.clone())
+        .collect();
+    load_ids.sort();
+    if load_ids.len() != names.len() {
+        return Err(anyhow!(
+            "template has {} {class} node(s) but {} {noun} name(s) supplied",
+            load_ids.len(),
+            names.len()
+        ));
+    }
+    for (name, id) in names.iter().zip(load_ids.iter()) {
+        set_input(obj, id, key, Value::from(name.clone()))?;
+    }
+    Ok(())
 }
 
 /// Set the positive prompt on the `Prompt`-titled node(s), writing whichever leaf

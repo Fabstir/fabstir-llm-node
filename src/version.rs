@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.35.0-ltx-iclora-2026-07-06";
+pub const VERSION: &str = "v8.35.1-ltx-iclora-2026-07-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.35.0";
+pub const VERSION_NUMBER: &str = "8.35.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,16 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 35;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-07-06";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.35.1 BL3/U7 hardening: server-side control-video frame-count gate
+    // (billed == rendered enforced on the node, not just the helper) + hard-fail
+    // on ComfyUI partial-graph node_errors at submit. No wire change.
     // v8.35.0 LTX IC-LoRA union control ("Restyle Clip", allow-list bundle v6):
     // the fourth pinned template `ltx-iclora-hdr` takes ONE reference still +
     // ONE control VIDEO (the first video input across the seam) and generates a
@@ -844,7 +847,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 35);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.35.0 LTX IC-LoRA union control (bundle v6, videos on the seam)
@@ -1022,14 +1025,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.35.0"));
+        assert!(version.contains("8.35.1"));
         assert!(version.contains("2026-07-06"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.35.0-ltx-iclora-2026-07-06");
-        assert_eq!(VERSION_NUMBER, "8.35.0");
+        assert_eq!(VERSION, "v8.35.1-ltx-iclora-2026-07-06");
+        assert_eq!(VERSION_NUMBER, "8.35.1");
         assert_eq!(BUILD_DATE, "2026-07-06");
     }
 

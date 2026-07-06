@@ -8,6 +8,7 @@ pub mod capacity;
 pub mod client;
 pub mod exr;
 pub mod input_image;
+pub mod mp4;
 pub mod patcher;
 pub mod rate_limiter;
 pub mod submit;

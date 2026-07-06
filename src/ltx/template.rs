@@ -203,22 +203,18 @@ impl TemplateStore {
     /// format selector the handler validates `job.images.len()` against (M1a).
     /// `None` for an unknown id.
     pub fn image_inputs(&self, id: &str) -> Option<u32> {
-        self.bundle
-            .templates
-            .iter()
-            .find(|t| t.template_id == id)
-            .map(|t| t.image_inputs)
+        self.entry(id).map(|t| t.image_inputs)
+    }
+
+    fn entry(&self, id: &str) -> Option<&TemplateEntry> {
+        self.bundle.templates.iter().find(|t| t.template_id == id)
     }
 
     /// The number of input videos template `id` consumes — the BL3 analogue of
     /// `image_inputs` the handler validates `job.videos.len()` against. `None`
     /// for an unknown id.
     pub fn video_inputs(&self, id: &str) -> Option<u32> {
-        self.bundle
-            .templates
-            .iter()
-            .find(|t| t.template_id == id)
-            .map(|t| t.video_inputs)
+        self.entry(id).map(|t| t.video_inputs)
     }
 
     pub fn bundle(&self) -> &AllowListBundle {
