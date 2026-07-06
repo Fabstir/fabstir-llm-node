@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 5,
-  "bundleHash": "0xc6f1091dc3d4fbae2a757db1a43141443e593107b697ff895c52f3ee712664b7",
+  "allowListVersion": 6,
+  "bundleHash": "0x265d5bdde30d03814f7d35a268c237cb7e5a837e5bce0ba0c443563d1d1b8058",
   "templates": [
     {
       "templateId": "ltx-flf2v-hdr",
@@ -9,20 +9,35 @@
       "imageSemantics": [
         "firstFrame",
         "lastFrame"
-      ]
+      ],
+      "videoInputs": 0
     },
     {
       "templateId": "ltx-i2v-hdr",
-      "templateHash": "0x1074478991672ae0e0c668c1adf13f9e04dcd79edaaebfa5ae25f8d63c7831bd",
+      "templateHash": "0xa4c890fd5f9a24a778c2a2ab00be2141dcb2c801a339d390016924292dff128c",
       "imageInputs": 1,
       "imageSemantics": [
         "firstFrame"
+      ],
+      "videoInputs": 0
+    },
+    {
+      "templateId": "ltx-iclora-hdr",
+      "templateHash": "0x55885abe431493a1b523a20b4a86a36c38dd2a748df946ba79d78f02f7d95fb4",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "reference"
+      ],
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
       ]
     },
     {
       "templateId": "ltx-t2v-hdr",
       "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078",
-      "imageInputs": 0
+      "imageInputs": 0,
+      "videoInputs": 0
     }
   ],
   "loras": [
@@ -82,6 +97,10 @@
       "png",
       "jpeg",
       "webp"
+    ],
+    "videoMaxBytes": 134217728,
+    "videoFormats": [
+      "mp4"
     ]
   }
 }

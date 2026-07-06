@@ -37,6 +37,13 @@ pub struct Bounds {
     /// Accepted input-image container formats (M1a; advisory).
     #[serde(default)]
     pub image_formats: Vec<String>,
+    /// Max plaintext bytes for ONE input video (BL3). `default` keeps v5-shaped
+    /// bundles (no video fields) parsing to 0.
+    #[serde(default)]
+    pub video_max_bytes: u64,
+    /// Accepted input-video container formats (BL3; advisory).
+    #[serde(default)]
+    pub video_formats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +67,16 @@ pub struct TemplateEntry {
     /// order the node binds `images[i]` to `LoadImage` nodes. Empty ⇒ omitted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_semantics: Vec<String>,
+    /// Number of input videos the template consumes (BL3). Together with
+    /// `image_inputs` this selects the `inputCommitment` format (>0 ⇒ v3).
+    /// ALWAYS serialised (even 0) so the selector is explicit on the wire,
+    /// mirroring `image_inputs`; `default` keeps v5-shaped bundles parsing.
+    #[serde(default)]
+    pub video_inputs: u32,
+    /// Advisory per-slot meaning (e.g. `["controlVideo"]`), in the same order
+    /// the node binds `videos[i]` to `LoadVideo` nodes. Empty ⇒ omitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video_semantics: Vec<String>,
 }
 
 /// Versioned allow-list bundle: advertised in NodeRegistry metadata and echoed
@@ -95,6 +112,11 @@ struct ConfigEntry {
     image_inputs: u32,
     #[serde(default)]
     image_semantics: Vec<String>,
+    /// BL3; optional so pre-video entries still parse to 0.
+    #[serde(default)]
+    video_inputs: u32,
+    #[serde(default)]
+    video_semantics: Vec<String>,
 }
 
 /// Loads and pins the allow-listed templates at startup.
@@ -139,6 +161,8 @@ impl TemplateStore {
                 template_hash: hash,
                 image_inputs: entry.image_inputs,
                 image_semantics: entry.image_semantics.clone(),
+                video_inputs: entry.video_inputs,
+                video_semantics: entry.video_semantics.clone(),
             });
         }
         // Canonical order so bundleHash is independent of allowlist.json ordering.
@@ -184,6 +208,17 @@ impl TemplateStore {
             .iter()
             .find(|t| t.template_id == id)
             .map(|t| t.image_inputs)
+    }
+
+    /// The number of input videos template `id` consumes — the BL3 analogue of
+    /// `image_inputs` the handler validates `job.videos.len()` against. `None`
+    /// for an unknown id.
+    pub fn video_inputs(&self, id: &str) -> Option<u32> {
+        self.bundle
+            .templates
+            .iter()
+            .find(|t| t.template_id == id)
+            .map(|t| t.video_inputs)
     }
 
     pub fn bundle(&self) -> &AllowListBundle {

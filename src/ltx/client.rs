@@ -97,6 +97,19 @@ impl ComfyClient {
     /// content-addressed `filename` (e.g. keccak of the plaintext) so identical
     /// images map to one stable input file under `overwrite`.
     pub async fn upload_image(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
+        self.upload_input(filename, bytes).await
+    }
+
+    /// POST an input VIDEO into ComfyUI's `input/` folder for a `LoadVideo` node
+    /// to reference (BL3 iclora control video). Same `/upload/image` endpoint —
+    /// ComfyUI's upload route is format-blind and stores whatever bytes arrive
+    /// under `input/`; only the referencing node cares about the container. Same
+    /// content-addressed-`filename` guidance as [`Self::upload_image`].
+    pub async fn upload_video(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
+        self.upload_input(filename, bytes).await
+    }
+
+    async fn upload_input(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
         let url = format!("{}/upload/image", self.endpoint);
         let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
         let form = reqwest::multipart::Form::new()

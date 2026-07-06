@@ -3,25 +3,40 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.34.0-ltx-duration-2026-07-03";
+pub const VERSION: &str = "v8.35.0-ltx-iclora-2026-07-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.34.0";
+pub const VERSION_NUMBER: &str = "8.35.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 34;
+pub const VERSION_MINOR: u32 = 35;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-03";
+pub const BUILD_DATE: &str = "2026-07-06";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.35.0 LTX IC-LoRA union control ("Restyle Clip", allow-list bundle v6):
+    // the fourth pinned template `ltx-iclora-hdr` takes ONE reference still +
+    // ONE control VIDEO (the first video input across the seam) and generates a
+    // styled AV clip whose motion follows the control clip (MoGe depth guide);
+    // audio is sampled jointly and ships in the output mp4. Seam: LtxJob gains
+    // `videos` (S5 capability CIDs); bundle entries gain videoInputs/
+    // videoSemantics and bounds gain videoMaxBytes (128 MiB) / videoFormats
+    // (mp4, enforced by ISO-BMFF sniff on the decrypted bytes); inputCommitment
+    // v3 appends `bytes32[] videoHashes` (keccak256 of plaintext), selected by
+    // videoInputs > 0 (vectors-iclora.json is the cross-language fixture); the
+    // patcher's seed handle widens to RandomNoise OR plain KSampler (iclora's
+    // validated graph has no RandomNoise) and binds videos[i] to LoadVideo
+    // nodes in node-id order, count fail-closed. The three pre-existing
+    // templateHashes are byte-unchanged in bundle v6.
+    "ltx-iclora",
     // v8.34.0 LTX user-selectable clip duration + fps correction (allow-list
     // bundle v5). Clients pick 5..=15 s at the LTX 2.3 native rates [24,25,48,50]
     // (the bundle previously advertised a never-supported 30 and omitted 48/50);
@@ -828,10 +843,12 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 34);
+        assert_eq!(VERSION_MINOR, 35);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.35.0 LTX IC-LoRA union control (bundle v6, videos on the seam)
+        assert!(FEATURES.contains(&"ltx-iclora"));
         // v8.34.0 LTX duration + fps correction (bundle v5)
         assert!(FEATURES.contains(&"ltx-duration"));
         // v8.32.0 LTX M1 economics (submitProofOfWork per clip)
@@ -1005,15 +1022,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.34.0"));
-        assert!(version.contains("2026-07-03"));
+        assert!(version.contains("8.35.0"));
+        assert!(version.contains("2026-07-06"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.34.0-ltx-duration-2026-07-03");
-        assert_eq!(VERSION_NUMBER, "8.34.0");
-        assert_eq!(BUILD_DATE, "2026-07-03");
+        assert_eq!(VERSION, "v8.35.0-ltx-iclora-2026-07-06");
+        assert_eq!(VERSION_NUMBER, "8.35.0");
+        assert_eq!(BUILD_DATE, "2026-07-06");
     }
 
     #[test]

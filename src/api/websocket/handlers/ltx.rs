@@ -289,10 +289,56 @@ pub async fn handle_encrypted_ltx_generate(
         }
     }
 
-    // Patch scalar params into the pinned graph (substitution only). Image inputs
-    // (LoadImage) are patched post-accept in the spawn, once the images are
-    // fetched from S5 and uploaded to ComfyUI (they need the stored filenames).
-    let patched_graph = match patcher::patch(&graph, &job, &[]) {
+    // Input-video validation (BL3), the exact mirror of the images block above:
+    // count == the template's `videoInputs` (the v3 commitment selector), size
+    // from the capability CID's own length field (parse only, NO network fetch),
+    // fail closed on a missing bound.
+    let video_inputs = store.video_inputs(&job.template_id).unwrap_or(0);
+    let videos = job.videos.clone().unwrap_or_default();
+    if videos.len() != video_inputs as usize {
+        return reject(
+            "VALIDATION_FAILED",
+            &format!(
+                "template {:?} expects {} input video(s), got {}",
+                job.template_id,
+                video_inputs,
+                videos.len()
+            ),
+        );
+    }
+    let video_max_bytes = store.bundle().bounds.video_max_bytes;
+    if !videos.is_empty() && video_max_bytes == 0 {
+        return reject(
+            "VALIDATION_FAILED",
+            "template accepts videos but no videoMaxBytes bound is configured",
+        );
+    }
+    for cid in &videos {
+        let env = match crate::ltx::input_image::parse_capability_cid(cid) {
+            Ok(e) => e,
+            Err(e) => {
+                return reject(
+                    "VALIDATION_FAILED",
+                    &format!("invalid video capability CID: {e}"),
+                )
+            }
+        };
+        if env.plaintext_len as u64 > video_max_bytes {
+            return reject(
+                "VALIDATION_FAILED",
+                &format!(
+                    "input video is {} bytes, exceeds videoMaxBytes {}",
+                    env.plaintext_len, video_max_bytes
+                ),
+            );
+        }
+    }
+
+    // Patch scalar params into the pinned graph (substitution only). Image/video
+    // inputs (LoadImage/LoadVideo) are patched post-accept in the spawn, once the
+    // inputs are fetched from S5 and uploaded to ComfyUI (they need the stored
+    // filenames).
+    let patched_graph = match patcher::patch(&graph, &job, &[], &[]) {
         Ok(g) => g,
         Err(e) => return reject("VALIDATION_FAILED", &format!("patch failed: {e}")),
     };
@@ -421,27 +467,29 @@ fn s5_blob_source_url() -> String {
         .unwrap_or_else(|| "http://localhost:5522".to_string())
 }
 
-/// Resolve an image-conditioned job's inputs (M1a). For each ordered capability
-/// CID: fetch + integrity-check + decrypt it from the S5 portal, upload the
-/// plaintext to ComfyUI under a content-addressed name (`keccak256(plaintext)` ⇒
-/// stable under `overwrite`), and record `keccak256(plaintext)` into
-/// `image_hashes` (the v2 commitment input). Finally patch the `LoadImage` nodes
-/// with the stored names. A t2v job (no `images`) returns the graph untouched and
-/// leaves `image_hashes` empty. Pre-accept validation has already checked the
-/// image count and per-image size, so any failure here is post-accept
-/// (`GENERATION_FAILED`).
-async fn prepare_input_images(
+/// Resolve a conditioned job's inputs (M1a images + BL3 videos). For each
+/// ordered capability CID: fetch + integrity-check + decrypt it from the S5
+/// portal, upload the plaintext to ComfyUI under a content-addressed name
+/// (`keccak256(plaintext)` ⇒ stable under `overwrite`), and record
+/// `keccak256(plaintext)` into `image_hashes`/`video_hashes` (the v2/v3
+/// commitment inputs). Finally patch the `LoadImage`/`LoadVideo` nodes with the
+/// stored names. A t2v job (no inputs) returns the graph untouched and leaves
+/// both hash vecs empty. Pre-accept validation has already checked the counts
+/// and per-input sizes, so any failure here is post-accept (`GENERATION_FAILED`).
+async fn prepare_inputs(
     client: &ComfyClient,
     job: &LtxJob,
     graph: crate::ltx::Graph,
     image_hashes: &mut Vec<[u8; 32]>,
+    video_hashes: &mut Vec<[u8; 32]>,
 ) -> Result<crate::ltx::Graph, String> {
-    let images = match &job.images {
-        Some(imgs) if !imgs.is_empty() => imgs,
-        _ => return Ok(graph),
-    };
+    let images = job.images.as_deref().unwrap_or_default();
+    let videos = job.videos.as_deref().unwrap_or_default();
+    if images.is_empty() && videos.is_empty() {
+        return Ok(graph);
+    }
     let blob_source = s5_blob_source_url();
-    let mut stored_names = Vec::with_capacity(images.len());
+    let mut image_names = Vec::with_capacity(images.len());
     for cid in images {
         let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, cid)
             .await
@@ -451,10 +499,31 @@ async fn prepare_input_images(
             .upload_image(&filename, plaintext)
             .await
             .map_err(|e| format!("input image upload failed: {e}"))?;
-        stored_names.push(name);
+        image_names.push(name);
         image_hashes.push(hash);
     }
-    patcher::patch(&graph, job, &stored_names).map_err(|e| format!("image patch failed: {e}"))
+    let mut video_names = Vec::with_capacity(videos.len());
+    for cid in videos {
+        let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, cid)
+            .await
+            .map_err(|e| format!("input video fetch failed: {e}"))?;
+        // The bundle's videoFormats is ["mp4"]; enforce the container on the
+        // decrypted bytes (an ISO BMFF file has "ftyp" at offset 4) — the
+        // capability CID itself carries no format, so this is the earliest the
+        // node can check it.
+        if plaintext.len() < 12 || &plaintext[4..8] != b"ftyp" {
+            return Err("input video is not an mp4 (ISO BMFF) container".to_string());
+        }
+        let filename = format!("{}.mp4", hex::encode(hash));
+        let name = client
+            .upload_video(&filename, plaintext)
+            .await
+            .map_err(|e| format!("input video upload failed: {e}"))?;
+        video_names.push(name);
+        video_hashes.push(hash);
+    }
+    patcher::patch(&graph, job, &image_names, &video_names)
+        .map_err(|e| format!("input patch failed: {e}"))
 }
 
 impl LtxGenerateTask {
@@ -494,20 +563,27 @@ impl LtxGenerateTask {
             // without it, any error path taken after a disconnect deferred
             // completion would leave the session unsettled until job timeout.
             let core = async {
-                // Image-conditioned templates (M1a): fetch each input image from S5,
-                // upload it to ComfyUI, patch the LoadImage nodes, and collect the
-                // per-image `keccak256(plaintext)` for the v2 commitment. Empty for t2v.
+                // Conditioned templates: fetch each input image/video from S5,
+                // upload to ComfyUI, patch the LoadImage/LoadVideo nodes, and
+                // collect the per-input `keccak256(plaintext)` for the v2/v3
+                // commitment. Both empty for t2v.
                 let mut image_hashes: Vec<[u8; 32]> = Vec::new();
-                let patched_graph =
-                    match prepare_input_images(&client, &job, patched_graph, &mut image_hashes)
-                        .await
-                    {
-                        Ok(g) => g,
-                        Err(e) => {
-                            send_err(&progress_tx, "GENERATION_FAILED", &e, key, sid, rid).await;
-                            return;
-                        }
-                    };
+                let mut video_hashes: Vec<[u8; 32]> = Vec::new();
+                let patched_graph = match prepare_inputs(
+                    &client,
+                    &job,
+                    patched_graph,
+                    &mut image_hashes,
+                    &mut video_hashes,
+                )
+                .await
+                {
+                    Ok(g) => g,
+                    Err(e) => {
+                        send_err(&progress_tx, "GENERATION_FAILED", &e, key, sid, rid).await;
+                        return;
+                    }
+                };
 
                 // 1. Submit graph → prompt_id.
                 let prompt_id = match client.submit(&patched_graph).await {
@@ -798,6 +874,7 @@ impl LtxGenerateTask {
                     env_hash,
                     &job,
                     &image_hashes,
+                    &video_hashes,
                     output_cid.clone(),
                     manifest.clone(),
                     session_id.clone(),
@@ -990,6 +1067,7 @@ mod tests {
             lora: "ltx-iclora-hdr@v1".to_string(),
             output: OutputKind::ExrSequence,
             images: None,
+            videos: None,
         }
     }
 

@@ -41,6 +41,7 @@ fn job() -> LtxJob {
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
         images: None,
+        videos: None,
     }
 }
 
@@ -62,7 +63,7 @@ fn nodes_by_class<'a>(g: &'a Graph, class: &str) -> Vec<&'a Value> {
 
 #[test]
 fn test_patch_prompt_into_prompt_box() {
-    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
     let text = node_by_title(&g, "Prompt")
         .pointer("/inputs/value")
         .unwrap();
@@ -71,7 +72,7 @@ fn test_patch_prompt_into_prompt_box() {
 
 #[test]
 fn test_patch_seed_into_every_randomnoise() {
-    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
     let rn = nodes_by_class(&g, "RandomNoise");
     assert!(!rn.is_empty(), "template has RandomNoise seed node(s)");
     for n in rn {
@@ -84,7 +85,7 @@ fn test_patch_seed_into_every_randomnoise() {
 
 #[test]
 fn test_patch_dims_into_primitives() {
-    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
     assert_eq!(
         node_by_title(&g, "Width")
             .pointer("/inputs/value")
@@ -115,7 +116,7 @@ fn test_patch_dims_into_primitives() {
 fn test_seed_out_of_range_rejected() {
     let mut j = job();
     j.seed = "18446744073709551616".to_string(); // > u64::MAX, valid uint256 on the wire
-    assert!(patch(&fixture_graph(), &j, &[]).is_err());
+    assert!(patch(&fixture_graph(), &j, &[], &[]).is_err());
 }
 
 #[test]
@@ -127,7 +128,7 @@ fn test_missing_required_prompt_is_error() {
         }
     }
     assert!(
-        patch(&g, &job(), &[]).is_err(),
+        patch(&g, &job(), &[], &[]).is_err(),
         "missing prompt handle -> fail closed"
     );
 }
@@ -141,7 +142,7 @@ fn test_missing_required_seed_is_error() {
         }
     }
     assert!(
-        patch(&g, &job(), &[]).is_err(),
+        patch(&g, &job(), &[], &[]).is_err(),
         "no seed node -> fail closed"
     );
 }
@@ -158,7 +159,7 @@ fn test_optional_dims_absent_still_ok() {
         }
     }
     assert!(
-        patch(&g, &job(), &[]).is_ok(),
+        patch(&g, &job(), &[], &[]).is_ok(),
         "optional dims absent -> patch still succeeds"
     );
 }
@@ -172,7 +173,7 @@ fn test_refuses_to_patch_a_wired_connection() {
         }
     }
     assert!(
-        patch(&g, &job(), &[]).is_err(),
+        patch(&g, &job(), &[], &[]).is_err(),
         "leaf-only: never overwrite a wired connection"
     );
 }
@@ -180,7 +181,7 @@ fn test_refuses_to_patch_a_wired_connection() {
 #[test]
 fn test_patch_single_loadimage() {
     // i2v: the one image name lands on the single LoadImage node (269).
-    let g = patch(&i2v_graph(), &job(), &["egyptian.png".to_string()]).unwrap();
+    let g = patch(&i2v_graph(), &job(), &["egyptian.png".to_string()], &[]).unwrap();
     assert_eq!(
         g.0.pointer("/269/inputs/image").unwrap().as_str().unwrap(),
         "egyptian.png"
@@ -204,7 +205,7 @@ fn test_patch_two_loadimages_by_nodeid_order() {
                 "inputs": { "noise_seed": 0 } }
     }));
     let names = vec!["first.png".to_string(), "last.png".to_string()];
-    let g = patch(&graph, &job(), &names).unwrap();
+    let g = patch(&graph, &job(), &names, &[]).unwrap();
     assert_eq!(g.0.pointer("/31/inputs/image").unwrap(), "first.png");
     assert_eq!(g.0.pointer("/39/inputs/image").unwrap(), "last.png");
 }
@@ -215,7 +216,7 @@ fn test_patch_loadimage_refuses_wired() {
     // by a value patch (same leaf-only guarantee as the scalar handles).
     let mut g = i2v_graph();
     g.0["269"]["inputs"]["image"] = serde_json::json!(["12", 0]);
-    assert!(patch(&g, &job(), &["x.png".to_string()]).is_err());
+    assert!(patch(&g, &job(), &["x.png".to_string()], &[]).is_err());
 }
 
 #[test]
@@ -223,7 +224,7 @@ fn test_patch_flf2v_prompt_images_and_dims() {
     // flf2v: two images, and the positive prompt is a CLIPTextEncode (.text), not
     // a PrimitiveStringMultiline (.value) — the patcher must drive both.
     let names = vec!["first.png".to_string(), "last.png".to_string()];
-    let g = patch(&flf2v_graph(), &job(), &names).unwrap();
+    let g = patch(&flf2v_graph(), &job(), &names, &[]).unwrap();
     // Prompt -> the POSITIVE CLIPTextEncode's .text (129:128).
     assert_eq!(
         g.0.pointer("/129:128/inputs/text")
@@ -280,7 +281,7 @@ fn test_patch_loadimage_count_mismatch_errors() {
     // Defence in depth: image name count must equal the template's LoadImage count.
     let two = vec!["a.png".to_string(), "b.png".to_string()];
     assert!(
-        patch(&i2v_graph(), &job(), &two).is_err(),
+        patch(&i2v_graph(), &job(), &two, &[]).is_err(),
         "1 LoadImage vs 2 names -> fail closed"
     );
 }
@@ -288,7 +289,7 @@ fn test_patch_loadimage_count_mismatch_errors() {
 #[test]
 fn test_no_images_no_op() {
     // t2v: no image names, no LoadImage nodes. Scalars still patched; nothing added.
-    let g = patch(&fixture_graph(), &job(), &[]).unwrap();
+    let g = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
     assert_eq!(
         node_by_title(&g, "Prompt")
             .pointer("/inputs/value")
@@ -317,7 +318,7 @@ fn job_frames_fps(frames: u32, fps: u32) -> LtxJob {
 fn test_patch_duration_t2v() {
     // 10 s @ 24 fps -> frames 241 -> Duration 10 (the pinned graph's a*b+1 then
     // recomputes length = 10*24+1 = 241, equal to the billed frame count).
-    let g = patch(&fixture_graph(), &job_frames_fps(241, 24), &[]).unwrap();
+    let g = patch(&fixture_graph(), &job_frames_fps(241, 24), &[], &[]).unwrap();
     assert_eq!(
         node_by_title(&g, "Duration")
             .pointer("/inputs/value")
@@ -335,6 +336,7 @@ fn test_patch_duration_i2v() {
         &i2v_graph(),
         &job_frames_fps(376, 25),
         &["egyptian.png".to_string()],
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -351,7 +353,7 @@ fn test_patch_duration_i2v() {
 fn test_patch_duration_flf2v() {
     // 5 s @ 48 fps -> frames 241 -> Duration 5, on the curated flf2v graph.
     let names = vec!["first.png".to_string(), "last.png".to_string()];
-    let g = patch(&flf2v_graph(), &job_frames_fps(241, 48), &names).unwrap();
+    let g = patch(&flf2v_graph(), &job_frames_fps(241, 48), &names, &[]).unwrap();
     assert_eq!(
         node_by_title(&g, "Duration")
             .pointer("/inputs/value")
@@ -365,13 +367,13 @@ fn test_patch_duration_flf2v() {
 #[test]
 fn test_patch_panic_guard_fps_zero() {
     // fps 0 would divide-by-zero in (frames-1)/fps -> fail closed, no panic.
-    assert!(patch(&fixture_graph(), &job_frames_fps(121, 0), &[]).is_err());
+    assert!(patch(&fixture_graph(), &job_frames_fps(121, 0), &[], &[]).is_err());
 }
 
 #[test]
 fn test_patch_panic_guard_frames_zero() {
     // frames 0 would underflow (frames-1) on u32 -> fail closed, no panic.
-    assert!(patch(&fixture_graph(), &job_frames_fps(0, 24), &[]).is_err());
+    assert!(patch(&fixture_graph(), &job_frames_fps(0, 24), &[], &[]).is_err());
 }
 
 /// Every pinned template must carry the Duration wiring the patcher relies on: a
@@ -448,7 +450,7 @@ fn test_all_templates_have_duration_wiring() {
 #[test]
 fn test_no_structural_edits() {
     let before = fixture_graph();
-    let after = patch(&before, &job(), &[]).unwrap();
+    let after = patch(&before, &job(), &[], &[]).unwrap();
     let b = before.0.as_object().unwrap();
     let a = after.0.as_object().unwrap();
     assert_eq!(
@@ -463,4 +465,134 @@ fn test_no_structural_edits() {
             "class_type {id} unchanged"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// BL3 iclora: widened seed handle (RandomNoise OR KSampler) + LoadVideo binding.
+// ---------------------------------------------------------------------------
+
+/// The pinned iclora graph (one `LoadImage` 200, one `LoadVideo` 199, seed in
+/// the plain `KSampler` 129:704 — no RandomNoise anywhere).
+fn iclora_graph() -> Graph {
+    let raw = std::fs::read(format!("{DIR}/ltx-iclora-hdr/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+fn iclora_job() -> LtxJob {
+    LtxJob {
+        template_id: "ltx-iclora-hdr".to_string(),
+        template_hash: "0x00".to_string(),
+        prompt: "restyle the control clip as a cartoon child".to_string(),
+        seed: "4815162342".to_string(),
+        frames: 126,
+        fps: 25,
+        resolution: Resolution { w: 768, h: 512 },
+        lora: "ltx-iclora-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+        images: None,
+        videos: None,
+    }
+}
+
+#[test]
+fn test_seed_lands_in_ksampler_no_randomnoise() {
+    // iclora has NO RandomNoise; the widened seed handle stamps KSampler.seed.
+    let g = patch(&iclora_graph(), &iclora_job(), &[], &[]).unwrap();
+    assert!(nodes_by_class(&g, "RandomNoise").is_empty());
+    let ks = nodes_by_class(&g, "KSampler");
+    assert_eq!(ks.len(), 1);
+    assert_eq!(
+        ks[0].pointer("/inputs/seed").unwrap().as_u64().unwrap(),
+        4815162342
+    );
+}
+
+#[test]
+fn test_seed_missing_both_classes_rejected() {
+    // Remove the KSampler from iclora -> no seed handle at all -> fail closed.
+    let mut v = iclora_graph().0;
+    v.as_object_mut().unwrap().remove("129:704");
+    assert!(patch(&Graph(v), &iclora_job(), &[], &[]).is_err());
+}
+
+#[test]
+fn test_seed_widening_leaves_old_templates_unchanged() {
+    // Pre-BL3 templates keep their behaviour: the i2v graph's RandomNoise nodes
+    // get the job seed, and its KSamplerSelect nodes (a DIFFERENT class_type —
+    // exact-match equality) are untouched.
+    let g = patch(&i2v_graph(), &job(), &[], &[]).unwrap();
+    let noise = nodes_by_class(&g, "RandomNoise");
+    assert!(!noise.is_empty(), "i2v carries RandomNoise");
+    for n in &noise {
+        assert_eq!(
+            n.pointer("/inputs/noise_seed").unwrap().as_u64().unwrap(),
+            4815162342
+        );
+    }
+    let selects = nodes_by_class(&g, "KSamplerSelect");
+    assert!(!selects.is_empty(), "i2v carries KSamplerSelect");
+    for n in selects {
+        assert!(
+            n.pointer("/inputs/seed").is_none(),
+            "KSamplerSelect must not gain a seed input"
+        );
+    }
+}
+
+#[test]
+fn test_iclora_full_patch() {
+    // End-to-end handle check on the REAL pinned graph: prompt, seed, dims,
+    // duration, the reference still AND the control video all land.
+    let g = patch(
+        &iclora_graph(),
+        &iclora_job(),
+        &["ref.png".to_string()],
+        &["ctl.mp4".to_string()],
+    )
+    .unwrap();
+    let leaf_u64 = |title: &str| {
+        node_by_title(&g, title)
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(
+        node_by_title(&g, "Prompt")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "restyle the control clip as a cartoon child"
+    );
+    assert_eq!(leaf_u64("Width"), 768);
+    assert_eq!(leaf_u64("Height"), 512);
+    assert_eq!(leaf_u64("Frame Rate"), 25);
+    // 126 frames @ 25 fps -> 5 s sliced from the control video.
+    assert_eq!(leaf_u64("Duration"), 5);
+    assert_eq!(
+        nodes_by_class(&g, "LoadImage")[0]
+            .pointer("/inputs/image")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "ref.png"
+    );
+    assert_eq!(
+        nodes_by_class(&g, "LoadVideo")[0]
+            .pointer("/inputs/file")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "ctl.mp4"
+    );
+}
+
+#[test]
+fn test_load_video_count_mismatch_rejected() {
+    // Two names for one LoadVideo node -> fail closed (mirror of images).
+    let two = vec!["a.mp4".to_string(), "b.mp4".to_string()];
+    assert!(patch(&iclora_graph(), &iclora_job(), &[], &two).is_err());
+    // A video name against a graph with NO LoadVideo -> fail closed too.
+    assert!(patch(&fixture_graph(), &job(), &[], &["x.mp4".to_string()]).is_err());
 }

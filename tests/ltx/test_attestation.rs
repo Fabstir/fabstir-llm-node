@@ -10,8 +10,8 @@ use ethers::utils::keccak256;
 use fabstir_llm_node::crypto::proof_signer::{eip191_prehash, sign_eip191_digest};
 use fabstir_llm_node::crypto::recover_client_address;
 use fabstir_llm_node::ltx::attestation::{
-    assemble, commitment_for, env_hash, input_commitment, input_commitment_v2, output_commitment,
-    proof_hash, sig_digest, EnvMeta,
+    assemble, commitment_for, env_hash, input_commitment, input_commitment_v2, input_commitment_v3,
+    output_commitment, proof_hash, sig_digest, EnvMeta,
 };
 use fabstir_llm_node::ltx::submit::{ltx_tokens, submit_calldata};
 use fabstir_llm_node::ltx::types::{Attestation, FrameManifest, LtxJob, OutputKind, Resolution};
@@ -44,6 +44,7 @@ fn sample_job() -> LtxJob {
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
         images: None,
+        videos: None,
     }
 }
 
@@ -94,6 +95,7 @@ fn sample_attestation(signed: bool) -> Attestation {
         env_hash(&sample_meta()),
         &sample_job(),
         &[],
+        &[],
         OUTPUT_CID.to_string(),
         sample_manifest(),
         "0x05".to_string(),
@@ -126,6 +128,7 @@ fn test_assemble_i2v_uses_v2() {
         env_hash(&sample_meta()),
         &job,
         &[h0],
+        &[],
         OUTPUT_CID.to_string(),
         sample_manifest(),
         "0x05".to_string(),
@@ -367,6 +370,7 @@ fn sample_i2v_job() -> LtxJob {
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
         images: None,
+        videos: None,
     }
 }
 
@@ -385,6 +389,7 @@ fn sample_flf2v_job() -> LtxJob {
         lora: "ltx-iclora-hdr@v1".to_string(),
         output: OutputKind::ExrSequence,
         images: None,
+        videos: None,
     }
 }
 
@@ -425,13 +430,13 @@ fn test_commitment_for_dispatches_on_image_count() {
     let job = sample_i2v_job();
     // zero images -> byte-identical M0 seven-field
     assert_eq!(
-        commitment_for(&job, &[]).unwrap(),
+        commitment_for(&job, &[], &[]).unwrap(),
         input_commitment(&job).unwrap()
     );
     // one image -> v2 eight-field
     let h0 = img_hash(&img_plain(0));
     assert_eq!(
-        commitment_for(&job, &[h0]).unwrap(),
+        commitment_for(&job, &[h0], &[]).unwrap(),
         input_commitment_v2(&job, &[h0]).unwrap()
     );
 }
@@ -504,6 +509,183 @@ fn emit_i2v_vectors_json() {
     });
 
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors-i2v.json");
+    std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
+    assert!(std::path::Path::new(path).exists());
+}
+
+// ---------------------------------------------------------------------------
+// BL3 video-conditioned: inputCommitment v3 conformance + `vectors-iclora.json`.
+// ---------------------------------------------------------------------------
+
+/// Deterministic stand-in plaintext for input video `i` (same convention as
+/// [`img_plain`]; production points this machinery at real decrypted bytes).
+fn vid_plain(i: u8) -> Vec<u8> {
+    format!("fabstir-ltx-iclora-vector::video-{i}").into_bytes()
+}
+
+/// The v3 pre-image: the v2 eight fields + trailing `bytes32[] videoHashes`.
+fn v3_preimage(job: &LtxJob, image_hashes: &[[u8; 32]], video_hashes: &[[u8; 32]]) -> Vec<u8> {
+    let arr = |hashes: &[[u8; 32]]| {
+        Token::Array(
+            hashes
+                .iter()
+                .map(|h| Token::FixedBytes(h.to_vec()))
+                .collect(),
+        )
+    };
+    encode(&[
+        Token::String(job.prompt.clone()),
+        Token::Uint(U256::from_dec_str(&job.seed).unwrap()),
+        Token::Uint(U256::from(job.frames)),
+        Token::Uint(U256::from(job.fps)),
+        Token::Uint(U256::from(job.resolution.w)),
+        Token::Uint(U256::from(job.resolution.h)),
+        Token::String(job.lora.clone()),
+        arr(image_hashes),
+        arr(video_hashes),
+    ])
+}
+
+/// iclora (one LoadImage reference + one LoadVideo control). 768x512 / fps 25 /
+/// 126 frames = the BL3 money shape (5s @ 25fps).
+fn sample_iclora_job() -> LtxJob {
+    LtxJob {
+        template_id: "ltx-iclora-hdr".to_string(),
+        template_hash: b32(0x05),
+        prompt: "restyle the control clip as a hand-painted cartoon child, jaunty whistling"
+            .to_string(),
+        seed: "60540193790228".to_string(),
+        frames: 126,
+        fps: 25,
+        resolution: Resolution { w: 768, h: 512 },
+        lora: "ltx-iclora-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+        images: None,
+        videos: None,
+    }
+}
+
+#[test]
+fn test_input_commitment_v3_appends_video_hashes() {
+    let job = sample_iclora_job();
+    let ih = img_hash(&img_plain(0));
+    let vh = img_hash(&vid_plain(0));
+    let got = input_commitment_v3(&job, &[ih], &[vh]).unwrap();
+    assert_eq!(got, hx(&keccak256(v3_preimage(&job, &[ih], &[vh]))));
+}
+
+#[test]
+fn test_commitment_v3_empty_videos_differs_from_v2() {
+    // The v2/v3 trap, same as v1/v2: a ten-field encode with an EMPTY videoHashes
+    // is not the v2 eight-field encode. Image templates must keep the v2 path.
+    let job = sample_iclora_job();
+    let ih = img_hash(&img_plain(0));
+    assert_ne!(
+        input_commitment_v3(&job, &[ih], &[]).unwrap(),
+        input_commitment_v2(&job, &[ih]).unwrap(),
+        "empty-videos v3 must differ from v2 — image templates keep the v2 path"
+    );
+}
+
+#[test]
+fn test_commitment_v3_arrays_not_interchangeable() {
+    // imageHashes and videoHashes are distinct slots: moving a hash from one
+    // array to the other must change the commitment.
+    let job = sample_iclora_job();
+    let a = img_hash(&img_plain(0));
+    let b = img_hash(&vid_plain(0));
+    assert_ne!(
+        input_commitment_v3(&job, &[a], &[b]).unwrap(),
+        input_commitment_v3(&job, &[b], &[a]).unwrap(),
+        "swapping image/video arrays must change the commitment"
+    );
+}
+
+#[test]
+fn test_commitment_for_dispatches_on_video_count() {
+    let job = sample_iclora_job();
+    let ih = img_hash(&img_plain(0));
+    let vh = img_hash(&vid_plain(0));
+    // any video -> v3 (with or without images)
+    assert_eq!(
+        commitment_for(&job, &[ih], &[vh]).unwrap(),
+        input_commitment_v3(&job, &[ih], &[vh]).unwrap()
+    );
+    assert_eq!(
+        commitment_for(&job, &[], &[vh]).unwrap(),
+        input_commitment_v3(&job, &[], &[vh]).unwrap()
+    );
+    // no videos -> the pre-BL3 selector is unchanged
+    assert_eq!(
+        commitment_for(&job, &[ih], &[]).unwrap(),
+        input_commitment_v2(&job, &[ih]).unwrap()
+    );
+    assert_eq!(
+        commitment_for(&job, &[], &[]).unwrap(),
+        input_commitment(&job).unwrap()
+    );
+}
+
+/// Emit `tests/ltx/vectors-iclora.json` from the SAME code paths (mirror of
+/// `emit_i2v_vectors_json`): the 1-image+1-video iclora shape, the v2/v3 format
+/// guard, and the array-slot guard, so the SDK conformance-checks one fixture.
+#[test]
+fn emit_iclora_vectors_json() {
+    let job = sample_iclora_job();
+    let i_plain = img_plain(0);
+    let v_plain = vid_plain(0);
+    let ih = img_hash(&i_plain);
+    let vh = img_hash(&v_plain);
+    let pre = v3_preimage(&job, &[ih], &[vh]);
+    let commit = input_commitment_v3(&job, &[ih], &[vh]).unwrap();
+    assert_eq!(commit, hx(&keccak256(&pre)));
+
+    let guard_v2 = input_commitment_v2(&job, &[ih]).unwrap();
+    let guard_v3_empty = input_commitment_v3(&job, &[ih], &[]).unwrap();
+    assert_ne!(guard_v2, guard_v3_empty);
+    let swapped = input_commitment_v3(&job, &[vh], &[ih]).unwrap();
+    assert_ne!(commit, swapped);
+
+    let vectors = serde_json::json!({
+        "_note": "Generated by tests/ltx/test_attestation.rs::emit_iclora_vectors_json. Do not hand-edit.",
+        "_scheme": "inputCommitment v3 = keccak256(abi.encode(string prompt, uint256 seed, uint32 frames, uint32 fps, uint32 w, uint32 h, string lora, bytes32[] imageHashes, bytes32[] videoHashes)). imageHashes[i]=keccak256(plaintext bytes of images[i]); videoHashes[i]=keccak256(plaintext bytes of videos[i]). Format is selected by the template's bundle entry: videoInputs > 0 -> this nine-field v3; else imageInputs > 0 -> the eight-field v2 (vectors-i2v.json); else the M0 seven-field (vectors.json). The capability CIDs are transport only and are NOT hashed into the commitment.",
+        "referencePlusControl": {
+            "imageInputs": 1,
+            "imageSemantics": ["reference"],
+            "videoInputs": 1,
+            "videoSemantics": ["controlVideo"],
+            "imageHashes": [hx(&ih)],
+            "videoHashes": [hx(&vh)],
+            "imagePlaintext": [{ "utf8": String::from_utf8(i_plain.clone()).unwrap(), "hex": hx(&i_plain) }],
+            "videoPlaintext": [{ "utf8": String::from_utf8(v_plain.clone()).unwrap(), "hex": hx(&v_plain) }],
+            "images": ["uCapabilityCidPlaceholder0"],
+            "videos": ["uCapabilityCidPlaceholderV0"],
+            "job": {
+                "templateId": job.template_id,
+                "templateHash": job.template_hash,
+                "prompt": job.prompt,
+                "seed": job.seed,
+                "frames": job.frames,
+                "fps": job.fps,
+                "resolution": { "w": job.resolution.w, "h": job.resolution.h },
+                "lora": job.lora,
+                "output": "exr-sequence",
+            },
+            "inputCommitment": { "abiEncoded": hx(&pre), "hash": commit },
+        },
+        "formatGuard": {
+            "note": "v3 with an EMPTY videoHashes array is NOT byte-equal to the v2 eight-field commitment (the trailing dynamic field shifts the earlier heads). Templates with videoInputs == 0 MUST use the v1/v2 paths; only videoInputs > 0 uses v3.",
+            "v2EightField": guard_v2,
+            "v3EmptyVideos": guard_v3_empty,
+            "equal": false,
+        },
+        "arraySlotGuard": {
+            "note": "imageHashes and videoHashes are distinct ABI slots. Binding the video hash as an image hash (or vice versa) changes the commitment.",
+            "swappedHash": swapped,
+        },
+    });
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors-iclora.json");
     std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }

@@ -18,15 +18,25 @@ use crate::ltx::types::LtxJob;
 /// Patch `job`'s params into the pinned `graph`. `image_names` are the ComfyUI
 /// stored filenames for image-conditioned templates (M1a), assigned to the
 /// `LoadImage` nodes in node-id order; pass `&[]` for t2v (no LoadImage nodes).
+/// `video_names` are the stored filenames for video-conditioned templates (BL3),
+/// assigned to the `LoadVideo` nodes the same way; pass `&[]` when none.
 ///
 /// Required handles (fail closed if absent): the positive prompt (`_meta.title ==
-/// "Prompt"`) and at least one `RandomNoise` seed node. Optional (patched only if
+/// "Prompt"`) and at least one seed node — `RandomNoise` (`noise_seed`) or a
+/// plain `KSampler` (`seed`), across both classes (iclora's validated graph uses
+/// a plain KSampler; re-plumbing it to the RandomNoise stack would change
+/// sampling behaviour, so the patcher widened instead). Optional (patched only if
 /// present): `Width`, `Height`, `Frame Rate`, `Duration`. `Duration` = the clip
 /// length in whole seconds `(frames-1)/fps`; the pinned graph recomputes
-/// `Duration * FrameRate + 1` into `EmptyLTXVLatentVideo.length`, so patching both
-/// `Duration` and `Frame Rate` makes the rendered length equal the billed
-/// `frames`.
-pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Graph> {
+/// `Duration * FrameRate + 1` into `EmptyLTXVLatentVideo.length` (iclora instead
+/// slices the control video to `Duration` seconds), so patching both `Duration`
+/// and `Frame Rate` makes the rendered length equal the billed `frames`.
+pub fn patch(
+    graph: &Graph,
+    job: &LtxJob,
+    image_names: &[String],
+    video_names: &[String],
+) -> Result<Graph> {
     let mut value = graph.0.clone();
     let obj = value
         .as_object_mut()
@@ -48,7 +58,17 @@ pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Grap
 
     // Required.
     patch_prompt(obj, &job.prompt)?;
-    patch_by_class(obj, "RandomNoise", "noise_seed", Value::from(seed), true)?;
+    // Seed: stamp every RandomNoise (`noise_seed`) AND every plain KSampler
+    // (`seed`) — the same job seed everywhere is the determinism semantics.
+    // Exact class_type equality means KSamplerSelect / SamplerCustomAdvanced are
+    // untouched. Required ≥1 match across the two classes (fail closed).
+    let seed_nodes = patch_by_class(obj, "RandomNoise", "noise_seed", Value::from(seed), false)?
+        + patch_by_class(obj, "KSampler", "seed", Value::from(seed), false)?;
+    if seed_nodes == 0 {
+        return Err(anyhow!(
+            "template is missing the required seed handle (RandomNoise or KSampler)"
+        ));
+    }
     // Optional (patched only where the pinned graph exposes them as literals).
     patch_by_title(obj, "Width", "value", Value::from(job.resolution.w), false)?;
     patch_by_title(obj, "Height", "value", Value::from(job.resolution.h), false)?;
@@ -81,6 +101,29 @@ pub fn patch(graph: &Graph, job: &LtxJob, image_names: &[String]) -> Result<Grap
         }
         for (name, id) in image_names.iter().zip(load_ids.iter()) {
             set_input(obj, id, "image", Value::from(name.clone()))?;
+        }
+    }
+
+    // Video inputs (BL3): assign `video_names[i]` to the i-th `LoadVideo` node's
+    // `file`, node-id order — the exact mirror of the images block, same
+    // count-mismatch fail-closed rule. iclora has one `LoadVideo` (the control
+    // video); templates without one pass `&[]` and this is a no-op.
+    if !video_names.is_empty() {
+        let mut load_ids: Vec<String> = obj
+            .iter()
+            .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some("LoadVideo"))
+            .map(|(id, _)| id.clone())
+            .collect();
+        load_ids.sort();
+        if load_ids.len() != video_names.len() {
+            return Err(anyhow!(
+                "template has {} LoadVideo node(s) but {} video name(s) supplied",
+                load_ids.len(),
+                video_names.len()
+            ));
+        }
+        for (name, id) in video_names.iter().zip(load_ids.iter()) {
+            set_input(obj, id, "file", Value::from(name.clone()))?;
         }
     }
 
@@ -137,7 +180,7 @@ fn patch_by_title(
     key: &str,
     value: Value,
     required: bool,
-) -> Result<()> {
+) -> Result<usize> {
     let ids: Vec<String> = graph
         .iter()
         .filter(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
@@ -155,13 +198,15 @@ fn patch_by_title(
 
 /// Set `key` on every node of `class_type` (e.g. all `RandomNoise` seeds get the
 /// same job seed — deterministic). Required-if-none like [`patch_by_title`].
+/// Returns how many nodes matched, so a caller can require ≥1 match ACROSS
+/// several classes (the widened seed handle).
 fn patch_by_class(
     graph: &mut Map<String, Value>,
     class: &str,
     key: &str,
     value: Value,
     required: bool,
-) -> Result<()> {
+) -> Result<usize> {
     let ids: Vec<String> = graph
         .iter()
         .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some(class))
@@ -177,17 +222,18 @@ fn apply(
     value: Value,
     required: bool,
     what: &str,
-) -> Result<()> {
+) -> Result<usize> {
     if ids.is_empty() {
         if required {
             return Err(anyhow!("template is missing the required {what}"));
         }
-        return Ok(());
+        return Ok(0);
     }
+    let n = ids.len();
     for id in ids {
         set_input(graph, &id, key, value.clone())?;
     }
-    Ok(())
+    Ok(n)
 }
 
 /// Overwrite an EXISTING leaf input value. Refuses to create a new input key
