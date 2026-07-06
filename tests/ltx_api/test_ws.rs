@@ -68,10 +68,11 @@ fn fixture_capability_cid() -> String {
     v["capabilityCid"].as_str().unwrap().to_string()
 }
 
-/// A well-formed `0xae` envelope whose plaintextCID length field claims 34 MB
-/// (> the v4 `imageMaxBytes` 32 MiB). The pre-fetch gate reads only this
-/// length, so the oversize reject needs no real allocation.
-fn oversize_capability_cid() -> String {
+/// A well-formed `0xae` envelope whose plaintextCID length field claims
+/// `claimed_len` bytes. The pre-fetch gate reads only this length, so an
+/// oversize reject needs no real allocation — 34 MB trips `imageMaxBytes`
+/// (32 MiB), 200 MB trips `videoMaxBytes` (128 MiB).
+fn oversize_capability_cid(claimed_len: u64) -> String {
     let mut env = vec![0xaeu8, 0xa6, 18, 0x1f];
     env.extend_from_slice(&[0u8; 32]); // ct_hash
     env.extend_from_slice(&[0u8; 32]); // key
@@ -79,7 +80,7 @@ fn oversize_capability_cid() -> String {
     env.push(0x26);
     env.push(0x1f);
     env.extend_from_slice(&[0u8; 32]); // pt_hash
-    let mut sle = 34_000_000u64.to_le_bytes().to_vec();
+    let mut sle = claimed_len.to_le_bytes().to_vec();
     while sle.len() > 1 && *sle.last().unwrap() == 0 {
         sle.pop();
     }
@@ -146,7 +147,7 @@ async fn test_i2v_oversize_image_rejected() {
     let (store, hash) = store_i2v();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
-    let job = i2v_job(&hash, json!([oversize_capability_cid()]));
+    let job = i2v_job(&hash, json!([oversize_capability_cid(34_000_000)]));
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v-o", Some(9), None).await;
     assert!(task.is_none(), "oversize image rejected pre-escrow");
@@ -449,25 +450,8 @@ async fn test_iclora_oversize_video_rejected() {
     let (store, hash) = store_iclora();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
-    // 34 MB claims fit under videoMaxBytes (128 MiB) — so build a 200 MB claim.
-    let big = {
-        let mut env = vec![0xaeu8, 0xa6, 18, 0x1f];
-        env.extend_from_slice(&[0u8; 32]);
-        env.extend_from_slice(&[0u8; 32]);
-        env.extend_from_slice(&[0u8; 4]);
-        env.push(0x26);
-        env.push(0x1f);
-        env.extend_from_slice(&[0u8; 32]);
-        let mut sle = 200_000_000u64.to_le_bytes().to_vec();
-        while sle.len() > 1 && *sle.last().unwrap() == 0 {
-            sle.pop();
-        }
-        env.extend_from_slice(&sle);
-        format!(
-            "u{}",
-            base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &env)
-        )
-    };
+    // 34 MB claims fit under videoMaxBytes (128 MiB) — so claim 200 MB.
+    let big = oversize_capability_cid(200_000_000);
     let job = iclora_job(&hash, json!([fixture_capability_cid()]), json!([big]));
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-iclora-o", Some(9), None).await;
