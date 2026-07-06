@@ -1,6 +1,6 @@
 {
   "allowListVersion": 6,
-  "bundleHash": "0x265d5bdde30d03814f7d35a268c237cb7e5a837e5bce0ba0c443563d1d1b8058",
+  "bundleHash": "0xaa6192be00b67f948227d4819e4157790322cf99332d3ffd1566b571cc396aa2",
   "templates": [
     {
       "templateId": "ltx-flf2v-hdr",
@@ -23,7 +23,7 @@
     },
     {
       "templateId": "ltx-iclora-hdr",
-      "templateHash": "0x55885abe431493a1b523a20b4a86a36c38dd2a748df946ba79d78f02f7d95fb4",
+      "templateHash": "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6",
       "imageInputs": 1,
       "imageSemantics": [
         "reference"

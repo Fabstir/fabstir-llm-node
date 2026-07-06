@@ -25,14 +25,19 @@ const FLF2V_TEMPLATE_HASH: &str =
 /// primitive into Video Slice, prompt-enhance baked ON; the U0 preflight
 /// 2026-07-06 proved the archive graph live on 3XS-Z — styled motion following
 /// the control clip + audible audio).
+/// Re-pinned 2026-07-06: `Duration` (node 901) is a `PrimitiveFloat` — the Video
+/// Slice `duration` input is FLOAT-typed, and ComfyUI rejects an INT link with
+/// "Return type mismatch between linked nodes" (caught live, session 847: the
+/// video branch was ignored and the run produced no frames). Widget PATCHING is
+/// unaffected — the patcher writes a JSON number into the `value` leaf either way.
 const ICLORA_TEMPLATE_HASH: &str =
-    "0x55885abe431493a1b523a20b4a86a36c38dd2a748df946ba79d78f02f7d95fb4";
+    "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6";
 /// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
 /// ladder + 32 MiB image cap; v5 the clip-duration bounds frames {121,751} and
 /// corrected fps [24,25,48,50], with the i2v enhance=true re-pin landing within
 /// v5 as the LIVE on-chain 0xb44beb2c…; v6 adds ltx-iclora-hdr + the video
 /// bounds/videoInputs fields); the t2v/i2v/flf2v graph hashes above must NOT move.
-const BUNDLE_HASH: &str = "0x265d5bdde30d03814f7d35a268c237cb7e5a837e5bce0ba0c443563d1d1b8058";
+const BUNDLE_HASH: &str = "0xaa6192be00b67f948227d4819e4157790322cf99332d3ffd1566b571cc396aa2";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
