@@ -29,7 +29,7 @@ const MIN_PROVEN_TOKENS: u64 = 100;
 /// Safety buffer (seconds) added to dispute window to account for block confirmation delay.
 /// The node timestamps proofs when the tx is sent, but the contract uses block.timestamp
 /// from when the tx is confirmed (~1-2s later on Base Sepolia).
-const DISPUTE_WINDOW_BUFFER_SECS: u64 = 5;
+pub(crate) const DISPUTE_WINDOW_BUFFER_SECS: u64 = 5;
 
 #[derive(Debug, Clone)]
 pub struct JobTokenTracker {
@@ -1909,6 +1909,13 @@ impl CheckpointManager {
         self.s5_storage.as_ref()
     }
 
+    /// Dispute window (seconds) resolved at startup (env override or contract
+    /// query). The LTX completion paths wait this + `DISPUTE_WINDOW_BUFFER_SECS`
+    /// after a landed proof before the host may call `completeSessionJob`.
+    pub fn dispute_window_secs(&self) -> u64 {
+        self.dispute_window_secs
+    }
+
     /// Track a conversation message for checkpoint publishing
     ///
     /// Call this for each user prompt and assistant response.
@@ -1958,6 +1965,51 @@ impl CheckpointManager {
     }
 }
 
+/// LTX payout seam (M1 economics): the spawn submits one `submitProofOfWork`
+/// per clip through this impl — `Web3Client` stays encapsulated. `Ok` is
+/// STRICT: the tx queue's `Success` does not inspect `receipt.status` and the
+/// receipt can be `None` after its wait cap, so anything short of a confirmed
+/// status-1 receipt is `Err` (the clip's revenue is forfeited, never assumed).
+#[async_trait::async_trait]
+impl crate::ltx::submit::ProofSubmit for CheckpointManager {
+    async fn submit_ltx_proof(
+        &self,
+        job_id: u64,
+        tokens: u64,
+        proof_hash: [u8; 32],
+        proof_cid: String,
+    ) -> Result<H256> {
+        let (tx_hash, receipt) = crate::ltx::submit::submit_proof(
+            &self.web3_client,
+            self.proof_system_address,
+            job_id,
+            tokens,
+            proof_hash,
+            proof_cid,
+        )
+        .await?;
+        match receipt {
+            Some(r) if r.status == Some(U64::from(1)) => Ok(tx_hash),
+            Some(r) => Err(anyhow!(
+                "submitProofOfWork reverted for job {} (status {:?}, tx {:?})",
+                job_id,
+                r.status,
+                tx_hash
+            )),
+            None => Err(anyhow!(
+                "submitProofOfWork unconfirmed for job {} (no receipt, tx {:?})",
+                job_id,
+                tx_hash
+            )),
+        }
+    }
+
+    async fn session_proof_interval(&self, job_id: u64) -> u64 {
+        // Falls back internally (CHECKPOINT_THRESHOLD = 1000) on query error.
+        self.query_session_proof_interval(job_id).await
+    }
+}
+
 // ABI encoding helper for completeSessionJob
 fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8> {
     use ethers::abi::Function;
@@ -1993,7 +2045,7 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
 // ABI encoding helper for submitProofOfWork (v8.14.0 - Post-Remediation)
 // Signature parameter REMOVED per BREAKING_CHANGES.md (Feb 4, 2026)
 // Authentication now via msg.sender == session.host check in contract
-fn encode_checkpoint_call(
+pub(crate) fn encode_checkpoint_call(
     job_id: u64,
     tokens_generated: u64,
     proof_hash: [u8; 32],

@@ -1,0 +1,106 @@
+{
+  "allowListVersion": 6,
+  "bundleHash": "0xaa6192be00b67f948227d4819e4157790322cf99332d3ffd1566b571cc396aa2",
+  "templates": [
+    {
+      "templateId": "ltx-flf2v-hdr",
+      "templateHash": "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721",
+      "imageInputs": 2,
+      "imageSemantics": [
+        "firstFrame",
+        "lastFrame"
+      ],
+      "videoInputs": 0
+    },
+    {
+      "templateId": "ltx-i2v-hdr",
+      "templateHash": "0xa4c890fd5f9a24a778c2a2ab00be2141dcb2c801a339d390016924292dff128c",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "firstFrame"
+      ],
+      "videoInputs": 0
+    },
+    {
+      "templateId": "ltx-iclora-hdr",
+      "templateHash": "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "reference"
+      ],
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
+    {
+      "templateId": "ltx-t2v-hdr",
+      "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078",
+      "imageInputs": 0,
+      "videoInputs": 0
+    }
+  ],
+  "loras": [
+    "ltx-iclora-hdr@v1"
+  ],
+  "bounds": {
+    "frames": {
+      "min": 121,
+      "max": 751
+    },
+    "fps": [
+      24,
+      25,
+      48,
+      50
+    ],
+    "resolutions": [
+      {
+        "w": 768,
+        "h": 512
+      },
+      {
+        "w": 1280,
+        "h": 720
+      },
+      {
+        "w": 1920,
+        "h": 1080
+      },
+      {
+        "w": 2560,
+        "h": 1440
+      },
+      {
+        "w": 3840,
+        "h": 2160
+      },
+      {
+        "w": 512,
+        "h": 768
+      },
+      {
+        "w": 720,
+        "h": 1280
+      },
+      {
+        "w": 1080,
+        "h": 1920
+      },
+      {
+        "w": 1024,
+        "h": 1024
+      }
+    ],
+    "imageMaxBytes": 33554432,
+    "imageFormats": [
+      "png",
+      "jpeg",
+      "webp"
+    ],
+    "videoMaxBytes": 134217728,
+    "videoFormats": [
+      "mp4"
+    ]
+  }
+}

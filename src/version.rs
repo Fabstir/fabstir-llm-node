@@ -3,25 +3,113 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.30.0-tee-confidential-inference-2026-06-03";
+pub const VERSION: &str = "v8.35.1-ltx-iclora-2026-07-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.30.0";
+pub const VERSION_NUMBER: &str = "8.35.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 30;
+pub const VERSION_MINOR: u32 = 35;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-06-03";
+pub const BUILD_DATE: &str = "2026-07-06";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.35.1 BL3/U7 hardening: server-side control-video frame-count gate
+    // (billed == rendered enforced on the node, not just the helper) + hard-fail
+    // on ComfyUI partial-graph node_errors at submit. No wire change.
+    // v8.35.0 LTX IC-LoRA union control ("Restyle Clip", allow-list bundle v6):
+    // the fourth pinned template `ltx-iclora-hdr` takes ONE reference still +
+    // ONE control VIDEO (the first video input across the seam) and generates a
+    // styled AV clip whose motion follows the control clip (MoGe depth guide);
+    // audio is sampled jointly and ships in the output mp4. Seam: LtxJob gains
+    // `videos` (S5 capability CIDs); bundle entries gain videoInputs/
+    // videoSemantics and bounds gain videoMaxBytes (128 MiB) / videoFormats
+    // (mp4, enforced by ISO-BMFF sniff on the decrypted bytes); inputCommitment
+    // v3 appends `bytes32[] videoHashes` (keccak256 of plaintext), selected by
+    // videoInputs > 0 (vectors-iclora.json is the cross-language fixture); the
+    // patcher's seed handle widens to RandomNoise OR plain KSampler (iclora's
+    // validated graph has no RandomNoise) and binds videos[i] to LoadVideo
+    // nodes in node-id order, count fail-closed. The three pre-existing
+    // templateHashes are byte-unchanged in bundle v6.
+    "ltx-iclora",
+    // v8.34.0 LTX user-selectable clip duration + fps correction (allow-list
+    // bundle v5). Clients pick 5..=15 s at the LTX 2.3 native rates [24,25,48,50]
+    // (the bundle previously advertised a never-supported 30 and omitted 48/50);
+    // frames = fps·secs + 1, bounds.frames widened to {121,751}. The patcher
+    // drives the pinned graphs' existing `Duration` PrimitiveInt (× Frame Rate + 1
+    // → EmptyLTXVLatentVideo.length), so rendered length == billed frames by
+    // construction; NO template file edited (zero templateHash movement). The new
+    // validate_duration enforces exact whole seconds in range; the patcher fails
+    // closed on fps==0 / frames==0.
+    "ltx-duration",
+    // v8.33.0 allow-list bundle v4: the full LTX 2.3 resolution ladder up to 4K
+    // (landscape 768×512…3840×2160, portrait mirrors, 1024×1024 square) and a
+    // 32 MiB input-image cap for 4K stills. Bundle-only change: bundleHash and
+    // allowListVersion move; NO template/commitment/wire change. NOTE: a 4K
+    // 121-frame clip is ~1,003,623 tokens ≈ $0.91 gross at price 904 — the SDK
+    // must size deposits from ltxTokens(job), the $0.50 floor cannot cover it.
+    "ltx-resolution-ladder-4k",
+    // v8.32.0 LTX M1 economics: one submitProofOfWork per clip (5-param v8.14.0
+    // form, host-wallet auth) through a ProofSubmit seam on CheckpointManager —
+    // success strictly gated on a confirmed status-1 receipt. tokensClaimed ==
+    // wire billing.tokens (§B). Disconnect-race machine on LtxTracker (pending
+    // COUNT + deferred completion + dispute-window wait); mid-render disconnect
+    // deterministically abandons (interrupt, forfeit, settle at 0).
+    "ltx-payout",
+    "ltx-proof-submit",
+    "ltx-deferred-settlement",
+    // v8.32.1 post-implementation review hardening: atomic accept gate
+    // (mark_proof_pending rejects while a completeSessionJob is in flight —
+    // the completing latch, self-expiring), take-at-wake deferral (peek →
+    // dispute-window sleep → atomic take), post-render disconnect gates on the
+    // stage sends (never bill a clip whose ltx_complete provably cannot land),
+    // bounded recomputing "Too many" retry (3 attempts — lastProofTime moves
+    // when sibling clips land), VRAM permit released before settlement sleeps.
+    "ltx-payout-race-hardening",
+    // v8.31.2 LTX real-template text-to-video (patch on the M0 sidecar): patch by the
+    // template's own node names, accept a video output, advisory frame count, and pull
+    // rendered files over ComfyUI's /view HTTP endpoint (no shared output volume).
+    "ltx-real-template-t2v",
+    "ltx-video-output",
+    "ltx-http-view-fetch",
+    // v8.31.3: DISABLE_LLM runs the node sidecar-only (no LLM GGUF load).
+    "disable-llm-sidecar-only",
+    // v8.31.4: publish the LTX allow-list bundle to S5 at startup, log the bundleCID.
+    "ltx-bundle-s5-publish",
+    // v8.31.5 LTX image-to-video (M1a): image-conditioned templates. Fetch the input
+    // image from the S5 portal by capability CID (blake3-gated), decrypt, hash, upload
+    // to ComfyUI, patch the LoadImage node(s), and bind imageHashes into a v2
+    // inputCommitment. t2v stays byte-identical (empty imageHashes ⇒ M0 seven-field).
+    "ltx-i2v",
+    "ltx-s5-blob-fetch",
+    "inputcommitment-v2",
+    // v8.31.6: portal blob-download CID now uses the BlobIdentifier blake3 multihash
+    // 0x1e (was 0x1f), matching s5.js BlobIdentifier(hash,0).toBase58() — fixes the
+    // i2v input-image portal fetch 404.
+    "ltx-i2v-blobcid-fix",
+    // v8.31.7: input-image blob is fetched through the local S5 bridge's
+    // downloadByCID (P2P) via ENHANCED_S5_URL, not a raw portal HTTP GET (which is
+    // not a supported transport). Bridge must peer with the client's portal.
+    "ltx-i2v-bridge-fetch",
+    // v8.31.8 LTX first-last-frame to video (flf2v): two input images
+    // (firstFrame/lastFrame) in a v3 bundle; patcher drives a CLIPTextEncode
+    // positive prompt (.text) in addition to PrimitiveStringMultiline (.value).
+    "ltx-flf2v",
+    // v8.31.0 LTX 2.3 generation sidecar (M0)
+    "ltx-video-sidecar",
+    "comfyui-generation",
+    "hdr-exr-output",
+    "keyless-attestation",
+    "megapixel-frame-billing",
+    "fixed-field-commitments",
     "multi-chain",
     "base-sepolia",
     "opbnb-testnet",
@@ -338,6 +426,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.34.0 - LTX Duration + fps correction (Jul 3, 2026)
+    "FEAT: User-selectable LTX clip duration 5..=15s — frames = fps·secs + 1 (allow-list bundle v5)",
+    "FEAT: Corrected advertised fps to LTX 2.3 native rates [24,25,48,50] (dropped never-supported 30, added 48/50)",
+    "FEAT: bounds.frames widened to {121,751}; new validate_duration enforces exact whole seconds in range",
+    "FEAT: Patcher drives the pinned graphs' existing Duration handle so rendered length == billed frames (no template/hash change)",
+    "BUNDLE: allowListVersion 4 -> 5; bundleHash moves; the three templateHashes are UNCHANGED",
     // v8.29.0 - Qwen3.6-35B-A3B Support (May 21, 2026)
     "FEAT: llama-cpp-2 bumped 0.1.122 -> 0.1.146 — adds qwen35moe (Qwen3.6-35B-A3B) architecture support",
     "BUILD: pinned llama-cpp-2 =0.1.146 in Cargo.toml (Cargo.lock is gitignored)",
@@ -752,10 +846,36 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 30);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_MINOR, 35);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.35.0 LTX IC-LoRA union control (bundle v6, videos on the seam)
+        assert!(FEATURES.contains(&"ltx-iclora"));
+        // v8.34.0 LTX duration + fps correction (bundle v5)
+        assert!(FEATURES.contains(&"ltx-duration"));
+        // v8.32.0 LTX M1 economics (submitProofOfWork per clip)
+        assert!(FEATURES.contains(&"ltx-payout"));
+        assert!(FEATURES.contains(&"ltx-proof-submit"));
+        assert!(FEATURES.contains(&"ltx-deferred-settlement"));
+        // v8.32.1 review hardening (atomic accept gate, delivery gates)
+        assert!(FEATURES.contains(&"ltx-payout-race-hardening"));
+        // v8.33.0 bundle v4 resolution ladder
+        assert!(FEATURES.contains(&"ltx-resolution-ladder-4k"));
+        // v8.31.0 LTX 2.3 generation sidecar (M0)
+        assert!(FEATURES.contains(&"ltx-video-sidecar"));
+        assert!(FEATURES.contains(&"comfyui-generation"));
+        assert!(FEATURES.contains(&"hdr-exr-output"));
+        assert!(FEATURES.contains(&"keyless-attestation"));
+        assert!(FEATURES.contains(&"megapixel-frame-billing"));
+        assert!(FEATURES.contains(&"fixed-field-commitments"));
+        // v8.31.5 LTX image-to-video (M1a)
+        assert!(FEATURES.contains(&"ltx-i2v"));
+        assert!(FEATURES.contains(&"ltx-s5-blob-fetch"));
+        assert!(FEATURES.contains(&"inputcommitment-v2"));
+        assert!(FEATURES.contains(&"ltx-i2v-blobcid-fix"));
+        assert!(FEATURES.contains(&"ltx-i2v-bridge-fetch"));
+        assert!(FEATURES.contains(&"ltx-flf2v"));
         // v8.30.0 TEE / confidential inference (mock backend, Phase 1-4)
         assert!(FEATURES.contains(&"tee-confidential-inference"));
         assert!(FEATURES.contains(&"tee-attestation-mock"));
@@ -905,15 +1025,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.30.0"));
-        assert!(version.contains("2026-06-03"));
+        assert!(version.contains("8.35.1"));
+        assert!(version.contains("2026-07-06"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.30.0-tee-confidential-inference-2026-06-03");
-        assert_eq!(VERSION_NUMBER, "8.30.0");
-        assert_eq!(BUILD_DATE, "2026-06-03");
+        assert_eq!(VERSION, "v8.35.1-ltx-iclora-2026-07-06");
+        assert_eq!(VERSION_NUMBER, "8.35.1");
+        assert_eq!(BUILD_DATE, "2026-07-06");
     }
 
     #[test]

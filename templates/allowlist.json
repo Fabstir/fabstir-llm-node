@@ -1,0 +1,29 @@
+{
+  "allowListVersion": 6,
+  "templates": [
+    { "templateId": "ltx-t2v-hdr", "version": "v1" },
+    { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
+    { "templateId": "ltx-flf2v-hdr", "version": "v1", "imageInputs": 2, "imageSemantics": ["firstFrame", "lastFrame"] },
+    { "templateId": "ltx-iclora-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["reference"], "videoInputs": 1, "videoSemantics": ["controlVideo"] }
+  ],
+  "loras": ["ltx-iclora-hdr@v1"],
+  "bounds": {
+    "frames": { "min": 121, "max": 751 },
+    "fps": [24, 25, 48, 50],
+    "resolutions": [
+      { "w": 768, "h": 512 },
+      { "w": 1280, "h": 720 },
+      { "w": 1920, "h": 1080 },
+      { "w": 2560, "h": 1440 },
+      { "w": 3840, "h": 2160 },
+      { "w": 512, "h": 768 },
+      { "w": 720, "h": 1280 },
+      { "w": 1080, "h": 1920 },
+      { "w": 1024, "h": 1024 }
+    ],
+    "imageMaxBytes": 33554432,
+    "imageFormats": ["png", "jpeg", "webp"],
+    "videoMaxBytes": 134217728,
+    "videoFormats": ["mp4"]
+  }
+}

@@ -1,0 +1,58 @@
+# LTX 2.3 ComfyUI sidecar (text/image-to-video, 22b + HDR IC-LoRA).
+# Headless ComfyUI exposing the standard HTTP API (/prompt, /system_stats) on :8188.
+# Multi-GB weights are NOT baked in — mount them via a models volume at runtime
+# (see scripts/download_ltx_models.sh + ltx-sidecar in docker-compose.prod.yml).
+# Build: docker build -t ltx-comfyui -f docker/Dockerfile.ltx-sidecar .
+
+# CUDA base — matches the repo's GPU sidecars (Dockerfile.vlm-sidecar uses 12.4.1).
+# TODO(Jules): confirm this CUDA tag matches the diffusion sidecar / LTX PyTorch build.
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+# TODO(Jules): pin commit — exact ComfyUI commit validated against LTX 2.3.
+ARG COMFYUI_REPO=https://github.com/comfyanonymous/ComfyUI.git
+ARG COMFYUI_COMMIT=<pin-me>
+# TODO(Jules): pin commit — exact ComfyUI-LTXVideo commit for LTX 2.3 (22b + HDR).
+ARG LTXVIDEO_REPO=https://github.com/Lightricks/ComfyUI-LTXVideo.git
+ARG LTXVIDEO_COMMIT=<pin-me>
+# TODO(Jules): pin commit + confirm repo — HDR/EXR (OpenEXR) save custom node.
+ARG HDR_NODE_REPO=https://github.com/spacepxl/ComfyUI-HQ-Image-Save.git
+ARG HDR_NODE_COMMIT=<pin-me>
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git python3 python3-venv python3-pip ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
+RUN python3 -m venv "${VIRTUAL_ENV}"
+
+# CUDA-matched PyTorch (cu124) before ComfyUI's own requirements.
+RUN pip install --no-cache-dir torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu124
+WORKDIR /opt
+RUN git clone "${COMFYUI_REPO}" ComfyUI && cd ComfyUI && git checkout "${COMFYUI_COMMIT}"
+WORKDIR /opt/ComfyUI
+RUN pip install --no-cache-dir -r requirements.txt
+
+# LTXVideo (LTX 2.3 22b + HDR IC-LoRA) + HDR/EXR save node.
+RUN git clone "${LTXVIDEO_REPO}" custom_nodes/ComfyUI-LTXVideo \
+    && cd custom_nodes/ComfyUI-LTXVideo && git checkout "${LTXVIDEO_COMMIT}" \
+    && pip install --no-cache-dir -r requirements.txt
+RUN git clone "${HDR_NODE_REPO}" custom_nodes/ComfyUI-HDR-EXR \
+    && cd custom_nodes/ComfyUI-HDR-EXR && git checkout "${HDR_NODE_COMMIT}" \
+    && pip install --no-cache-dir -r requirements.txt
+
+# ---- Runtime (no build toolchain; weights mounted at runtime) ----
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 curl ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/ComfyUI /opt/ComfyUI
+ENV PATH=/opt/venv/bin:$PATH
+WORKDIR /opt/ComfyUI
+
+# Container listens on 0.0.0.0; compose maps it to 127.0.0.1:8188 (localhost-only).
+EXPOSE 8188
+HEALTHCHECK --interval=30s --timeout=10s --start-period=240s --retries=3 \
+    CMD curl -f http://localhost:8188/system_stats || exit 1
+ENTRYPOINT ["python3", "main.py"]
+CMD ["--listen", "0.0.0.0", "--port", "8188", "--output-directory", "/opt/ComfyUI/output"]
