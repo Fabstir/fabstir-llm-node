@@ -18,8 +18,9 @@ use crate::ltx::types::LtxJob;
 /// Patch `job`'s params into the pinned `graph`. `image_names` are the ComfyUI
 /// stored filenames for image-conditioned templates (M1a), assigned to the
 /// `LoadImage` nodes in node-id order; pass `&[]` for t2v (no LoadImage nodes).
-/// `video_names` are the stored filenames for video-conditioned templates (BL3),
-/// assigned to the `LoadVideo` nodes the same way; pass `&[]` when none.
+/// `video_names` are the stored filenames for video-conditioned templates
+/// (BL3/BL4), assigned across the video-loader union (`LoadVideo` /
+/// `VHS_LoadVideo`) the same way; pass `&[]` when none.
 ///
 /// Required handles (fail closed if absent): the positive prompt (`_meta.title ==
 /// "Prompt"`) and at least one seed node — `RandomNoise` (`noise_seed`) or a
@@ -87,12 +88,61 @@ pub fn patch(
     // on node titles. t2v passes `&[]` and has no `LoadImage`, so this is a no-op.
     bind_inputs_by_class(obj, "LoadImage", "image", "image", image_names)?;
 
-    // Video inputs (BL3): assign `video_names[i]` to the i-th `LoadVideo` node's
-    // `file` — same node-id-order + count-mismatch fail-closed rule. iclora has
-    // one `LoadVideo` (the control video); templates without one pass `&[]`.
-    bind_inputs_by_class(obj, "LoadVideo", "file", "video", video_names)?;
+    // Video inputs (BL3/BL4): assign `video_names[i]` across the UNION of the
+    // video-loader classes — core `LoadVideo` (`file` key, iclora) and VHS
+    // `VHS_LoadVideo` (`video` key, the BL4 edit family) — in node-id order,
+    // count fail-closed. Templates without a loader pass `&[]`.
+    bind_video_inputs(obj, video_names)?;
+
+    // BL4: cap the VHS loader at the billed frame count so loaded == billed by
+    // construction (`skip_first_frames`/`select_every_nth`/`force_rate` are
+    // frozen neutral in the pinned graphs, and the handler's stsz gate bounds
+    // the clip itself). No-op for templates without a `VHS_LoadVideo`.
+    patch_by_class(
+        obj,
+        "VHS_LoadVideo",
+        "frame_load_cap",
+        Value::from(job.frames),
+        false,
+    )?;
 
     Ok(Graph(value))
+}
+
+/// The video-loader classes and each one's filename input key. Control clips
+/// bind across the UNION of these in node-id order, so a job's `videos[i]`
+/// lands deterministically whichever loader class the pinned graph uses.
+const VIDEO_LOADER_CLASSES: [(&str, &str); 2] = [("LoadVideo", "file"), ("VHS_LoadVideo", "video")];
+
+/// Assign `names[i]` to the i-th video-loader node (union of
+/// [`VIDEO_LOADER_CLASSES`], id-ordered), each through its class's own key.
+/// Fails CLOSED on a count mismatch; empty `names` is a no-op.
+fn bind_video_inputs(obj: &mut Map<String, Value>, names: &[String]) -> Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut loaders: Vec<(String, &'static str)> = obj
+        .iter()
+        .filter_map(|(id, n)| {
+            let class = n.get("class_type").and_then(Value::as_str)?;
+            VIDEO_LOADER_CLASSES
+                .iter()
+                .find(|(c, _)| *c == class)
+                .map(|(_, key)| (id.clone(), *key))
+        })
+        .collect();
+    loaders.sort();
+    if loaders.len() != names.len() {
+        return Err(anyhow!(
+            "template has {} video loader node(s) but {} video name(s) supplied",
+            loaders.len(),
+            names.len()
+        ));
+    }
+    for (name, (id, key)) in names.iter().zip(loaders.iter()) {
+        set_input(obj, id, key, Value::from(name.clone()))?;
+    }
+    Ok(())
 }
 
 /// Assign `names[i]` to the i-th node of `class`'s `key` input, ordering nodes by
