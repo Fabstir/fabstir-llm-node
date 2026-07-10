@@ -32,12 +32,27 @@ const FLF2V_TEMPLATE_HASH: &str =
 /// unaffected — the patcher writes a JSON number into the `value` leaf either way.
 const ICLORA_TEMPLATE_HASH: &str =
     "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6";
+/// BL4 template hashes (authored at V1 from the live-proven host exports in
+/// docs/archive/comfyui/: outpaint ef5d632ed2c5, edit 1fb07c3b4b99, restore
+/// 558cc012978d). One shared 30-node spine — dev-fp8 + distilled-384 + mode
+/// IC-LoRA, ManualSigmas 8-step, local Gemma encoder, radiance gamma pair,
+/// source-audio passthrough — differing only in resize head (outpaint
+/// fit+letterbox "pad"; edit/restore centre-"crop"), LoRA stack and strengths.
+/// All three graphs proved free on 3XS-Z 2026-07-10 (vertical outpaint fill /
+/// retriever insertion / restore identity) BEFORE these hashes were pinned.
+const OUTPAINT_TEMPLATE_HASH: &str =
+    "0x51273037895f44c3b18be7b6b5c11b6ae7225ebf67e6d89ec38d574d821e11e9";
+const EDIT_TEMPLATE_HASH: &str =
+    "0x7c1900c0f1062c86c1d3b83725c42561f6f540012d7a3a74216ed1770bac9787";
+const RESTORE_TEMPLATE_HASH: &str =
+    "0xb09d8e6f1895a9c7513b57cc18729ae6f16fad0432460355d014185ebea1cb1c";
 /// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
 /// ladder + 32 MiB image cap; v5 the clip-duration bounds frames {121,751} and
 /// corrected fps [24,25,48,50], with the i2v enhance=true re-pin landing within
 /// v5 as the LIVE on-chain 0xb44beb2c…; v6 adds ltx-iclora-hdr + the video
-/// bounds/videoInputs fields); the t2v/i2v/flf2v graph hashes above must NOT move.
-const BUNDLE_HASH: &str = "0xaa6192be00b67f948227d4819e4157790322cf99332d3ffd1566b571cc396aa2";
+/// bounds/videoInputs fields; v7 adds the BL4 trio outpaint/edit/restore +
+/// their lora ids); the t2v/i2v/flf2v/iclora graph hashes above must NOT move.
+const BUNDLE_HASH: &str = "0x27c24a9f51cfb1047d8d89548accb92d1941b63d7b1b446aca04112dca8eb5ec";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -242,6 +257,88 @@ fn test_iclora_template_hash_stable() {
 }
 
 #[test]
+fn test_bl4_template_hashes_stable() {
+    let store = TemplateStore::new(DIR).unwrap();
+    for (id, golden) in [
+        ("ltx-outpaint-hdr", OUTPAINT_TEMPLATE_HASH),
+        ("ltx-edit-hdr", EDIT_TEMPLATE_HASH),
+        ("ltx-restore-hdr", RESTORE_TEMPLATE_HASH),
+    ] {
+        let h = store.template_hash(id).expect("template present");
+        eprintln!("GOLD {id}={h}");
+        assert!(h.starts_with("0x") && h.len() == 66, "hash shape: {h}");
+        // Independent recompute (same canonical path the impl uses).
+        let raw = std::fs::read(format!("{DIR}/{id}/v1.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let expect = keccak_hex(serde_json::to_vec(&sort_json_keys(&v)).unwrap());
+        assert_eq!(h, expect, "{id}");
+        if golden != "0x__TBD__" {
+            assert_eq!(h, golden, "golden {id} templateHash drifted");
+        }
+        // The bundle advertises the video-conditioned commitment selector: one
+        // control clip, NO images (the dummy-still branch was stripped — v3
+        // commitment with empty imageHashes).
+        assert_eq!(store.video_inputs(id), Some(1), "{id}: videoInputs");
+        assert_eq!(store.image_inputs(id), Some(0), "{id}: imageInputs");
+        // Patcher handles present: one CLIPTextEncode titled Prompt, Width /
+        // Height primitives, RandomNoise seed, one VHS_LoadVideo with a
+        // frame_load_cap leaf.
+        let obj = v.as_object().unwrap();
+        let by_title = |t: &str| {
+            obj.values()
+                .filter(|n| n.pointer("/_meta/title").and_then(|x| x.as_str()) == Some(t))
+                .count()
+        };
+        assert_eq!(by_title("Prompt"), 1, "{id}: one Prompt handle");
+        assert_eq!(by_title("Width"), 1, "{id}: Width handle");
+        assert_eq!(by_title("Height"), 1, "{id}: Height handle");
+        let vhs: Vec<&serde_json::Value> = obj
+            .values()
+            .filter(|n| n.get("class_type").and_then(|c| c.as_str()) == Some("VHS_LoadVideo"))
+            .collect();
+        assert_eq!(vhs.len(), 1, "{id}: one VHS_LoadVideo");
+        assert!(
+            vhs[0].pointer("/inputs/frame_load_cap").is_some(),
+            "{id}: frame_load_cap leaf present"
+        );
+        // Frozen-neutral frame widgets (the billed==rendered precondition).
+        assert_eq!(
+            vhs[0].pointer("/inputs/select_every_nth"),
+            Some(&serde_json::json!(1)),
+            "{id}: select_every_nth frozen at 1"
+        );
+        assert_eq!(
+            vhs[0].pointer("/inputs/force_rate"),
+            Some(&serde_json::json!(0)),
+            "{id}: force_rate frozen at 0"
+        );
+        assert_eq!(
+            vhs[0].pointer("/inputs/skip_first_frames"),
+            Some(&serde_json::json!(0)),
+            "{id}: skip_first_frames frozen at 0"
+        );
+    }
+    // The four existing graph hashes are unmoved by adding the BL4 trio.
+    let store = TemplateStore::new(DIR).unwrap();
+    assert_eq!(
+        store.template_hash("ltx-t2v-hdr").unwrap(),
+        HDR_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-i2v-hdr").unwrap(),
+        I2V_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-flf2v-hdr").unwrap(),
+        FLF2V_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-iclora-hdr").unwrap(),
+        ICLORA_TEMPLATE_HASH
+    );
+}
+
+#[test]
 fn test_iclora_handles() {
     let raw = std::fs::read(format!("{DIR}/ltx-iclora-hdr/v1.json")).unwrap();
     let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -350,7 +447,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
     let ic = b
         .templates
         .iter()
@@ -389,10 +486,39 @@ fn test_bundle_v6_has_iclora() {
 }
 
 #[test]
+fn test_bundle_v7_has_bl4_trio() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let b = store.bundle();
+    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
+    for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
+        let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
+        assert_eq!(t.video_inputs, 1, "{id}: one control video");
+        assert_eq!(t.video_semantics, vec!["controlVideo".to_string()]);
+        assert_eq!(
+            t.image_inputs, 0,
+            "{id}: NO image inputs (v3 selector with empty imageHashes)"
+        );
+        assert!(t.image_semantics.is_empty(), "{id}: no image semantics");
+    }
+    // The lora ids ride the bundle for client discovery.
+    for lora in [
+        "ltx-iclora-hdr@v1",
+        "ltx-outpaint-hdr@v1",
+        "ltx-edit-hdr@v1",
+        "ltx-restore-hdr@v1",
+    ] {
+        assert!(b.loras.iter().any(|l| l == lora), "lora {lora} advertised");
+    }
+    // Bounds are UNCHANGED by v7 (same ladder, caps, fps set as v6).
+    assert_eq!(b.bounds.video_max_bytes, 134_217_728);
+    assert_eq!(b.bounds.image_max_bytes, 33_554_432);
+}
+
+#[test]
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
     let flf = b
         .templates
         .iter()
@@ -414,7 +540,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -441,8 +567,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 6,
-        "v6 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 7,
+        "v7 allow-list (t2v/i2v entries unchanged)"
     );
     let t2v = b
         .templates

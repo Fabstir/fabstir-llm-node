@@ -121,7 +121,7 @@ async fn test_i2v_accepted_ack() {
     assert!(task.is_some(), "valid one-image i2v job is accepted");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 6, "v6 allow-list echoed");
+    assert_eq!(inner["allowListVersion"], 7, "v7 allow-list echoed");
 }
 
 #[tokio::test]
@@ -416,7 +416,7 @@ async fn test_iclora_accepted_ack() {
     );
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 6, "v6 allow-list echoed");
+    assert_eq!(inner["allowListVersion"], 7, "v7 allow-list echoed");
 }
 
 #[tokio::test]

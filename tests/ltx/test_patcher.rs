@@ -596,3 +596,164 @@ fn test_load_video_count_mismatch_rejected() {
     // A video name against a graph with NO LoadVideo -> fail closed too.
     assert!(patch(&fixture_graph(), &job(), &[], &["x.mp4".to_string()]).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// BL4 video-edit templates: `VHS_LoadVideo` joins the video-binding union and
+// the billed frame count lands in its `frame_load_cap`.
+// ---------------------------------------------------------------------------
+
+/// One of the three pinned BL4 graphs (same spine; `VHS_LoadVideo` node `10`,
+/// seed in `RandomNoise` `60`, positive prompt is the `CLIPTextEncode` titled
+/// `Prompt`, dims are `Width`/`Height` primitives, no `LoadImage` at all).
+fn bl4_graph(id: &str) -> Graph {
+    let raw = std::fs::read(format!("{DIR}/{id}/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+fn bl4_job(id: &str) -> LtxJob {
+    LtxJob {
+        template_id: id.to_string(),
+        template_hash: "0x00".to_string(),
+        prompt: "extend the scene, cinematic, natural lighting".to_string(),
+        seed: "4815162342".to_string(),
+        frames: 121,
+        fps: 24,
+        resolution: Resolution { w: 720, h: 1280 },
+        lora: format!("{id}@v1"),
+        output: OutputKind::ExrSequence,
+        images: None,
+        videos: None,
+    }
+}
+
+#[test]
+fn test_bl4_full_patch_all_three_templates() {
+    // End-to-end handle check on each REAL pinned graph: prompt (a
+    // `CLIPTextEncode`, so the `text` leaf), seed (RandomNoise), dims, the
+    // control video into `VHS_LoadVideo.video`, and the billed frame count
+    // into its `frame_load_cap`.
+    for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
+        let g = patch(&bl4_graph(id), &bl4_job(id), &[], &["ctl.mp4".to_string()]).unwrap();
+        assert_eq!(
+            node_by_title(&g, "Prompt")
+                .pointer("/inputs/text")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "extend the scene, cinematic, natural lighting",
+            "{id}: prompt"
+        );
+        let rn = nodes_by_class(&g, "RandomNoise");
+        assert_eq!(rn.len(), 1, "{id}: one RandomNoise");
+        assert_eq!(
+            rn[0]
+                .pointer("/inputs/noise_seed")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            4_815_162_342,
+            "{id}: seed"
+        );
+        let leaf_u64 = |title: &str| {
+            node_by_title(&g, title)
+                .pointer("/inputs/value")
+                .unwrap()
+                .as_u64()
+                .unwrap()
+        };
+        assert_eq!(leaf_u64("Width"), 720, "{id}: width");
+        assert_eq!(leaf_u64("Height"), 1280, "{id}: height");
+        let vhs = nodes_by_class(&g, "VHS_LoadVideo");
+        assert_eq!(vhs.len(), 1, "{id}: one VHS_LoadVideo");
+        assert_eq!(
+            vhs[0].pointer("/inputs/video").unwrap().as_str().unwrap(),
+            "ctl.mp4",
+            "{id}: control video bound"
+        );
+        assert_eq!(
+            vhs[0]
+                .pointer("/inputs/frame_load_cap")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            121,
+            "{id}: billed frames cap the loader"
+        );
+    }
+}
+
+#[test]
+fn test_vhs_load_video_count_mismatch_rejected() {
+    // Two names for one VHS_LoadVideo -> fail closed, same rule as LoadVideo.
+    let two = vec!["a.mp4".to_string(), "b.mp4".to_string()];
+    assert!(patch(
+        &bl4_graph("ltx-outpaint-hdr"),
+        &bl4_job("ltx-outpaint-hdr"),
+        &[],
+        &two
+    )
+    .is_err());
+}
+
+#[test]
+fn test_video_binding_spans_both_loader_classes() {
+    // Synthetic graph with one core `LoadVideo` ("2") AND one `VHS_LoadVideo`
+    // ("1"): names bind across the UNION in node-id order, each through its
+    // class's own filename key. No pinned template mixes the classes; this
+    // pins the union semantics so a future one can't bind ambiguously.
+    let raw = serde_json::json!({
+        "1": { "inputs": { "video": "x.mp4", "force_rate": 0, "frame_load_cap": 0 },
+               "class_type": "VHS_LoadVideo", "_meta": { "title": "Load Video (Upload)" } },
+        "2": { "inputs": { "file": "y.mp4" },
+               "class_type": "LoadVideo", "_meta": { "title": "Load Video" } },
+        "3": { "inputs": { "text": "", "clip": ["9", 0] },
+               "class_type": "CLIPTextEncode", "_meta": { "title": "Prompt" } },
+        "4": { "inputs": { "noise_seed": 0 },
+               "class_type": "RandomNoise", "_meta": { "title": "RandomNoise" } }
+    });
+    let g = Graph(raw);
+    let names = vec!["first.mp4".to_string(), "second.mp4".to_string()];
+    let patched = patch(&g, &bl4_job("ltx-outpaint-hdr"), &[], &names).unwrap();
+    assert_eq!(
+        nodes_by_class(&patched, "VHS_LoadVideo")[0]
+            .pointer("/inputs/video")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "first.mp4",
+        "id \"1\" (VHS) takes the first name via its `video` key"
+    );
+    assert_eq!(
+        nodes_by_class(&patched, "LoadVideo")[0]
+            .pointer("/inputs/file")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "second.mp4",
+        "id \"2\" (core) takes the second name via its `file` key"
+    );
+    // One name across a two-loader union -> fail closed.
+    assert!(patch(
+        &g,
+        &bl4_job("ltx-outpaint-hdr"),
+        &[],
+        &["only.mp4".to_string()]
+    )
+    .is_err());
+}
+
+#[test]
+fn test_frame_load_cap_absent_is_noop_for_old_templates() {
+    // No VHS_LoadVideo anywhere in the pre-BL4 family: the new frames handle
+    // must not invent inputs or fail — t2v and iclora patch exactly as before.
+    let g = patch(
+        &iclora_graph(),
+        &iclora_job(),
+        &[],
+        &["ctl.mp4".to_string()],
+    )
+    .unwrap();
+    assert!(nodes_by_class(&g, "VHS_LoadVideo").is_empty());
+    let g = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
+    assert!(nodes_by_class(&g, "VHS_LoadVideo").is_empty());
+}
