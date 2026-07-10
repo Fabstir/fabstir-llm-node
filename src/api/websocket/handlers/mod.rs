@@ -3,6 +3,7 @@
 pub mod disconnect;
 pub mod image_generation;
 pub mod inference;
+pub mod ltx;
 pub mod prompt;
 pub mod rag;
 pub mod response;

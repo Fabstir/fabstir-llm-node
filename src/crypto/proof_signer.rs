@@ -143,6 +143,31 @@ pub fn sign_proof_data(
     Ok(sig_bytes)
 }
 
+/// EIP-191 `personal_sign` of an already-computed 32-byte digest (e.g. the LTX
+/// attestation `sigDigest`). Returns a 65-byte `r||s||v` signature, v in {27,28}.
+/// Mirrors `sign_proof_data` steps 3-5 but signs the caller's digest directly
+/// instead of the AUDIT-F4 proof tuple. The SDK recovers via
+/// `ethers.verifyMessage(getBytes(digest), sig)`, which applies the same
+/// `\x19Ethereum Signed Message:\n32` prefix.
+pub fn sign_eip191_digest(private_key: &[u8; 32], digest: [u8; 32]) -> Result<[u8; 65]> {
+    let eth_signed_hash = eip191_hash(&digest);
+    let signing_key = SigningKey::from_bytes(private_key.into())
+        .map_err(|e| anyhow!(ProofSigningError::InvalidPrivateKey(e.to_string())))?;
+    let (signature, recovery_id) = signing_key
+        .sign_prehash_recoverable(&eth_signed_hash)
+        .map_err(|e| anyhow!(ProofSigningError::SigningFailed(e.to_string())))?;
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+    sig_bytes[64] = recovery_id.to_byte() + 27;
+    Ok(sig_bytes)
+}
+
+/// Public EIP-191 prehash of a 32-byte digest, so callers can recover the signer
+/// via `recover_client_address(sig, &eip191_prehash(&digest))`.
+pub fn eip191_prehash(digest: &[u8; 32]) -> [u8; 32] {
+    eip191_hash(digest)
+}
+
 /// Verify a proof signature locally (for debugging)
 ///
 /// # AUDIT-F4 Compliance
