@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.36.0-ltx-video-edit-2026-07-10";
+pub const VERSION: &str = "v8.36.1-ltx-overlength-clips-2026-07-12";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.36.0";
+pub const VERSION_NUMBER: &str = "8.36.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,20 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 36;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-10";
+pub const BUILD_DATE: &str = "2026-07-12";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.36.1 over-length control clips accepted: the frame-count gate keeps only
+    // its LOWER bound (under-length = overbilling risk, still fail-closed); clips
+    // longer than the job crop server-side by construction (the trio's
+    // frame_load_cap is patched to the billed count; iclora's Video Slice takes
+    // the first duration seconds), so a 14.76 s clip is now a valid input to a
+    // 14 s job with no client-side re-encode. Clip fps must still match exactly.
+    // No wire/template/bundle change.
     // v8.36.0 BL4 video-edit trio (allow-list bundle v7): three pinned templates
     // ltx-outpaint-hdr / ltx-edit-hdr / ltx-restore-hdr on one shared spine
     // (dev-fp8 + distilled-384 + mode IC-LoRA, 8-step ManualSigmas, local Gemma
@@ -860,7 +867,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 36);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1040,15 +1047,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.36.0"));
-        assert!(version.contains("2026-07-10"));
+        assert!(version.contains("8.36.1"));
+        assert!(version.contains("2026-07-12"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.36.0-ltx-video-edit-2026-07-10");
-        assert_eq!(VERSION_NUMBER, "8.36.0");
-        assert_eq!(BUILD_DATE, "2026-07-10");
+        assert_eq!(VERSION, "v8.36.1-ltx-overlength-clips-2026-07-12");
+        assert_eq!(VERSION_NUMBER, "8.36.1");
+        assert_eq!(BUILD_DATE, "2026-07-12");
     }
 
     #[test]
