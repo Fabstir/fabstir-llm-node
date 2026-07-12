@@ -115,3 +115,45 @@ fn test_truncated_and_hostile_inputs_never_panic() {
     tiny[0..4].copy_from_slice(&3u32.to_be_bytes());
     assert!(video_sample_count(&tiny).is_err());
 }
+
+// ── the handler's control-video gate (v8.36.1 semantics) ─────────────────────
+// Billing safety only needs the LOWER bound: an under-length clip means fewer
+// rendered frames than billed (overbilling). Over-length clips are SAFE — both
+// pinned-graph families crop server-side (the trio's VHS_LoadVideo carries
+// frame_load_cap patched to the billed count; iclora's Video Slice takes the
+// first `duration` seconds) — so v8.36.1 accepts them, letting clients send
+// e.g. a 14.76 s clip against a 14 s job without client-side re-encoding.
+
+use fabstir_llm_node::api::websocket::handlers::ltx::check_control_video;
+
+fn clip(samples: u32) -> Vec<u8> {
+    mp4_with(&[trak(b"vide", Some(samples))])
+}
+
+#[test]
+fn test_control_gate_accepts_billed_range_and_over_length() {
+    for samples in [120, 121, 122, 150, 369] {
+        assert!(
+            check_control_video(&clip(samples), 121).is_ok(),
+            "{samples} samples vs 121 billed must pass (over-length crops in-graph)"
+        );
+    }
+}
+
+#[test]
+fn test_control_gate_rejects_under_length() {
+    // fewer than billed-1 frames -> the render would come up short of billing
+    for samples in [1, 60, 119] {
+        assert!(
+            check_control_video(&clip(samples), 121).is_err(),
+            "{samples} samples vs 121 billed must fail closed"
+        );
+    }
+}
+
+#[test]
+fn test_control_gate_still_rejects_non_mp4_and_unreadable() {
+    assert!(check_control_video(b"RIFFxxxxWEBP", 121).is_err());
+    let ftyp_only = boxed(b"ftyp", b"isom");
+    assert!(check_control_video(&ftyp_only, 121).is_err());
+}
