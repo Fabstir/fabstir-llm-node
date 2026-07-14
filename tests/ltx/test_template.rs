@@ -52,7 +52,10 @@ const RESTORE_TEMPLATE_HASH: &str =
 /// v5 as the LIVE on-chain 0xb44beb2c…; v6 adds ltx-iclora-hdr + the video
 /// bounds/videoInputs fields; v7 adds the BL4 trio outpaint/edit/restore +
 /// their lora ids); the t2v/i2v/flf2v/iclora graph hashes above must NOT move.
-const BUNDLE_HASH: &str = "0x27c24a9f51cfb1047d8d89548accb92d1941b63d7b1b446aca04112dca8eb5ec";
+// v8 (2026-07-13): the ladder gained the /64-clean HD+QHD sizes. 1080/1440 floor to an
+// ODD latent (1080//32 == 33), which the IC-LoRA guide rejects outright and the VAE
+// truncates for everyone else — 1088/1408 are their renderable neighbours.
+const BUNDLE_HASH: &str = "0x8bda6e4a19ef7a37ee16ddcca1289421a99623397c88489467c9a5f506dc8501";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -447,7 +450,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
+    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
     let ic = b
         .templates
         .iter()
@@ -489,7 +492,7 @@ fn test_bundle_v6_has_iclora() {
 fn test_bundle_v7_has_bl4_trio() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
+    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
     for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
         let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
         assert_eq!(t.video_inputs, 1, "{id}: one control video");
@@ -518,7 +521,7 @@ fn test_bundle_v7_has_bl4_trio() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
+    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
     let flf = b
         .templates
         .iter()
@@ -540,7 +543,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 7, "v7 allow-list");
+    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -551,6 +554,12 @@ fn test_bundle_v4_resolution_ladder() {
         (720, 1280),
         (1080, 1920),
         (1024, 1024),
+        // v8: /64-clean HD + QHD. floor(dim/32) is EVEN in both axes, so the IC-LoRA guide
+        // accepts them AND the VAE renders them EXACTLY (1088 == 34*32, no truncation).
+        (1920, 1088),
+        (1088, 1920),
+        (2560, 1408),
+        (1408, 2560),
     ];
     for (w, h) in expect {
         assert!(
@@ -567,8 +576,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 7,
-        "v7 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 8,
+        "v8 allow-list (t2v/i2v entries unchanged)"
     );
     let t2v = b
         .templates
