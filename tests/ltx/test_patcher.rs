@@ -757,3 +757,73 @@ fn test_frame_load_cap_absent_is_noop_for_old_templates() {
     let g = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
     assert!(nodes_by_class(&g, "VHS_LoadVideo").is_empty());
 }
+
+#[test]
+fn test_upscale_full_patch() {
+    // U-phase: the upscale template has NO Width/Height/Duration handles on purpose
+    // (output = input x2, derived from the clip), an EMPTY prompt as a template
+    // constant, and the same seed/frame-rate/video/frame-cap handles as the trio.
+    // This proves the pinned graph satisfies every fail-closed patcher requirement.
+    let mut job = bl4_job("ltx-upscale-hdr");
+    job.prompt = String::new(); // the mode has no prompt; "" is committed honestly
+    job.resolution = Resolution { w: 1536, h: 1024 }; // OUTPUT dims (= input x2)
+    let g = patch(
+        &bl4_graph("ltx-upscale-hdr"),
+        &job,
+        &[],
+        &["src.mp4".to_string()],
+    )
+    .unwrap();
+
+    // the empty prompt LANDS (patch_prompt is fail-closed, so this also proves the
+    // handle exists); PrimitiveStringMultiline carries it in inputs.value
+    assert_eq!(
+        node_by_title(&g, "Prompt")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        ""
+    );
+    // seed reaches the refine's RandomNoise
+    let rn = nodes_by_class(&g, "RandomNoise");
+    assert_eq!(rn.len(), 1);
+    assert_eq!(
+        rn[0]
+            .pointer("/inputs/noise_seed")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        4_815_162_342
+    );
+    // fps lands on the Frame Rate primitive (feeds conditioning + audio latent + mux)
+    assert_eq!(
+        node_by_title(&g, "Frame Rate")
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        24
+    );
+    // the source clip binds into the loader, capped at the billed frame count
+    let vhs = nodes_by_class(&g, "VHS_LoadVideo");
+    assert_eq!(vhs.len(), 1);
+    assert_eq!(
+        vhs[0].pointer("/inputs/video").unwrap().as_str().unwrap(),
+        "src.mp4"
+    );
+    assert_eq!(
+        vhs[0]
+            .pointer("/inputs/frame_load_cap")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        121
+    );
+    // and the sigmas remain the PINNED fidelity constant — not a patch target
+    let ms = nodes_by_class(&g, "ManualSigmas");
+    assert_eq!(
+        ms[0].pointer("/inputs/sigmas").unwrap().as_str().unwrap(),
+        "0.60, 0.40, 0.20, 0.0"
+    );
+}

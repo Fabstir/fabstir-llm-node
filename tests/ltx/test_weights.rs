@@ -66,8 +66,9 @@ fn outpaint_manifest_is_golden() {
 /// is exactly the 12 weight files the host is required to hold. A template that
 /// loads a file outside this set is a deployment change, not a silent one.
 #[test]
-fn all_seven_templates_derive_and_the_union_is_twelve() {
-    const IDS: [&str; 7] = [
+fn all_eight_templates_derive_and_the_union_is_twelve() {
+    const IDS: [&str; 8] = [
+        "ltx-upscale-hdr",
         "ltx-t2v-hdr",
         "ltx-i2v-hdr",
         "ltx-flf2v-hdr",
@@ -277,5 +278,20 @@ fn swapping_the_bytes_behind_the_name_moves_the_root() {
     assert_ne!(
         honest, cheat,
         "a swapped checkpoint must move weightsRoot — this is the entire point"
+    );
+}
+
+/// The upscale template loads only files already in the pinned twelve — a new MODE
+/// with no new weights, which is what lets it ride bundle v9 without a licence pass.
+#[test]
+fn upscale_manifest_is_golden() {
+    assert_eq!(
+        files_of("ltx-upscale-hdr"),
+        vec![
+            "gemma_3_12B_it_fp4_mixed.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+            "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+        ]
     );
 }
