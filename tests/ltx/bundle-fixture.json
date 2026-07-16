@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 8,
-  "bundleHash": "0x8bda6e4a19ef7a37ee16ddcca1289421a99623397c88489467c9a5f506dc8501",
+  "allowListVersion": 11,
+  "bundleHash": "0x9319d350af953b3aa9987c6bde8f0d665c9c81e56e43336091318fbe2758b35d",
   "templates": [
     {
       "templateId": "ltx-edit-hdr",
@@ -65,6 +65,15 @@
       "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078",
       "imageInputs": 0,
       "videoInputs": 0
+    },
+    {
+      "templateId": "ltx-upscale-hdr",
+      "templateHash": "0xc5a149f0b9d1513db369b29bcf4ca7bd12e091f58a11c6adf968059b8ead39db",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ]
     }
   ],
   "loras": [
@@ -136,6 +145,22 @@
       {
         "w": 1408,
         "h": 2560
+      },
+      {
+        "w": 1536,
+        "h": 1024
+      },
+      {
+        "w": 1024,
+        "h": 1536
+      },
+      {
+        "w": 3840,
+        "h": 2176
+      },
+      {
+        "w": 2176,
+        "h": 3840
       }
     ],
     "imageMaxBytes": 33554432,
