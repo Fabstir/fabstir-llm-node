@@ -55,7 +55,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // v8 (2026-07-13): the ladder gained the /64-clean HD+QHD sizes. 1080/1440 floor to an
 // ODD latent (1080//32 == 33), which the IC-LoRA guide rejects outright and the VAE
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
-const BUNDLE_HASH: &str = "0x8bda6e4a19ef7a37ee16ddcca1289421a99623397c88489467c9a5f506dc8501";
+const BUNDLE_HASH: &str = "0x9319d350af953b3aa9987c6bde8f0d665c9c81e56e43336091318fbe2758b35d";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -450,7 +450,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
+    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
     let ic = b
         .templates
         .iter()
@@ -492,7 +492,7 @@ fn test_bundle_v6_has_iclora() {
 fn test_bundle_v7_has_bl4_trio() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
+    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
     for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
         let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
         assert_eq!(t.video_inputs, 1, "{id}: one control video");
@@ -521,7 +521,7 @@ fn test_bundle_v7_has_bl4_trio() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
+    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
     let flf = b
         .templates
         .iter()
@@ -543,7 +543,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 8, "v8 allow-list");
+    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -576,7 +576,7 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 8,
+        b.allow_list_version, 11,
         "v8 allow-list (t2v/i2v entries unchanged)"
     );
     let t2v = b
@@ -687,4 +687,33 @@ fn emit_bundle_fixture_v2() {
     );
     std::fs::write(path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
+}
+
+/// Bundle v10: the upscale template (v9 + the INT->FLOAT fps shim ComfyUI demands) plus its x2 output rungs. The graph is the
+/// proven ComfyUI probe of 2026-07-15 with patcher handles added; sigmas 0.60/0.40/0.20/0
+/// are pinned as a fidelity constant (0.85 = the t2v generator setting = redesigns content).
+const UPSCALE_TEMPLATE_HASH: &str =
+    "0xc5a149f0b9d1513db369b29bcf4ca7bd12e091f58a11c6adf968059b8ead39db";
+
+#[test]
+fn test_bundle_v11_has_upscale() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert_eq!(store.bundle().allow_list_version, 11);
+    assert_eq!(
+        store
+            .template_hash("ltx-upscale-hdr")
+            .expect("upscale template pinned"),
+        UPSCALE_TEMPLATE_HASH
+    );
+    // videoInputs routes the control-clip plumbing; imageInputs stays zero.
+    assert_eq!(store.video_inputs("ltx-upscale-hdr"), Some(1));
+    assert_eq!(store.image_inputs("ltx-upscale-hdr"), Some(0));
+    // the x2 output rungs are in the ladder
+    let rs = &store.bundle().bounds.resolutions;
+    for (w, h) in [(1536u32, 1024u32), (1024, 1536), (3840, 2176), (2176, 3840)] {
+        assert!(
+            rs.iter().any(|r| r.w == w && r.h == h),
+            "missing rung {w}x{h}"
+        );
+    }
 }

@@ -1,5 +1,5 @@
 {
-  "allowListVersion": 8,
+  "allowListVersion": 11,
   "templates": [
     { "templateId": "ltx-t2v-hdr", "version": "v1" },
     { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
@@ -7,7 +7,8 @@
     { "templateId": "ltx-iclora-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["reference"], "videoInputs": 1, "videoSemantics": ["controlVideo"] },
     { "templateId": "ltx-outpaint-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] },
     { "templateId": "ltx-edit-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] },
-    { "templateId": "ltx-restore-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] }
+    { "templateId": "ltx-restore-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] },
+    { "templateId": "ltx-upscale-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["sourceVideo"] }
   ],
   "loras": ["ltx-iclora-hdr@v1", "ltx-outpaint-hdr@v1", "ltx-edit-hdr@v1", "ltx-restore-hdr@v1"],
   "bounds": {
@@ -26,7 +27,11 @@
       { "w": 1920, "h": 1088 },
       { "w": 1088, "h": 1920 },
       { "w": 2560, "h": 1408 },
-      { "w": 1408, "h": 2560 }
+      { "w": 1408, "h": 2560 },
+      { "w": 1536, "h": 1024 },
+      { "w": 1024, "h": 1536 },
+      { "w": 3840, "h": 2176 },
+      { "w": 2176, "h": 3840 }
     ],
     "imageMaxBytes": 33554432,
     "imageFormats": ["png", "jpeg", "webp"],
