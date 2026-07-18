@@ -62,12 +62,13 @@ fn outpaint_manifest_is_golden() {
     );
 }
 
-/// Every template derives a non-empty manifest, and the union across the seven
-/// is exactly the 12 weight files the host is required to hold. A template that
+/// Every template derives a non-empty manifest, and the union across the nine
+/// is exactly the 13 weight files the host is required to hold. A template that
 /// loads a file outside this set is a deployment change, not a silent one.
 #[test]
-fn all_eight_templates_derive_and_the_union_is_twelve() {
-    const IDS: [&str; 8] = [
+fn all_nine_templates_derive_and_the_union_is_thirteen() {
+    const IDS: [&str; 9] = [
+        "ltx-ingredients-hdr",
         "ltx-upscale-hdr",
         "ltx-t2v-hdr",
         "ltx-i2v-hdr",
@@ -95,7 +96,7 @@ fn all_eight_templates_derive_and_the_union_is_twelve() {
         }
     }
     union.sort();
-    assert_eq!(union.len(), 12, "union changed: {union:#?}");
+    assert_eq!(union.len(), 13, "union changed: {union:#?}");
 }
 
 /// FAIL CLOSED — an unknown loader class carrying a weight file must raise, not
@@ -292,6 +293,21 @@ fn upscale_manifest_is_golden() {
             "ltx-2.3-22b-dev-fp8.safetensors",
             "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
             "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+        ]
+    );
+}
+
+/// I-phase: the gated Lightricks LoRA is the ONE new weight this mode brings
+/// (sha256 515E4E13… in the provenance ledger; licence-gated download per host).
+#[test]
+fn ingredients_manifest_is_golden() {
+    assert_eq!(
+        files_of("ltx-ingredients-hdr"),
+        vec![
+            "gemma_3_12B_it_fp4_mixed.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "ltx-2.3-22b-distilled-lora-384.safetensors",
+            "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
         ]
     );
 }

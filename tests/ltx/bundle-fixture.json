@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 11,
-  "bundleHash": "0x9319d350af953b3aa9987c6bde8f0d665c9c81e56e43336091318fbe2758b35d",
+  "allowListVersion": 15,
+  "bundleHash": "0x60f662a83c195dd9959123129b8067cb7a6d77a3601d523abb990d4e73784264",
   "templates": [
     {
       "templateId": "ltx-edit-hdr",
@@ -43,6 +43,15 @@
       ]
     },
     {
+      "templateId": "ltx-ingredients-hdr",
+      "templateHash": "0xa936e172b695762f56c38f4499b1c2ae7f69160a0b889427c2d07a0c542f1e42",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "referenceSheet"
+      ],
+      "videoInputs": 0
+    },
+    {
       "templateId": "ltx-outpaint-hdr",
       "templateHash": "0x51273037895f44c3b18be7b6b5c11b6ae7225ebf67e6d89ec38d574d821e11e9",
       "imageInputs": 0,
@@ -80,7 +89,8 @@
     "ltx-iclora-hdr@v1",
     "ltx-outpaint-hdr@v1",
     "ltx-edit-hdr@v1",
-    "ltx-restore-hdr@v1"
+    "ltx-restore-hdr@v1",
+    "ltx-ingredients-hdr@v1"
   ],
   "bounds": {
     "frames": {
