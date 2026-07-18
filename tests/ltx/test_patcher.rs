@@ -827,3 +827,70 @@ fn test_upscale_full_patch() {
         "0.60, 0.40, 0.20, 0.0"
     );
 }
+
+#[test]
+fn test_ingredients_full_patch() {
+    // I-phase: ONE reference sheet in (LoadImage binder), committed Width/Height (the
+    // sheet is conformed in-graph to the canvas, black pad), Duration -> frames via the
+    // t2v math, Frame Rate primitive, prompt patched into the titled CLIPTextEncode,
+    // seed by class. Sigmas are the author's distilled ladder, pinned.
+    // Every asserted value DIFFERS from the template's pinned literal (960×544 @ 24fps,
+    // 10 s) — a title-miss no-op (patch_by_title handles are optional) must FAIL here,
+    // not render every production clip at the pins regardless of the committed job.
+    let mut job = bl4_job("ltx-ingredients-hdr");
+    job.prompt = "Reference sheet: an owl mascot. Generated video: the owl waves.".to_string();
+    job.resolution = Resolution { w: 1280, h: 720 };
+    job.fps = 25;
+    job.frames = 126; // 25 × 5 + 1 → Duration 5, against the pinned 10
+    let g = patch(
+        &bl4_graph("ltx-ingredients-hdr"),
+        &job,
+        &["sheet.png".to_string()],
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(
+        node_by_title(&g, "Prompt")
+            .pointer("/inputs/text")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "Reference sheet: an owl mascot. Generated video: the owl waves."
+    );
+    let leaf_u64 = |title: &str| {
+        node_by_title(&g, title)
+            .pointer("/inputs/value")
+            .unwrap()
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(leaf_u64("Width"), 1280);
+    assert_eq!(leaf_u64("Height"), 720);
+    assert_eq!(leaf_u64("Frame Rate"), 25);
+    assert_eq!(leaf_u64("Duration"), 5);
+    // the sheet binds into the ONE LoadImage
+    let li = nodes_by_class(&g, "LoadImage");
+    assert_eq!(li.len(), 1);
+    assert_eq!(
+        li[0].pointer("/inputs/image").unwrap().as_str().unwrap(),
+        "sheet.png"
+    );
+    // seed reaches the refine noise
+    let rn = nodes_by_class(&g, "RandomNoise");
+    assert_eq!(rn.len(), 1);
+    assert_eq!(
+        rn[0]
+            .pointer("/inputs/noise_seed")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        4_815_162_342
+    );
+    // the author's distilled sigma ladder stays pinned — not a patch target
+    let ms = nodes_by_class(&g, "ManualSigmas");
+    assert_eq!(
+        ms[0].pointer("/inputs/sigmas").unwrap().as_str().unwrap(),
+        "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    );
+}

@@ -55,7 +55,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // v8 (2026-07-13): the ladder gained the /64-clean HD+QHD sizes. 1080/1440 floor to an
 // ODD latent (1080//32 == 33), which the IC-LoRA guide rejects outright and the VAE
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
-const BUNDLE_HASH: &str = "0x9319d350af953b3aa9987c6bde8f0d665c9c81e56e43336091318fbe2758b35d";
+const BUNDLE_HASH: &str = "0x60f662a83c195dd9959123129b8067cb7a6d77a3601d523abb990d4e73784264";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -450,7 +450,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
+    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
     let ic = b
         .templates
         .iter()
@@ -492,7 +492,7 @@ fn test_bundle_v6_has_iclora() {
 fn test_bundle_v7_has_bl4_trio() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
+    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
     for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
         let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
         assert_eq!(t.video_inputs, 1, "{id}: one control video");
@@ -509,6 +509,7 @@ fn test_bundle_v7_has_bl4_trio() {
         "ltx-outpaint-hdr@v1",
         "ltx-edit-hdr@v1",
         "ltx-restore-hdr@v1",
+        "ltx-ingredients-hdr@v1",
     ] {
         assert!(b.loras.iter().any(|l| l == lora), "lora {lora} advertised");
     }
@@ -521,7 +522,7 @@ fn test_bundle_v7_has_bl4_trio() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
+    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
     let flf = b
         .templates
         .iter()
@@ -543,7 +544,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 11, "v10 allow-list");
+    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -576,8 +577,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 11,
-        "v8 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 15,
+        "v15 allow-list (t2v/i2v entries unchanged since v8)"
     );
     let t2v = b
         .templates
@@ -698,7 +699,7 @@ const UPSCALE_TEMPLATE_HASH: &str =
 #[test]
 fn test_bundle_v11_has_upscale() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    assert_eq!(store.bundle().allow_list_version, 11);
+    assert_eq!(store.bundle().allow_list_version, 15);
     assert_eq!(
         store
             .template_hash("ltx-upscale-hdr")
@@ -716,4 +717,41 @@ fn test_bundle_v11_has_upscale() {
             "missing rung {w}x{h}"
         );
     }
+}
+
+/// Bundle v14: the Ingredients (cast-consistency) template — I-phase. The graph is the
+/// author distilled single-stage recipe proven on 3XS-Z 2026-07-18 (Lightricks' own
+/// reference sheet reproduced their demo on the fp8 stack), with the four house patcher
+/// handles added and the canvas made COMMITTED (sheet conformed in-graph, black pad).
+/// Version history: v12 and v13 BURNED on the ComfyMathExpression output-index bug
+/// ([0] is FLOAT, [1] is INT — never re-pin to them); v14 went live (session 921 paid
+/// to the token); v15 adds the ingredients lora id to the bundle's loras advert so
+/// clients commit the LoRA that actually ran, not the iclora fallback.
+const INGREDIENTS_TEMPLATE_HASH: &str =
+    "0xa936e172b695762f56c38f4499b1c2ae7f69160a0b889427c2d07a0c542f1e42";
+
+#[test]
+fn test_bundle_v14_has_ingredients() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert_eq!(store.bundle().allow_list_version, 15);
+    assert_eq!(
+        store
+            .template_hash("ltx-ingredients-hdr")
+            .expect("ingredients template pinned"),
+        INGREDIENTS_TEMPLATE_HASH
+    );
+    // ONE reference sheet, bound in the commitment; no control video, no conform render.
+    assert_eq!(store.image_inputs("ltx-ingredients-hdr"), Some(1));
+    assert_eq!(store.video_inputs("ltx-ingredients-hdr"), Some(0));
+    // v15: the mode's OWN lora id is advertised — the helper's templateLora prefers
+    // `<templateId>@v1` when the bundle carries it, so the attestation commits the
+    // ingredients LoRA (the one new weight) instead of the loras[0] iclora fallback.
+    assert!(
+        store
+            .bundle()
+            .loras
+            .iter()
+            .any(|l| l == "ltx-ingredients-hdr@v1"),
+        "ingredients lora advertised"
+    );
 }

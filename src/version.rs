@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.37.0-ltx-upscale-template-2026-07-15";
+pub const VERSION: &str = "v8.38.0-ltx-ingredients-template-2026-07-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.37.0";
+pub const VERSION_NUMBER: &str = "8.38.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 37;
+pub const VERSION_MINOR: u32 = 38;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-12";
+pub const BUILD_DATE: &str = "2026-07-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 37);
+        assert_eq!(VERSION_MINOR, 38);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1047,15 +1047,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.37.0"));
-        assert!(version.contains("2026-07-12"));
+        assert!(version.contains("8.38.0"));
+        assert!(version.contains("2026-07-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.37.0-ltx-upscale-template-2026-07-15");
-        assert_eq!(VERSION_NUMBER, "8.37.0");
-        assert_eq!(BUILD_DATE, "2026-07-12");
+        assert_eq!(VERSION, "v8.38.0-ltx-ingredients-template-2026-07-18");
+        assert_eq!(VERSION_NUMBER, "8.38.0");
+        assert_eq!(BUILD_DATE, "2026-07-18");
     }
 
     #[test]

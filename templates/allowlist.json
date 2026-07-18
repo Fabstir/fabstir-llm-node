@@ -1,5 +1,5 @@
 {
-  "allowListVersion": 11,
+  "allowListVersion": 15,
   "templates": [
     { "templateId": "ltx-t2v-hdr", "version": "v1" },
     { "templateId": "ltx-i2v-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["firstFrame"] },
@@ -8,9 +8,10 @@
     { "templateId": "ltx-outpaint-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] },
     { "templateId": "ltx-edit-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] },
     { "templateId": "ltx-restore-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["controlVideo"] },
-    { "templateId": "ltx-upscale-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["sourceVideo"] }
+    { "templateId": "ltx-upscale-hdr", "version": "v1", "videoInputs": 1, "videoSemantics": ["sourceVideo"] },
+    { "templateId": "ltx-ingredients-hdr", "version": "v1", "imageInputs": 1, "imageSemantics": ["referenceSheet"] }
   ],
-  "loras": ["ltx-iclora-hdr@v1", "ltx-outpaint-hdr@v1", "ltx-edit-hdr@v1", "ltx-restore-hdr@v1"],
+  "loras": ["ltx-iclora-hdr@v1", "ltx-outpaint-hdr@v1", "ltx-edit-hdr@v1", "ltx-restore-hdr@v1", "ltx-ingredients-hdr@v1"],
   "bounds": {
     "frames": { "min": 121, "max": 751 },
     "fps": [24, 25, 48, 50],
