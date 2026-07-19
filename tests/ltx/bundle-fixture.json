@@ -1,7 +1,16 @@
 {
-  "allowListVersion": 15,
-  "bundleHash": "0x60f662a83c195dd9959123129b8067cb7a6d77a3601d523abb990d4e73784264",
+  "allowListVersion": 16,
+  "bundleHash": "0x41cfb10d197e1288f7accedb3e1879fc0b0a179362c3dfa9b114f2cf4e74e012",
   "templates": [
+    {
+      "templateId": "ltx-daynight-hdr",
+      "templateHash": "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
     {
       "templateId": "ltx-edit-hdr",
       "templateHash": "0x7c1900c0f1062c86c1d3b83725c42561f6f540012d7a3a74216ed1770bac9787",
@@ -83,6 +92,15 @@
       "videoSemantics": [
         "sourceVideo"
       ]
+    },
+    {
+      "templateId": "ltx-water-hdr",
+      "templateHash": "0x015a079d593ec461805c2280e727b019c3b50e9f8d8f1b22c75a0c1dd33932d9",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
     }
   ],
   "loras": [
@@ -90,7 +108,9 @@
     "ltx-outpaint-hdr@v1",
     "ltx-edit-hdr@v1",
     "ltx-restore-hdr@v1",
-    "ltx-ingredients-hdr@v1"
+    "ltx-ingredients-hdr@v1",
+    "ltx-water-hdr@v1",
+    "ltx-daynight-hdr@v1"
   ],
   "bounds": {
     "frames": {

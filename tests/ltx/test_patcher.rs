@@ -632,7 +632,14 @@ fn test_bl4_full_patch_all_three_templates() {
     // `CLIPTextEncode`, so the `text` leaf), seed (RandomNoise), dims, the
     // control video into `VHS_LoadVideo.video`, and the billed frame count
     // into its `frame_load_cap`.
-    for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
+    // WA/DN ride the same control-clip shape, so the same handle contract holds.
+    for id in [
+        "ltx-outpaint-hdr",
+        "ltx-edit-hdr",
+        "ltx-restore-hdr",
+        "ltx-water-hdr",
+        "ltx-daynight-hdr",
+    ] {
         let g = patch(&bl4_graph(id), &bl4_job(id), &[], &["ctl.mp4".to_string()]).unwrap();
         assert_eq!(
             node_by_title(&g, "Prompt")

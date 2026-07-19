@@ -62,12 +62,12 @@ fn outpaint_manifest_is_golden() {
     );
 }
 
-/// Every template derives a non-empty manifest, and the union across the nine
-/// is exactly the 13 weight files the host is required to hold. A template that
+/// Every template derives a non-empty manifest, and the union across the eleven
+/// is exactly the 15 weight files the host is required to hold. A template that
 /// loads a file outside this set is a deployment change, not a silent one.
 #[test]
-fn all_nine_templates_derive_and_the_union_is_thirteen() {
-    const IDS: [&str; 9] = [
+fn all_eleven_templates_derive_and_the_union_is_fifteen() {
+    const IDS: [&str; 11] = [
         "ltx-ingredients-hdr",
         "ltx-upscale-hdr",
         "ltx-t2v-hdr",
@@ -77,6 +77,8 @@ fn all_nine_templates_derive_and_the_union_is_thirteen() {
         "ltx-outpaint-hdr",
         "ltx-edit-hdr",
         "ltx-restore-hdr",
+        "ltx-water-hdr",
+        "ltx-daynight-hdr",
     ];
     let mut union: Vec<String> = Vec::new();
     for id in IDS {
@@ -96,7 +98,7 @@ fn all_nine_templates_derive_and_the_union_is_thirteen() {
         }
     }
     union.sort();
-    assert_eq!(union.len(), 13, "union changed: {union:#?}");
+    assert_eq!(union.len(), 15, "union changed: {union:#?}");
 }
 
 /// FAIL CLOSED — an unknown loader class carrying a weight file must raise, not
@@ -308,6 +310,34 @@ fn ingredients_manifest_is_golden() {
             "ltx-2.3-22b-dev-fp8.safetensors",
             "ltx-2.3-22b-distilled-lora-384.safetensors",
             "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+        ]
+    );
+}
+
+/// WA-phase: the gated water LoRA (sha256 19AD9007… in the provenance ledger).
+#[test]
+fn water_manifest_is_golden() {
+    assert_eq!(
+        files_of("ltx-water-hdr"),
+        vec![
+            "gemma_3_12B_it_fp4_mixed.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "ltx-2.3-22b-distilled-lora-384.safetensors",
+            "ltx-2.3-22b-ic-lora-water-simulation-0.9.safetensors",
+        ]
+    );
+}
+
+/// DN-phase: the gated day-to-night LoRA (sha256 984771A6… in the ledger).
+#[test]
+fn daynight_manifest_is_golden() {
+    assert_eq!(
+        files_of("ltx-daynight-hdr"),
+        vec![
+            "gemma_3_12B_it_fp4_mixed.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "ltx-2.3-22b-distilled-lora-384.safetensors",
+            "ltx-2.3-22b-ic-lora-day-to-night-0.9.safetensors",
         ]
     );
 }
