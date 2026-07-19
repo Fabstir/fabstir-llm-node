@@ -55,7 +55,9 @@ const RESTORE_TEMPLATE_HASH: &str =
 // v8 (2026-07-13): the ladder gained the /64-clean HD+QHD sizes. 1080/1440 floor to an
 // ODD latent (1080//32 == 33), which the IC-LoRA guide rejects outright and the VAE
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
-const BUNDLE_HASH: &str = "0x60f662a83c195dd9959123129b8067cb7a6d77a3601d523abb990d4e73784264";
+// v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
+// ltx-daynight-hdr and their lora ids.
+const BUNDLE_HASH: &str = "0x41cfb10d197e1288f7accedb3e1879fc0b0a179362c3dfa9b114f2cf4e74e012";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -450,7 +452,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     let ic = b
         .templates
         .iter()
@@ -492,7 +494,7 @@ fn test_bundle_v6_has_iclora() {
 fn test_bundle_v7_has_bl4_trio() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
         let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
         assert_eq!(t.video_inputs, 1, "{id}: one control video");
@@ -510,6 +512,8 @@ fn test_bundle_v7_has_bl4_trio() {
         "ltx-edit-hdr@v1",
         "ltx-restore-hdr@v1",
         "ltx-ingredients-hdr@v1",
+        "ltx-water-hdr@v1",
+        "ltx-daynight-hdr@v1",
     ] {
         assert!(b.loras.iter().any(|l| l == lora), "lora {lora} advertised");
     }
@@ -522,7 +526,7 @@ fn test_bundle_v7_has_bl4_trio() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     let flf = b
         .templates
         .iter()
@@ -544,7 +548,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 15, "v15 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -577,8 +581,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 15,
-        "v15 allow-list (t2v/i2v entries unchanged since v8)"
+        b.allow_list_version, 16,
+        "v16 allow-list (t2v/i2v entries unchanged since v8)"
     );
     let t2v = b
         .templates
@@ -699,7 +703,7 @@ const UPSCALE_TEMPLATE_HASH: &str =
 #[test]
 fn test_bundle_v11_has_upscale() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    assert_eq!(store.bundle().allow_list_version, 15);
+    assert_eq!(store.bundle().allow_list_version, 16);
     assert_eq!(
         store
             .template_hash("ltx-upscale-hdr")
@@ -733,7 +737,7 @@ const INGREDIENTS_TEMPLATE_HASH: &str =
 #[test]
 fn test_bundle_v14_has_ingredients() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    assert_eq!(store.bundle().allow_list_version, 15);
+    assert_eq!(store.bundle().allow_list_version, 16);
     assert_eq!(
         store
             .template_hash("ltx-ingredients-hdr")
@@ -754,4 +758,44 @@ fn test_bundle_v14_has_ingredients() {
             .any(|l| l == "ltx-ingredients-hdr@v1"),
         "ingredients lora advertised"
     );
+}
+
+/// Bundle v16: Water Simulation + Day-To-Night — the WA/DN combined ladder. Both
+/// graphs are the PROVEN edit spine (same 30-node shape, same distilled recipe:
+/// cfg 1, 8-step sigmas, guide factor 1) with only the mode IC-LoRA swapped —
+/// water at the card's 1.2 sweet spot, day-to-night at 1.0. Discovery 2026-07-18
+/// (headless POST runs on 3XS-Z): water GO incl. 1920x1088 exact delivery, 10 s
+/// alive, (F-1)%8 rule SOFT; day-to-night GO on the distilled spine (the card's
+/// 30-step full recipe NOT needed — clean sources show no artifacting). Both lora
+/// ids advertised from day one (the v15 lesson).
+const WATER_TEMPLATE_HASH: &str =
+    "0x015a079d593ec461805c2280e727b019c3b50e9f8d8f1b22c75a0c1dd33932d9";
+const DAYNIGHT_TEMPLATE_HASH: &str =
+    "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86";
+
+#[test]
+fn test_bundle_v16_has_water_and_daynight() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert_eq!(store.bundle().allow_list_version, 16);
+    for (id, golden) in [
+        ("ltx-water-hdr", WATER_TEMPLATE_HASH),
+        ("ltx-daynight-hdr", DAYNIGHT_TEMPLATE_HASH),
+    ] {
+        let h = store.template_hash(id).expect("template pinned");
+        eprintln!("GOLD {id}={h}");
+        if golden != "0x__TBD__" {
+            assert_eq!(h, golden, "{id} golden hash drifted");
+        }
+        // Control-clip shape: one video in, no stills, no conform render needed
+        // client-side beyond the standard BL4 path.
+        assert_eq!(store.image_inputs(id), Some(0), "{id} imageInputs");
+        assert_eq!(store.video_inputs(id), Some(1), "{id} videoInputs");
+        // The mode's OWN lora id is advertised so the attestation commits the
+        // LoRA that actually ran (the v15 lesson, applied from day one).
+        let own = format!("{id}@v1");
+        assert!(
+            store.bundle().loras.iter().any(|l| l == &own),
+            "{id} lora advertised"
+        );
+    }
 }
