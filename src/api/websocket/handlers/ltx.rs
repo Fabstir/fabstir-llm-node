@@ -477,13 +477,18 @@ async fn stage_input(
 /// ComfyUI upload or GPU work: (1) the bundle's `videoFormats` is `["mp4"]` —
 /// enforce the container (an ISO BMFF file has "ftyp" at offset 4; the
 /// capability CID itself carries no format, so this is the earliest the node
-/// can check it); (2) the graph derives the RENDERED frame count from this clip
-/// while billing uses `job.frames`, so the clip's own sample count must sit in
-/// the billed range [frames−1, frames] (the conform ±1: content-true fps·d vs
-/// billed fps·d+1). Without this a direct-WS client could upload a higher-fps
-/// clip and make the GPU render a multiple of the billed frames — the TS helper
-/// enforces the same rule client-side, which a direct client can skip.
-fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), String> {
+/// can check it); (2) the clip's own sample count must be AT LEAST the billed
+/// count minus one (the conform ±1: content-true fps·d vs billed fps·d+1) —
+/// an under-length clip would render fewer frames than billed (overbilling).
+/// Over-length clips are accepted as of v8.36.1: both pinned-graph families
+/// crop server-side by construction (the BL4 trio's `VHS_LoadVideo` carries
+/// `frame_load_cap` patched to the billed count; iclora's `Video Slice` takes
+/// the first `duration` seconds), so extra footage cannot inflate the rendered
+/// count — this lets clients submit an off-grid-length clip (e.g. 14.76 s)
+/// against the rounded-down whole-second job without client-side re-encoding.
+/// The clip's fps must still match the job exactly (conditioning + output
+/// timing derive from it); the TS helper enforces that via ffprobe.
+pub fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), String> {
     if plaintext.len() < 12 || &plaintext[4..8] != b"ftyp" {
         return Err("input video is not an mp4 (ISO BMFF) container".to_string());
     }
@@ -491,10 +496,10 @@ fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), Strin
         format!("input video frame count unreadable ({e}) — refusing unbounded render")
     })?;
     let billed = u64::from(billed_frames);
-    if samples + 1 < billed || samples > billed {
+    if samples + 1 < billed {
         return Err(format!(
             "control video has {samples} frame(s) but the job bills {billed} — \
-             conform the clip to the job (frames must be {}..{billed})",
+             the clip must carry at least {} frame(s) at the job's fps",
             billed.saturating_sub(1)
         ));
     }

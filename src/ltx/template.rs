@@ -199,6 +199,13 @@ impl TemplateStore {
         self.graphs.get(id).map(|(_, h)| h.as_str())
     }
 
+    /// The pinned graph for `id`, without a hash challenge — for host-side
+    /// derivation over templates the store itself loaded (W1 weight manifests).
+    /// Client-supplied ids must still go through [`Self::verify`].
+    pub fn graph(&self, id: &str) -> Option<Graph> {
+        self.graphs.get(id).map(|(g, _)| g.clone())
+    }
+
     /// The number of input images template `id` consumes — the `inputCommitment`
     /// format selector the handler validates `job.images.len()` against (M1a).
     /// `None` for an unknown id.

@@ -23,6 +23,7 @@ import { signChallenge, CHALLENGE_TYPE_REGISTER } from '@julesl23/s5js/dist/src/
 import { base64UrlNoPaddingEncode, base64UrlNoPaddingDecode } from '@julesl23/s5js/dist/src/util/base64.js';
 import { FS5Advanced } from '@julesl23/s5js/advanced';
 import { ethers } from 'ethers';
+import { installTusLargeUpload } from './tus_upload.js';
 import { bridgeConfig } from './config.js';
 
 let s5Instance = null;
@@ -552,6 +553,10 @@ export async function initializeS5Client() {
         console.log(`✅ Portal accounts configured: ${accountCount}`);
         accountIds.forEach(id => console.log(`   - ${id}`));
         console.log('🌐 Uploads will be stored on S5 network');
+        // S5's single-shot /s5/upload caps at 32 MiB; large deliverables
+        // (long/HD clips) stream via the tus resumable path instead.
+        installTusLargeUpload(s5.apiWithIdentity);
+        console.log('🌊 Large uploads (≥32 MiB) will stream via tus');
       } else {
         console.error('🚨 NO PORTAL ACCOUNTS CONFIGURED!');
         console.error('   Uploads will be stored LOCALLY ONLY, NOT on S5 network.');

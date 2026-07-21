@@ -18,8 +18,9 @@ use crate::ltx::types::LtxJob;
 /// Patch `job`'s params into the pinned `graph`. `image_names` are the ComfyUI
 /// stored filenames for image-conditioned templates (M1a), assigned to the
 /// `LoadImage` nodes in node-id order; pass `&[]` for t2v (no LoadImage nodes).
-/// `video_names` are the stored filenames for video-conditioned templates (BL3),
-/// assigned to the `LoadVideo` nodes the same way; pass `&[]` when none.
+/// `video_names` are the stored filenames for video-conditioned templates
+/// (BL3/BL4), assigned across the video-loader union (`LoadVideo` /
+/// `VHS_LoadVideo`) the same way; pass `&[]` when none.
 ///
 /// Required handles (fail closed if absent): the positive prompt (`_meta.title ==
 /// "Prompt"`) and at least one seed node — `RandomNoise` (`noise_seed`) or a
@@ -80,50 +81,68 @@ pub fn patch(
     // as the dims — a synthetic graph without it is a no-op.
     patch_by_title(obj, "Duration", "value", Value::from(duration_secs), false)?;
 
-    // Image inputs (M1a): assign `image_names[i]` to the i-th `LoadImage` node,
-    // ordering nodes by their id lexicographically ascending. This is universal
-    // across the image template family — i2v has one `LoadImage`; flf2v `31` <
-    // `39` binds (first, last); style_transition `137` < `138` — with no reliance
-    // on node titles. t2v passes `&[]` and has no `LoadImage`, so this is a no-op.
-    bind_inputs_by_class(obj, "LoadImage", "image", "image", image_names)?;
+    // Image inputs (M1a) and video inputs (BL3/BL4) bind through the ONE binder:
+    // names land on matching loader nodes in id order, count fail-closed, `&[]`
+    // a no-op. Videos span the loader-class union (core `LoadVideo` for iclora,
+    // `VHS_LoadVideo` for the BL4 trio).
+    bind_inputs(obj, &[("LoadImage", "image")], "image", image_names)?;
+    bind_inputs(obj, VIDEO_LOADER_CLASSES, "video", video_names)?;
 
-    // Video inputs (BL3): assign `video_names[i]` to the i-th `LoadVideo` node's
-    // `file` — same node-id-order + count-mismatch fail-closed rule. iclora has
-    // one `LoadVideo` (the control video); templates without one pass `&[]`.
-    bind_inputs_by_class(obj, "LoadVideo", "file", "video", video_names)?;
+    // BL4: cap the VHS loader at the billed frame count — defence-in-depth atop
+    // the handler's stsz gate (which already bounds the clip to [billed-1, billed],
+    // so the cap can only trim the +1 case; `skip_first_frames`/`select_every_nth`/
+    // `force_rate` are frozen neutral in the pinned graphs). No-op for templates
+    // without a `VHS_LoadVideo`.
+    patch_by_class(
+        obj,
+        "VHS_LoadVideo",
+        "frame_load_cap",
+        Value::from(job.frames),
+        false,
+    )?;
 
     Ok(Graph(value))
 }
 
-/// Assign `names[i]` to the i-th node of `class`'s `key` input, ordering nodes by
-/// id lexicographically ascending — universal across the template family with no
-/// reliance on node titles (i2v has one `LoadImage`; flf2v `31` < `39` binds
-/// (first, last)). Fails CLOSED on a count mismatch; an empty `names` is a no-op
-/// (t2v has no `LoadImage`).
-fn bind_inputs_by_class(
-    obj: &mut serde_json::Map<String, Value>,
-    class: &str,
-    key: &str,
+/// The video-loader classes and each one's filename input key. Control clips
+/// bind across the UNION of these in node-id order, so a job's `videos[i]`
+/// lands deterministically whichever loader class the pinned graph uses
+/// (iclora carries a core `LoadVideo`; the BL4 trio a VHS `VHS_LoadVideo`).
+const VIDEO_LOADER_CLASSES: &[(&str, &str)] = &[("LoadVideo", "file"), ("VHS_LoadVideo", "video")];
+
+/// The one input binder: assign `names[i]` to the i-th node whose `class_type`
+/// is in `classes` (id-ordered lexicographically — i2v has one `LoadImage`;
+/// flf2v `31` < `39` binds (first, last)), each through its class's own input
+/// key. Fails CLOSED on a count mismatch; an empty `names` is a no-op (t2v has
+/// no loader at all). Images pass the one-element slice; videos the union.
+fn bind_inputs(
+    obj: &mut Map<String, Value>,
+    classes: &[(&str, &str)],
     noun: &str,
     names: &[String],
-) -> anyhow::Result<()> {
+) -> Result<()> {
     if names.is_empty() {
         return Ok(());
     }
-    let mut load_ids: Vec<String> = obj
+    let mut loaders: Vec<(String, &str)> = obj
         .iter()
-        .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some(class))
-        .map(|(id, _)| id.clone())
+        .filter_map(|(id, n)| {
+            let class = n.get("class_type").and_then(Value::as_str)?;
+            classes
+                .iter()
+                .find(|(c, _)| *c == class)
+                .map(|(_, key)| (id.clone(), *key))
+        })
         .collect();
-    load_ids.sort();
-    if load_ids.len() != names.len() {
+    loaders.sort();
+    if loaders.len() != names.len() {
         return Err(anyhow!(
-            "template has {} {class} node(s) but {} {noun} name(s) supplied",
-            load_ids.len(),
+            "template has {} {noun} loader node(s) but {} {noun} name(s) supplied",
+            loaders.len(),
             names.len()
         ));
     }
-    for (name, id) in names.iter().zip(load_ids.iter()) {
+    for (name, (id, key)) in names.iter().zip(loaders.iter()) {
         set_input(obj, id, key, Value::from(name.clone()))?;
     }
     Ok(())

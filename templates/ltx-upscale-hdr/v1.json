@@ -1,0 +1,430 @@
+{
+ "1": {
+  "class_type": "VHS_LoadVideo",
+  "_meta": {
+   "title": "Source clip (bound by the node; frame_load_cap patched to billed frames)"
+  },
+  "inputs": {
+   "video": "source.mp4",
+   "force_rate": 0,
+   "custom_width": 0,
+   "custom_height": 0,
+   "frame_load_cap": 0,
+   "skip_first_frames": 0,
+   "select_every_nth": 1,
+   "format": "AnimateDiff"
+  }
+ },
+ "2": {
+  "class_type": "CheckpointLoaderSimple",
+  "_meta": {
+   "title": "LTX 2.3 checkpoint"
+  },
+  "inputs": {
+   "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+  }
+ },
+ "3": {
+  "class_type": "Float32ColorCorrect",
+  "_meta": {
+   "title": "Gamma in 2.0"
+  },
+  "inputs": {
+   "exposure": 0,
+   "contrast": 1,
+   "brightness": 0,
+   "saturation": 1,
+   "gamma": 2,
+   "lift_r": 0,
+   "lift_g": 0,
+   "lift_b": 0,
+   "gain_r": 1,
+   "gain_g": 1,
+   "gain_b": 1,
+   "luma_space": "Rec.709 / sRGB",
+   "clamp_output": false,
+   "image": [
+    "1",
+    0
+   ]
+  }
+ },
+ "4": {
+  "class_type": "VAEEncode",
+  "_meta": {
+   "title": "Encode source pixels"
+  },
+  "inputs": {
+   "pixels": [
+    "3",
+    0
+   ],
+   "vae": [
+    "2",
+    2
+   ]
+  }
+ },
+ "5": {
+  "class_type": "LatentUpscaleModelLoader",
+  "_meta": {
+   "title": "Spatial upscaler x2"
+  },
+  "inputs": {
+   "model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+  }
+ },
+ "6": {
+  "class_type": "LTXVLatentUpsampler",
+  "_meta": {
+   "title": "Latent upscale x2"
+  },
+  "inputs": {
+   "samples": [
+    "4",
+    0
+   ],
+   "upscale_model": [
+    "5",
+    0
+   ],
+   "vae": [
+    "2",
+    2
+   ]
+  }
+ },
+ "10": {
+  "class_type": "LTXAVTextEncoderLoader",
+  "_meta": {
+   "title": "Text encoder"
+  },
+  "inputs": {
+   "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+   "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+   "device": "default"
+  }
+ },
+ "25": {
+  "class_type": "PrimitiveStringMultiline",
+  "_meta": {
+   "title": "Prompt"
+  },
+  "inputs": {
+   "value": ""
+  }
+ },
+ "11": {
+  "class_type": "CLIPTextEncode",
+  "_meta": {
+   "title": "Positive"
+  },
+  "inputs": {
+   "text": [
+    "25",
+    0
+   ],
+   "clip": [
+    "10",
+    0
+   ]
+  }
+ },
+ "12": {
+  "class_type": "CLIPTextEncode",
+  "_meta": {
+   "title": "Negative (inert at cfg 1)"
+  },
+  "inputs": {
+   "text": "",
+   "clip": [
+    "10",
+    0
+   ]
+  }
+ },
+ "26": {
+  "class_type": "PrimitiveInt",
+  "_meta": {
+   "title": "Frame Rate"
+  },
+  "inputs": {
+   "value": 24
+  }
+ },
+ "13": {
+  "class_type": "LTXVConditioning",
+  "_meta": {
+   "title": "LTX conditioning"
+  },
+  "inputs": {
+   "frame_rate": [
+    "27",
+    0
+   ],
+   "positive": [
+    "11",
+    0
+   ],
+   "negative": [
+    "12",
+    0
+   ]
+  }
+ },
+ "14": {
+  "class_type": "LTXVCropGuides",
+  "_meta": {
+   "title": "Crop guides (no guides here; kept to match the proven stage-2)"
+  },
+  "inputs": {
+   "positive": [
+    "13",
+    0
+   ],
+   "negative": [
+    "13",
+    1
+   ],
+   "latent": [
+    "6",
+    0
+   ]
+  }
+ },
+ "15": {
+  "class_type": "LoraLoaderModelOnly",
+  "_meta": {
+   "title": "Distilled 1.1 LoRA @ 0.5"
+  },
+  "inputs": {
+   "lora_name": "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+   "strength_model": 0.5,
+   "model": [
+    "2",
+    0
+   ]
+  }
+ },
+ "16": {
+  "class_type": "CFGGuider",
+  "_meta": {
+   "title": "Guider cfg 1"
+  },
+  "inputs": {
+   "cfg": 1,
+   "model": [
+    "15",
+    0
+   ],
+   "positive": [
+    "14",
+    0
+   ],
+   "negative": [
+    "14",
+    1
+   ]
+  }
+ },
+ "17": {
+  "class_type": "LTXVAudioVAELoader",
+  "_meta": {
+   "title": "Audio VAE (empty-latent factory only)"
+  },
+  "inputs": {
+   "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+  }
+ },
+ "18": {
+  "class_type": "LTXVEmptyLatentAudio",
+  "_meta": {
+   "title": "Empty audio latent (discarded; source audio is kept)"
+  },
+  "inputs": {
+   "frames_number": [
+    "1",
+    1
+   ],
+   "frame_rate": [
+    "26",
+    0
+   ],
+   "batch_size": 1,
+   "audio_vae": [
+    "17",
+    0
+   ]
+  }
+ },
+ "19": {
+  "class_type": "LTXVConcatAVLatent",
+  "_meta": {
+   "title": "AV concat"
+  },
+  "inputs": {
+   "video_latent": [
+    "6",
+    0
+   ],
+   "audio_latent": [
+    "18",
+    0
+   ]
+  }
+ },
+ "20": {
+  "class_type": "RandomNoise",
+  "_meta": {
+   "title": "Noise (noise_seed patched by class)"
+  },
+  "inputs": {
+   "noise_seed": 42
+  }
+ },
+ "21": {
+  "class_type": "KSamplerSelect",
+  "_meta": {
+   "title": "euler"
+  },
+  "inputs": {
+   "sampler_name": "euler"
+  }
+ },
+ "22": {
+  "class_type": "ManualSigmas",
+  "_meta": {
+   "title": "Refine sigmas (pinned)"
+  },
+  "inputs": {
+   "sigmas": "0.60, 0.40, 0.20, 0.0"
+  }
+ },
+ "23": {
+  "class_type": "SamplerCustomAdvanced",
+  "_meta": {
+   "title": "Refine"
+  },
+  "inputs": {
+   "noise": [
+    "20",
+    0
+   ],
+   "guider": [
+    "16",
+    0
+   ],
+   "sampler": [
+    "21",
+    0
+   ],
+   "sigmas": [
+    "22",
+    0
+   ],
+   "latent_image": [
+    "19",
+    0
+   ]
+  }
+ },
+ "24": {
+  "class_type": "LTXVSeparateAVLatent",
+  "_meta": {
+   "title": "Split video latent"
+  },
+  "inputs": {
+   "av_latent": [
+    "23",
+    0
+   ]
+  }
+ },
+ "7": {
+  "class_type": "VAEDecodeTiled",
+  "_meta": {
+   "title": "Decode (tiled)"
+  },
+  "inputs": {
+   "tile_size": 768,
+   "overlap": 64,
+   "temporal_size": 4096,
+   "temporal_overlap": 4,
+   "samples": [
+    "24",
+    0
+   ],
+   "vae": [
+    "2",
+    2
+   ]
+  }
+ },
+ "8": {
+  "class_type": "Float32ColorCorrect",
+  "_meta": {
+   "title": "Gamma out 0.5"
+  },
+  "inputs": {
+   "exposure": 0,
+   "contrast": 1,
+   "brightness": 0,
+   "saturation": 1,
+   "gamma": 0.5,
+   "lift_r": 0,
+   "lift_g": 0,
+   "lift_b": 0,
+   "gain_r": 1,
+   "gain_g": 1,
+   "gain_b": 1,
+   "luma_space": "Rec.709 / sRGB",
+   "clamp_output": false,
+   "image": [
+    "7",
+    0
+   ]
+  }
+ },
+ "9": {
+  "class_type": "VHS_VideoCombine",
+  "_meta": {
+   "title": "Save (keeps the SOURCE clip's audio)"
+  },
+  "inputs": {
+   "frame_rate": [
+    "27",
+    0
+   ],
+   "loop_count": 0,
+   "filename_prefix": "video/ltx2.3_upscale",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 13,
+   "save_metadata": true,
+   "trim_to_audio": false,
+   "pingpong": false,
+   "save_output": true,
+   "images": [
+    "8",
+    0
+   ],
+   "audio": [
+    "1",
+    2
+   ]
+  }
+ },
+ "27": {
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "fps as FLOAT (conditioning + mux want FLOAT; the audio latent wants the INT primitive \u2014 ComfyUI types per input)"
+  },
+  "inputs": {
+   "expression": "a",
+   "values.a": [
+    "26",
+    0
+   ]
+  }
+ }
+}

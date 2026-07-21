@@ -3,25 +3,45 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.35.1-ltx-iclora-2026-07-06";
+pub const VERSION: &str = "v8.38.0-ltx-ingredients-template-2026-07-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.35.1";
+pub const VERSION_NUMBER: &str = "8.38.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 35;
+pub const VERSION_MINOR: u32 = 38;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-06";
+pub const BUILD_DATE: &str = "2026-07-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.36.1 over-length control clips accepted: the frame-count gate keeps only
+    // its LOWER bound (under-length = overbilling risk, still fail-closed); clips
+    // longer than the job crop server-side by construction (the trio's
+    // frame_load_cap is patched to the billed count; iclora's Video Slice takes
+    // the first duration seconds), so a 14.76 s clip is now a valid input to a
+    // 14 s job with no client-side re-encode. Clip fps must still match exactly.
+    // No wire/template/bundle change.
+    // v8.36.0 BL4 video-edit trio (allow-list bundle v7): three pinned templates
+    // ltx-outpaint-hdr / ltx-edit-hdr / ltx-restore-hdr on one shared spine
+    // (dev-fp8 + distilled-384 + mode IC-LoRA, 8-step ManualSigmas, local Gemma
+    // encoder, radiance gamma pair, source-audio passthrough). Outpaint fits and
+    // black-letterboxes the control clip to the job's committed w/h (the outpaint
+    // LoRA fills pure-black regions); edit/restore centre-crop conform. All three
+    // take ONE control video and NO images (inputCommitment v3 with empty
+    // imageHashes). The video binder widens to the union of LoadVideo (`file`)
+    // and VHS_LoadVideo (`video`), id-ordered, count fail-closed; the billed
+    // frame count patches into VHS_LoadVideo.frame_load_cap (loaded == billed by
+    // construction; skip/select/force_rate are frozen neutral and golden-tested).
+    // Graphs proved free on the host ComfyUI before hash pinning. No wire change.
+    "ltx-video-edit",
     // v8.35.1 BL3/U7 hardening: server-side control-video frame-count gate
     // (billed == rendered enforced on the node, not just the helper) + hard-fail
     // on ComfyUI partial-graph node_errors at submit. No wire change.
@@ -846,10 +866,12 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 35);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 38);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
+        assert!(FEATURES.contains(&"ltx-video-edit"));
         // v8.35.0 LTX IC-LoRA union control (bundle v6, videos on the seam)
         assert!(FEATURES.contains(&"ltx-iclora"));
         // v8.34.0 LTX duration + fps correction (bundle v5)
@@ -1025,15 +1047,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.35.1"));
-        assert!(version.contains("2026-07-06"));
+        assert!(version.contains("8.38.0"));
+        assert!(version.contains("2026-07-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.35.1-ltx-iclora-2026-07-06");
-        assert_eq!(VERSION_NUMBER, "8.35.1");
-        assert_eq!(BUILD_DATE, "2026-07-06");
+        assert_eq!(VERSION, "v8.38.0-ltx-ingredients-template-2026-07-18");
+        assert_eq!(VERSION_NUMBER, "8.38.0");
+        assert_eq!(BUILD_DATE, "2026-07-18");
     }
 
     #[test]

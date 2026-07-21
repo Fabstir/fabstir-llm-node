@@ -1,7 +1,25 @@
 {
-  "allowListVersion": 6,
-  "bundleHash": "0xaa6192be00b67f948227d4819e4157790322cf99332d3ffd1566b571cc396aa2",
+  "allowListVersion": 16,
+  "bundleHash": "0x41cfb10d197e1288f7accedb3e1879fc0b0a179362c3dfa9b114f2cf4e74e012",
   "templates": [
+    {
+      "templateId": "ltx-daynight-hdr",
+      "templateHash": "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
+    {
+      "templateId": "ltx-edit-hdr",
+      "templateHash": "0x7c1900c0f1062c86c1d3b83725c42561f6f540012d7a3a74216ed1770bac9787",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
     {
       "templateId": "ltx-flf2v-hdr",
       "templateHash": "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721",
@@ -34,14 +52,65 @@
       ]
     },
     {
+      "templateId": "ltx-ingredients-hdr",
+      "templateHash": "0xa936e172b695762f56c38f4499b1c2ae7f69160a0b889427c2d07a0c542f1e42",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "referenceSheet"
+      ],
+      "videoInputs": 0
+    },
+    {
+      "templateId": "ltx-outpaint-hdr",
+      "templateHash": "0x51273037895f44c3b18be7b6b5c11b6ae7225ebf67e6d89ec38d574d821e11e9",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
+    {
+      "templateId": "ltx-restore-hdr",
+      "templateHash": "0xb09d8e6f1895a9c7513b57cc18729ae6f16fad0432460355d014185ebea1cb1c",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
+    {
       "templateId": "ltx-t2v-hdr",
       "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078",
       "imageInputs": 0,
       "videoInputs": 0
+    },
+    {
+      "templateId": "ltx-upscale-hdr",
+      "templateHash": "0xc5a149f0b9d1513db369b29bcf4ca7bd12e091f58a11c6adf968059b8ead39db",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ]
+    },
+    {
+      "templateId": "ltx-water-hdr",
+      "templateHash": "0x015a079d593ec461805c2280e727b019c3b50e9f8d8f1b22c75a0c1dd33932d9",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
     }
   ],
   "loras": [
-    "ltx-iclora-hdr@v1"
+    "ltx-iclora-hdr@v1",
+    "ltx-outpaint-hdr@v1",
+    "ltx-edit-hdr@v1",
+    "ltx-restore-hdr@v1",
+    "ltx-ingredients-hdr@v1",
+    "ltx-water-hdr@v1",
+    "ltx-daynight-hdr@v1"
   ],
   "bounds": {
     "frames": {
@@ -90,6 +159,38 @@
       {
         "w": 1024,
         "h": 1024
+      },
+      {
+        "w": 1920,
+        "h": 1088
+      },
+      {
+        "w": 1088,
+        "h": 1920
+      },
+      {
+        "w": 2560,
+        "h": 1408
+      },
+      {
+        "w": 1408,
+        "h": 2560
+      },
+      {
+        "w": 1536,
+        "h": 1024
+      },
+      {
+        "w": 1024,
+        "h": 1536
+      },
+      {
+        "w": 3840,
+        "h": 2176
+      },
+      {
+        "w": 2176,
+        "h": 3840
       }
     ],
     "imageMaxBytes": 33554432,

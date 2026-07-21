@@ -32,12 +32,32 @@ const FLF2V_TEMPLATE_HASH: &str =
 /// unaffected — the patcher writes a JSON number into the `value` leaf either way.
 const ICLORA_TEMPLATE_HASH: &str =
     "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6";
+/// BL4 template hashes (authored at V1 from the live-proven host exports in
+/// docs/archive/comfyui/: outpaint ef5d632ed2c5, edit 1fb07c3b4b99, restore
+/// 558cc012978d). One shared 30-node spine — dev-fp8 + distilled-384 + mode
+/// IC-LoRA, ManualSigmas 8-step, local Gemma encoder, radiance gamma pair,
+/// source-audio passthrough — differing only in resize head (outpaint
+/// fit+letterbox "pad"; edit/restore centre-"crop"), LoRA stack and strengths.
+/// All three graphs proved free on 3XS-Z 2026-07-10 (vertical outpaint fill /
+/// retriever insertion / restore identity) BEFORE these hashes were pinned.
+const OUTPAINT_TEMPLATE_HASH: &str =
+    "0x51273037895f44c3b18be7b6b5c11b6ae7225ebf67e6d89ec38d574d821e11e9";
+const EDIT_TEMPLATE_HASH: &str =
+    "0x7c1900c0f1062c86c1d3b83725c42561f6f540012d7a3a74216ed1770bac9787";
+const RESTORE_TEMPLATE_HASH: &str =
+    "0xb09d8e6f1895a9c7513b57cc18729ae6f16fad0432460355d014185ebea1cb1c";
 /// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
 /// ladder + 32 MiB image cap; v5 the clip-duration bounds frames {121,751} and
 /// corrected fps [24,25,48,50], with the i2v enhance=true re-pin landing within
 /// v5 as the LIVE on-chain 0xb44beb2c…; v6 adds ltx-iclora-hdr + the video
-/// bounds/videoInputs fields); the t2v/i2v/flf2v graph hashes above must NOT move.
-const BUNDLE_HASH: &str = "0xaa6192be00b67f948227d4819e4157790322cf99332d3ffd1566b571cc396aa2";
+/// bounds/videoInputs fields; v7 adds the BL4 trio outpaint/edit/restore +
+/// their lora ids); the t2v/i2v/flf2v/iclora graph hashes above must NOT move.
+// v8 (2026-07-13): the ladder gained the /64-clean HD+QHD sizes. 1080/1440 floor to an
+// ODD latent (1080//32 == 33), which the IC-LoRA guide rejects outright and the VAE
+// truncates for everyone else — 1088/1408 are their renderable neighbours.
+// v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
+// ltx-daynight-hdr and their lora ids.
+const BUNDLE_HASH: &str = "0x41cfb10d197e1288f7accedb3e1879fc0b0a179362c3dfa9b114f2cf4e74e012";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -242,6 +262,88 @@ fn test_iclora_template_hash_stable() {
 }
 
 #[test]
+fn test_bl4_template_hashes_stable() {
+    let store = TemplateStore::new(DIR).unwrap();
+    for (id, golden) in [
+        ("ltx-outpaint-hdr", OUTPAINT_TEMPLATE_HASH),
+        ("ltx-edit-hdr", EDIT_TEMPLATE_HASH),
+        ("ltx-restore-hdr", RESTORE_TEMPLATE_HASH),
+    ] {
+        let h = store.template_hash(id).expect("template present");
+        eprintln!("GOLD {id}={h}");
+        assert!(h.starts_with("0x") && h.len() == 66, "hash shape: {h}");
+        // Independent recompute (same canonical path the impl uses).
+        let raw = std::fs::read(format!("{DIR}/{id}/v1.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let expect = keccak_hex(serde_json::to_vec(&sort_json_keys(&v)).unwrap());
+        assert_eq!(h, expect, "{id}");
+        if golden != "0x__TBD__" {
+            assert_eq!(h, golden, "golden {id} templateHash drifted");
+        }
+        // The bundle advertises the video-conditioned commitment selector: one
+        // control clip, NO images (the dummy-still branch was stripped — v3
+        // commitment with empty imageHashes).
+        assert_eq!(store.video_inputs(id), Some(1), "{id}: videoInputs");
+        assert_eq!(store.image_inputs(id), Some(0), "{id}: imageInputs");
+        // Patcher handles present: one CLIPTextEncode titled Prompt, Width /
+        // Height primitives, RandomNoise seed, one VHS_LoadVideo with a
+        // frame_load_cap leaf.
+        let obj = v.as_object().unwrap();
+        let by_title = |t: &str| {
+            obj.values()
+                .filter(|n| n.pointer("/_meta/title").and_then(|x| x.as_str()) == Some(t))
+                .count()
+        };
+        assert_eq!(by_title("Prompt"), 1, "{id}: one Prompt handle");
+        assert_eq!(by_title("Width"), 1, "{id}: Width handle");
+        assert_eq!(by_title("Height"), 1, "{id}: Height handle");
+        let vhs: Vec<&serde_json::Value> = obj
+            .values()
+            .filter(|n| n.get("class_type").and_then(|c| c.as_str()) == Some("VHS_LoadVideo"))
+            .collect();
+        assert_eq!(vhs.len(), 1, "{id}: one VHS_LoadVideo");
+        assert!(
+            vhs[0].pointer("/inputs/frame_load_cap").is_some(),
+            "{id}: frame_load_cap leaf present"
+        );
+        // Frozen-neutral frame widgets (the billed==rendered precondition).
+        assert_eq!(
+            vhs[0].pointer("/inputs/select_every_nth"),
+            Some(&serde_json::json!(1)),
+            "{id}: select_every_nth frozen at 1"
+        );
+        assert_eq!(
+            vhs[0].pointer("/inputs/force_rate"),
+            Some(&serde_json::json!(0)),
+            "{id}: force_rate frozen at 0"
+        );
+        assert_eq!(
+            vhs[0].pointer("/inputs/skip_first_frames"),
+            Some(&serde_json::json!(0)),
+            "{id}: skip_first_frames frozen at 0"
+        );
+    }
+    // The four existing graph hashes are unmoved by adding the BL4 trio.
+    let store = TemplateStore::new(DIR).unwrap();
+    assert_eq!(
+        store.template_hash("ltx-t2v-hdr").unwrap(),
+        HDR_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-i2v-hdr").unwrap(),
+        I2V_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-flf2v-hdr").unwrap(),
+        FLF2V_TEMPLATE_HASH
+    );
+    assert_eq!(
+        store.template_hash("ltx-iclora-hdr").unwrap(),
+        ICLORA_TEMPLATE_HASH
+    );
+}
+
+#[test]
 fn test_iclora_handles() {
     let raw = std::fs::read(format!("{DIR}/ltx-iclora-hdr/v1.json")).unwrap();
     let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -350,7 +452,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     let ic = b
         .templates
         .iter()
@@ -389,10 +491,42 @@ fn test_bundle_v6_has_iclora() {
 }
 
 #[test]
+fn test_bundle_v7_has_bl4_trio() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let b = store.bundle();
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
+    for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
+        let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
+        assert_eq!(t.video_inputs, 1, "{id}: one control video");
+        assert_eq!(t.video_semantics, vec!["controlVideo".to_string()]);
+        assert_eq!(
+            t.image_inputs, 0,
+            "{id}: NO image inputs (v3 selector with empty imageHashes)"
+        );
+        assert!(t.image_semantics.is_empty(), "{id}: no image semantics");
+    }
+    // The lora ids ride the bundle for client discovery.
+    for lora in [
+        "ltx-iclora-hdr@v1",
+        "ltx-outpaint-hdr@v1",
+        "ltx-edit-hdr@v1",
+        "ltx-restore-hdr@v1",
+        "ltx-ingredients-hdr@v1",
+        "ltx-water-hdr@v1",
+        "ltx-daynight-hdr@v1",
+    ] {
+        assert!(b.loras.iter().any(|l| l == lora), "lora {lora} advertised");
+    }
+    // Bounds are UNCHANGED by v7 (same ladder, caps, fps set as v6).
+    assert_eq!(b.bounds.video_max_bytes, 134_217_728);
+    assert_eq!(b.bounds.image_max_bytes, 33_554_432);
+}
+
+#[test]
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     let flf = b
         .templates
         .iter()
@@ -414,7 +548,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 6, "v6 allow-list");
+    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -425,6 +559,12 @@ fn test_bundle_v4_resolution_ladder() {
         (720, 1280),
         (1080, 1920),
         (1024, 1024),
+        // v8: /64-clean HD + QHD. floor(dim/32) is EVEN in both axes, so the IC-LoRA guide
+        // accepts them AND the VAE renders them EXACTLY (1088 == 34*32, no truncation).
+        (1920, 1088),
+        (1088, 1920),
+        (2560, 1408),
+        (1408, 2560),
     ];
     for (w, h) in expect {
         assert!(
@@ -441,8 +581,8 @@ fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
     assert_eq!(
-        b.allow_list_version, 6,
-        "v6 allow-list (t2v/i2v entries unchanged)"
+        b.allow_list_version, 16,
+        "v16 allow-list (t2v/i2v entries unchanged since v8)"
     );
     let t2v = b
         .templates
@@ -552,4 +692,110 @@ fn emit_bundle_fixture_v2() {
     );
     std::fs::write(path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
+}
+
+/// Bundle v10: the upscale template (v9 + the INT->FLOAT fps shim ComfyUI demands) plus its x2 output rungs. The graph is the
+/// proven ComfyUI probe of 2026-07-15 with patcher handles added; sigmas 0.60/0.40/0.20/0
+/// are pinned as a fidelity constant (0.85 = the t2v generator setting = redesigns content).
+const UPSCALE_TEMPLATE_HASH: &str =
+    "0xc5a149f0b9d1513db369b29bcf4ca7bd12e091f58a11c6adf968059b8ead39db";
+
+#[test]
+fn test_bundle_v11_has_upscale() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert_eq!(store.bundle().allow_list_version, 16);
+    assert_eq!(
+        store
+            .template_hash("ltx-upscale-hdr")
+            .expect("upscale template pinned"),
+        UPSCALE_TEMPLATE_HASH
+    );
+    // videoInputs routes the control-clip plumbing; imageInputs stays zero.
+    assert_eq!(store.video_inputs("ltx-upscale-hdr"), Some(1));
+    assert_eq!(store.image_inputs("ltx-upscale-hdr"), Some(0));
+    // the x2 output rungs are in the ladder
+    let rs = &store.bundle().bounds.resolutions;
+    for (w, h) in [(1536u32, 1024u32), (1024, 1536), (3840, 2176), (2176, 3840)] {
+        assert!(
+            rs.iter().any(|r| r.w == w && r.h == h),
+            "missing rung {w}x{h}"
+        );
+    }
+}
+
+/// Bundle v14: the Ingredients (cast-consistency) template — I-phase. The graph is the
+/// author distilled single-stage recipe proven on 3XS-Z 2026-07-18 (Lightricks' own
+/// reference sheet reproduced their demo on the fp8 stack), with the four house patcher
+/// handles added and the canvas made COMMITTED (sheet conformed in-graph, black pad).
+/// Version history: v12 and v13 BURNED on the ComfyMathExpression output-index bug
+/// ([0] is FLOAT, [1] is INT — never re-pin to them); v14 went live (session 921 paid
+/// to the token); v15 adds the ingredients lora id to the bundle's loras advert so
+/// clients commit the LoRA that actually ran, not the iclora fallback.
+const INGREDIENTS_TEMPLATE_HASH: &str =
+    "0xa936e172b695762f56c38f4499b1c2ae7f69160a0b889427c2d07a0c542f1e42";
+
+#[test]
+fn test_bundle_v14_has_ingredients() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert_eq!(store.bundle().allow_list_version, 16);
+    assert_eq!(
+        store
+            .template_hash("ltx-ingredients-hdr")
+            .expect("ingredients template pinned"),
+        INGREDIENTS_TEMPLATE_HASH
+    );
+    // ONE reference sheet, bound in the commitment; no control video, no conform render.
+    assert_eq!(store.image_inputs("ltx-ingredients-hdr"), Some(1));
+    assert_eq!(store.video_inputs("ltx-ingredients-hdr"), Some(0));
+    // v15: the mode's OWN lora id is advertised — the helper's templateLora prefers
+    // `<templateId>@v1` when the bundle carries it, so the attestation commits the
+    // ingredients LoRA (the one new weight) instead of the loras[0] iclora fallback.
+    assert!(
+        store
+            .bundle()
+            .loras
+            .iter()
+            .any(|l| l == "ltx-ingredients-hdr@v1"),
+        "ingredients lora advertised"
+    );
+}
+
+/// Bundle v16: Water Simulation + Day-To-Night — the WA/DN combined ladder. Both
+/// graphs are the PROVEN edit spine (same 30-node shape, same distilled recipe:
+/// cfg 1, 8-step sigmas, guide factor 1) with only the mode IC-LoRA swapped —
+/// water at the card's 1.2 sweet spot, day-to-night at 1.0. Discovery 2026-07-18
+/// (headless POST runs on 3XS-Z): water GO incl. 1920x1088 exact delivery, 10 s
+/// alive, (F-1)%8 rule SOFT; day-to-night GO on the distilled spine (the card's
+/// 30-step full recipe NOT needed — clean sources show no artifacting). Both lora
+/// ids advertised from day one (the v15 lesson).
+const WATER_TEMPLATE_HASH: &str =
+    "0x015a079d593ec461805c2280e727b019c3b50e9f8d8f1b22c75a0c1dd33932d9";
+const DAYNIGHT_TEMPLATE_HASH: &str =
+    "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86";
+
+#[test]
+fn test_bundle_v16_has_water_and_daynight() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert_eq!(store.bundle().allow_list_version, 16);
+    for (id, golden) in [
+        ("ltx-water-hdr", WATER_TEMPLATE_HASH),
+        ("ltx-daynight-hdr", DAYNIGHT_TEMPLATE_HASH),
+    ] {
+        let h = store.template_hash(id).expect("template pinned");
+        eprintln!("GOLD {id}={h}");
+        if golden != "0x__TBD__" {
+            assert_eq!(h, golden, "{id} golden hash drifted");
+        }
+        // Control-clip shape: one video in, no stills, no conform render needed
+        // client-side beyond the standard BL4 path.
+        assert_eq!(store.image_inputs(id), Some(0), "{id} imageInputs");
+        assert_eq!(store.video_inputs(id), Some(1), "{id} videoInputs");
+        // The mode's OWN lora id is advertised so the attestation commits the
+        // LoRA that actually ran (the v15 lesson, applied from day one).
+        let own = format!("{id}@v1");
+        assert!(
+            store.bundle().loras.iter().any(|l| l == &own),
+            "{id} lora advertised"
+        );
+    }
 }
