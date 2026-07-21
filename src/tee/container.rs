@@ -28,8 +28,10 @@ pub const AEAD_TAG_LEN: usize = 16;
 ///
 /// `nonce_base` + `model_id` + `policy_hash` are the inputs the chunked AEAD
 /// (Phase 2.2/2.3) binds each chunk to: per-chunk nonce =
-/// `nonce_base ‖ chunk_idx_u32_be ‖ 0x00×4` (24 B), AAD =
-/// `model_id ‖ policy_hash ‖ chunk_idx_u32_be`.
+/// `nonce_base ‖ chunk_idx_u32_be ‖ 0x00×4` (24 B), AAD = the **full encoded
+/// header** (all fields) ‖ `chunk_idx_u32_be` (see [`chunk_aad`]) — binding the
+/// whole header, not just `model_id ‖ policy_hash`, is what closes the
+/// silent-truncation vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerHeader {
     /// Format magic; must equal [`CONTAINER_MAGIC`].
