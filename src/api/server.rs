@@ -230,6 +230,16 @@ pub struct ApiServer {
     /// endpoint, so LTX gates locally rather than via the transcoder capacity cache.
     ltx_semaphore: Arc<tokio::sync::Semaphore>,
     auto_image_routing: bool,
+    /// FC1.6: platform vault depositor addresses (lowercase). EMPTY (the
+    /// default) ⇒ the vault-session auth gate is skipped entirely — every
+    /// current deployment behaves exactly as before.
+    fiat_vault_addresses: Vec<String>,
+    /// FC1.6: the credits backend's AUTH key address (NOT its funds key).
+    /// None ⇒ POST /v1/session-auth 404s (pre-hardening shape).
+    fiat_backend_auth_address: Option<String>,
+    /// FC1.6: jobId → backend-authorised client address (in-memory; a restart
+    /// clears it and the helper simply re-presents before its next submit).
+    session_auth_store: Arc<crate::api::session_auth::SessionAuthStore>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -312,6 +322,9 @@ impl ApiServer {
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::LtxRateLimiter::new(3)),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             auto_image_routing: false,
+            fiat_vault_addresses: Vec::new(),
+            fiat_backend_auth_address: None,
+            session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -449,6 +462,19 @@ impl ApiServer {
                     .map(|v| !v.is_empty())
                     .unwrap_or(false),
             },
+            // FC1.6 (same optional-env posture as MODERATION_INGEST_TOKEN):
+            // unset ⇒ feature off ⇒ behaviour identical to pre-FC1.6 builds.
+            fiat_vault_addresses: std::env::var("FIAT_VAULT_ADDRESSES")
+                .unwrap_or_default()
+                .split(',')
+                .map(|a| a.trim().to_lowercase())
+                .filter(|a| !a.is_empty())
+                .collect(),
+            fiat_backend_auth_address: std::env::var("FIAT_BACKEND_AUTH_ADDRESS")
+                .ok()
+                .map(|a| a.trim().to_lowercase())
+                .filter(|a| !a.is_empty()),
+            session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -523,6 +549,9 @@ impl ApiServer {
             ltx_rate_limiter: self.ltx_rate_limiter.clone(),
             ltx_semaphore: self.ltx_semaphore.clone(),
             auto_image_routing: self.auto_image_routing,
+            fiat_vault_addresses: self.fiat_vault_addresses.clone(),
+            fiat_backend_auth_address: self.fiat_backend_auth_address.clone(),
+            session_auth_store: self.session_auth_store.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -543,6 +572,16 @@ impl ApiServer {
 
     pub async fn set_checkpoint_manager(&self, checkpoint_manager: Arc<CheckpointManager>) {
         *self.checkpoint_manager.write().await = Some(checkpoint_manager);
+    }
+
+    /// FC1.6 accessors (fields are private to this module; the session-auth
+    /// handler lives in api::session_auth).
+    pub fn fiat_backend_auth_address(&self) -> Option<&str> {
+        self.fiat_backend_auth_address.as_deref()
+    }
+
+    pub fn session_auth_store(&self) -> &Arc<crate::api::session_auth::SessionAuthStore> {
+        &self.session_auth_store
     }
 
     pub async fn get_checkpoint_manager(&self) -> Option<Arc<CheckpointManager>> {
@@ -1584,6 +1623,13 @@ impl ApiServer {
             )
             .nest("/v1", vision_routes)
             .nest("/v1/moderate", moderation_routes)
+            // FC1.6: the fiat helper presents its backend-signed client
+            // authorisation here before its WS submit (self-authenticating;
+            // 404 when the feature is unconfigured).
+            .route(
+                "/v1/session-auth",
+                post(crate::api::session_auth::session_auth_handler),
+            )
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(CorsLayer::permissive())
@@ -2314,6 +2360,64 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     // Update tracked session/job info - parse job_id from string
                                                     job_id =
                                                         extracted_job_id_str.parse::<u64>().ok();
+
+                                                    // FC1.6: vault-paid sessions serve only the depositor or
+                                                    // a backend-authorised client. With no vault configured
+                                                    // (every pre-FC1 deployment) this whole block is skipped.
+                                                    // With the gate ON, an unreadable depositor fails CLOSED:
+                                                    // a node serving vault money must not serve blind.
+                                                    if !server.fiat_vault_addresses.is_empty() {
+                                                        let denial: Option<String> = match job_id {
+                                                            None => Some("job id unparseable".to_string()),
+                                                            Some(jid) => {
+                                                                let depositor = match server.get_checkpoint_manager().await {
+                                                                    Some(cm) => cm.query_session_depositor(jid).await,
+                                                                    None => Err(anyhow::anyhow!("no checkpoint manager")),
+                                                                };
+                                                                match depositor {
+                                                                    Err(e) => Some(format!("depositor unavailable: {}", e)),
+                                                                    Ok(dep) => {
+                                                                        let authorised = server
+                                                                            .session_auth_store
+                                                                            .lock()
+                                                                            .ok()
+                                                                            .and_then(|m| m.get(&jid).cloned());
+                                                                        if crate::api::session_auth::authorise_session_client(
+                                                                            &dep,
+                                                                            &client_address,
+                                                                            &server.fiat_vault_addresses,
+                                                                            authorised.as_deref(),
+                                                                        ) {
+                                                                            None
+                                                                        } else {
+                                                                            Some(format!(
+                                                                                "client {} is not authorised for vault-paid job {}",
+                                                                                client_address, jid
+                                                                            ))
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        };
+                                                        if let Some(reason) = denial {
+                                                            error!("🚫 SESSION_AUTH_DENIED: {}", reason);
+                                                            let mut error_msg = json!({
+                                                                "type": "error",
+                                                                "code": "SESSION_AUTH_DENIED",
+                                                                "message": format!("session authorisation denied: {}", reason),
+                                                                "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                                            });
+                                                            if let Some(msg_id) = json_msg.get("id") {
+                                                                error_msg["id"] = msg_id.clone();
+                                                            }
+                                                            let _ = ws_sender
+                                                                .send(axum::extract::ws::Message::Text(
+                                                                    error_msg.to_string(),
+                                                                ))
+                                                                .await;
+                                                            continue;
+                                                        }
+                                                    }
 
                                                     eprintln!("🔐 Encrypted session started: job={:?} session={:?} model={}", job_id, session_id, model_name);
 

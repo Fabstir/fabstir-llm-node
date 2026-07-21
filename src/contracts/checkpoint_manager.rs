@@ -328,6 +328,46 @@ impl CheckpointManager {
         }
     }
 
+    /// FC1.6: query the session's DEPOSITOR (field index 1 of sessionJobs) —
+    /// the vault-session auth gate compares it against the configured vault
+    /// addresses. Unlike query_session_proof_interval there is NO fallback:
+    /// the caller fails closed when the read fails (a node serving vault money
+    /// must not serve blind).
+    ///
+    /// We decode the depositor word DIRECTLY from the raw return rather than
+    /// decode the full struct: `sessionJobs` returns a tuple whose leading
+    /// fields are static (id, depositor, host, …), so the depositor is always
+    /// the second 32-byte word regardless of how many fields the struct has
+    /// grown to. A full-tuple decode is brittle to that field-count drift — the
+    /// sibling `query_session_proof_interval` hard-codes a 17-field signature
+    /// while the deployed ABI carries 18, and only survives because its decode
+    /// failure is masked by a fallback. This read has no fallback, so it must
+    /// be drift-proof. (Field 1 = depositor is confirmed by the deployed ABI
+    /// and the sibling read's own tuple comment.)
+    pub async fn query_session_depositor(&self, job_id: u64) -> Result<String> {
+        use tiny_keccak::{Hasher, Keccak};
+        let mut keccak = Keccak::v256();
+        let mut selector = [0u8; 32];
+        keccak.update(b"sessionJobs(uint256)");
+        keccak.finalize(&mut selector);
+
+        let mut call_data = selector[..4].to_vec();
+        call_data.extend_from_slice(&ethers::abi::encode(&[Token::Uint(U256::from(job_id))]));
+
+        let tx = TransactionRequest::new()
+            .to(self.proof_system_address)
+            .data(call_data);
+        let result = self
+            .web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("sessionJobs read failed for job {}: {}", job_id, e))?;
+
+        depositor_from_session_jobs_return(&result)
+            .map_err(|e| anyhow!("sessionJobs decode failed for job {}: {}", job_id, e))
+    }
+
     /// Track tokens generated for a specific job
     pub async fn track_tokens(
         &self,
@@ -2042,6 +2082,22 @@ fn encode_complete_session_call(job_id: u64, conversation_cid: String) -> Vec<u8
     function.encode_input(&tokens).unwrap()
 }
 
+/// FC1.6: extract the depositor (field index 1) from a raw `sessionJobs`
+/// return. Reads word 1 directly so it is immune to struct field-count drift
+/// (see `query_session_depositor`). Kept pure for unit-testing against a real
+/// ABI-encoded fixture without a chain.
+pub(crate) fn depositor_from_session_jobs_return(result: &[u8]) -> Result<String> {
+    // Word 0 = id, word 1 = depositor. An address is the low 20 bytes of its
+    // 32-byte word (bytes 44..64).
+    if result.len() < 64 {
+        return Err(anyhow!(
+            "sessionJobs returned {} bytes (expected >= 64)",
+            result.len()
+        ));
+    }
+    Ok(format!("{:#x}", Address::from_slice(&result[44..64])))
+}
+
 // ABI encoding helper for submitProofOfWork (v8.14.0 - Post-Remediation)
 // Signature parameter REMOVED per BREAKING_CHANGES.md (Feb 4, 2026)
 // Authentication now via msg.sender == session.host check in contract
@@ -3287,6 +3343,46 @@ mod tests {
             .parse::<u64>()
             .unwrap_or(30);
         assert_eq!(val, 30, "Default dispute window should be 30 seconds");
+    }
+
+    #[test]
+    fn test_depositor_from_session_jobs_return_18_fields() {
+        // A full 18-field sessionJobs return (the DEPLOYED struct), depositor at
+        // index 1. Built with ethers.js and pasted as the ABI-encoded bytes:
+        // decoding the depositor from word 1 must work regardless of the 18
+        // trailing fields (a 17-field tuple decode fails "data out-of-bounds").
+        use ethers::abi::{encode, Token};
+        let depositor = Address::from_slice(
+            &hex::decode("8ba1f109551bd432803012645ac136ddd64dba72").unwrap(),
+        );
+        let encoded = encode(&[
+            Token::Uint(U256::from(1234u64)),
+            Token::Address(depositor),
+            Token::Address(Address::from_low_u64_be(0x1111)),
+            Token::Address(Address::from_low_u64_be(0x2222)),
+            Token::Uint(U256::from(500000u64)),
+            Token::Uint(U256::from(10u64)),
+            Token::Uint(U256::from(42u64)),
+            Token::Uint(U256::from(3600u64)),
+            Token::Uint(U256::from(111u64)),
+            Token::Uint(U256::from(222u64)),
+            Token::Uint(U256::from(50u64)),
+            Token::Uint(U256::from(300u64)), // proofTimeoutWindow — the 18th-struct field the old 17-sig dropped
+            Token::Uint(U256::from(3u64)),   // status (u8 encodes as a full word)
+            Token::Uint(U256::from(0u64)),
+            Token::Uint(U256::from(200783u64)),
+            Token::String("QmConvCID".to_string()),
+            Token::FixedBytes(vec![0xab; 32]),
+            Token::String("QmProofCID".to_string()),
+        ]);
+        let got = depositor_from_session_jobs_return(&encoded).unwrap();
+        assert_eq!(got, "0x8ba1f109551bd432803012645ac136ddd64dba72");
+    }
+
+    #[test]
+    fn test_depositor_from_session_jobs_return_too_short_errors() {
+        assert!(depositor_from_session_jobs_return(&[0u8; 32]).is_err());
+        assert!(depositor_from_session_jobs_return(&[]).is_err());
     }
 
     #[test]
