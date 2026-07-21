@@ -2,6 +2,8 @@
 
 > **What this is, in one breath:** This is the narrative of a feature that lets a model owner ship their *encrypted* AI model to a GPU machine they don't trust, have that machine *cryptographically prove* it's a genuine sealed box running unmodified code, hand it the decryption key *only then*, decrypt the weights *only into encrypted RAM*, run inference on the GPU, and securely wipe everything afterward — all while the machine's root-level operator can run the model and bill for it but can never read the plaintext weights. It works end-to-end on real GPU hardware today (behind a mock attestation backend), and the final 20% — real hardware-rooted attestation on a confidential VM — is Phase 5.
 
+> **⚠️ Currency note (updated 2026-07-16).** Sections 1–5 (the software story, the crypto design, and "what's been proven") remain accurate: the TEE feature is still Phases 1–4 complete behind a mock backend, GPU-proven, with Phase 5 outstanding. **Section 6's IONOS specifics are superseded** by later research (2026-06-16). In short: IONOS runs **H200 + DGX B300** (CC-capable), **not** H100/B200; **CPU confidential computing is not exposed to tenants** (their "attestation" marketing means BSI C5 compliance, not a hardware quote); so standing up a CC-On confidential VM with guest attestation on IONOS is a **co-engineering / partnership ask, not self-service**. Do not pitch from Section 6's "just confirm they offer CC and provision" framing.
+
 ---
 
 ## 1. The problem
@@ -36,8 +38,8 @@ Before we follow a model through its life, meet the building blocks. Each is a m
 
 And the code modules, as characters:
 
-- **`container.rs`** — the *vault builder*. Defines the encrypted container format and the chunked AEAD encryption/decryption.
-- **`encryption.rs`** — the *cipher*. The raw XChaCha20-Poly1305 primitive.
+- **`container.rs`** — the *vault builder*. Defines the encrypted container format and the chunked AEAD encryption/decryption. (The raw XChaCha20-Poly1305 primitive itself is *reused* from `src/crypto/encryption.rs`, the existing session-encryption layer — there is no TEE-specific `encryption.rs`.)
+- **`provider.rs`** — the *witness stand*. The `AttestationProvider` trait: the seam the mock backend fills today and the real `NvidiaCcProvider` fills in Phase 5.
 - **`types.rs`** — the *neutral shared rulebook*. Holds `Evidence`, `Policy`, and — crucially — the single canonical `cross_bind_report_data()` function so no two components can compute the cross-binding differently.
 - **`keywrap.rs`** — the *key courier*. ECDH + HKDF + AEAD to wrap and unwrap the DEK.
 - **`mock.rs` / `verifier.rs`** — the *judge and the stand-in witness*. The mock attestation provider/KBS and the `DefaultVerifier`.
@@ -224,9 +226,9 @@ The GPU end-to-end test (`/workspace/fabstir-llm-node/tests/tee_e2e.rs`) ran on 
 
 **Test counts and version:**
 
-- `tee_tests`: **85 passed / 0 failed** (Phase 1 ~22, Phase 2 ~53, Phase 3 ~66, Phase 4 ~84–85, cumulative).
+- `tee_tests`: **84 test functions** defined in `tests/tee/` (Phase 1 ~22, Phase 2 ~53, Phase 3 ~66, Phase 4 cumulative); **78 passed on the GPU host** (TEST_HOST_1) on the last host run, the remainder environment-gated.
 - TEE code is **fmt-clean and clippy-clean** (zero warnings/errors in `src/tee/` and `tests/tee/`); the lib compiles under test config.
-- **Version: `8.30.0-tee-confidential-inference`** (`/workspace/VERSION`, `src/version.rs`).
+- **Version: `8.30.0-tee-confidential-inference`** — the TEE feature's snapshot version (`src/version.rs`). The repo has since moved to `8.37.0` with unrelated LTX work layered on top; the TEE code is unchanged.
 - GPU e2e: `tests/tee_e2e.rs`, 1 passed in 147 s.
 
 A **relaxed baseline-diff gate** was approved for Phase 4: TEE tests green + TEE fmt/clippy-clean + lib compiles + *no new* `--lib` failures. Pre-existing, TEE-unrelated failures (`api::embed` needs the ONNX model; `api::response_formatter`; hanging `ezkl`/`inference`/`contracts`; the Risc0 guest build needs `RISC0_SKIP_BUILD=1`) are accepted because the TEE module is cleanly isolated.
@@ -241,6 +243,8 @@ For **open-weight models**, none of this is a blocker: the pipeline works end-to
 ---
 
 ## 6. What's left — the final 20% (Phase 5)
+
+> **⚠️ The IONOS details in this section are superseded (2026-07-16).** See the currency note at the top of this doc. The hardware/SDK/software points below are still valid; the IONOS *positioning* (candidate vs. default, "just confirm they offer CC") is not — IONOS has H200 + DGX B300, does not expose CPU CC to tenants, and Phase 5 there is a co-engineering ask.
 
 Phase 5 is the hardware-dependent remainder: swap the mocks for real, hardware-rooted components, run on a genuine confidential VM with CC-On, and prove the host truly can't read VRAM.
 
