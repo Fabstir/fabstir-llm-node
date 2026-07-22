@@ -54,6 +54,10 @@ Check the health status of the node.
 GET /health
 ```
 
+Also available as `GET /v1/health` (an alias with the same handler and response),
+kept for consistency with the rest of the `/v1/*` surface; the SDK browser build
+probes `/v1/health` for host-health checks and node discovery.
+
 #### Response
 
 ```json

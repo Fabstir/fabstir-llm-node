@@ -1605,6 +1605,11 @@ impl ApiServer {
 
         Router::new()
             .route("/health", get(health_handler))
+            // Alias: the SDK browser build probes /v1/health (ClientManager
+            // discovery + the per-prompt host-health check). Without it those
+            // 404 and read as "unreachable" for healthy hosts. Same handler as
+            // /health; keeps the path consistent with the rest of /v1/*.
+            .route("/v1/health", get(health_handler))
             .route("/v1/version", get(version_handler))
             .route("/v1/models", get(models_handler))
             .route("/v1/checkpoints/:session_id", get(checkpoints_handler))
