@@ -136,6 +136,14 @@ export function startSettlementListener(opts: {
   reconcile?: { reader: CreateReceiptReader };
   /** Tests drive tick() themselves; production self-schedules. */
   manual?: boolean;
+  /** Scan only to latest − safetyLag. A load-balanced public RPC can answer
+   *  latestBlock() from a fresh replica and getLogs from a lagging one; logs a
+   *  few blocks behind the head are present everywhere. Default 0 (exact). */
+  safetyLag?: number;
+  /** Re-scan this many blocks behind the cursor every tick. Re-delivery is free
+   *  (settle() is idempotent via the settled-refunds guard), and it gives a
+   *  replica that lagged past safetyLag more chances. Default 0 (exact). */
+  overlapBlocks?: number;
 }): SettlementListener {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -167,10 +175,17 @@ export function startSettlementListener(opts: {
       }
       const from = (await opts.cursor.load()) ?? opts.fromBlock;
       const latest = await opts.source.latestBlock();
-      if (latest < from) return;
-      const events = await opts.source.query(from, latest);
+      // The job-960 lesson (2026-07-23): a tick once scanned a range whose logs a
+      // lagging RPC replica had not indexed yet, then advanced the cursor —
+      // permanently skipping a real settlement. Hold back from the head and
+      // re-scan an overlap; both are free because apply is idempotent.
+      const safeLatest = latest - (opts.safetyLag ?? 0);
+      const scanFrom = Math.max(from - (opts.overlapBlocks ?? 0), opts.fromBlock);
+      if (safeLatest < scanFrom) return;
+      const events = await opts.source.query(scanFrom, safeLatest);
       await applySettlementEvents(opts.ledger, events, opts.onAlarm);
-      await opts.cursor.save(latest + 1);
+      // Never let the overlap walk the cursor backwards.
+      await opts.cursor.save(Math.max(safeLatest + 1, from));
     } catch (e) {
       opts.onAlarm(`settlement listener tick failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -267,6 +282,10 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     onAlarm: (message) => console.error(`[fiat-settlement] ALARM: ${message}`),
     solvency: makeVaultHoldings(),
     reconcile: { reader: makeChainReceiptReader() },
+    // Public-RPC replica lag protection (see the tickOnce comment). ~2s blocks:
+    // lag 5 ≈ 10s behind head, overlap 30 ≈ a minute of re-scan each tick.
+    safetyLag: Number(process.env.FIAT_SETTLEMENT_SAFETY_LAG ?? '5'),
+    overlapBlocks: Number(process.env.FIAT_SETTLEMENT_OVERLAP_BLOCKS ?? '30'),
   });
   console.log('[fiat-settlement] listener started');
   return productionListener;

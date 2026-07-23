@@ -247,6 +247,85 @@ describe('startSettlementListener (manual ticks, fake source + cursor)', () => {
     await listener.stop();
   });
 
+  // The job-960 incident (2026-07-23): a lagging RPC replica served empty logs
+  // for a range that contained a real settlement; the cursor advanced and the
+  // event was skipped forever. safetyLag + overlapBlocks close both halves.
+  it('safetyLag holds back from the head, and the held-back event applies on a later tick', async () => {
+    const ledger = await ledgerWithBoundJob(960n);
+    let latest = 105;
+    // The settlement sits 2 blocks behind the head — inside the lag zone.
+    const { source, queries } = fakeSource({ '103': [completed(960n, REFUND, 103)] }, () => latest);
+    const { get, cursor } = memoryCursor();
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor,
+      fromBlock: 100,
+      onAlarm: () => {},
+      manual: true,
+      safetyLag: 5,
+    });
+
+    await listener.tick();
+    expect(queries).toEqual([[100, 100]]); // scanned only to latest − 5
+    expect(get()).toBe(101);
+    expect(ledger.refundForJob(960n)).toBeUndefined(); // not seen yet — but not skipped either
+
+    latest = 110;
+    await listener.tick(); // head moved; the lag zone now includes block 103
+    expect(queries[1]).toEqual([101, 105]);
+    expect(ledger.refundForJob(960n)).toBe(REFUND);
+    await listener.stop();
+  });
+
+  it('overlap re-scans behind the cursor; re-delivery is silent and credits nothing twice', async () => {
+    const ledger = await ledgerWithBoundJob(961n);
+    const { source, queries } = fakeSource({ '104': [completed(961n, REFUND, 104)] }, () => 110);
+    const { get, cursor } = memoryCursor(105); // cursor already PAST the event — the 960 shape
+    const alarms: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor,
+      fromBlock: 100,
+      onAlarm: (m) => alarms.push(m),
+      manual: true,
+      overlapBlocks: 30,
+    });
+
+    await listener.tick(); // scans max(105-30,100)=100 .. 110 → catches the missed event
+    expect(queries).toEqual([[100, 110]]);
+    expect(ledger.refundForJob(961n)).toBe(REFUND);
+    expect(get()).toBe(111);
+
+    await listener.tick(); // overlap re-delivers the same event: idempotent, no alarm
+    expect(queries[1]).toEqual([100, 110]);
+    expect(ledger.refundForJob(961n)).toBe(REFUND);
+    expect(alarms).toEqual([]);
+    // cursor never regresses despite scanFrom < cursor
+    expect(get()).toBe(111);
+    await listener.stop();
+  });
+
+  it('cursor never walks backwards when the head stalls inside the lag window', async () => {
+    const ledger = await ledgerWithBoundJob(962n);
+    const { source } = fakeSource({}, () => 106); // safeLatest = 101 < cursor 105
+    const { get, cursor } = memoryCursor(105);
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor,
+      fromBlock: 100,
+      onAlarm: () => {},
+      manual: true,
+      safetyLag: 5,
+      overlapBlocks: 30,
+    });
+    await listener.tick(); // scans [100,101] via overlap; must not save 102 over 105
+    expect(get()).toBe(105);
+    await listener.stop();
+  });
+
   it('reconciles orphaned holds each tick, then settles the recovered session (M2)', async () => {
     // A hold whose create tx was submitted (txHash known) but never bound — the
     // exact crash-between-create-and-bind orphan.
