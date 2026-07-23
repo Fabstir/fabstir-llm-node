@@ -3,25 +3,37 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.38.0-ltx-ingredients-template-2026-07-18";
+pub const VERSION: &str = "v8.39.0-fc16-vault-session-auth-2026-07-23";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.38.0";
+pub const VERSION_NUMBER: &str = "8.39.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 38;
+pub const VERSION_MINOR: u32 = 39;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-18";
+pub const BUILD_DATE: &str = "2026-07-23";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.39.0 FC1.6 vault-session auth: POST /v1/session-auth accepts a backend-
+    // signed FC1-SESSION-AUTH digest (keccak256("FC1-SESSION-AUTH:<sessionId>:
+    // <clientAddress lowercase>"), no EIP-191 prefix) and pre-authorises ONE
+    // client address for a vault-paid session; the WS session gate then admits
+    // the on-chain depositor OR that authorised client. Enables browser/helper
+    // executors to attach to sessions the fiat vault deposited. Plus GET
+    // /v1/health as an alias of /health — the SDK browser build probes
+    // /v1/health (discovery + per-prompt host-health), so hosts without the
+    // alias read as unreachable to browser clients.
+    "fc1-session-auth",
+    "vault-delegated-sessions",
+    "v1-health-alias",
     // v8.36.1 over-length control clips accepted: the frame-count gate keeps only
     // its LOWER bound (under-length = overbilling risk, still fail-closed); clips
     // longer than the job crop server-side by construction (the trio's
@@ -446,6 +458,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.39.0 - FC1.6 vault-session auth + /v1/health alias (Jul 23, 2026)
+    "FEAT: POST /v1/session-auth — backend-signed FC1-SESSION-AUTH digest pre-authorises a delegated client address for a vault-paid session (scheme fc1-session-auth-v1)",
+    "FEAT: WS session gate admits the on-chain depositor OR the pre-authorised client for vault-paid sessions",
+    "FEAT: GET /v1/health alias of /health — SDK browser builds probe /v1/health; hosts without the alias read as unreachable to browser clients",
     // v8.34.0 - LTX Duration + fps correction (Jul 3, 2026)
     "FEAT: User-selectable LTX clip duration 5..=15s — frames = fps·secs + 1 (allow-list bundle v5)",
     "FEAT: Corrected advertised fps to LTX 2.3 native rates [24,25,48,50] (dropped never-supported 30, added 48/50)",
@@ -866,7 +882,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 38);
+        assert_eq!(VERSION_MINOR, 39);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1047,15 +1063,22 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.38.0"));
-        assert!(version.contains("2026-07-18"));
+        assert!(version.contains("8.39.0"));
+        assert!(version.contains("2026-07-23"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.38.0-ltx-ingredients-template-2026-07-18");
-        assert_eq!(VERSION_NUMBER, "8.38.0");
-        assert_eq!(BUILD_DATE, "2026-07-18");
+        assert_eq!(VERSION, "v8.39.0-fc16-vault-session-auth-2026-07-23");
+        assert_eq!(VERSION_NUMBER, "8.39.0");
+        assert_eq!(BUILD_DATE, "2026-07-23");
+    }
+
+    #[test]
+    fn test_fc16_session_auth_features() {
+        assert!(FEATURES.contains(&"fc1-session-auth"));
+        assert!(FEATURES.contains(&"vault-delegated-sessions"));
+        assert!(FEATURES.contains(&"v1-health-alias"));
     }
 
     #[test]
