@@ -355,6 +355,22 @@ export function makeFileCursor(path: string): SettlementCursor {
 
 let productionListener: SettlementListener | undefined;
 
+/** The externally-kicked tick (POST /v1/fiat/settlement/tick). Four freezes on
+ *  2026-07-23 — two different builds, identical signature: tick #1 completes,
+ *  tick #2 never begins — showed the in-process timer chain cannot be trusted
+ *  in this server. Correctness now rides on this: cron kicks one tick per
+ *  minute over HTTP, a fresh request context each time, running the SAME
+ *  guarded tick against the SAME in-memory ledger. The internal loop remains
+ *  as a best-effort fast path. */
+export function getProductionSettlementListener(): SettlementListener | undefined {
+  return productionListener;
+}
+
+/** Tests only. */
+export function setProductionSettlementListenerForTest(l: SettlementListener | undefined): void {
+  productionListener = l;
+}
+
 /**
  * Entry point for instrumentation.ts. Gated on FIAT_SETTLEMENT_ENABLED=1 and
  * a process-wide singleton (dev hot reloads must not double-start).
