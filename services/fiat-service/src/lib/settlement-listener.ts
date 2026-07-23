@@ -121,6 +121,12 @@ export interface SettlementListener {
   stop(): Promise<void>;
 }
 
+/** Executed-state view of one session, for the log-free reconciliation sweep. */
+export interface SessionStateReader {
+  /** undefined = temporarily unknown (treat as not-ended and retry next tick). */
+  session(jobId: bigint): Promise<{ ended: boolean; refundedToUser: bigint } | undefined>;
+}
+
 export function startSettlementListener(opts: {
   ledger: CreditsLedger;
   source: SettlementSource;
@@ -144,6 +150,14 @@ export function startSettlementListener(opts: {
    *  (settle() is idempotent via the settled-refunds guard), and it gives a
    *  replica that lagged past safetyLag more chances. Default 0 (exact). */
   overlapBlocks?: number;
+  /** The job-962 lesson (2026-07-23, second miss THROUGH the 30-block overlap):
+   *  gateways can route eth_getLogs to an indexer cluster lagging MINUTES behind
+   *  the head that eth_blockNumber reports, so no fixed overlap is safe. This
+   *  sweep reconciles by STATE instead: every tick, each job the ledger still
+   *  waits on is checked via eth_call (executed state, no log indexer involved)
+   *  and settled from the contract's own refundedToUser. Events stay the fast
+   *  path; the sweep is the guarantee. */
+  stateSweep?: SessionStateReader;
 }): SettlementListener {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -186,6 +200,25 @@ export function startSettlementListener(opts: {
       await applySettlementEvents(opts.ledger, events, opts.onAlarm);
       // Never let the overlap walk the cursor backwards.
       await opts.cursor.save(Math.max(safeLatest + 1, from));
+      if (opts.stateSweep) {
+        for (const jobId of opts.ledger.boundJobIds()) {
+          try {
+            const s = await opts.stateSweep.session(jobId);
+            if (!s || !s.ended) continue;
+            const result = await opts.ledger.settle(jobId, s.refundedToUser);
+            if (result.applied) {
+              // Recovery via state means the event path missed it — say so.
+              opts.onAlarm(
+                `state-sweep recovered job ${jobId}: refund ${s.refundedToUser} (the event path missed it)`
+              );
+            }
+          } catch (e) {
+            opts.onAlarm(
+              `state-sweep failed on job ${jobId}: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        }
+      }
     } catch (e) {
       opts.onAlarm(`settlement listener tick failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -244,6 +277,28 @@ export function makeChainSettlementSource(deps?: {
   };
 }
 
+/** State reader over the real marketplace: one eth_call per outstanding job.
+ *  eth_call reflects executed state directly — no log indexer in the path. */
+export function makeChainSessionReader(): SessionStateReader {
+  const provider = new JsonRpcProvider(rpcUrl());
+  const contract = new Contract(
+    jobMarketplaceAddress(),
+    [
+      'function sessionJobs(uint256) view returns (uint256 id, address depositor, address host, address paymentToken, uint256 deposit, uint256 pricePerToken, uint256 tokensUsed, uint256 maxDuration, uint256 startTime, uint256 lastProofTime, uint256 proofInterval, uint256 proofTimeoutWindow, uint8 status, bool withdrawnByHost, uint256 refundedToUser, string conversationCID, bytes32 lastProofHash, string lastProofCID)',
+    ],
+    provider
+  );
+  return {
+    async session(jobId: bigint) {
+      const s = await contract.sessionJobs(jobId);
+      // SessionStatus: 0 Active, 1 Completed, 2 TimedOut (API_REFERENCE.md).
+      // Non-active means the contract has finalised refundedToUser (0 is a
+      // legitimate fully-consumed deposit).
+      return { ended: Number(s.status) !== 0, refundedToUser: BigInt(s.refundedToUser) };
+    },
+  };
+}
+
 /** Cursor persisted next to the ledger journal (R5: part of the money record). */
 export function makeFileCursor(path: string): SettlementCursor {
   return {
@@ -286,6 +341,8 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     // lag 5 ≈ 10s behind head, overlap 30 ≈ a minute of re-scan each tick.
     safetyLag: Number(process.env.FIAT_SETTLEMENT_SAFETY_LAG ?? '5'),
     overlapBlocks: Number(process.env.FIAT_SETTLEMENT_OVERLAP_BLOCKS ?? '30'),
+    // The guarantee layer: log-free, lag-proof reconciliation by executed state.
+    stateSweep: makeChainSessionReader(),
   });
   console.log('[fiat-settlement] listener started');
   return productionListener;

@@ -277,6 +277,17 @@ export class CreditsLedger {
     return this.settledRefunds.get(jobId.toString());
   }
 
+  /** Jobs the ledger is still waiting on (bound holds, neither settled nor
+   *  released) — the work-list for the settlement state sweep. Settling a job
+   *  flips its hold to 'settled', so recovered jobs drop out automatically. */
+  boundJobIds(): bigint[] {
+    const out: bigint[] = [];
+    for (const hold of this.holds.values()) {
+      if (hold.state === 'bound' && hold.jobId !== undefined) out.push(hold.jobId);
+    }
+    return out;
+  }
+
   /** Credit a Stripe purchase. Idempotent per Stripe event id (webhook replays
    *  are a no-op). The ONLY way money enters the ledger (Decision 6). The
    *  paymentIntentId is the card charge a later cash-out may refund against. */

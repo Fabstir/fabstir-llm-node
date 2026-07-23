@@ -326,6 +326,85 @@ describe('startSettlementListener (manual ticks, fake source + cursor)', () => {
     await listener.stop();
   });
 
+  // The job-962 incident (2026-07-23, second miss THROUGH the 30-block overlap):
+  // log queries can be served by an indexer cluster lagging minutes behind the
+  // reported head, so no fixed overlap wins. The state sweep reconciles by
+  // eth_call against executed state — log-free, therefore lag-proof.
+  it('state sweep recovers a settlement the event path missed entirely, and says so', async () => {
+    const ledger = await ledgerWithBoundJob(962n);
+    const { source } = fakeSource({}, () => 200); // events: nothing, ever
+    const alarms: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor: memoryCursor(190).cursor, // cursor long past the settlement
+      fromBlock: 100,
+      onAlarm: (m) => alarms.push(m),
+      manual: true,
+      stateSweep: {
+        session: async (jobId) =>
+          jobId === 962n ? { ended: true, refundedToUser: REFUND } : undefined,
+      },
+    });
+    await listener.tick();
+    expect(ledger.refundForJob(962n)).toBe(REFUND);
+    expect(alarms.some((m) => m.includes('state-sweep recovered job 962'))).toBe(true);
+
+    // Recovered job left the bound set — the next tick must not re-settle or re-alarm.
+    const before = alarms.length;
+    await listener.tick();
+    expect(alarms).toHaveLength(before);
+    await listener.stop();
+  });
+
+  it('state sweep leaves active sessions and unknown reads alone', async () => {
+    const ledger = await ledgerWithBoundJob(963n);
+    const alarms: string[] = [];
+    let answer: { ended: boolean; refundedToUser: bigint } | undefined = {
+      ended: false,
+      refundedToUser: 0n,
+    };
+    const listener = startSettlementListener({
+      ledger,
+      source: fakeSource({}, () => 200).source,
+      cursor: memoryCursor(190).cursor,
+      fromBlock: 100,
+      onAlarm: (m) => alarms.push(m),
+      manual: true,
+      stateSweep: { session: async () => answer },
+    });
+    await listener.tick(); // active → untouched
+    expect(ledger.refundForJob(963n)).toBeUndefined();
+    answer = undefined;
+    await listener.tick(); // temporarily unknown → untouched, retried later
+    expect(ledger.refundForJob(963n)).toBeUndefined();
+    expect(alarms).toEqual([]);
+    await listener.stop();
+  });
+
+  it('a state-sweep reader failure alarms but does not kill the tick', async () => {
+    const ledger = await ledgerWithBoundJob(964n);
+    const alarms: string[] = [];
+    const { get, cursor } = memoryCursor(190);
+    const listener = startSettlementListener({
+      ledger,
+      source: fakeSource({}, () => 200).source,
+      cursor,
+      fromBlock: 100,
+      onAlarm: (m) => alarms.push(m),
+      manual: true,
+      stateSweep: {
+        session: async () => {
+          throw new Error('rpc down');
+        },
+      },
+    });
+    await listener.tick();
+    expect(alarms.some((m) => m.includes('state-sweep failed on job 964'))).toBe(true);
+    expect(get()).toBe(201); // the event path still ran and advanced the cursor
+    await listener.stop();
+  });
+
   it('reconciles orphaned holds each tick, then settles the recovered session (M2)', async () => {
     // A hold whose create tx was submitted (txHash known) but never bound — the
     // exact crash-between-create-and-bind orphan.
