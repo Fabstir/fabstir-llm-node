@@ -382,6 +382,63 @@ describe('startSettlementListener (manual ticks, fake source + cursor)', () => {
     await listener.stop();
   });
 
+  // The tick-freeze incident (2026-07-23, #3): one hung RPC await stopped ALL
+  // future ticks silently — 962 recovered at startup, 965 never touched. The
+  // watchdog abandons a stuck tick loudly and the loop lives on; the heartbeat
+  // makes prolonged silence provably mean "dead", never "idle".
+  it('the watchdog abandons a hung tick with an alarm, and the loop keeps ticking', async () => {
+    const ledger = await ledgerWithBoundJob(965n);
+    const alarms: string[] = [];
+    let hang = true;
+    const source = {
+      latestBlock: () => (hang ? new Promise<number>(() => {}) : Promise.resolve(200)),
+      query: async () => [],
+    };
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor: memoryCursor(190).cursor,
+      fromBlock: 100,
+      onAlarm: (m) => alarms.push(m),
+      manual: true,
+      tickTimeoutMs: 30,
+      stateSweep: { session: async () => ({ ended: true, refundedToUser: REFUND }) },
+    });
+
+    await listener.tick(); // hangs on latestBlock → watchdog fires
+    expect(alarms.some((m) => m.includes('tick watchdog'))).toBe(true);
+    expect(ledger.refundForJob(965n)).toBeUndefined();
+
+    hang = false;
+    await listener.tick(); // the loop survived; the sweep now recovers the job
+    expect(ledger.refundForJob(965n)).toBe(REFUND);
+    await listener.stop();
+  });
+
+  it('the heartbeat reports tick count, cursor and bound jobs every N ticks', async () => {
+    const ledger = await ledgerWithBoundJob(966n);
+    const beats: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source: fakeSource({}, () => 200).source,
+      cursor: memoryCursor(150).cursor,
+      fromBlock: 100,
+      onAlarm: () => {},
+      manual: true,
+      heartbeatEvery: 2,
+      onHeartbeat: (line) => beats.push(line),
+    });
+    await listener.tick();
+    await listener.tick();
+    await listener.tick();
+    await listener.tick();
+    expect(beats).toHaveLength(2);
+    expect(beats[0]).toContain('tick #2');
+    expect(beats[0]).toContain('boundJobs 1');
+    expect(beats[1]).toContain('tick #4');
+    await listener.stop();
+  });
+
   it('a state-sweep reader failure alarms but does not kill the tick', async () => {
     const ledger = await ledgerWithBoundJob(964n);
     const alarms: string[] = [];

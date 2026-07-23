@@ -14,7 +14,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Contract, Interface, JsonRpcProvider, Wallet } from 'ethers';
-import { fetchUsdcMicroBalance, rpcUrl, usdcTokenAddress } from './balance';
+import { rpcUrl, usdcTokenAddress } from './balance';
 import { jobMarketplaceAddress } from './escrow';
 import { getFiatDeps } from './fiat-session-service';
 import { makeChainReceiptReader, reconcileOrphans, type CreateReceiptReader } from './fiat-reconcile';
@@ -158,10 +158,22 @@ export function startSettlementListener(opts: {
    *  and settled from the contract's own refundedToUser. Events stay the fast
    *  path; the sweep is the guarantee. */
   stateSweep?: SessionStateReader;
+  /** The tick-freeze lesson (2026-07-23, incident #3): none of the tick's RPC
+   *  awaits had a timeout, so ONE hung request silently stopped all future
+   *  ticks — the only failure shape no per-event alarm can see. A tick that
+   *  exceeds this budget is abandoned with an ALARM and the loop reschedules;
+   *  abandonment is safe because every apply is idempotent. Default 120s. */
+  tickTimeoutMs?: number;
+  /** Liveness heartbeat: every N completed ticks, report tick count, cursor and
+   *  outstanding bound jobs. Makes journal silence itself diagnostic — a quiet
+   *  listener is now provably dead rather than possibly idle. 0 disables. */
+  heartbeatEvery?: number;
+  onHeartbeat?: (line: string) => void;
 }): SettlementListener {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> = Promise.resolve();
+  let tickCount = 0;
 
   async function tickOnce(): Promise<void> {
     try {
@@ -224,17 +236,41 @@ export function startSettlementListener(opts: {
     }
   }
 
+  async function guardedTick(): Promise<void> {
+    const budget = opts.tickTimeoutMs ?? 120_000;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      watchdog = setTimeout(() => resolve('timeout'), budget);
+    });
+    const result = await Promise.race([tickOnce().then(() => 'done' as const), timedOut]);
+    if (watchdog) clearTimeout(watchdog);
+    if (result === 'timeout') {
+      opts.onAlarm(
+        `tick watchdog: tick exceeded ${budget}ms — abandoned and rescheduled (hung RPC await; applies are idempotent so late effects are harmless)`
+      );
+      return;
+    }
+    tickCount += 1;
+    const every = opts.heartbeatEvery ?? 0;
+    if (opts.onHeartbeat && every > 0 && tickCount % every === 0) {
+      const cursorVal = await opts.cursor.load().catch(() => undefined);
+      opts.onHeartbeat(
+        `heartbeat: tick #${tickCount}, cursor ${cursorVal ?? 'unset'}, boundJobs ${opts.ledger.boundJobIds().length}`
+      );
+    }
+  }
+
   function schedule(): void {
     if (stopped) return;
     timer = setTimeout(() => {
-      running = tickOnce().finally(schedule);
+      running = guardedTick().finally(schedule);
     }, opts.pollMs ?? 15_000);
   }
   if (!opts.manual) schedule();
 
   return {
     tick: () => {
-      running = tickOnce();
+      running = guardedTick();
       return running;
     },
     stop: async () => {
@@ -343,6 +379,11 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     overlapBlocks: Number(process.env.FIAT_SETTLEMENT_OVERLAP_BLOCKS ?? '30'),
     // The guarantee layer: log-free, lag-proof reconciliation by executed state.
     stateSweep: makeChainSessionReader(),
+    // Liveness: abandon hung ticks loudly; heartbeat every 40 ticks (~10 min at
+    // the 15s poll) so journal silence beyond that provably means dead.
+    tickTimeoutMs: Number(process.env.FIAT_SETTLEMENT_TICK_TIMEOUT_MS ?? '120000'),
+    heartbeatEvery: Number(process.env.FIAT_SETTLEMENT_HEARTBEAT_EVERY ?? '40'),
+    onHeartbeat: (line) => console.log(`[fiat-settlement] ${line}`),
   });
   console.log('[fiat-settlement] listener started');
   return productionListener;
@@ -363,16 +404,26 @@ function makeVaultHoldings(): { holdings(): Promise<bigint> } | undefined {
   if (!key) return undefined;
   const vaultAddress = new Wallet(key).address;
   const treasury = process.env.FIAT_TREASURY_ADDRESS;
+  // ONE provider for the lifetime of the listener. fetchUsdcMicroBalance builds
+  // a fresh JsonRpcProvider per call — at one solvency check per 15s tick that
+  // is constant connection/detection churn against the public gateway (and a
+  // hang candidate in the 2026-07-23 tick-freeze incident). Reuse everything.
+  const provider = new JsonRpcProvider(rpcUrl());
   const deposits = new Contract(
     jobMarketplaceAddress(),
     ['function userDepositsToken(address user, address token) view returns (uint256)'],
-    new JsonRpcProvider(rpcUrl())
+    provider
+  );
+  const usdc = new Contract(
+    usdcTokenAddress(),
+    ['function balanceOf(address) view returns (uint256)'],
+    provider
   );
   return {
     async holdings(): Promise<bigint> {
-      let total = await fetchUsdcMicroBalance(vaultAddress);
+      let total = BigInt(await usdc.balanceOf(vaultAddress));
       total += (await deposits.userDepositsToken(vaultAddress, usdcTokenAddress())) as bigint;
-      if (treasury) total += await fetchUsdcMicroBalance(treasury);
+      if (treasury) total += BigInt(await usdc.balanceOf(treasury));
       return total;
     },
   };
