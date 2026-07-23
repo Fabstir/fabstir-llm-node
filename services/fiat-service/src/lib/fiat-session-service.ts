@@ -92,7 +92,17 @@ export interface FiatSessionService {
 
 let overrideService: FiatSessionService | undefined;
 let overrideDeps: Partial<FiatSessionDeps> | undefined;
-let builtBackend: { deps: FiatSessionDeps; service: FiatSessionService } | undefined;
+
+// The built backend lives on globalThis, NOT module scope. Next compiles
+// instrumentation.js and the route handlers into separate bundles, each with
+// its own copy of module variables: a module-local here gave the settlement
+// listener its OWN CreditsLedger instance over the same journal file — it
+// loaded the journal at boot and never saw holds the routes bound afterwards
+// (heartbeat: "boundJobs 0" while a live session's hold sat in the route
+// bundle's copy). One process, ONE ledger, whichever bundle asks first.
+const g = globalThis as typeof globalThis & {
+  __fiatBackend?: Promise<{ deps: FiatSessionDeps; service: FiatSessionService }>;
+};
 
 /** Tests inject a stub; pass undefined to restore the env-built service. */
 export function setFiatSessionServiceForTest(service: FiatSessionService | undefined): void {
@@ -104,8 +114,10 @@ export function setFiatDepsForTest(deps: Partial<FiatSessionDeps> | undefined): 
   overrideDeps = deps;
 }
 
-async function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionService }> {
-  if (!builtBackend) {
+function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionService }> {
+  // A PROMISE on globalThis (not the built value): if two bundles boot
+  // concurrently, both await the same construction — one ledger, ever.
+  g.__fiatBackend ??= (async () => {
     // The journals ARE the users' money (R5): git-ignored data dir, back it up.
     // (makeVaultChain() below throws the "not configured" error when the vault
     // key is unset — one authority for that message.)
@@ -117,9 +129,9 @@ async function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSes
       chain: makeVaultChain(),
       signAuth: signSessionAuthorisation,
     };
-    builtBackend = { deps, service: { open: (request) => openFiatSession(deps, request) } };
-  }
-  return builtBackend;
+    return { deps, service: { open: (request) => openFiatSession(deps, request) } };
+  })();
+  return g.__fiatBackend;
 }
 
 export async function getFiatSessionService(): Promise<FiatSessionService> {
