@@ -353,7 +353,15 @@ export function makeFileCursor(path: string): SettlementCursor {
   };
 }
 
-let productionListener: SettlementListener | undefined;
+// On globalThis, NOT module scope: Next compiles instrumentation.js and the
+// route handlers into SEPARATE bundles, each with its own copy of this module's
+// variables — a module-local here left the tick endpoint seeing `undefined`
+// while the instrumentation-owned listener was demonstrably running (first
+// deploy of the endpoint, 2026-07-23 20:08). Same dual-bundle trap the
+// challenge store already solves the same way.
+const g = globalThis as typeof globalThis & {
+  __fiatSettlementListener?: SettlementListener;
+};
 
 /** The externally-kicked tick (POST /v1/fiat/settlement/tick). Four freezes on
  *  2026-07-23 — two different builds, identical signature: tick #1 completes,
@@ -363,12 +371,12 @@ let productionListener: SettlementListener | undefined;
  *  guarded tick against the SAME in-memory ledger. The internal loop remains
  *  as a best-effort fast path. */
 export function getProductionSettlementListener(): SettlementListener | undefined {
-  return productionListener;
+  return g.__fiatSettlementListener;
 }
 
 /** Tests only. */
 export function setProductionSettlementListenerForTest(l: SettlementListener | undefined): void {
-  productionListener = l;
+  g.__fiatSettlementListener = l;
 }
 
 /**
@@ -377,11 +385,11 @@ export function setProductionSettlementListenerForTest(l: SettlementListener | u
  */
 export async function startProductionSettlementListener(): Promise<SettlementListener | undefined> {
   if (process.env.FIAT_SETTLEMENT_ENABLED !== '1') return undefined;
-  if (productionListener) return productionListener;
+  if (g.__fiatSettlementListener) return g.__fiatSettlementListener;
   const { ledger } = await getFiatDeps();
   const dataDir = process.env.FIAT_DATA_DIR ?? './data/fiat';
   const fromBlock = Number(process.env.FIAT_SETTLEMENT_FROM_BLOCK ?? '0');
-  productionListener = startSettlementListener({
+  g.__fiatSettlementListener = startSettlementListener({
     ledger,
     source: makeChainSettlementSource(),
     cursor: makeFileCursor(join(dataDir, 'settlement-cursor.json')),
@@ -402,7 +410,7 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     onHeartbeat: (line) => console.log(`[fiat-settlement] ${line}`),
   });
   console.log('[fiat-settlement] listener started');
-  return productionListener;
+  return g.__fiatSettlementListener;
 }
 
 /**
