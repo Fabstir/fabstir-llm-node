@@ -46,6 +46,13 @@ RUN python3.11 -m venv "${VIRTUAL_ENV}"
 RUN pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 \
     --index-url https://download.pytorch.org/whl/cu130
 
+# Proven-host kornia pair, installed BEFORE ComfyUI requirements so the resolver
+# sees kornia satisfied and does not upgrade it. kornia 0.8.3 segfaults at IMPORT
+# TIME inside torch.jit.script (kornia/geometry/epipolar/essential.py) on torch
+# 2.9.1+cu130/Linux; the proven host runs 0.8.2 + kornia_rs 0.1.10 on the same
+# torch without issue (verified 2026-07-23, faulthandler + pip show both sides).
+RUN pip install --no-cache-dir kornia==0.8.2 kornia_rs==0.1.10
+
 WORKDIR /opt
 RUN git clone "${COMFYUI_REPO}" ComfyUI && cd ComfyUI && git checkout "${COMFYUI_COMMIT}"
 WORKDIR /opt/ComfyUI
