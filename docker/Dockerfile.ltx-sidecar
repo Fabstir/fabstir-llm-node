@@ -48,14 +48,19 @@ WORKDIR /opt/ComfyUI
 RUN pip install --no-cache-dir -r requirements.txt
 
 # The five template-required custom packs, each pinned; requirements installed
-# where the pack ships them.
+# where the pack ships them. One filter: radiance pins `Imath>=3.1.0`, but PyPI's
+# standalone Imath is a dead 0.0.x stub — the Imath python module ships inside the
+# modern `openexr` wheel the same requirements already pull, and radiance's own
+# __init__ treats OpenEXR/Imath as OPTIONAL (our one node, Float32ColorCorrect,
+# is pure torch). Dropping the line is safe; installing it is impossible.
 RUN set -eux; \
     clone_pack() { \
         repo="$1"; commit="$2"; dir="$3"; \
         git clone "${repo}" "custom_nodes/${dir}"; \
         git -C "custom_nodes/${dir}" checkout "${commit}"; \
         if [ -f "custom_nodes/${dir}/requirements.txt" ]; then \
-            pip install --no-cache-dir -r "custom_nodes/${dir}/requirements.txt"; \
+            sed '/^[Ii]math/d' "custom_nodes/${dir}/requirements.txt" \
+                | pip install --no-cache-dir -r /dev/stdin; \
         fi; \
     }; \
     clone_pack "${LTXVIDEO_REPO}" "${LTXVIDEO_COMMIT}" "ComfyUI-LTXVideo"; \
