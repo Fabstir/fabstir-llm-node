@@ -1,49 +1,73 @@
-# LTX 2.3 ComfyUI sidecar (text/image-to-video, 22b + HDR IC-LoRA).
+# LTX 2.3 ComfyUI sidecar (the 11 allowlist-v16 video modes).
 # Headless ComfyUI exposing the standard HTTP API (/prompt, /system_stats) on :8188.
 # Multi-GB weights are NOT baked in — mount them via a models volume at runtime
 # (see scripts/download_ltx_models.sh + ltx-sidecar in docker-compose.prod.yml).
-# Build: docker build -t ltx-comfyui -f docker/Dockerfile.ltx-sidecar .
+# Build: docker compose -f docker-compose.prod.yml build ltx-sidecar
+#
+# Every pin below mirrors the PROVEN host install (3XS-Z, enumerated 2026-07-23 via
+# the live instance's /object_info): ComfyUI 0.27.0 core provides most template
+# classes (incl. the MoGe and LTX audio nodes); exactly FIVE custom packs supply the
+# rest — LTXVideo, VideoHelperSuite (VHS_LoadVideo etc.), KJNodes (ImageResizeKJv2),
+# ComfyMath (CM_FloatToInt), radiance (Float32ColorCorrect). Nothing else from the
+# host's 23 packs is referenced by any template; do not add packs "just in case".
+# Torch matches the proven host: 2.9.1+cu130 on Python 3.11, hence the CUDA 13.0
+# base (same base family as Dockerfile.production on the deploy box).
 
-# CUDA base — matches the repo's GPU sidecars (Dockerfile.vlm-sidecar uses 12.4.1).
-# TODO(Jules): confirm this CUDA tag matches the diffusion sidecar / LTX PyTorch build.
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:13.0.0-devel-ubuntu22.04 AS builder
 
-# TODO(Jules): pin commit — exact ComfyUI commit validated against LTX 2.3.
 ARG COMFYUI_REPO=https://github.com/comfyanonymous/ComfyUI.git
-ARG COMFYUI_COMMIT=<pin-me>
-# TODO(Jules): pin commit — exact ComfyUI-LTXVideo commit for LTX 2.3 (22b + HDR).
+ARG COMFYUI_COMMIT=1377a2f72925ed7a5518c1900ff71c6740217b0d
 ARG LTXVIDEO_REPO=https://github.com/Lightricks/ComfyUI-LTXVideo.git
-ARG LTXVIDEO_COMMIT=<pin-me>
-# TODO(Jules): pin commit + confirm repo — HDR/EXR (OpenEXR) save custom node.
-ARG HDR_NODE_REPO=https://github.com/spacepxl/ComfyUI-HQ-Image-Save.git
-ARG HDR_NODE_COMMIT=<pin-me>
+ARG LTXVIDEO_COMMIT=4f45fd6c222eb06eb3e46605da62e7c889e4be5c
+ARG KJNODES_REPO=https://github.com/kijai/ComfyUI-KJNodes.git
+ARG KJNODES_COMMIT=7f43f2ce910a27971bdbbf3fb5a52081457f32e2
+ARG COMFYMATH_REPO=https://github.com/evanspearman/ComfyMath.git
+ARG COMFYMATH_COMMIT=c01177221c31b8e5fbc062778fc8254aeb541638
+# VideoHelperSuite: the proven host's copy is UNVERSIONED (no .git — installed by
+# hand or a manager without metadata), so there is no commit to copy. Pin to the
+# upstream release matching the host copy's pyproject version (see the render-host
+# worklog); bump deliberately, never silently.
+ARG VHS_REPO=https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+ARG VHS_COMMIT=3234937ff5f3ca19068aaba5042771514de2429d
+ARG RADIANCE_REPO=https://github.com/fxtdstudios/radiance.git
+ARG RADIANCE_COMMIT=64fee4144cd4818a087b4269effe6c40d6f6fe2f
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git python3 python3-venv python3-pip ffmpeg libgl1 libglib2.0-0 \
+    git python3.11 python3.11-venv ffmpeg libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
-RUN python3 -m venv "${VIRTUAL_ENV}"
+RUN python3.11 -m venv "${VIRTUAL_ENV}"
 
-# CUDA-matched PyTorch (cu124) before ComfyUI's own requirements.
-RUN pip install --no-cache-dir torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu124
+# CUDA-matched PyTorch (cu130, proven-host version) before ComfyUI's requirements.
+RUN pip install --no-cache-dir torch==2.9.1 torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu130
+
 WORKDIR /opt
 RUN git clone "${COMFYUI_REPO}" ComfyUI && cd ComfyUI && git checkout "${COMFYUI_COMMIT}"
 WORKDIR /opt/ComfyUI
 RUN pip install --no-cache-dir -r requirements.txt
 
-# LTXVideo (LTX 2.3 22b + HDR IC-LoRA) + HDR/EXR save node.
-RUN git clone "${LTXVIDEO_REPO}" custom_nodes/ComfyUI-LTXVideo \
-    && cd custom_nodes/ComfyUI-LTXVideo && git checkout "${LTXVIDEO_COMMIT}" \
-    && pip install --no-cache-dir -r requirements.txt
-RUN git clone "${HDR_NODE_REPO}" custom_nodes/ComfyUI-HDR-EXR \
-    && cd custom_nodes/ComfyUI-HDR-EXR && git checkout "${HDR_NODE_COMMIT}" \
-    && pip install --no-cache-dir -r requirements.txt
+# The five template-required custom packs, each pinned; requirements installed
+# where the pack ships them.
+RUN set -eux; \
+    clone_pack() { \
+        repo="$1"; commit="$2"; dir="$3"; \
+        git clone "${repo}" "custom_nodes/${dir}"; \
+        git -C "custom_nodes/${dir}" checkout "${commit}"; \
+        if [ -f "custom_nodes/${dir}/requirements.txt" ]; then \
+            pip install --no-cache-dir -r "custom_nodes/${dir}/requirements.txt"; \
+        fi; \
+    }; \
+    clone_pack "${LTXVIDEO_REPO}" "${LTXVIDEO_COMMIT}" "ComfyUI-LTXVideo"; \
+    clone_pack "${KJNODES_REPO}" "${KJNODES_COMMIT}" "ComfyUI-KJNodes"; \
+    clone_pack "${COMFYMATH_REPO}" "${COMFYMATH_COMMIT}" "ComfyMath"; \
+    clone_pack "${VHS_REPO}" "${VHS_COMMIT}" "comfyui-videohelpersuite"; \
+    clone_pack "${RADIANCE_REPO}" "${RADIANCE_COMMIT}" "radiance"
 
 # ---- Runtime (no build toolchain; weights mounted at runtime) ----
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 curl ffmpeg libgl1 libglib2.0-0 \
+    python3.11 curl ffmpeg libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /opt/ComfyUI /opt/ComfyUI
@@ -54,5 +78,5 @@ WORKDIR /opt/ComfyUI
 EXPOSE 8188
 HEALTHCHECK --interval=30s --timeout=10s --start-period=240s --retries=3 \
     CMD curl -f http://localhost:8188/system_stats || exit 1
-ENTRYPOINT ["python3", "main.py"]
+ENTRYPOINT ["python", "main.py"]
 CMD ["--listen", "0.0.0.0", "--port", "8188", "--output-directory", "/opt/ComfyUI/output"]
