@@ -39,7 +39,11 @@ ENV VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
 RUN python3.11 -m venv "${VIRTUAL_ENV}"
 
 # CUDA-matched PyTorch (cu130, proven-host version) before ComfyUI's requirements.
-RUN pip install --no-cache-dir torch==2.9.1 torchvision torchaudio \
+# ALL THREE pinned: with only torch pinned, pip pairs it with the index's newest
+# torchaudio (2.11, built against torch 2.11) → fatal `undefined symbol:
+# torch_library_impl` at ComfyUI startup (the LTX audio nodes are core). The trio
+# must always move in lockstep.
+RUN pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 \
     --index-url https://download.pytorch.org/whl/cu130
 
 WORKDIR /opt
