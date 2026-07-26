@@ -135,8 +135,16 @@ export function startSettlementListener(opts: {
   onAlarm: (message: string) => void;
   pollMs?: number;
   /** FC1.4 solvency invariant: vault holdings >= outstanding ledger money,
-   *  asserted every tick when provided. */
-  solvency?: { holdings(): Promise<bigint> };
+   *  asserted every tick when provided. `spendableMicro` is the subset that can
+   *  actually fund a create (see minSpendableMicro). */
+  solvency?: { holdings(): Promise<bigint>; spendableMicro?(): Promise<bigint> };
+  /** The silent-drain lesson (2026-07-26): the card path died with a raw
+   *  `ERC20: transfer amount exceeds balance` while the solvency check reported
+   *  a healthy 12.45 USDC — because most of that was the vault's IN-CONTRACT
+   *  deposit balance, which backs liabilities but cannot fund a create. The
+   *  wallet had 0.48 and no alarm watched it. Warn when the spendable balance
+   *  can no longer cover one maximum-size session. 0 disables. */
+  minSpendableMicro?: bigint;
   /** R5/M2 reconciliation: bind/release orphaned holds (crash between create and
    *  bind) each tick when provided. A no-op when there are no pending creates. */
   reconcile?: { reader: CreateReceiptReader };
@@ -206,6 +214,19 @@ export function startSettlementListener(opts: {
           opts.onAlarm(
             `solvency breach: backing ${backing} (holdings ${holdings} + escrow ${opts.ledger.escrowedMicro()}) below outstanding ledger ${outstanding}`
           );
+        }
+        // Solvent but illiquid is the failure the card path actually hits.
+        const floor = opts.minSpendableMicro ?? 0n;
+        if (floor > 0n && opts.solvency.spendableMicro) {
+          const spendable = await opts.solvency.spendableMicro();
+          if (spendable < floor) {
+            opts.onAlarm(
+              `vault liquidity low: spendable wallet balance ${spendable} below ${floor} (one max session) — ` +
+                `holdings are ${holdings}, so the difference is sitting in the in-contract deposit balance; ` +
+                `withdrawToken it back, or top the vault up. New sessions will revert with ` +
+                `"ERC20: transfer amount exceeds balance" once this reaches zero.`
+            );
+          }
         }
       }
       const from = (await opts.cursor.load()) ?? opts.fromBlock;
@@ -421,6 +442,9 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     fromBlock,
     onAlarm: (message) => console.error(`[fiat-settlement] ALARM: ${message}`),
     solvency: makeVaultHoldings(),
+    // One max-size session is the smallest floor that is still actionable: below
+    // it, the very next open reverts.
+    minSpendableMicro: BigInt(process.env.FIAT_MAX_SESSION_DEPOSIT_MICRO ?? '2000000'),
     reconcile: { reader: makeChainReceiptReader() },
     // Public-RPC replica lag protection (see the tickOnce comment). ~2s blocks:
     // lag 5 ≈ 10s behind head, overlap 30 ≈ a minute of re-scan each tick.
@@ -448,7 +472,9 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
  * withdrawToken the latter), so both count toward backing outstanding
  * liabilities — else a pull-pattern refund would look like a solvency shortfall.
  */
-function makeVaultHoldings(): { holdings(): Promise<bigint> } | undefined {
+function makeVaultHoldings():
+  | { holdings(): Promise<bigint>; spendableMicro(): Promise<bigint> }
+  | undefined {
   const key = process.env.FIAT_VAULT_PRIVATE_KEY;
   if (!key) return undefined;
   const vaultAddress = new Wallet(key).address;
@@ -474,6 +500,13 @@ function makeVaultHoldings(): { holdings(): Promise<bigint> } | undefined {
       total += (await deposits.userDepositsToken(vaultAddress, usdcTokenAddress())) as bigint;
       if (treasury) total += BigInt(await usdc.balanceOf(treasury));
       return total;
+    },
+    // Only the WALLET term can fund createSessionJobForModelWithToken. The
+    // in-contract deposit balance is vault-owned and counts toward solvency,
+    // but it cannot be spent until withdrawToken pulls it back — so a vault can
+    // be provably solvent and still unable to open a single session.
+    async spendableMicro(): Promise<bigint> {
+      return BigInt(await usdc.balanceOf(vaultAddress));
     },
   };
 }

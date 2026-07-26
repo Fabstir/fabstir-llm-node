@@ -234,6 +234,58 @@ describe('solvency invariant (FC1.4 reconciliation)', () => {
     await listener.stop();
   });
 
+  // The silent-drain lesson (2026-07-26): the card path died on a raw
+  // `ERC20: transfer amount exceeds balance` while this very check reported a
+  // healthy 12.45 USDC. Most of that was the vault's IN-CONTRACT deposit
+  // balance — vault-owned, so genuinely solvent, but unspendable until
+  // withdrawToken pulls it back. The wallet held 0.48 and nothing watched it.
+  it('alarms when the vault is solvent but cannot fund one session (liquidity, not solvency)', async () => {
+    const ledger = await CreditsLedger.open(new MemoryLedgerStore());
+    await ledger.purchase('user-1', 1_000_000n, 'evt_1');
+    const alarms: string[] = [];
+    let spendable = 2_000_000n;
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: { load: async () => 5, save: async () => {} },
+      fromBlock: 0,
+      onAlarm: (m) => alarms.push(m),
+      // Comfortably solvent throughout — 12.45 USDC against 1.00 outstanding.
+      solvency: { holdings: async () => 12_447_376n, spendableMicro: async () => spendable },
+      minSpendableMicro: 2_000_000n,
+      manual: true,
+    });
+
+    await listener.tick();
+    expect(alarms).toEqual([]); // solvent AND liquid: silent
+
+    spendable = 483_856n; // the live figure the night it broke
+    await listener.tick();
+
+    expect(alarms).toHaveLength(1);
+    expect(alarms[0]).toMatch(/liquidity/i);
+    expect(alarms[0]).not.toMatch(/solvency breach/i); // distinct fault, distinct wording
+    expect(alarms[0]).toContain('483856');
+    await listener.stop();
+  });
+
+  it('does not raise the liquidity alarm when no floor is configured', async () => {
+    const ledger = await CreditsLedger.open(new MemoryLedgerStore());
+    const alarms: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: { load: async () => 5, save: async () => {} },
+      fromBlock: 0,
+      onAlarm: (m) => alarms.push(m),
+      solvency: { holdings: async () => 0n, spendableMicro: async () => 0n },
+      manual: true,
+    });
+    await listener.tick();
+    expect(alarms).toEqual([]);
+    await listener.stop();
+  });
+
   it('does NOT alarm on an open session, when its deposit is in escrow (M1)', async () => {
     const gate = makeGatekeeper({
       allowedHosts: ['0xabcd000000000000000000000000000000000001'],
