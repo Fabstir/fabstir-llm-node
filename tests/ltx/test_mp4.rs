@@ -70,6 +70,46 @@ fn test_non_video_traks_are_skipped() {
     assert_eq!(video_sample_count(&bytes).unwrap(), 126);
 }
 
+/// A.2 — CHARACTERISATION, not a requirement. `video_sample_count` returns the
+/// FIRST `vide` trak's count, so a container carrying two video traks is read
+/// from whichever the muxer wrote first, regardless of which one a decoder
+/// would pick as the primary stream.
+///
+/// This was investigated as a suspected live false-rejection ("a cover-art
+/// trak sorts first, reads as 1 sample, and the control-video gate rejects a
+/// lawful clip"). **It is not reachable from real encoder output.** ISO BMFF
+/// has no `attached_pic` concept: FFmpeg writes cover art to
+/// `moov/udta/meta/ilst/covr`, a metadata box, not a trak.
+///
+/// Probe run 2026-07-25 against a purpose-built real fixture
+/// (`fabstir-moderation/tests/fixtures/cover_art.mp4` — a sibling repo, NOT a
+/// dependency of this crate, so the numbers here are a RECORDED RESULT rather
+/// than something this test re-checks): one `vide` trak, `video_sample_count`
+/// == 125 (its true frame count), and `check_control_video` ACCEPTS it at both
+/// 121 and 126 billed frames. All 12 mp4/mov files then present across the
+/// workspace — including the helper's own control clips and one 2-trak
+/// `vide`+`soun` file — had exactly one `vide` trak.
+///
+/// The shape below therefore has to be synthesised. It is pinned so that the
+/// boundary of that finding is reproducible, and so that a future decision on
+/// multi-track containers (OQ-L11 stream selection, DL14(b)) has a test to
+/// flip rather than a claim to re-derive.
+#[test]
+fn test_first_vide_trak_wins_when_a_container_carries_two() {
+    let bytes = mp4_with(&[trak(b"vide", Some(1)), trak(b"vide", Some(126))]);
+    assert_eq!(
+        video_sample_count(&bytes).unwrap(),
+        1,
+        "the parser reads the FIRST vide trak, not the longest or the primary one"
+    );
+    let bytes = mp4_with(&[trak(b"vide", Some(126)), trak(b"vide", Some(1))]);
+    assert_eq!(
+        video_sample_count(&bytes).unwrap(),
+        126,
+        "trak order alone decides which count the gate sees"
+    );
+}
+
 #[test]
 fn test_no_video_track_is_an_error() {
     let bytes = mp4_with(&[trak(b"soun", Some(240))]);

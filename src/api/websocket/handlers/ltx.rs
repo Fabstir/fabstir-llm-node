@@ -18,8 +18,10 @@ use crate::ltx::template::Bounds;
 use crate::ltx::types::{FrameManifest, LtxJob};
 use crate::ltx::{attestation, exr, patcher, submit, ComfyClient};
 use ethers::types::U256;
+use futures::FutureExt;
 use rand::RngCore;
 use serde_json::{json, Value};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use tokio::sync::{mpsc, OwnedSemaphorePermit};
 use tracing::{error, info, warn};
@@ -123,6 +125,100 @@ pub fn build_encrypted_ltx_response(
             msg
         }
     }
+}
+
+/// What one bounded WebSocket write did. See [`send_ws_frame_bounded`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsWriteOutcome {
+    /// The frame reached the socket.
+    Sent,
+    /// The write errored — the peer has gone.
+    Failed,
+    /// The write did not complete within the bound — the peer is still
+    /// connected but is not reading (OQ-L24).
+    TimedOut,
+}
+
+impl WsWriteOutcome {
+    /// Both abnormal outcomes mean the same thing to the progress drain: stop
+    /// draining and drop the receiver, so the generation task's existing
+    /// disconnect gates classify the client as gone.
+    ///
+    /// Breaking on `Failed` only would reopen OQ-L24 exactly, so this is a
+    /// method rather than a `== Failed` comparison at the call site.
+    pub fn client_is_gone(self) -> bool {
+        !matches!(self, WsWriteOutcome::Sent)
+    }
+}
+
+/// Write one frame to a WebSocket sink, bounded by `write_timeout`.
+///
+/// **OQ-L24.** The unbounded form (`sink.send(frame).await`) strands session
+/// escrow. A client that completes the handshake, holds the socket open and
+/// then stops reading TCP closes its receive window, so the write never
+/// returns. The LTX progress drain then stops draining its bounded 32-slot
+/// channel; the channel fills; and every `send_err`/`send_stage` inside the
+/// generation core parks on it. The core never returns, so `catch_unwind`
+/// never resolves, the VRAM permit is never released and the single-exit
+/// cleanup never runs — the clip's pending proof stays unresolved for the
+/// process lifetime, `defer_completion` returns `true` for ever, and the
+/// disconnect path returns without `completeSessionJob`. The user then pays an
+/// on-chain `triggerSessionTimeout` reclaim to recover their own escrow, and
+/// the single generation slot is pinned throughout. No panic is involved and
+/// the trigger is entirely client-controlled.
+///
+/// Bounding the write here fixes every one of the core's terminal sends at
+/// once, because it feeds machinery that already exists and is already
+/// correct: a broken drain drops `progress_rx`, which makes `progress_tx`
+/// fail immediately, which is precisely what `send_stage`'s `false` return
+/// and the `client_gone` exit are written to detect.
+pub async fn send_ws_frame_bounded<S, M>(
+    sink: &mut S,
+    frame: M,
+    write_timeout: std::time::Duration,
+) -> WsWriteOutcome
+where
+    S: futures::Sink<M> + Unpin,
+{
+    use futures::SinkExt;
+    match tokio::time::timeout(write_timeout, sink.send(frame)).await {
+        Ok(Ok(())) => WsWriteOutcome::Sent,
+        Ok(Err(_)) => WsWriteOutcome::Failed,
+        Err(_elapsed) => WsWriteOutcome::TimedOut,
+    }
+}
+
+/// How long one WebSocket write may take before the client is treated as gone
+/// (`LTX_WS_WRITE_TIMEOUT_SECS`, default 300 s).
+///
+/// **The bound being finite is the fix; its tightness is not.** Five minutes is
+/// deliberately loose because a false positive is expensive and silent: the
+/// core's `client_gone` exit sends nothing (the channel is already gone), so a
+/// still-connected client simply receives silence, and if the stall lands after
+/// `finalize_clip` the proof is already on-chain and the user is billed while
+/// the `ltx_complete` frame — the ONLY carrier of the output and capability
+/// CIDs — is dropped. Renders run 5–15 minutes, and laptop suspend, a VPN
+/// re-key or a helper blocked on a large decode can all stall a legitimate
+/// client for a minute or more. Bounding at 300 s still closes the unbounded
+/// strand while leaving those survivable.
+pub fn ltx_ws_write_timeout() -> std::time::Duration {
+    parse_ws_write_timeout(std::env::var("LTX_WS_WRITE_TIMEOUT_SECS").ok().as_deref())
+}
+
+/// The parse half of [`ltx_ws_write_timeout`], split out so the DEFAULT is
+/// testable without mutating process-global environment.
+///
+/// The default's *magnitude* is the fix: widening 60 to (say) `u64::MAX`
+/// silently restores the unbounded behaviour OQ-L24 describes, so it is pinned
+/// by test. `0` is rejected rather than honoured — an operator setting it
+/// means "disabled", but as a literal bound it would abort every render at its
+/// first progress frame with a 0-token refund.
+pub fn parse_ws_write_timeout(raw: Option<&str>) -> std::time::Duration {
+    std::time::Duration::from_secs(
+        raw.and_then(|v| v.parse().ok())
+            .filter(|s| *s > 0)
+            .unwrap_or(300),
+    )
 }
 
 /// Build an encrypted `ltx_error` envelope.
@@ -331,6 +427,7 @@ pub async fn handle_encrypted_ltx_generate(
         job_id,
         permit,
         pending_marked,
+        panic_seam: None,
     };
     (ack, Some(task))
 }
@@ -353,6 +450,119 @@ pub struct LtxGenerateTask {
     /// single-exit cleanup resolves it; if the caller DROPS this task without
     /// spawning it, the caller must `mark_proof_forfeited(job_id)` first.
     pub pending_marked: bool,
+    /// TEST SEAM (A.0) — the accept path always constructs this `None` and
+    /// nothing in `src/` ever produces a `Some`. It makes the panic-safety path
+    /// (DL16(a): `catch_unwind` → terminal frame → [`finish_ltx_task`])
+    /// exercisable from an integration crate without a live ComfyUI/S5 harness.
+    /// It exists because `tests/ltx_api_tests.rs` is a separate crate that can
+    /// see neither `pub(crate)` items nor `#[cfg(test)]` code, so the seam must
+    /// be plain `pub` or the test cannot compile.
+    #[doc(hidden)]
+    pub panic_seam: Option<LtxPanicSeam>,
+}
+
+/// Which panic [`LtxGenerateTask::run`]'s core injects at entry. Test-only;
+/// see [`LtxGenerateTask::panic_seam`].
+///
+/// Two variants because the cleanup's forfeit decision turns on
+/// `pending_resolved`, and the two sides of that branch are otherwise
+/// indistinguishable from a test: both real `pending_resolved = true`
+/// assignments sit after `finalize_clip` has been REACHED (its `Ok` arm and its
+/// proof-upload-failure `Err` arm), which needs the live ComfyUI + S5 harness
+/// deferred to Phase B2.0.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LtxPanicSeam {
+    /// Panic with the clip's proof still UNRESOLVED — an exit before
+    /// `finalize_clip`. The cleanup must forfeit the pending proof.
+    BeforeResolve,
+    /// Mark the clip's proof resolved exactly as the `finalize_clip` arms do,
+    /// then panic. The cleanup must NOT forfeit it a second time, or it would
+    /// consume a CONCURRENT clip's pending mark and let the disconnect path
+    /// settle the session under that clip's in-flight proof.
+    AfterResolve,
+}
+
+/// The LTX generation task's SINGLE-EXIT cleanup — every exit of
+/// [`LtxGenerateTask::run`]'s core funnels through here, including (since
+/// DL16(a)) a caught panic.
+///
+/// (a) An exit before `finalize_clip` leaves the clip's pending unresolved:
+///     forfeit it (no work delivered ⇒ that clip settles at 0 — correct).
+/// (b) If a disconnect deferred completion and no proof is pending any more,
+///     THIS task owns `completeSessionJob`: wait out the dispute window since
+///     the last landed proof (a host caller reverts "Dispute wait" inside it),
+///     then complete — one belt-and-braces retry (cm may also retry
+///     internally). PEEK (read-only) before the sleep, TAKE only at wake: a
+///     clip accepted on a reconnected session mid-sleep clears the flag at
+///     accept, so the take fails and completion ownership moves to that clip's
+///     own lifecycle — never settle under it.
+///
+/// Extracted (A.0) so the already-resolved path is unit-testable without a
+/// live render; plain `pub` for the same integration-crate visibility reason as
+/// [`LtxGenerateTask::panic_seam`].
+pub async fn finish_ltx_task(
+    server: &ApiServer,
+    job_id: Option<u64>,
+    pending_marked: bool,
+    pending_resolved: bool,
+) {
+    let Some(jid) = job_id else {
+        return;
+    };
+    if pending_marked && !pending_resolved {
+        server.ltx_tracker().mark_proof_forfeited(jid).await;
+    }
+    if !server.ltx_tracker().deferred_idle(jid).await {
+        return;
+    }
+    let Some(cm) = server.get_checkpoint_manager().await else {
+        error!("LTX job {jid}: completion deferred but no checkpoint manager");
+        return;
+    };
+    let window =
+        cm.dispute_window_secs() + crate::contracts::checkpoint_manager::DISPUTE_WINDOW_BUFFER_SECS;
+    let wait = server.ltx_tracker().proof_wait_remaining(jid, window).await;
+    if !wait.is_zero() {
+        info!(
+            "LTX job {jid}: deferred completion waiting {}s dispute window",
+            wait.as_secs()
+        );
+        tokio::time::sleep(wait).await;
+    }
+    // The take also SETS the completing latch (same lock): accepts are
+    // rejected while the completion runs.
+    if !server.ltx_tracker().take_deferred_if_idle(jid).await {
+        info!("LTX job {jid}: deferred completion ownership moved to a newer clip — skipping");
+        return;
+    }
+    info!("LTX job {jid}: running deferred session completion");
+    // complete_session_job's error is a non-Send Box<dyn Error>: stringify
+    // before holding it across an await.
+    let first = cm
+        .complete_session_job(jid)
+        .await
+        .map_err(|e| e.to_string());
+    if let Err(e) = first {
+        warn!("LTX job {jid}: deferred completion failed ({e}); retrying once after {window}s");
+        tokio::time::sleep(std::time::Duration::from_secs(window)).await;
+        // Atomically re-latch for the retry; false = a newer clip owns
+        // completion now.
+        if !server.ltx_tracker().mark_completing_if_idle(jid).await {
+            info!(
+                "LTX job {jid}: a newer clip is in flight — abandoning the completion retry to \
+                 its lifecycle"
+            );
+            return;
+        }
+        let retry = cm
+            .complete_session_job(jid)
+            .await
+            .map_err(|e| e.to_string());
+        if let Err(e2) = retry {
+            error!("LTX job {jid}: deferred completion retry failed: {e2}");
+        }
+    }
 }
 
 async fn send_stage(
@@ -552,6 +762,27 @@ impl LtxGenerateTask {
         server: Arc<ApiServer>,
         progress_tx: mpsc::Sender<Value>,
     ) {
+        tokio::spawn(self.run(client, session_key, session_id, server, progress_tx));
+    }
+
+    /// The body [`Self::spawn`] detaches. Kept awaitable and plain `pub` (A.0)
+    /// so an integration crate can drive one full generation lifecycle to
+    /// completion deterministically — `spawn` discards its `JoinHandle`, so a
+    /// test driven through it can only poll.
+    ///
+    /// NOT CANCELLATION-SAFE: dropping this future part-way (a `select!` arm, a
+    /// `tokio::time::timeout`, a cancelled parent task) skips the single-exit
+    /// cleanup entirely and strands the clip's pending proof — the very failure
+    /// this task's structure exists to prevent. Production must go through
+    /// [`Self::spawn`], which detaches it onto its own task.
+    pub async fn run(
+        self,
+        client: Arc<ComfyClient>,
+        session_key: [u8; 32],
+        session_id: String,
+        server: Arc<ApiServer>,
+        progress_tx: mpsc::Sender<Value>,
+    ) {
         let LtxGenerateTask {
             job,
             patched_graph,
@@ -561,8 +792,13 @@ impl LtxGenerateTask {
             job_id,
             permit,
             pending_marked,
+            panic_seam,
         } = self;
-        tokio::spawn(async move {
+        // This block is a no-op scope kept deliberately: it was the body of the
+        // old `tokio::spawn(async move { … })`, and preserving it keeps A.0's
+        // diff to the extraction itself rather than re-indenting ~490 lines of
+        // a live billing path.
+        {
             let _permit = permit; // hold the VRAM slot for the whole job
             let rid = request_id.as_deref();
             let (key, sid) = (&session_key, session_id.as_str());
@@ -576,6 +812,21 @@ impl LtxGenerateTask {
             // without it, any error path taken after a disconnect deferred
             // completion would leave the session unsettled until job timeout.
             let core = async {
+                // Inert in any release binary: `debug_assertions` is off under
+                // `--release`, so the shipped artefact cannot panic here even
+                // if a future construction site sets the field.
+                if cfg!(debug_assertions) {
+                    match panic_seam {
+                        Some(LtxPanicSeam::BeforeResolve) => {
+                            panic!("LTX test seam: panic before resolve")
+                        }
+                        Some(LtxPanicSeam::AfterResolve) => {
+                            pending_resolved = true;
+                            panic!("LTX test seam: panic after resolve")
+                        }
+                        None => {}
+                    }
+                }
                 // Conditioned templates: fetch each input image/video from S5,
                 // upload to ComfyUI, patch the LoadImage/LoadVideo nodes, and
                 // collect the per-input `keccak256(plaintext)` for the v2/v3
@@ -981,85 +1232,62 @@ impl LtxGenerateTask {
                     caps.len()
                 );
             };
-            core.await;
+            // DL16(a): a panic anywhere in the core used to unwind straight out
+            // of the spawned task, skipping the single-exit cleanup below — the
+            // clip's pending proof was then never forfeited, `pending_count`
+            // stayed at 1 forever, and the later disconnect path took
+            // `defer_completion` (true) and returned WITHOUT completing the
+            // session. Catching the unwind restores the single exit. (`panic =
+            // unwind` is in force; no profile sets `panic = "abort"`.)
+            let panicked = AssertUnwindSafe(core).catch_unwind().await.is_err();
             // Render is over on every core exit — release the VRAM slot before
             // any settlement sleeps (the deferred path can wait 35s+).
             drop(_permit);
 
-            // SINGLE-EXIT cleanup — every core exit funnels through here.
-            // (a) An exit before finalize_clip leaves the clip's pending
-            //     unresolved: forfeit it (no work delivered ⇒ that clip settles
-            //     at 0 — correct).
-            // (b) If a disconnect deferred completion and no proof is pending
-            //     any more, THIS task owns completeSessionJob: wait out the
-            //     dispute window since the last landed proof (host caller
-            //     reverts "Dispute wait" inside it), then complete — one
-            //     belt-and-braces retry (cm may also retry internally).
-            //     PEEK (read-only) before the sleep, TAKE only at wake: a clip
-            //     accepted on a reconnected session mid-sleep clears the flag
-            //     at accept, so the take fails and completion ownership moves
-            //     to that clip's own lifecycle — never settle under it.
-            if let Some(jid) = job_id {
-                if pending_marked && !pending_resolved {
-                    server.ltx_tracker().mark_proof_forfeited(jid).await;
-                }
-                if server.ltx_tracker().deferred_idle(jid).await {
-                    if let Some(cm) = server.get_checkpoint_manager().await {
-                        let window = cm.dispute_window_secs()
-                            + crate::contracts::checkpoint_manager::DISPUTE_WINDOW_BUFFER_SECS;
-                        let wait = server.ltx_tracker().proof_wait_remaining(jid, window).await;
-                        if !wait.is_zero() {
-                            info!(
-                                "LTX job {jid}: deferred completion waiting {}s dispute window",
-                                wait.as_secs()
-                            );
-                            tokio::time::sleep(wait).await;
-                        }
-                        // The take also SETS the completing latch (same lock):
-                        // accepts are rejected while the completion runs.
-                        if !server.ltx_tracker().take_deferred_if_idle(jid).await {
-                            info!(
-                                "LTX job {jid}: deferred completion ownership moved to a newer \
-                                 clip — skipping"
-                            );
-                            return;
-                        }
-                        info!("LTX job {jid}: running deferred session completion");
-                        // complete_session_job's error is a non-Send Box<dyn
-                        // Error>: stringify before holding it across an await.
-                        let first = cm
-                            .complete_session_job(jid)
-                            .await
-                            .map_err(|e| e.to_string());
-                        if let Err(e) = first {
-                            warn!(
-                                "LTX job {jid}: deferred completion failed ({e}); retrying once \
-                                 after {window}s"
-                            );
-                            tokio::time::sleep(std::time::Duration::from_secs(window)).await;
-                            // Atomically re-latch for the retry; false = a
-                            // newer clip owns completion now.
-                            if !server.ltx_tracker().mark_completing_if_idle(jid).await {
-                                info!(
-                                    "LTX job {jid}: a newer clip is in flight — abandoning the \
-                                     completion retry to its lifecycle"
-                                );
-                                return;
-                            }
-                            let retry = cm
-                                .complete_session_job(jid)
-                                .await
-                                .map_err(|e| e.to_string());
-                            if let Err(e2) = retry {
-                                error!("LTX job {jid}: deferred completion retry failed: {e2}");
-                            }
-                        }
-                    } else {
-                        error!("LTX job {jid}: completion deferred but no checkpoint manager");
-                    }
-                }
+            if panicked {
+                error!(
+                    "LTX job {:?} (session {sid}): generation task PANICKED — forfeiting the \
+                     clip and running the single-exit cleanup",
+                    job_id
+                );
             }
-        });
+
+            // ORDER MATTERS: the money cleanup runs BEFORE the terminal frame.
+            // `send_err` awaits a send on a BOUNDED channel (capacity 32,
+            // `api/server.rs:2916`) whose drain loop blocks inside
+            // `ws_sender.send(...).await` with no write timeout — a client that
+            // holds the socket open but stops reading TCP fills that channel and
+            // parks the send forever. Sending first would therefore skip the
+            // forfeit on exactly the input a hostile client controls.
+            // SCOPE: ordering matters here for the PANIC exit. The wider
+            // wedge — the core's other terminal exits parking inside the core
+            // on a full channel — was OQ-L24, and is now closed separately by
+            // bounding the WebSocket writes themselves (`send_ws_frame_bounded`),
+            // so a non-reading client can no longer park any of them.
+            // Nothing is lost by
+            // going second: the deferred branch of the cleanup only runs when a
+            // disconnect already happened (`completion_deferred`), in which case
+            // this task's `progress_tx` belongs to a connection that is gone and
+            // the frame is undeliverable anyway; when the client IS connected the
+            // cleanup returns immediately after the forfeit.
+            finish_ltx_task(&server, job_id, pending_marked, pending_resolved).await;
+
+            if panicked {
+                // Otherwise the client waits out LTX_JOB_TIMEOUT_SECS. Reuses
+                // GENERATION_FAILED (DL9): the addon renders only the leading
+                // ALLCAPS token, so a distinguishable code needs helper/addon
+                // work (OQ-L8) and is outside Slice A.
+                send_err(
+                    &progress_tx,
+                    "GENERATION_FAILED",
+                    "generation failed unexpectedly",
+                    key,
+                    sid,
+                    rid,
+                )
+                .await;
+            }
+        }
     }
 }
 

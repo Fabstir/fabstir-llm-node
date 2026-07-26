@@ -147,6 +147,15 @@ impl ProofSubmissionCache {
 pub struct CheckpointManager {
     web3_client: Arc<Web3Client>,
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
+    /// Jobs whose tokens were claimed by an LTX `submitProofOfWork` rather than
+    /// by LLM token tracking. Purely for HONEST LOGGING: `job_trackers` counts
+    /// LLM inference tokens, so an LTX-only session legitimately never appears
+    /// there. Without this distinction the settlement path logged
+    /// "❌ NO TRACKER — payment calculation may be affected!" on every
+    /// successful LTX render, which is false — `completeSessionJob(jobId,
+    /// conversationCID)` takes no token count, and the tokens are already on
+    /// chain from the proof. Never used for any payment decision.
+    ltx_proof_jobs: Arc<RwLock<std::collections::HashSet<u64>>>,
     /// Content hashes for real prompt/response binding (Phase 4 - v8.10.0)
     content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>>,
     proof_system_address: Address,
@@ -212,6 +221,7 @@ impl CheckpointManager {
         Ok(Self {
             web3_client,
             job_trackers: Arc::new(RwLock::new(HashMap::new())),
+            ltx_proof_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
             content_hashes: Arc::new(RwLock::new(HashMap::new())),
             proof_system_address,
             host_address,
@@ -1366,13 +1376,19 @@ impl CheckpointManager {
                     job_id
                 );
             }
-        } else {
-            error!(
-                "❌ No tracker found for job {} - tokens were never tracked!",
+        } else if self.ltx_proof_jobs.read().await.contains(&job_id) {
+            debug!(
+                "No LLM token tracker for job {} — it settled via an LTX proof, so there is no \
+                 final LLM checkpoint to submit (expected)",
                 job_id
             );
-            error!("   This means HTTP inference didn't track tokens for this job ID");
-            error!("   Check if job_id/session_id is correctly passed in inference requests");
+        } else {
+            warn!(
+                "⚠️ No token tracker for job {} — no LLM tokens were tracked and no LTX proof was \
+                 submitted, so this session bills nothing",
+                job_id
+            );
+            warn!("   If this was an inference session, check job_id/session_id is passed in the request");
         }
 
         Ok(())
@@ -1542,8 +1558,19 @@ impl CheckpointManager {
                     "[CHECKPOINT-MGR]     - Session ID: {:?}",
                     tracker.session_id
                 );
+            } else if self.ltx_proof_jobs.read().await.contains(&job_id) {
+                // Expected: LTX/video sessions claim tokens via submitProofOfWork,
+                // not via LLM token tracking. Payment is unaffected.
+                info!(
+                    "[CHECKPOINT-MGR]   ✓ Job {} settled via an LTX proof (no LLM token tracker — expected)",
+                    job_id
+                );
             } else {
-                error!("[CHECKPOINT-MGR]   ❌ Job {} has NO TRACKER - payment calculation may be affected!", job_id);
+                warn!(
+                    "[CHECKPOINT-MGR]   ⚠️ Job {} has no LLM token tracker and no LTX proof — \
+                     nothing was billed for this session",
+                    job_id
+                );
             }
         }
 
@@ -2019,6 +2046,10 @@ impl crate::ltx::submit::ProofSubmit for CheckpointManager {
         proof_hash: [u8; 32],
         proof_cid: String,
     ) -> Result<H256> {
+        // Logging only (see `ltx_proof_jobs`): recorded BEFORE the call so a
+        // submission that fails mid-flight still marks the job as LTX rather
+        // than reporting it as an untracked inference session.
+        self.ltx_proof_jobs.write().await.insert(job_id);
         let (tx_hash, receipt) = crate::ltx::submit::submit_proof(
             &self.web3_client,
             self.proof_system_address,

@@ -2373,20 +2373,37 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     // a node serving vault money must not serve blind.
                                                     if !server.fiat_vault_addresses.is_empty() {
                                                         let denial: Option<String> = match job_id {
-                                                            None => Some("job id unparseable".to_string()),
+                                                            None => Some(
+                                                                "job id unparseable".to_string(),
+                                                            ),
                                                             Some(jid) => {
-                                                                let depositor = match server.get_checkpoint_manager().await {
-                                                                    Some(cm) => cm.query_session_depositor(jid).await,
-                                                                    None => Err(anyhow::anyhow!("no checkpoint manager")),
+                                                                let depositor = match server
+                                                                    .get_checkpoint_manager()
+                                                                    .await
+                                                                {
+                                                                    Some(cm) => {
+                                                                        cm.query_session_depositor(
+                                                                            jid,
+                                                                        )
+                                                                        .await
+                                                                    }
+                                                                    None => Err(anyhow::anyhow!(
+                                                                        "no checkpoint manager"
+                                                                    )),
                                                                 };
                                                                 match depositor {
-                                                                    Err(e) => Some(format!("depositor unavailable: {}", e)),
+                                                                    Err(e) => Some(format!(
+                                                                        "depositor unavailable: {}",
+                                                                        e
+                                                                    )),
                                                                     Ok(dep) => {
                                                                         let authorised = server
                                                                             .session_auth_store
                                                                             .lock()
                                                                             .ok()
-                                                                            .and_then(|m| m.get(&jid).cloned());
+                                                                            .and_then(|m| {
+                                                                                m.get(&jid).cloned()
+                                                                            });
                                                                         if crate::api::session_auth::authorise_session_client(
                                                                             &dep,
                                                                             &client_address,
@@ -2405,14 +2422,18 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                             }
                                                         };
                                                         if let Some(reason) = denial {
-                                                            error!("🚫 SESSION_AUTH_DENIED: {}", reason);
+                                                            error!(
+                                                                "🚫 SESSION_AUTH_DENIED: {}",
+                                                                reason
+                                                            );
                                                             let mut error_msg = json!({
                                                                 "type": "error",
                                                                 "code": "SESSION_AUTH_DENIED",
                                                                 "message": format!("session authorisation denied: {}", reason),
                                                                 "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
                                                             });
-                                                            if let Some(msg_id) = json_msg.get("id") {
+                                                            if let Some(msg_id) = json_msg.get("id")
+                                                            {
                                                                 error_msg["id"] = msg_id.clone();
                                                             }
                                                             let _ = ws_sender
@@ -2910,7 +2931,42 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         job_id,
                                                                         json_msg.get("id"),
                                                                     ).await;
-                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(ack.to_string())).await;
+                                                                    // OQ-L24 (accept path). This write happens AFTER the handler
+                                                                    // has taken the VRAM permit and marked the proof pending, but
+                                                                    // BEFORE the task is spawned — so if it parks on a wedged
+                                                                    // client there is no task in existence to release either. The
+                                                                    // permit would be leaked with no owner (MAX_CONCURRENT_
+                                                                    // GENERATIONS defaults to 1, so that disables LTX on the node
+                                                                    // until restart) and the pending would never resolve. Bound it,
+                                                                    // and on a gone client honour LtxGenerateTask's documented
+                                                                    // drop-without-spawn contract before leaving the loop.
+                                                                    let ack_timeout = crate::api::websocket::handlers::ltx::ltx_ws_write_timeout();
+                                                                    let ack_outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                        &mut ws_sender,
+                                                                        axum::extract::ws::Message::Text(ack.to_string()),
+                                                                        ack_timeout,
+                                                                    ).await;
+                                                                    if ack_outcome.client_is_gone()
+                                                                    {
+                                                                        if let Some(t) = gen_task {
+                                                                            if t.pending_marked {
+                                                                                if let Some(jid) =
+                                                                                    t.job_id
+                                                                                {
+                                                                                    server.ltx_tracker().mark_proof_forfeited(jid).await;
+                                                                                }
+                                                                            }
+                                                                            drop(t);
+                                                                            // releases the VRAM permit
+                                                                        }
+                                                                        warn!(
+                                                                            "LTX ack write {:?} (bound {}s) — client cannot receive; \
+                                                                             forfeited the pending proof and released the slot",
+                                                                            ack_outcome,
+                                                                            ack_timeout.as_secs()
+                                                                        );
+                                                                        break; // treat as disconnected: run the settlement path
+                                                                    }
 
                                                                     if let Some(task) = gen_task {
                                                                         let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<serde_json::Value>(32);
@@ -2939,7 +2995,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 decrypted_json.get("requestId").and_then(|v| v.as_str()),
                                                                                 json_msg.get("id"),
                                                                             );
-                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(err.to_string())).await;
+                                                                            // Bounded for the same reason: `task` still holds the
+                                                                            // permit until the `continue` drops it.
+                                                                            let _ = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                                &mut ws_sender,
+                                                                                axum::extract::ws::Message::Text(err.to_string()),
+                                                                                crate::api::websocket::handlers::ltx::ltx_ws_write_timeout(),
+                                                                            ).await;
                                                                             continue;
                                                                         };
                                                                         let cancel_lc = lc.clone();
@@ -2960,13 +3022,31 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         // spawn's disconnect gates detect — so a failed WS write and
                                                                         // a read error must BREAK (not be swallowed), or the spawn
                                                                         // would bill a clip whose ltx_complete provably cannot land.
+                                                                        //
+                                                                        // OQ-L24: the write is BOUNDED. Unbounded, a client that holds
+                                                                        // the socket open but stops reading TCP parks this write for
+                                                                        // ever; this loop stops draining; the 32-slot channel fills;
+                                                                        // and every send inside the generation core then parks too, so
+                                                                        // the core never returns, the permit is never released and the
+                                                                        // single-exit cleanup never forfeits — stranding the session's
+                                                                        // escrow until the USER pays a triggerSessionTimeout reclaim.
+                                                                        let ltx_write_timeout = crate::api::websocket::handlers::ltx::ltx_ws_write_timeout();
                                                                         loop {
                                                                             tokio::select! {
                                                                                 msg = progress_rx.recv() => {
                                                                                     match msg {
                                                                                         Some(m) => {
-                                                                                            if ws_sender.send(axum::extract::ws::Message::Text(m.to_string())).await.is_err() {
-                                                                                                info!("LTX progress write failed — client gone, dropping progress channel");
+                                                                                            let outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                                                &mut ws_sender,
+                                                                                                axum::extract::ws::Message::Text(m.to_string()),
+                                                                                                ltx_write_timeout,
+                                                                                            ).await;
+                                                                                            if outcome.client_is_gone() {
+                                                                                                info!(
+                                                                                                    "LTX progress write {:?} (bound {}s) — client gone, dropping progress channel",
+                                                                                                    outcome,
+                                                                                                    ltx_write_timeout.as_secs()
+                                                                                                );
                                                                                                 break;
                                                                                             }
                                                                                         }

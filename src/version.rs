@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.39.0-fc16-vault-session-auth-2026-07-23";
+pub const VERSION: &str = "v8.39.3-ltx-tracker-logs-2026-07-26";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.39.0";
+pub const VERSION_NUMBER: &str = "8.39.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,35 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 39;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-23";
+pub const BUILD_DATE: &str = "2026-07-26";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.39.1 LTX panic safety: a panic inside the generation core used to
+    // unwind straight out of the spawned task, skipping the single-exit
+    // cleanup — the clip's pending proof was never forfeited, pending_count
+    // stayed at 1 forever, and the later WS-disconnect path then took
+    // defer_completion() (true) and returned WITHOUT calling
+    // completeSessionJob, stranding the session escrow until the user paid an
+    // on-chain triggerSessionTimeout reclaim. The core now runs under
+    // catch_unwind: a caught panic emits a terminal GENERATION_FAILED frame
+    // and falls through to the same single-exit cleanup as every other exit.
+    // PANIC ONLY — SIGKILL, OOM-kill, SIGTERM (docker stop) and container
+    // restarts lose LtxTracker's in-memory state and strand the same escrow;
+    // closing those is separate, larger work. No wire, template, bundle,
+    // commitment or attestation change.
+    // v8.39.3 honest settlement logs: the LLM token tracker is legitimately
+    // absent for LTX sessions (they claim tokens via submitProofOfWork), so its
+    // absence is no longer logged as an ERROR claiming payment may be affected.
+    "ltx-tracker-log-honesty",
+    // v8.39.2 OQ-L24: all LTX WebSocket writes bounded (see BREAKING_CHANGES).
+    "ltx-ws-write-bound",
+    "oq-l24-wedged-client",
+    "ltx-panic-safety",
+    "ltx-panic-forfeits-pending-proof",
     // v8.39.0 FC1.6 vault-session auth: POST /v1/session-auth accepts a backend-
     // signed FC1-SESSION-AUTH digest (keccak256("FC1-SESSION-AUTH:<sessionId>:
     // <clientAddress lowercase>"), no EIP-191 prefix) and pre-authorises ONE
@@ -458,6 +480,15 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.39.1 - LTX panic safety (Jul 25, 2026)
+    "FIX: a panic in the LTX generation core no longer strands session escrow — the core runs under catch_unwind and every exit funnels through the single-exit cleanup, forfeiting the clip's pending proof",
+    "FIX: a caught panic now sends a terminal GENERATION_FAILED frame instead of leaving the client waiting for LTX_JOB_TIMEOUT_SECS",
+    "SCOPE: panic-induced stranding only — SIGKILL/OOM/SIGTERM/restart lose in-memory pending state and are NOT covered",
+    // v8.39.3 - honest settlement logging (Jul 26, 2026)
+    "FIX: settlement no longer logs \"❌ Job N has NO TRACKER — payment calculation may be affected!\" on every successful LTX render. job_trackers counts LLM INFERENCE tokens; an LTX session legitimately never appears there because it claims tokens via submitProofOfWork, and completeSessionJob(jobId, conversationCID) takes no token count — so payment was never affected. The manager now records which jobs settled via an LTX proof and logs the three cases distinctly: LLM-tracked, LTX-proof-settled (info/debug), and genuinely-nothing-billed (warn)",
+    // v8.39.2 - OQ-L24 wedged-client write bound (Jul 25, 2026)
+    "FIX: OQ-L24 — every LTX WebSocket write is now BOUNDED (LTX_WS_WRITE_TIMEOUT_SECS, default 300s). A client that held the socket open but stopped reading TCP parked the write for ever, filling the 32-slot progress channel so the generation core could never return: the VRAM permit was never released and the pending proof never forfeited, stranding session escrow until the user paid a triggerSessionTimeout reclaim. No panic required, fully client-triggered",
+    "FIX: the accept-path ack write is bounded too — it runs after the permit and pending mark are taken but BEFORE the task is spawned, so parking there leaked the permit with no owner (MAX_CONCURRENT_GENERATIONS defaults to 1, disabling LTX until restart); a gone client now forfeits the pending, drops the task and takes the settlement path",
     // v8.39.0 - FC1.6 vault-session auth + /v1/health alias (Jul 23, 2026)
     "FEAT: POST /v1/session-auth — backend-signed FC1-SESSION-AUTH digest pre-authorises a delegated client address for a vault-paid session (scheme fc1-session-auth-v1)",
     "FEAT: WS session gate admits the on-chain depositor OR the pre-authorised client for vault-paid sessions",
@@ -883,7 +914,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 39);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 3);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1063,15 +1094,32 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.39.0"));
-        assert!(version.contains("2026-07-23"));
+        assert!(version.contains("8.39.3"));
+        assert!(version.contains("2026-07-26"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.39.0-fc16-vault-session-auth-2026-07-23");
-        assert_eq!(VERSION_NUMBER, "8.39.0");
-        assert_eq!(BUILD_DATE, "2026-07-23");
+        assert_eq!(VERSION, "v8.39.3-ltx-tracker-logs-2026-07-26");
+        assert_eq!(VERSION_NUMBER, "8.39.3");
+        assert_eq!(BUILD_DATE, "2026-07-26");
+    }
+
+    #[test]
+    fn test_ltx_tracker_log_features() {
+        assert!(FEATURES.contains(&"ltx-tracker-log-honesty"));
+    }
+
+    #[test]
+    fn test_ltx_ws_write_bound_features() {
+        assert!(FEATURES.contains(&"ltx-ws-write-bound"));
+        assert!(FEATURES.contains(&"oq-l24-wedged-client"));
+    }
+
+    #[test]
+    fn test_ltx_panic_safety_features() {
+        assert!(FEATURES.contains(&"ltx-panic-safety"));
+        assert!(FEATURES.contains(&"ltx-panic-forfeits-pending-proof"));
     }
 
     #[test]
