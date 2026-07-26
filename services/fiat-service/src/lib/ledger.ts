@@ -248,6 +248,13 @@ export class CreditsLedger {
     return holdId ? this.holds.get(holdId)?.userId : undefined;
   }
 
+  /** Which hold a jobId is bound to, if any. Lets a caller that lost the
+   *  bind race to the reconcile sweep tell "already bound, by us, to this very
+   *  job" (benign) from every other bind failure (not). */
+  holdForJob(jobId: bigint): string | undefined {
+    return this.jobToHold.get(jobId.toString());
+  }
+
   /**
    * Holds that debited a balance but never bound to a jobId (state `held`) —
    * orphan candidates for the R5 reconciliation job (M2). A crash between the
@@ -425,7 +432,6 @@ export class CreditsLedger {
     return this.run(async () => {
       const hold = this.holds.get(holdId);
       if (!hold) throw new Error(`no hold ${holdId}`);
-      if (hold.state !== 'held') throw new Error(`hold ${holdId} is ${hold.state}, cannot bind`);
       // On-chain jobIds are unique; a second bind to the same jobId means a
       // duplicated receipt/misbind and would misdirect the refund — alarm,
       // never a silent mapping overwrite.
@@ -433,6 +439,7 @@ export class CreditsLedger {
       if (existing !== undefined && existing !== holdId) {
         throw new Error(`jobId ${jobId} is already bound to hold ${existing}`);
       }
+      if (hold.state !== 'held') throw new Error(`hold ${holdId} is ${hold.state}, cannot bind`);
       await this.commit({ t: 'bind', holdId, jobId: jobId.toString(), at: this.now() });
     });
   }

@@ -77,7 +77,21 @@ export async function openFiatSession(
   // hold `held` but unbound — a recoverable orphan (M2). The R5 reconciliation
   // job matches ledger.unboundHolds() to on-chain vault-depositor creation
   // events by host+deposit and binds them; no refund is lost, only deferred.
-  await deps.ledger.bindSession(open.holdId, created.jobId);
+  //
+  // That recovery is also a competitor. The reconcile sweep runs on the
+  // settlement listener's tick, so when a tick lands inside our confirmation
+  // wait it resolves the same receipt and binds first — and bindSession is
+  // deliberately strict about rebinding (see the adversarial guard), so this
+  // call then threw and the route 500'd on a session that had been created and
+  // paid for. Live on 2026-07-26 as job 987: the customer saw a failure, the
+  // deposit was spent, and the session was stranded. Losing this race is a
+  // success, not an error — the bind we wanted is exactly the one that already
+  // happened. Anything else still propagates.
+  try {
+    await deps.ledger.bindSession(open.holdId, created.jobId);
+  } catch (e) {
+    if (deps.ledger.holdForJob(created.jobId) !== open.holdId) throw e;
+  }
   return {
     status: 'ok',
     sessionId: created.jobId,

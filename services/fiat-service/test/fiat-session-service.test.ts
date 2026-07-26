@@ -70,6 +70,58 @@ const request = (token: string, overrides = {}) => ({
 });
 
 describe('openFiatSession', () => {
+  // The double-bind race, live on 2026-07-26 as job 987. The reconcile sweep
+  // runs on the settlement listener's tick; when a tick lands inside our
+  // confirmation wait it resolves the same receipt and binds first. bindSession
+  // is deliberately strict about rebinding, so this call threw and the route
+  // 500'd — on a session that had been created and paid for. The customer saw
+  // a failure, the deposit was gone, and the session was stranded.
+  it('succeeds when the reconcile sweep binds the hold first (lost race is not a failure)', async () => {
+    const { deps, ledger, token } = await makeDeps();
+    const realCreate = deps.chain.createSession;
+    const racingChain: FiatChain = {
+      ...deps.chain,
+      // Bind from "the reconciler" during the confirmation wait, exactly as the
+      // sweep does, after onSubmitted has recorded the pending create.
+      createSession: async (args) => {
+        const created = await realCreate(args);
+        const orphan = ledger.unboundHolds()[0];
+        if (orphan) await ledger.bindSession(orphan.holdId, created.jobId);
+        return created;
+      },
+    };
+
+    const outcome = await openFiatSession({ ...deps, chain: racingChain }, request(token));
+
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+    expect(outcome.jobId).toBe(842n);
+    // Bound exactly once, to us, and the money moved exactly once.
+    expect(ledger.userForJob(842n)).toBe('user-1');
+    expect(ledger.availableMicro('user-1')).toBe(500_000n);
+  });
+
+  it('still fails loudly if the jobId was bound to somebody else\'s hold', async () => {
+    const { deps, ledger, token } = await makeDeps();
+    const realCreate = deps.chain.createSession;
+    const stealingChain: FiatChain = {
+      ...deps.chain,
+      createSession: async (args) => {
+        const created = await realCreate(args);
+        // A DIFFERENT hold claims our jobId — a genuine misbind, never benign.
+        await ledger.purchase('user-2', 1_000_000n, 'evt_2');
+        const other = await ledger.openHold(
+          { userId: 'user-2', host: HOST, depositMicro: 500_000n },
+          deps.gatekeeper
+        );
+        if (other.ok) await ledger.bindSession(other.holdId, created.jobId);
+        return created;
+      },
+    };
+
+    await expect(openFiatSession({ ...deps, chain: stealingChain }, request(token))).rejects.toThrow();
+  });
+
   it('happy path: holds, creates from the vault, binds the jobId, returns the signed authorisation', async () => {
     const { deps, ledger, token, chainLog } = await makeDeps();
     const outcome = await openFiatSession(deps, request(token));
