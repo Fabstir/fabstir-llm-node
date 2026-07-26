@@ -230,6 +230,104 @@ describe('startSettlementListener (manual ticks, fake source + cursor)', () => {
     await listener.stop();
   });
 
+  // The wedged-listener bug (2026-07-26, live on fabstirserv1 for three days).
+  // One query spanned the whole gap, and the cursor only advanced after a batch
+  // applied. So once the gap passed the provider's cap the range could only
+  // grow: every tick failed on the same range and the listener never recovered.
+  // It surfaced as a solvency-breach alarm — settlements were never reconciled,
+  // so the ledger looked unbacked and card-paid sessions were refused.
+  it('pages a gap wider than the provider cap instead of wedging on it', async () => {
+    const CAP = 2000;
+    const ledger = await ledgerWithBoundJob(842n);
+    const { get, cursor } = memoryCursor(100);
+    const queries: Array<[number, number]> = [];
+    const source = {
+      latestBlock: async () => 100 + 5 * CAP,
+      query: async (from: number, to: number) => {
+        // Exactly what Base's public RPC does: -32602 over 2000 blocks.
+        if (to - from + 1 > CAP) throw new Error('query exceeds max block range 2000');
+        queries.push([from, to]);
+        return [];
+      },
+    };
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor,
+      fromBlock: 100,
+      onAlarm: () => {},
+      manual: true,
+    });
+
+    await listener.tick();
+
+    expect(queries.length).toBeGreaterThan(1);
+    for (const [from, to] of queries) expect(to - from + 1).toBeLessThanOrEqual(CAP);
+    expect(get()).toBe(100 + 5 * CAP + 1); // fully caught up in one tick
+    await listener.stop();
+  });
+
+  it('bounds pages per tick and resumes from the persisted cursor', async () => {
+    const ledger = await ledgerWithBoundJob(843n);
+    const { get, cursor } = memoryCursor(0);
+    const queries: Array<[number, number]> = [];
+    const source = {
+      latestBlock: async () => 10_000,
+      query: async (from: number, to: number) => {
+        queries.push([from, to]);
+        return [];
+      },
+    };
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor,
+      fromBlock: 0,
+      onAlarm: () => {},
+      manual: true,
+      maxBlockSpan: 1000,
+      maxChunksPerTick: 3,
+    });
+
+    await listener.tick();
+    expect(queries).toHaveLength(3);
+    expect(get()).toBe(3000); // progress banked mid-catch-up
+
+    await listener.tick();
+    expect(queries).toHaveLength(6);
+    expect(queries[3]).toEqual([3000, 3999]);
+    await listener.stop();
+  });
+
+  it('keeps the ground it gained when a later page fails', async () => {
+    const ledger = await ledgerWithBoundJob(844n);
+    const { get, cursor } = memoryCursor(0);
+    const alarms: string[] = [];
+    const source = {
+      latestBlock: async () => 5000,
+      query: async (from: number) => {
+        if (from >= 2000) throw new Error('rpc blipped');
+        return [];
+      },
+    };
+    const listener = startSettlementListener({
+      ledger,
+      source,
+      cursor,
+      fromBlock: 0,
+      onAlarm: (m: string) => alarms.push(m),
+      manual: true,
+      maxBlockSpan: 1000,
+    });
+
+    await listener.tick();
+
+    // Without per-page saves a mid-catch-up failure would rewind to 0 forever.
+    expect(get()).toBe(2000);
+    expect(alarms.some((a) => a.includes('tick failed'))).toBe(true);
+    await listener.stop();
+  });
+
   it('resumes from the persisted cursor after a restart (replay-safe anyway)', async () => {
     const ledger = await ledgerWithBoundJob(841n);
     const { cursor } = memoryCursor(103);

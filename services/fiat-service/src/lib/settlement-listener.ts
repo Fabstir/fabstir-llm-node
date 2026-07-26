@@ -169,6 +169,15 @@ export function startSettlementListener(opts: {
    *  listener is now provably dead rather than possibly idle. 0 disables. */
   heartbeatEvery?: number;
   onHeartbeat?: (line: string) => void;
+  /** Largest inclusive block span sent to eth_getLogs in one call. Must not
+   *  exceed the provider's cap or every call fails; Base's public RPC rejects
+   *  anything over 2000 with -32602 "query exceeds max block range 2000".
+   *  Default 2000. */
+  maxBlockSpan?: number;
+  /** Pages per tick while catching up. Bounds tick duration under the watchdog
+   *  (tickTimeoutMs) on a large gap; the cursor persists per page, so the
+   *  remaining gap is closed over subsequent ticks. Default 20. */
+  maxChunksPerTick?: number;
 }): SettlementListener {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -208,10 +217,26 @@ export function startSettlementListener(opts: {
       const safeLatest = latest - (opts.safetyLag ?? 0);
       const scanFrom = Math.max(from - (opts.overlapBlocks ?? 0), opts.fromBlock);
       if (safeLatest < scanFrom) return;
-      const events = await opts.source.query(scanFrom, safeLatest);
-      await applySettlementEvents(opts.ledger, events, opts.onAlarm);
-      // Never let the overlap walk the cursor backwards.
-      await opts.cursor.save(Math.max(safeLatest + 1, from));
+      // The wedged-listener lesson (2026-07-26): public RPCs cap eth_getLogs at a
+      // fixed block span (Base's is 2000) and the cursor only advances after a
+      // batch applies. A single query across the whole gap therefore fails
+      // permanently once the gap exceeds the cap — the range can only grow, so
+      // every later tick fails on the same range and the listener never
+      // recovers. It had been wedged for three days: the first tick failed, the
+      // cursor file was never written, and the alarm read as a solvency breach
+      // (unreconciled settlements) rather than as a stuck scan. Page the scan,
+      // and save the cursor per page so a failure mid-catch-up keeps its ground.
+      const span = Math.max(1, opts.maxBlockSpan ?? 2000);
+      const maxChunks = Math.max(1, opts.maxChunksPerTick ?? 20);
+      let chunkStart = scanFrom;
+      for (let chunk = 0; chunk < maxChunks && chunkStart <= safeLatest; chunk += 1) {
+        const chunkEnd = Math.min(chunkStart + span - 1, safeLatest);
+        const events = await opts.source.query(chunkStart, chunkEnd);
+        await applySettlementEvents(opts.ledger, events, opts.onAlarm);
+        // Never let the overlap walk the cursor backwards.
+        await opts.cursor.save(Math.max(chunkEnd + 1, from));
+        chunkStart = chunkEnd + 1;
+      }
       if (opts.stateSweep) {
         for (const jobId of opts.ledger.boundJobIds()) {
           try {
