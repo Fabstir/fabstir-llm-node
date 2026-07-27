@@ -85,12 +85,26 @@ export function extractPurchase(event: unknown): ExtractedPurchase {
   if (typeof cents !== 'number' || !Number.isInteger(cents) || cents <= 0) {
     return { kind: 'ignored', reason: `event ${e.id} has no positive integer amount_total` };
   }
+  // Credit NET of tax. `amount_total` includes VAT, and crediting it would hand
+  // the customer the tax as spendable balance while HMRC takes the cash — the
+  // backing invariant (every credit backed by USDC actually received) forces
+  // net, regardless of whether prices are displayed inclusive or exclusive;
+  // display only changes the purchase-page copy. NOT `amount_subtotal`, which
+  // is before discounts too and would over-credit under a promo code. When no
+  // tax is configured `total_details.amount_tax` is 0 or absent and this is a
+  // no-op, so the fix is safe under every VAT-policy outcome.
+  const tax = (obj?.total_details as { amount_tax?: unknown } | undefined)?.amount_tax ?? 0;
+  if (typeof tax !== 'number' || !Number.isInteger(tax) || tax < 0 || tax >= cents) {
+    // A malformed or implausible tax figure must not fall back to crediting the
+    // gross — that silently reintroduces the bug it guards against.
+    return { kind: 'ignored', reason: `event ${e.id} has unusable total_details.amount_tax ${String(tax)}` };
+  }
   const paymentIntent = obj?.payment_intent;
   return {
     kind: 'purchase',
     eventId: e.id,
     userId,
-    amountMicro: BigInt(cents) * 10_000n,
+    amountMicro: BigInt(cents - tax) * 10_000n,
     ...(typeof paymentIntent === 'string' && paymentIntent ? { paymentIntentId: paymentIntent } : {}),
   };
 }

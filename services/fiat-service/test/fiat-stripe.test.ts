@@ -96,6 +96,32 @@ describe('extractPurchase', () => {
     });
   });
 
+  // The VAT bug (26 July, fixed 27 July after the v2-guide review). amount_total
+  // includes tax; crediting it gave the customer the VAT as spendable balance.
+  // The backing invariant forces crediting NET, whatever the display policy.
+  it('credits net of tax when Stripe charges VAT', () => {
+    const out = extractPurchase(event({}, { amount_total: 1200, total_details: { amount_tax: 200 } }));
+    expect(out).toMatchObject({ kind: 'purchase', amountMicro: 10_000_000n }); // 1000 cents, not 1200
+  });
+
+  it('a zero or absent tax leaves the credit unchanged (the no-VAT branches)', () => {
+    expect(extractPurchase(event({}, { total_details: { amount_tax: 0 } }))).toMatchObject({
+      amountMicro: 5_000_000n,
+    });
+    expect(extractPurchase(event({}, { total_details: undefined }))).toMatchObject({
+      amountMicro: 5_000_000n,
+    });
+  });
+
+  it('a malformed or implausible tax figure is ignored, never credited gross', () => {
+    // Falling back to the gross on bad data would silently reintroduce the bug.
+    for (const bad of [-1, 2.5, '200', 500, 600]) {
+      expect(extractPurchase(event({}, { amount_total: 500, total_details: { amount_tax: bad } }))).toMatchObject(
+        { kind: 'ignored' }
+      );
+    }
+  });
+
   it('maps a completed checkout to a purchase: cents x 10,000 = micro-USDC', () => {
     expect(extractPurchase(event())).toEqual({
       kind: 'purchase',
