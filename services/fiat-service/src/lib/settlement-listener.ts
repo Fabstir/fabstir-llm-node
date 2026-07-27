@@ -166,6 +166,24 @@ export function startSettlementListener(opts: {
    *  and settled from the contract's own refundedToUser. Events stay the fast
    *  path; the sweep is the guarantee. */
   stateSweep?: SessionStateReader;
+  /** Release the escrow of a session that can no longer be used.
+   *
+   *  `triggerSessionTimeout(jobId)` is the ONLY thing that frees a session
+   *  nobody completed, it is callable by anyone, and until 27 July nothing in
+   *  the tree called it: every reference was a comment saying the user must pay
+   *  for their own reclaim. So a failed open stranded the escrow AND kept the
+   *  customer's deposit debited, with no path back (job 987, 26 July).
+   *
+   *  We deliberately do NOT credit the customer ourselves on a guess. The state
+   *  reader cannot tell us whether work was proven, so refunding the full
+   *  deposit could over-credit a session the chain will pay a host for. Trigger
+   *  the timeout instead and let the ordinary settlement event apply the
+   *  contract's OWN refund figure, through the path that is already tested. */
+  reclaim?: { trigger(jobId: bigint): Promise<void> };
+  /** How long a bound hold may sit unsettled before we reclaim it. Must exceed
+   *  the contract's session lifetime or the call reverts; default 2h against a
+   *  1h `FIAT_SESSION_MAX_DURATION`, so a slow render is never cut short. */
+  reclaimAfterMs?: number;
   /** The tick-freeze lesson (2026-07-23, incident #3): none of the tick's RPC
    *  awaits had a timeout, so ONE hung request silently stopped all future
    *  ticks — the only failure shape no per-event alarm can see. A tick that
@@ -257,6 +275,24 @@ export function startSettlementListener(opts: {
         // Never let the overlap walk the cursor backwards.
         await opts.cursor.save(Math.max(chunkEnd + 1, from));
         chunkStart = chunkEnd + 1;
+      }
+      if (opts.reclaim) {
+        const after = opts.reclaimAfterMs ?? 2 * 60 * 60 * 1000;
+        for (const jobId of opts.ledger.boundJobsOlderThan(after)) {
+          try {
+            // Reclaim only; the settle happens on the resulting event, next
+            // tick, with the contract's own refund figure.
+            await opts.reclaim.trigger(jobId);
+            opts.onAlarm(
+              `reclaimed stranded session ${jobId}: unsettled for over ${Math.round(after / 60000)} minutes, ` +
+                `triggerSessionTimeout sent — the settlement event will return the customer's deposit`
+            );
+          } catch (e) {
+            opts.onAlarm(
+              `reclaim failed on job ${jobId}: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        }
       }
       if (opts.stateSweep) {
         for (const jobId of opts.ledger.boundJobIds()) {
@@ -452,6 +488,11 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     overlapBlocks: Number(process.env.FIAT_SETTLEMENT_OVERLAP_BLOCKS ?? '30'),
     // The guarantee layer: log-free, lag-proof reconciliation by executed state.
     stateSweep: makeChainSessionReader(),
+    // Stranded-escrow reclaim (job 987). Inert unless FIAT_RECLAIM_STRANDED=1.
+    reclaim: makeReclaimer(),
+    // Must exceed the contract's session lifetime or the call reverts. Default
+    // 2h against a 1h FIAT_SESSION_MAX_DURATION, so no live render is cut short.
+    reclaimAfterMs: Number(process.env.FIAT_RECLAIM_AFTER_MS ?? String(2 * 60 * 60 * 1000)),
     // Liveness: abandon hung ticks loudly; heartbeat every 40 ticks (~10 min at
     // the 15s poll) so journal silence beyond that provably means dead.
     tickTimeoutMs: Number(process.env.FIAT_SETTLEMENT_TICK_TIMEOUT_MS ?? '120000'),
@@ -472,6 +513,34 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
  * withdrawToken the latter), so both count toward backing outstanding
  * liabilities — else a pull-pattern refund would look like a solvency shortfall.
  */
+/**
+ * Sends `triggerSessionTimeout(jobId)` for sessions nobody completed. OFF unless
+ * FIAT_RECLAIM_STRANDED=1, because this is the one place the service spends gas
+ * on its own initiative and that should be a decision, not a default.
+ *
+ * Anyone may call it (NODE-MIGRATION-JAN2026), so the vault key is used simply
+ * because it is the key we already hold. We do not credit the customer here:
+ * the resulting SessionTimedOut event settles the hold through the ordinary
+ * path, with the contract's own refund figure rather than a guess of ours.
+ */
+function makeReclaimer(): { trigger(jobId: bigint): Promise<void> } | undefined {
+  if (process.env.FIAT_RECLAIM_STRANDED !== '1') return undefined;
+  const key = process.env.FIAT_VAULT_PRIVATE_KEY;
+  if (!key) return undefined;
+  const wallet = new Wallet(key, new JsonRpcProvider(rpcUrl()));
+  const marketplace = new Contract(
+    jobMarketplaceAddress(),
+    ['function triggerSessionTimeout(uint256 jobId)'],
+    wallet
+  );
+  return {
+    async trigger(jobId: bigint): Promise<void> {
+      const tx = await marketplace.triggerSessionTimeout(jobId);
+      await tx.wait();
+    },
+  };
+}
+
 function makeVaultHoldings():
   | { holdings(): Promise<bigint>; spendableMicro(): Promise<bigint> }
   | undefined {

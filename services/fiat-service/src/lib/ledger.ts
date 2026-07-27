@@ -295,6 +295,26 @@ export class CreditsLedger {
     return out;
   }
 
+  /** Bound jobs whose hold was placed more than `ageMs` ago — candidates for an
+   *  on-chain timeout reclaim.
+   *
+   *  A session that is never used strands its escrow for ever: only
+   *  `triggerSessionTimeout(jobId)` releases it, nobody was calling that, and
+   *  until it settles the customer's deposit stays debited from their balance.
+   *  Job 987 sat exactly like this from 26 to 27 July after a failed open
+   *  (the create succeeded, the caller never learned the sessionId). Age is
+   *  taken from the HOLD rather than the chain because that is when our money
+   *  left, and it is the one clock we always have. */
+  boundJobsOlderThan(ageMs: number, nowMs?: number): bigint[] {
+    const now = nowMs ?? this.now();
+    const out: bigint[] = [];
+    for (const hold of this.holds.values()) {
+      if (hold.state !== 'bound' || hold.jobId === undefined) continue;
+      if (now - hold.atMs >= ageMs) out.push(hold.jobId);
+    }
+    return out;
+  }
+
   /** Credit a Stripe purchase. Idempotent per Stripe event id (webhook replays
    *  are a no-op). The ONLY way money enters the ledger (Decision 6). The
    *  paymentIntentId is the card charge a later cash-out may refund against. */

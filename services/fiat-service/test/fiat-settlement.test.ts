@@ -328,6 +328,114 @@ describe('startSettlementListener (manual ticks, fake source + cursor)', () => {
     await listener.stop();
   });
 
+  // Stranded escrow (job 987, 26-27 July). A session created but never used
+  // strands its deposit for ever: only triggerSessionTimeout frees it, nothing
+  // called it, and until it settles the customer's money stays debited. We
+  // reclaim rather than credit on a guess, because the state reader cannot tell
+  // us whether work was proven and a full refund could over-credit a session
+  // the chain will pay a host for.
+  it('reclaims a bound session that has sat unsettled past the cutoff', async () => {
+    const ledger = await ledgerWithBoundJob(987n);
+    const reclaimed: bigint[] = [];
+    const alarms: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: memoryCursor(5).cursor,
+      fromBlock: 0,
+      onAlarm: (m) => alarms.push(m),
+      reclaim: { trigger: async (jobId) => void reclaimed.push(jobId) },
+      reclaimAfterMs: 0, // the fixture's hold is "now"; 0 makes every bound job due
+      manual: true,
+    });
+
+    await listener.tick();
+
+    expect(reclaimed).toEqual([987n]);
+    expect(alarms.some((a) => a.includes('reclaimed stranded session 987'))).toBe(true);
+    await listener.stop();
+  });
+
+  it('leaves a young session alone', async () => {
+    // A render in flight must never be cut short by the reclaim.
+    const ledger = await ledgerWithBoundJob(988n);
+    const reclaimed: bigint[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: memoryCursor(5).cursor,
+      fromBlock: 0,
+      onAlarm: () => {},
+      reclaim: { trigger: async (jobId) => void reclaimed.push(jobId) },
+      reclaimAfterMs: 60 * 60 * 1000,
+      manual: true,
+    });
+
+    await listener.tick();
+
+    expect(reclaimed).toEqual([]);
+    await listener.stop();
+  });
+
+  it('does not credit the customer itself — the settlement event does that', async () => {
+    // The whole point: we trigger the timeout and let the contract's own refund
+    // figure come back through the tested path. Reclaiming must move no money.
+    const ledger = await ledgerWithBoundJob(989n);
+    const before = ledger.availableMicro('user-1');
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: memoryCursor(5).cursor,
+      fromBlock: 0,
+      onAlarm: () => {},
+      reclaim: { trigger: async () => {} },
+      reclaimAfterMs: 0,
+      manual: true,
+    });
+
+    await listener.tick();
+
+    expect(ledger.availableMicro('user-1')).toBe(before);
+    expect(ledger.boundJobIds()).toEqual([989n]); // still bound until the event lands
+    await listener.stop();
+  });
+
+  it('alarms but keeps going when a reclaim call fails', async () => {
+    const ledger = await ledgerWithBoundJob(990n);
+    const alarms: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: memoryCursor(5).cursor,
+      fromBlock: 0,
+      onAlarm: (m) => alarms.push(m),
+      reclaim: { trigger: async () => { throw new Error('reverted: session still active'); } },
+      reclaimAfterMs: 0,
+      manual: true,
+    });
+
+    await listener.tick();
+
+    expect(alarms.some((a) => a.includes('reclaim failed on job 990'))).toBe(true);
+    await listener.stop();
+  });
+
+  it('does nothing at all when no reclaim is configured', async () => {
+    const ledger = await ledgerWithBoundJob(991n);
+    const alarms: string[] = [];
+    const listener = startSettlementListener({
+      ledger,
+      source: { latestBlock: async () => 10, query: async () => [] },
+      cursor: memoryCursor(5).cursor,
+      fromBlock: 0,
+      onAlarm: (m) => alarms.push(m),
+      manual: true,
+    });
+    await listener.tick();
+    expect(alarms).toEqual([]);
+    await listener.stop();
+  });
+
   it('resumes from the persisted cursor after a restart (replay-safe anyway)', async () => {
     const ledger = await ledgerWithBoundJob(841n);
     const { cursor } = memoryCursor(103);
