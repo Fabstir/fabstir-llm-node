@@ -53,10 +53,26 @@ export function extractPurchase(event: unknown): ExtractedPurchase {
     data?: { object?: Record<string, unknown> };
   };
   if (typeof e?.id !== 'string') return { kind: 'ignored', reason: 'event has no id' };
-  if (e.type !== 'checkout.session.completed') {
+  // Two creditable events, not one. For async payment methods (Bacs, SEPA)
+  // `completed` fires when checkout finishes — BEFORE the money moves — and
+  // `async_payment_succeeded` fires when it actually settles. For cards only
+  // `completed` fires, already paid. Stripe never delivers both with
+  // payment_status 'paid' for one session, so the event-id dedup still gives
+  // exactly-once.
+  if (e.type !== 'checkout.session.completed' && e.type !== 'checkout.session.async_payment_succeeded') {
     return { kind: 'ignored', reason: `unhandled event type ${String(e.type)}` };
   }
   const obj = e.data?.object;
+  // The gate that makes the two-event scheme safe: credit ONLY settled money.
+  // Without it, `completed` with payment_status 'unpaid' (an async method that
+  // may yet fail) minted spendable credits for a payment that did not exist.
+  // Latent while Checkout was card-only; found in the 27 July v2-guide review.
+  if (obj?.payment_status !== 'paid') {
+    return {
+      kind: 'ignored',
+      reason: `event ${e.id} payment_status ${String(obj?.payment_status)} != paid — not settled; an async method credits on async_payment_succeeded`,
+    };
+  }
   const userId = (obj?.metadata as Record<string, unknown> | undefined)?.fc1UserId;
   if (typeof userId !== 'string' || userId.length === 0) {
     return { kind: 'ignored', reason: `event ${e.id} has no metadata.fc1UserId` };

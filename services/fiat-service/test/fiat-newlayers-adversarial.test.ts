@@ -362,7 +362,7 @@ describe('extractPurchase: hostile Stripe event fields', () => {
   const base = (obj: Record<string, unknown>) => ({
     id: 'evt_1',
     type: 'checkout.session.completed',
-    data: { object: { metadata: { fc1UserId: 'user-1' }, amount_total: 500, currency: 'usd', payment_intent: 'pi_1', ...obj } },
+    data: { object: { metadata: { fc1UserId: 'user-1' }, amount_total: 500, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_1', ...obj } },
   });
 
   it('amount_total as a float, string, negative, or zero is ignored (no BigInt injection, no negative mint)', () => {
@@ -436,7 +436,7 @@ describe('webhook: duplicate event id cannot inflate, hostile userId is isolated
     JSON.stringify({
       id,
       type: 'checkout.session.completed',
-      data: { object: { metadata: { fc1UserId: userId }, amount_total: cents, currency: 'usd', payment_intent: 'pi_1' } },
+      data: { object: { metadata: { fc1UserId: userId }, amount_total: cents, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_1' } },
     });
 
   it('replaying event id evt_X with a 100x amount is a no-op (first amount stands)', async () => {

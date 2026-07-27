@@ -62,11 +62,38 @@ describe('extractPurchase', () => {
         metadata: { fc1UserId: 'user-1' },
         amount_total: 500, // $5.00 in cents
         currency: 'usd',
+        payment_status: 'paid', // real Stripe events always carry this
         payment_intent: 'pi_1',
         ...obj,
       },
     },
     ...over,
+  });
+
+  // The unpaid-credit bug (27 July guide review). For async payment methods
+  // `completed` fires before the money moves, with payment_status 'unpaid'.
+  // Crediting on the event alone minted credits for a payment that could still
+  // fail. Latent while card-only, where completed implies paid.
+  it('does NOT credit a completed checkout whose payment has not settled', () => {
+    const out = extractPurchase(event({}, { payment_status: 'unpaid' }));
+    expect(out.kind).toBe('ignored');
+    if (out.kind === 'ignored') expect(out.reason).toContain('payment_status');
+  });
+
+  it('does not credit when payment_status is absent entirely', () => {
+    const out = extractPurchase(event({}, { payment_status: undefined }));
+    expect(out.kind).toBe('ignored');
+  });
+
+  it('credits async_payment_succeeded — the settle event for bank-debit methods', () => {
+    const out = extractPurchase(event({ type: 'checkout.session.async_payment_succeeded' }));
+    expect(out).toMatchObject({ kind: 'purchase', amountMicro: 5_000_000n });
+  });
+
+  it('still ignores async_payment_failed (no credit path for failure)', () => {
+    expect(extractPurchase(event({ type: 'checkout.session.async_payment_failed' }))).toMatchObject({
+      kind: 'ignored',
+    });
   });
 
   it('maps a completed checkout to a purchase: cents x 10,000 = micro-USDC', () => {
@@ -121,6 +148,7 @@ describe('POST /api/fiat/stripe/webhook', () => {
         object: {
           metadata: { fc1UserId: 'user-1' },
           amount_total: amountCents,
+          payment_status: 'paid',
           currency: 'usd',
           payment_intent: 'pi_1',
         },
