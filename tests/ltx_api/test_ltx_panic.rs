@@ -100,6 +100,10 @@ fn job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 

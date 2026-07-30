@@ -1,4 +1,4 @@
-# LTX 2.3 ComfyUI sidecar (the 11 allowlist-v16 video modes).
+# LTX 2.3 ComfyUI sidecar (the 12 allowlist-v17 video modes).
 # Headless ComfyUI exposing the standard HTTP API (/prompt, /system_stats) on :8188.
 # Multi-GB weights are NOT baked in — mount them via a models volume at runtime
 # (see scripts/download_ltx_models.sh + ltx-sidecar in docker-compose.prod.yml).
@@ -6,10 +6,12 @@
 #
 # Every pin below mirrors the PROVEN host install (3XS-Z, enumerated 2026-07-23 via
 # the live instance's /object_info): ComfyUI 0.27.0 core provides most template
-# classes (incl. the MoGe and LTX audio nodes); exactly FIVE custom packs supply the
+# classes (incl. the MoGe and LTX audio nodes); exactly SEVEN custom packs supply the
 # rest — LTXVideo, VideoHelperSuite (VHS_LoadVideo etc.), KJNodes (ImageResizeKJv2),
-# ComfyMath (CM_FloatToInt), radiance (Float32ColorCorrect). Nothing else from the
-# host's 23 packs is referenced by any template; do not add packs "just in case".
+# ComfyMath (CM_FloatToInt), radiance (Float32ColorCorrect), and the two CV1
+# (crossview) packs: CrossViewWarp (the camera node) + DepthAnythingV2 (its depth
+# dependency). Nothing else from the host's 23 packs is referenced by any template;
+# do not add packs "just in case".
 # Torch matches the proven host: 2.9.1+cu130 on Python 3.11, hence the CUDA 13.0
 # base (same base family as Dockerfile.production on the deploy box).
 
@@ -31,6 +33,12 @@ ARG VHS_REPO=https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
 ARG VHS_COMMIT=3234937ff5f3ca19068aaba5042771514de2429d
 ARG RADIANCE_REPO=https://github.com/fxtdstudios/radiance.git
 ARG RADIANCE_COMMIT=64fee4144cd4818a087b4269effe6c40d6f6fe2f
+# CV1 (crossview): pinned at the commits PROVEN on 3XS-Z 2026-07-29/30 — upstream
+# HEADs predate that clone, so the pins equal the probe install exactly.
+ARG CROSSVIEW_REPO=https://github.com/cseti007/ComfyUI-CrossViewWarp.git
+ARG CROSSVIEW_COMMIT=7c758557c827dfc9a65bab0823b494344d653985
+ARG DEPTHANYTHING_REPO=https://github.com/kijai/ComfyUI-DepthAnythingV2.git
+ARG DEPTHANYTHING_COMMIT=553187872eeb1d52e50dc53209fa57e569609a72
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git python3.11 python3.11-venv ffmpeg libgl1 libglib2.0-0 \
@@ -78,7 +86,16 @@ RUN set -eux; \
     clone_pack "${KJNODES_REPO}" "${KJNODES_COMMIT}" "ComfyUI-KJNodes"; \
     clone_pack "${COMFYMATH_REPO}" "${COMFYMATH_COMMIT}" "ComfyMath"; \
     clone_pack "${VHS_REPO}" "${VHS_COMMIT}" "comfyui-videohelpersuite"; \
-    clone_pack "${RADIANCE_REPO}" "${RADIANCE_COMMIT}" "radiance"
+    clone_pack "${RADIANCE_REPO}" "${RADIANCE_COMMIT}" "radiance"; \
+    clone_pack "${CROSSVIEW_REPO}" "${CROSSVIEW_COMMIT}" "ComfyUI-CrossViewWarp"; \
+    clone_pack "${DEPTHANYTHING_REPO}" "${DEPTHANYTHING_COMMIT}" "ComfyUI-DepthAnythingV2"
+
+# CV1 depth model: NOT baked here — the compose mount (${LTX_MODELS_DIR}:/opt/
+# ComfyUI/models:ro) would shadow anything under models/ inside the image. It
+# ships with the weights tree instead: scripts/download_ltx_models.sh places
+# depth_anything_v2_vits_fp16.safetensors under models/ltx/depthanything/.
+# Small/vits ONLY (Apache-2.0) — Base/Large are CC-BY-NC-4.0 and must never
+# be used on a render host.
 
 # ---- Runtime (no build toolchain; weights mounted at runtime) ----
 FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04

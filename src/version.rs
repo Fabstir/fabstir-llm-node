@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.39.3-ltx-tracker-logs-2026-07-26";
+pub const VERSION: &str = "v8.41.0-ltx-crossview-2026-07-30";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.39.3";
+pub const VERSION_NUMBER: &str = "8.41.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 39;
+pub const VERSION_MINOR: u32 = 41;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-26";
+pub const BUILD_DATE: &str = "2026-07-30";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -480,6 +480,13 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.41.0 - CrossView novel-view mode (Jul 30, 2026)
+    "FEAT: ltx-crossview-hdr template (allowlist v17) — novel view synthesis of a control clip via Cseti CrossView-Warp IC-LoRA (Apache-2.0) + DepthAnything v2 Small (Apache; Large is CC-BY-NC and must NOT be shipped). Single pass at the picked resolution; chain the upscale mode for 2x",
+    "FEAT: optional `azimuth`/`elevation`/`distance` on ltx_generate, patched by class onto CrossViewWarp; ranges [-65,65]/[-25,40]/[0.5,2.0] (trained yellow-zone envelope); absent = pinned mild pose (20/0/1.0); REJECTED on templates with no camera node",
+    "FEAT: `Frame Count` titled patch handle — one INT feeds both VHS frame_load_cap and the latent length, so billed == loaded == rendered by construction",
+    // v8.40.0 - IC-LoRA guide strength (Jul 28, 2026)
+    "FEAT: optional `strength` on ltx_generate — overrides LTXAddVideoICLoRAGuide.strength ((0,1]; the pinned graphs carry 1.0 = maximum source adherence). Lowering it hands the prompt authority over the source, which is what object edits (recolour/replace) need. Patched by CLASS so the retitled ingredients guide is covered; absent = pinned constant, wire and output byte-identical to v8.39.x",
+    "GUARD: a strength sent for a template with no IC-LoRA guide node (t2v/i2v/flf2v/iclora/upscale) is REJECTED at validation — a paid render must never bill with its one requested knob silently ignored",
     // v8.39.1 - LTX panic safety (Jul 25, 2026)
     "FIX: a panic in the LTX generation core no longer strands session escrow — the core runs under catch_unwind and every exit funnels through the single-exit cleanup, forfeiting the clip's pending proof",
     "FIX: a caught panic now sends a terminal GENERATION_FAILED frame instead of leaving the client waiting for LTX_JOB_TIMEOUT_SECS",
@@ -913,8 +920,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 39);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_MINOR, 41);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1094,15 +1101,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.39.3"));
-        assert!(version.contains("2026-07-26"));
+        assert!(version.contains("8.41.0"));
+        assert!(version.contains("2026-07-30"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.39.3-ltx-tracker-logs-2026-07-26");
-        assert_eq!(VERSION_NUMBER, "8.39.3");
-        assert_eq!(BUILD_DATE, "2026-07-26");
+        assert_eq!(VERSION, "v8.41.0-ltx-crossview-2026-07-30");
+        assert_eq!(VERSION_NUMBER, "8.41.0");
+        assert_eq!(BUILD_DATE, "2026-07-30");
     }
 
     #[test]

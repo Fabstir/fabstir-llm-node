@@ -1,7 +1,16 @@
 {
-  "allowListVersion": 16,
-  "bundleHash": "0x41cfb10d197e1288f7accedb3e1879fc0b0a179362c3dfa9b114f2cf4e74e012",
+  "allowListVersion": 18,
+  "bundleHash": "0x249dd19e326ea2bea0c654eeaa6e1cf9726270a297f19ebdd0a990f578aa492a",
   "templates": [
+    {
+      "templateId": "ltx-crossview-hdr",
+      "templateHash": "0xc8e174ec56aa41ec7d4459c139855ddf5fea219d946d1d8092cea587473e25cf",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ]
+    },
     {
       "templateId": "ltx-daynight-hdr",
       "templateHash": "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86",

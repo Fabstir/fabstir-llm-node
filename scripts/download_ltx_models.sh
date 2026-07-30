@@ -12,6 +12,7 @@
 # Layout produced (mounted at /opt/ComfyUI/models by docker-compose.prod.yml):
 #   $MODELS_DIR/checkpoints/            two 22B fp8 checkpoints
 #   $MODELS_DIR/loras/                  distilled + IC-/mode-LoRAs
+#   $MODELS_DIR/depthanything/          CV1 depth (vits/Apache ONLY — Base/Large are CC-BY-NC)
 #   $MODELS_DIR/text_encoders/          gemma fp4 encoder
 #   $MODELS_DIR/latent_upscale_models/  spatial upscaler x2
 #   $MODELS_DIR/geometry_estimation/    MoGe (guided modes)
@@ -43,6 +44,8 @@ loras|ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors|654465352|https://hug
 loras|ltx-2.3-22b-ic-lora-water-simulation-0.9.safetensors|906071437|https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Water-Simulation/resolve/main/ltx-2.3-22b-ic-lora-water-simulation-0.9.safetensors
 loras|ltx-2.3-22b-ic-lora-day-to-night-0.9.safetensors|327309305|https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Day-To-Night/resolve/main/ltx-2.3-22b-ic-lora-day-to-night-0.9.safetensors
 loras|ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors|1308778338|https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients/resolve/main/ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors
+loras|LTX2.3-22B_IC-LoRA-CrossView-Warp_v0.9_18000.safetensors|201431592|https://huggingface.co/Cseti/LTX2.3-22B_IC-LoRA-CrossView-Warp/resolve/main/LTX2.3-22B_IC-LoRA-CrossView-Warp_v0.9_18000.safetensors
+depthanything|depth_anything_v2_vits_fp16.safetensors|49595202|https://huggingface.co/Kijai/DepthAnythingV2-safetensors/resolve/5aa7ab578df757d94c743998b157a0204ff29215/depth_anything_v2_vits_fp16.safetensors
 loras|ltx-2.3-22b-ic-lora-outpaint.safetensors|1308756416|https://huggingface.co/oumoumad/LTX-2.3-22b-IC-LoRA-Outpaint/resolve/main/ltx-2.3-22b-ic-lora-outpaint.safetensors|https://huggingface.co/DeepBeepMeep/LTX-2/resolve/main/ltx-2.3-22b-ic-lora-outpaint.safetensors
 loras|ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors|1308756416|https://huggingface.co/Alissonerdx/LTX-LoRAs/resolve/main/ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors
 geometry_estimation|moge_2_vitl_normal_fp16.safetensors|661859924|MANUAL

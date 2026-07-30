@@ -334,6 +334,36 @@ pub async fn handle_encrypted_ltx_generate(
     if let Err(msg) = validate_duration(&job) {
         return reject("VALIDATION_FAILED", &msg);
     }
+    // Guide-strength contract: finite, (0, 1]. Enforced BEFORE a slot or the
+    // deposit is spent; the patcher separately fails closed when a strength is
+    // sent for a template with no guide node, so the knob can never be billed
+    // while silently ignored.
+    if let Some(s) = job.strength {
+        if !s.is_finite() || s <= 0.0 || s > 1.0 {
+            return reject(
+                "VALIDATION_FAILED",
+                &format!("strength {s} is out of range (must be 0 < strength <= 1)"),
+            );
+        }
+    }
+    // CrossView camera ranges: the trained yellow-zone envelope (Cseti's card;
+    // the green zone is azimuth +/-45, elevation +30/-15 — we allow out to the
+    // yellow edge and no further). Enforced BEFORE any slot or deposit is
+    // spent; the patcher separately fail-closes on templates with no camera.
+    for (name, v, lo, hi) in [
+        ("azimuth", job.azimuth, -65.0, 65.0),
+        ("elevation", job.elevation, -25.0, 40.0),
+        ("distance", job.distance, 0.5, 2.0),
+    ] {
+        if let Some(v) = v {
+            if !v.is_finite() || v < lo || v > hi {
+                return reject(
+                    "VALIDATION_FAILED",
+                    &format!("{name} {v} is out of range (must be {lo}..={hi})"),
+                );
+            }
+        }
+    }
 
     // Input-image validation (M1a), fail-closed BEFORE a slot is spent. The
     // template's `imageInputs` is the commitment format selector: the job MUST
@@ -1309,6 +1339,10 @@ mod tests {
             output: OutputKind::ExrSequence,
             images: None,
             videos: None,
+            strength: None,
+            azimuth: None,
+            elevation: None,
+            distance: None,
         }
     }
 

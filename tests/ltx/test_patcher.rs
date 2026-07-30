@@ -42,6 +42,10 @@ fn job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 
@@ -491,6 +495,10 @@ fn iclora_job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 
@@ -623,6 +631,10 @@ fn bl4_job(id: &str) -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 
@@ -900,4 +912,167 @@ fn test_ingredients_full_patch() {
         ms[0].pointer("/inputs/sigmas").unwrap().as_str().unwrap(),
         "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Guide strength (2026-07-28): `LTXAddVideoICLoRAGuide.strength`, patched by
+// CLASS. The pinned constant 1.0 = maximum source adherence — which is why
+// object edits ("make the green prop gun black") could not take; the override
+// hands the prompt authority over the source. Fail-closed on unguided
+// templates so a paid render can never bill with the knob silently ignored.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_strength_patches_the_guide_on_the_real_edit_graph() {
+    let mut j = bl4_job("ltx-edit-hdr");
+    j.strength = Some(0.6);
+    let patched = patch(
+        &bl4_graph("ltx-edit-hdr"),
+        &j,
+        &[],
+        &["control.mp4".to_string()],
+    )
+    .unwrap();
+    let guides = nodes_by_class(&patched, "LTXAddVideoICLoRAGuide");
+    assert_eq!(guides.len(), 1, "the edit graph carries exactly one guide");
+    assert_eq!(
+        guides[0].pointer("/inputs/strength").unwrap().as_f64().unwrap(),
+        0.6
+    );
+}
+
+#[test]
+fn test_no_strength_leaves_the_pinned_constant() {
+    // None must not touch the graph: the pre-strength wire produces an
+    // identical patched graph, so old helpers keep byte-identical behaviour.
+    let patched = patch(
+        &bl4_graph("ltx-edit-hdr"),
+        &bl4_job("ltx-edit-hdr"),
+        &[],
+        &["control.mp4".to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        nodes_by_class(&patched, "LTXAddVideoICLoRAGuide")[0]
+            .pointer("/inputs/strength")
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+        1.0
+    );
+}
+
+#[test]
+fn test_strength_on_an_unguided_template_fails_closed() {
+    // t2v has no guide node. Silently ignoring the knob would bill a paid
+    // render whose one requested parameter did nothing.
+    let mut j = job();
+    j.strength = Some(0.5);
+    let err = patch(&fixture_graph(), &j, &[], &[]).unwrap_err().to_string();
+    assert!(err.contains("no IC-LoRA guide"), "got: {err}");
+}
+
+#[test]
+fn test_strength_reaches_a_retitled_guide_by_class() {
+    // ingredients retitles the node with glyphs ("🅛🅣🅧 Add Video IC-LoRA
+    // Guide"); class matching must not care about titles.
+    let raw = serde_json::json!({
+        "1": { "inputs": { "strength": 1.0 },
+               "class_type": "LTXAddVideoICLoRAGuide",
+               "_meta": { "title": "🅛🅣🅧 Add Video IC-LoRA Guide" } },
+        "3": { "inputs": { "text": "", "clip": ["9", 0] },
+               "class_type": "CLIPTextEncode", "_meta": { "title": "Prompt" } },
+        "4": { "inputs": { "noise_seed": 0 },
+               "class_type": "RandomNoise", "_meta": { "title": "RandomNoise" } }
+    });
+    let mut j = bl4_job("ltx-ingredients-hdr");
+    j.strength = Some(0.35);
+    let patched = patch(&Graph(raw), &j, &[], &[]).unwrap();
+    assert_eq!(
+        nodes_by_class(&patched, "LTXAddVideoICLoRAGuide")[0]
+            .pointer("/inputs/strength")
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+        0.35
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CrossView camera (CV1, 2026-07-30): azimuth/elevation/distance patched by
+// CLASS onto CrossViewWarp; "Frame Count" is the one titled INT that feeds
+// BOTH frame_load_cap and the latent length. Probe provenance: the pose
+// (40, 30, 1.0) rendered clean on real 1280x704/121f street footage.
+// ---------------------------------------------------------------------------
+
+fn crossview_graph() -> Graph {
+    let raw = std::fs::read(format!("{DIR}/ltx-crossview-hdr/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+fn crossview_job() -> LtxJob {
+    let mut j = bl4_job("ltx-crossview-hdr");
+    j.resolution = Resolution { w: 1280, h: 720 };
+    j
+}
+
+#[test]
+fn test_camera_patches_the_crossview_node() {
+    let mut j = crossview_job();
+    j.azimuth = Some(40.0);
+    j.elevation = Some(30.0);
+    j.distance = Some(1.0);
+    let patched = patch(&crossview_graph(), &j, &[], &["control.mp4".to_string()]).unwrap();
+    let cam = nodes_by_class(&patched, "CrossViewWarp");
+    assert_eq!(cam.len(), 1, "one camera node");
+    for (k, want) in [("azimuth", 40.0), ("elevation", 30.0), ("distance", 1.0)] {
+        assert_eq!(
+            cam[0].pointer(&format!("/inputs/{k}")).unwrap().as_f64().unwrap(),
+            want
+        );
+    }
+}
+
+#[test]
+fn test_no_camera_leaves_the_pinned_mild_pose() {
+    let patched = patch(
+        &crossview_graph(),
+        &crossview_job(),
+        &[],
+        &["control.mp4".to_string()],
+    )
+    .unwrap();
+    let cam = &nodes_by_class(&patched, "CrossViewWarp")[0];
+    assert_eq!(cam.pointer("/inputs/azimuth").unwrap().as_f64().unwrap(), 20.0);
+    assert_eq!(cam.pointer("/inputs/elevation").unwrap().as_f64().unwrap(), 0.0);
+}
+
+#[test]
+fn test_camera_on_a_cameraless_template_fails_closed() {
+    let mut j = job(); // t2v
+    j.azimuth = Some(20.0);
+    let err = patch(&fixture_graph(), &j, &[], &[]).unwrap_err().to_string();
+    assert!(err.contains("no CrossViewWarp"), "got: {err}");
+}
+
+#[test]
+fn test_frame_count_handle_binds_billed_to_loaded_and_rendered() {
+    let mut j = crossview_job();
+    j.frames = 121;
+    j.fps = 24;
+    let patched = patch(&crossview_graph(), &j, &[], &["control.mp4".to_string()]).unwrap();
+    let g = patched.0.as_object().unwrap();
+    let fc = g.values()
+        .find(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some("Frame Count"))
+        .expect("crossview carries the Frame Count handle");
+    assert_eq!(fc.pointer("/inputs/value").unwrap().as_i64().unwrap(), 121);
+    // and the strength patch reaches BOTH guides in this template
+    let mut j2 = crossview_job();
+    j2.strength = Some(0.8);
+    let p2 = patch(&crossview_graph(), &j2, &[], &["control.mp4".to_string()]).unwrap();
+    let guides = nodes_by_class(&p2, "LTXAddVideoICLoRAGuide");
+    assert_eq!(guides.len(), 3, "two base-pass guides + the x2 refine pass guide");
+    for gd in guides {
+        assert_eq!(gd.pointer("/inputs/strength").unwrap().as_f64().unwrap(), 0.8);
+    }
 }
