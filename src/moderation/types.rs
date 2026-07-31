@@ -108,7 +108,10 @@ impl Verdict {
 /// empty), whose `Blocked` carries a different reason and must NOT preserve. A shared
 /// named constant (not ad-hoc string parsing): the producer (`csam::entry`) and the
 /// consumer (`ModerationResult::is_genuine_hit`) reference the same symbol (R8/R9).
-pub const REASON_CSAM_MATCH: &str = "csam-match";
+/// List-neutral by design (WP-N2): the hit may come from the NCMEC-sourced list,
+/// an operator-loaded list, or the own-hash list — the sentinel does not claim
+/// which. Downstream consumers treat the string as opaque.
+pub const REASON_HASH_LIST_MATCH: &str = "hash-list-match";
 
 /// The result the node records per job/asset (B9). `reason` carries a category or
 /// rule id only — **never raw matched content** (CSAM isolation, §2).
@@ -146,13 +149,15 @@ impl ModerationResult {
     /// evidence — as opposed to a fail-closed HOLD (list unavailable / undecodable /
     /// hash-compute failure / empty), which must NOT preserve and is retryable (the API
     /// surfaces it as `503`). A `Flagged` is always a real text flag; a `Blocked` is a
-    /// genuine match ONLY when its reason is the match sentinel [`REASON_CSAM_MATCH`]
-    /// (an own-hash or NCMEC exact/PDQ hit — including an own-hash hit while the NCMEC
-    /// list is unavailable, and an undecodable exact-SHA hit), never a can't-scan reason.
+    /// genuine match ONLY when its reason is the match sentinel
+    /// [`REASON_HASH_LIST_MATCH`] (an own-hash or loaded-list exact/PDQ hit — the
+    /// list may be NCMEC-sourced or operator-loaded — including an own-hash hit
+    /// while the snapshot is unavailable, and an undecodable exact-SHA hit),
+    /// never a can't-scan reason.
     pub fn is_genuine_hit(&self) -> bool {
         match self.verdict {
             Verdict::Flagged => true,
-            Verdict::Blocked => self.reason.as_deref() == Some(REASON_CSAM_MATCH),
+            Verdict::Blocked => self.reason.as_deref() == Some(REASON_HASH_LIST_MATCH),
             Verdict::Cleared => false,
         }
     }

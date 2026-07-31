@@ -736,7 +736,7 @@ describe('End-to-End Conversation', () => {
 - `encrypted_response` (type: `image_generation_error`): Encrypted generation error (v8.16.0+)
 - `encrypted_response` (type: `transcode_accepted`): Encrypted transcode job accepted (v8.25.0+)
 - `encrypted_response` (type: `transcode_progress`): Encrypted transcode progress update (v8.25.0+, gopInfo added v8.26.0)
-- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0)
+- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0). May carry a **top-level `moderation` field** — `{"verdict": "cleared"|"blocked"|"flagged", "reason": string|null}` — when a moderation verdict was recorded for the job; the field is **omitted** (not null) when no verdict exists. Absence means "not moderated", never "clean".
 - `encrypted_response` (type: `transcode_error`): Encrypted transcode error (v8.25.0+)
 
 ### Error Codes
@@ -758,6 +758,11 @@ describe('End-to-End Conversation', () => {
 - `SUBMIT_FAILED`: Transcoder sidecar rejected the job (v8.25.0+)
 - `TIMEOUT`: Transcoding job exceeded timeout (v8.25.0+)
 - `POLL_FAILED`: Transcoder status polling failed (v8.25.0+)
+- `CONTENT_BLOCKED`: Transcode held by the content-moderation gate — verdict `blocked`. Terminal for the job; the client never receives `transcode_complete`. Emitted only when host enforcement is enabled
+- `CONTENT_FLAGGED`: Transcode held pending human review — verdict `flagged`. Terminal for the job (a reviewer decision is a new fact, not a retry). Emitted only when host enforcement is enabled
+- `MODERATION_UNAVAILABLE`: No moderation verdict could be recorded (frames never arrived, or no usable hash list). An infra state, not a verdict: clients must not auto-retry, but a user-initiated resubmission is a new job and may succeed. Emitted only when host enforcement is enabled
+
+All transcode errors arrive as `{"type": "transcode_error", "error": {"code": "<CODE>", "message": "<detail>"}}` inside the encrypted envelope — the code is always a property of the `error` object, never a bare string.
 
 ## Thinking/Reasoning Mode (v8.17.0+)
 

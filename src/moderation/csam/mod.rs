@@ -15,6 +15,7 @@
 pub mod atrest;
 pub mod entry;
 pub mod hashlist;
+pub mod listfile;
 pub mod matcher;
 pub mod mock_source;
 pub mod ownhash;

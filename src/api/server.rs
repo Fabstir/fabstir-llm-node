@@ -219,6 +219,14 @@ pub struct ApiServer {
     /// `None`/empty ⇒ every frame POST is rejected (401): an unset secret never means
     /// "accept all" (fail-closed, R3-C1).
     moderation_ingest_token: Option<String>,
+    /// The resolved match state both moderation builders serve from (WP-N2):
+    /// operator lists from `MODERATION_LIST_FILE`/`MODERATION_OWNHASH_FILE`,
+    /// loaded once at startup; without them, the fail-closed default triple.
+    frames_match_state: crate::moderation::csam::listfile::FramesMatchState,
+    /// `Some(reason)` when a set list env var failed to load (rule 1: the node
+    /// starts DEGRADED — fail-closed default — never dies on a broken file).
+    /// Surfaced via `health_check()` so degradation is not boot-log archaeology.
+    moderation_list_degraded: Option<String>,
     transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     // LTX 2.3 generation sidecar (mirror of the transcoder fields).
@@ -310,6 +318,12 @@ impl ApiServer {
             ),
             moderation_task_jobs: Arc::new(std::sync::Mutex::new(HashMap::new())),
             moderation_ingest_token: None,
+            // NEVER reads env: tests/moderation/test_frames_state.rs pins this
+            // snapshot as fail-closed Unavailable (R11) — env leakage here
+            // would break that pin and the asset-path 503 pins.
+            frames_match_state:
+                crate::moderation::csam::listfile::FramesMatchState::fail_closed_default(),
+            moderation_list_degraded: None,
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(3),
             ),
@@ -384,6 +398,37 @@ impl ApiServer {
             crate::api::websocket::session_store::SessionStore::new(session_store_config),
         ));
 
+        // WP-N2 operator lists — TWO steps so the one fatal case is structurally
+        // separate from the degradable one (a single anyhow::Result cannot
+        // discriminate degrade-vs-die). Step 1: the PDQ knob. Its error
+        // propagates and the node exits (rule 1's ONLY fatal case: static
+        // misconfig no race can produce).
+        let frames_max_distance = crate::moderation::csam::listfile::resolve_pdq_max_distance()?;
+        // Step 2: file loading. Every error is caught UNCONDITIONALLY (both
+        // enforce states, rule 1): a broken list file degrades — fail-closed
+        // default, ERROR log, /health issue — it never kills the node (the
+        // enforcement outcome is identical to dying: everything holds).
+        let (frames_match_state, moderation_list_degraded) =
+            match crate::moderation::csam::listfile::FramesMatchState::from_env_files(
+                frames_max_distance,
+            ) {
+                Ok(state) => (state, None),
+                Err(e) => {
+                    error!(
+                        "moderation list degraded: {e:#} — starting fail-closed \
+                         (all transcodes will HOLD)"
+                    );
+                    // /health is UNAUTHENTICATED: surface the root cause only —
+                    // the full chain (operator filesystem path) stays in the log.
+                    let issue = format!("moderation list degraded: {}", e.root_cause());
+                    let state = crate::moderation::csam::listfile::FramesMatchState {
+                        max_distance: frames_max_distance,
+                        ..crate::moderation::csam::listfile::FramesMatchState::fail_closed_default()
+                    };
+                    (state, Some(issue))
+                }
+            };
+
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
@@ -435,6 +480,8 @@ impl ApiServer {
             moderation_ingest_token: std::env::var("MODERATION_INGEST_TOKEN")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            frames_match_state,
+            moderation_list_degraded,
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(
                     std::env::var("TRANSCODE_RATE_LIMIT")
@@ -480,6 +527,56 @@ impl ApiServer {
             listener: Some(listener),
             config,
         };
+
+        // WP-N2 startup visibility (rules 1a-iii + §1): one line for every
+        // state, so the operator learns the list situation from the boot log,
+        // not from customer complaints.
+        {
+            let st = &server.frames_match_state;
+            // Deliberately `Loaded`, NOT `require_available()` (which also
+            // passes Stale): rule 1a-iii's condition is "no list source
+            // yielded a Loaded snapshot", and the operator-load path can only
+            // produce Loaded or Unavailable. Revisit if D7 stale-reuse lands.
+            let loaded = matches!(
+                st.snapshot.state,
+                crate::moderation::csam::hashlist::ListState::Loaded
+            );
+            info!(
+                "moderation lists: {} (sha256 {}, pdq {}, list-fp {:016x}) + ownhash {} — max_distance {}",
+                if loaded { "loaded" } else { "unavailable (fail-closed)" },
+                st.snapshot.sha256.len(),
+                st.snapshot.pdq.len(),
+                st.snapshot.version,
+                st.ownhash.len(),
+                st.max_distance
+            );
+            if !loaded && !st.ownhash.is_empty() {
+                warn!(
+                    "own-hash list loaded WITHOUT an operator list: own-hash can only BLOCK \
+                     listed content, it cannot clear anything — all non-listed content will HOLD \
+                     until MODERATION_LIST_FILE provides a loaded list"
+                );
+            }
+            // §6 huge-file row: the match state is cloned per scan request, so
+            // an NCMEC-scale list on this deploy-time path costs ~MBs of
+            // alloc/copy per request. Operator lists are meant to be small.
+            let total_entries = st.snapshot.sha256.len() + st.snapshot.pdq.len() + st.ownhash.len();
+            if total_entries >= 100_000 {
+                warn!(
+                    "moderation lists hold {} entries — this deploy-time file path clones the \
+                     full state per scan request; lists of this scale belong on the encrypted \
+                     NCMEC store path",
+                    total_entries
+                );
+            }
+            // Same truthiness as the moderation_enforce field init ("true"/"1").
+            if server.moderation_enforce && !loaded {
+                warn!(
+                    "MODERATION_ENFORCE is on but no moderation list is Loaded — \
+                     100% of transcodes will HOLD until a list loads or enforcement is turned off"
+                );
+            }
+        }
 
         // Start the HTTP server in the background
         server.start_http_server().await;
@@ -541,6 +638,8 @@ impl ApiServer {
             moderation_metrics: self.moderation_metrics.clone(),
             moderation_task_jobs: self.moderation_task_jobs.clone(),
             moderation_ingest_token: self.moderation_ingest_token.clone(),
+            frames_match_state: self.frames_match_state.clone(),
+            moderation_list_degraded: self.moderation_list_degraded.clone(),
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             ltx_client: self.ltx_client.clone(),
@@ -744,14 +843,17 @@ impl ApiServer {
         self.moderation_enforce
     }
 
-    /// Build the launch asset moderator (B8). Until the real NCMEC list is wired at
-    /// go-live (Phase-7 glue), the NCMEC snapshot is `Unavailable` ⇒ image assets
-    /// HOLD (fail-closed); the subtitle text-scan list is the launch mock (§4-Q2).
+    /// Build the launch asset moderator (B8). Serves from the SAME stored
+    /// match state as [`Self::build_frames_match_state`] (WP-N2): without
+    /// operator list env vars that state is the fail-closed default —
+    /// `Unavailable` snapshot ⇒ image assets HOLD; with an operator list
+    /// loaded, both paths see it together (C5: no drift). The subtitle
+    /// text-scan list is the launch mock (§4-Q2).
     pub fn build_asset_moderator(&self) -> crate::moderation::asset::AssetModerator {
         crate::moderation::asset::AssetModerator::new(
-            crate::moderation::csam::hashlist::HashListSnapshot::unavailable(),
-            crate::moderation::csam::ownhash::OwnHashList::new(),
-            31,
+            self.frames_match_state.snapshot.clone(),
+            self.frames_match_state.ownhash.clone(),
+            self.frames_match_state.max_distance,
             crate::moderation::asset::TextScanList::launch_mock(),
         )
     }
@@ -826,9 +928,12 @@ impl ApiServer {
         }
     }
 
-    /// Build the launch frames match-state (C5): the SAME `Unavailable` NCMEC
-    /// snapshot, own-hash list, and PDQ `max_distance` (31) as
-    /// [`Self::build_asset_moderator`], so `/frames` cannot drift from `/asset`.
+    /// Build the frames match-state (C5): a clone of the SAME stored state as
+    /// [`Self::build_asset_moderator`], so `/frames` cannot drift from
+    /// `/asset`. Without operator lists (WP-N2) this is the fail-closed
+    /// default (`Unavailable`, empty own-hash, 31). Clone-per-call is the
+    /// existing pattern (`NcmecHashStore::current_snapshot` also returns
+    /// owned); an NCMEC-scale list keeps its own store.
     pub fn build_frames_match_state(
         &self,
     ) -> (
@@ -837,9 +942,9 @@ impl ApiServer {
         u32,
     ) {
         (
-            crate::moderation::csam::hashlist::HashListSnapshot::unavailable(),
-            crate::moderation::csam::ownhash::OwnHashList::new(),
-            31,
+            self.frames_match_state.snapshot.clone(),
+            self.frames_match_state.ownhash.clone(),
+            self.frames_match_state.max_distance,
         )
     }
 
@@ -1555,6 +1660,13 @@ impl ApiServer {
             issues.push("Circuit breaker is open".to_string());
         }
 
+        // WP-N2 rule 1a-i: a set-but-broken list file degrades the node loudly —
+        // the default match state alone is indistinguishable from a healthy
+        // no-env-vars boot, so the load failure is stored and surfaced here.
+        if let Some(msg) = &self.moderation_list_degraded {
+            issues.push(msg.clone());
+        }
+
         let status = if issues.is_empty() {
             "healthy"
         } else if issues.len() == 1 {
@@ -1575,6 +1687,14 @@ impl ApiServer {
 
     /// Maximum body size for vision endpoints (20MB to support ~15MB raw images after base64 encoding)
     const VISION_BODY_LIMIT: usize = 20 * 1024 * 1024;
+
+    /// Body cap for the `/v1/moderate` nest. Load-bearing for the frames seam:
+    /// PART-A §3.2's batching amendment (2026-07-31) caps the transcoder at
+    /// **200 keyframes per POST** — ~17 MB worst-case at 64 KB tap PNGs after
+    /// base64 — precisely so full-coverage samples fit under this limit in
+    /// batches. Raising the batch cap requires revisiting BOTH this value and
+    /// the frames handler's decode-all-at-once memory profile.
+    const MODERATION_BODY_LIMIT: usize = 20 * 1024 * 1024;
 
     pub fn create_router(server: Arc<Self>) -> Router {
         // Vision routes need higher body limit for large images
@@ -1600,7 +1720,7 @@ impl ApiServer {
                 "/frames",
                 post(crate::api::moderation::moderate_frames_handler),
             )
-            .layer(DefaultBodyLimit::max(Self::VISION_BODY_LIMIT))
+            .layer(DefaultBodyLimit::max(Self::MODERATION_BODY_LIMIT))
             .with_state(server.clone());
 
         Router::new()

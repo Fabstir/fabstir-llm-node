@@ -166,9 +166,11 @@ async fn route_registered_and_serves_clean_subtitle() {
 
 #[tokio::test]
 async fn route_image_on_unavailable_list_returns_503() {
-    // PRODUCTION path: build_asset_moderator() installs an Unavailable NCMEC snapshot, so
-    // an image POST to /v1/moderate/asset must HOLD as 503 (retryable infra hold) and
-    // preserve nothing — NOT 200-blocked-and-preserved (the over-preserve fix).
+    // DEFAULT-STATE path: `new_for_test` hardcodes the fail-closed default triple
+    // (env-blind — WP-N2), so an image POST to /v1/moderate/asset must HOLD as 503
+    // (retryable infra hold) and preserve nothing — NOT 200-blocked-and-preserved
+    // (the over-preserve fix). Production may now be Loaded via an explicit
+    // operator list; this pins the no-list default.
     let server = Arc::new(ApiServer::new_for_test());
     let app = ApiServer::create_router(server);
     let body = serde_json::to_string(&ModerateAssetRequest {

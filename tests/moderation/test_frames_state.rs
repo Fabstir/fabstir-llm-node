@@ -59,11 +59,14 @@ fn frames_match_state_mirrors_asset_tuning() {
     let server = ApiServer::new_for_test();
     let (snapshot, _ownhash, max_distance) = server.build_frames_match_state();
     assert_eq!(max_distance, 31);
-    // R11: the PRODUCTION frames snapshot MUST be fail-closed (Unavailable) until the real
-    // NCMEC list lands — a Loaded/available snapshot here would be a fail-open regression
-    // (benign keyframes would clear). Asserted so it can't silently regress.
+    // R11 (amended by WP-N2): this pins the NO-ENV-VARS default — `new_for_test`
+    // hardcodes the fail-closed triple and NEVER reads env. Production MAY now
+    // install a Loaded snapshot via an explicit operator list
+    // (MODERATION_LIST_FILE); the fail-closed default pinned here is what every
+    // deployment without that explicit choice gets. A Loaded snapshot HERE
+    // would mean env leakage or a fail-open default — both regressions.
     assert!(
         snapshot.require_available().is_err(),
-        "the production frames snapshot must be Unavailable (fail-closed)"
+        "the default frames snapshot must be Unavailable (fail-closed)"
     );
 }
