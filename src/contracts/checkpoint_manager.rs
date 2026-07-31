@@ -3383,9 +3383,8 @@ mod tests {
         // decoding the depositor from word 1 must work regardless of the 18
         // trailing fields (a 17-field tuple decode fails "data out-of-bounds").
         use ethers::abi::{encode, Token};
-        let depositor = Address::from_slice(
-            &hex::decode("8ba1f109551bd432803012645ac136ddd64dba72").unwrap(),
-        );
+        let depositor =
+            Address::from_slice(&hex::decode("8ba1f109551bd432803012645ac136ddd64dba72").unwrap());
         let encoded = encode(&[
             Token::Uint(U256::from(1234u64)),
             Token::Address(depositor),

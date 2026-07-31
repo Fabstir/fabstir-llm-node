@@ -90,7 +90,13 @@ pub fn patch(
     // node (t2v/i2v/flf2v/iclora/upscale): billing a paid render whose knob
     // was silently ignored would be worse than rejecting it.
     if let Some(s) = job.strength {
-        let n = patch_by_class(obj, "LTXAddVideoICLoRAGuide", "strength", Value::from(s), false)?;
+        let n = patch_by_class(
+            obj,
+            "LTXAddVideoICLoRAGuide",
+            "strength",
+            Value::from(s),
+            false,
+        )?;
         if n == 0 {
             return Err(anyhow!(
                 "strength was provided but template {} has no IC-LoRA guide node",

@@ -486,7 +486,10 @@ async fn test_strength_rejects_out_of_range_and_unguided_templates() {
         assert!(task.is_none(), "strength {bad} must reject: {inner:?}");
         assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
         assert!(
-            inner["error"]["message"].as_str().unwrap().contains("strength"),
+            inner["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("strength"),
             "message names the field: {inner:?}"
         );
     }
@@ -506,7 +509,10 @@ async fn test_strength_rejects_out_of_range_and_unguided_templates() {
     assert!(task.is_none(), "t2v + strength must reject: {inner:?}");
     assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
     assert!(
-        inner["error"]["message"].as_str().unwrap().contains("no IC-LoRA guide"),
+        inner["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no IC-LoRA guide"),
         "fail-closed reason reaches the client: {inner:?}"
     );
 }
@@ -515,8 +521,14 @@ async fn test_strength_rejects_out_of_range_and_unguided_templates() {
 async fn test_camera_rejects_out_of_range_and_cameraless_templates() {
     // Yellow-zone envelope: azimuth [-65,65], elevation [-25,40], distance
     // [0.5,2.0] — rejected BEFORE any slot or deposit is spent.
-    for (field, bad) in [("azimuth", 70.0), ("azimuth", -90.0), ("elevation", 45.0),
-                         ("elevation", -30.0), ("distance", 0.1), ("distance", 3.0)] {
+    for (field, bad) in [
+        ("azimuth", 70.0),
+        ("azimuth", -90.0),
+        ("elevation", 45.0),
+        ("elevation", -30.0),
+        ("distance", 0.1),
+        ("distance", 3.0),
+    ] {
         let server = ApiServer::new_for_test();
         let k = key();
         let (store, hash) = store_hash();
@@ -547,7 +559,10 @@ async fn test_camera_rejects_out_of_range_and_cameraless_templates() {
     let inner = decrypt_envelope(&resp, &k);
     assert!(task.is_none());
     assert!(
-        inner["error"]["message"].as_str().unwrap().contains("no CrossViewWarp"),
+        inner["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no CrossViewWarp"),
         "fail-closed reason reaches the client: {inner:?}"
     );
 }

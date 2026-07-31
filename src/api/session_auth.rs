@@ -76,7 +76,8 @@ pub fn authorise_session_client(
         return true;
     }
     client_address.eq_ignore_ascii_case(depositor)
-        || authorised_client.is_some_and(|authorised| authorised.eq_ignore_ascii_case(client_address))
+        || authorised_client
+            .is_some_and(|authorised| authorised.eq_ignore_ascii_case(client_address))
 }
 
 #[derive(Deserialize)]
@@ -106,7 +107,9 @@ pub async fn session_auth_handler(
     if request.scheme != SESSION_AUTH_SCHEME {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("unknown scheme {} (expected {})", request.scheme, SESSION_AUTH_SCHEME)})),
+            Json(
+                json!({"error": format!("unknown scheme {} (expected {})", request.scheme, SESSION_AUTH_SCHEME)}),
+            ),
         );
     }
     let Ok(session_id) = request.session_id.parse::<u64>() else {
@@ -131,7 +134,9 @@ pub async fn session_auth_handler(
         }
         _ => (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "authorisation signature is not from the configured backend auth key"})),
+            Json(
+                json!({"error": "authorisation signature is not from the configured backend auth key"}),
+            ),
         ),
     }
 }
@@ -181,8 +186,11 @@ mod tests {
         // a DIFFERENT (wrong) address — never the backend's.
         let other_session = verify_session_auth(819, CLIENT, &signature);
         assert!(!matches!(other_session, Ok(ref a) if a.eq_ignore_ascii_case(AUTH_ADDRESS)));
-        let other_client =
-            verify_session_auth(818, "0x9999999999999999999999999999999999999999", &signature);
+        let other_client = verify_session_auth(
+            818,
+            "0x9999999999999999999999999999999999999999",
+            &signature,
+        );
         assert!(!matches!(other_client, Ok(ref a) if a.eq_ignore_ascii_case(AUTH_ADDRESS)));
     }
 
@@ -229,6 +237,11 @@ mod tests {
     fn vault_address_comparison_is_case_insensitive() {
         let vaults = vec![VAULT.to_uppercase().replace("0X", "0x")];
         assert!(!authorise_session_client(VAULT, CLIENT, &vaults, None));
-        assert!(authorise_session_client(VAULT, CLIENT, &vaults, Some(CLIENT)));
+        assert!(authorise_session_client(
+            VAULT,
+            CLIENT,
+            &vaults,
+            Some(CLIENT)
+        ));
     }
 }

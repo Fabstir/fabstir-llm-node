@@ -3,25 +3,42 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.41.0-ltx-crossview-2026-07-30";
+pub const VERSION: &str = "v8.42.0-moderation-lists-2026-07-31";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.41.0";
+pub const VERSION_NUMBER: &str = "8.42.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 41;
+pub const VERSION_MINOR: u32 = 42;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-30";
+pub const BUILD_DATE: &str = "2026-07-31";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.42.0 WP-N1+WP-N2 moderation drop: operator-loadable hash lists
+    // (MODERATION_LIST_FILE / MODERATION_OWNHASH_FILE /
+    // MODERATION_PDQ_MAX_DISTANCE, loaded once at startup into a genuine
+    // Loaded snapshot serving both the frames and asset moderation paths;
+    // broken files degrade fail-closed with /health + metrics + boot-log
+    // visibility; #!allow-empty exclusive directive); the moderation
+    // {verdict, reason} field on transcode_complete; hold codes
+    // CONTENT_BLOCKED/CONTENT_FLAGGED/MODERATION_UNAVAILABLE in the public
+    // guide; match sentinel renamed to the list-neutral "hash-list-match";
+    // per-hit provenance logging; named 20 MB moderation body limit as the
+    // PART-A §3.2 batching counterpart (blocked-is-sticky across batches).
+    "moderation-operator-lists",
+    "moderation-verdict-on-complete",
+    "moderation-hold-codes",
+    "hash-list-match-sentinel",
+    "moderation-degraded-health",
+    "moderation-batched-frames",
     // v8.39.1 LTX panic safety: a panic inside the generation core used to
     // unwind straight out of the spawned task, skipping the single-exit
     // cleanup — the clip's pending proof was never forfeited, pending_count
@@ -480,6 +497,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.42.0 - Operator-loadable moderation lists + verdict on completion (Jul 31, 2026)
+    "FEAT: MODERATION_LIST_FILE (sha256:/pdq: entries) installs a genuine Loaded snapshot at startup — unlisted content can now CLEAR through /v1/moderate/frames; MODERATION_OWNHASH_FILE adds the definitive re-upload halt (block-only: it cannot clear); MODERATION_PDQ_MAX_DISTANCE tunes the near-match threshold (default 31, >256 or unparseable = boot-fatal; empty = unset)",
+    "FEAT: broken list files DEGRADE fail-closed, never kill the node — ERROR log + 'moderation list degraded' /health issue + moderation_holds_total movement; #!allow-empty is the only legal empty list and only as the sole non-comment line",
+    "FEAT: transcode_complete carries top-level moderation {verdict, reason} (omitted when no verdict); hold codes CONTENT_BLOCKED/CONTENT_FLAGGED/MODERATION_UNAVAILABLE documented in WEBSOCKET_API_SDK_GUIDE.md",
+    "BREAKING: blocked-verdict reason value renamed \"csam-match\" -> \"hash-list-match\" (opaque display string; nothing should branch on it)",
+    "FEAT: /v1/moderate nest body limit named at 20 MB — the counterpart of PART-A §3.2's 200-keyframes-per-POST batching; blocked verdicts are sticky across batches (set_if_not_downgrade), pinned by test",
     // v8.41.0 - CrossView novel-view mode (Jul 30, 2026)
     "FEAT: ltx-crossview-hdr template (allowlist v17) — novel view synthesis of a control clip via Cseti CrossView-Warp IC-LoRA (Apache-2.0) + DepthAnything v2 Small (Apache; Large is CC-BY-NC and must NOT be shipped). Single pass at the picked resolution; chain the upscale mode for 2x",
     "FEAT: optional `azimuth`/`elevation`/`distance` on ltx_generate, patched by class onto CrossViewWarp; ranges [-65,65]/[-25,40]/[0.5,2.0] (trained yellow-zone envelope); absent = pinned mild pose (20/0/1.0); REJECTED on templates with no camera node",
@@ -1101,15 +1124,25 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.41.0"));
-        assert!(version.contains("2026-07-30"));
+        assert!(version.contains("8.42.0"));
+        assert!(version.contains("2026-07-31"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.41.0-ltx-crossview-2026-07-30");
-        assert_eq!(VERSION_NUMBER, "8.41.0");
-        assert_eq!(BUILD_DATE, "2026-07-30");
+        assert_eq!(VERSION, "v8.42.0-moderation-lists-2026-07-31");
+        assert_eq!(VERSION_NUMBER, "8.42.0");
+        assert_eq!(BUILD_DATE, "2026-07-31");
+    }
+
+    #[test]
+    fn test_moderation_lists_features() {
+        assert!(FEATURES.contains(&"moderation-operator-lists"));
+        assert!(FEATURES.contains(&"moderation-verdict-on-complete"));
+        assert!(FEATURES.contains(&"moderation-hold-codes"));
+        assert!(FEATURES.contains(&"hash-list-match-sentinel"));
+        assert!(FEATURES.contains(&"moderation-degraded-health"));
+        assert!(FEATURES.contains(&"moderation-batched-frames"));
     }
 
     #[test]

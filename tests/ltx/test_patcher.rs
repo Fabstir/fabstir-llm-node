@@ -936,7 +936,11 @@ fn test_strength_patches_the_guide_on_the_real_edit_graph() {
     let guides = nodes_by_class(&patched, "LTXAddVideoICLoRAGuide");
     assert_eq!(guides.len(), 1, "the edit graph carries exactly one guide");
     assert_eq!(
-        guides[0].pointer("/inputs/strength").unwrap().as_f64().unwrap(),
+        guides[0]
+            .pointer("/inputs/strength")
+            .unwrap()
+            .as_f64()
+            .unwrap(),
         0.6
     );
 }
@@ -968,7 +972,9 @@ fn test_strength_on_an_unguided_template_fails_closed() {
     // render whose one requested parameter did nothing.
     let mut j = job();
     j.strength = Some(0.5);
-    let err = patch(&fixture_graph(), &j, &[], &[]).unwrap_err().to_string();
+    let err = patch(&fixture_graph(), &j, &[], &[])
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("no IC-LoRA guide"), "got: {err}");
 }
 
@@ -1027,7 +1033,11 @@ fn test_camera_patches_the_crossview_node() {
     assert_eq!(cam.len(), 1, "one camera node");
     for (k, want) in [("azimuth", 40.0), ("elevation", 30.0), ("distance", 1.0)] {
         assert_eq!(
-            cam[0].pointer(&format!("/inputs/{k}")).unwrap().as_f64().unwrap(),
+            cam[0]
+                .pointer(&format!("/inputs/{k}"))
+                .unwrap()
+                .as_f64()
+                .unwrap(),
             want
         );
     }
@@ -1043,15 +1053,23 @@ fn test_no_camera_leaves_the_pinned_mild_pose() {
     )
     .unwrap();
     let cam = &nodes_by_class(&patched, "CrossViewWarp")[0];
-    assert_eq!(cam.pointer("/inputs/azimuth").unwrap().as_f64().unwrap(), 20.0);
-    assert_eq!(cam.pointer("/inputs/elevation").unwrap().as_f64().unwrap(), 0.0);
+    assert_eq!(
+        cam.pointer("/inputs/azimuth").unwrap().as_f64().unwrap(),
+        20.0
+    );
+    assert_eq!(
+        cam.pointer("/inputs/elevation").unwrap().as_f64().unwrap(),
+        0.0
+    );
 }
 
 #[test]
 fn test_camera_on_a_cameraless_template_fails_closed() {
     let mut j = job(); // t2v
     j.azimuth = Some(20.0);
-    let err = patch(&fixture_graph(), &j, &[], &[]).unwrap_err().to_string();
+    let err = patch(&fixture_graph(), &j, &[], &[])
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("no CrossViewWarp"), "got: {err}");
 }
 
@@ -1062,7 +1080,8 @@ fn test_frame_count_handle_binds_billed_to_loaded_and_rendered() {
     j.fps = 24;
     let patched = patch(&crossview_graph(), &j, &[], &["control.mp4".to_string()]).unwrap();
     let g = patched.0.as_object().unwrap();
-    let fc = g.values()
+    let fc = g
+        .values()
         .find(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some("Frame Count"))
         .expect("crossview carries the Frame Count handle");
     assert_eq!(fc.pointer("/inputs/value").unwrap().as_i64().unwrap(), 121);
@@ -1071,8 +1090,15 @@ fn test_frame_count_handle_binds_billed_to_loaded_and_rendered() {
     j2.strength = Some(0.8);
     let p2 = patch(&crossview_graph(), &j2, &[], &["control.mp4".to_string()]).unwrap();
     let guides = nodes_by_class(&p2, "LTXAddVideoICLoRAGuide");
-    assert_eq!(guides.len(), 3, "two base-pass guides + the x2 refine pass guide");
+    assert_eq!(
+        guides.len(),
+        3,
+        "two base-pass guides + the x2 refine pass guide"
+    );
     for gd in guides {
-        assert_eq!(gd.pointer("/inputs/strength").unwrap().as_f64().unwrap(), 0.8);
+        assert_eq!(
+            gd.pointer("/inputs/strength").unwrap().as_f64().unwrap(),
+            0.8
+        );
     }
 }

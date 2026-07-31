@@ -800,8 +800,8 @@ fn test_bundle_v16_has_water_and_daynight() {
     }
 }
 
-
-const CROSSVIEW_TEMPLATE_HASH: &str = "0xc8e174ec56aa41ec7d4459c139855ddf5fea219d946d1d8092cea587473e25cf";
+const CROSSVIEW_TEMPLATE_HASH: &str =
+    "0xc8e174ec56aa41ec7d4459c139855ddf5fea219d946d1d8092cea587473e25cf";
 
 /// v17 (CV1): the crossview novel-view template — control-clip shape, camera
 /// pose pinned mild (azimuth 20 / elevation 0 / distance 1.0), single pass at
@@ -810,7 +810,9 @@ const CROSSVIEW_TEMPLATE_HASH: &str = "0xc8e174ec56aa41ec7d4459c139855ddf5fea219
 fn test_bundle_v17_has_crossview() {
     let store = TemplateStore::new(DIR).expect("store loads");
     assert!(store.bundle().allow_list_version >= 18); // v18: crossview regained its x2 refine pass
-    let h = store.template_hash("ltx-crossview-hdr").expect("template pinned");
+    let h = store
+        .template_hash("ltx-crossview-hdr")
+        .expect("template pinned");
     eprintln!("GOLD ltx-crossview-hdr={h}");
     if CROSSVIEW_TEMPLATE_HASH != "0x__TBD__" {
         assert_eq!(h, CROSSVIEW_TEMPLATE_HASH, "crossview golden hash drifted");
