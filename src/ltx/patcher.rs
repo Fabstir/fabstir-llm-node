@@ -81,6 +81,56 @@ pub fn patch(
     // as the dims — a synthetic graph without it is a no-op.
     patch_by_title(obj, "Duration", "value", Value::from(duration_secs), false)?;
 
+    // Guide strength (opt-in): the one tunable the guided family lacked. The
+    // pinned graphs carry LTXAddVideoICLoRAGuide.strength = 1.0 — maximum
+    // source adherence — which is why "recolour this object" edits could not
+    // take. Patched by CLASS, not title: ingredients retitles the node with
+    // glyphs but the class is identical across all six guided templates. Fail
+    // closed when the job carries a strength and the template has no guide
+    // node (t2v/i2v/flf2v/iclora/upscale): billing a paid render whose knob
+    // was silently ignored would be worse than rejecting it.
+    if let Some(s) = job.strength {
+        let n = patch_by_class(
+            obj,
+            "LTXAddVideoICLoRAGuide",
+            "strength",
+            Value::from(s),
+            false,
+        )?;
+        if n == 0 {
+            return Err(anyhow!(
+                "strength was provided but template {} has no IC-LoRA guide node",
+                job.template_id
+            ));
+        }
+    }
+
+    // CrossView camera (CV1): azimuth/elevation/distance patched by CLASS onto
+    // the template's CrossViewWarp node. Same fail-closed contract as strength:
+    // a camera sent to a template with no such node must reject, not bill with
+    // the pose silently ignored. Handler validation owns the ranges.
+    for (key, v) in [
+        ("azimuth", job.azimuth),
+        ("elevation", job.elevation),
+        ("distance", job.distance),
+    ] {
+        if let Some(v) = v {
+            let n = patch_by_class(obj, "CrossViewWarp", key, Value::from(v), false)?;
+            if n == 0 {
+                return Err(anyhow!(
+                    "{key} was provided but template {} has no CrossViewWarp node",
+                    job.template_id
+                ));
+            }
+        }
+    }
+
+    // "Frame Count" (crossview): one titled INT feeds BOTH the VHS loader's
+    // frame_load_cap and the latent length, so patching it makes billed ==
+    // loaded == rendered by construction. Optional handle — templates that
+    // derive length from the clip (edit family) simply don't have it.
+    patch_by_title(obj, "Frame Count", "value", Value::from(job.frames), false)?;
+
     // Image inputs (M1a) and video inputs (BL3/BL4) bind through the ONE binder:
     // names land on matching loader nodes in id order, count fail-closed, `&[]`
     // a no-op. Videos span the loader-class union (core `LoadVideo` for iclora,

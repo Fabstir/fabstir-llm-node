@@ -312,20 +312,32 @@ impl TranscodeProgressTask {
                                 }
                             }
 
+                            // Seam #3 (WP-N1): surface the recorded verdict on the
+                            // completion so the SDK's publish gate has a signal even in
+                            // dark launch, where the gate above does not hold. Absent
+                            // verdict ⇒ field omitted — the SDK treats absence as "not
+                            // moderated", never as "clean" (DESIGN-SDK-SEAM3 §2.2).
+                            let mut complete_payload = json!({
+                                "type": "transcode_complete",
+                                "taskId": task_id,
+                                "outputs": outputs,
+                                "billing": {
+                                    "units": total_units,
+                                    "tokens": tokens,
+                                },
+                                "duration": duration,
+                                "qualityMetrics": quality_val,
+                                "proofTreeCID": proof_cid_val,
+                                "proofTreeRootHash": proof_root_val
+                            });
+                            if let Some(m) =
+                                moderation_completion_field(server.moderation_store(), job_id)
+                            {
+                                complete_payload["moderation"] = m;
+                            }
+
                             let complete_msg = build_encrypted_transcode_response(
-                                &json!({
-                                    "type": "transcode_complete",
-                                    "taskId": task_id,
-                                    "outputs": outputs,
-                                    "billing": {
-                                        "units": total_units,
-                                        "tokens": tokens,
-                                    },
-                                    "duration": duration,
-                                    "qualityMetrics": quality_val,
-                                    "proofTreeCID": proof_cid_val,
-                                    "proofTreeRootHash": proof_root_val
-                                }),
+                                &complete_payload,
                                 &session_key,
                                 &session_id,
                                 None,
@@ -603,6 +615,23 @@ pub fn build_encrypted_transcode_response(
 }
 
 /// Build an encrypted transcode error response.
+/// Seam #3 (WP-N1): the `moderation` field for `transcode_complete`, from the
+/// recorded verdict. `None` (no job id, or no verdict recorded) means the field
+/// is OMITTED — the SDK treats absence as "not moderated", never as "clean"
+/// (DESIGN-SDK-SEAM3-PUBLISH-GATE.md §2.2). The verdict string comes from
+/// `Verdict::as_str()`, the same single source the frames endpoint uses, so the
+/// two wire surfaces cannot drift.
+pub fn moderation_completion_field(
+    store: &crate::moderation::verdict_store::VerdictStore,
+    job_id: Option<u64>,
+) -> Option<Value> {
+    let r = job_id.and_then(|jid| store.get(jid))?;
+    Some(json!({
+        "verdict": r.verdict.as_str(),
+        "reason": r.reason,
+    }))
+}
+
 fn build_encrypted_transcode_error(
     code: &str,
     message: &str,

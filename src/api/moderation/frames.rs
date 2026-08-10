@@ -67,9 +67,10 @@ impl From<ModerationResult> for ModerateFramesResponse {
 }
 
 /// Pure, testable core. `match_state` (snapshot, ownhash, max_distance) is injected
-/// so tests can drive a *Loaded* list (production passes the `Unavailable` snapshot
-/// from `ApiServer::build_frames_match_state`, which fail-closed HOLDs until the real
-/// NCMEC list lands). Decodes each keyframe to the original PNG (kept) + a transient
+/// so tests can drive any list state (production passes the stored state from
+/// `ApiServer::build_frames_match_state` — the fail-closed `Unavailable` default,
+/// or a `Loaded` operator list when `MODERATION_LIST_FILE` is set — WP-N2).
+/// Decodes each keyframe to the original PNG (kept) + a transient
 /// RGB frame (PDQ only); blocks ⇒ preserve-every-PNG-or-503; writes the verdict
 /// monotonically. Returns `(StatusCode, msg)` on any fail-closed condition.
 pub fn moderate_frames_inner(
@@ -230,6 +231,14 @@ pub async fn moderate_frames_handler(
             }
             (StatusCode::OK, Json(resp)).into_response()
         }
-        Err((status, msg)) => (status, Json(serde_json::json!({ "error": msg }))).into_response(),
+        Err((status, msg)) => {
+            // Rule 1a-ii (WP-N2): count every fail-closed HOLD — both 503 arms
+            // (list-unavailability and preserve-failure) land here; the 400s
+            // deliberately don't (malformed input is not a hold).
+            if status == StatusCode::SERVICE_UNAVAILABLE {
+                server.moderation_metrics().record_held();
+            }
+            (status, Json(serde_json::json!({ "error": msg }))).into_response()
+        }
     }
 }

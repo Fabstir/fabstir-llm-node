@@ -219,6 +219,14 @@ pub struct ApiServer {
     /// `None`/empty ⇒ every frame POST is rejected (401): an unset secret never means
     /// "accept all" (fail-closed, R3-C1).
     moderation_ingest_token: Option<String>,
+    /// The resolved match state both moderation builders serve from (WP-N2):
+    /// operator lists from `MODERATION_LIST_FILE`/`MODERATION_OWNHASH_FILE`,
+    /// loaded once at startup; without them, the fail-closed default triple.
+    frames_match_state: crate::moderation::csam::listfile::FramesMatchState,
+    /// `Some(reason)` when a set list env var failed to load (rule 1: the node
+    /// starts DEGRADED — fail-closed default — never dies on a broken file).
+    /// Surfaced via `health_check()` so degradation is not boot-log archaeology.
+    moderation_list_degraded: Option<String>,
     transcoding_rate_limiter: Arc<crate::transcoder::rate_limiter::TranscodingRateLimiter>,
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     // LTX 2.3 generation sidecar (mirror of the transcoder fields).
@@ -230,6 +238,16 @@ pub struct ApiServer {
     /// endpoint, so LTX gates locally rather than via the transcoder capacity cache.
     ltx_semaphore: Arc<tokio::sync::Semaphore>,
     auto_image_routing: bool,
+    /// FC1.6: platform vault depositor addresses (lowercase). EMPTY (the
+    /// default) ⇒ the vault-session auth gate is skipped entirely — every
+    /// current deployment behaves exactly as before.
+    fiat_vault_addresses: Vec<String>,
+    /// FC1.6: the credits backend's AUTH key address (NOT its funds key).
+    /// None ⇒ POST /v1/session-auth 404s (pre-hardening shape).
+    fiat_backend_auth_address: Option<String>,
+    /// FC1.6: jobId → backend-authorised client address (in-memory; a restart
+    /// clears it and the helper simply re-presents before its next submit).
+    session_auth_store: Arc<crate::api::session_auth::SessionAuthStore>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -300,6 +318,12 @@ impl ApiServer {
             ),
             moderation_task_jobs: Arc::new(std::sync::Mutex::new(HashMap::new())),
             moderation_ingest_token: None,
+            // NEVER reads env: tests/moderation/test_frames_state.rs pins this
+            // snapshot as fail-closed Unavailable (R11) — env leakage here
+            // would break that pin and the asset-path 503 pins.
+            frames_match_state:
+                crate::moderation::csam::listfile::FramesMatchState::fail_closed_default(),
+            moderation_list_degraded: None,
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(3),
             ),
@@ -312,6 +336,9 @@ impl ApiServer {
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::LtxRateLimiter::new(3)),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             auto_image_routing: false,
+            fiat_vault_addresses: Vec::new(),
+            fiat_backend_auth_address: None,
+            session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -371,6 +398,37 @@ impl ApiServer {
             crate::api::websocket::session_store::SessionStore::new(session_store_config),
         ));
 
+        // WP-N2 operator lists — TWO steps so the one fatal case is structurally
+        // separate from the degradable one (a single anyhow::Result cannot
+        // discriminate degrade-vs-die). Step 1: the PDQ knob. Its error
+        // propagates and the node exits (rule 1's ONLY fatal case: static
+        // misconfig no race can produce).
+        let frames_max_distance = crate::moderation::csam::listfile::resolve_pdq_max_distance()?;
+        // Step 2: file loading. Every error is caught UNCONDITIONALLY (both
+        // enforce states, rule 1): a broken list file degrades — fail-closed
+        // default, ERROR log, /health issue — it never kills the node (the
+        // enforcement outcome is identical to dying: everything holds).
+        let (frames_match_state, moderation_list_degraded) =
+            match crate::moderation::csam::listfile::FramesMatchState::from_env_files(
+                frames_max_distance,
+            ) {
+                Ok(state) => (state, None),
+                Err(e) => {
+                    error!(
+                        "moderation list degraded: {e:#} — starting fail-closed \
+                         (all transcodes will HOLD)"
+                    );
+                    // /health is UNAUTHENTICATED: surface the root cause only —
+                    // the full chain (operator filesystem path) stays in the log.
+                    let issue = format!("moderation list degraded: {}", e.root_cause());
+                    let state = crate::moderation::csam::listfile::FramesMatchState {
+                        max_distance: frames_max_distance,
+                        ..crate::moderation::csam::listfile::FramesMatchState::fail_closed_default()
+                    };
+                    (state, Some(issue))
+                }
+            };
+
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
@@ -422,6 +480,8 @@ impl ApiServer {
             moderation_ingest_token: std::env::var("MODERATION_INGEST_TOKEN")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            frames_match_state,
+            moderation_list_degraded,
             transcoding_rate_limiter: Arc::new(
                 crate::transcoder::rate_limiter::TranscodingRateLimiter::new(
                     std::env::var("TRANSCODE_RATE_LIMIT")
@@ -449,11 +509,74 @@ impl ApiServer {
                     .map(|v| !v.is_empty())
                     .unwrap_or(false),
             },
+            // FC1.6 (same optional-env posture as MODERATION_INGEST_TOKEN):
+            // unset ⇒ feature off ⇒ behaviour identical to pre-FC1.6 builds.
+            fiat_vault_addresses: std::env::var("FIAT_VAULT_ADDRESSES")
+                .unwrap_or_default()
+                .split(',')
+                .map(|a| a.trim().to_lowercase())
+                .filter(|a| !a.is_empty())
+                .collect(),
+            fiat_backend_auth_address: std::env::var("FIAT_BACKEND_AUTH_ADDRESS")
+                .ok()
+                .map(|a| a.trim().to_lowercase())
+                .filter(|a| !a.is_empty()),
+            session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
             config,
         };
+
+        // WP-N2 startup visibility (rules 1a-iii + §1): one line for every
+        // state, so the operator learns the list situation from the boot log,
+        // not from customer complaints.
+        {
+            let st = &server.frames_match_state;
+            // Deliberately `Loaded`, NOT `require_available()` (which also
+            // passes Stale): rule 1a-iii's condition is "no list source
+            // yielded a Loaded snapshot", and the operator-load path can only
+            // produce Loaded or Unavailable. Revisit if D7 stale-reuse lands.
+            let loaded = matches!(
+                st.snapshot.state,
+                crate::moderation::csam::hashlist::ListState::Loaded
+            );
+            info!(
+                "moderation lists: {} (sha256 {}, pdq {}, list-fp {:016x}) + ownhash {} — max_distance {}",
+                if loaded { "loaded" } else { "unavailable (fail-closed)" },
+                st.snapshot.sha256.len(),
+                st.snapshot.pdq.len(),
+                st.snapshot.version,
+                st.ownhash.len(),
+                st.max_distance
+            );
+            if !loaded && !st.ownhash.is_empty() {
+                warn!(
+                    "own-hash list loaded WITHOUT an operator list: own-hash can only BLOCK \
+                     listed content, it cannot clear anything — all non-listed content will HOLD \
+                     until MODERATION_LIST_FILE provides a loaded list"
+                );
+            }
+            // §6 huge-file row: the match state is cloned per scan request, so
+            // an NCMEC-scale list on this deploy-time path costs ~MBs of
+            // alloc/copy per request. Operator lists are meant to be small.
+            let total_entries = st.snapshot.sha256.len() + st.snapshot.pdq.len() + st.ownhash.len();
+            if total_entries >= 100_000 {
+                warn!(
+                    "moderation lists hold {} entries — this deploy-time file path clones the \
+                     full state per scan request; lists of this scale belong on the encrypted \
+                     NCMEC store path",
+                    total_entries
+                );
+            }
+            // Same truthiness as the moderation_enforce field init ("true"/"1").
+            if server.moderation_enforce && !loaded {
+                warn!(
+                    "MODERATION_ENFORCE is on but no moderation list is Loaded — \
+                     100% of transcodes will HOLD until a list loads or enforcement is turned off"
+                );
+            }
+        }
 
         // Start the HTTP server in the background
         server.start_http_server().await;
@@ -515,6 +638,8 @@ impl ApiServer {
             moderation_metrics: self.moderation_metrics.clone(),
             moderation_task_jobs: self.moderation_task_jobs.clone(),
             moderation_ingest_token: self.moderation_ingest_token.clone(),
+            frames_match_state: self.frames_match_state.clone(),
+            moderation_list_degraded: self.moderation_list_degraded.clone(),
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             ltx_client: self.ltx_client.clone(),
@@ -523,6 +648,9 @@ impl ApiServer {
             ltx_rate_limiter: self.ltx_rate_limiter.clone(),
             ltx_semaphore: self.ltx_semaphore.clone(),
             auto_image_routing: self.auto_image_routing,
+            fiat_vault_addresses: self.fiat_vault_addresses.clone(),
+            fiat_backend_auth_address: self.fiat_backend_auth_address.clone(),
+            session_auth_store: self.session_auth_store.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -543,6 +671,16 @@ impl ApiServer {
 
     pub async fn set_checkpoint_manager(&self, checkpoint_manager: Arc<CheckpointManager>) {
         *self.checkpoint_manager.write().await = Some(checkpoint_manager);
+    }
+
+    /// FC1.6 accessors (fields are private to this module; the session-auth
+    /// handler lives in api::session_auth).
+    pub fn fiat_backend_auth_address(&self) -> Option<&str> {
+        self.fiat_backend_auth_address.as_deref()
+    }
+
+    pub fn session_auth_store(&self) -> &Arc<crate::api::session_auth::SessionAuthStore> {
+        &self.session_auth_store
     }
 
     pub async fn get_checkpoint_manager(&self) -> Option<Arc<CheckpointManager>> {
@@ -705,14 +843,17 @@ impl ApiServer {
         self.moderation_enforce
     }
 
-    /// Build the launch asset moderator (B8). Until the real NCMEC list is wired at
-    /// go-live (Phase-7 glue), the NCMEC snapshot is `Unavailable` ⇒ image assets
-    /// HOLD (fail-closed); the subtitle text-scan list is the launch mock (§4-Q2).
+    /// Build the launch asset moderator (B8). Serves from the SAME stored
+    /// match state as [`Self::build_frames_match_state`] (WP-N2): without
+    /// operator list env vars that state is the fail-closed default —
+    /// `Unavailable` snapshot ⇒ image assets HOLD; with an operator list
+    /// loaded, both paths see it together (C5: no drift). The subtitle
+    /// text-scan list is the launch mock (§4-Q2).
     pub fn build_asset_moderator(&self) -> crate::moderation::asset::AssetModerator {
         crate::moderation::asset::AssetModerator::new(
-            crate::moderation::csam::hashlist::HashListSnapshot::unavailable(),
-            crate::moderation::csam::ownhash::OwnHashList::new(),
-            31,
+            self.frames_match_state.snapshot.clone(),
+            self.frames_match_state.ownhash.clone(),
+            self.frames_match_state.max_distance,
             crate::moderation::asset::TextScanList::launch_mock(),
         )
     }
@@ -787,9 +928,12 @@ impl ApiServer {
         }
     }
 
-    /// Build the launch frames match-state (C5): the SAME `Unavailable` NCMEC
-    /// snapshot, own-hash list, and PDQ `max_distance` (31) as
-    /// [`Self::build_asset_moderator`], so `/frames` cannot drift from `/asset`.
+    /// Build the frames match-state (C5): a clone of the SAME stored state as
+    /// [`Self::build_asset_moderator`], so `/frames` cannot drift from
+    /// `/asset`. Without operator lists (WP-N2) this is the fail-closed
+    /// default (`Unavailable`, empty own-hash, 31). Clone-per-call is the
+    /// existing pattern (`NcmecHashStore::current_snapshot` also returns
+    /// owned); an NCMEC-scale list keeps its own store.
     pub fn build_frames_match_state(
         &self,
     ) -> (
@@ -798,9 +942,9 @@ impl ApiServer {
         u32,
     ) {
         (
-            crate::moderation::csam::hashlist::HashListSnapshot::unavailable(),
-            crate::moderation::csam::ownhash::OwnHashList::new(),
-            31,
+            self.frames_match_state.snapshot.clone(),
+            self.frames_match_state.ownhash.clone(),
+            self.frames_match_state.max_distance,
         )
     }
 
@@ -1516,6 +1660,13 @@ impl ApiServer {
             issues.push("Circuit breaker is open".to_string());
         }
 
+        // WP-N2 rule 1a-i: a set-but-broken list file degrades the node loudly —
+        // the default match state alone is indistinguishable from a healthy
+        // no-env-vars boot, so the load failure is stored and surfaced here.
+        if let Some(msg) = &self.moderation_list_degraded {
+            issues.push(msg.clone());
+        }
+
         let status = if issues.is_empty() {
             "healthy"
         } else if issues.len() == 1 {
@@ -1536,6 +1687,14 @@ impl ApiServer {
 
     /// Maximum body size for vision endpoints (20MB to support ~15MB raw images after base64 encoding)
     const VISION_BODY_LIMIT: usize = 20 * 1024 * 1024;
+
+    /// Body cap for the `/v1/moderate` nest. Load-bearing for the frames seam:
+    /// PART-A §3.2's batching amendment (2026-07-31) caps the transcoder at
+    /// **200 keyframes per POST** — ~17 MB worst-case at 64 KB tap PNGs after
+    /// base64 — precisely so full-coverage samples fit under this limit in
+    /// batches. Raising the batch cap requires revisiting BOTH this value and
+    /// the frames handler's decode-all-at-once memory profile.
+    const MODERATION_BODY_LIMIT: usize = 20 * 1024 * 1024;
 
     pub fn create_router(server: Arc<Self>) -> Router {
         // Vision routes need higher body limit for large images
@@ -1561,11 +1720,16 @@ impl ApiServer {
                 "/frames",
                 post(crate::api::moderation::moderate_frames_handler),
             )
-            .layer(DefaultBodyLimit::max(Self::VISION_BODY_LIMIT))
+            .layer(DefaultBodyLimit::max(Self::MODERATION_BODY_LIMIT))
             .with_state(server.clone());
 
         Router::new()
             .route("/health", get(health_handler))
+            // Alias: the SDK browser build probes /v1/health (ClientManager
+            // discovery + the per-prompt host-health check). Without it those
+            // 404 and read as "unreachable" for healthy hosts. Same handler as
+            // /health; keeps the path consistent with the rest of /v1/*.
+            .route("/v1/health", get(health_handler))
             .route("/v1/version", get(version_handler))
             .route("/v1/models", get(models_handler))
             .route("/v1/checkpoints/:session_id", get(checkpoints_handler))
@@ -1584,6 +1748,13 @@ impl ApiServer {
             )
             .nest("/v1", vision_routes)
             .nest("/v1/moderate", moderation_routes)
+            // FC1.6: the fiat helper presents its backend-signed client
+            // authorisation here before its WS submit (self-authenticating;
+            // 404 when the feature is unconfigured).
+            .route(
+                "/v1/session-auth",
+                post(crate::api::session_auth::session_auth_handler),
+            )
             .route("/v1/ws", get(websocket_handler))
             .route("/metrics", get(metrics_handler))
             .layer(CorsLayer::permissive())
@@ -2315,6 +2486,85 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     job_id =
                                                         extracted_job_id_str.parse::<u64>().ok();
 
+                                                    // FC1.6: vault-paid sessions serve only the depositor or
+                                                    // a backend-authorised client. With no vault configured
+                                                    // (every pre-FC1 deployment) this whole block is skipped.
+                                                    // With the gate ON, an unreadable depositor fails CLOSED:
+                                                    // a node serving vault money must not serve blind.
+                                                    if !server.fiat_vault_addresses.is_empty() {
+                                                        let denial: Option<String> = match job_id {
+                                                            None => Some(
+                                                                "job id unparseable".to_string(),
+                                                            ),
+                                                            Some(jid) => {
+                                                                let depositor = match server
+                                                                    .get_checkpoint_manager()
+                                                                    .await
+                                                                {
+                                                                    Some(cm) => {
+                                                                        cm.query_session_depositor(
+                                                                            jid,
+                                                                        )
+                                                                        .await
+                                                                    }
+                                                                    None => Err(anyhow::anyhow!(
+                                                                        "no checkpoint manager"
+                                                                    )),
+                                                                };
+                                                                match depositor {
+                                                                    Err(e) => Some(format!(
+                                                                        "depositor unavailable: {}",
+                                                                        e
+                                                                    )),
+                                                                    Ok(dep) => {
+                                                                        let authorised = server
+                                                                            .session_auth_store
+                                                                            .lock()
+                                                                            .ok()
+                                                                            .and_then(|m| {
+                                                                                m.get(&jid).cloned()
+                                                                            });
+                                                                        if crate::api::session_auth::authorise_session_client(
+                                                                            &dep,
+                                                                            &client_address,
+                                                                            &server.fiat_vault_addresses,
+                                                                            authorised.as_deref(),
+                                                                        ) {
+                                                                            None
+                                                                        } else {
+                                                                            Some(format!(
+                                                                                "client {} is not authorised for vault-paid job {}",
+                                                                                client_address, jid
+                                                                            ))
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        };
+                                                        if let Some(reason) = denial {
+                                                            error!(
+                                                                "🚫 SESSION_AUTH_DENIED: {}",
+                                                                reason
+                                                            );
+                                                            let mut error_msg = json!({
+                                                                "type": "error",
+                                                                "code": "SESSION_AUTH_DENIED",
+                                                                "message": format!("session authorisation denied: {}", reason),
+                                                                "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                                            });
+                                                            if let Some(msg_id) = json_msg.get("id")
+                                                            {
+                                                                error_msg["id"] = msg_id.clone();
+                                                            }
+                                                            let _ = ws_sender
+                                                                .send(axum::extract::ws::Message::Text(
+                                                                    error_msg.to_string(),
+                                                                ))
+                                                                .await;
+                                                            continue;
+                                                        }
+                                                    }
+
                                                     eprintln!("🔐 Encrypted session started: job={:?} session={:?} model={}", job_id, session_id, model_name);
 
                                                     // Store session key in SessionKeyStore
@@ -2801,7 +3051,42 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         job_id,
                                                                         json_msg.get("id"),
                                                                     ).await;
-                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(ack.to_string())).await;
+                                                                    // OQ-L24 (accept path). This write happens AFTER the handler
+                                                                    // has taken the VRAM permit and marked the proof pending, but
+                                                                    // BEFORE the task is spawned — so if it parks on a wedged
+                                                                    // client there is no task in existence to release either. The
+                                                                    // permit would be leaked with no owner (MAX_CONCURRENT_
+                                                                    // GENERATIONS defaults to 1, so that disables LTX on the node
+                                                                    // until restart) and the pending would never resolve. Bound it,
+                                                                    // and on a gone client honour LtxGenerateTask's documented
+                                                                    // drop-without-spawn contract before leaving the loop.
+                                                                    let ack_timeout = crate::api::websocket::handlers::ltx::ltx_ws_write_timeout();
+                                                                    let ack_outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                        &mut ws_sender,
+                                                                        axum::extract::ws::Message::Text(ack.to_string()),
+                                                                        ack_timeout,
+                                                                    ).await;
+                                                                    if ack_outcome.client_is_gone()
+                                                                    {
+                                                                        if let Some(t) = gen_task {
+                                                                            if t.pending_marked {
+                                                                                if let Some(jid) =
+                                                                                    t.job_id
+                                                                                {
+                                                                                    server.ltx_tracker().mark_proof_forfeited(jid).await;
+                                                                                }
+                                                                            }
+                                                                            drop(t);
+                                                                            // releases the VRAM permit
+                                                                        }
+                                                                        warn!(
+                                                                            "LTX ack write {:?} (bound {}s) — client cannot receive; \
+                                                                             forfeited the pending proof and released the slot",
+                                                                            ack_outcome,
+                                                                            ack_timeout.as_secs()
+                                                                        );
+                                                                        break; // treat as disconnected: run the settlement path
+                                                                    }
 
                                                                     if let Some(task) = gen_task {
                                                                         let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<serde_json::Value>(32);
@@ -2830,7 +3115,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                 decrypted_json.get("requestId").and_then(|v| v.as_str()),
                                                                                 json_msg.get("id"),
                                                                             );
-                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(err.to_string())).await;
+                                                                            // Bounded for the same reason: `task` still holds the
+                                                                            // permit until the `continue` drops it.
+                                                                            let _ = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                                &mut ws_sender,
+                                                                                axum::extract::ws::Message::Text(err.to_string()),
+                                                                                crate::api::websocket::handlers::ltx::ltx_ws_write_timeout(),
+                                                                            ).await;
                                                                             continue;
                                                                         };
                                                                         let cancel_lc = lc.clone();
@@ -2851,13 +3142,31 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         // spawn's disconnect gates detect — so a failed WS write and
                                                                         // a read error must BREAK (not be swallowed), or the spawn
                                                                         // would bill a clip whose ltx_complete provably cannot land.
+                                                                        //
+                                                                        // OQ-L24: the write is BOUNDED. Unbounded, a client that holds
+                                                                        // the socket open but stops reading TCP parks this write for
+                                                                        // ever; this loop stops draining; the 32-slot channel fills;
+                                                                        // and every send inside the generation core then parks too, so
+                                                                        // the core never returns, the permit is never released and the
+                                                                        // single-exit cleanup never forfeits — stranding the session's
+                                                                        // escrow until the USER pays a triggerSessionTimeout reclaim.
+                                                                        let ltx_write_timeout = crate::api::websocket::handlers::ltx::ltx_ws_write_timeout();
                                                                         loop {
                                                                             tokio::select! {
                                                                                 msg = progress_rx.recv() => {
                                                                                     match msg {
                                                                                         Some(m) => {
-                                                                                            if ws_sender.send(axum::extract::ws::Message::Text(m.to_string())).await.is_err() {
-                                                                                                info!("LTX progress write failed — client gone, dropping progress channel");
+                                                                                            let outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                                                &mut ws_sender,
+                                                                                                axum::extract::ws::Message::Text(m.to_string()),
+                                                                                                ltx_write_timeout,
+                                                                                            ).await;
+                                                                                            if outcome.client_is_gone() {
+                                                                                                info!(
+                                                                                                    "LTX progress write {:?} (bound {}s) — client gone, dropping progress channel",
+                                                                                                    outcome,
+                                                                                                    ltx_write_timeout.as_secs()
+                                                                                                );
                                                                                                 break;
                                                                                             }
                                                                                         }

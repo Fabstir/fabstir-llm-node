@@ -1,0 +1,16 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+# Local environment (secrets) and editor litter
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# FIAT ledger + credential journals (FIAT_DATA_DIR) — users' money records, never
+# in the repo. Back up out of band. Default dir name below; adjust if you point
+# FIAT_DATA_DIR elsewhere.
+/data/

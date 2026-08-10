@@ -4,7 +4,13 @@
 
 This document describes the current state of the fabstir-llm-node WebSocket API implementation and provides guidance for SDK developers working with TypeScript/JavaScript to integrate with the node's capabilities. This covers all work completed from Sub-phase 8.7 through 8.12 in this session.
 
-## Current Implementation Status (Updated March 2026, v8.26.0)
+## Current Implementation Status (Updated July 2026, v8.42.0)
+
+### ✅ Content Moderation on the Transcode Path (v8.42.0)
+- **`transcode_complete` carries a top-level `moderation {verdict, reason}` field** when a verdict exists (omitted otherwise — absence is "not moderated", never "clean")
+- **Hosts load operator block lists** (SHA-256 exact + PDQ perceptual matching over sampled keyframes), so genuine `cleared`/`blocked` verdicts occur in production
+- **Three hold error codes** (`CONTENT_BLOCKED`, `CONTENT_FLAGGED`, `MODERATION_UNAVAILABLE`) defined for when host enforcement is enabled; enforcement is currently staged off (verdicts are recorded and returned, nothing is withheld yet)
+- See the Error Codes section for exact semantics, and `CONTENT-MODERATION.md` for the system overview
 
 ### ✅ Phase 8.18: WebSocket Integration with Main HTTP Server (COMPLETED)
 - **WebSocket endpoint now available at `/v1/ws`**
@@ -736,7 +742,7 @@ describe('End-to-End Conversation', () => {
 - `encrypted_response` (type: `image_generation_error`): Encrypted generation error (v8.16.0+)
 - `encrypted_response` (type: `transcode_accepted`): Encrypted transcode job accepted (v8.25.0+)
 - `encrypted_response` (type: `transcode_progress`): Encrypted transcode progress update (v8.25.0+, gopInfo added v8.26.0)
-- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0)
+- `encrypted_response` (type: `transcode_complete`): Encrypted transcode completion with output CIDs (v8.25.0+, proofTreeCID/proofTreeRootHash/qualityMetrics added v8.26.0). May carry a **top-level `moderation` field** — `{"verdict": "cleared"|"blocked"|"flagged", "reason": string|null}` — when a moderation verdict was recorded for the job; the field is **omitted** (not null) when no verdict exists. Absence means "not moderated", never "clean". As of v8.42.0 hosts can load operator block lists, so real verdicts (including `cleared`) occur in production. Handling rules for clients: treat `reason` as an **opaque display string** and never branch on its value (current values such as `"hash-list-match"` may change); treat any **unrecognised future verdict string as non-releasing** (only the exact string `"cleared"` releases); verdicts are **monotonic per job** — a job can go cleared→blocked (late evidence), never blocked→cleared.
 - `encrypted_response` (type: `transcode_error`): Encrypted transcode error (v8.25.0+)
 
 ### Error Codes
@@ -758,6 +764,11 @@ describe('End-to-End Conversation', () => {
 - `SUBMIT_FAILED`: Transcoder sidecar rejected the job (v8.25.0+)
 - `TIMEOUT`: Transcoding job exceeded timeout (v8.25.0+)
 - `POLL_FAILED`: Transcoder status polling failed (v8.25.0+)
+- `CONTENT_BLOCKED`: Transcode held by the content-moderation gate — verdict `blocked`. Terminal for the job; the client never receives `transcode_complete`. Emitted only when host enforcement is enabled (v8.42.0+)
+- `CONTENT_FLAGGED`: Transcode held pending human review — verdict `flagged`. Terminal for the job (a reviewer decision is a new fact, not a retry). Emitted only when host enforcement is enabled (v8.42.0+)
+- `MODERATION_UNAVAILABLE`: No moderation verdict could be recorded (frames never arrived, or no usable hash list). An infra state, not a verdict: clients must not auto-retry, but a user-initiated resubmission is a new job and may succeed. Emitted only when host enforcement is enabled (v8.42.0+)
+
+All transcode errors arrive as `{"type": "transcode_error", "error": {"code": "<CODE>", "message": "<detail>"}}` inside the encrypted envelope — the code is always a property of the `error` object, never a bare string.
 
 ## Thinking/Reasoning Mode (v8.17.0+)
 

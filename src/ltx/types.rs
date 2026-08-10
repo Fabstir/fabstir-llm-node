@@ -52,6 +52,31 @@ pub struct LtxJob {
     /// byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub videos: Option<Vec<String>>,
+    /// IC-LoRA guide-strength override, (0.0, 1.0]. `None` = the template's
+    /// pinned constant (1.0 in every guided graph — maximum source adherence).
+    /// Surfaced 2026-07-28 because object edits ("make the green prop gun
+    /// black") cannot win against a fully-weighted guide: lowering this hands
+    /// the prompt authority over the source. Patched by CLASS onto
+    /// `LTXAddVideoICLoRAGuide`; a job carrying it against a template with no
+    /// guide node is REJECTED rather than billed with the knob silently
+    /// ignored. Serde attrs keep the pre-strength wire (`None`) parsing and
+    /// output byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strength: Option<f64>,
+    /// CrossView camera pose (CV1, v8.41.0): azimuth/elevation in degrees,
+    /// distance as a scale factor. `None` = the template's pinned mild pose
+    /// (azimuth 20, elevation 0, distance 1.0). Patched by CLASS onto
+    /// `CrossViewWarp`; a job carrying any of them against a template with no
+    /// camera node is REJECTED, same fail-closed rule as `strength`. Ranges
+    /// enforced at validation: azimuth [-65, 65], elevation [-25, 40],
+    /// distance [0.5, 2.0] — the trained yellow-zone envelope. Keyframed
+    /// camera paths are CV2, deliberately not on this wire yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azimuth: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elevation: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance: Option<f64>,
 }
 
 impl LtxJob {

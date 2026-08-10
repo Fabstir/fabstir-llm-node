@@ -42,6 +42,7 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Transcoding Trustless Verification**: Quality metrics, GOP proofs, Merkle tree, checkpoint submission (v8.26.0+)
 - **HLS Adaptive Bitrate Streaming**: Segmented fMP4 output with per-segment encryption and free preview support (v8.28.0+)
 - **Qwen3.6-35B-A3B Support**: llama-cpp-2 0.1.146 (qwen35moe architecture) on a CUDA 13 base image (v8.29.0+)
+- **Content Moderation**: fail-closed hash-matching gate over transcode keyframes — SHA-256 exact + PDQ perceptual matching against operator-loadable block lists, verdicts on completions, evidence quarantine with human review (v8.42.0+, see `docs/CONTENT-MODERATION.md`)
 
 ## Prerequisites
 

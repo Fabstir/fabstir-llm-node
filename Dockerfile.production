@@ -1,11 +1,15 @@
 # Copyright (c) 2025 Fabstir
 # SPDX-License-Identifier: BUSL-1.1
 FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04 AS runtime
+# libnccl2 is deliberately NOT installed here: the cuda:13.0.0 base image ships
+# it pre-installed and version-HELD at the CUDA-matched version. Listing it makes
+# apt try to upgrade a held package whenever NVIDIA's repo moves ahead, which
+# fails the build ("Held packages were changed and -y was used without
+# --allow-change-held-packages"). The held base version is the one we want.
 RUN apt-get update && apt-get install -y \
     curl ca-certificates \
     libgomp1 \
     libssl-dev \
-    libnccl2 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Binary is mounted from host via docker-compose volume

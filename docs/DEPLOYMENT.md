@@ -642,6 +642,107 @@ spec:
 - If `ENABLE_EMBEDDINGS=false`: Embedding endpoint returns 503 Service Unavailable
 - If model files missing: Node starts without embedding support (graceful degradation)
 
+### 6. Operator Moderation Lists
+
+The node can load operator-supplied block-hash lists at startup. Without them,
+the content-moderation scan endpoints hold everything fail-closed (no verdict
+can be `cleared`); with a list loaded, listed content blocks and unlisted
+content clears.
+
+**Environment variables**:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MODERATION_LIST_FILE` | No | unset | Path to the operator block list (installs as a genuine loaded list) |
+| `MODERATION_OWNHASH_FILE` | No | unset | Path to locally-confirmed SHA-256 hashes (definitive block, but CANNOT clear anything on its own — non-listed content still holds unless `MODERATION_LIST_FILE` is also loaded) |
+| `MODERATION_PDQ_MAX_DISTANCE` | No | 31 | PDQ near-match Hamming threshold; an empty value means unset (default 31), but values above 256 or otherwise unparseable values are FATAL at startup |
+
+**List file format** (`MODERATION_LIST_FILE`) — plain text, one entry per
+line; blank lines and whole-line `#` comments allowed; inline comments are
+NOT allowed (a `#` after an entry makes the line malformed); hex is
+case-insensitive:
+
+```
+# operator block list — deployed 2026-07-30
+sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+pdq:d8f8f0cce0f4a84f06370a22038f63f0b2352db3fedea86dbfbd4c1a45983530
+```
+
+- `sha256:` entries match the source file exactly; `pdq:` entries near-match
+  video keyframes/images within `MODERATION_PDQ_MAX_DISTANCE`.
+- The own-hash file uses the same rules but bare 64-hex SHA-256 lines (no
+  prefix).
+- **One malformed line rejects the whole file** (a corrupted hash is a hash
+  that no longer blocks), and the error names the line number.
+- **A file with zero entries is an error** — unless its sole non-comment
+  line is the literal directive `#!allow-empty` (case-sensitive, exactly
+  that), which installs an empty loaded list so everything clears. The
+  directive is legal ONLY alone: a file containing both the directive and
+  entries is rejected. Never pad a list with placeholder hashes — well-known
+  values such as `e3b0c442...b855` (the SHA-256 of empty input) will match
+  real empty files and block them.
+
+**Broken files degrade, they never kill the node.** If a list variable is
+set and the file is missing, unreadable, or malformed, the node starts with
+NO list (everything holds, fail-closed) and surfaces the failure three ways:
+an ERROR line in the boot log with the parse error, a
+`moderation list degraded` entry in `/health` issues, and the
+`moderation_holds_total` counter at `/metrics` moving on every held scan.
+The one exception is `MODERATION_PDQ_MAX_DISTANCE`: an out-of-range or
+unparseable value stops the node at startup (static misconfiguration should
+fail at deploy time, when someone is watching); only a completely empty
+value is treated as unset. Files are read once at
+startup — edit the file, then restart the node to apply.
+
+**What the files may contain.** Operator list files hold operator-originated
+hashes of operator-confirmed illegal content only. Never use them for
+copyright, takedown, or general-moderation lists, and never place hashes
+sourced from NCMEC or other reporting bodies in these plaintext files —
+those must ride the encrypted store only. Set permissions `0600`, owned by
+the operator account.
+
+**Provenance of entries.** List entries must originate from the node's own
+quarantine/review flow or an equivalent documented evidence procedure —
+never from ad-hoc handling of suspect material. Reviewers must check a
+case's provenance log line (`moderation match: ... source=... list-fp=...`)
+before confirming any report to the applicable reporting body (NCMEC or the
+national equivalent): a hit from an operator list is not automatically
+reportable material.
+
+**False-positive remediation.** A mis-listed hash is fixed by removing the
+entry from the file and restarting the node — verdicts are in-memory and
+monotonic, so there is no in-place un-block. The client resubmits the job as
+a new job. Quarantine items created by a confirmed mis-hit are deleted, not
+reviewed.
+
+**Worked example** (run as root, then hand the file to the account the node
+runs as — shown here as `fabstir`):
+
+```bash
+# 1. Create the list (0600, owned by the node's account)
+mkdir -p /etc/fabstir
+install -m 0600 -o fabstir -g fabstir /dev/null /etc/fabstir/moderation-list.txt
+echo "sha256:$(sha256sum /evidence/confirmed-bad.mp4 | cut -d' ' -f1)" \
+  >> /etc/fabstir/moderation-list.txt
+
+# 2. Add MODERATION_LIST_FILE=/etc/fabstir/moderation-list.txt to the node
+#    service's environment (its systemd unit / EnvironmentFile / compose env —
+#    a shell `export` does not reach a service), then restart the service.
+
+# 3. Verify from the boot log:
+#    moderation lists: loaded (sha256 1, pdq 0, list-fp <hex>) + ownhash 0 — max_distance 31
+#    The list-fp value MUST equal the first 16 hex chars of
+#    `sha256sum /etc/fabstir/moderation-list.txt`. Check this after every list
+#    deploy: it is the defence against a truncated or half-copied file — a
+#    truncation at a line boundary still loads as a valid (shorter) list, and
+#    only the fingerprint reveals it.
+```
+
+The node's scan endpoint now returns `blocked` for the listed file and
+`cleared` for any other. For that verdict to hold an actual upload, the
+transcoder-side moderation tap and the enforcement flags must also be
+configured — see the transcoder deployment guide.
+
 ## Monitoring Setup
 
 ### 1. Prometheus Configuration

@@ -10,12 +10,14 @@ use std::sync::RwLock;
 
 use crate::moderation::types::{ModerationError, Pdq256, Result};
 
-/// Availability of the CSAM hash list. `Unavailable` (including first boot before
-/// any successful refresh) ⇒ the matcher HOLDs; a failed refresh never installs an
-/// empty `Loaded` list (§3.4, fail-closed core).
+/// Availability of the block-hash list (NCMEC-sourced or operator-loaded —
+/// WP-N2). `Unavailable` (including first boot before any successful refresh)
+/// ⇒ the matcher HOLDs; a failed refresh never installs an empty `Loaded` list
+/// (§3.4, fail-closed core).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListState {
-    /// A successful refresh installed this list.
+    /// A successful refresh — or an explicit, logged operator list load
+    /// (WP-N2 `MODERATION_LIST_FILE`) — installed this list.
     Loaded,
     /// Last-good list retained past its refresh window; `age_secs` since the last
     /// success. Usable only within a bounded TTL when stale-reuse is explicitly
@@ -25,7 +27,11 @@ pub enum ListState {
     Unavailable,
 }
 
-/// A point-in-time view of the CSAM hash list, tagged with its availability state.
+/// A point-in-time view of the block-hash list, tagged with its availability
+/// state. `version` is a monotonic counter on the NCMEC refresh path but a
+/// NON-ORDINAL content fingerprint for operator-loaded lists (WP-N2 rule 6) —
+/// never compare versions with `>`.
+#[derive(Clone)]
 pub struct HashListSnapshot {
     pub state: ListState,
     pub sha256: HashSet<[u8; 32]>,

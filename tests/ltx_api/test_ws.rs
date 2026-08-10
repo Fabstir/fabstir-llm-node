@@ -114,14 +114,18 @@ async fn test_i2v_accepted_ack() {
     let k = key();
     let (store, hash) = store_i2v();
     server.set_ltx_client(comfy()).await;
-    server.set_ltx_template_store(store).await;
+    server.set_ltx_template_store(store.clone()).await;
     let job = i2v_job(&hash, json!([fixture_capability_cid()]));
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v", Some(9), None).await;
     assert!(task.is_some(), "valid one-image i2v job is accepted");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 7, "v7 allow-list echoed");
+    assert_eq!(
+        inner["allowListVersion"],
+        store.bundle().allow_list_version,
+        "the LIVE bundle version is echoed (hardcoding a snapshot rotted at v7)"
+    );
 }
 
 #[tokio::test]
@@ -400,7 +404,7 @@ async fn test_iclora_accepted_ack() {
     let k = key();
     let (store, hash) = store_iclora();
     server.set_ltx_client(comfy()).await;
-    server.set_ltx_template_store(store).await;
+    server.set_ltx_template_store(store.clone()).await;
     // 1 reference image + 1 control video (the capability envelope is
     // media-agnostic; format is enforced on the decrypted bytes post-accept).
     let job = iclora_job(
@@ -416,7 +420,11 @@ async fn test_iclora_accepted_ack() {
     );
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["type"], "ltx_accepted");
-    assert_eq!(inner["allowListVersion"], 7, "v7 allow-list echoed");
+    assert_eq!(
+        inner["allowListVersion"],
+        store.bundle().allow_list_version,
+        "the LIVE bundle version is echoed (hardcoding a snapshot rotted at v7)"
+    );
 }
 
 #[tokio::test]
@@ -458,4 +466,103 @@ async fn test_iclora_oversize_video_rejected() {
     assert!(task.is_none(), "oversize video rejected pre-escrow");
     let inner = decrypt_envelope(&resp, &k);
     assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+}
+
+#[tokio::test]
+async fn test_strength_rejects_out_of_range_and_unguided_templates() {
+    // Out-of-range → VALIDATION_FAILED with the strength message, before any
+    // slot or deposit is spent.
+    for bad in [0.0, -0.25, 1.01, 4.0] {
+        let server = ApiServer::new_for_test();
+        let k = key();
+        let (store, hash) = store_hash();
+        server.set_ltx_client(comfy()).await;
+        server.set_ltx_template_store(store).await;
+        let mut job = valid_job(&hash);
+        job["strength"] = json!(bad);
+        let (resp, task) =
+            handle_encrypted_ltx_generate(&server, &job, &k, "sess-str", Some(1), None).await;
+        let inner = decrypt_envelope(&resp, &k);
+        assert!(task.is_none(), "strength {bad} must reject: {inner:?}");
+        assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+        assert!(
+            inner["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("strength"),
+            "message names the field: {inner:?}"
+        );
+    }
+    // In-range strength on an UNGUIDED template (t2v) → the patcher's
+    // fail-closed guard reaches the wire. Billing a render whose knob was
+    // silently ignored would be worse than rejecting it.
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_hash();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    let mut job = valid_job(&hash);
+    job["strength"] = json!(0.5);
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-str2", Some(1), None).await;
+    let inner = decrypt_envelope(&resp, &k);
+    assert!(task.is_none(), "t2v + strength must reject: {inner:?}");
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+    assert!(
+        inner["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no IC-LoRA guide"),
+        "fail-closed reason reaches the client: {inner:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_camera_rejects_out_of_range_and_cameraless_templates() {
+    // Yellow-zone envelope: azimuth [-65,65], elevation [-25,40], distance
+    // [0.5,2.0] — rejected BEFORE any slot or deposit is spent.
+    for (field, bad) in [
+        ("azimuth", 70.0),
+        ("azimuth", -90.0),
+        ("elevation", 45.0),
+        ("elevation", -30.0),
+        ("distance", 0.1),
+        ("distance", 3.0),
+    ] {
+        let server = ApiServer::new_for_test();
+        let k = key();
+        let (store, hash) = store_hash();
+        server.set_ltx_client(comfy()).await;
+        server.set_ltx_template_store(store).await;
+        let mut job = valid_job(&hash);
+        job[field] = json!(bad);
+        let (resp, task) =
+            handle_encrypted_ltx_generate(&server, &job, &k, "sess-cam", Some(1), None).await;
+        let inner = decrypt_envelope(&resp, &k);
+        assert!(task.is_none(), "{field}={bad} must reject: {inner:?}");
+        assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+        assert!(
+            inner["error"]["message"].as_str().unwrap().contains(field),
+            "message names the field: {inner:?}"
+        );
+    }
+    // In-range camera on t2v (no CrossViewWarp node) → the patcher fail-closes.
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_hash();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    let mut job = valid_job(&hash);
+    job["azimuth"] = json!(20.0);
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-cam2", Some(1), None).await;
+    let inner = decrypt_envelope(&resp, &k);
+    assert!(task.is_none());
+    assert!(
+        inner["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no CrossViewWarp"),
+        "fail-closed reason reaches the client: {inner:?}"
+    );
 }

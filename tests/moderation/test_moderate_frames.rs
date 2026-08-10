@@ -322,11 +322,13 @@ async fn unknown_task_is_404() {
 
 #[tokio::test]
 async fn route_frames_on_unavailable_list_returns_503() {
-    // PRODUCTION path (R11): build_frames_match_state() installs an Unavailable snapshot,
-    // so a fully-authed, valid keyframe POST HOLDs as 503 — proving the whole production
-    // chain (handler → build_frames_match_state → inner) is wired fail-closed (parity with
-    // the asset route_image_on_unavailable_list_returns_503 test). A fail-open regression
-    // in build_frames_match_state would flip this to 200/cleared and fail here.
+    // DEFAULT-STATE path (R11): `new_for_test` hardcodes the fail-closed default
+    // (env-blind — WP-N2), so build_frames_match_state() serves an Unavailable
+    // snapshot and a fully-authed, valid keyframe POST HOLDs as 503 — proving the
+    // whole chain (handler → build_frames_match_state → inner) is wired
+    // fail-closed (parity with the asset route_image_on_unavailable_list test).
+    // Production may now be Loaded via an explicit operator list (WP-N2); a
+    // fail-open regression in the DEFAULT state would flip this to 200 and fail.
     let mut s = ApiServer::new_for_test();
     s.set_ingest_token(Some("secret".into()));
     s.record_task_job("task-z".into(), 12);

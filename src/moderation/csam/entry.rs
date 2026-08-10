@@ -4,18 +4,42 @@
 //! returns a `ModerationResult` only — no raw content / hashes / store leak out.
 //! All are fail-closed: any decode/match error or unavailable list ⇒ HOLD.
 
+use tracing::info;
+
 use super::hashlist::HashListSnapshot;
 use super::matcher::Matcher;
 use super::ownhash::OwnHashList;
 use super::pdq;
 use crate::moderation::ingest::IngestItem;
-use crate::moderation::types::{MatchResult, ModerationResult, Result, REASON_CSAM_MATCH};
+use crate::moderation::types::{MatchResult, ModerationResult, Result, REASON_HASH_LIST_MATCH};
 
-/// Map a single match attempt to a terminal verdict: a hit blocks; an error holds
-/// (fail-closed); a clean miss returns `None` so the caller keeps scanning.
-fn check(res: Result<MatchResult>) -> Option<ModerationResult> {
+/// Per-hit provenance line (WP-N2 rule 8): quarantine stores category + blobs
+/// only, so this log is the only record of WHICH list produced a hit —
+/// reviewers must check it before confirming any report. Hashes never logged.
+/// `own_hit` re-derives the matcher's ownhash-first precedence (`matcher.rs`
+/// is rule-4-frozen, so `MatchResult` cannot carry a source field yet); the
+/// attribution is correct only while ownhash stays SHA-only and checked first —
+/// revisit if the freeze lifts.
+fn log_hit(job: Option<u64>, own_hit: bool, kind: &str, m: &MatchResult, list_fp: u64) {
+    info!(
+        "moderation match: job={} source={} kind={} distance={:?} list-fp={:016x}",
+        job.map_or_else(|| "asset".to_string(), |j| j.to_string()),
+        if own_hit { "ownhash" } else { "list" },
+        kind,
+        m.distance,
+        list_fp
+    );
+}
+
+/// Map a single match attempt to a terminal verdict: a hit blocks (after the
+/// `on_hit` provenance hook); an error holds (fail-closed); a clean miss
+/// returns `None` so the caller keeps scanning.
+fn check(res: Result<MatchResult>, on_hit: impl FnOnce(&MatchResult)) -> Option<ModerationResult> {
     match res {
-        Ok(m) if m.is_match => Some(ModerationResult::blocked(REASON_CSAM_MATCH)),
+        Ok(m) if m.is_match => {
+            on_hit(&m);
+            Some(ModerationResult::blocked(REASON_HASH_LIST_MATCH))
+        }
         Ok(_) => None,
         Err(_) => Some(ModerationResult::blocked("moderation unavailable")),
     }
@@ -48,8 +72,23 @@ pub fn moderate_asset_bytes(
         }
     };
     match matcher.match_content(&sha, pdq_hash.as_ref(), max_distance) {
-        Ok(m) if m.is_match => ModerationResult::blocked(REASON_CSAM_MATCH),
-        Ok(_) if pdq_hash.is_some() => ModerationResult::cleared(),
+        Ok(m) if m.is_match => {
+            log_hit(
+                None,
+                ownhash.contains(&sha),
+                "content",
+                &m,
+                snapshot.version,
+            );
+            ModerationResult::blocked(REASON_HASH_LIST_MATCH)
+        }
+        Ok(_) if pdq_hash.is_some() => {
+            info!(
+                "moderation verdict: asset cleared (list-fp={:016x})",
+                snapshot.version
+            );
+            ModerationResult::cleared()
+        }
         Ok(_) => ModerationResult::blocked("asset could not be decoded for scanning"),
         Err(_) => ModerationResult::blocked("moderation unavailable"),
     }
@@ -85,25 +124,37 @@ pub fn moderate_frames(
     if sha256.is_empty() && pdq_hashes.is_empty() && frames.is_empty() {
         return ModerationResult::blocked("empty ingest item: nothing to scan");
     }
+    let job = Some(item.job_id());
+    let fp = snapshot.version;
     for s in sha256 {
-        if let Some(block) = check(matcher.match_sha256(s)) {
+        if let Some(block) = check(matcher.match_sha256(s), |m| {
+            log_hit(job, ownhash.contains(s), "sha256", m, fp)
+        }) {
             return block;
         }
     }
     for p in pdq_hashes {
-        if let Some(block) = check(matcher.match_pdq(p, max_distance)) {
+        if let Some(block) = check(matcher.match_pdq(p, max_distance), |m| {
+            log_hit(job, false, "pdq", m, fp)
+        }) {
             return block;
         }
     }
     for f in frames {
         match pdq::compute_pdq_rgb(&f.rgb, f.width, f.height) {
             Ok(r) => {
-                if let Some(block) = check(matcher.match_pdq(&r.hash, max_distance)) {
+                if let Some(block) = check(matcher.match_pdq(&r.hash, max_distance), |m| {
+                    log_hit(job, false, "frame-pdq", m, fp)
+                }) {
                     return block;
                 }
             }
             Err(_) => return ModerationResult::blocked("frame could not be hashed"),
         }
     }
+    info!(
+        "moderation verdict: job={} cleared (list-fp={fp:016x})",
+        item.job_id()
+    );
     ModerationResult::cleared()
 }

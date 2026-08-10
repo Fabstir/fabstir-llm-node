@@ -4,13 +4,15 @@
 //!
 //! When a match is human-confirmed (Phase 6), its hash is added here so any
 //! bit-identical re-upload auto-blocks, independent of the NCMEC list. Persisted
-//! encrypted-at-rest via the shared [`super::atrest`] helper.
+//! encrypted-at-rest via the shared [`super::atrest`] helper; ALSO env-loadable
+//! from a plaintext operator file (WP-N2 `MODERATION_OWNHASH_FILE`,
+//! [`super::listfile`] — operator-originated entries only, rule 8).
 
 use std::collections::HashSet;
 
 use crate::moderation::types::{ModerationError, Result};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct OwnHashList {
     sha256: HashSet<[u8; 32]>,
 }

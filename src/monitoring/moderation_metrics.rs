@@ -45,7 +45,12 @@ impl ModerationMetrics {
         .fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Count a fail-closed HOLD (absent/errored verdict held at the gate).
+    /// Count a fail-closed HOLD. Aggregate across stages (WP-N2): the frames
+    /// endpoint's 503 arms (scan hold) AND the ws gate's absent-verdict hold
+    /// both record here, so one held job can increment more than once — this
+    /// series answers "are holds happening", not "how many jobs held". A
+    /// stage-labelled split is the named follow-up if that distinction is
+    /// ever needed.
     pub fn record_held(&self) {
         self.held.fetch_add(1, Ordering::Relaxed);
     }

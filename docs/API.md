@@ -54,6 +54,10 @@ Check the health status of the node.
 GET /health
 ```
 
+Also available as `GET /v1/health` (an alias with the same handler and response),
+kept for consistency with the rest of the `/v1/*` surface; the SDK browser build
+probes `/v1/health` for host-health checks and node discovery.
+
 #### Response
 
 ```json
@@ -3364,6 +3368,42 @@ Watch for these log patterns to monitor checkpoint publishing:
 | `CHECKPOINT_S5_RETRY_DELAY_MS` | `1000` | Delay between retries |
 
 ---
+
+## Content Moderation Endpoints (v8.42.0+)
+
+The node carries a deterministic content-moderation layer for the media
+pipeline: sampled keyframes from every transcode are matched against
+operator-loaded block lists (SHA-256 exact match on source files, PDQ
+perceptual match on keyframes). Full behaviour and operator setup live in
+`CONTENT-MODERATION.md` (public overview) and `DEPLOYMENT.md` ("Operator
+moderation lists" — the `MODERATION_LIST_FILE` / `MODERATION_OWNHASH_FILE` /
+`MODERATION_PDQ_MAX_DISTANCE` environment variables).
+
+Three endpoints under `/v1/moderate` (all POST, JSON, 20 MB body cap):
+
+| Endpoint | Caller | Auth |
+|---|---|---|
+| `/v1/moderate/frames` | The transcoder sidecar only (service-internal): submits sampled keyframes + optional `sourceSha256` for a job, in batches of at most 200 frames | Shared secret `ingestToken` **body field** (`MODERATION_INGEST_TOKEN`); unset server-side secret rejects everything |
+| `/v1/moderate/asset` | Host-local asset checks (images/subtitles) | None (host-local use) |
+| `/v1/moderate/review` | Human reviewer actions on quarantined matches | Reviewer token |
+
+`/v1/moderate/frames` responses: `200 {"verdict": "cleared"|"blocked"|"flagged", "reason"?, "reportId": null}`
+(`reason` omitted on cleared; treat it as an opaque display string), `400`
+malformed (writes no verdict), `401` bad/missing token, `404` unknown task,
+`503` fail-closed hold (list unavailable / preservation failure — retryable
+infrastructure state, no verdict written). Verdicts are **monotonic** per
+job: once blocked, a job cannot be re-cleared.
+
+Client-visible surfaces (documented in `WEBSOCKET_API_SDK_GUIDE.md`): the
+top-level `moderation {verdict, reason}` field on `transcode_complete`
+(omitted when no verdict exists — absence means *not moderated*, never
+*clean*), and the hold error codes `CONTENT_BLOCKED` / `CONTENT_FLAGGED` /
+`MODERATION_UNAVAILABLE` when enforcement is enabled.
+
+Observability: a set-but-unloadable list degrades the node visibly — a
+`moderation list degraded: …` entry appears in `/health` issues, and the
+`moderation_holds_total` counter at `/metrics` moves on every fail-closed
+hold.
 
 ## Error Handling
 

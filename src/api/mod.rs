@@ -12,6 +12,7 @@ pub mod pool;
 pub mod response_formatter;
 pub mod search;
 pub mod server;
+pub mod session_auth;
 pub mod streaming;
 pub mod token_tracker;
 pub mod transcode;

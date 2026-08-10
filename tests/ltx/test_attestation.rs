@@ -45,6 +45,10 @@ fn sample_job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 
@@ -371,6 +375,10 @@ fn sample_i2v_job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 
@@ -390,6 +398,10 @@ fn sample_flf2v_job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 
@@ -562,6 +574,10 @@ fn sample_iclora_job() -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 

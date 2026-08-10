@@ -31,6 +31,10 @@ fn sample_job(frames: u32) -> LtxJob {
         output: OutputKind::ExrSequence,
         images: None,
         videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
     }
 }
 

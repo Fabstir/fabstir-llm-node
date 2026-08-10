@@ -168,3 +168,46 @@ fn test_transcode_complete_hls_message_format() {
     assert_eq!(output["totalSegments"], 100);
     assert_eq!(output["totalDuration"], 598.764);
 }
+
+// ── WP-N1: the `moderation` field on transcode_complete (seam #3 signal) ──────
+// The SDK publish gate keys on this field; in dark launch it is the ONLY signal
+// (the node gate does not hold). Absent verdict ⇒ field omitted — the SDK must
+// treat absence as "not moderated", so emitting anything here for an unmoderated
+// job would be wrong in both directions.
+
+#[test]
+fn test_moderation_completion_field_absent_without_verdict() {
+    use fabstir_llm_node::api::websocket::handlers::transcode::moderation_completion_field;
+    use fabstir_llm_node::moderation::verdict_store::VerdictStore;
+
+    let store = VerdictStore::new();
+    // No job id at all (session without a chain job): omitted.
+    assert!(moderation_completion_field(&store, None).is_none());
+    // Job id but no verdict recorded (frames never arrived): omitted.
+    assert!(moderation_completion_field(&store, Some(42)).is_none());
+}
+
+#[test]
+fn test_moderation_completion_field_carries_verdict_and_reason() {
+    use fabstir_llm_node::api::websocket::handlers::transcode::moderation_completion_field;
+    use fabstir_llm_node::moderation::types::{ModerationResult, REASON_HASH_LIST_MATCH};
+    use fabstir_llm_node::moderation::verdict_store::VerdictStore;
+
+    let store = VerdictStore::new();
+    store.set(7, ModerationResult::cleared());
+    // Setup via the constant, assertion via the raw literal: proves in one test
+    // that the exported symbol IS the wire string the SDK keys on.
+    store.set(8, ModerationResult::blocked(REASON_HASH_LIST_MATCH));
+
+    let cleared = moderation_completion_field(&store, Some(7)).expect("cleared field");
+    assert_eq!(cleared["verdict"], "cleared");
+    assert!(cleared["reason"].is_null());
+
+    let blocked = moderation_completion_field(&store, Some(8)).expect("blocked field");
+    assert_eq!(blocked["verdict"], "blocked");
+    // Literal on purpose: pins the SDK-visible wire value, not the symbol.
+    assert_eq!(blocked["reason"], "hash-list-match");
+
+    // The wrong job id must not leak another job's verdict.
+    assert!(moderation_completion_field(&store, Some(9)).is_none());
+}

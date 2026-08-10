@@ -3,10 +3,15 @@
 How content moderation works on the Fabstir network: what runs today, what is
 being built, and what an interface built on top of it has to handle.
 
-**Status, plainly.** Parts of this are running, parts are built but switched
-off, and the part most people assume exists — automatically refusing bad
-content — is **not available yet** and cannot be switched on. Section 6 says
-exactly why. If you are building a UI against this, read sections 4 and 5.
+**Status, plainly.** There are two moderation layers and they are in very
+different states. The **hash-matching layer** — deterministic matching of
+media against block lists of known illegal content — is **built and
+operating**: every video transcode is scanned and receives a recorded
+verdict, though enforcement (actually withholding content) is staged behind
+a host-side switch and not yet turned on. The **policy layer** — AI
+judgment of novel content — is built but **cannot be switched on**; section
+6 says exactly why, and that limitation does not affect the hash layer.
+If you are building a UI against this, read sections 1a, 4 and 5.
 
 ---
 
@@ -38,7 +43,49 @@ exposes.
 the plaintext already exists on the host during processing. It does not create
 new access to user content; it reads what is already there.
 
-## 2. What it actually looks at
+## 1a. The hash-matching layer (operating)
+
+Separately from the sidecar above, the media pipeline carries a
+**deterministic** moderation layer that involves no AI judgment at all.
+During every video transcode, sampled keyframes are handed to the node,
+which matches them against **block lists of known illegal content**: exact
+matching on SHA-256 of source files, and perceptual matching (PDQ) on the
+keyframes themselves, which survives re-encoding. Lists are supplied by the
+host operator from documented evidence procedures; when feeds from
+recognised reporting bodies are adopted they ride an encrypted store, never
+plain files.
+
+Every transcode job receives a verdict — `cleared`, `blocked` or `flagged`
+— recorded against the job and carried on the completion message a client
+receives. Every verdict is logged with a fingerprint of the exact list it
+was produced against, so a `cleared` is always attributable. An **absent
+verdict means "not scanned", never "clean"** — the same rule as the
+evidence sink below.
+
+Three properties to rely on:
+
+- **Fail-closed everywhere.** If the list cannot be loaded, frames cannot
+  be scanned, or the scan service is unreachable, the outcome is a hold,
+  not a pass. A broken configuration degrades the host visibly (its health
+  endpoint says so) rather than silently weakening moderation.
+- **Three independent gates** close on a non-cleared verdict: the node
+  withholds completion and billing, the transcoder withholds the upload of
+  playable output, and the client SDK refuses the publish step. Each is
+  fail-closed on its own inputs. All three currently run in **observing
+  mode** — verdicts are produced and recorded, nothing is withheld yet —
+  with enforcement staged deliberately after a soak period.
+- **Matched material is preserved, and humans decide.** A genuine match
+  quarantines the evidence; nothing is auto-reported. A reviewer checks a
+  case's provenance (which list produced the hit) before anything is filed
+  with the applicable reporting body.
+
+Wire-level shapes (the completion's `moderation` field and the hold error
+codes) are documented in `WEBSOCKET_API_SDK_GUIDE.md`.
+
+## 2. What the policy sidecar looks at
+
+(Sections 2 and 3 describe the **policy layer** — the AI sidecar of
+section 1 — not the hash layer above.)
 
 Video is **sampled**, not watched frame by frame. The sampler takes every
 I-frame plus a one-frame-per-second grid, which catches cuts and scene changes
@@ -104,7 +151,8 @@ Be precise about this, because the three paths differ.
 
 | Path | Moderation today |
 |---|---|
-| **Transcode / media pipeline** | Built and deployed, but **dark-launched** — the gate evaluates and logs without enforcing. Enabled by a host-side switch |
+| **Transcode / media pipeline — hash matching** | **Operating.** Every transcode is scanned against the loaded block lists and a verdict is recorded and returned. Enforcement (withholding non-cleared content) is staged behind host-side switches, currently off |
+| **Transcode / media pipeline — policy scan** | Built, off (section 6) |
 | **AI video generation (LTX)** | **None.** No moderation call exists anywhere on this path |
 | **Audio, text prompts** | None |
 
@@ -141,10 +189,15 @@ scanned, what was found, and what could not be scanned. Anything user-facing —
 notices, appeals, takedown flows — depends on decisions not yet made, listed in
 section 7.
 
-## 6. Why refusal is not switched on
+## 6. Why policy-based refusal is not switched on
 
-This is the single most important limitation, and it is not a matter of finish
-or polish.
+This section is about the **policy layer only** — the AI judgment of novel
+content. The hash layer of section 1a is unaffected: matching a file
+against a block list involves no policy judgment, which is why it can
+operate while this limitation stands.
+
+This is the single most important limitation of the policy layer, and it is
+not a matter of finish or polish.
 
 One of the policies is **prompt-inexpressible**: it cannot be stated to the
 model in a way that separates the prohibited category from lawful adult
@@ -187,7 +240,8 @@ Genuinely undecided, and each changes what gets built:
 
 - It does not detect everything. Sampling, single-track reading, no audio and no
   still-image coverage all leave gaps.
-- It does not prevent anything today, on any path.
+- It does not prevent anything today, on any path: the hash layer records
+  and returns verdicts but enforcement is not yet switched on anywhere.
 - It does not make the operator a moderator of the wider network. Verdicts are
   local to the host that produced them.
 - Two hosts agreeing depends on running the same pinned bundle. Across different

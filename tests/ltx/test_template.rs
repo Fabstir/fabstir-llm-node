@@ -57,7 +57,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
 // v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
 // ltx-daynight-hdr and their lora ids.
-const BUNDLE_HASH: &str = "0x41cfb10d197e1288f7accedb3e1879fc0b0a179362c3dfa9b114f2cf4e74e012";
+const BUNDLE_HASH: &str = "0x249dd19e326ea2bea0c654eeaa6e1cf9726270a297f19ebdd0a990f578aa492a";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -452,7 +452,7 @@ fn test_iclora_handles() {
 fn test_bundle_v6_has_iclora() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
+    assert!(b.allow_list_version >= 16, "since v16"); // exact pins rot on every bump
     let ic = b
         .templates
         .iter()
@@ -494,7 +494,7 @@ fn test_bundle_v6_has_iclora() {
 fn test_bundle_v7_has_bl4_trio() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
+    assert!(b.allow_list_version >= 16, "since v16"); // exact pins rot on every bump
     for id in ["ltx-outpaint-hdr", "ltx-edit-hdr", "ltx-restore-hdr"] {
         let t = b.templates.iter().find(|t| t.template_id == id).unwrap();
         assert_eq!(t.video_inputs, 1, "{id}: one control video");
@@ -526,7 +526,7 @@ fn test_bundle_v7_has_bl4_trio() {
 fn test_bundle_v3_has_flf2v() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
+    assert!(b.allow_list_version >= 16, "since v16"); // exact pins rot on every bump
     let flf = b
         .templates
         .iter()
@@ -548,7 +548,7 @@ fn test_bundle_v4_resolution_ladder() {
     // $0.50 floor deposit; the SDK must size deposits from ltxTokens(job).
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(b.allow_list_version, 16, "v16 allow-list");
+    assert!(b.allow_list_version >= 16, "since v16"); // exact pins rot on every bump
     let expect = [
         (768u32, 512u32),
         (1280, 720),
@@ -580,9 +580,9 @@ fn test_bundle_v4_resolution_ladder() {
 fn test_bundle_v2_has_image_inputs() {
     let store = TemplateStore::new(DIR).unwrap();
     let b = store.bundle();
-    assert_eq!(
-        b.allow_list_version, 16,
-        "v16 allow-list (t2v/i2v entries unchanged since v8)"
+    assert!(
+        b.allow_list_version >= 16,
+        "since v16 (t2v/i2v entries unchanged since v8; exact pins rot on every bump)"
     );
     let t2v = b
         .templates
@@ -703,7 +703,7 @@ const UPSCALE_TEMPLATE_HASH: &str =
 #[test]
 fn test_bundle_v11_has_upscale() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    assert_eq!(store.bundle().allow_list_version, 16);
+    assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
     assert_eq!(
         store
             .template_hash("ltx-upscale-hdr")
@@ -737,7 +737,7 @@ const INGREDIENTS_TEMPLATE_HASH: &str =
 #[test]
 fn test_bundle_v14_has_ingredients() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    assert_eq!(store.bundle().allow_list_version, 16);
+    assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
     assert_eq!(
         store
             .template_hash("ltx-ingredients-hdr")
@@ -776,7 +776,7 @@ const DAYNIGHT_TEMPLATE_HASH: &str =
 #[test]
 fn test_bundle_v16_has_water_and_daynight() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    assert_eq!(store.bundle().allow_list_version, 16);
+    assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
     for (id, golden) in [
         ("ltx-water-hdr", WATER_TEMPLATE_HASH),
         ("ltx-daynight-hdr", DAYNIGHT_TEMPLATE_HASH),
@@ -798,4 +798,25 @@ fn test_bundle_v16_has_water_and_daynight() {
             "{id} lora advertised"
         );
     }
+}
+
+const CROSSVIEW_TEMPLATE_HASH: &str =
+    "0xc8e174ec56aa41ec7d4459c139855ddf5fea219d946d1d8092cea587473e25cf";
+
+/// v17 (CV1): the crossview novel-view template — control-clip shape, camera
+/// pose pinned mild (azimuth 20 / elevation 0 / distance 1.0), single pass at
+/// the picked resolution (upscale is its own paid mode; no second pass).
+#[test]
+fn test_bundle_v17_has_crossview() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    assert!(store.bundle().allow_list_version >= 18); // v18: crossview regained its x2 refine pass
+    let h = store
+        .template_hash("ltx-crossview-hdr")
+        .expect("template pinned");
+    eprintln!("GOLD ltx-crossview-hdr={h}");
+    if CROSSVIEW_TEMPLATE_HASH != "0x__TBD__" {
+        assert_eq!(h, CROSSVIEW_TEMPLATE_HASH, "crossview golden hash drifted");
+    }
+    assert_eq!(store.video_inputs("ltx-crossview-hdr"), Some(1));
+    assert_eq!(store.image_inputs("ltx-crossview-hdr").unwrap_or(0), 0);
 }
