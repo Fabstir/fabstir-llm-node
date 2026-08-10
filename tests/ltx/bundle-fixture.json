@@ -1,10 +1,10 @@
 {
-  "allowListVersion": 18,
-  "bundleHash": "0x249dd19e326ea2bea0c654eeaa6e1cf9726270a297f19ebdd0a990f578aa492a",
+  "allowListVersion": 21,
+  "bundleHash": "0x1f42de4b8e09f9fec4a5ff2c65f060e9439ebd1b889649bf7b472427fdcaf892",
   "templates": [
     {
       "templateId": "ltx-crossview-hdr",
-      "templateHash": "0xc8e174ec56aa41ec7d4459c139855ddf5fea219d946d1d8092cea587473e25cf",
+      "templateHash": "0x411f192cffc8417788f2710eb305477427a84a94c3b2e79ae4f22276d80c35ad",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -13,7 +13,7 @@
     },
     {
       "templateId": "ltx-daynight-hdr",
-      "templateHash": "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86",
+      "templateHash": "0xcc1ea6b5eec43f3896fbcd70d2d174c558fcf11546ca73300de328bbad260c74",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -22,7 +22,7 @@
     },
     {
       "templateId": "ltx-edit-hdr",
-      "templateHash": "0x7c1900c0f1062c86c1d3b83725c42561f6f540012d7a3a74216ed1770bac9787",
+      "templateHash": "0xf933e8a49781a900c71f19b50b0d704ca7d911645afb488dec213cd5174dfaac",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -31,7 +31,7 @@
     },
     {
       "templateId": "ltx-flf2v-hdr",
-      "templateHash": "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721",
+      "templateHash": "0xd09fd1325947906d2de26666e45cebd19256e1b6a4730ff3e621fb4137a3b6bf",
       "imageInputs": 2,
       "imageSemantics": [
         "firstFrame",
@@ -41,7 +41,7 @@
     },
     {
       "templateId": "ltx-i2v-hdr",
-      "templateHash": "0xa4c890fd5f9a24a778c2a2ab00be2141dcb2c801a339d390016924292dff128c",
+      "templateHash": "0xbb8c30fcd45f372ce4ed75428fb97fb09c9a3a479215cd7b03af99fddc04d1bb",
       "imageInputs": 1,
       "imageSemantics": [
         "firstFrame"
@@ -50,7 +50,7 @@
     },
     {
       "templateId": "ltx-iclora-hdr",
-      "templateHash": "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6",
+      "templateHash": "0x3fbd6084d1d0e9a953569632df75e0ed07e95cd96be44894de3921e2ea4316fb",
       "imageInputs": 1,
       "imageSemantics": [
         "reference"
@@ -62,7 +62,7 @@
     },
     {
       "templateId": "ltx-ingredients-hdr",
-      "templateHash": "0xa936e172b695762f56c38f4499b1c2ae7f69160a0b889427c2d07a0c542f1e42",
+      "templateHash": "0x9c1a9a0cc84bfd3e79c325cec593e8f838fca4a3eb0f7079b9529f6c53a7c9dc",
       "imageInputs": 1,
       "imageSemantics": [
         "referenceSheet"
@@ -71,7 +71,7 @@
     },
     {
       "templateId": "ltx-outpaint-hdr",
-      "templateHash": "0x51273037895f44c3b18be7b6b5c11b6ae7225ebf67e6d89ec38d574d821e11e9",
+      "templateHash": "0xdf3e88489d4f73b89c6c3081e8a3929fe8b512e2773013199a504fb7a0bc0f6c",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -80,7 +80,7 @@
     },
     {
       "templateId": "ltx-restore-hdr",
-      "templateHash": "0xb09d8e6f1895a9c7513b57cc18729ae6f16fad0432460355d014185ebea1cb1c",
+      "templateHash": "0x5c3344c7260549c1aa6fee5daba4e1d9cb19a4c9c81cf546a0a2fac85c6b2b5c",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -89,13 +89,13 @@
     },
     {
       "templateId": "ltx-t2v-hdr",
-      "templateHash": "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078",
+      "templateHash": "0x74ccf9abe4423f908357cb8da2f3a0f6475ec33b129032795d01efbbc79a9f94",
       "imageInputs": 0,
       "videoInputs": 0
     },
     {
       "templateId": "ltx-upscale-hdr",
-      "templateHash": "0xc5a149f0b9d1513db369b29bcf4ca7bd12e091f58a11c6adf968059b8ead39db",
+      "templateHash": "0xa36ed9d96fc264b8d97cd03a4628dd1c30161a6a83a7442185c9f58945aaffb5",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -104,7 +104,7 @@
     },
     {
       "templateId": "ltx-water-hdr",
-      "templateHash": "0x015a079d593ec461805c2280e727b019c3b50e9f8d8f1b22c75a0c1dd33932d9",
+      "templateHash": "0xc19ed1d99ae6e7fd214afb9ecb10b50f096a137b0c9a0f207e83fc982828ba39",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [

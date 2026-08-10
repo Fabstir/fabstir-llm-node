@@ -125,6 +125,32 @@ pub fn patch(
         }
     }
 
+    // EXR master sink (A2): every template carries a RadianceDigitalCinemaWrite
+    // (write_mode "Sequence") titled
+    // "exr_output". For jobs that did NOT request `exr-frames` the node is
+    // REMOVED from the runtime copy (the ONE sanctioned structural edit — a
+    // sink with no consumers, so nothing can dangle); one pinned template
+    // serves both deliveries. When `exr-frames` IS requested the handle is
+    // REQUIRED — fail closed, a paid EXR request must never quietly render
+    // mp4-only.
+    let exr_ids: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some("exr_output"))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if job.output == crate::ltx::types::OutputKind::ExrFrames {
+        if exr_ids.is_empty() {
+            return Err(anyhow!(
+                "exr-frames was requested but template {} has no exr_output sink",
+                job.template_id
+            ));
+        }
+    } else {
+        for id in &exr_ids {
+            obj.remove(id);
+        }
+    }
+
     // "Frame Count" (crossview): one titled INT feeds BOTH the VHS loader's
     // frame_load_cap and the latent length, so patching it makes billed ==
     // loaded == rendered by construction. Optional handle — templates that
