@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.42.0-moderation-lists-2026-07-31";
+pub const VERSION: &str = "v8.43.0-exr-masters-2026-08-10";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.42.0";
+pub const VERSION_NUMBER: &str = "8.43.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 42;
+pub const VERSION_MINOR: u32 = 43;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-07-31";
+pub const BUILD_DATE: &str = "2026-08-10";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -497,6 +497,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.43.0 - EXR masters (Aug 10, 2026)
+    "FEAT: opt-in 16-bit EXR master delivery for every mode — new output kind `exr-frames`. Every pinned template (allowlist v19) carries a RadianceSaveEXR sink titled exr_output (16-bit half, ZIP, linearised on write); the patcher REMOVES it for legacy jobs (the one sanctioned structural edit) and REQUIRES it when exr-frames is requested",
+    "FEAT: exr-frames delivery convention — frames[0] = preview mp4, frames[1..] = the EXR sequence in filename order; EXR count MUST equal billed frames (fail closed); manifest colour_encoding = linear-rec709 (legacy single-artefact jobs keep linear-HDR-from-LogC3 byte-for-byte)",
+    "NOTE: legacy `exr-sequence` output kind is UNCHANGED (single H.264) — deployed helpers keep working without modification",
     // v8.42.0 - Operator-loadable moderation lists + verdict on completion (Jul 31, 2026)
     "FEAT: MODERATION_LIST_FILE (sha256:/pdq: entries) installs a genuine Loaded snapshot at startup — unlisted content can now CLEAR through /v1/moderate/frames; MODERATION_OWNHASH_FILE adds the definitive re-upload halt (block-only: it cannot clear); MODERATION_PDQ_MAX_DISTANCE tunes the near-match threshold (default 31, >256 or unparseable = boot-fatal; empty = unset)",
     "FEAT: broken list files DEGRADE fail-closed, never kill the node — ERROR log + 'moderation list degraded' /health issue + moderation_holds_total movement; #!allow-empty is the only legal empty list and only as the sole non-comment line",
@@ -943,7 +947,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 41);
+        assert_eq!(VERSION_MINOR, 43);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1124,15 +1128,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.42.0"));
-        assert!(version.contains("2026-07-31"));
+        assert!(version.contains("8.43.0"));
+        assert!(version.contains("2026-08-10"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.42.0-moderation-lists-2026-07-31");
-        assert_eq!(VERSION_NUMBER, "8.42.0");
-        assert_eq!(BUILD_DATE, "2026-07-31");
+        assert_eq!(VERSION, "v8.43.0-exr-masters-2026-08-10");
+        assert_eq!(VERSION_NUMBER, "8.43.0");
+        assert_eq!(BUILD_DATE, "2026-08-10");
     }
 
     #[test]

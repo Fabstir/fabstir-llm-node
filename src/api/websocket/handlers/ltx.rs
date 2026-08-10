@@ -15,7 +15,7 @@ use crate::api::server::ApiServer;
 use crate::ltx::attestation::EnvMeta;
 use crate::ltx::client::Progress;
 use crate::ltx::template::Bounds;
-use crate::ltx::types::{FrameManifest, LtxJob};
+use crate::ltx::types::{FrameManifest, LtxJob, OutputKind};
 use crate::ltx::{attestation, exr, patcher, submit, ComfyClient};
 use ethers::types::U256;
 use futures::FutureExt;
@@ -968,7 +968,7 @@ impl LtxGenerateTask {
                 // 3. EXR pipeline. Enumerate THIS prompt's outputs (scoped by prompt_id) —
                 // NOT a glob of the shared output dir, which would leak other concurrent
                 // jobs' frames into this manifest/capability set.
-                let mut output_refs = match client.outputs(&prompt_id).await {
+                let output_refs_raw = match client.outputs(&prompt_id).await {
                     Ok(r) => r,
                     Err(e) => {
                         send_err(
@@ -985,9 +985,29 @@ impl LtxGenerateTask {
                 };
                 // Keep only final "output" frames (drop "temp" previews) so a preview can't
                 // pollute the manifest or trip the count check.
+                let mut output_refs = output_refs_raw;
                 output_refs.retain(|r| r.type_ == "output");
                 // Deterministic order (ComfyUI writes zero-padded frame indices).
                 output_refs.sort_by(|a, b| a.filename.cmp(&b.filename));
+                // A2 (EXR masters): for `exr-frames` jobs, enforce the delivery
+                // convention — frames[0] = the preview mp4, frames[1..] = the EXR
+                // sequence in filename order, EXR count == billed frames (fail
+                // closed). Legacy jobs pass through byte-identically.
+                let output_refs = match exr::order_refs(&job, output_refs) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        send_err(
+                            &progress_tx,
+                            "GENERATION_FAILED",
+                            &format!("delivery ordering failed: {e}"),
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    }
+                };
                 if output_refs.is_empty() {
                     send_err(
                         &progress_tx,
@@ -1004,7 +1024,7 @@ impl LtxGenerateTask {
                 // length (a single video file, or an EXR sequence), so `job.frames` need not
                 // equal the delivered count. Billing still uses `job.frames`; just surface any
                 // divergence in the logs rather than failing a legitimate video artefact.
-                if output_refs.len() != job.frames as usize {
+                if job.output != OutputKind::ExrFrames && output_refs.len() != job.frames as usize {
                     warn!(
                         "LTX output count {} differs from requested frames {} (advisory this pass)",
                         output_refs.len(),

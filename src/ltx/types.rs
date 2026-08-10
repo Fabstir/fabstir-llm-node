@@ -19,6 +19,11 @@ pub struct Resolution {
 #[serde(rename_all = "kebab-case")]
 pub enum OutputKind {
     ExrSequence,
+    /// A2 (EXR masters, v8.42.0): true per-frame 16-bit EXR delivery — wire
+    /// value `exr-frames`. The legacy `exr-sequence` keeps meaning "single
+    /// H.264 artefact" for every deployed client; behaviour keys ONLY on this
+    /// variant, which the 0.15.0+ helper sends when the user opts in.
+    ExrFrames,
 }
 
 /// Job contract A (M0, prompt-only). `seed` is a decimal STRING on the wire

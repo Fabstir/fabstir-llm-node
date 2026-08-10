@@ -255,6 +255,53 @@ pub fn capability_cid(plaintext: &[u8], ciphertext: &[u8], key: &[u8; 32], paddi
 /// `0x`-hex `keccak256(ciphertext)` strings; the Merkle root is computed over
 /// their RAW 32-byte decoded leaves (keccak node = `keccak256(left||right)`,
 /// odd layer duplicates the last leaf). NO capability CIDs / keys are included.
+/// Deterministic delivery order (A2). Legacy jobs pass through untouched
+/// (byte-identical path). For `exr-frames`: exactly ONE non-EXR ref (the
+/// preview mp4) comes FIRST, then the EXR frames sorted by filename
+/// (frame_%05d), and the EXR count must equal the billed frames — fail
+/// closed: a paid EXR request must never silently deliver fewer frames.
+pub fn order_refs(
+    job: &LtxJob,
+    refs: Vec<crate::ltx::client::ExrRef>,
+) -> Result<Vec<crate::ltx::client::ExrRef>> {
+    use crate::ltx::types::OutputKind;
+    if job.output != OutputKind::ExrFrames {
+        return Ok(refs);
+    }
+    let (mut exr, other): (Vec<_>, Vec<_>) = refs
+        .into_iter()
+        .partition(|r| r.filename.to_ascii_lowercase().ends_with(".exr"));
+    if other.len() != 1 {
+        return Err(anyhow!(
+            "exr-frames delivery expects exactly one preview artefact, got {}",
+            other.len()
+        ));
+    }
+    if exr.len() as u32 != job.frames {
+        return Err(anyhow!(
+            "exr-frames delivery produced {} frames but {} were billed",
+            exr.len(),
+            job.frames
+        ));
+    }
+    exr.sort_by(|a, b| a.filename.cmp(&b.filename));
+    let mut out = other;
+    out.extend(exr);
+    Ok(out)
+}
+
+/// The manifest's colour_encoding for this job. Legacy single-artefact jobs
+/// keep the historical constant byte-for-byte; A2 EXR masters are linearised
+/// display content (RadianceSaveEXR converts to Linear (sRGB) = Rec.709
+/// primaries on write).
+pub fn colour_encoding_for(job: &LtxJob) -> &'static str {
+    use crate::ltx::types::OutputKind;
+    match job.output {
+        OutputKind::ExrFrames => "linear-rec709",
+        OutputKind::ExrSequence => COLOUR_ENCODING,
+    }
+}
+
 pub fn build_manifest(frame_hashes: &[String], job: &LtxJob) -> Result<FrameManifest> {
     let mut tree = MerkleTree::new();
     for h in frame_hashes {
@@ -276,7 +323,7 @@ pub fn build_manifest(frame_hashes: &[String], job: &LtxJob) -> Result<FrameMani
         frame_count: frame_hashes.len() as u32,
         fps: job.fps,
         resolution: job.resolution,
-        colour_encoding: COLOUR_ENCODING.to_string(),
+        colour_encoding: colour_encoding_for(job).to_string(),
         frame_hashes: frame_hashes.to_vec(),
         merkle_root: format!("0x{}", hex::encode(tree.root())),
     })

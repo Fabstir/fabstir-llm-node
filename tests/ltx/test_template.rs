@@ -10,15 +10,15 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
 /// Golden oracle: locks the wire contract for the pinned fixture. Update ONLY on
 /// an intentional template or canonicalisation change.
 const HDR_TEMPLATE_HASH: &str =
-    "0xd67dfae8ea7da02516af56bd39d7bf4dedebb65da09d0e520e7cc1c7bb5fe078";
+    "0x74ccf9abe4423f908357cb8da2f3a0f6475ec33b129032795d01efbbc79a9f94";
 /// i2v graph hash (prompt-enhance baked ON — the BL2 grey-output fix; matches the
 /// template deployed live in bundle v5).
 const I2V_TEMPLATE_HASH: &str =
-    "0xa4c890fd5f9a24a778c2a2ab00be2141dcb2c801a339d390016924292dff128c";
+    "0xbb8c30fcd45f372ce4ed75428fb97fb09c9a3a479215cd7b03af99fddc04d1bb";
 /// flf2v graph hash (curated: positive CLIPTextEncode retitled Prompt, height/Frame
 /// Rate retitled to match the patcher handles).
 const FLF2V_TEMPLATE_HASH: &str =
-    "0x8bebde0f3bc0bf67f6f8efefe6fa742f2819edf6f70160541c756d62c9f96721";
+    "0xd09fd1325947906d2de26666e45cebd19256e1b6a4730ff3e621fb4137a3b6bf";
 /// iclora graph hash (authored at BL3 U1 from the archive IC-LoRA union-control
 /// workflow docs/archive/comfyui/video_ltx2_3_ic_lora_20260701.json: Prompt
 /// handle wired to both consumers, Height / Frame Rate retitles, Duration
@@ -31,7 +31,7 @@ const FLF2V_TEMPLATE_HASH: &str =
 /// video branch was ignored and the run produced no frames). Widget PATCHING is
 /// unaffected — the patcher writes a JSON number into the `value` leaf either way.
 const ICLORA_TEMPLATE_HASH: &str =
-    "0xef5588148be1ef3b34a859149ff3327b6acc70eec0bf1eda7c07e3b884c925e6";
+    "0x3fbd6084d1d0e9a953569632df75e0ed07e95cd96be44894de3921e2ea4316fb";
 /// BL4 template hashes (authored at V1 from the live-proven host exports in
 /// docs/archive/comfyui/: outpaint ef5d632ed2c5, edit 1fb07c3b4b99, restore
 /// 558cc012978d). One shared 30-node spine — dev-fp8 + distilled-384 + mode
@@ -41,11 +41,11 @@ const ICLORA_TEMPLATE_HASH: &str =
 /// All three graphs proved free on 3XS-Z 2026-07-10 (vertical outpaint fill /
 /// retriever insertion / restore identity) BEFORE these hashes were pinned.
 const OUTPAINT_TEMPLATE_HASH: &str =
-    "0x51273037895f44c3b18be7b6b5c11b6ae7225ebf67e6d89ec38d574d821e11e9";
+    "0xdf3e88489d4f73b89c6c3081e8a3929fe8b512e2773013199a504fb7a0bc0f6c";
 const EDIT_TEMPLATE_HASH: &str =
-    "0x7c1900c0f1062c86c1d3b83725c42561f6f540012d7a3a74216ed1770bac9787";
+    "0xf933e8a49781a900c71f19b50b0d704ca7d911645afb488dec213cd5174dfaac";
 const RESTORE_TEMPLATE_HASH: &str =
-    "0xb09d8e6f1895a9c7513b57cc18729ae6f16fad0432460355d014185ebea1cb1c";
+    "0x5c3344c7260549c1aa6fee5daba4e1d9cb19a4c9c81cf546a0a2fac85c6b2b5c";
 /// Bundle hash MOVES at each bundle bump (v3 added flf2v; v4 the resolution
 /// ladder + 32 MiB image cap; v5 the clip-duration bounds frames {121,751} and
 /// corrected fps [24,25,48,50], with the i2v enhance=true re-pin landing within
@@ -57,7 +57,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
 // v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
 // ltx-daynight-hdr and their lora ids.
-const BUNDLE_HASH: &str = "0x249dd19e326ea2bea0c654eeaa6e1cf9726270a297f19ebdd0a990f578aa492a";
+const BUNDLE_HASH: &str = "0x1f42de4b8e09f9fec4a5ff2c65f060e9439ebd1b889649bf7b472427fdcaf892";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -698,12 +698,13 @@ fn emit_bundle_fixture_v2() {
 /// proven ComfyUI probe of 2026-07-15 with patcher handles added; sigmas 0.60/0.40/0.20/0
 /// are pinned as a fidelity constant (0.85 = the t2v generator setting = redesigns content).
 const UPSCALE_TEMPLATE_HASH: &str =
-    "0xc5a149f0b9d1513db369b29bcf4ca7bd12e091f58a11c6adf968059b8ead39db";
+    "0xa36ed9d96fc264b8d97cd03a4628dd1c30161a6a83a7442185c9f58945aaffb5";
 
 #[test]
 fn test_bundle_v11_has_upscale() {
     let store = TemplateStore::new(DIR).expect("store loads");
     assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
+    eprintln!("GOLD ltx-upscale-hdr={}", store.template_hash("ltx-upscale-hdr").unwrap());
     assert_eq!(
         store
             .template_hash("ltx-upscale-hdr")
@@ -732,12 +733,13 @@ fn test_bundle_v11_has_upscale() {
 /// to the token); v15 adds the ingredients lora id to the bundle's loras advert so
 /// clients commit the LoRA that actually ran, not the iclora fallback.
 const INGREDIENTS_TEMPLATE_HASH: &str =
-    "0xa936e172b695762f56c38f4499b1c2ae7f69160a0b889427c2d07a0c542f1e42";
+    "0x9c1a9a0cc84bfd3e79c325cec593e8f838fca4a3eb0f7079b9529f6c53a7c9dc";
 
 #[test]
 fn test_bundle_v14_has_ingredients() {
     let store = TemplateStore::new(DIR).expect("store loads");
     assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
+    eprintln!("GOLD ltx-ingredients-hdr={}", store.template_hash("ltx-ingredients-hdr").unwrap());
     assert_eq!(
         store
             .template_hash("ltx-ingredients-hdr")
@@ -769,9 +771,9 @@ fn test_bundle_v14_has_ingredients() {
 /// 30-step full recipe NOT needed — clean sources show no artifacting). Both lora
 /// ids advertised from day one (the v15 lesson).
 const WATER_TEMPLATE_HASH: &str =
-    "0x015a079d593ec461805c2280e727b019c3b50e9f8d8f1b22c75a0c1dd33932d9";
+    "0xc19ed1d99ae6e7fd214afb9ecb10b50f096a137b0c9a0f207e83fc982828ba39";
 const DAYNIGHT_TEMPLATE_HASH: &str =
-    "0xfd67bbee78ac7759c5bd6bafba95ca4cd1be0d944487305e5b986eea29ccbc86";
+    "0xcc1ea6b5eec43f3896fbcd70d2d174c558fcf11546ca73300de328bbad260c74";
 
 #[test]
 fn test_bundle_v16_has_water_and_daynight() {
@@ -801,7 +803,7 @@ fn test_bundle_v16_has_water_and_daynight() {
 }
 
 const CROSSVIEW_TEMPLATE_HASH: &str =
-    "0xc8e174ec56aa41ec7d4459c139855ddf5fea219d946d1d8092cea587473e25cf";
+    "0x411f192cffc8417788f2710eb305477427a84a94c3b2e79ae4f22276d80c35ad";
 
 /// v17 (CV1): the crossview novel-view template — control-clip shape, camera
 /// pose pinned mild (azimuth 20 / elevation 0 / distance 1.0), single pass at

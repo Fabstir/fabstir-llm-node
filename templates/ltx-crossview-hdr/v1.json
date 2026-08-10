@@ -849,5 +849,53 @@
   "_meta": {
    "title": "video_output"
   }
+ },
+ "90": {
+  "inputs": {
+   "image": [
+    "91",
+    0
+   ],
+   "filename_prefix": "ltx2.3_crossview_exr",
+   "write_mode": "Sequence",
+   "output_format": "Image Sequence \u2014 EXR (32-bit)",
+   "fps": 24.0,
+   "quality": 10,
+   "output_color_space": "Linear (sRGB)",
+   "broadcast_safe": false,
+   "output_path": "",
+   "bit_depth": "16-bit Half Float",
+   "compression": "ZIP",
+   "alpha_mode": "None"
+  },
+  "class_type": "RadianceDigitalCinemaWrite",
+  "_meta": {
+   "title": "exr_output"
+  }
+ },
+ "91": {
+  "inputs": {
+   "exposure": 0,
+   "contrast": 1,
+   "brightness": 0,
+   "saturation": 1,
+   "gamma": 0.4545,
+   "lift_r": 0,
+   "lift_g": 0,
+   "lift_b": 0,
+   "gain_r": 1,
+   "gain_g": 1,
+   "gain_b": 1,
+   "luma_space": "Rec.709 / sRGB",
+   "clamp_output": false,
+   "image": [
+    "5471",
+    0
+   ]
+  },
+  "class_type": "Float32ColorCorrect",
+  "_meta": {
+   "title": "EXR Linearise"
+  }
  }
 }

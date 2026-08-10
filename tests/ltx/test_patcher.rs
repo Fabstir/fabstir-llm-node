@@ -457,12 +457,26 @@ fn test_no_structural_edits() {
     let after = patch(&before, &job(), &[], &[]).unwrap();
     let b = before.0.as_object().unwrap();
     let a = after.0.as_object().unwrap();
+    // The ONE sanctioned structural edit (A2): the "exr_output" sink is removed
+    // for jobs that did not request exr-frames. Everything else must be
+    // substitution-only, so compare the id sets with that node excluded.
+    let exr_ids: std::collections::BTreeSet<_> = b
+        .iter()
+        .filter(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some("exr_output"))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(exr_ids.len(), 1, "fixture carries exactly one exr_output");
     assert_eq!(
-        b.keys().collect::<std::collections::BTreeSet<_>>(),
+        b.keys()
+            .filter(|k| !exr_ids.contains(k))
+            .collect::<std::collections::BTreeSet<_>>(),
         a.keys().collect::<std::collections::BTreeSet<_>>(),
-        "same node ids"
+        "same node ids apart from the sanctioned exr_output removal"
     );
     for (id, bn) in b {
+        if exr_ids.contains(id) {
+            continue; // the removed sink has no after-side counterpart
+        }
         assert_eq!(
             a[id].pointer("/class_type"),
             bn.pointer("/class_type"),
@@ -1101,4 +1115,41 @@ fn test_frame_count_handle_binds_billed_to_loaded_and_rendered() {
             0.8
         );
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// A2 — EXR masters (2026-08-10): the "exr_output" RadianceSaveEXR sink rides
+// every pinned template; removed for legacy jobs, required for `exr-frames`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_exr_output_removed_for_legacy_jobs() {
+    let patched = patch(&fixture_graph(), &job(), &[], &[]).unwrap();
+    assert!(
+        nodes_by_class(&patched, "RadianceDigitalCinemaWrite").is_empty(),
+        "legacy exr-sequence jobs must not carry the EXR sink"
+    );
+}
+
+#[test]
+fn test_exr_output_kept_and_required_for_exr_frames() {
+    let mut j = job();
+    j.output = OutputKind::ExrFrames;
+    let patched = patch(&fixture_graph(), &j, &[], &[]).unwrap();
+    let sinks = nodes_by_class(&patched, "RadianceDigitalCinemaWrite");
+    assert_eq!(sinks.len(), 1, "exr-frames keeps the pinned EXR sink");
+    assert_eq!(
+        sinks[0].pointer("/inputs/bit_depth").unwrap().as_str().unwrap(),
+        "16-bit Half Float"
+    );
+
+    // fail closed on a template with no sink
+    let mut g = fixture_graph();
+    let ids: Vec<String> = g.0.as_object().unwrap().iter()
+        .filter(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some("exr_output"))
+        .map(|(id, _)| id.clone()).collect();
+    for id in ids { g.0.as_object_mut().unwrap().remove(&id); }
+    let err = patch(&g, &j, &[], &[]).unwrap_err().to_string();
+    assert!(err.contains("no exr_output"), "got: {err}");
 }

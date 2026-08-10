@@ -289,3 +289,68 @@ fn emit_capability_fixture() {
     std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
+
+// A2 (2026-08-10): delivery ordering for exr-frames — preview first, EXR
+// frames sorted, count fail-closed; legacy jobs byte-identical pass-through.
+mod order_refs_a2 {
+    use fabstir_llm_node::ltx::client::ExrRef;
+    use fabstir_llm_node::ltx::exr::{colour_encoding_for, order_refs};
+    use fabstir_llm_node::ltx::types::{LtxJob, OutputKind, Resolution};
+
+    fn r(name: &str) -> ExrRef {
+        ExrRef { filename: name.to_string(), subfolder: String::new(), type_: "output".to_string() }
+    }
+
+    fn base_job(output: OutputKind, frames: u32) -> LtxJob {
+        LtxJob {
+            template_id: "ltx-t2v-hdr".into(),
+            template_hash: "0x00".into(),
+            prompt: "p".into(),
+            seed: "1".into(),
+            frames,
+            fps: 24,
+            resolution: Resolution { w: 768, h: 512 },
+            lora: "l".into(),
+            output,
+            images: None,
+            videos: None,
+            strength: None,
+            azimuth: None,
+            elevation: None,
+            distance: None,
+        }
+    }
+
+    #[test]
+    fn legacy_passes_through_untouched() {
+        let refs = vec![r("clip.mp4")];
+        let out = order_refs(&base_job(OutputKind::ExrSequence, 121), refs.clone()).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].filename, "clip.mp4");
+        assert_eq!(colour_encoding_for(&base_job(OutputKind::ExrSequence, 121)), "linear-HDR-from-LogC3");
+    }
+
+    #[test]
+    fn exr_frames_orders_preview_first_then_sorted_frames() {
+        let refs = vec![r("frame_00001.exr"), r("clip.mp4"), r("frame_00000.exr"), r("frame_00002.exr")];
+        let job = base_job(OutputKind::ExrFrames, 3);
+        let out = order_refs(&job, refs).unwrap();
+        let names: Vec<_> = out.iter().map(|x| x.filename.as_str()).collect();
+        assert_eq!(names, ["clip.mp4", "frame_00000.exr", "frame_00001.exr", "frame_00002.exr"]);
+        assert_eq!(colour_encoding_for(&job), "linear-rec709");
+    }
+
+    #[test]
+    fn exr_frames_fails_closed_on_count_mismatch() {
+        let refs = vec![r("clip.mp4"), r("frame_00000.exr")];
+        let err = order_refs(&base_job(OutputKind::ExrFrames, 121), refs).unwrap_err().to_string();
+        assert!(err.contains("121 were billed"), "got: {err}");
+    }
+
+    #[test]
+    fn exr_frames_fails_closed_without_exactly_one_preview() {
+        let refs = vec![r("frame_00000.exr")];
+        let err = order_refs(&base_job(OutputKind::ExrFrames, 1), refs).unwrap_err().to_string();
+        assert!(err.contains("preview"), "got: {err}");
+    }
+}
