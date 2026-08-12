@@ -44,6 +44,12 @@ pub struct Bounds {
     /// Accepted input-video container formats (BL3; advisory).
     #[serde(default)]
     pub video_formats: Vec<String>,
+    /// Max plaintext bytes for a deep-conform EXR tar (v8.44.0, `inputWire`
+    /// jobs — videos[0] is a 16-bit sequence, not an mp4, and dwarfs the mp4
+    /// bound by design). `default` 0 = bundles that predate the deep wire
+    /// refuse every deep job, fail-closed.
+    #[serde(default)]
+    pub deep_video_max_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -46,6 +46,7 @@ fn job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        input_wire: None,
     }
 }
 
@@ -513,6 +514,7 @@ fn iclora_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        input_wire: None,
     }
 }
 
@@ -649,6 +651,7 @@ fn bl4_job(id: &str) -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        input_wire: None,
     }
 }
 
@@ -1152,4 +1155,166 @@ fn test_exr_output_kept_and_required_for_exr_frames() {
     for id in ids { g.0.as_object_mut().unwrap().remove(&id); }
     let err = patch(&g, &j, &[], &[]).unwrap_err().to_string();
     assert!(err.contains("no exr_output"), "got: {err}");
+}
+
+// ── Deep-conform loader swap (v8.44.0, EXECUTION-DEEP-CONFORM.md) ──────────
+
+fn deep_job(id: &str) -> LtxJob {
+    let mut j = bl4_job(id);
+    j.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqDisplay);
+    j.videos = Some(vec!["u_tar_capability_cid".to_string()]);
+    j
+}
+
+#[test]
+fn deep_swap_replaces_loader_and_every_known_chain() {
+    let job = deep_job("ltx-edit-hdr");
+    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let obj = g.0.as_object().unwrap();
+
+    // The loader id (10) now carries the float sequence reader, globbing the
+    // staged subfolder, capped at the billed count, colour pass-through.
+    let loader = &obj["10"];
+    assert_eq!(
+        loader.pointer("/class_type").and_then(Value::as_str),
+        Some("RadianceDigitalCinemaRead")
+    );
+    assert_eq!(
+        loader.pointer("/inputs/source_path").and_then(Value::as_str),
+        Some("cafebabe")
+    );
+    assert_eq!(
+        loader.pointer("/inputs/frame_limit").and_then(Value::as_u64),
+        Some(121)
+    );
+    assert_eq!(
+        loader
+            .pointer("/inputs/input_colorspace")
+            .and_then(Value::as_str),
+        Some("Linear (sRGB)")
+    );
+
+    // The VideoInfo node is gone, and every consumer of its fps chain became
+    // the literal job fps.
+    assert!(!obj.contains_key("11"), "VHS_VideoInfo must be removed");
+    assert_eq!(
+        obj["42"].pointer("/inputs/frame_rate").and_then(Value::as_u64),
+        Some(24)
+    );
+    assert_eq!(obj["12"].pointer("/inputs/a").and_then(Value::as_u64), Some(24));
+
+    // frame_count consumer became the literal billed count; the audio link is
+    // dropped entirely (v1 deep previews are silent by decision).
+    assert_eq!(
+        obj["51"]
+            .pointer("/inputs/frames_number")
+            .and_then(Value::as_u64),
+        Some(121)
+    );
+    assert!(
+        obj["80"].pointer("/inputs/audio").is_none(),
+        "VideoCombine audio input must be dropped"
+    );
+    assert_eq!(
+        obj["80"].pointer("/inputs/frame_rate").and_then(Value::as_u64),
+        Some(24)
+    );
+}
+
+#[test]
+fn deep_swap_display_wire_has_no_shim() {
+    let job = deep_job("ltx-edit-hdr");
+    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    assert!(
+        !g.0.as_object().unwrap().contains_key("92"),
+        "display wire must not insert the encode shim"
+    );
+}
+
+#[test]
+fn deep_swap_linear_wire_inserts_encode_shim() {
+    let mut job = deep_job("ltx-edit-hdr");
+    job.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqLinear);
+    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let obj = g.0.as_object().unwrap();
+
+    let shim = obj.get("92").expect("linear wire inserts shim 92");
+    assert_eq!(
+        shim.pointer("/class_type").and_then(Value::as_str),
+        Some("Float32ColorCorrect")
+    );
+    // Radiance gamma g applies x^(1/g): 2.2 IS the linear->display encode.
+    assert_eq!(shim.pointer("/inputs/gamma").and_then(Value::as_f64), Some(2.2));
+    assert_eq!(
+        shim.pointer("/inputs/image").and_then(Value::as_array).map(|a| a[0].as_str().unwrap().to_string()),
+        Some("10".to_string())
+    );
+    // Every former IMAGE consumer of the loader now reads the shim.
+    for (nid, n) in obj {
+        if nid == "92" {
+            continue;
+        }
+        if let Some(inputs) = n.get("inputs").and_then(Value::as_object) {
+            for (key, v) in inputs {
+                if let Some(arr) = v.as_array() {
+                    assert!(
+                        !(arr.len() == 2
+                            && arr[0].as_str() == Some("10")
+                            && arr[1].as_u64() == Some(0)),
+                        "{nid}.{key} still reads the raw loader on the linear wire"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn deep_swap_covers_upscale_shape() {
+    // Upscale: loader is node 1, no VideoInfo, audio into VideoCombine 9.
+    let job = deep_job("ltx-upscale-hdr");
+    let g = patch(&bl4_graph("ltx-upscale-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let obj = g.0.as_object().unwrap();
+    assert_eq!(
+        obj["1"].pointer("/class_type").and_then(Value::as_str),
+        Some("RadianceDigitalCinemaRead")
+    );
+    assert_eq!(
+        obj["18"]
+            .pointer("/inputs/frames_number")
+            .and_then(Value::as_u64),
+        Some(121)
+    );
+    assert!(obj["9"].pointer("/inputs/audio").is_none());
+}
+
+#[test]
+fn deep_rejected_on_incapable_templates_before_any_work() {
+    // t2v (no loader at all) and iclora (core LoadVideo + Video Slice — an
+    // unaudited shape) both refuse the wire at the capability gate, which the
+    // PRE-ACCEPT dry-run with empty names also exercises.
+    let mut job = job();
+    job.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqDisplay);
+    let err = patch(&fixture_graph(), &job, &[], &[]).unwrap_err().to_string();
+    assert!(err.contains("not deep-input capable"), "{err}");
+
+    let mut job = iclora_job();
+    job.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqDisplay);
+    let err = patch(&iclora_graph(), &job, &[], &[]).unwrap_err().to_string();
+    assert!(err.contains("not deep-input capable"), "{err}");
+}
+
+#[test]
+fn deep_dry_run_validates_capability_without_swapping() {
+    // Pre-accept calls patch with EMPTY names: a capable template passes the
+    // gate but the loader must remain untouched (no staged path exists yet).
+    let job = deep_job("ltx-edit-hdr");
+    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &[]).unwrap();
+    let obj = g.0.as_object().unwrap();
+    assert_eq!(
+        obj["10"].pointer("/class_type").and_then(Value::as_str),
+        Some("VHS_LoadVideo"),
+        "dry-run must not swap the loader"
+    );
+    assert!(obj.contains_key("11"), "dry-run must keep VideoInfo");
 }

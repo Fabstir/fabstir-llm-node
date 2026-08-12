@@ -24,6 +24,7 @@ fn sample_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        input_wire: None,
     }
 }
 
@@ -158,4 +159,27 @@ fn test_job_videos_optional_and_roundtrips() {
     assert_eq!(v["videos"], json!(["uCidControl"]));
     let back: LtxJob = serde_json::from_value(v).unwrap();
     assert_eq!(back, iclora);
+}
+
+#[test]
+fn input_wire_kebab_case_and_absent_default() {
+    use fabstir_llm_node::ltx::types::InputWire;
+    // Wire values are kebab-case like OutputKind.
+    assert_eq!(
+        serde_json::to_string(&InputWire::ExrseqDisplay).unwrap(),
+        "\"exrseq-display\""
+    );
+    assert_eq!(
+        serde_json::to_string(&InputWire::ExrseqLinear).unwrap(),
+        "\"exrseq-linear\""
+    );
+    // A pre-deep wire (no inputWire key) parses to None — every deployed
+    // client's payload stays byte-identical.
+    let j: fabstir_llm_node::ltx::types::LtxJob = serde_json::from_str(
+        r#"{"templateId":"ltx-t2v-hdr","templateHash":"0x00","prompt":"p","seed":"1",
+            "frames":121,"fps":24,"resolution":{"w":768,"h":512},"lora":"l",
+            "output":"exr-sequence"}"#,
+    )
+    .unwrap();
+    assert_eq!(j.input_wire, None);
 }

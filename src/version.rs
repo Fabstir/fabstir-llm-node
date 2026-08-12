@@ -3,25 +3,32 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.43.0-exr-masters-2026-08-10";
+pub const VERSION: &str = "v8.44.2-deep-conform-2026-08-12";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.43.0";
+pub const VERSION_NUMBER: &str = "8.44.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 43;
+pub const VERSION_MINOR: u32 = 44;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-10";
+pub const BUILD_DATE: &str = "2026-08-12";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.44.0 deep-conform input (EXECUTION-DEEP-CONFORM.md): jobs may carry
+    // `inputWire` ("exrseq-display"/"exrseq-linear") with videos[0] a flat tar
+    // of 16-bit EXR frames — the control clip without 8-bit quantisation or
+    // 4:2:0 chroma subsampling. The patcher swaps the pinned VHS_LoadVideo for
+    // the float sequence reader (in-place, censused, fail-closed); bounds gain
+    // deepVideoMaxBytes (allowlist v22); frame count must equal billed EXACTLY.
+    "ltx-deep-conform-input",
     // v8.42.0 WP-N1+WP-N2 moderation drop: operator-loadable hash lists
     // (MODERATION_LIST_FILE / MODERATION_OWNHASH_FILE /
     // MODERATION_PDQ_MAX_DISTANCE, loaded once at startup into a genuine
@@ -947,8 +954,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 43);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_MINOR, 44);
+        assert_eq!(VERSION_PATCH, 2);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)

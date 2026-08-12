@@ -3,6 +3,7 @@
 mod test_attestation;
 mod test_billing;
 mod test_client;
+mod test_deep_input;
 mod test_engine;
 mod test_exr;
 mod test_input_image;

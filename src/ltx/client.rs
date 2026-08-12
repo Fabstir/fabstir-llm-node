@@ -115,12 +115,28 @@ impl ComfyClient {
     /// survived unchanged. Pass a content-addressed `filename` (e.g. keccak of the
     /// plaintext) so identical inputs map to one stable file under `overwrite`.
     pub async fn upload_input(&self, filename: &str, bytes: Vec<u8>) -> Result<String> {
+        self.upload_input_in(None, filename, bytes).await
+    }
+
+    /// `upload_input` with an optional ComfyUI `input/<subfolder>/` target —
+    /// the deep-conform path stages a whole EXR sequence into one
+    /// content-addressed subfolder so the sequence reader can glob exactly
+    /// that directory and nothing else.
+    pub async fn upload_input_in(
+        &self,
+        subfolder: Option<&str>,
+        filename: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String> {
         let url = format!("{}/upload/image", self.endpoint);
         let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
-        let form = reqwest::multipart::Form::new()
+        let mut form = reqwest::multipart::Form::new()
             .part("image", part)
             .text("type", "input")
             .text("overwrite", "true");
+        if let Some(sub) = subfolder {
+            form = form.text("subfolder", sub.to_string());
+        }
         let response = self.client.post(&url).multipart(form).send().await?;
         if !response.status().is_success() {
             let status = response.status();

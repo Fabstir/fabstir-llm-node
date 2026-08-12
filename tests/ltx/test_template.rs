@@ -57,7 +57,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
 // v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
 // ltx-daynight-hdr and their lora ids.
-const BUNDLE_HASH: &str = "0x1f42de4b8e09f9fec4a5ff2c65f060e9439ebd1b889649bf7b472427fdcaf892";
+const BUNDLE_HASH: &str = "0x0f0e4c6820dac7fe0d9902c74d263083cdc498818edd786295c6c28501a88697";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))

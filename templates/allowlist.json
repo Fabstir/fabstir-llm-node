@@ -1,5 +1,5 @@
 {
- "allowListVersion": 21,
+ "allowListVersion": 22,
  "templates": [
   {
    "templateId": "ltx-t2v-hdr",
@@ -198,6 +198,7 @@
   "videoMaxBytes": 134217728,
   "videoFormats": [
    "mp4"
-  ]
+  ],
+  "deepVideoMaxBytes": 4294967296
  }
 }

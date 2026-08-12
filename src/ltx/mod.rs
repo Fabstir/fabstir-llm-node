@@ -6,6 +6,7 @@ pub mod attestation;
 pub mod billing;
 pub mod capacity;
 pub mod client;
+pub mod deep_input;
 pub mod engine;
 pub mod exr;
 pub mod input_image;

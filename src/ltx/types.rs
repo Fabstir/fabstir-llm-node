@@ -26,6 +26,25 @@ pub enum OutputKind {
     ExrFrames,
 }
 
+/// Deep-conform input wire (v8.44.0, EXECUTION-DEEP-CONFORM.md). When a job
+/// carries one of these, `videos[0]` is NOT an mp4: it is a flat POSIX tar of
+/// 16-bit EXR frames — the conform without 8-bit quantisation or 4:2:0 chroma
+/// subsampling. The two variants differ ONLY in what the frame values mean;
+/// both end display-referred at the graph (the model's training distribution):
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InputWire {
+    /// Frames carry DISPLAY-encoded Rec.709 values — the loader passes them
+    /// through untouched ("Linear (sRGB)" is the Radiance pass-through).
+    ExrseqDisplay,
+    /// Frames carry Blender scene-linear values — the patcher inserts the
+    /// x^(1/2.2) encode shim after the loader so the graph still sees
+    /// display-encoded input. Exists because Blender's EXR export semantics
+    /// are audited on first deploy, not assumed: the helper flips this
+    /// constant, not code, if the audit says linear.
+    ExrseqLinear,
+}
+
 /// Job contract A (M0, prompt-only). `seed` is a decimal STRING on the wire
 /// (a JSON float64 corrupts values above 2^53), parsed to `U256` inside
 /// `inputCommitment`.
@@ -82,6 +101,13 @@ pub struct LtxJob {
     pub elevation: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distance: Option<f64>,
+    /// Deep-conform wire marker (v8.44.0): `videos[0]` is an EXR tar, not an
+    /// mp4, and the patcher swaps the video loader for the float sequence
+    /// reader. `None` = every deployed client's behaviour, byte-identical.
+    /// A job carrying it against a template outside the deep-capable set is
+    /// REJECTED pre-accept (same fail-closed rule as `strength`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_wire: Option<InputWire>,
 }
 
 impl LtxJob {

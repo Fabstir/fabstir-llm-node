@@ -35,6 +35,7 @@ fn sample_job(frames: u32) -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        input_wire: None,
     }
 }
 
@@ -318,6 +319,7 @@ mod order_refs_a2 {
             azimuth: None,
             elevation: None,
             distance: None,
+            input_wire: None,
         }
     }
 

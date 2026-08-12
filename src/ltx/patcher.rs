@@ -177,7 +177,220 @@ pub fn patch(
         false,
     )?;
 
+    // Deep-conform loader swap (v8.44.0, EXECUTION-DEEP-CONFORM.md): a job
+    // carrying `inputWire` had its videos[0] staged as an EXR SEQUENCE
+    // subfolder, and the pinned VHS_LoadVideo (8-bit cv2 decode) is replaced
+    // in place by the float sequence reader. Runs LAST so the binder above
+    // has already written the staged path into the loader's `video` input.
+    if let Some(wire) = job.input_wire {
+        if !DEEP_INPUT_CAPABLE.contains(&job.template_id.as_str()) {
+            return Err(anyhow!(
+                "inputWire was provided but template {} is not deep-input capable",
+                job.template_id
+            ));
+        }
+        // The swap needs the staged sequence path, which only exists on the
+        // post-accept call (the pre-accept dry-run passes empty names and
+        // stops at the capability check above).
+        if !video_names.is_empty() {
+            swap_deep_loader(obj, job, wire)?;
+        }
+    }
+
     Ok(Graph(value))
+}
+
+/// Templates proven compatible with the deep-conform loader swap: each carries
+/// exactly one `VHS_LoadVideo` whose non-IMAGE outputs are consumed only by
+/// the three known patterns the swap handles (frame_count -> literal billed,
+/// audio -> dropped, VHS_VideoInfo fps chain -> literal job fps). iclora
+/// (core `LoadVideo` + Video Slice) and crossview (warp pre-pass) are
+/// deliberately ABSENT in v1 — their loader shapes differ and nothing here
+/// has been audited against them.
+pub const DEEP_INPUT_CAPABLE: &[&str] = &[
+    "ltx-daynight-hdr",
+    "ltx-edit-hdr",
+    "ltx-outpaint-hdr",
+    "ltx-restore-hdr",
+    "ltx-upscale-hdr",
+    "ltx-water-hdr",
+];
+
+/// The deep-conform structural edit (the THIRD sanctioned one, after
+/// exr_output removal and the EXR lineariser insertion): replace the pinned
+/// `VHS_LoadVideo` with `RadianceDigitalCinemaRead` reading the staged EXR
+/// subfolder at float, pass-through colour ("Linear (sRGB)" applies no
+/// transform — the wire already carries what the graph expects). The census
+/// runs FIRST: any consumer of a loader output slot without an explicit rule
+/// fails the job before the graph is touched.
+/// Deep-swap-only variant of `set_input`: OVERWRITES a wired connection with a
+/// literal or a new link. The general patcher must never do this — the
+/// never-overwrite-a-connection guarantee is load-bearing — but the sanctioned
+/// deep swap exists precisely to replace loader links, and only after the
+/// census proved every one of them matches an explicit rule.
+fn force_input(graph: &mut Map<String, Value>, node_id: &str, key: &str, value: Value) -> Result<()> {
+    let inputs = graph
+        .get_mut(node_id)
+        .and_then(|n| n.get_mut("inputs"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| anyhow!("node {node_id} has no inputs object"))?;
+    if !inputs.contains_key(key) {
+        return Err(anyhow!("node {node_id} has no input {:?} to replace", key));
+    }
+    inputs.insert(key.to_string(), value);
+    Ok(())
+}
+
+fn swap_deep_loader(
+    obj: &mut Map<String, Value>,
+    job: &LtxJob,
+    wire: crate::ltx::types::InputWire,
+) -> Result<()> {
+    let loaders: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| n.get("class_type").and_then(Value::as_str) == Some("VHS_LoadVideo"))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if loaders.len() != 1 {
+        return Err(anyhow!(
+            "deep swap expects exactly one VHS_LoadVideo in template {}, found {}",
+            job.template_id,
+            loaders.len()
+        ));
+    }
+    let loader_id = loaders[0].clone();
+    let staged = obj
+        .get(&loader_id)
+        .and_then(|n| n.pointer("/inputs/video"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("deep swap: staged sequence path missing on loader {loader_id}"))?
+        .to_string();
+
+    // Census of every consumer of the loader's outputs.
+    let mut videoinfo_ids: Vec<String> = Vec::new();
+    let mut count_edits: Vec<(String, String)> = Vec::new();
+    let mut audio_drops: Vec<(String, String)> = Vec::new();
+    let mut image_edits: Vec<(String, String)> = Vec::new();
+    for (nid, n) in obj.iter() {
+        let Some(inputs) = n.get("inputs").and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, v) in inputs {
+            let Some(arr) = v.as_array() else { continue };
+            if arr.len() != 2 || arr[0].as_str() != Some(loader_id.as_str()) {
+                continue;
+            }
+            match arr[1].as_u64() {
+                Some(0) => image_edits.push((nid.clone(), key.clone())),
+                Some(1) => count_edits.push((nid.clone(), key.clone())),
+                Some(2) => {
+                    if key != "audio" {
+                        return Err(anyhow!(
+                            "deep swap: loader audio output consumed by unexpected input {nid}.{key}"
+                        ));
+                    }
+                    audio_drops.push((nid.clone(), key.clone()));
+                }
+                Some(3) => {
+                    if n.get("class_type").and_then(Value::as_str) != Some("VHS_VideoInfo") {
+                        return Err(anyhow!(
+                            "deep swap: loader video_info consumed by non-VideoInfo node {nid}"
+                        ));
+                    }
+                    videoinfo_ids.push(nid.clone());
+                }
+                other => {
+                    return Err(anyhow!(
+                        "deep swap: loader output slot {other:?} consumed by {nid}.{key} — no rule for it"
+                    ))
+                }
+            }
+        }
+    }
+    // Every consumer of a VideoInfo output takes the literal job fps (the
+    // chain only ever carried source fps, which the job validates anyway).
+    let mut fps_edits: Vec<(String, String)> = Vec::new();
+    for vid in &videoinfo_ids {
+        for (nid, n) in obj.iter() {
+            let Some(inputs) = n.get("inputs").and_then(Value::as_object) else {
+                continue;
+            };
+            for (key, v) in inputs {
+                if let Some(arr) = v.as_array() {
+                    if arr.len() == 2 && arr[0].as_str() == Some(vid.as_str()) {
+                        fps_edits.push((nid.clone(), key.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    for (nid, key) in count_edits {
+        force_input(obj, &nid, &key, Value::from(job.frames))?;
+    }
+    for (nid, key) in fps_edits {
+        force_input(obj, &nid, &key, Value::from(job.fps))?;
+    }
+    for (nid, key) in audio_drops {
+        if let Some(m) = obj
+            .get_mut(&nid)
+            .and_then(|n| n.get_mut("inputs"))
+            .and_then(Value::as_object_mut)
+        {
+            m.remove(&key);
+        }
+    }
+    for vid in videoinfo_ids {
+        obj.remove(&vid);
+    }
+
+    // The swap itself: same node id, so IMAGE consumers keep their links.
+    obj.insert(
+        loader_id.clone(),
+        serde_json::json!({
+            "class_type": "RadianceDigitalCinemaRead",
+            "inputs": {
+                "source_path": staged,
+                "start_frame": 1,
+                "frame_limit": job.frames,
+                "input_colorspace": "Linear (sRGB)",
+                "fps_override": f64::from(job.fps),
+            },
+            "_meta": {"title": "deep_input"}
+        }),
+    );
+
+    // Linear wire: the graph must still see display-encoded values — insert
+    // the x^(1/2.2) encode shim (Radiance gamma g applies x^(1/g), so gamma
+    // 2.2 IS the encode) between the reader and every IMAGE consumer.
+    if wire == crate::ltx::types::InputWire::ExrseqLinear {
+        let shim_id = "92";
+        if obj.contains_key(shim_id) {
+            return Err(anyhow!(
+                "deep swap: shim id {shim_id} already taken in template {}",
+                job.template_id
+            ));
+        }
+        for (nid, key) in image_edits {
+            force_input(obj, &nid, &key, serde_json::json!([shim_id, 0]))?;
+        }
+        obj.insert(
+            shim_id.to_string(),
+            serde_json::json!({
+                "class_type": "Float32ColorCorrect",
+                "inputs": {
+                    "image": [loader_id, 0],
+                    "exposure": 0, "contrast": 1, "brightness": 0, "saturation": 1,
+                    "gamma": 2.2,
+                    "lift_r": 0, "lift_g": 0, "lift_b": 0,
+                    "gain_r": 1, "gain_g": 1, "gain_b": 1,
+                    "luma_space": "Rec.709 / sRGB", "clamp_output": false
+                },
+                "_meta": {"title": "deep_input encode (x^1/2.2)"}
+            }),
+        );
+    }
+    Ok(())
 }
 
 /// The video-loader classes and each one's filename input key. Control clips

@@ -381,14 +381,25 @@ pub async fn handle_encrypted_ltx_generate(
         return reject("VALIDATION_FAILED", &msg);
     }
     // Input-video validation (BL3): same gate, `videoInputs` is the v3 commitment
-    // selector.
+    // selector. Deep-conform jobs (v8.44.0) carry an EXR tar in videos[0], which
+    // dwarfs the mp4 bound by design — they are sized against the bundle's
+    // `deepVideoMaxBytes` instead, whose serde default of 0 makes every deep job
+    // fail closed against a bundle that predates the deep wire.
+    let (video_bound_key, video_bound) = if job.input_wire.is_some() {
+        (
+            "deepVideoMaxBytes",
+            store.bundle().bounds.deep_video_max_bytes,
+        )
+    } else {
+        ("videoMaxBytes", store.bundle().bounds.video_max_bytes)
+    };
     if let Err(msg) = validate_input_cids(
         &job.template_id,
         "video",
-        "videoMaxBytes",
+        video_bound_key,
         job.videos.as_deref().unwrap_or_default(),
         store.video_inputs(&job.template_id).unwrap_or(0),
-        store.bundle().bounds.video_max_bytes,
+        video_bound,
     ) {
         return reject("VALIDATION_FAILED", &msg);
     }
@@ -448,7 +459,9 @@ pub async fn handle_encrypted_ltx_generate(
     }
     let ack = build_encrypted_ltx_response(&ack_inner, session_key, session_id, message_id);
 
+    let deep_total_cap = store.bundle().bounds.deep_video_max_bytes;
     let task = LtxGenerateTask {
+        deep_total_cap,
         job,
         patched_graph,
         request_id,
@@ -473,6 +486,10 @@ pub struct LtxGenerateTask {
     pub patched_graph: crate::ltx::Graph,
     pub request_id: Option<String>,
     pub allow_list_version: u32,
+    /// The bundle's deepVideoMaxBytes at accept — enforced as the RUNNING
+    /// total across fetched deep frames (the manifest itself is tiny; the
+    /// pre-accept CID length check only sees the manifest).
+    pub deep_total_cap: u64,
     pub timeout_secs: u64,
     pub job_id: Option<u64>,
     pub permit: OwnedSemaphorePermit,
@@ -752,6 +769,7 @@ async fn prepare_inputs(
     graph: crate::ltx::Graph,
     image_hashes: &mut Vec<[u8; 32]>,
     video_hashes: &mut Vec<[u8; 32]>,
+    deep_total_cap: u64,
 ) -> Result<crate::ltx::Graph, String> {
     let images = job.images.as_deref().unwrap_or_default();
     let videos = job.videos.as_deref().unwrap_or_default();
@@ -767,13 +785,56 @@ async fn prepare_inputs(
         image_hashes.push(hash);
     }
     let mut video_names = Vec::with_capacity(videos.len());
-    for cid in videos {
-        let (name, hash) = stage_input(client, &blob_source, cid, "video", "mp4", |plaintext| {
-            check_control_video(plaintext, job.frames)
-        })
-        .await?;
-        video_names.push(name);
+    if job.input_wire.is_some() {
+        // Deep-conform wire, transport v2 (v8.44.2): videos[0] decrypts to a
+        // small JSON manifest listing per-frame capability CIDs in delivery
+        // order (the tar transport died on the helper's 32 MiB s5.js blob
+        // cap). Fetch the manifest, then each frame: EXR magic + per-frame
+        // cap + RUNNING total against the bundle's deepVideoMaxBytes, staged
+        // into one content-addressed ComfyUI subfolder under NODE-generated
+        // sequential names (client names are never trusted; array order IS
+        // delivery order). The commitment binds keccak256(manifest plaintext);
+        // capability CIDs embed each frame's own plaintext hash, so the
+        // frames are bound transitively through the pinned list.
+        let cid = videos
+            .first()
+            .ok_or_else(|| "deep job carries no videos[0]".to_string())?;
+        let (hash, manifest) = crate::ltx::input_image::fetch_image_hash(&blob_source, cid)
+            .await
+            .map_err(|e| format!("deep manifest fetch failed: {e}"))?;
+        let frame_cids = crate::ltx::deep_input::parse_deep_manifest(&manifest, job.frames)
+            .map_err(|e| format!("deep input rejected: {e}"))?;
+        let sub = hex::encode(&hash[..16]);
+        let mut total: u64 = 0;
+        for (i, frame_cid) in frame_cids.iter().enumerate() {
+            let (_, plaintext) =
+                crate::ltx::input_image::fetch_image_hash(&blob_source, frame_cid)
+                    .await
+                    .map_err(|e| format!("deep frame {i} fetch failed: {e}"))?;
+            crate::ltx::deep_input::check_deep_frame(i, &plaintext)?;
+            total += plaintext.len() as u64;
+            if total > deep_total_cap {
+                return Err(format!(
+                    "deep conform exceeds deepVideoMaxBytes ({deep_total_cap}) at frame {i} — refusing"
+                ));
+            }
+            client
+                .upload_input_in(Some(&sub), &format!("frame_{:05}.exr", i + 1), plaintext)
+                .await
+                .map_err(|e| format!("deep frame {i} upload failed: {e}"))?;
+        }
+        video_names.push(sub);
         video_hashes.push(hash);
+    } else {
+        for cid in videos {
+            let (name, hash) =
+                stage_input(client, &blob_source, cid, "video", "mp4", |plaintext| {
+                    check_control_video(plaintext, job.frames)
+                })
+                .await?;
+            video_names.push(name);
+            video_hashes.push(hash);
+        }
     }
     patcher::patch(&graph, job, &image_names, &video_names)
         .map_err(|e| format!("input patch failed: {e}"))
@@ -818,6 +879,7 @@ impl LtxGenerateTask {
             patched_graph,
             request_id,
             allow_list_version: _,
+            deep_total_cap,
             timeout_secs,
             job_id,
             permit,
@@ -869,6 +931,7 @@ impl LtxGenerateTask {
                     patched_graph,
                     &mut image_hashes,
                     &mut video_hashes,
+                    deep_total_cap,
                 )
                 .await
                 {

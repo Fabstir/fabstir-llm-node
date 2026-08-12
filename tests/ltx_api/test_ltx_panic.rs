@@ -104,6 +104,7 @@ fn job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        input_wire: None,
     }
 }
 
