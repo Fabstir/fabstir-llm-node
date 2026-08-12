@@ -116,6 +116,7 @@ async fn task_with(job_id: Option<u64>, seam: Option<LtxPanicSeam>) -> LtxGenera
         job: job(),
         patched_graph: Graph(json!({})),
         request_id: Some("r-panic".to_string()),
+        deep_total_cap: 4_294_967_296,
         allow_list_version: 16,
         timeout_secs: 5,
         job_id,

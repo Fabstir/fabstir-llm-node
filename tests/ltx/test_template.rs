@@ -57,7 +57,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
 // v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
 // ltx-daynight-hdr and their lora ids.
-const BUNDLE_HASH: &str = "0x0f0e4c6820dac7fe0d9902c74d263083cdc498818edd786295c6c28501a88697";
+const BUNDLE_HASH: &str = "0x3f8b95e20c780897a6fce8573a91fdc3270ede3d7488378676b9ad5366a9c676";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -821,4 +821,95 @@ fn test_bundle_v17_has_crossview() {
     }
     assert_eq!(store.video_inputs("ltx-crossview-hdr"), Some(1));
     assert_eq!(store.image_inputs("ltx-crossview-hdr").unwrap_or(0), 0);
+}
+
+// ── Mode 13 (ltx-sdr2hdr-hdr, EXECUTION-MODE13-HDR.md) ──────────────────────
+
+const SDR2HDR_TEMPLATE_HASH: &str = "0x3a14f4da6af1ebeabc8744fba1b2e80e1fb1bbeac71d9dd4a68826d755769e1b";
+
+#[test]
+fn test_bundle_v23_has_sdr2hdr() {
+    let store = TemplateStore::new(DIR).expect("store loads");
+    let hash = store.template_hash("ltx-sdr2hdr-hdr").expect("13th template");
+    eprintln!("GOLD ltx-sdr2hdr-hdr={hash}");
+    assert_eq!(hash, SDR2HDR_TEMPLATE_HASH, "sdr2hdr golden hash drifted");
+    assert!(store.bundle().allow_list_version >= 23, "since v23");
+}
+
+#[test]
+fn test_sdr2hdr_template_structural_laws() {
+    let raw = std::fs::read(format!("{DIR}/ltx-sdr2hdr-hdr/v1.json")).unwrap();
+    let g: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let obj = g.as_object().unwrap();
+
+    // LAW 1: plain decode only — the tiled class shimmers reconstructed
+    // highlights (proven 2026-07-30) and must never enter this template.
+    assert!(
+        obj.values()
+            .all(|n| n.pointer("/class_type").and_then(|v| v.as_str()) != Some("VAEDecodeTiled")),
+        "VAEDecodeTiled is BANNED in the sdr2hdr template"
+    );
+    assert!(obj
+        .values()
+        .any(|n| n.pointer("/class_type").and_then(|v| v.as_str()) == Some("VAEDecode")));
+
+    // LAW 2: exr_output taps hdr_linear (slot 1) DIRECTLY — no lineariser in
+    // between (gamma-encoding scene-linear pixels would destroy the >1.0
+    // range this mode exists to produce).
+    let exr = &obj["90"];
+    assert_eq!(
+        exr.pointer("/class_type").and_then(|v| v.as_str()),
+        Some("RadianceDigitalCinemaWrite")
+    );
+    assert_eq!(
+        exr.pointer("/inputs/image").and_then(|v| v.as_array()).map(|a| {
+            (a[0].as_str().unwrap().to_string(), a[1].as_u64().unwrap())
+        }),
+        Some(("5114".to_string(), 1))
+    );
+    assert!(!obj.values().any(|n| {
+        n.pointer("/class_type").and_then(|v| v.as_str()) == Some("Float32ColorCorrect")
+    }), "no colour-correct node belongs in the scene-linear template");
+
+    // LAW 3: the preview taps tonemapped (slot 0) — the house graph wrongly
+    // tapped linear, which is the gamma-dark preview trap.
+    assert_eq!(
+        obj["5108"].pointer("/inputs/images").and_then(|v| v.as_array()).map(|a| {
+            (a[0].as_str().unwrap().to_string(), a[1].as_u64().unwrap())
+        }),
+        Some(("5114".to_string(), 0))
+    );
+
+    // LAW 4: the HDR node's internal writer is OFF, and the exposure carries
+    // the proven look.
+    let hdr = &obj["5114"];
+    assert_eq!(hdr.pointer("/inputs/save_exr").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(hdr.pointer("/inputs/exposure").and_then(|v| v.as_f64()), Some(7.1));
+}
+
+#[test]
+fn test_sdr2hdr_colour_encoding_is_scene_linear() {
+    use fabstir_llm_node::ltx::exr::colour_encoding_for;
+    use fabstir_llm_node::ltx::types::{LtxJob, OutputKind, Resolution};
+    let mut job = LtxJob {
+        template_id: "ltx-sdr2hdr-hdr".to_string(),
+        template_hash: "0x00".to_string(),
+        prompt: "p".to_string(),
+        seed: "1".to_string(),
+        frames: 121,
+        fps: 24,
+        resolution: Resolution { w: 768, h: 512 },
+        lora: "ltx-sdr2hdr-hdr@v1".to_string(),
+        output: OutputKind::ExrFrames,
+        images: None,
+        videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
+        input_wire: None,
+    };
+    assert_eq!(colour_encoding_for(&job), "scene-linear-rec709");
+    job.template_id = "ltx-edit-hdr".to_string();
+    assert_eq!(colour_encoding_for(&job), "linear-rec709");
 }

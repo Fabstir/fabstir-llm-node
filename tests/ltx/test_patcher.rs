@@ -1318,3 +1318,77 @@ fn deep_dry_run_validates_capability_without_swapping() {
     );
     assert!(obj.contains_key("11"), "dry-run must keep VideoInfo");
 }
+
+// ── Mode 13 (ltx-sdr2hdr-hdr): the patcher against the REAL pinned graph ────
+
+fn sdr2hdr_graph() -> Graph {
+    let raw = std::fs::read(format!("{DIR}/ltx-sdr2hdr-hdr/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+fn sdr2hdr_job(output: OutputKind) -> LtxJob {
+    LtxJob {
+        template_id: "ltx-sdr2hdr-hdr".to_string(),
+        template_hash: "0x00".to_string(),
+        prompt: "HDR reconstruction of the street".to_string(),
+        seed: "4815162342".to_string(),
+        frames: 121,
+        fps: 24,
+        resolution: Resolution { w: 768, h: 512 },
+        lora: "ltx-sdr2hdr-hdr@v1".to_string(),
+        output,
+        images: None,
+        videos: Some(vec!["u_src_cid".to_string()]),
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
+        input_wire: None,
+    }
+}
+
+#[test]
+fn sdr2hdr_full_patch_lands_every_handle() {
+    let mut job = sdr2hdr_job(OutputKind::ExrFrames);
+    job.strength = Some(0.7);
+    let g = patch(&sdr2hdr_graph(), &job, &[], &["src.mp4".to_string()]).unwrap();
+    let obj = g.0.as_object().unwrap();
+
+    assert_eq!(
+        obj["2483"].pointer("/inputs/text").and_then(Value::as_str),
+        Some("HDR reconstruction of the street")
+    );
+    assert_eq!(
+        obj["4832"].pointer("/inputs/noise_seed").and_then(Value::as_u64),
+        Some(4815162342)
+    );
+    // Frame Count -> latent length == billed frames (the edit-family
+    // latent-longer-than-guide shape).
+    assert_eq!(obj["95"].pointer("/inputs/value").and_then(Value::as_u64), Some(121));
+    // the source clip binds to the core LoadVideo's `file` input
+    assert_eq!(
+        obj["5106"].pointer("/inputs/file").and_then(Value::as_str),
+        Some("src.mp4")
+    );
+    // guide strength landed (guide node present in this template)
+    assert_eq!(
+        obj["5012"].pointer("/inputs/strength").and_then(Value::as_f64),
+        Some(0.7)
+    );
+    // exr-frames: the sink is REQUIRED and present
+    assert!(obj.contains_key("90"));
+}
+
+#[test]
+fn sdr2hdr_legacy_job_removes_the_exr_sink() {
+    let g = patch(
+        &sdr2hdr_graph(),
+        &sdr2hdr_job(OutputKind::ExrSequence),
+        &[],
+        &["src.mp4".to_string()],
+    )
+    .unwrap();
+    let obj = g.0.as_object().unwrap();
+    assert!(!obj.contains_key("90"), "legacy jobs drop exr_output");
+    assert!(obj.contains_key("5109"), "the preview sink stays");
+}

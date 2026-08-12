@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 22,
-  "bundleHash": "0x0f0e4c6820dac7fe0d9902c74d263083cdc498818edd786295c6c28501a88697",
+  "allowListVersion": 23,
+  "bundleHash": "0x3f8b95e20c780897a6fce8573a91fdc3270ede3d7488378676b9ad5366a9c676",
   "templates": [
     {
       "templateId": "ltx-crossview-hdr",
@@ -88,6 +88,15 @@
       ]
     },
     {
+      "templateId": "ltx-sdr2hdr-hdr",
+      "templateHash": "0x3a14f4da6af1ebeabc8744fba1b2e80e1fb1bbeac71d9dd4a68826d755769e1b",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ]
+    },
+    {
       "templateId": "ltx-t2v-hdr",
       "templateHash": "0x74ccf9abe4423f908357cb8da2f3a0f6475ec33b129032795d01efbbc79a9f94",
       "imageInputs": 0,
@@ -119,7 +128,8 @@
     "ltx-restore-hdr@v1",
     "ltx-ingredients-hdr@v1",
     "ltx-water-hdr@v1",
-    "ltx-daynight-hdr@v1"
+    "ltx-daynight-hdr@v1",
+    "ltx-sdr2hdr-hdr@v1"
   ],
   "bounds": {
     "frames": {

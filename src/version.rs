@@ -3,25 +3,31 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.44.2-deep-conform-2026-08-12";
+pub const VERSION: &str = "v8.45.0-mode13-hdr-2026-08-12";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.44.2";
+pub const VERSION_NUMBER: &str = "8.45.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 44;
+pub const VERSION_MINOR: u32 = 45;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-08-12";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.45.0 mode 13 "Convert to HDR (EXR)" (EXECUTION-MODE13-HDR.md): the
+    // ltx-sdr2hdr-hdr template (HDR IC-LoRA + LTXVHDRDecodePostprocess, plain
+    // VAEDecode LAW, exposure 7.1 = the proven look, internal writer OFF,
+    // preview = tonemapped slot 0, exr_output = hdr_linear slot 1 unencoded);
+    // colour_encoding "scene-linear-rec709" for this template; allowlist v23.
+    "ltx-sdr2hdr",
     // v8.44.0 deep-conform input (EXECUTION-DEEP-CONFORM.md): jobs may carry
     // `inputWire` ("exrseq-display"/"exrseq-linear") with videos[0] a flat tar
     // of 16-bit EXR frames — the control clip without 8-bit quantisation or
@@ -954,8 +960,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 44);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_MINOR, 45);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)

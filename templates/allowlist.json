@@ -1,5 +1,5 @@
 {
- "allowListVersion": 22,
+ "allowListVersion": 23,
  "templates": [
   {
    "templateId": "ltx-t2v-hdr",
@@ -97,6 +97,14 @@
    "videoSemantics": [
     "controlVideo"
    ]
+  },
+  {
+   "templateId": "ltx-sdr2hdr-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ]
   }
  ],
  "loras": [
@@ -106,7 +114,8 @@
   "ltx-restore-hdr@v1",
   "ltx-ingredients-hdr@v1",
   "ltx-water-hdr@v1",
-  "ltx-daynight-hdr@v1"
+  "ltx-daynight-hdr@v1",
+  "ltx-sdr2hdr-hdr@v1"
  ],
  "bounds": {
   "frames": {
