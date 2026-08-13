@@ -324,7 +324,7 @@
    ],
    "resize_type": "scale to multiple",
    "resize_type.multiple": 64,
-   "upscale_method": "lanczos"
+   "scale_method": "lanczos"
   },
   "_meta": {
    "title": "Snap to /64 (even latent \u2014 SimpleMath+ chain replaced: not in the image)"
@@ -337,14 +337,14 @@
     "4851",
     0
    ],
-   "exposure": 7.1,
+   "exposure": 0.0,
    "save_exr": false,
    "output_dir": "output/hdr_exr3",
    "filename_prefix": "frame",
    "half_precision": true
   },
   "_meta": {
-   "title": "HDR decode (exposure 7.1 = proven look; INTERNAL writer OFF)"
+   "title": "HDR decode (exposure affects PREVIEW ONLY per node source; masters are pre-exposure)"
   }
  },
  "5125": {

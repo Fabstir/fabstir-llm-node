@@ -57,7 +57,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
 // v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
 // ltx-daynight-hdr and their lora ids.
-const BUNDLE_HASH: &str = "0x3f8b95e20c780897a6fce8573a91fdc3270ede3d7488378676b9ad5366a9c676";
+const BUNDLE_HASH: &str = "0xc5d91799574dc359f5f7b375c276e79bcf15adbdd5441e312aba0dce276a0a78";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -825,7 +825,7 @@ fn test_bundle_v17_has_crossview() {
 
 // ── Mode 13 (ltx-sdr2hdr-hdr, EXECUTION-MODE13-HDR.md) ──────────────────────
 
-const SDR2HDR_TEMPLATE_HASH: &str = "0x3a14f4da6af1ebeabc8744fba1b2e80e1fb1bbeac71d9dd4a68826d755769e1b";
+const SDR2HDR_TEMPLATE_HASH: &str = "0xb18cecd50b0d66a8986c3e1c26b0f271932b09ddde95ec993696aa233901612a";
 
 #[test]
 fn test_bundle_v23_has_sdr2hdr() {
@@ -880,11 +880,14 @@ fn test_sdr2hdr_template_structural_laws() {
         Some(("5114".to_string(), 0))
     );
 
-    // LAW 4: the HDR node's internal writer is OFF, and the exposure carries
-    // the proven look.
+    // LAW 4: the HDR node's internal writer is OFF, and exposure is 0 — per
+    // the node's source, exposure multiplies ONLY the tonemapped preview
+    // (hdr_linear returns pre-exposure), so 7.1 blew the preview while
+    // touching nothing validated in July. Field-caught on the first shipped
+    // render; masters were correct throughout.
     let hdr = &obj["5114"];
     assert_eq!(hdr.pointer("/inputs/save_exr").and_then(|v| v.as_bool()), Some(false));
-    assert_eq!(hdr.pointer("/inputs/exposure").and_then(|v| v.as_f64()), Some(7.1));
+    assert_eq!(hdr.pointer("/inputs/exposure").and_then(|v| v.as_f64()), Some(0.0));
 }
 
 #[test]

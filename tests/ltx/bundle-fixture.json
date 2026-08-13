@@ -1,6 +1,6 @@
 {
-  "allowListVersion": 23,
-  "bundleHash": "0x3f8b95e20c780897a6fce8573a91fdc3270ede3d7488378676b9ad5366a9c676",
+  "allowListVersion": 25,
+  "bundleHash": "0xc5d91799574dc359f5f7b375c276e79bcf15adbdd5441e312aba0dce276a0a78",
   "templates": [
     {
       "templateId": "ltx-crossview-hdr",
@@ -89,7 +89,7 @@
     },
     {
       "templateId": "ltx-sdr2hdr-hdr",
-      "templateHash": "0x3a14f4da6af1ebeabc8744fba1b2e80e1fb1bbeac71d9dd4a68826d755769e1b",
+      "templateHash": "0xb18cecd50b0d66a8986c3e1c26b0f271932b09ddde95ec993696aa233901612a",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
