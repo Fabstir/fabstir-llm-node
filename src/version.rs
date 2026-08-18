@@ -3,25 +3,39 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.45.0-mode13-hdr-2026-08-12";
+pub const VERSION: &str = "v8.46.0-qwen38-llama-cpp-154-2026-08-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.45.0";
+pub const VERSION_NUMBER: &str = "8.46.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 45;
+pub const VERSION_MINOR: u32 = 46;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-12";
+pub const BUILD_DATE: &str = "2026-08-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.46.0 Qwen3.8-27B support: llama-cpp-2 0.1.146 -> 0.1.154. The 0.1.146
+    // llama.cpp has no nextn/MTP handling in its qwen35 path, so a Qwen3.8 GGUF
+    // (block_count 65 = 64 trunk + 1 MTP block, plus blk.64.nextn.* tensors)
+    // fails to load outright. 0.1.154's qwen35 loader splits n_layer from
+    // n_layer_all and consumes the MTP block. Qwen3.6 is unaffected.
+    "qwen38-27b",
+    "llama-cpp-2-0-1-154",
+    "qwen35-nextn-mtp-block",
+    // v8.46.0 Qwen reasoning-effort control on the ChatML path. Qwen3.8's own
+    // template defaults to reasoning_effort=xhigh; we format ChatML ourselves so
+    // the model otherwise gets no instruction and falls back to long thinking,
+    // which a per-token-billed host pays for on every reply.
+    "chatml-reasoning-effort",
+    "qwen-thinking-control",
     // v8.45.0 mode 13 "Convert to HDR (EXR)" (EXECUTION-MODE13-HDR.md): the
     // ltx-sdr2hdr-hdr template (HDR IC-LoRA + LTXVHDRDecodePostprocess, plain
     // VAEDecode LAW, exposure 7.1 = the proven look, internal writer OFF,
@@ -510,6 +524,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.46.0 - Qwen3.8-27B support + ChatML reasoning-effort control (Aug 18, 2026)
+    "FEAT: llama-cpp-2 bumped 0.1.146 -> 0.1.154 — the qwen35 loader now splits n_layer from n_layer_all and consumes the NextN/MTP block, which is what Qwen3.8-27B needs (block_count 65 = 64 trunk + 1 MTP, plus blk.64.nextn.* tensors). On 0.1.146 that GGUF does not load at all: block 64 fell on the recurrent side of the full_attention_interval test and a required ssm tensor was missing",
+    "FEAT: MODEL_CHAT_TEMPLATE=chatml now honours thinking mode. DEFAULT_THINKING_MODE / per-request thinking maps to Qwen's own reasoning_effort sentences (low, xhigh) injected at the head of the system message; medium injects nothing, matching Qwen's template; disabled prefills an empty <think></think> on the assistant turn, which is how Qwen suppresses reasoning",
+    "NOTE: unset thinking mode leaves the ChatML prompt byte-for-byte as it was before v8.46.0 — Qwen3.6 hosts see no behaviour change until they opt in",
+    "NOTE: Qwen3.8-27B is dense 27B, arch qwen35, same tokenizer and ChatML template as Qwen3.6-27B (eos 248046 / bos 248044 / pad 248055). Q8_0 is ~29 GB of weights; KV is only ~2 GiB at 32k because 48 of the 64 layers are gated-delta-net and keep a fixed recurrent state instead of a growing cache",
     // v8.43.0 - EXR masters (Aug 10, 2026)
     "FEAT: opt-in 16-bit EXR master delivery for every mode — new output kind `exr-frames`. Every pinned template (allowlist v19) carries a RadianceSaveEXR sink titled exr_output (16-bit half, ZIP, linearised on write); the patcher REMOVES it for legacy jobs (the one sanctioned structural edit) and REQUIRES it when exr-frames is requested",
     "FEAT: exr-frames delivery convention — frames[0] = preview mp4, frames[1..] = the EXR sequence in filename order; EXR count MUST equal billed frames (fail closed); manifest colour_encoding = linear-rec709 (legacy single-artefact jobs keep linear-HDR-from-LogC3 byte-for-byte)",
@@ -960,7 +979,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 45);
+        assert_eq!(VERSION_MINOR, 46);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1141,15 +1160,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.43.0"));
-        assert!(version.contains("2026-08-10"));
+        assert!(version.contains("8.46.0"));
+        assert!(version.contains("2026-08-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.43.0-exr-masters-2026-08-10");
-        assert_eq!(VERSION_NUMBER, "8.43.0");
-        assert_eq!(BUILD_DATE, "2026-08-10");
+        assert_eq!(VERSION, "v8.46.0-qwen38-llama-cpp-154-2026-08-18");
+        assert_eq!(VERSION_NUMBER, "8.46.0");
+        assert_eq!(BUILD_DATE, "2026-08-18");
     }
 
     #[test]

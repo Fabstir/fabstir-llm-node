@@ -93,6 +93,8 @@ pub fn build_prompt_with_context(
         }
     }
 
+    apply_chatml_thinking_prefill(&template, effective_mode.as_deref(), &mut formatted);
+
     tracing::debug!(
         "🎨 Formatted prompt using {} template (context: {} messages, {} chars)",
         template.as_str(),
@@ -133,6 +135,10 @@ pub(crate) fn inject_thinking_directive(
         ChatTemplate::Harmony => inject_harmony_thinking(messages, thinking_mode),
         ChatTemplate::Glm4 => {
             inject_glm4_thinking(messages, thinking_mode);
+            None
+        }
+        ChatTemplate::ChatML => {
+            inject_qwen_reasoning(messages, thinking_mode);
             None
         }
         _ => {
@@ -204,6 +210,77 @@ fn inject_glm4_thinking(messages: &mut Vec<(String, String)>, thinking_mode: &st
     // All other modes inject /think
     if let Some(last_user) = messages.iter_mut().rev().find(|(role, _)| role == "user") {
         last_user.1 = format!("/think\n{}", last_user.1);
+    }
+}
+
+/// Apply the ChatML thinking-off prefill, when the template and mode call for it.
+///
+/// Qwen suppresses reasoning by prefilling an empty think block on the assistant
+/// turn rather than by instruction — a system message cannot do this job, because
+/// the model opens `<think>` spontaneously otherwise. It therefore has to run
+/// after formatting, so it lands behind the `<|im_start|>assistant\n` generation
+/// prefix, and it has to run on BOTH prompt paths: `build_prompt_with_context`
+/// (HTTP `/v1/inference`) and the WebSocket handler's `format_prompt_for_inference`,
+/// which the UI chat actually uses.
+pub(crate) fn apply_chatml_thinking_prefill(
+    template: &ChatTemplate,
+    effective_mode: Option<&str>,
+    formatted: &mut String,
+) {
+    if matches!(template, ChatTemplate::ChatML) && effective_mode == Some("disabled") {
+        formatted.push_str("<think>\n\n</think>\n\n");
+    }
+}
+
+/// Qwen 3.5-family reasoning-effort instruction, verbatim from the model's own
+/// chat template.
+///
+/// Qwen3.8 added a `reasoning_effort` control that Qwen3.6 did not have, and its
+/// template defaults to `xhigh` when the caller says nothing. We format ChatML
+/// ourselves rather than running the model's Jinja, so without this the model
+/// gets no instruction at all and falls back to its untuned default — long
+/// `<think>` blocks on every reply, which a per-token-billed host pays for.
+///
+/// `medium` deliberately maps to `None`: Qwen's template sets no instruction for
+/// it, so injecting one would be us inventing text the model was not tuned on.
+fn qwen_reasoning_instructions(thinking_mode: &str) -> Option<&'static str> {
+    match thinking_mode {
+        "low" => Some(
+            "Reasoning effort is set to low. Keep your thinking brief and focused, \
+             moving directly to the conclusion without unnecessary elaboration.",
+        ),
+        "high" | "xhigh" => Some(
+            "Reasoning effort is set to xhigh. Please think carefully through the task, \
+             validate key assumptions, consider plausible alternatives, and prioritize \
+             correctness, consistency, and clarity in the final answer.",
+        ),
+        // "medium"/"enabled" -> Qwen's medium, which carries no instruction.
+        // "disabled" -> handled by the empty-think prefill in
+        // `build_prompt_with_context`, which is how Qwen's template does it.
+        _ => None,
+    }
+}
+
+/// Inject the Qwen reasoning-effort instruction into the system message.
+///
+/// Mirrors the placement in Qwen's own template: the instruction leads the
+/// system message, separated from any caller-supplied system content by a blank
+/// line. When the conversation carries no system message, one is created holding
+/// just the instruction.
+///
+/// Note this keys off `MODEL_CHAT_TEMPLATE=chatml` rather than off the loaded
+/// model, so a non-Qwen ChatML model would also receive the sentence. It reads
+/// as ordinary prose, and host2 is the only ChatML deployment, so that is
+/// preferred over adding a model-family env var nobody would remember to set.
+fn inject_qwen_reasoning(messages: &mut Vec<(String, String)>, thinking_mode: &str) {
+    let Some(instructions) = qwen_reasoning_instructions(thinking_mode) else {
+        return;
+    };
+
+    match messages.iter_mut().find(|(role, _)| role == "system") {
+        Some(system) if system.1.trim().is_empty() => system.1 = instructions.to_string(),
+        Some(system) => system.1 = format!("{}\n\n{}", instructions, system.1),
+        None => messages.insert(0, ("system".to_string(), instructions.to_string())),
     }
 }
 
@@ -691,6 +768,124 @@ mod tests {
         assert!(
             result.ends_with("<|assistant|>\n</think>"),
             "GLM-4 should use official </think> to disable thinking: {}",
+            result
+        );
+    }
+
+    // === v8.46.0 Qwen (ChatML) reasoning-effort control ===
+
+    #[test]
+    fn test_chatml_thinking_low_injects_qwen_low_instruction() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("low"));
+        assert!(
+            result.contains(
+                "Reasoning effort is set to low. Keep your thinking brief and focused, \
+                 moving directly to the conclusion without unnecessary elaboration."
+            ),
+            "Expected Qwen's verbatim low instruction in: {}",
+            result
+        );
+        assert!(
+            result.contains("<|im_start|>system\nReasoning effort is set to low."),
+            "Instruction must lead a system message: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_chatml_thinking_high_injects_qwen_xhigh_instruction() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("high"));
+        assert!(
+            result.contains("Reasoning effort is set to xhigh."),
+            "Expected xhigh instruction in: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_chatml_thinking_medium_injects_nothing() {
+        // Qwen's template sets no instruction for medium; inventing one would
+        // feed the model text it was never tuned on.
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("medium"));
+        assert!(
+            !result.contains("Reasoning effort is set to"),
+            "medium must not inject an instruction: {}",
+            result
+        );
+        assert!(
+            !result.contains("<|im_start|>system"),
+            "medium must not fabricate a system message: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_chatml_thinking_disabled_prefills_empty_think_block() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", Some("disabled"));
+        assert!(
+            result.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "disabled must prefill an empty think block on the assistant turn: {}",
+            result
+        );
+        assert!(
+            !result.contains("Reasoning effort is set to"),
+            "disabled must not also inject a reasoning instruction: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_chatml_no_thinking_mode_unchanged() {
+        // Regression guard: with no mode set the ChatML path must behave exactly
+        // as it did before v8.46.0, so Qwen3.6 hosts see no change.
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        assert_eq!(
+            result, "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+            "Unset thinking mode must leave the ChatML prompt untouched"
+        );
+    }
+
+    #[test]
+    fn test_chatml_instruction_leads_existing_system_message() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let context = vec![Message {
+            role: "system".to_string(),
+            content: "You are a helpful assistant.".to_string(),
+            timestamp: None,
+        }];
+        let result = build_prompt_with_context(&context, "Hello", Some("low"));
+        assert!(
+            result.contains("<|im_start|>system\nReasoning effort is set to low."),
+            "Instruction must lead the system message: {}",
+            result
+        );
+        assert!(
+            result.contains("\n\nYou are a helpful assistant.<|im_end|>"),
+            "Caller's system content must survive, separated by a blank line: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_chatml_env_var_default_thinking_mode() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::set_var("DEFAULT_THINKING_MODE", "low");
+        let result = build_prompt_with_context(&[], "Hello", None);
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        assert!(
+            result.contains("Reasoning effort is set to low."),
+            "DEFAULT_THINKING_MODE must drive the ChatML path: {}",
             result
         );
     }
