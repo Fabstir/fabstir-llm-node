@@ -1426,6 +1426,10 @@ mod tests {
             azimuth: None,
             elevation: None,
             distance: None,
+            // v8.44.x added this field; this helper was not updated with it, so
+            // `cargo test --lib` has not compiled since. Duration validation
+            // does not read it, so None is the right value here.
+            input_wire: None,
         }
     }
 
