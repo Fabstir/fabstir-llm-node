@@ -476,6 +476,12 @@ impl InferenceHandler {
             }
         }
 
+        crate::utils::context::apply_chatml_thinking_prefill(
+            &template,
+            effective_mode.as_deref(),
+            &mut formatted,
+        );
+
         formatted
     }
 
@@ -584,5 +590,62 @@ mod tests {
         let result = handler.generate_response("test", "", 1).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Empty prompt"));
+    }
+
+    // === v8.46.0 Qwen (ChatML) thinking control on the WebSocket path ===
+    //
+    // The WebSocket handler formats prompts itself rather than going through
+    // utils::context::build_prompt_with_context, so the ChatML behaviour has to
+    // be proven here as well — this is the path the UI chat actually uses.
+
+    fn chatml_handler() -> InferenceHandler {
+        InferenceHandler::new(Arc::new(SessionInitHandler::new()))
+    }
+
+    #[tokio::test]
+    async fn test_ws_chatml_thinking_disabled_prefills_empty_think_block() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+        }];
+        let formatted = chatml_handler().format_prompt_for_inference(&messages, Some("disabled"));
+        assert!(
+            formatted.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "WebSocket path must prefill the empty think block too: {}",
+            formatted
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ws_chatml_thinking_low_injects_qwen_instruction() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+        }];
+        let formatted = chatml_handler().format_prompt_for_inference(&messages, Some("low"));
+        assert!(
+            formatted.contains("<|im_start|>system\nReasoning effort is set to low."),
+            "WebSocket path must inject the reasoning instruction: {}",
+            formatted
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ws_chatml_no_thinking_mode_unchanged() {
+        std::env::set_var("MODEL_CHAT_TEMPLATE", "chatml");
+        std::env::remove_var("DEFAULT_THINKING_MODE");
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+        }];
+        let formatted = chatml_handler().format_prompt_for_inference(&messages, None);
+        assert_eq!(
+            formatted, "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+            "Unset thinking mode must leave the WebSocket ChatML prompt untouched"
+        );
     }
 }

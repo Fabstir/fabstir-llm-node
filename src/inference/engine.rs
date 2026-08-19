@@ -40,6 +40,28 @@ fn sanitize_prompt_for_tokenizer(prompt: &str) -> String {
         .collect()
 }
 
+/// Clamp a requested `max_tokens` to the context room that actually remains.
+///
+/// The generation loop runs until `prompt_tokens + max_tokens`, but the context
+/// window is a hard wall: crossing `context_size` fails the decode part-way
+/// through, which on a paid session means erroring out *after* escrow is open and
+/// tokens have already been billed. The caller can legitimately ask for more than
+/// fits — a client that always sends `max_tokens: 16000` against a 32k window is
+/// not doing anything wrong, and most such requests stop at EOS long before the
+/// wall — so this clamps rather than rejects. An over-large request then ends
+/// cleanly with `finish_reason: length` instead of failing mid-stream.
+///
+/// Callers must already have rejected `prompt_tokens >= context_size`; the
+/// saturating subtraction is a belt-and-braces guard, not the real check.
+pub(crate) fn clamp_max_tokens_to_context(
+    requested: usize,
+    prompt_tokens: usize,
+    context_size: usize,
+) -> usize {
+    let room = context_size.saturating_sub(prompt_tokens);
+    requested.min(room)
+}
+
 /// v8.21.2: Normalize `<thought>` → `<think>` for consistent thinking tags.
 /// GLM-4 emits `<thought>` (special token) but `</think>` (text), creating a mismatch.
 fn normalize_thought_token(token: &str) -> &str {
@@ -615,7 +637,17 @@ impl LlmEngine {
             let mut output = String::new();
             let mut token_info_list: Vec<TokenInfo> = Vec::new();
             let mut n_cur = prompt_tokens.len();
-            let max_tokens = request.max_tokens;
+            let max_tokens =
+                clamp_max_tokens_to_context(request.max_tokens, prompt_tokens.len(), context_size);
+            if max_tokens < request.max_tokens {
+                tracing::warn!(
+                    "✂️  max_tokens clamped {} -> {} to fit the context window ({} prompt tokens of {}); generation will end with finish_reason=length rather than failing mid-stream",
+                    request.max_tokens,
+                    max_tokens,
+                    prompt_tokens.len(),
+                    context_size
+                );
+            }
             let mut consecutive_invalid_utf8: u32 = 0; // Track consecutive invalid UTF-8 bytes
             const MAX_CONSECUTIVE_INVALID: u32 = 10; // Break if stuck generating invalid bytes
             let mut stop_reason = "loop_condition"; // v8.4.18: Track why we stopped
@@ -1082,6 +1114,47 @@ pub enum ModelCapability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === v8.46.1 Context-window clamp ===
+    //
+    // The generation loop runs to `prompt_tokens + max_tokens`. Before this, a
+    // request whose prompt plus budget crossed `context_size` was accepted and
+    // then failed the decode part-way through, which on a paid session means
+    // erroring after escrow is open. It clamps rather than rejects, because a
+    // client that always sends a large max_tokens is not misbehaving.
+
+    #[test]
+    fn test_clamp_max_tokens_leaves_a_fitting_request_alone() {
+        // 104 prompt + 16000 budget against a 32768 window: fits, untouched.
+        assert_eq!(clamp_max_tokens_to_context(16000, 104, 32768), 16000);
+    }
+
+    #[test]
+    fn test_clamp_max_tokens_trims_to_remaining_room() {
+        // The real case: a long multi-turn conversation with the UI's default
+        // budget. 20000 + 16000 = 36000 > 32768, so the budget becomes 12768.
+        assert_eq!(clamp_max_tokens_to_context(16000, 20000, 32768), 12768);
+    }
+
+    #[test]
+    fn test_clamp_max_tokens_exact_fit_is_not_trimmed() {
+        // prompt + requested == context_size is the last legal request; the loop
+        // stops exactly at the wall without crossing it.
+        assert_eq!(clamp_max_tokens_to_context(768, 32000, 32768), 768);
+    }
+
+    #[test]
+    fn test_clamp_max_tokens_one_over_is_trimmed_by_one() {
+        assert_eq!(clamp_max_tokens_to_context(769, 32000, 32768), 768);
+    }
+
+    #[test]
+    fn test_clamp_max_tokens_saturates_when_prompt_fills_context() {
+        // Callers reject `prompt >= context_size` earlier; this proves the
+        // arithmetic cannot underflow if that check is ever moved or missed.
+        assert_eq!(clamp_max_tokens_to_context(500, 32768, 32768), 0);
+        assert_eq!(clamp_max_tokens_to_context(500, 40000, 32768), 0);
+    }
 
     // === KV Cache Type Parsing Tests (Sub-phase 1.1) ===
 
