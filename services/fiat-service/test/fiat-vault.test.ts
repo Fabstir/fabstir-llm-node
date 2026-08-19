@@ -59,6 +59,13 @@ describe('session authorisation signature (FC1.6 contract)', () => {
 
 type ApproveCall = { spender: string; amount: bigint };
 
+/** Every case below pins an explicit price, so the registry must never be read.
+ *  Throwing (not stubbing) means a regression that drops the explicit price
+ *  fails loudly here instead of silently taking some other rate. */
+const unusedPriceReader = async (): Promise<bigint> => {
+  throw new Error('registry price read not expected: this test pins pricePerToken');
+};
+
 function fakeUsdc(initialAllowance: bigint) {
   const approvals: ApproveCall[] = [];
   let allowance = initialAllowance;
@@ -113,6 +120,7 @@ describe('makeVaultChain (fake contracts, no RPC)', () => {
       usdcAddress: USDC,
       usdc: usdc.contract,
       marketplace: marketplace.contract,
+      modelPrice: unusedPriceReader,
     });
   }
 
@@ -163,6 +171,7 @@ describe('makeVaultChain (fake contracts, no RPC)', () => {
       usdcAddress: USDC,
       usdc: fakeUsdc(0n).contract,
       marketplace: marketplace.contract,
+      modelPrice: unusedPriceReader,
     });
     await expect(
       chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n })
@@ -203,6 +212,7 @@ describe('makeVaultChain (fake contracts, no RPC)', () => {
       usdcAddress: USDC,
       usdc: usdc.contract,
       marketplace: marketplace.contract,
+      modelPrice: unusedPriceReader,
     });
     const result = await chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n });
     expect(result.jobId).toBe(843n);
@@ -225,6 +235,7 @@ describe('makeVaultChain (fake contracts, no RPC)', () => {
       usdcAddress: USDC,
       usdc: usdc.contract,
       marketplace: marketplace.contract,
+      modelPrice: unusedPriceReader,
     });
     await expect(
       chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n })
