@@ -2321,6 +2321,55 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                         eprintln!("📝 Session init: job={:?} session={:?}", job_id, session_id);
 
+                        // FC1.6: a plaintext init carries no authenticated client
+                        // identity, so vault-paid money must not be spendable
+                        // through this path at all (the encrypted path below does
+                        // the per-client check). Crypto-native sessions are
+                        // untouched, and with no vault configured this is skipped.
+                        if !server.fiat_vault_addresses.is_empty() {
+                            let denial: Option<String> = match job_id {
+                                None => Some("job id unparseable".to_string()),
+                                Some(jid) => {
+                                    let depositor = match server.get_checkpoint_manager().await {
+                                        Some(cm) => cm.query_session_depositor(jid).await,
+                                        None => Err(anyhow::anyhow!("no checkpoint manager")),
+                                    };
+                                    match depositor {
+                                        Err(e) => Some(format!("depositor unavailable: {}", e)),
+                                        Ok(dep) => {
+                                            if crate::api::session_auth::plaintext_session_allowed(
+                                                &dep,
+                                                &server.fiat_vault_addresses,
+                                            ) {
+                                                None
+                                            } else {
+                                                Some(format!(
+                                                    "job {} is vault-paid: open it with an encrypted session (plaintext carries no client identity)",
+                                                    jid
+                                                ))
+                                            }
+                                        }
+                                    }
+                                }
+                            };
+                            if let Some(reason) = denial {
+                                error!("🚫 SESSION_AUTH_DENIED (plaintext init): {}", reason);
+                                let mut error_msg = json!({
+                                    "type": "error",
+                                    "code": "SESSION_AUTH_DENIED",
+                                    "message": format!("session authorisation denied: {}", reason),
+                                    "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                });
+                                if let Some(msg_id) = json_msg.get("id") {
+                                    error_msg["id"] = msg_id.clone();
+                                }
+                                let _ = ws_sender
+                                    .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                    .await;
+                                continue;
+                            }
+                        }
+
                         // FIX: Create session in session_store (was missing - caused "Session not found" errors)
                         if let Some(sid) = &session_id {
                             let mut store = server.session_store.write().await;

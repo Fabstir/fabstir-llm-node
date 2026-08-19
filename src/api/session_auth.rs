@@ -80,6 +80,21 @@ pub fn authorise_session_client(
             .is_some_and(|authorised| authorised.eq_ignore_ascii_case(client_address))
 }
 
+/// The plaintext (`session_init`) counterpart of `authorise_session_client`.
+///
+/// A plaintext init carries NO authenticated client identity: there is no
+/// signature over it, so any address it claims is one an attacker may equally
+/// claim. Running the normal check against an unverified address would be
+/// theatre. So the rule is coarse and honest: a vault-paid session cannot be
+/// opened over the plaintext path at all, and the client must use an encrypted
+/// session. Crypto-native sessions (depositor is not a configured vault) are
+/// untouched, exactly as on the encrypted path.
+pub fn plaintext_session_allowed(depositor: &str, vault_addresses: &[String]) -> bool {
+    !vault_addresses
+        .iter()
+        .any(|vault| vault.eq_ignore_ascii_case(depositor))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAuthRequest {
@@ -192,6 +207,27 @@ mod tests {
             &signature,
         );
         assert!(!matches!(other_client, Ok(ref a) if a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+    }
+
+    #[test]
+    fn plaintext_init_is_refused_for_vault_paid_sessions() {
+        let vaults = vec![VAULT.to_string()];
+        // The bypass this closes: the plaintext path has no authenticated
+        // client, so vault money must not be spendable through it at all.
+        assert!(!plaintext_session_allowed(VAULT, &vaults));
+        // Case-insensitively, too (checksummed depositor from the chain).
+        assert!(!plaintext_session_allowed(
+            "0x8BA1F109551BD432803012645AC136DDD64DBA72",
+            &vaults
+        ));
+    }
+
+    #[test]
+    fn plaintext_init_still_serves_crypto_native_sessions() {
+        let vaults = vec![VAULT.to_string()];
+        assert!(plaintext_session_allowed(CLIENT, &vaults));
+        // And with no vault configured, nothing is gated (pre-FC1 shape).
+        assert!(plaintext_session_allowed(VAULT, &[]));
     }
 
     #[test]
