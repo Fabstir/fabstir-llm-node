@@ -248,6 +248,9 @@ pub struct ApiServer {
     /// FC1.6: jobId → backend-authorised client address (in-memory; a restart
     /// clears it and the helper simply re-presents before its next submit).
     session_auth_store: Arc<crate::api::session_auth::SessionAuthStore>,
+    /// FC1.6: jobId -> depositor, so the gate does not re-read the chain
+    /// (and cannot be tripped by one flaky RPC) on every session init.
+    session_depositor_cache: Arc<crate::api::session_auth::DepositorCache>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -265,6 +268,12 @@ struct Metrics {
 pub struct SessionKeyMetrics {
     pub active_sessions: usize,
 }
+
+/// FC1.6 depositor read: attempts and the unit backoff between them. Three
+/// tries over ~750ms covers a public-RPC blip without making a genuinely
+/// unreachable chain slow to refuse.
+const DEPOSITOR_READ_ATTEMPTS: u32 = 3;
+const DEPOSITOR_READ_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl ApiServer {
     pub fn new_for_test() -> Self {
@@ -339,6 +348,7 @@ impl ApiServer {
             fiat_vault_addresses: Vec::new(),
             fiat_backend_auth_address: None,
             session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -522,6 +532,7 @@ impl ApiServer {
                 .map(|a| a.trim().to_lowercase())
                 .filter(|a| !a.is_empty()),
             session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -651,6 +662,7 @@ impl ApiServer {
             fiat_vault_addresses: self.fiat_vault_addresses.clone(),
             fiat_backend_auth_address: self.fiat_backend_auth_address.clone(),
             session_auth_store: self.session_auth_store.clone(),
+            session_depositor_cache: self.session_depositor_cache.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -2331,7 +2343,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 None => Some("job id unparseable".to_string()),
                                 Some(jid) => {
                                     let depositor = match server.get_checkpoint_manager().await {
-                                        Some(cm) => cm.query_session_depositor(jid).await,
+                                        Some(cm) => {
+                                            crate::api::session_auth::resolve_depositor(
+                                                jid,
+                                                &server.session_depositor_cache,
+                                                || cm.query_session_depositor(jid),
+                                                DEPOSITOR_READ_ATTEMPTS,
+                                                DEPOSITOR_READ_BACKOFF,
+                                            )
+                                            .await
+                                        }
                                         None => Err(anyhow::anyhow!("no checkpoint manager")),
                                     };
                                     match depositor {
@@ -2551,8 +2572,12 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     .await
                                                                 {
                                                                     Some(cm) => {
-                                                                        cm.query_session_depositor(
+                                                                        crate::api::session_auth::resolve_depositor(
                                                                             jid,
+                                                                            &server.session_depositor_cache,
+                                                                            || cm.query_session_depositor(jid),
+                                                                            DEPOSITOR_READ_ATTEMPTS,
+                                                                            DEPOSITOR_READ_BACKOFF,
                                                                         )
                                                                         .await
                                                                     }

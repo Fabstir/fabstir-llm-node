@@ -3,19 +3,19 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.46.1-context-clamp-2026-08-19";
+pub const VERSION: &str = "v8.47.0-vault-session-hardening-2026-08-19";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.46.1";
+pub const VERSION_NUMBER: &str = "8.47.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 46;
+pub const VERSION_MINOR: u32 = 47;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-08-19";
@@ -85,6 +85,18 @@ pub const FEATURES: &[&str] = &[
     // absent for LTX sessions (they claim tokens via submitProofOfWork), so its
     // absence is no longer logged as an ERROR claiming payment may be affected.
     "ltx-tracker-log-honesty",
+    // v8.47.0 vault-session hardening (FC1.6):
+    //  - plaintext `session_init` REFUSES a vault-paid job. That path carries no
+    //    authenticated client identity, so checking a claimed address there
+    //    would be theatre; vault money requires an encrypted session. Crypto-
+    //    native sessions and un-configured nodes are unaffected.
+    //  - the depositor read behind the gate now retries (3 attempts, 250ms unit
+    //    backoff) and caches per jobId. The gate denies when the depositor
+    //    cannot be read, which previously made every session init hostage to a
+    //    public RPC answering first time; a depositor is fixed at creation, so
+    //    a cache hit can never be stale. Genuine failures still deny.
+    "fc1-plaintext-vault-refusal",
+    "fc1-depositor-read-resilience",
     // v8.39.2 OQ-L24: all LTX WebSocket writes bounded (see BREAKING_CHANGES).
     "ltx-ws-write-bound",
     "oq-l24-wedged-client",
@@ -984,8 +996,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 46);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 47);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1171,8 +1183,8 @@ mod tests {
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.46.1-context-clamp-2026-08-19");
-        assert_eq!(VERSION_NUMBER, "8.46.1");
+        assert_eq!(VERSION, "v8.47.0-vault-session-hardening-2026-08-19");
+        assert_eq!(VERSION_NUMBER, "8.47.0");
         assert_eq!(BUILD_DATE, "2026-08-19");
     }
 

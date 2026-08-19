@@ -95,6 +95,58 @@ pub fn plaintext_session_allowed(depositor: &str, vault_addresses: &[String]) ->
         .any(|vault| vault.eq_ignore_ascii_case(depositor))
 }
 
+/// jobId -> on-chain depositor. A session's depositor is fixed at creation, so
+/// a cache hit can never be stale; it only ever saves a chain read.
+pub type DepositorCache = Mutex<HashMap<u64, String>>;
+
+/// Bound on the cache: sessions per process are modest, but an unbounded map
+/// on a long-lived node is a slow leak. Oldest-out is not worth the machinery
+/// here; clearing wholesale simply costs a few re-reads.
+const DEPOSITOR_CACHE_MAX: usize = 4096;
+
+/// Resolve the depositor for `job_id`, tolerating a flaky RPC.
+///
+/// Why this exists: the gate DENIES a session whose depositor cannot be read,
+/// which is the right default for vault money but makes every session init
+/// depend on a public RPC answering first time. One hiccup would then refuse a
+/// session that is perfectly legitimate. So: answer from cache when we can,
+/// and give the chain a couple of chances before concluding anything. A
+/// genuine failure still denies.
+pub async fn resolve_depositor<F, Fut>(
+    job_id: u64,
+    cache: &DepositorCache,
+    fetch: F,
+    attempts: u32,
+    backoff: std::time::Duration,
+) -> anyhow::Result<String>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<String>>,
+{
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(&job_id).cloned()) {
+        return Ok(hit);
+    }
+    let mut last_error: Option<anyhow::Error> = None;
+    for attempt in 0..attempts.max(1) {
+        if attempt > 0 {
+            tokio::time::sleep(backoff * attempt).await;
+        }
+        match fetch().await {
+            Ok(depositor) => {
+                if let Ok(mut c) = cache.lock() {
+                    if c.len() >= DEPOSITOR_CACHE_MAX {
+                        c.clear();
+                    }
+                    c.insert(job_id, depositor.clone());
+                }
+                return Ok(depositor);
+            }
+            Err(e) => last_error = Some(e),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("depositor read failed for job {job_id}")))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAuthRequest {
@@ -207,6 +259,72 @@ mod tests {
             &signature,
         );
         assert!(!matches!(other_client, Ok(ref a) if a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+    }
+
+    #[tokio::test]
+    async fn depositor_read_survives_a_transient_rpc_failure() {
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let resolved = resolve_depositor(
+            42,
+            &cache,
+            || async {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    Err(anyhow::anyhow!("rpc hiccup"))
+                } else {
+                    Ok(VAULT.to_string())
+                }
+            },
+            3,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(resolved.unwrap(), VAULT);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_genuine_failure_still_denies_after_every_attempt() {
+        // Fail CLOSED remains the rule: retries buy tolerance, not permission.
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let resolved = resolve_depositor(
+            42,
+            &cache,
+            || async {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(anyhow::anyhow!("chain unreachable"))
+            },
+            3,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert!(resolved.is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert!(cache.lock().unwrap().is_empty()); // nothing poisoned the cache
+    }
+
+    #[tokio::test]
+    async fn a_cached_depositor_is_answered_without_touching_the_chain() {
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let fetch = || async {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(VAULT.to_string())
+        };
+        let backoff = std::time::Duration::from_millis(1);
+        assert_eq!(
+            resolve_depositor(42, &cache, fetch, 3, backoff).await.unwrap(),
+            VAULT
+        );
+        assert_eq!(
+            resolve_depositor(42, &cache, fetch, 3, backoff).await.unwrap(),
+            VAULT
+        );
+        // Second call served from cache: the depositor is immutable, so this
+        // can never be a stale answer.
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
