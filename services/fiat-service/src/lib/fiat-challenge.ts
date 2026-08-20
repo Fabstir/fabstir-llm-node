@@ -19,8 +19,35 @@ import { randomBytes } from 'node:crypto';
 import { fiatUserId } from './fiat-identity';
 import { BASE_SEPOLIA_CHAIN_ID } from './seed';
 
-const INTENT = 'authorise card-paid rendering';
-const DOMAIN_PREFIX = `Platformless AI — ${INTENT}`;
+// The intent is what the user actually reads in the passkey prompt, so it must
+// describe the authority being granted. It began as "rendering" when the
+// credential only paid for LTX clips; the same credential now also pays for chat
+// sessions, so "compute" is the honest wording.
+//
+// Changing it unilaterally would break every client at once: both this project's
+// account page and the Platformless AI UI RECONSTRUCT the expected message and
+// refuse to sign anything that differs by a character (never blind-sign). So the
+// intent is CHOSEN PER CHALLENGE from a fixed allow-list: clients opt into the
+// new wording when they are ready, and the default moves only once they all
+// have. An allow-list, never free text — a caller who could put arbitrary words
+// into a signing prompt could phish a signature.
+export const CHALLENGE_INTENTS = {
+  rendering: 'authorise card-paid rendering',
+  compute: 'authorise card-paid compute',
+} as const;
+
+export type ChallengeIntentName = keyof typeof CHALLENGE_INTENTS;
+
+/** The wording used when a caller does not ask for one. Moves to 'compute' once
+ *  both clients accept it; the old string is retired after that. */
+export const DEFAULT_INTENT: ChallengeIntentName = 'rendering';
+
+/** Narrow an untrusted query value to a known intent name, or null. */
+export function parseIntentName(raw: unknown): ChallengeIntentName | null {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_INTENT;
+  return typeof raw === 'string' && raw in CHALLENGE_INTENTS ? (raw as ChallengeIntentName) : null;
+}
+
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export interface Challenge {
@@ -29,12 +56,21 @@ export interface Challenge {
   address: string;
   message: string;
   expiresAt: number; // epoch ms
+  /** Which wording this challenge was issued with, so verification rebuilds the
+   *  EXACT payload that was signed rather than today's default. */
+  intent: ChallengeIntentName;
 }
 
 /** The human-legible string shown in the passkey prompt (personal_sign form).
  *  Binds the fixed intent, the lowercased address, the nonce, and the expiry. */
-export function buildChallengeMessage(c: { address: string; nonce: string; expiresAt: number }): string {
-  return `${DOMAIN_PREFIX}\naddress: ${c.address}\nnonce: ${c.nonce}\nexpires: ${new Date(c.expiresAt).toISOString()}`;
+export function buildChallengeMessage(c: {
+  address: string;
+  nonce: string;
+  expiresAt: number;
+  intent?: ChallengeIntentName;
+}): string {
+  const prefix = `Platformless AI — ${CHALLENGE_INTENTS[c.intent ?? DEFAULT_INTENT]}`;
+  return `${prefix}\naddress: ${c.address}\nnonce: ${c.nonce}\nexpires: ${new Date(c.expiresAt).toISOString()}`;
 }
 
 const CHALLENGE_TYPES = {
@@ -48,13 +84,18 @@ const CHALLENGE_TYPES = {
 
 /** The EIP-712 equivalent of the string message (same fields), for providers
  *  that expose eth_signTypedData_v4 rather than personal_sign. */
-export function buildChallengeTypedData(c: { address: string; nonce: string; expiresAt: number }) {
+export function buildChallengeTypedData(c: {
+  address: string;
+  nonce: string;
+  expiresAt: number;
+  intent?: ChallengeIntentName;
+}) {
   return {
     domain: { name: 'Platformless AI', version: '1', chainId: BASE_SEPOLIA_CHAIN_ID },
     types: CHALLENGE_TYPES,
     primaryType: 'Ownership',
     message: {
-      intent: INTENT,
+      intent: CHALLENGE_INTENTS[c.intent ?? DEFAULT_INTENT],
       wallet: c.address,
       nonce: c.nonce,
       expires: new Date(c.expiresAt).toISOString(),
@@ -78,7 +119,11 @@ function challengeMaxFromEnv(): number {
 
 export class ChallengeStore {
   private byNonce = new Map<string, Challenge>();
-  private byAddress = new Map<string, string>(); // address -> its outstanding nonce
+  // Keyed by address AND intent: a client asking for the new wording must not be
+  // handed a live challenge carrying the old one (it would refuse to sign it).
+  // Per-intent slots keep the anti-eviction property intact within each wording,
+  // and the intent list is fixed and tiny, so this cannot be grown by a caller.
+  private byAddress = new Map<string, string>(); // `${address}|${intent}` -> nonce
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -89,13 +134,18 @@ export class ChallengeStore {
   private dropExpired(): void {
     const t = this.now();
     for (const [nonce, c] of this.byNonce) {
-      if (c.expiresAt <= t) this.drop(nonce, c.address);
+      if (c.expiresAt <= t) this.drop(nonce, c.address, c.intent);
     }
   }
 
-  private drop(nonce: string, address: string): void {
+  private static slot(address: string, intent: ChallengeIntentName): string {
+    return `${address}|${intent}`;
+  }
+
+  private drop(nonce: string, address: string, intent: ChallengeIntentName): void {
     this.byNonce.delete(nonce);
-    if (this.byAddress.get(address) === nonce) this.byAddress.delete(address);
+    const slot = ChallengeStore.slot(address, intent);
+    if (this.byAddress.get(slot) === nonce) this.byAddress.delete(slot);
   }
 
   /** Issue a challenge for `address`. IDEMPOTENT within the TTL: if a live
@@ -106,10 +156,10 @@ export class ChallengeStore {
    *  in-flight nonce so their mint 401s). A nonce is single-use — consumed on
    *  mint — so returning the same live one repeatedly is safe. Throws
    *  ChallengeStoreFullError past the global cap, or on a malformed address. */
-  issue(address: string): Challenge {
+  issue(address: string, intent: ChallengeIntentName = DEFAULT_INTENT): Challenge {
     const addr = fiatUserId(address); // normalise + validate (throws on malformed)
     this.dropExpired();
-    const existingNonce = this.byAddress.get(addr);
+    const existingNonce = this.byAddress.get(ChallengeStore.slot(addr, intent));
     if (existingNonce) {
       const existing = this.byNonce.get(existingNonce);
       if (existing) return existing; // live (dropExpired cleared any expired) — idempotent
@@ -118,10 +168,10 @@ export class ChallengeStore {
 
     const nonce = randomBytes(24).toString('hex');
     const expiresAt = this.now() + this.ttlMs;
-    const message = buildChallengeMessage({ address: addr, nonce, expiresAt });
-    const challenge: Challenge = { nonce, address: addr, message, expiresAt };
+    const message = buildChallengeMessage({ address: addr, nonce, expiresAt, intent });
+    const challenge: Challenge = { nonce, address: addr, message, expiresAt, intent };
     this.byNonce.set(nonce, challenge);
-    this.byAddress.set(addr, nonce);
+    this.byAddress.set(ChallengeStore.slot(addr, intent), nonce);
     return challenge;
   }
 
@@ -134,7 +184,7 @@ export class ChallengeStore {
     if (typeof nonce !== 'string' || nonce.length === 0) return null;
     const challenge = this.byNonce.get(nonce);
     if (!challenge) return null;
-    this.drop(nonce, challenge.address);
+    this.drop(nonce, challenge.address, challenge.intent);
     if (challenge.expiresAt <= this.now()) return null;
     return challenge;
   }
