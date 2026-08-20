@@ -38,9 +38,13 @@ export const CHALLENGE_INTENTS = {
 
 export type ChallengeIntentName = keyof typeof CHALLENGE_INTENTS;
 
-/** The wording used when a caller does not ask for one. Moves to 'compute' once
- *  both clients accept it; the old string is retired after that. */
-export const DEFAULT_INTENT: ChallengeIntentName = 'rendering';
+/** The wording used when a caller does not ask for one. Moved to 'compute' on
+ *  2026-08-20, once BOTH clients were confirmed to accept either wording (the
+ *  Platformless AI UI asks for compute and falls back to rendering; this
+ *  project's account page accepts both as exact matches). 'rendering' stays
+ *  accepted so any client still pinning it, or a rollback, keeps working; retire
+ *  it only when nothing asks for it. */
+export const DEFAULT_INTENT: ChallengeIntentName = 'compute';
 
 /** Narrow an untrusted query value to a known intent name, or null. */
 export function parseIntentName(raw: unknown): ChallengeIntentName | null {

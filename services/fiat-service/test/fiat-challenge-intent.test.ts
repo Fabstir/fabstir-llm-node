@@ -20,16 +20,24 @@ import {
 const ADDR = '0xb5e859a491607d8970bbd4d9ddd317d5c3357a80';
 
 describe('intent selection', () => {
-  it('defaults to the existing wording, so today clients are untouched', () => {
+  it('defaults to the WIDER wording (moved 2026-08-20, once both clients accepted either)', () => {
     const c = new ChallengeStore().issue(ADDR);
     expect(c.intent).toBe(DEFAULT_INTENT);
-    expect(c.message).toContain('authorise card-paid rendering');
+    expect(DEFAULT_INTENT).toBe('compute');
+    expect(c.message).toContain('authorise card-paid compute');
   });
 
-  it('issues the wider wording when asked for it', () => {
+  it('issues the wider wording when asked for it explicitly', () => {
     const c = new ChallengeStore().issue(ADDR, 'compute');
     expect(c.message).toContain('authorise card-paid compute');
     expect(c.message).not.toContain('rendering');
+  });
+
+  it('still issues the OLD wording on request, so a pinned client keeps working', () => {
+    // Retire 'rendering' only when nothing asks for it; until then this is the
+    // escape hatch that makes the default move reversible without a deploy.
+    const c = new ChallengeStore().issue(ADDR, 'rendering');
+    expect(c.message).toContain('authorise card-paid rendering');
   });
 
   it('carries the chosen wording into the typed-data form too', () => {
