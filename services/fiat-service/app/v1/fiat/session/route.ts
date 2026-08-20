@@ -1,6 +1,15 @@
 // FC1.2 — POST /v1/fiat/session: the fiat session-open endpoint. Thin HTTP
 // shell: bearer credential + strict validation, then openFiatSession does the
 // gatekeeping and signing. Bigints cross the wire as decimal strings.
+//
+// `clientAddress` IS THE SIGNING IDENTITY, NOT THE PAYING ONE. The vault signs an
+// FC1.6 authorisation naming it, and the node serves the session only if the
+// address it recovers from the encrypted session-init signature matches. It can
+// only compare against what it can recover, so any other address is refused at
+// CONNECT time — after the escrow is open. A browser client that signs with the
+// wallet it pays from has one identity and cannot notice; a client with separate
+// payment and encryption keys (the Blender helper) has two, and shipped exactly
+// this bug. See the identity-contract section in the service README.
 import { isAddress } from 'ethers';
 import { getFiatSessionService } from '../../../../src/lib/fiat-session-service';
 
