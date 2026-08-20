@@ -27,6 +27,21 @@ pub struct EncryptedSessionPayload {
     pub aad: Vec<u8>,
 }
 
+/// The parts of the client's HKDF context that are also SIGNED, and so must be
+/// reproduced exactly to recover the signer. They travel on the wire; when a
+/// client omits them the SDK's own defaults apply (32 zero bytes, empty info).
+#[derive(Debug, Clone)]
+pub struct SigContext {
+    pub salt: Vec<u8>,
+    pub info: Vec<u8>,
+}
+
+impl Default for SigContext {
+    fn default() -> Self {
+        Self { salt: vec![0u8; 32], info: Vec::new() }
+    }
+}
+
 /// Decrypted session initialization data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInitData {
@@ -62,6 +77,48 @@ struct SessionDataJson {
     recovery_public_key: Option<String>,
 }
 
+/// Rebuild the message the client signed (E2EE v1).
+///
+/// The SDK signs `sha256("E2EEv1|" ‖ ephPub ‖ "|" ‖ recipientPub ‖ "|" ‖ salt ‖
+/// "|" ‖ nonce ‖ "|" ‖ info [‖ "|" ‖ aad])` with the client's STATIC key —
+/// @fabstir/sdk-core `makeSigMessage`. The `aad` separator and value are
+/// appended ONLY when aad is non-empty, which is load bearing: appending an
+/// empty one changes the hash.
+///
+/// This node previously recovered over `sha256(ciphertext)` instead. That is a
+/// different message, so recovery returned a well-formed but meaningless
+/// address that changed with every ciphertext — an "identity" that was never
+/// the client's. It went unnoticed because the only consumer is the FC1.6 gate,
+/// which was not enforced anywhere until a vault address was configured.
+pub fn e2ee_sig_message(
+    eph_pub: &[u8],
+    recipient_pub: &[u8],
+    salt: &[u8],
+    nonce: &[u8],
+    info: &[u8],
+    aad: &[u8],
+) -> [u8; 32] {
+    let mut message: Vec<u8> = Vec::new();
+    message.extend_from_slice(b"E2EEv1|");
+    message.extend_from_slice(eph_pub);
+    message.push(b'|');
+    message.extend_from_slice(recipient_pub);
+    message.push(b'|');
+    message.extend_from_slice(salt);
+    message.push(b'|');
+    message.extend_from_slice(nonce);
+    message.push(b'|');
+    message.extend_from_slice(info);
+    if !aad.is_empty() {
+        message.push(b'|');
+        message.extend_from_slice(aad);
+    }
+    let digest = Sha256::digest(&message);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_slice());
+    out
+}
+
 /// Decrypt and verify encrypted session initialization payload
 ///
 /// This function orchestrates the complete session initialization decryption:
@@ -81,6 +138,18 @@ struct SessionDataJson {
 pub fn decrypt_session_init(
     payload: &EncryptedSessionPayload,
     node_private_key: &[u8],
+) -> Result<SessionInitData> {
+    decrypt_session_init_with_context(payload, node_private_key, &SigContext::default())
+}
+
+/// As `decrypt_session_init`, but with the client's actual salt/info rather
+/// than the SDK defaults. Both are part of the SIGNED message, so a client that
+/// sends its own must be verified against those values or the recovered address
+/// is meaningless.
+pub fn decrypt_session_init_with_context(
+    payload: &EncryptedSessionPayload,
+    node_private_key: &[u8],
+    sig_context: &SigContext,
 ) -> Result<SessionInitData> {
     // Validate payload sizes
     if payload.eph_pub.is_empty() {
@@ -154,10 +223,20 @@ pub fn decrypt_session_init(
     let mut session_key = [0u8; 32];
     session_key.copy_from_slice(&session_key_bytes);
 
-    // Step 5: Verify signature over ciphertext and recover client address
-    let ciphertext_hash = Sha256::digest(&payload.ciphertext);
+    // Step 5: Recover the client's STATIC address from the signature over the
+    // E2EE v1 message (NOT over the ciphertext — see e2ee_sig_message).
+    let recipient_pub = crate::crypto::public_key_from_private(node_private_key)
+        .map_err(|e| anyhow!("Could not derive this node's public key: {}", e))?;
+    let sig_message = e2ee_sig_message(
+        &payload.eph_pub,
+        &recipient_pub,
+        &sig_context.salt,
+        &payload.nonce,
+        &sig_context.info,
+        &payload.aad,
+    );
 
-    let client_address = recover_client_address(&payload.signature, ciphertext_hash.as_slice())
+    let client_address = recover_client_address(&payload.signature, &sig_message)
         .map_err(|e| anyhow!("Signature verification failed: {}", e))?;
 
     // Step 6: Return complete session initialization data
@@ -175,6 +254,99 @@ pub fn decrypt_session_init(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Cross-runtime vectors for the E2EE v1 signed message. Generated with the
+    // construction copied VERBATIM from @fabstir/sdk-core 1.34.0
+    // (dist/index.js:15200 `makeSigMessage`), signed with a known key, so this
+    // pins the node to the CLIENT's format rather than to our reading of it.
+    //
+    // This is the bug these vectors exist to prevent recurring: the node used to
+    // recover over sha256(ciphertext), a message no client ever signed, which
+    // produced a different bogus address on every attempt.
+    const EPH_PUB: &str = "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+    const RECIPIENT_PUB: &str = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
+    const NONCE_HEX: &str = "333333333333333333333333333333333333333333333333";
+    const EXPECTED_ADDRESS: &str = "0x17c5185167401ed00cf5f5b2fc97d9bbfdb7d025";
+
+    #[test]
+    fn sig_message_matches_the_sdk_vector_without_aad() {
+        let digest = e2ee_sig_message(
+            &hex::decode(EPH_PUB).unwrap(),
+            &hex::decode(RECIPIENT_PUB).unwrap(),
+            &[0u8; 32],
+            &hex::decode(NONCE_HEX).unwrap(),
+            &[],
+            &[],
+        );
+        assert_eq!(
+            hex::encode(digest),
+            "dc280aec449c4f9a887ed1eb3f5a03b0cbbc63db2174d8a4dc2b7c0851caa36c"
+        );
+    }
+
+    #[test]
+    fn sig_message_matches_the_sdk_vector_with_aad() {
+        // aad appends a SEPARATOR and the value; appending an empty one would
+        // change the hash, which is why the emptiness check is load bearing.
+        let digest = e2ee_sig_message(
+            &hex::decode(EPH_PUB).unwrap(),
+            &hex::decode(RECIPIENT_PUB).unwrap(),
+            &[0u8; 32],
+            &hex::decode(NONCE_HEX).unwrap(),
+            &[],
+            b"job-1106",
+        );
+        assert_eq!(
+            hex::encode(digest),
+            "a086c48c7b37f9f7af376ba9a67046f01837b32d9ac345df55a1d3072aa34666"
+        );
+    }
+
+    #[test]
+    fn recovers_the_clients_static_address_from_the_sdk_signature() {
+        let sig = hex::decode(
+            "3a42c8921c8e91303507f7565bc2b843f0cfb1c30532ed91ebaf4fe4637c861609298aa99b553f8471f9278f41bdc69bb3736a30c6055dfbcde8d9494da56da000",
+        )
+        .unwrap();
+        let digest = e2ee_sig_message(
+            &hex::decode(EPH_PUB).unwrap(),
+            &hex::decode(RECIPIENT_PUB).unwrap(),
+            &[0u8; 32],
+            &hex::decode(NONCE_HEX).unwrap(),
+            &[],
+            &[],
+        );
+        let recovered = super::recover_client_address(&sig, &digest).unwrap();
+        assert!(
+            recovered.eq_ignore_ascii_case(EXPECTED_ADDRESS),
+            "recovered {recovered}, expected {EXPECTED_ADDRESS}"
+        );
+    }
+
+    #[test]
+    fn recovering_over_the_wrong_message_gives_a_different_address() {
+        // The old behaviour, pinned so nobody restores it thinking it equivalent.
+        let sig = hex::decode(
+            "3a42c8921c8e91303507f7565bc2b843f0cfb1c30532ed91ebaf4fe4637c861609298aa99b553f8471f9278f41bdc69bb3736a30c6055dfbcde8d9494da56da000",
+        )
+        .unwrap();
+        let wrong = Sha256::digest(b"any other message");
+        let recovered = super::recover_client_address(&sig, wrong.as_slice());
+        // It "succeeds" and yields a plausible-looking address that is NOT the
+        // client's. That silent plausibility is what made the bug survive.
+        if let Ok(addr) = recovered {
+            assert!(!addr.eq_ignore_ascii_case(EXPECTED_ADDRESS));
+        }
+    }
+
+    #[test]
+    fn node_public_key_is_compressed_33_bytes() {
+        // The client signs the recipient key COMPRESSED; a 65-byte encoding here
+        // would hash differently and break every recovery.
+        let pk = crate::crypto::public_key_from_private(&[0x22u8; 32]).unwrap();
+        assert_eq!(pk.len(), 33);
+        assert_eq!(hex::encode(&pk), RECIPIENT_PUB);
+    }
 
     #[test]
     fn test_validate_payload_sizes() {

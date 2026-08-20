@@ -22,6 +22,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
+use tracing::info;
 use tiny_keccak::{Hasher, Keccak};
 
 use super::server::ApiServer;
@@ -197,6 +198,15 @@ pub async fn session_auth_handler(
             if let Ok(mut store) = server.session_auth_store().lock() {
                 store.insert(session_id, request.client_address.to_lowercase());
             }
+            // Log the GRANT, not only the denial. Without this line "did the
+            // authorisation arrive?" cannot be answered from this node's log at
+            // all, and answering it took a cross-reference against the credits
+            // service on another box. One line here makes it a glance.
+            info!(
+                "🔓 SESSION_AUTH_GRANTED: job {} authorised for client {}",
+                session_id,
+                request.client_address.to_lowercase()
+            );
             (StatusCode::OK, Json(json!({"ok": true})))
         }
         _ => (

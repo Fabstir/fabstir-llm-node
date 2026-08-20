@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.47.0-vault-session-hardening-2026-08-19";
+pub const VERSION: &str = "v8.48.0-e2ee-sig-recovery-2026-08-20";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.47.0";
+pub const VERSION_NUMBER: &str = "8.48.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 47;
+pub const VERSION_MINOR: u32 = 48;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-19";
+pub const BUILD_DATE: &str = "2026-08-20";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -85,6 +85,20 @@ pub const FEATURES: &[&str] = &[
     // absent for LTX sessions (they claim tokens via submitProofOfWork), so its
     // absence is no longer logged as an ERROR claiming payment may be affected.
     "ltx-tracker-log-honesty",
+    // v8.48.0 FC1.6 client-address recovery FIXED. The node recovered the client
+    // address from the session-init signature over sha256(ciphertext) — a message
+    // no client ever signs. @fabstir/sdk-core signs
+    // sha256("E2EEv1|"|ephPub|"|"|recipientPub|"|"|salt|"|"|nonce|"|"|info[|"|"|aad])
+    // with the client's STATIC key. Recovery over the wrong message does not
+    // fail; it returns a well-formed address that differs on every ciphertext,
+    // so a vault-paid session could never match its authorisation. Invisible
+    // until now because the only consumer is the vault gate, which is skipped
+    // unless FIAT_VAULT_ADDRESSES is set. Also: salt/info are now read from the
+    // wire (SDK defaults when absent), and session-auth GRANTS are logged, not
+    // only denials — without that, "did the authorisation arrive?" could not be
+    // answered from this node's log at all.
+    "e2ee-sig-recovery-fix",
+    "session-auth-grant-logging",
     // v8.47.0 vault-session hardening (FC1.6):
     //  - plaintext `session_init` REFUSES a vault-paid job. That path carries no
     //    authenticated client identity, so checking a claimed address there
@@ -996,7 +1010,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 47);
+        assert_eq!(VERSION_MINOR, 48);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1183,9 +1197,9 @@ mod tests {
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.47.0-vault-session-hardening-2026-08-19");
-        assert_eq!(VERSION_NUMBER, "8.47.0");
-        assert_eq!(BUILD_DATE, "2026-08-19");
+        assert_eq!(VERSION, "v8.48.0-e2ee-sig-recovery-2026-08-20");
+        assert_eq!(VERSION_NUMBER, "8.48.0");
+        assert_eq!(BUILD_DATE, "2026-08-20");
     }
 
     #[test]

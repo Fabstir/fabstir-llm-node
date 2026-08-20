@@ -40,11 +40,14 @@ pub mod session_keys;
 pub mod signature;
 
 pub use aes_gcm::{decrypt_aes_gcm, decrypt_chunk, decrypt_manifest, extract_nonce};
-pub use ecdh::derive_shared_key;
+pub use ecdh::{derive_shared_key, public_key_from_private};
 pub use encryption::{decrypt_with_aead, encrypt_with_aead};
 pub use error::CryptoError;
 pub use private_key::extract_node_private_key;
 pub use proof_signer::sign_proof_data;
-pub use session_init::{decrypt_session_init, EncryptedSessionPayload, SessionInitData};
+pub use session_init::{
+    decrypt_session_init, decrypt_session_init_with_context, e2ee_sig_message,
+    EncryptedSessionPayload, SessionInitData, SigContext,
+};
 pub use session_keys::SessionKeyStore;
 pub use signature::recover_client_address;

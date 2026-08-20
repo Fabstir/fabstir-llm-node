@@ -2525,6 +2525,28 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                 continue;
                                             }
 
+                                            // salt and info are part of the message the client
+                                            // SIGNED, so they must come off the wire when present.
+                                            // Absent, use the SDK's own defaults (32 zero bytes and
+                                            // empty) rather than inventing anything, or recovery
+                                            // lands on a different address entirely.
+                                            let salt_bytes = payload_obj["saltHex"]
+                                                .as_str()
+                                                .map(|h| h.strip_prefix("0x").unwrap_or(h))
+                                                .and_then(|h| hex::decode(h).ok())
+                                                .unwrap_or_else(|| vec![0u8; 32]);
+                                            let info_bytes = payload_obj["infoHex"]
+                                                .as_str()
+                                                .map(|h| h.strip_prefix("0x").unwrap_or(h))
+                                                .and_then(|h| hex::decode(h).ok())
+                                                .or_else(|| {
+                                                    // Some clients send `info` as a plain string.
+                                                    payload_obj["info"]
+                                                        .as_str()
+                                                        .map(|s| s.as_bytes().to_vec())
+                                                })
+                                                .unwrap_or_default();
+
                                             // Build EncryptedSessionPayload for decryption
                                             let encrypted_payload =
                                                 crate::crypto::EncryptedSessionPayload {
@@ -2534,11 +2556,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     nonce: nonce_bytes,
                                                     aad: aad_bytes,
                                                 };
+                                            let sig_context = crate::crypto::SigContext {
+                                                salt: salt_bytes,
+                                                info: info_bytes,
+                                            };
 
                                             // Decrypt session init payload
-                                            match crate::crypto::decrypt_session_init(
+                                            match crate::crypto::decrypt_session_init_with_context(
                                                 &encrypted_payload,
                                                 &node_private_key,
+                                                &sig_context,
                                             ) {
                                                 Ok(session_init_data) => {
                                                     // Extract session data
@@ -2607,8 +2634,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             None
                                                                         } else {
                                                                             Some(format!(
-                                                                                "client {} is not authorised for vault-paid job {}",
-                                                                                client_address, jid
+                                                                                "client {} (recovered from the E2EE v1 signature) is not authorised for vault-paid job {}; authorised client is {}",
+                                                                                client_address,
+                                                                                jid,
+                                                                                authorised.as_deref().unwrap_or("<none: no authorisation was posted for this job>")
                                                                             ))
                                                                         }
                                                                     }
