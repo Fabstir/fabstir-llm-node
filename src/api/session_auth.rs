@@ -166,12 +166,13 @@ pub async fn session_auth_handler(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<SessionAuthRequest>,
 ) -> impl IntoResponse {
-    let Some(expected) = server.fiat_backend_auth_address() else {
+    let expected = server.fiat_backend_auth_addresses();
+    if expected.is_empty() {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "session-auth is not enabled on this node"})),
         );
-    };
+    }
     if request.scheme != SESSION_AUTH_SCHEME {
         return (
             StatusCode::BAD_REQUEST,
@@ -194,7 +195,7 @@ pub async fn session_auth_handler(
         );
     };
     match verify_session_auth(session_id, &request.client_address, &signature) {
-        Ok(recovered) if recovered.eq_ignore_ascii_case(expected) => {
+        Ok(recovered) if expected.iter().any(|a| a.eq_ignore_ascii_case(&recovered)) => {
             if let Ok(mut store) = server.session_auth_store().lock() {
                 store.insert(session_id, request.client_address.to_lowercase());
             }
@@ -269,6 +270,28 @@ mod tests {
             &signature,
         );
         assert!(!matches!(other_client, Ok(ref a) if a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+    }
+
+    #[test]
+    fn one_configured_signer_still_works_unchanged() {
+        // A single FIAT_BACKEND_AUTH_ADDRESS is a set of one, so existing
+        // deployments keep working with no configuration change.
+        let signers = vec![AUTH_ADDRESS.to_string()];
+        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+    }
+
+    #[test]
+    fn several_platforms_can_each_authorise_with_their_own_key() {
+        // Each platform funding sessions on this node signs with its OWN key;
+        // none of them should ever hold another's. Membership, not equality.
+        let other = "0x1df87d191b3dd4dfdf846751f80c03a2bc83dd2e";
+        let signers = vec![AUTH_ADDRESS.to_string(), other.to_string()];
+        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(&other.to_uppercase())));
+        // An unlisted signer is still refused, which is the whole point.
+        assert!(!signers
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case("0x9999999999999999999999999999999999999999")));
     }
 
     #[tokio::test]

@@ -244,7 +244,11 @@ pub struct ApiServer {
     fiat_vault_addresses: Vec<String>,
     /// FC1.6: the credits backend's AUTH key address (NOT its funds key).
     /// None ⇒ POST /v1/session-auth 404s (pre-hardening shape).
-    fiat_backend_auth_address: Option<String>,
+    /// FC1.6: the addresses whose signatures authorise a client for a vault-paid
+    /// session. A SET, not one: each platform funding sessions on this node signs
+    /// with its OWN key, and no platform should ever hold another's. Empty = the
+    /// feature is off and POST /v1/session-auth 404s.
+    fiat_backend_auth_addresses: Vec<String>,
     /// FC1.6: jobId → backend-authorised client address (in-memory; a restart
     /// clears it and the helper simply re-presents before its next submit).
     session_auth_store: Arc<crate::api::session_auth::SessionAuthStore>,
@@ -346,7 +350,7 @@ impl ApiServer {
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             auto_image_routing: false,
             fiat_vault_addresses: Vec::new(),
-            fiat_backend_auth_address: None,
+            fiat_backend_auth_addresses: Vec::new(),
             session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
@@ -527,10 +531,17 @@ impl ApiServer {
                 .map(|a| a.trim().to_lowercase())
                 .filter(|a| !a.is_empty())
                 .collect(),
-            fiat_backend_auth_address: std::env::var("FIAT_BACKEND_AUTH_ADDRESS")
+            // Comma-separated, so one deployment can serve several platforms.
+            // A single value is still valid, so existing configuration is unchanged.
+            fiat_backend_auth_addresses: std::env::var("FIAT_BACKEND_AUTH_ADDRESS")
                 .ok()
-                .map(|a| a.trim().to_lowercase())
-                .filter(|a| !a.is_empty()),
+                .map(|raw| {
+                    raw.split(',')
+                        .map(|a| a.trim().to_lowercase())
+                        .filter(|a| !a.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
             session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
@@ -660,7 +671,7 @@ impl ApiServer {
             ltx_semaphore: self.ltx_semaphore.clone(),
             auto_image_routing: self.auto_image_routing,
             fiat_vault_addresses: self.fiat_vault_addresses.clone(),
-            fiat_backend_auth_address: self.fiat_backend_auth_address.clone(),
+            fiat_backend_auth_addresses: self.fiat_backend_auth_addresses.clone(),
             session_auth_store: self.session_auth_store.clone(),
             session_depositor_cache: self.session_depositor_cache.clone(),
             session_store: self.session_store.clone(),
@@ -687,8 +698,8 @@ impl ApiServer {
 
     /// FC1.6 accessors (fields are private to this module; the session-auth
     /// handler lives in api::session_auth).
-    pub fn fiat_backend_auth_address(&self) -> Option<&str> {
-        self.fiat_backend_auth_address.as_deref()
+    pub fn fiat_backend_auth_addresses(&self) -> &[String] {
+        &self.fiat_backend_auth_addresses
     }
 
     pub fn session_auth_store(&self) -> &Arc<crate::api::session_auth::SessionAuthStore> {
