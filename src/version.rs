@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.48.0-e2ee-sig-recovery-2026-08-20";
+pub const VERSION: &str = "v8.49.0-multi-signer-auth-2026-08-21";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.48.0";
+pub const VERSION_NUMBER: &str = "8.49.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 48;
+pub const VERSION_MINOR: u32 = 49;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-20";
+pub const BUILD_DATE: &str = "2026-08-21";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -85,6 +85,13 @@ pub const FEATURES: &[&str] = &[
     // absent for LTX sessions (they claim tokens via submitProofOfWork), so its
     // absence is no longer logged as an ERROR claiming payment may be affected.
     "ltx-tracker-log-honesty",
+    // v8.49.0 FC1.6 accepts a SET of authorisation signers.
+    // FIAT_BACKEND_AUTH_ADDRESS is comma-separated: every platform funding
+    // sessions on this node signs with its OWN key, and no platform should ever
+    // hold another's — which one signer forced, since the only way for a second
+    // platform to have its sessions gated was to be handed our key. A single
+    // value is a set of one, so existing deployments are unchanged.
+    "fc1-multi-signer-auth",
     // v8.48.0 FC1.6 client-address recovery FIXED. The node recovered the client
     // address from the session-init signature over sha256(ciphertext) — a message
     // no client ever signs. @fabstir/sdk-core signs
@@ -1010,7 +1017,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 48);
+        assert_eq!(VERSION_MINOR, 49);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1197,9 +1204,9 @@ mod tests {
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.48.0-e2ee-sig-recovery-2026-08-20");
-        assert_eq!(VERSION_NUMBER, "8.48.0");
-        assert_eq!(BUILD_DATE, "2026-08-20");
+        assert_eq!(VERSION, "v8.49.0-multi-signer-auth-2026-08-21");
+        assert_eq!(VERSION_NUMBER, "8.49.0");
+        assert_eq!(BUILD_DATE, "2026-08-21");
     }
 
     #[test]
