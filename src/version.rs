@@ -3,16 +3,16 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.49.0-multi-signer-auth-2026-08-21";
+pub const VERSION: &str = "v8.50.0-transcode-billing-2026-08-21";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.49.0";
+pub const VERSION_NUMBER: &str = "8.50.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 49;
+pub const VERSION_MINOR: u32 = 50;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
@@ -85,6 +85,16 @@ pub const FEATURES: &[&str] = &[
     // absent for LTX sessions (they claim tokens via submitProofOfWork), so its
     // absence is no longer logged as an ERROR claiming payment may be affected.
     "ltx-tracker-log-honesty",
+    // v8.50.0 transcode billing actually bills. The handler computed units,
+    // recorded them in an in-memory tracker, reported them in the completion
+    // message, and never handed them to the checkpoint manager — so every
+    // transcode on every host settled at zero with the deposit refunded in full
+    // while telling the client it had been charged. track_tokens now runs below
+    // the zero-output and moderation guards; a billing failure is loud but never
+    // fails a transcode whose outputs are already published.
+    // COORDINATED RELEASE: turning this on breaks deposits sized when transcodes
+    // were free. Confirm downstream sizing before deploying.
+    "transcode-billing-on-chain",
     // v8.49.0 FC1.6 accepts a SET of authorisation signers.
     // FIAT_BACKEND_AUTH_ADDRESS is comma-separated: every platform funding
     // sessions on this node signs with its OWN key, and no platform should ever
@@ -1017,7 +1027,7 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 49);
+        assert_eq!(VERSION_MINOR, 50);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
@@ -1204,8 +1214,8 @@ mod tests {
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.49.0-multi-signer-auth-2026-08-21");
-        assert_eq!(VERSION_NUMBER, "8.49.0");
+        assert_eq!(VERSION, "v8.50.0-transcode-billing-2026-08-21");
+        assert_eq!(VERSION_NUMBER, "8.50.0");
         assert_eq!(BUILD_DATE, "2026-08-21");
     }
 
