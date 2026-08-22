@@ -11,7 +11,6 @@ import {
   SESSION_MAX_DURATION,
   SESSION_PROOF_INTERVAL,
   SESSION_PROOF_TIMEOUT_WINDOW,
-  escrowPricePerToken,
   jobMarketplaceAddress,
 } from './escrow';
 import { rpcUrl, usdcTokenAddress } from './balance';
@@ -75,11 +74,21 @@ export interface MarketplaceLike {
   ): Promise<{ hash: string; wait(): Promise<{ logs: Array<{ topics: readonly string[]; data: string }> } | null> }>;
 }
 
+/** Reads the price the REGISTRY holds for this (host, model, token) triple.
+ *  Pricing is per model per host: the LTX video model is 904, the chat models
+ *  on the chat host are 10000. A single service-wide constant made every
+ *  non-LTX model unopenable (the contract rejects an underpriced create with
+ *  "Low price"), so the chain is the only honest source. */
+export type ModelPriceReader = (host: string, modelId: string, token: string) => Promise<bigint>;
+
 export interface CreateSessionParams {
   host: string;
   modelId: string;
   depositMicro: bigint;
-  /** Defaults to the proven env price (NEXT_PUBLIC_SESSION_PRICE_PER_TOKEN). */
+  /** Omit to use the registry price for (host, modelId, token) — the norm.
+   *  Supply it only to pin a price deliberately; it is never taken from a
+   *  client request (a price the caller chooses is a price an attacker
+   *  chooses). */
   pricePerToken?: bigint;
   /** Called with the tx hash the instant the create is SUBMITTED (before the
    *  confirmation wait), so the caller can durably record a crash-recoverable
@@ -111,12 +120,13 @@ export interface VaultChainDeps {
   usdcAddress: string;
   usdc: Erc20Like;
   marketplace: MarketplaceLike;
+  modelPrice: ModelPriceReader;
 }
 
 /** Real deps come from server env; tests inject all five. */
 export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
   const resolved = deps ?? realDeps();
-  const { vaultAddress, marketplaceAddress, usdcAddress, usdc, marketplace } = resolved;
+  const { vaultAddress, marketplaceAddress, usdcAddress, usdc, marketplace, modelPrice } = resolved;
   const createdTopic = ESCROW_INTERFACE.getEvent('SessionJobCreatedForModel')!.topicHash;
 
   return {
@@ -135,13 +145,25 @@ export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
     },
 
     async createSession(params: CreateSessionParams) {
+      // Registry price unless the caller pinned one. A failed read or a zero
+      // price ABORTS: guessing here would either revert on chain ("Low price")
+      // or, worse, open a session that bills the host at the wrong rate.
+      let pricePerToken = params.pricePerToken;
+      if (pricePerToken === undefined) {
+        pricePerToken = await modelPrice(params.host, params.modelId, usdcAddress);
+        if (pricePerToken <= 0n) {
+          throw new Error(
+            `no registered price for model ${params.modelId} on host ${params.host} — the host must advertise this model before a vault session can pay for it`
+          );
+        }
+      }
       const send = () =>
         marketplace.createSessionJobForModelWithToken(
           params.host,
           params.modelId,
           usdcAddress,
           params.depositMicro,
-          params.pricePerToken ?? escrowPricePerToken(),
+          pricePerToken,
           SESSION_MAX_DURATION,
           SESSION_PROOF_INTERVAL,
           SESSION_PROOF_TIMEOUT_WINDOW
@@ -199,5 +221,25 @@ function realDeps(): VaultChainDeps {
       wallet
     ) as unknown as Erc20Like,
     marketplace: new Contract(marketplaceAddress, ESCROW_INTERFACE, wallet) as unknown as MarketplaceLike,
+    modelPrice: makeChainModelPriceReader(provider),
   };
+}
+
+/** The registry read behind the price: NodeRegistry.getModelPricing(host,
+ *  modelId, token), the same source the SDK quotes from, so a vault-paid
+ *  session and a wallet-paid one are billed at the identical rate. */
+export function makeChainModelPriceReader(provider: JsonRpcProvider): ModelPriceReader {
+  const address = process.env.NEXT_PUBLIC_CONTRACT_NODE_REGISTRY;
+  if (!address) {
+    throw new Error(
+      'NEXT_PUBLIC_CONTRACT_NODE_REGISTRY is not set — the fiat backend cannot price a session without the host directory'
+    );
+  }
+  const registry = new Contract(
+    address,
+    ['function getModelPricing(address host, bytes32 modelId, address token) view returns (uint256)'],
+    provider
+  );
+  const read = registry.getFunction('getModelPricing');
+  return async (host, modelId, token) => BigInt(await read(host, modelId, token));
 }

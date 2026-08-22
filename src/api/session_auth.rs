@@ -22,6 +22,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
+use tracing::info;
 use tiny_keccak::{Hasher, Keccak};
 
 use super::server::ApiServer;
@@ -80,6 +81,73 @@ pub fn authorise_session_client(
             .is_some_and(|authorised| authorised.eq_ignore_ascii_case(client_address))
 }
 
+/// The plaintext (`session_init`) counterpart of `authorise_session_client`.
+///
+/// A plaintext init carries NO authenticated client identity: there is no
+/// signature over it, so any address it claims is one an attacker may equally
+/// claim. Running the normal check against an unverified address would be
+/// theatre. So the rule is coarse and honest: a vault-paid session cannot be
+/// opened over the plaintext path at all, and the client must use an encrypted
+/// session. Crypto-native sessions (depositor is not a configured vault) are
+/// untouched, exactly as on the encrypted path.
+pub fn plaintext_session_allowed(depositor: &str, vault_addresses: &[String]) -> bool {
+    !vault_addresses
+        .iter()
+        .any(|vault| vault.eq_ignore_ascii_case(depositor))
+}
+
+/// jobId -> on-chain depositor. A session's depositor is fixed at creation, so
+/// a cache hit can never be stale; it only ever saves a chain read.
+pub type DepositorCache = Mutex<HashMap<u64, String>>;
+
+/// Bound on the cache: sessions per process are modest, but an unbounded map
+/// on a long-lived node is a slow leak. Oldest-out is not worth the machinery
+/// here; clearing wholesale simply costs a few re-reads.
+const DEPOSITOR_CACHE_MAX: usize = 4096;
+
+/// Resolve the depositor for `job_id`, tolerating a flaky RPC.
+///
+/// Why this exists: the gate DENIES a session whose depositor cannot be read,
+/// which is the right default for vault money but makes every session init
+/// depend on a public RPC answering first time. One hiccup would then refuse a
+/// session that is perfectly legitimate. So: answer from cache when we can,
+/// and give the chain a couple of chances before concluding anything. A
+/// genuine failure still denies.
+pub async fn resolve_depositor<F, Fut>(
+    job_id: u64,
+    cache: &DepositorCache,
+    fetch: F,
+    attempts: u32,
+    backoff: std::time::Duration,
+) -> anyhow::Result<String>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<String>>,
+{
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(&job_id).cloned()) {
+        return Ok(hit);
+    }
+    let mut last_error: Option<anyhow::Error> = None;
+    for attempt in 0..attempts.max(1) {
+        if attempt > 0 {
+            tokio::time::sleep(backoff * attempt).await;
+        }
+        match fetch().await {
+            Ok(depositor) => {
+                if let Ok(mut c) = cache.lock() {
+                    if c.len() >= DEPOSITOR_CACHE_MAX {
+                        c.clear();
+                    }
+                    c.insert(job_id, depositor.clone());
+                }
+                return Ok(depositor);
+            }
+            Err(e) => last_error = Some(e),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("depositor read failed for job {job_id}")))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAuthRequest {
@@ -98,12 +166,13 @@ pub async fn session_auth_handler(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<SessionAuthRequest>,
 ) -> impl IntoResponse {
-    let Some(expected) = server.fiat_backend_auth_address() else {
+    let expected = server.fiat_backend_auth_addresses();
+    if expected.is_empty() {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "session-auth is not enabled on this node"})),
         );
-    };
+    }
     if request.scheme != SESSION_AUTH_SCHEME {
         return (
             StatusCode::BAD_REQUEST,
@@ -126,10 +195,19 @@ pub async fn session_auth_handler(
         );
     };
     match verify_session_auth(session_id, &request.client_address, &signature) {
-        Ok(recovered) if recovered.eq_ignore_ascii_case(expected) => {
+        Ok(recovered) if expected.iter().any(|a| a.eq_ignore_ascii_case(&recovered)) => {
             if let Ok(mut store) = server.session_auth_store().lock() {
                 store.insert(session_id, request.client_address.to_lowercase());
             }
+            // Log the GRANT, not only the denial. Without this line "did the
+            // authorisation arrive?" cannot be answered from this node's log at
+            // all, and answering it took a cross-reference against the credits
+            // service on another box. One line here makes it a glance.
+            info!(
+                "🔓 SESSION_AUTH_GRANTED: job {} authorised for client {}",
+                session_id,
+                request.client_address.to_lowercase()
+            );
             (StatusCode::OK, Json(json!({"ok": true})))
         }
         _ => (
@@ -192,6 +270,115 @@ mod tests {
             &signature,
         );
         assert!(!matches!(other_client, Ok(ref a) if a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+    }
+
+    #[test]
+    fn one_configured_signer_still_works_unchanged() {
+        // A single FIAT_BACKEND_AUTH_ADDRESS is a set of one, so existing
+        // deployments keep working with no configuration change.
+        let signers = vec![AUTH_ADDRESS.to_string()];
+        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+    }
+
+    #[test]
+    fn several_platforms_can_each_authorise_with_their_own_key() {
+        // Each platform funding sessions on this node signs with its OWN key;
+        // none of them should ever hold another's. Membership, not equality.
+        let other = "0x1df87d191b3dd4dfdf846751f80c03a2bc83dd2e";
+        let signers = vec![AUTH_ADDRESS.to_string(), other.to_string()];
+        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(AUTH_ADDRESS)));
+        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(&other.to_uppercase())));
+        // An unlisted signer is still refused, which is the whole point.
+        assert!(!signers
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case("0x9999999999999999999999999999999999999999")));
+    }
+
+    #[tokio::test]
+    async fn depositor_read_survives_a_transient_rpc_failure() {
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let resolved = resolve_depositor(
+            42,
+            &cache,
+            || async {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    Err(anyhow::anyhow!("rpc hiccup"))
+                } else {
+                    Ok(VAULT.to_string())
+                }
+            },
+            3,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(resolved.unwrap(), VAULT);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_genuine_failure_still_denies_after_every_attempt() {
+        // Fail CLOSED remains the rule: retries buy tolerance, not permission.
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let resolved = resolve_depositor(
+            42,
+            &cache,
+            || async {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(anyhow::anyhow!("chain unreachable"))
+            },
+            3,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert!(resolved.is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert!(cache.lock().unwrap().is_empty()); // nothing poisoned the cache
+    }
+
+    #[tokio::test]
+    async fn a_cached_depositor_is_answered_without_touching_the_chain() {
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let fetch = || async {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(VAULT.to_string())
+        };
+        let backoff = std::time::Duration::from_millis(1);
+        assert_eq!(
+            resolve_depositor(42, &cache, fetch, 3, backoff).await.unwrap(),
+            VAULT
+        );
+        assert_eq!(
+            resolve_depositor(42, &cache, fetch, 3, backoff).await.unwrap(),
+            VAULT
+        );
+        // Second call served from cache: the depositor is immutable, so this
+        // can never be a stale answer.
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn plaintext_init_is_refused_for_vault_paid_sessions() {
+        let vaults = vec![VAULT.to_string()];
+        // The bypass this closes: the plaintext path has no authenticated
+        // client, so vault money must not be spendable through it at all.
+        assert!(!plaintext_session_allowed(VAULT, &vaults));
+        // Case-insensitively, too (checksummed depositor from the chain).
+        assert!(!plaintext_session_allowed(
+            "0x8BA1F109551BD432803012645AC136DDD64DBA72",
+            &vaults
+        ));
+    }
+
+    #[test]
+    fn plaintext_init_still_serves_crypto_native_sessions() {
+        let vaults = vec![VAULT.to_string()];
+        assert!(plaintext_session_allowed(CLIENT, &vaults));
+        // And with no vault configured, nothing is gated (pre-FC1 shape).
+        assert!(plaintext_session_allowed(VAULT, &[]));
     }
 
     #[test]

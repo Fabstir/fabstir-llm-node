@@ -8,7 +8,10 @@
 
 use anyhow::{anyhow, Result};
 use hkdf::Hkdf;
-use k256::{elliptic_curve::sec1::FromEncodedPoint, EncodedPoint, PublicKey, SecretKey};
+use k256::{
+    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
+    EncodedPoint, PublicKey, SecretKey,
+};
 use sha2::Sha256;
 
 /// Derive a shared encryption key using ECDH
@@ -92,4 +95,16 @@ mod tests {
         let result = derive_shared_key(&client_pub, &node_priv);
         assert!(result.is_err()); // Should fail until implemented
     }
+}
+
+/// This node's COMPRESSED (33-byte) public key, as the client addresses it.
+///
+/// The client signs the recipient's compressed key as part of the E2EE v1
+/// session-init message, so the node must reconstruct the identical bytes to
+/// recover the signer. Compressed is what @fabstir/sdk-core sends
+/// (`toCompressedPub`), and the encoding must match byte for byte.
+pub fn public_key_from_private(node_priv_key: &[u8]) -> Result<Vec<u8>> {
+    let secret = SecretKey::from_slice(node_priv_key)
+        .map_err(|e| anyhow!("Invalid node private key: {}", e))?;
+    Ok(secret.public_key().to_encoded_point(true).as_bytes().to_vec())
 }

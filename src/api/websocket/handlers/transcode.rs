@@ -232,6 +232,50 @@ impl TranscodeProgressTask {
 
                             let tokens = (total_units * 1000.0).ceil() as u64;
 
+                            // Submit the usage ON CHAIN. The tracker above is an
+                            // in-process record used for reporting; the checkpoint
+                            // manager is the ONLY thing that submits proof-of-work and
+                            // therefore the only thing that moves `tokensUsed`. Without
+                            // this call a transcode settled at zero with the deposit
+                            // refunded in full — every transcode, on every host, while
+                            // the completion message cheerfully reported a `billing`
+                            // figure nobody was ever charged. Deliberately placed BELOW
+                            // the zero-output and moderation guards, so a held job still
+                            // bills nothing.
+                            //
+                            // Unlike inference, a transcode's usage is known all at once
+                            // rather than a token at a time, so this is a single call
+                            // carrying the whole amount; the tracker's own threshold then
+                            // triggers the checkpoint submission.
+                            if let Some(jid) = job_id {
+                                if tokens > 0 {
+                                    if let Some(cm) = server.get_checkpoint_manager().await {
+                                        if let Err(e) =
+                                            cm.track_tokens(jid, tokens, Some(session_id.clone())).await
+                                        {
+                                            // Never fail the transcode for a billing error:
+                                            // the work is done and the outputs are published.
+                                            // Loud, because an unbilled job is revenue lost
+                                            // and silence is how this went unnoticed before.
+                                            error!(
+                                                "TRANSCODE BILLING FAILED for job {}: {} tokens were NOT submitted on chain: {}",
+                                                jid, tokens, e
+                                            );
+                                        } else {
+                                            info!(
+                                                "Transcode billing: submitted {} tokens ({:.1} units) for job {}",
+                                                tokens, total_units, jid
+                                            );
+                                        }
+                                    } else {
+                                        error!(
+                                            "TRANSCODE BILLING SKIPPED for job {}: no checkpoint manager, {} tokens unbilled",
+                                            jid, tokens
+                                        );
+                                    }
+                                }
+                            }
+
                             // (`outputs` is parsed once, hoisted above the zero-output
                             // guard near the top of this completion block — F3b.)
 

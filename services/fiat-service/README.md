@@ -32,6 +32,39 @@ The four client files the UI drops in (`fiat-fetch`, `fiat-purchase-client`,
 `fiat-credential-client`, `fiat-credits`) already call these paths with a configurable
 `baseUrl`. See `docs/archive/FC2-FIAT-CLIENT-DROP-README.md`.
 
+### `clientAddress` on POST /v1/fiat/session — the identity contract
+
+**`clientAddress` must be the identity that SIGNS the session init, not whichever
+address is paying.** The vault opens the job and signs an FC1.6 authorisation naming
+this address; the node later recovers a signer from the encrypted `session_init`
+signature and serves the session only if the two match. It can only ever compare
+against what it can recover, so naming any other address means the session is refused
+on arrival, after the escrow is open.
+
+The two are the same key in a browser client that signs with its own wallet, which is
+why this is easy to get wrong and easy to miss. They are NOT the same in a client with
+separate roles. The Blender helper has exactly that split and shipped the bug:
+
+| Identity | Purpose | Correct to send? |
+|---|---|---|
+| Burner wallet | holds USDC, pays gas | ❌ never seen by the node's verifier |
+| Encryption identity (S5-seed derived) | signs the encrypted session init | ✅ this one |
+
+The failure is loud but only at connect time, and the node names both addresses:
+
+```
+SESSION_AUTH_DENIED: client 0xc84be515… (recovered from the E2EE v1 signature)
+is not authorised for vault-paid job 1108; authorised client is 0x1a84ef26…
+```
+
+If you see that, the fix is on the client: send the signing identity when opening the
+session. The escrow from the refused attempt is reclaimable (it settles zero and
+refunds in full), but it is a wasted round trip, so get this right before spending.
+
+Rule of thumb: if your code can name two different addresses when asked "who is the
+client", you have this bug latent. Pick the one whose private key signs the session
+init.
+
 ## CORS
 
 Handled in `middleware.ts`, scoped to the **browser routes only** (the table above).
@@ -94,6 +127,9 @@ Bind `-H 0.0.0.0` (the scripts do) so a Docker port map can forward to the conta
 - **The Stripe webhook needs the RAW body** for signature verification; the route reads
   it as text — do not insert a body parser in front of it.
 - **Rate-limit `/v1/fiat/credential/*` per-IP at the edge** before public exposure.
+- **`clientAddress` is the SIGNING identity, not the paying one** (see the routes
+  section). Cost us two denied renders and a stranded escrow on 2026-08-20 before the
+  node's denial line named both addresses and made it obvious.
 - **Currency:** credits are USD-pegged (1 credit = 1 cent = 10,000 micro-USDC). Model A
   (charge USD, the card network converts) is the default and needs no code. Model B
   (charge local currency) needs an FX lookup **and** a webhook change (credit from

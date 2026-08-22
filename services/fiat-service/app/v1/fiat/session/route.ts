@@ -1,6 +1,15 @@
 // FC1.2 — POST /v1/fiat/session: the fiat session-open endpoint. Thin HTTP
 // shell: bearer credential + strict validation, then openFiatSession does the
 // gatekeeping and signing. Bigints cross the wire as decimal strings.
+//
+// `clientAddress` IS THE SIGNING IDENTITY, NOT THE PAYING ONE. The vault signs an
+// FC1.6 authorisation naming it, and the node serves the session only if the
+// address it recovers from the encrypted session-init signature matches. It can
+// only compare against what it can recover, so any other address is refused at
+// CONNECT time — after the escrow is open. A browser client that signs with the
+// wallet it pays from has one identity and cannot notice; a client with separate
+// payment and encryption keys (the Blender helper) has two, and shipped exactly
+// this bug. See the identity-contract section in the service README.
 import { isAddress } from 'ethers';
 import { getFiatSessionService } from '../../../../src/lib/fiat-session-service';
 
@@ -21,6 +30,19 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'body must be JSON' }, { status: 400 });
   }
   const { host, modelId, depositMicro, clientAddress } = body ?? {};
+  // FC2.8: the retry key travels as a header (Stripe's convention) or in the
+  // body, whichever suits the caller. Bounded so a key cannot be used as a
+  // storage channel; absent = today's behaviour, no dedupe.
+  const rawKey = req.headers.get('idempotency-key') ?? (body as { idempotencyKey?: unknown })?.idempotencyKey;
+  if (rawKey !== undefined && rawKey !== null) {
+    if (typeof rawKey !== 'string' || rawKey.length === 0 || rawKey.length > 200) {
+      return Response.json(
+        { error: 'idempotencyKey must be a string of 1..200 characters' },
+        { status: 400 }
+      );
+    }
+  }
+  const idempotencyKey = typeof rawKey === 'string' ? rawKey : undefined;
   if (typeof host !== 'string' || !isAddress(host)) {
     return Response.json({ error: 'host must be an address' }, { status: 400 });
   }
@@ -54,14 +76,36 @@ export async function POST(req: Request): Promise<Response> {
       modelId,
       depositMicro: BigInt(depositMicro),
       clientAddress,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     });
     switch (outcome.status) {
       case 'ok':
-        return Response.json({
-          sessionId: outcome.sessionId.toString(),
-          jobId: outcome.jobId.toString(),
-          authorisation: outcome.authorisation,
-        });
+        return Response.json(
+          {
+            sessionId: outcome.sessionId.toString(),
+            jobId: outcome.jobId.toString(),
+            authorisation: outcome.authorisation,
+            // Tells the caller this was a replay of an earlier attempt, not a
+            // new escrow — useful in their logs, ignorable in their code.
+            ...(outcome.replayed ? { replayed: true } : {}),
+          },
+          { headers: idempotencyKey ? { 'idempotency-replayed': outcome.replayed ? 'true' : 'false' } : {} }
+        );
+      case 'in_flight':
+        // 409 + Retry-After: an identical attempt is mid-flight and may already
+        // have escrowed. Waiting is the only answer that cannot double-charge.
+        return Response.json(
+          { error: 'in_flight', message: 'an attempt with this idempotency key is still in progress' },
+          { status: 409, headers: { 'retry-after': '5' } }
+        );
+      case 'key_conflict':
+        return Response.json(
+          {
+            error: 'key_conflict',
+            message: 'this idempotency key was first used with different session parameters',
+          },
+          { status: 422 }
+        );
       case 'unauthorised':
         return Response.json({ error: 'unauthorised' }, { status: 401 });
       case 'refused':

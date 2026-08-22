@@ -244,10 +244,17 @@ pub struct ApiServer {
     fiat_vault_addresses: Vec<String>,
     /// FC1.6: the credits backend's AUTH key address (NOT its funds key).
     /// None ⇒ POST /v1/session-auth 404s (pre-hardening shape).
-    fiat_backend_auth_address: Option<String>,
+    /// FC1.6: the addresses whose signatures authorise a client for a vault-paid
+    /// session. A SET, not one: each platform funding sessions on this node signs
+    /// with its OWN key, and no platform should ever hold another's. Empty = the
+    /// feature is off and POST /v1/session-auth 404s.
+    fiat_backend_auth_addresses: Vec<String>,
     /// FC1.6: jobId → backend-authorised client address (in-memory; a restart
     /// clears it and the helper simply re-presents before its next submit).
     session_auth_store: Arc<crate::api::session_auth::SessionAuthStore>,
+    /// FC1.6: jobId -> depositor, so the gate does not re-read the chain
+    /// (and cannot be tripped by one flaky RPC) on every session init.
+    session_depositor_cache: Arc<crate::api::session_auth::DepositorCache>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     listener: Option<tokio::net::TcpListener>,
@@ -265,6 +272,12 @@ struct Metrics {
 pub struct SessionKeyMetrics {
     pub active_sessions: usize,
 }
+
+/// FC1.6 depositor read: attempts and the unit backoff between them. Three
+/// tries over ~750ms covers a public-RPC blip without making a genuinely
+/// unreachable chain slow to refuse.
+const DEPOSITOR_READ_ATTEMPTS: u32 = 3;
+const DEPOSITOR_READ_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl ApiServer {
     pub fn new_for_test() -> Self {
@@ -337,8 +350,9 @@ impl ApiServer {
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             auto_image_routing: false,
             fiat_vault_addresses: Vec::new(),
-            fiat_backend_auth_address: None,
+            fiat_backend_auth_addresses: Vec::new(),
             session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: None,
@@ -517,11 +531,19 @@ impl ApiServer {
                 .map(|a| a.trim().to_lowercase())
                 .filter(|a| !a.is_empty())
                 .collect(),
-            fiat_backend_auth_address: std::env::var("FIAT_BACKEND_AUTH_ADDRESS")
+            // Comma-separated, so one deployment can serve several platforms.
+            // A single value is still valid, so existing configuration is unchanged.
+            fiat_backend_auth_addresses: std::env::var("FIAT_BACKEND_AUTH_ADDRESS")
                 .ok()
-                .map(|a| a.trim().to_lowercase())
-                .filter(|a| !a.is_empty()),
+                .map(|raw| {
+                    raw.split(',')
+                        .map(|a| a.trim().to_lowercase())
+                        .filter(|a| !a.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
             session_auth_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
             listener: Some(listener),
@@ -649,8 +671,9 @@ impl ApiServer {
             ltx_semaphore: self.ltx_semaphore.clone(),
             auto_image_routing: self.auto_image_routing,
             fiat_vault_addresses: self.fiat_vault_addresses.clone(),
-            fiat_backend_auth_address: self.fiat_backend_auth_address.clone(),
+            fiat_backend_auth_addresses: self.fiat_backend_auth_addresses.clone(),
             session_auth_store: self.session_auth_store.clone(),
+            session_depositor_cache: self.session_depositor_cache.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
             listener: None,
@@ -675,8 +698,8 @@ impl ApiServer {
 
     /// FC1.6 accessors (fields are private to this module; the session-auth
     /// handler lives in api::session_auth).
-    pub fn fiat_backend_auth_address(&self) -> Option<&str> {
-        self.fiat_backend_auth_address.as_deref()
+    pub fn fiat_backend_auth_addresses(&self) -> &[String] {
+        &self.fiat_backend_auth_addresses
     }
 
     pub fn session_auth_store(&self) -> &Arc<crate::api::session_auth::SessionAuthStore> {
@@ -2321,6 +2344,64 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                         eprintln!("📝 Session init: job={:?} session={:?}", job_id, session_id);
 
+                        // FC1.6: a plaintext init carries no authenticated client
+                        // identity, so vault-paid money must not be spendable
+                        // through this path at all (the encrypted path below does
+                        // the per-client check). Crypto-native sessions are
+                        // untouched, and with no vault configured this is skipped.
+                        if !server.fiat_vault_addresses.is_empty() {
+                            let denial: Option<String> = match job_id {
+                                None => Some("job id unparseable".to_string()),
+                                Some(jid) => {
+                                    let depositor = match server.get_checkpoint_manager().await {
+                                        Some(cm) => {
+                                            crate::api::session_auth::resolve_depositor(
+                                                jid,
+                                                &server.session_depositor_cache,
+                                                || cm.query_session_depositor(jid),
+                                                DEPOSITOR_READ_ATTEMPTS,
+                                                DEPOSITOR_READ_BACKOFF,
+                                            )
+                                            .await
+                                        }
+                                        None => Err(anyhow::anyhow!("no checkpoint manager")),
+                                    };
+                                    match depositor {
+                                        Err(e) => Some(format!("depositor unavailable: {}", e)),
+                                        Ok(dep) => {
+                                            if crate::api::session_auth::plaintext_session_allowed(
+                                                &dep,
+                                                &server.fiat_vault_addresses,
+                                            ) {
+                                                None
+                                            } else {
+                                                Some(format!(
+                                                    "job {} is vault-paid: open it with an encrypted session (plaintext carries no client identity)",
+                                                    jid
+                                                ))
+                                            }
+                                        }
+                                    }
+                                }
+                            };
+                            if let Some(reason) = denial {
+                                error!("🚫 SESSION_AUTH_DENIED (plaintext init): {}", reason);
+                                let mut error_msg = json!({
+                                    "type": "error",
+                                    "code": "SESSION_AUTH_DENIED",
+                                    "message": format!("session authorisation denied: {}", reason),
+                                    "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                });
+                                if let Some(msg_id) = json_msg.get("id") {
+                                    error_msg["id"] = msg_id.clone();
+                                }
+                                let _ = ws_sender
+                                    .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                    .await;
+                                continue;
+                            }
+                        }
+
                         // FIX: Create session in session_store (was missing - caused "Session not found" errors)
                         if let Some(sid) = &session_id {
                             let mut store = server.session_store.write().await;
@@ -2455,6 +2536,28 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                 continue;
                                             }
 
+                                            // salt and info are part of the message the client
+                                            // SIGNED, so they must come off the wire when present.
+                                            // Absent, use the SDK's own defaults (32 zero bytes and
+                                            // empty) rather than inventing anything, or recovery
+                                            // lands on a different address entirely.
+                                            let salt_bytes = payload_obj["saltHex"]
+                                                .as_str()
+                                                .map(|h| h.strip_prefix("0x").unwrap_or(h))
+                                                .and_then(|h| hex::decode(h).ok())
+                                                .unwrap_or_else(|| vec![0u8; 32]);
+                                            let info_bytes = payload_obj["infoHex"]
+                                                .as_str()
+                                                .map(|h| h.strip_prefix("0x").unwrap_or(h))
+                                                .and_then(|h| hex::decode(h).ok())
+                                                .or_else(|| {
+                                                    // Some clients send `info` as a plain string.
+                                                    payload_obj["info"]
+                                                        .as_str()
+                                                        .map(|s| s.as_bytes().to_vec())
+                                                })
+                                                .unwrap_or_default();
+
                                             // Build EncryptedSessionPayload for decryption
                                             let encrypted_payload =
                                                 crate::crypto::EncryptedSessionPayload {
@@ -2464,11 +2567,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     nonce: nonce_bytes,
                                                     aad: aad_bytes,
                                                 };
+                                            let sig_context = crate::crypto::SigContext {
+                                                salt: salt_bytes,
+                                                info: info_bytes,
+                                            };
 
                                             // Decrypt session init payload
-                                            match crate::crypto::decrypt_session_init(
+                                            match crate::crypto::decrypt_session_init_with_context(
                                                 &encrypted_payload,
                                                 &node_private_key,
+                                                &sig_context,
                                             ) {
                                                 Ok(session_init_data) => {
                                                     // Extract session data
@@ -2502,8 +2610,12 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     .await
                                                                 {
                                                                     Some(cm) => {
-                                                                        cm.query_session_depositor(
+                                                                        crate::api::session_auth::resolve_depositor(
                                                                             jid,
+                                                                            &server.session_depositor_cache,
+                                                                            || cm.query_session_depositor(jid),
+                                                                            DEPOSITOR_READ_ATTEMPTS,
+                                                                            DEPOSITOR_READ_BACKOFF,
                                                                         )
                                                                         .await
                                                                     }
@@ -2533,8 +2645,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             None
                                                                         } else {
                                                                             Some(format!(
-                                                                                "client {} is not authorised for vault-paid job {}",
-                                                                                client_address, jid
+                                                                                "client {} (recovered from the E2EE v1 signature) is not authorised for vault-paid job {}; authorised client is {}",
+                                                                                client_address,
+                                                                                jid,
+                                                                                authorised.as_deref().unwrap_or("<none: no authorisation was posted for this job>")
                                                                             ))
                                                                         }
                                                                     }

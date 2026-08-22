@@ -12,10 +12,12 @@ import {
   ChallengeStoreFullError,
   buildChallengeTypedData,
   getChallengeStore,
+  parseIntentName,
 } from '../../../../../src/lib/fiat-challenge';
 
 export async function GET(req: Request): Promise<Response> {
-  const address = new URL(req.url).searchParams.get('address');
+  const params = new URL(req.url).searchParams;
+  const address = params.get('address');
   let addr: string;
   try {
     addr = fiatUserId(address ?? '');
@@ -23,9 +25,22 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ error: 'address query param must be a valid address' }, { status: 400 });
   }
 
+  // Optional `intent`: which wording the user will be asked to sign. Clients
+  // that verify the message character-for-character opt into the newer wording
+  // when they are ready; omitting it keeps today's string, so no client has to
+  // deploy in step with the service. Unknown values are refused rather than
+  // echoed — arbitrary text in a signing prompt would be a phishing tool.
+  const intent = parseIntentName(params.get('intent'));
+  if (!intent) {
+    return Response.json(
+      { error: 'intent, when present, must be one of: rendering, compute' },
+      { status: 400 }
+    );
+  }
+
   let challenge;
   try {
-    challenge = getChallengeStore().issue(addr);
+    challenge = getChallengeStore().issue(addr, intent);
   } catch (e) {
     if (e instanceof ChallengeStoreFullError) return Response.json({ error: e.message }, { status: 429 });
     throw e;
@@ -38,6 +53,8 @@ export async function GET(req: Request): Promise<Response> {
       message: challenge.message,
       typedData: buildChallengeTypedData(challenge),
       expiresAt: challenge.expiresAt,
+      // Echoed so a client can assert it got the wording it asked for.
+      intent: challenge.intent,
     },
     { headers: { 'cache-control': 'no-store' } }
   );

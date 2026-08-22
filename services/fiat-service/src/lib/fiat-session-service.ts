@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { FiatCredentials } from './fiat-credentials';
 import { makeVaultChain, signSessionAuthorisation, type SessionAuthorisation } from './fiat-vault';
 import { gatekeeperConfigFromEnv, makeGatekeeper, type GateRefusal, type Gatekeeper } from './gatekeeper';
+import { IdempotencyStore, requestFingerprint } from './idempotency';
 import { CreditsLedger, JsonlLedgerStore } from './ledger';
 
 export interface FiatSessionRequest {
@@ -16,10 +17,18 @@ export interface FiatSessionRequest {
   depositMicro: bigint;
   /** The burner that will connect over WS — bound into the FC1.6 authorisation. */
   clientAddress: string;
+  /** FC2.8: caller-supplied retry key. Same (user, key) => the SAME escrow, ever.
+   *  Absent = no dedupe (unchanged behaviour for callers that do not send one). */
+  idempotencyKey?: string;
 }
 
 export type FiatSessionOutcome =
-  | { status: 'ok'; sessionId: bigint; jobId: bigint; authorisation: SessionAuthorisation }
+  | { status: 'ok'; sessionId: bigint; jobId: bigint; authorisation: SessionAuthorisation; replayed?: true }
+  /** The same key is mid-flight: the chain call may be in the air, so the honest
+   *  answer is "wait and ask again", never a second escrow. */
+  | { status: 'in_flight' }
+  /** The key was first used for a DIFFERENT request: a client bug, surfaced. */
+  | { status: 'key_conflict' }
   | { status: 'unauthorised' }
   | { status: 'refused'; reason: GateRefusal }
   | { status: 'chain_error'; message: string };
@@ -42,6 +51,8 @@ export interface FiatSessionDeps {
   gatekeeper: Gatekeeper;
   chain: FiatChain;
   signAuth: (sessionId: bigint, clientAddress: string) => SessionAuthorisation;
+  /** FC2.8 retry keys. Optional so existing tests and callers are unaffected. */
+  idempotency?: IdempotencyStore;
 }
 
 export async function openFiatSession(
@@ -51,11 +62,48 @@ export async function openFiatSession(
   const userId = deps.credentials.authenticate(request.credential);
   if (!userId) return { status: 'unauthorised' };
 
+  // FC2.8 — retry key. Checked AFTER authentication (an unauthenticated caller
+  // learns nothing about anyone's keys) and BEFORE the hold, so a replay never
+  // touches the gatekeeper or the chain.
+  const key = request.idempotencyKey;
+  const fingerprint = key
+    ? requestFingerprint({
+        host: request.host,
+        modelId: request.modelId,
+        depositMicro: request.depositMicro,
+        clientAddress: request.clientAddress,
+      })
+    : undefined;
+  if (key && deps.idempotency) {
+    const prior = await deps.idempotency.lookup(userId, key);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) return { status: 'key_conflict' };
+      if (prior.state === 'pending') return { status: 'in_flight' };
+      // The authorisation is re-derived, not stored: the signature over
+      // (sessionId, clientAddress) is deterministic, so the replay is
+      // byte-identical to the original reply without keeping a secret at rest.
+      return {
+        status: 'ok',
+        sessionId: prior.jobId,
+        jobId: prior.jobId,
+        authorisation: deps.signAuth(prior.jobId, prior.clientAddress),
+        replayed: true,
+      };
+    }
+    // Claim the key BEFORE anything can spend, so a crash mid-create leaves it
+    // pending and the retry is refused rather than charging twice.
+    await deps.idempotency.reserve(userId, key, fingerprint!);
+  }
+
   const open = await deps.ledger.openHold(
     { userId, host: request.host, depositMicro: request.depositMicro },
     deps.gatekeeper
   );
-  if (!open.ok) return { status: 'refused', reason: open.reason };
+  if (!open.ok) {
+    // Refused by policy: nothing was escrowed, so the key must not stay claimed.
+    if (key && deps.idempotency) await deps.idempotency.release(userId, key);
+    return { status: 'refused', reason: open.reason };
+  }
 
   let created: { jobId: bigint; depositor: string; txHash: string };
   try {
@@ -70,6 +118,11 @@ export async function openFiatSession(
     });
   } catch (e) {
     await deps.ledger.releaseHold(open.holdId);
+    // The create threw, so the hold is released and no session exists; free the
+    // key too, or an honest retry would be refused by our own bookkeeping. The
+    // ambiguous case (create submitted, confirmation lost) does NOT land here:
+    // it leaves the key pending and is reconciled as an orphan (M2/R5).
+    if (key && deps.idempotency) await deps.idempotency.release(userId, key);
     return { status: 'chain_error', message: e instanceof Error ? e.message : String(e) };
   }
 
@@ -91,6 +144,10 @@ export async function openFiatSession(
     await deps.ledger.bindSession(open.holdId, created.jobId);
   } catch (e) {
     if (deps.ledger.holdForJob(created.jobId) !== open.holdId) throw e;
+  }
+  // Bind the key to the session that exists, so any retry replays THIS one.
+  if (key && deps.idempotency) {
+    await deps.idempotency.complete(userId, key, created.jobId, request.clientAddress);
   }
   return {
     status: 'ok',
@@ -139,6 +196,7 @@ function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionSe
     const deps: FiatSessionDeps = {
       ledger: await CreditsLedger.open(new JsonlLedgerStore(join(dataDir, 'ledger.jsonl'))),
       credentials: await FiatCredentials.open(new JsonlLedgerStore(join(dataDir, 'credentials.jsonl'))),
+      idempotency: await IdempotencyStore.open(new JsonlLedgerStore(join(dataDir, 'idempotency.jsonl'))),
       gatekeeper: makeGatekeeper(gatekeeperConfigFromEnv()),
       chain: makeVaultChain(),
       signAuth: signSessionAuthorisation,
