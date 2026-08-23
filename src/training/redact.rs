@@ -46,6 +46,29 @@ pub fn opaque(context: &str, error: impl std::fmt::Display) -> String {
     format!("{context} (details are in the host log)")
 }
 
+/// Bound a FOREIGN error's text whose DIAGNOSIS sits at the end.
+///
+/// Round-9: serde renders `invalid type: string "<the whole value>", expected
+/// u32` and omits the field name entirely, so head-only truncation keeps the
+/// noise and throws away the only actionable part. That is the round-6
+/// over-suppression mistake in miniature: bounding is not an excuse to destroy
+/// diagnosability. Keeps both ends and never allocates a copy of the input.
+pub fn echo_error(value: &str) -> String {
+    let Some((head_end, _)) = value.char_indices().nth(64) else {
+        return value.to_string();
+    };
+    let tail_start = value
+        .char_indices()
+        .rev()
+        .nth(47)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    if tail_start <= head_end {
+        return value.to_string();
+    }
+    format!("{}…{}", &value[..head_end], &value[tail_start..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +82,24 @@ mod tests {
         assert!(out.ends_with('…'));
         // 64 MiB in, a bounded string out: the amplification is what matters.
         assert!(out.len() < 1024);
+    }
+
+    #[test]
+    fn echo_error_bounds_but_keeps_the_diagnosis_at_the_tail() {
+        // The exact shape serde produces, which is why this exists.
+        let long = format!("invalid type: string \"{}\", expected u32", "A".repeat(200_000));
+        let out = echo_error(&long);
+        assert!(out.len() < 512, "{} bytes", out.len());
+        assert!(out.starts_with("invalid type: string"), "{out}");
+        assert!(
+            out.ends_with("expected u32"),
+            "the diagnosis is at the TAIL; dropping it leaves the client nothing: {out}"
+        );
+        // Short input is returned whole.
+        assert_eq!(echo_error("expected u32"), "expected u32");
+        // Multi-byte at both cut points must not panic.
+        let wide = format!("{}|{}", "🙂".repeat(300), "🙂".repeat(300));
+        assert!(echo_error(&wide).len() < 1024);
     }
 
     #[test]

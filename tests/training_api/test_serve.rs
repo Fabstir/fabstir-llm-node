@@ -1878,3 +1878,151 @@ async fn a_different_job_still_clears_after_an_init_that_carried_no_job_id() {
          clobbered, and the socket is stranded refusing for its lifetime"
     );
 }
+
+/// T5.3 round-8 F-R8-5: the round-7 fix had no test that reached its own arm.
+///
+/// Round 7 added `(None, Some(_)) => true` so that a connection holding a
+/// `Required` adapter which never bound to a job could still be cleared by a
+/// later real job. Deleting that arm from both branches left all 147 rows
+/// green, because no row ever produced a `Required` with no job bound.
+///
+/// The only shape that does is a `lora` whose `jobId` does not parse: the key
+/// is minted, so the connection refuses, but staging fails with "serve-back
+/// needs a jobId" and nothing is ever bound. Without the arm, no later init on
+/// any job can clear it and the socket refuses for its lifetime.
+#[tokio::test]
+async fn an_adapter_that_never_bound_to_a_job_does_not_strand_the_socket() {
+    use fabstir_llm_node::api::server::ApiServer;
+    use fabstir_llm_node::crypto::{derive_shared_key, encrypt_with_aead};
+    use futures_util::{SinkExt, StreamExt};
+    use k256::ecdsa::{signature::Signer, SigningKey};
+    use k256::SecretKey;
+    use rand::rngs::OsRng;
+    use std::sync::Arc;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fx = super::support::fixture(None).await;
+    let afx = adapter_fixture(true, None).await;
+    let harness = super::support::make_deps(
+        &fx,
+        super::support::MockSessions {
+            snapshot: Ok(super::support::passing_snapshot()),
+            model: super::support::model_id(0xAA),
+            dispute: 30,
+        },
+        super::support::ScanBehaviour::Cleared,
+        super::support::CountBehaviour::Tokens(9),
+    );
+    let deps = Arc::new(harness.deps);
+
+    let node_secret = SecretKey::random(&mut OsRng);
+    let node_priv: [u8; 32] = node_secret.to_bytes().into();
+    let mut server = ApiServer::new_for_test();
+    server.set_node_private_key_for_test(node_priv);
+    let server = Arc::new(server);
+    server.set_training_deps(deps.clone()).await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let router = ApiServer::create_router(server.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let init = |inner: serde_json::Value| {
+        let client_secret = SecretKey::random(&mut OsRng);
+        let shared = derive_shared_key(
+            node_secret.public_key().to_sec1_bytes().as_ref(),
+            &client_secret.to_bytes(),
+        )
+        .unwrap();
+        let nonce = [8u8; 24];
+        let ciphertext =
+            encrypt_with_aead(inner.to_string().as_bytes(), &nonce, b"", &shared).unwrap();
+        let signature: k256::ecdsa::Signature = SigningKey::random(&mut OsRng).sign(&ciphertext);
+        let mut sig = [0u8; 65];
+        sig[..64].copy_from_slice(&signature.to_bytes());
+        serde_json::json!({
+            "type": "encrypted_session_init",
+            "session_id": "s",
+            "payload": {
+                "ephPubHex": format!("0x{}", hex::encode(client_secret.public_key().to_sec1_bytes())),
+                "ciphertextHex": format!("0x{}", hex::encode(&ciphertext)),
+                "nonceHex": format!("0x{}", hex::encode(nonce)),
+                "signatureHex": format!("0x{}", hex::encode(sig)),
+                "aadHex": "",
+            },
+        })
+        .to_string()
+    };
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/v1/ws"))
+        .await
+        .expect("connects");
+    let _welcome = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await;
+
+    // 1. A lora whose jobId does not parse to u64. The key is minted and the
+    //    connection refuses, but staging cannot bind it to a job.
+    ws.send(Message::Text(init(serde_json::json!({
+        "jobId": "",
+        "modelName": "qwen3.8-27b",
+        "sessionKey": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        "pricePerToken": 904,
+        "lora": {
+            "manifestCID": afx.manifest_cid,
+            "manifestSha256": afx.manifest_sha256,
+            "file": "adapter.gguf",
+        },
+    }))))
+    .await
+    .unwrap();
+
+    // 2. A real, parseable job with no lora. This must clear the refusal.
+    ws.send(Message::Text(init(serde_json::json!({
+        "jobId": "777",
+        "modelName": "qwen3.8-27b",
+        "sessionKey": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        "pricePerToken": 904,
+    }))))
+    .await
+    .unwrap();
+
+    ws.send(Message::Text(
+        serde_json::json!({
+            "type": "inference",
+            "id": "p7",
+            "request": { "model": "qwen3.8-27b", "prompt": "hi", "max_tokens": 4, "session_id": "s" },
+        })
+        .to_string(),
+    ))
+    .await
+    .unwrap();
+
+    let mut code = String::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        let Ok(Some(Ok(Message::Text(text)))) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), ws.next()).await
+        else {
+            break;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        if v["type"] == "error" {
+            let c = v["code"].as_str().unwrap_or_default().to_string();
+            // The staging failure for step 1 is expected and is not the answer.
+            if c == "LORA_STAGING_FAILED" {
+                continue;
+            }
+            code = c;
+            break;
+        }
+    }
+    assert_eq!(
+        code, "INFERENCE_FAILED",
+        "job 777 is a real, bindable session and must clear a refusal that was never \
+         bound to any job. LORA_NOT_STAGED here means the socket is stranded for its \
+         lifetime with no init able to recover it"
+    );
+}

@@ -131,8 +131,12 @@ pub async fn fetch_manifest(
         .map_err(|e| StageError::Transport(format!("manifest fetch: {e}")))?;
     let actual = sha256_hex(&bytes);
     if !hex_eq(&actual, expected_sha256_hex) {
+        // Round-8 F-R8-3: the dataset twin of the serve-back echo bounded in
+        // F-R7-5. `expected_sha256_hex` is the wire's `dataset.manifestSha256`,
+        // unbounded, and this is a whitelisted Integrity arm.
         return Err(StageError::Integrity(format!(
-            "manifestSha256 mismatch: stored bytes hash {actual}, wire claims {expected_sha256_hex}"
+            "manifestSha256 mismatch: stored bytes hash {actual}, wire claims {}",
+            crate::training::redact::echo(expected_sha256_hex)
         )));
     }
     let manifest: DatasetManifest = serde_json::from_slice(&bytes)

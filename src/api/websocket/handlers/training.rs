@@ -198,7 +198,18 @@ pub async fn handle_encrypted_train(
             return reject_only(TrainReject {
                 code: VALIDATION_FAILED,
                 reason: None,
-                detail: format!("train job failed validation: {e}"),
+                // Round-9 F-R9-1 (LIVE): serde renders `Unexpected::Str` with
+                // NO truncation, so any wire member of the wrong JSON type
+                // came straight back — measured at 200,066 bytes from a
+                // 200 KB input, bounded above only by tungstenite's 64 MiB
+                // default. This is the FIRST gate a malformed `train` hits:
+                // before both chain reads, before the attempt claim, before
+                // any funding is verified. The shortest path in the whole
+                // surface to the amplifier `redact.rs` was written to stop.
+                detail: format!(
+                    "train job failed validation: {}",
+                    crate::training::redact::echo_error(&e.to_string())
+                ),
                 declared_actual: None,
             })
         }
@@ -212,7 +223,13 @@ pub async fn handle_encrypted_train(
             let Ok(permit) = gpu_semaphore.try_acquire_owned() else {
                 let reject = TrainReject {
                     code: CAPACITY,
-                    reason: None,
+                    // Round-8 F-R8-4: the discriminator was landed on the five
+                    // CAPACITY rejects in `core.rs` and missed the two here.
+                    // Both of these CONSUME and zero-settle, so an SDK that
+                    // reads a reasonless CAPACITY as "safe, retry" retries a
+                    // session the node has already completed — the exact
+                    // failure the vocabulary exists to prevent.
+                    reason: Some("slotBusy"),
                     detail: "GPU busy (cross-workload exclusion)".to_string(),
                     declared_actual: None,
                 };
@@ -465,8 +482,14 @@ impl TrainTask {
                         ..
                     } if kind == "SLOT_BUSY" => TrainReject {
                         code: crate::training::core::CAPACITY,
-                        reason: None,
-                        detail: detail.clone(),
+                        reason: Some("slotBusy"),
+                        // Round-8 F-R8-4 (secondary): this echoed the sidecar's
+                        // envelope detail verbatim while the `other` arm three
+                        // lines below already used `opaque`.
+                        detail: crate::training::redact::opaque(
+                            "sidecar run slot busy",
+                            detail.clone(),
+                        ),
                         declared_actual: None,
                     },
                     other => TrainReject {

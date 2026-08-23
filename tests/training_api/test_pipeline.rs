@@ -229,6 +229,17 @@ async fn chain_read_failure_is_retryable_capacity_nothing_consumed() {
         reject.code, CAPACITY,
         "fail closed but RETRYABLE: {reject:?}"
     );
+    // Round-8 F-R8-6: the SDK BRANCHES on this. It treats an unknown reason as
+    // "session consumed, re-shop", against our written commitment that
+    // `chainUnavailable` is the only reason that ever means nothing was
+    // consumed. Inverting the vocabulary left the whole suite green, so an
+    // inversion here would strand a funded deposit until timeout with nothing
+    // failing. Assert the string, not just the code.
+    assert_eq!(
+        reject.reason,
+        Some("chainUnavailable"),
+        "a chain-read failure consumes and settles NOTHING: {reject:?}"
+    );
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     assert_eq!(
         h.completer.count(),
@@ -269,6 +280,9 @@ async fn same_address_second_session_is_capacity_while_first_runs() {
         .await
         .unwrap_err();
     assert_eq!(reject.code, CAPACITY, "{reject:?}");
+    // F-R8-6: this one IS funded and IS zero-completed, so it must NOT read as
+    // chainUnavailable. The two demand opposite client behaviour.
+    assert_eq!(reject.reason, Some("addressBusy"), "{reject:?}");
     for _ in 0..100 {
         if h.completer.count() > 0 {
             break;
@@ -375,6 +389,7 @@ async fn sidecar_slot_busy_at_accept_is_capacity_consumed_and_settled() {
         .await
         .unwrap_err();
     assert_eq!(reject.code, CAPACITY, "{reject:?}");
+    assert_eq!(reject.reason, Some("slotBusy"), "{reject:?}");
     assert!(reject.detail.contains("slot busy"), "{:?}", reject.detail);
     assert_eq!(settle_calls_after_wait(&h).await, 1);
 
@@ -456,4 +471,52 @@ async fn terminal_effects_twice_settle_exactly_once() {
     // Settle-due is already past; give a duplicate every chance to fire too.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(h.completer.count(), 1, "exactly one settle per session");
+}
+
+/// T5.3 round-9 F-R9-2: the FIFTH echo in `validate_against_template`, five
+/// lines below one that round 8 bounded, on the SAME field.
+///
+/// `lr_is_canonical` imposes no length bound (ASCII digits with at most one
+/// interior dot), so a 200,000-digit `lr` is canonical, passes the earlier
+/// gate, and lands in the pinned-list arm. This runs at accept step 3 — after
+/// the chain reads but BEFORE the attempt claim and before the A.3 gates — so
+/// no funding has been verified when it echoes.
+///
+/// Only reachable when a template pins `method.lrs`, which the sidecar supports
+/// and enforces, and which the default harness leaves as None. That is why
+/// four rounds of sweeping for this class walked past it.
+#[tokio::test]
+async fn a_long_lr_is_not_echoed_whole_when_the_template_pins_a_list() {
+    let fx = fixture(None).await;
+    let mut h = make_deps(
+        &fx,
+        MockSessions {
+            snapshot: Ok(passing_snapshot()),
+            model: model_id(0xAA),
+            dispute: 30,
+        },
+        ScanBehaviour::Cleared,
+        CountBehaviour::Tokens(9),
+    );
+    // A template that pins its learning rates, which the default fixture does
+    // not. Without this the arm is unreachable and the row proves nothing.
+    h.deps.template.lrs = Some(vec!["0.0002".to_string()]);
+
+    let mut job = fx.job.clone();
+    job.hyper.lr = "0".repeat(200_000);
+
+    let reject = accept_and_prepare(&h.deps, 205, &job, NOW)
+        .await
+        .unwrap_err();
+    assert_eq!(reject.code, VALIDATION_FAILED, "{}", reject.code);
+    assert!(
+        reject.detail.len() < 1024,
+        "the reject echoed {} bytes back before any funding was verified",
+        reject.detail.len()
+    );
+    assert!(
+        reject.detail.contains("pinned list"),
+        "the bound must not cost the reason: {}",
+        reject.detail
+    );
 }

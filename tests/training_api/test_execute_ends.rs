@@ -286,6 +286,9 @@ async fn train_open_failure_consumes_settles_and_sends_the_terminal_last() {
         terminal["error"]["code"], "CAPACITY",
         "SLOT_BUSY → CAPACITY (§3.7)"
     );
+    // Round-9 F-R9-3, as in the GPU-busy row: this is consumed and
+    // zero-completed, so it must not read as retry-safe to the SDK.
+    assert_eq!(terminal["error"]["detail"]["reason"], "slotBusy");
     // Progress frames DID flow before it (so "last" is a real ordering claim).
     assert!(
         out.frames.iter().any(|f| f["type"] == "train_progress"),

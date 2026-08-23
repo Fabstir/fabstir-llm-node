@@ -270,7 +270,13 @@ fn map_sidecar(failure: SidecarFailure, leg: &str) -> TrainReject {
                 SIDECAR_UNAVAILABLE,
                 None,
                 crate::training::redact::opaque(
-                    &format!("sidecar {leg} rejected ({other}) — deployment fault, operator alert"),
+                    // Round-8 F-R8-8: `other` is an arbitrary envelope kind
+                    // from the sidecar, so it is bounded even here — the
+                    // context half of `opaque` is the half that IS echoed.
+                    &format!(
+                        "sidecar {leg} rejected ({}) — deployment fault, operator alert",
+                        crate::training::redact::echo(other)
+                    ),
                     detail,
                 ),
             ),
@@ -335,7 +341,14 @@ fn validate_against_template(
 ) -> Result<u64, TrainReject> {
     let fail = |detail: String| Err(TrainReject::new(VALIDATION_FAILED, None, detail));
     if job.template_id != template.template_id {
-        return fail(format!("unknown templateId {:?}", job.template_id));
+        // Round-8 F-R8-2: these four are raw wire strings echoed at accept
+        // step 3, BEFORE the A.3 gates, so no funding has been verified. With
+        // no `max_message_size` set, `{:?}` on a 64 MiB String roughly doubles
+        // it — the amplifier `redact.rs`'s own docstring describes.
+        return fail(format!(
+            "unknown templateId {:?}",
+            crate::training::redact::echo(&job.template_id)
+        ));
     }
     if !job
         .template_hash
@@ -343,7 +356,8 @@ fn validate_against_template(
     {
         return fail(format!(
             "templateHash mismatch: wire {} vs pinned {}",
-            job.template_hash, template.template_hash
+            crate::training::redact::echo(&job.template_hash),
+            template.template_hash
         ));
     }
     if !template.ranks.contains(&job.hyper.rank) {
@@ -371,18 +385,29 @@ fn validate_against_template(
         ));
     }
     if !job.hyper.lr_is_canonical() {
-        return fail(format!("lr {:?} is not canonical decimal", job.hyper.lr));
+        return fail(format!(
+            "lr {:?} is not canonical decimal",
+            crate::training::redact::echo(&job.hyper.lr)
+        ));
     }
     if let Some(lrs) = &template.lrs {
         if !lrs.contains(&job.hyper.lr) {
+            // Round-9 F-R9-2: the FIFTH echo in this function, five lines
+            // below one F-R8-2 bounded, on the SAME field. `lr_is_canonical`
+            // imposes no length bound, so a 200,000-digit lr is canonical and
+            // lands here. Live wherever a template pins `method.lrs`, which
+            // the sidecar supports and enforces.
             return fail(format!(
                 "lr {:?} not in the template's pinned list",
-                job.hyper.lr
+                crate::training::redact::echo(&job.hyper.lr)
             ));
         }
     }
     if job.output != "adapter-v1" {
-        return fail(format!("output {:?} is not adapter-v1", job.output));
+        return fail(format!(
+            "output {:?} is not adapter-v1",
+            crate::training::redact::echo(&job.output)
+        ));
     }
     let Some(total) =
         crate::training::schedule::training_tokens(job.dataset.declared_tokens, job.epochs)
@@ -733,7 +758,10 @@ async fn dataset_body(
             return Err(TrainReject::new(
                 SIDECAR_UNAVAILABLE,
                 None,
-                format!("unrecognised scan verdict {other:?} (version skew)"),
+                format!(
+                    "unrecognised scan verdict {:?} (version skew)",
+                    crate::training::redact::echo(other)
+                ),
             ));
         }
     }
@@ -1370,7 +1398,7 @@ pub async fn run_training_session(
                                 job_id,
                                 &accepted.snapshot,
                                 now_secs,
-                                format!("slice settle failed: {e}"),
+                                crate::training::redact::opaque("slice settle failed", e),
                                 Some(manifest),
                             )
                             .await
@@ -1402,7 +1430,7 @@ pub async fn run_training_session(
                                 job_id,
                                 &accepted.snapshot,
                                 now_secs,
-                                format!("adapter upload failed: {e}"),
+                                crate::training::redact::opaque("adapter upload failed", e),
                                 last_checkpoint,
                             )
                             .await
@@ -1463,7 +1491,7 @@ pub async fn run_training_session(
                             job_id,
                             &accepted.snapshot,
                             now_secs,
-                            format!("final slice settle failed: {e}"),
+                            crate::training::redact::opaque("final slice settle failed", e),
                             Some(adapter),
                         )
                         .await
@@ -1521,7 +1549,10 @@ pub async fn run_training_session(
                     &accepted.snapshot,
                     now_secs,
                     crate::training::redact::opaque(
-                        &format!("sidecar terminal {kind}"),
+                        &format!(
+                        "sidecar terminal {}",
+                        crate::training::redact::echo(&kind)
+                    ),
                         detail,
                     ),
                     last_checkpoint,
@@ -1534,7 +1565,12 @@ pub async fn run_training_session(
                     job_id,
                     &accepted.snapshot,
                     now_secs,
-                    detail,
+                    // Round-8 F-R8-1: this arm echoed the transport detail
+                    // verbatim three lines below an Envelope arm that already
+                    // redacted it. `Transport` carries the sidecar's raw
+                    // stream line, which for a framework traceback is this
+                    // node's absolute install paths.
+                    crate::training::redact::opaque("sidecar stream failed", detail),
                     last_checkpoint,
                 )
                 .await;

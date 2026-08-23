@@ -216,6 +216,11 @@ async fn gpu_busy_is_capacity_and_consumes_the_session_per_c3() {
     assert!(task.is_none());
     let inner = decrypt_envelope(&envelope);
     assert_eq!(inner["error"]["code"], "CAPACITY");
+    // Round-9 F-R9-3: the round-8 discriminator landed here unpinned — setting
+    // this back to None left the whole suite green. A GPU-busy reject is
+    // funded, consumed and zero-completed, so an SDK reading a reasonless
+    // CAPACITY as retry-safe would retry a session the node has completed.
+    assert_eq!(inner["error"]["detail"]["reason"], "slotBusy");
     // The session is consumed + its zero-settle scheduled.
     for _ in 0..100 {
         if h.completer.count() > 0 {
@@ -274,4 +279,63 @@ async fn a3_reject_reason_flows_to_the_error_detail() {
     let inner = decrypt_envelope(&envelope);
     assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
     assert_eq!(inner["error"]["detail"]["reason"], "sessionParams");
+}
+
+/// T5.3 round-9 F-R9-1 (LIVE): the A.1 serde surface echoed the entire
+/// offending client string back to the client.
+///
+/// `serde` renders `Unexpected::Str` with NO truncation, so any wire member of
+/// the wrong JSON type came straight back. Measured at 200,066 bytes from a
+/// 200 KB input, and the socket sets no `max_message_size`, so the ceiling was
+/// tungstenite's 64 MiB default; the node then multiplied it through the
+/// format, the json, the encrypt and two hex encodes.
+///
+/// This is the FIRST gate a malformed `train` hits: before both chain reads,
+/// before the attempt claim, before any funding is verified. It is the
+/// shortest path in the whole surface to the amplifier `redact.rs` exists to
+/// stop, and it survived three rounds of sweeping for exactly this class.
+#[tokio::test]
+async fn a_malformed_train_job_does_not_echo_the_whole_offending_string() {
+    let fx = fixture(None).await;
+    let h = make_deps(
+        &fx,
+        good_sessions(),
+        ScanBehaviour::Cleared,
+        CountBehaviour::Tokens(9),
+    );
+    let deps = Arc::new(h.deps);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
+    let mut action = train_action(&fx.job);
+    // A wire member of the wrong JSON type, 200 KB of it.
+    action["epochs"] = json!("A".repeat(200_000));
+
+    let (envelope, task) = handle_encrypted_train(
+        Some(deps.clone()),
+        semaphore.clone(),
+        3,
+        &action,
+        &SESSION_KEY,
+        "ws-session-1",
+        Some(500),
+        Some(&json!(11)),
+        NOW,
+    )
+    .await;
+    assert!(task.is_none(), "a malformed job must not spawn work");
+    let inner = decrypt_envelope(&envelope);
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED", "{inner}");
+    let message = inner["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.len() < 1024,
+        "the reject echoed {} bytes back to the client; it must be bounded",
+        message.len()
+    );
+    // Bounding must not destroy diagnosability. serde puts the diagnosis at
+    // the TAIL ("expected u32") and omits the field name entirely, so a
+    // head-only truncation would keep 96 bytes of the attacker's padding and
+    // throw away the only actionable part.
+    assert!(
+        message.contains("expected u32"),
+        "the bound kept the noise and dropped the diagnosis: {message}"
+    );
 }
