@@ -1,0 +1,34 @@
+{
+  "_note": "Interface B.5. sigDigest = keccak256(abi.encode(digestTypes/values)); signature = EIP-191 personal_sign of the 32 digest bytes by the throwaway vector key (hardhat #0 — public test key, never funds). Recover: verifyMessage(getBytes(sigDigest), signature) === host. PLACEHOLDERS: templateHash, envHash (keccak of \"envHash@vector-placeholder\" — the REAL M0 envHash is the LTX empty-environment constant, a DIFFERENT value; never pin this one), checkpointManifestSha256 (0x77…). sessionId NOTE: shown here as the JSON number 12345 for the uint256 digest input; a real B.3 attestation carries sessionId as a 0x-hex STRING (\"0x3039\" for this value) per the wire ground rules — parse it to uint256 before encoding.",
+  "digestTypes": [
+    "bytes32",
+    "bytes32",
+    "bytes32",
+    "bytes32",
+    "bytes32",
+    "uint256",
+    "uint256",
+    "uint256",
+    "address",
+    "uint256"
+  ],
+  "values": {
+    "modelId": "0xa447563341bff3b9bc8a3ad94b874e8724a1892451d576f9575da64b05ea8215",
+    "templateHash": "0x2bbb01933e54dc04fb60a234a5431ad6c5587e037e6c32afafc3c032da9ff869",
+    "envHash": "0x7c989259aa33be8ebddff7ddcc7ec75eacc52f9530594d0e238eee08e5b477f7",
+    "inputCommitment": "0xe46b925a961793a8551cebec2604f2087ceb7fb2f0adcdb175eda1a4900b5102",
+    "checkpointManifestSha256": "0x7777777777777777777777777777777777777777777777777777777777777777",
+    "sliceIndex": 0,
+    "tokensDelta": 1000000,
+    "sessionId": 12345,
+    "host": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "timestamp": 1790000000
+  },
+  "abiEncoded": "0xa447563341bff3b9bc8a3ad94b874e8724a1892451d576f9575da64b05ea82152bbb01933e54dc04fb60a234a5431ad6c5587e037e6c32afafc3c032da9ff8697c989259aa33be8ebddff7ddcc7ec75eacc52f9530594d0e238eee08e5b477f7e46b925a961793a8551cebec2604f2087ceb7fb2f0adcdb175eda1a4900b51027777777777777777777777777777777777777777777777777777777777777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f42400000000000000000000000000000000000000000000000000000000000003039000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266000000000000000000000000000000000000000000000000000000006ab13b80",
+  "sigDigest": "0x831359efed888c2f3c327dcd2a6e1762054f3a7510316fb41e491b07d5c925f8",
+  "signer": {
+    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "privateKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  },
+  "signature": "0x2ebc0cea7656b2833c3b3e510fdbdbdfee7c18f978888c03230c37da6fb9eb8231b51a82725478a73df495afab54853d78a109b5c82648dd5a2c9c3a4fd9d8c31b"
+}

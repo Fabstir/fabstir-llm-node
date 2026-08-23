@@ -1,0 +1,30 @@
+{
+  "_note": "Interface C.1 at sample pricePerToken 904 (the registered price is set at T7). gross = floor(tokens*price/1000); deposit = max(500000, ceil(gross*1.05)) computed as (gross*105+99)/100. Four cases: worked (divides evenly), roundingBites (floor AND ceil both bite — 949,248 vs a floored 949,247), roundVsFloor (gross fraction .912 — a round-to-nearest gross gives 904,048, floor gives 904,047), minFloorBinds (the 0.5 USDC floor decides).",
+  "minDepositMicroUsdc": 500000,
+  "cases": {
+    "worked": {
+      "trainingTokens": 9600000,
+      "pricePerToken": 904,
+      "grossMicroUsdc": 8678400,
+      "depositMicroUsdc": 9112320
+    },
+    "roundingBites": {
+      "trainingTokens": 1000050,
+      "pricePerToken": 904,
+      "grossMicroUsdc": 904045,
+      "depositMicroUsdc": 949248
+    },
+    "roundVsFloor": {
+      "trainingTokens": 1000053,
+      "pricePerToken": 904,
+      "grossMicroUsdc": 904047,
+      "depositMicroUsdc": 949250
+    },
+    "minFloorBinds": {
+      "trainingTokens": 10000,
+      "pricePerToken": 904,
+      "grossMicroUsdc": 9040,
+      "depositMicroUsdc": 500000
+    }
+  }
+}

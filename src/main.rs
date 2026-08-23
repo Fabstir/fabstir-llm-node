@@ -609,6 +609,10 @@ async fn main() -> Result<()> {
         println!("   To enable payments, set HOST_PRIVATE_KEY environment variable");
     }
 
+    // Training M0 (T4.5): gated on TRAIN_ENABLED; needs the checkpoint
+    // manager above for chain reads/settles.
+    fabstir_llm_node::training::chain::wire_training_from_env(&api_server).await;
+
     // The API server is already running in the background (started in new())
     // We don't need to call run() or spawn a task
 

@@ -1,0 +1,35 @@
+{
+  "_note": "Interface B.4. abiEncoded = abi.encode over commitTypes/values; inputCommitment = keccak256(abiEncoded). lr is committed byte-for-byte as sent (trailing zeros deliberate); seed = 2^64+13 (> u64::MAX AND float-lossy — deliberately NOT a power of two). PLACEHOLDERS: templateHash (real one arrives with the T1.4 template), tokenizerSha256, all CIDs, shard sha256s. REAL: datasetManifestSha256 (= manifests.json dataset), declaredTokens/epochs (= slice-schedule worked case), and the registry modelId in sig-digest.json.",
+  "job": {
+    "templateId": "train-qlora-qwen38-27b-v1",
+    "templateHash": "0x2bbb01933e54dc04fb60a234a5431ad6c5587e037e6c32afafc3c032da9ff869",
+    "dataset": {
+      "manifestCID": "uVECTORDATASETMANIFESTPLACEHOLDER000000000000000000",
+      "manifestSha256": "0x76017ee02ab35f5a824aa6bbb50815a9892a5d337a0b482e1c8b924688a1aff7",
+      "declaredTokens": 3200000,
+      "samples": 5000
+    },
+    "epochs": 3,
+    "hyper": {
+      "rank": 16,
+      "alpha": 32,
+      "lr": "0.000200",
+      "seed": "18446744073709551629",
+      "seqLen": 2048
+    },
+    "output": "adapter-v1"
+  },
+  "commitTypes": [
+    "bytes32",
+    "bytes32",
+    "uint256",
+    "uint32",
+    "uint32",
+    "uint32",
+    "string",
+    "uint256",
+    "uint32"
+  ],
+  "abiEncoded": "0x2bbb01933e54dc04fb60a234a5431ad6c5587e037e6c32afafc3c032da9ff86976017ee02ab35f5a824aa6bbb50815a9892a5d337a0b482e1c8b924688a1aff7000000000000000000000000000000000000000000000000000000000030d4000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000001000000000000000d00000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000008302e303030323030000000000000000000000000000000000000000000000000",
+  "inputCommitment": "0xe46b925a961793a8551cebec2604f2087ceb7fb2f0adcdb175eda1a4900b5102"
+}

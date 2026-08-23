@@ -1,0 +1,136 @@
+{
+  "_note": "Interface D.2/D.3. canonicalBytes = recursively-key-sorted compact UTF-8 JSON; manifestSha256 = SHA256(exact canonical bytes). The STORED manifest bytes must equal canonicalBytes (verify fetched manifests by hashing RAW bytes, never by re-canonicalising). Sizes respect D.1: non-final shards exactly 25,161,728; shiftedRemainder pins the exact-multiple branch — remainder 524,288 (= 2×262,144) splits into 524,287 + 1.",
+  "dataset": {
+    "object": {
+      "schema": "dataset-manifest-v1",
+      "format": "jsonl-text-v1",
+      "countingRecipe": "count-v1",
+      "tokenizerSha256": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "samples": 5000,
+      "declaredTokens": 3200000,
+      "totalBytes": 18900000,
+      "shards": [
+        {
+          "cid": "uVECTORDATASETSHARD0PLACEHOLDER0000000000000000000",
+          "sha256": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "sizeBytes": 18900000
+        }
+      ]
+    },
+    "canonicalBytes": "{\"countingRecipe\":\"count-v1\",\"declaredTokens\":3200000,\"format\":\"jsonl-text-v1\",\"samples\":5000,\"schema\":\"dataset-manifest-v1\",\"shards\":[{\"cid\":\"uVECTORDATASETSHARD0PLACEHOLDER0000000000000000000\",\"sha256\":\"0x2222222222222222222222222222222222222222222222222222222222222222\",\"sizeBytes\":18900000}],\"tokenizerSha256\":\"0x1111111111111111111111111111111111111111111111111111111111111111\",\"totalBytes\":18900000}",
+    "manifestSha256": "0x76017ee02ab35f5a824aa6bbb50815a9892a5d337a0b482e1c8b924688a1aff7"
+  },
+  "adapter": {
+    "object": {
+      "schema": "artifact-manifest-v1",
+      "kind": "adapter",
+      "files": [
+        {
+          "name": "adapter_model.safetensors",
+          "sha256": "0x3333333333333333333333333333333333333333333333333333333333333333",
+          "sizeBytes": 167772160,
+          "shards": [
+            {
+              "cid": "uVECTORADPTSHARD0PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4444444444444444444444444444444444444444444444444444444444444444",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORADPTSHARD1PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4545454545454545454545454545454545454545454545454545454545454545",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORADPTSHARD2PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4646464646464646464646464646464646464646464646464646464646464646",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORADPTSHARD3PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4747474747474747474747474747474747474747474747474747474747474747",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORADPTSHARD4PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4848484848484848484848484848484848484848484848484848484848484848",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORADPTSHARD5PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4949494949494949494949494949494949494949494949494949494949494949",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORADPTSHARD6PLACEHOLDER00000000000000000000000",
+              "sha256": "0x4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a",
+              "sizeBytes": 16801792
+            }
+          ]
+        },
+        {
+          "name": "adapter.gguf",
+          "sha256": "0x5555555555555555555555555555555555555555555555555555555555555555",
+          "sizeBytes": 90000000,
+          "shards": [
+            {
+              "cid": "uVECTORGGUFSHARD0PLACEHOLDER00000000000000000000000",
+              "sha256": "0x6666666666666666666666666666666666666666666666666666666666666666",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORGGUFSHARD1PLACEHOLDER00000000000000000000000",
+              "sha256": "0x6767676767676767676767676767676767676767676767676767676767676767",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORGGUFSHARD2PLACEHOLDER00000000000000000000000",
+              "sha256": "0x6868686868686868686868686868686868686868686868686868686868686868",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORGGUFSHARD3PLACEHOLDER00000000000000000000000",
+              "sha256": "0x6969696969696969696969696969696969696969696969696969696969696969",
+              "sizeBytes": 14514816
+            }
+          ]
+        }
+      ]
+    },
+    "canonicalBytes": "{\"files\":[{\"name\":\"adapter_model.safetensors\",\"sha256\":\"0x3333333333333333333333333333333333333333333333333333333333333333\",\"shards\":[{\"cid\":\"uVECTORADPTSHARD0PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4444444444444444444444444444444444444444444444444444444444444444\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORADPTSHARD1PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4545454545454545454545454545454545454545454545454545454545454545\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORADPTSHARD2PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4646464646464646464646464646464646464646464646464646464646464646\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORADPTSHARD3PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4747474747474747474747474747474747474747474747474747474747474747\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORADPTSHARD4PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4848484848484848484848484848484848484848484848484848484848484848\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORADPTSHARD5PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4949494949494949494949494949494949494949494949494949494949494949\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORADPTSHARD6PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a\",\"sizeBytes\":16801792}],\"sizeBytes\":167772160},{\"name\":\"adapter.gguf\",\"sha256\":\"0x5555555555555555555555555555555555555555555555555555555555555555\",\"shards\":[{\"cid\":\"uVECTORGGUFSHARD0PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x6666666666666666666666666666666666666666666666666666666666666666\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORGGUFSHARD1PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x6767676767676767676767676767676767676767676767676767676767676767\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORGGUFSHARD2PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x6868686868686868686868686868686868686868686868686868686868686868\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORGGUFSHARD3PLACEHOLDER00000000000000000000000\",\"sha256\":\"0x6969696969696969696969696969696969696969696969696969696969696969\",\"sizeBytes\":14514816}],\"sizeBytes\":90000000}],\"kind\":\"adapter\",\"schema\":\"artifact-manifest-v1\"}",
+    "manifestSha256": "0x116997eda9028fa0c26f74ff9fc052fb1f388baeecf4f51fe852434792358166"
+  },
+  "shiftedRemainder": {
+    "_note": "File list abbreviated to the splitter-relevant file; a REAL checkpoint manifest also carries adapter_model.safetensors + trainer_state.json (D.3) — this entry pins the D.1 splitter branch, not the full checkpoint shape.",
+    "object": {
+      "schema": "artifact-manifest-v1",
+      "kind": "checkpoint",
+      "sliceIndex": 4,
+      "files": [
+        {
+          "name": "optimizer.bin",
+          "sha256": "0x8888888888888888888888888888888888888888888888888888888888888888",
+          "sizeBytes": 25686016,
+          "shards": [
+            {
+              "cid": "uVECTORSHIFTSHARD0PLACEHOLDER0000000000000000000000",
+              "sha256": "0x9999999999999999999999999999999999999999999999999999999999999999",
+              "sizeBytes": 25161728
+            },
+            {
+              "cid": "uVECTORSHIFTSHARD1PLACEHOLDER0000000000000000000000",
+              "sha256": "0x9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+              "sizeBytes": 524287
+            },
+            {
+              "cid": "uVECTORSHIFTSHARD2PLACEHOLDER0000000000000000000000",
+              "sha256": "0x9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b",
+              "sizeBytes": 1
+            }
+          ]
+        }
+      ]
+    },
+    "canonicalBytes": "{\"files\":[{\"name\":\"optimizer.bin\",\"sha256\":\"0x8888888888888888888888888888888888888888888888888888888888888888\",\"shards\":[{\"cid\":\"uVECTORSHIFTSHARD0PLACEHOLDER0000000000000000000000\",\"sha256\":\"0x9999999999999999999999999999999999999999999999999999999999999999\",\"sizeBytes\":25161728},{\"cid\":\"uVECTORSHIFTSHARD1PLACEHOLDER0000000000000000000000\",\"sha256\":\"0x9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\",\"sizeBytes\":524287},{\"cid\":\"uVECTORSHIFTSHARD2PLACEHOLDER0000000000000000000000\",\"sha256\":\"0x9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b\",\"sizeBytes\":1}],\"sizeBytes\":25686016}],\"kind\":\"checkpoint\",\"schema\":\"artifact-manifest-v1\",\"sliceIndex\":4}",
+    "manifestSha256": "0x484edf20402c140910d6bce03b947f9fa3c5f221f9d3827e982d350f596b4c5c"
+  }
+}

@@ -34,6 +34,7 @@ pub mod search;
 pub mod settlement;
 pub mod storage;
 pub mod tee;
+pub mod training;
 pub mod transcoder;
 pub mod utils;
 pub mod vector;

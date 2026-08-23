@@ -9,6 +9,7 @@ pub mod rag;
 pub mod response;
 pub mod session_init;
 pub mod session_resume;
+pub mod training;
 pub mod transcode;
 
 use super::messages::{ErrorCode, WebSocketMessage};

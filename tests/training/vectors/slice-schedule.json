@@ -1,0 +1,54 @@
+{
+  "_note": "Interface B.1 floor rule: slices = max(1, floor(total/sliceTokens)); last slice absorbs the remainder. Every delta >= min(total, sliceTokens) >= 10000.",
+  "cases": {
+    "worked": {
+      "declaredTokens": 3200000,
+      "epochs": 3,
+      "sliceTokens": 1000000,
+      "totalTokens": 9600000,
+      "slices": 9,
+      "deltas": [
+        1000000,
+        1000000,
+        1000000,
+        1000000,
+        1000000,
+        1000000,
+        1000000,
+        1000000,
+        1600000
+      ]
+    },
+    "remainderFree": {
+      "declaredTokens": 1000000,
+      "epochs": 2,
+      "sliceTokens": 1000000,
+      "totalTokens": 2000000,
+      "slices": 2,
+      "deltas": [
+        1000000,
+        1000000
+      ]
+    },
+    "tinyRemainder": {
+      "declaredTokens": 333350,
+      "epochs": 3,
+      "sliceTokens": 1000000,
+      "totalTokens": 1000050,
+      "slices": 1,
+      "deltas": [
+        1000050
+      ]
+    },
+    "subSliceTokens": {
+      "declaredTokens": 10000,
+      "epochs": 1,
+      "sliceTokens": 1000000,
+      "totalTokens": 10000,
+      "slices": 1,
+      "deltas": [
+        10000
+      ]
+    }
+  }
+}
