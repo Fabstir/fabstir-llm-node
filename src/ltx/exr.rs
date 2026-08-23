@@ -301,9 +301,7 @@ pub fn colour_encoding_for(job: &LtxJob) -> &'static str {
         // SCENE-LINEAR with values above 1.0 (the HDR reconstruction is the
         // point) — every other template delivers linearised display-referred
         // content. The manifest must say which, so graders trust the label.
-        OutputKind::ExrFrames if job.template_id == "ltx-sdr2hdr-hdr" => {
-            "scene-linear-rec709"
-        }
+        OutputKind::ExrFrames if job.template_id == "ltx-sdr2hdr-hdr" => "scene-linear-rec709",
         OutputKind::ExrFrames => "linear-rec709",
         OutputKind::ExrSequence => COLOUR_ENCODING,
     }

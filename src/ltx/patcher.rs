@@ -228,7 +228,12 @@ pub const DEEP_INPUT_CAPABLE: &[&str] = &[
 /// never-overwrite-a-connection guarantee is load-bearing — but the sanctioned
 /// deep swap exists precisely to replace loader links, and only after the
 /// census proved every one of them matches an explicit rule.
-fn force_input(graph: &mut Map<String, Value>, node_id: &str, key: &str, value: Value) -> Result<()> {
+fn force_input(
+    graph: &mut Map<String, Value>,
+    node_id: &str,
+    key: &str,
+    value: Value,
+) -> Result<()> {
     let inputs = graph
         .get_mut(node_id)
         .and_then(|n| n.get_mut("inputs"))

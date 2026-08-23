@@ -24,24 +24,41 @@ fn count_honours_the_conform_plus_minus_one() {
     // The job bills fps*d + 1; a content-true conform carries fps*d — the
     // SAME tolerance the mp4 path has always had (caught live: a 9 s render
     // conformed 216 frames against 217 billed and was wrongly refused).
-    assert!(parse_deep_manifest(&manifest(216), 217).is_ok(), "billed-1 accepted");
-    assert!(parse_deep_manifest(&manifest(217), 217).is_ok(), "exact accepted");
+    assert!(
+        parse_deep_manifest(&manifest(216), 217).is_ok(),
+        "billed-1 accepted"
+    );
+    assert!(
+        parse_deep_manifest(&manifest(217), 217).is_ok(),
+        "exact accepted"
+    );
     let err = parse_deep_manifest(&manifest(215), 217).unwrap_err();
-    assert!(err.contains("lists 215") && err.contains("bills 217"), "{err}");
+    assert!(
+        err.contains("lists 215") && err.contains("bills 217"),
+        "{err}"
+    );
     let err = parse_deep_manifest(&manifest(218), 217).unwrap_err();
     assert!(err.contains("lists 218"), "{err}");
 }
 
 #[test]
 fn rejects_junk_json_duplicates_and_empty_cids() {
-    assert!(parse_deep_manifest(b"not json", 1).unwrap_err().contains("not valid JSON"));
-    assert!(parse_deep_manifest(b"{}", 1).unwrap_err().contains("not valid JSON"));
+    assert!(parse_deep_manifest(b"not json", 1)
+        .unwrap_err()
+        .contains("not valid JSON"));
+    assert!(parse_deep_manifest(b"{}", 1)
+        .unwrap_err()
+        .contains("not valid JSON"));
 
     let dup = serde_json::to_vec(&serde_json::json!({ "deepFrames": ["uA", "uA"] })).unwrap();
-    assert!(parse_deep_manifest(&dup, 2).unwrap_err().contains("repeats"));
+    assert!(parse_deep_manifest(&dup, 2)
+        .unwrap_err()
+        .contains("repeats"));
 
     let empty = serde_json::to_vec(&serde_json::json!({ "deepFrames": ["uA", ""] })).unwrap();
-    assert!(parse_deep_manifest(&empty, 2).unwrap_err().contains("empty CID"));
+    assert!(parse_deep_manifest(&empty, 2)
+        .unwrap_err()
+        .contains("empty CID"));
 }
 
 #[test]
@@ -50,7 +67,9 @@ fn per_frame_gate_rejects_non_exr_and_oversize() {
     good.extend_from_slice(&[0u8; 64]);
     assert!(check_deep_frame(0, &good).is_ok());
 
-    assert!(check_deep_frame(3, b"not an exr").unwrap_err().contains("frame 3"));
+    assert!(check_deep_frame(3, b"not an exr")
+        .unwrap_err()
+        .contains("frame 3"));
 
     // an oversize frame fails without allocating one: size check uses len()
     let mut big = EXR_MAGIC.to_vec();

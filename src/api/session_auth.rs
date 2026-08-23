@@ -22,8 +22,8 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
-use tracing::info;
 use tiny_keccak::{Hasher, Keccak};
+use tracing::info;
 
 use super::server::ApiServer;
 
@@ -287,7 +287,9 @@ mod tests {
         let other = "0x1df87d191b3dd4dfdf846751f80c03a2bc83dd2e";
         let signers = vec![AUTH_ADDRESS.to_string(), other.to_string()];
         assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(AUTH_ADDRESS)));
-        assert!(signers.iter().any(|a| a.eq_ignore_ascii_case(&other.to_uppercase())));
+        assert!(signers
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(&other.to_uppercase())));
         // An unlisted signer is still refused, which is the whole point.
         assert!(!signers
             .iter()
@@ -348,11 +350,15 @@ mod tests {
         };
         let backoff = std::time::Duration::from_millis(1);
         assert_eq!(
-            resolve_depositor(42, &cache, fetch, 3, backoff).await.unwrap(),
+            resolve_depositor(42, &cache, fetch, 3, backoff)
+                .await
+                .unwrap(),
             VAULT
         );
         assert_eq!(
-            resolve_depositor(42, &cache, fetch, 3, backoff).await.unwrap(),
+            resolve_depositor(42, &cache, fetch, 3, backoff)
+                .await
+                .unwrap(),
             VAULT
         );
         // Second call served from cache: the depositor is immutable, so this

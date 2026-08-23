@@ -1120,7 +1120,6 @@ fn test_frame_count_handle_binds_billed_to_loaded_and_rendered() {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // A2 — EXR masters (2026-08-10): the "exr_output" RadianceSaveEXR sink rides
 // every pinned template; removed for legacy jobs, required for `exr-frames`.
@@ -1143,16 +1142,27 @@ fn test_exr_output_kept_and_required_for_exr_frames() {
     let sinks = nodes_by_class(&patched, "RadianceDigitalCinemaWrite");
     assert_eq!(sinks.len(), 1, "exr-frames keeps the pinned EXR sink");
     assert_eq!(
-        sinks[0].pointer("/inputs/bit_depth").unwrap().as_str().unwrap(),
+        sinks[0]
+            .pointer("/inputs/bit_depth")
+            .unwrap()
+            .as_str()
+            .unwrap(),
         "16-bit Half Float"
     );
 
     // fail closed on a template with no sink
     let mut g = fixture_graph();
-    let ids: Vec<String> = g.0.as_object().unwrap().iter()
+    let ids: Vec<String> = g
+        .0
+        .as_object()
+        .unwrap()
+        .iter()
         .filter(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some("exr_output"))
-        .map(|(id, _)| id.clone()).collect();
-    for id in ids { g.0.as_object_mut().unwrap().remove(&id); }
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in ids {
+        g.0.as_object_mut().unwrap().remove(&id);
+    }
     let err = patch(&g, &j, &[], &[]).unwrap_err().to_string();
     assert!(err.contains("no exr_output"), "got: {err}");
 }
@@ -1169,7 +1179,13 @@ fn deep_job(id: &str) -> LtxJob {
 #[test]
 fn deep_swap_replaces_loader_and_every_known_chain() {
     let job = deep_job("ltx-edit-hdr");
-    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let g = patch(
+        &bl4_graph("ltx-edit-hdr"),
+        &job,
+        &[],
+        &["cafebabe".to_string()],
+    )
+    .unwrap();
     let obj = g.0.as_object().unwrap();
 
     // The loader id (10) now carries the float sequence reader, globbing the
@@ -1180,11 +1196,15 @@ fn deep_swap_replaces_loader_and_every_known_chain() {
         Some("RadianceDigitalCinemaRead")
     );
     assert_eq!(
-        loader.pointer("/inputs/source_path").and_then(Value::as_str),
+        loader
+            .pointer("/inputs/source_path")
+            .and_then(Value::as_str),
         Some("cafebabe")
     );
     assert_eq!(
-        loader.pointer("/inputs/frame_limit").and_then(Value::as_u64),
+        loader
+            .pointer("/inputs/frame_limit")
+            .and_then(Value::as_u64),
         Some(121)
     );
     assert_eq!(
@@ -1198,10 +1218,15 @@ fn deep_swap_replaces_loader_and_every_known_chain() {
     // the literal job fps.
     assert!(!obj.contains_key("11"), "VHS_VideoInfo must be removed");
     assert_eq!(
-        obj["42"].pointer("/inputs/frame_rate").and_then(Value::as_u64),
+        obj["42"]
+            .pointer("/inputs/frame_rate")
+            .and_then(Value::as_u64),
         Some(24)
     );
-    assert_eq!(obj["12"].pointer("/inputs/a").and_then(Value::as_u64), Some(24));
+    assert_eq!(
+        obj["12"].pointer("/inputs/a").and_then(Value::as_u64),
+        Some(24)
+    );
 
     // frame_count consumer became the literal billed count; the audio link is
     // dropped entirely (v1 deep previews are silent by decision).
@@ -1216,7 +1241,9 @@ fn deep_swap_replaces_loader_and_every_known_chain() {
         "VideoCombine audio input must be dropped"
     );
     assert_eq!(
-        obj["80"].pointer("/inputs/frame_rate").and_then(Value::as_u64),
+        obj["80"]
+            .pointer("/inputs/frame_rate")
+            .and_then(Value::as_u64),
         Some(24)
     );
 }
@@ -1224,7 +1251,13 @@ fn deep_swap_replaces_loader_and_every_known_chain() {
 #[test]
 fn deep_swap_display_wire_has_no_shim() {
     let job = deep_job("ltx-edit-hdr");
-    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let g = patch(
+        &bl4_graph("ltx-edit-hdr"),
+        &job,
+        &[],
+        &["cafebabe".to_string()],
+    )
+    .unwrap();
     assert!(
         !g.0.as_object().unwrap().contains_key("92"),
         "display wire must not insert the encode shim"
@@ -1235,7 +1268,13 @@ fn deep_swap_display_wire_has_no_shim() {
 fn deep_swap_linear_wire_inserts_encode_shim() {
     let mut job = deep_job("ltx-edit-hdr");
     job.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqLinear);
-    let g = patch(&bl4_graph("ltx-edit-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let g = patch(
+        &bl4_graph("ltx-edit-hdr"),
+        &job,
+        &[],
+        &["cafebabe".to_string()],
+    )
+    .unwrap();
     let obj = g.0.as_object().unwrap();
 
     let shim = obj.get("92").expect("linear wire inserts shim 92");
@@ -1244,9 +1283,14 @@ fn deep_swap_linear_wire_inserts_encode_shim() {
         Some("Float32ColorCorrect")
     );
     // Radiance gamma g applies x^(1/g): 2.2 IS the linear->display encode.
-    assert_eq!(shim.pointer("/inputs/gamma").and_then(Value::as_f64), Some(2.2));
     assert_eq!(
-        shim.pointer("/inputs/image").and_then(Value::as_array).map(|a| a[0].as_str().unwrap().to_string()),
+        shim.pointer("/inputs/gamma").and_then(Value::as_f64),
+        Some(2.2)
+    );
+    assert_eq!(
+        shim.pointer("/inputs/image")
+            .and_then(Value::as_array)
+            .map(|a| a[0].as_str().unwrap().to_string()),
         Some("10".to_string())
     );
     // Every former IMAGE consumer of the loader now reads the shim.
@@ -1273,7 +1317,13 @@ fn deep_swap_linear_wire_inserts_encode_shim() {
 fn deep_swap_covers_upscale_shape() {
     // Upscale: loader is node 1, no VideoInfo, audio into VideoCombine 9.
     let job = deep_job("ltx-upscale-hdr");
-    let g = patch(&bl4_graph("ltx-upscale-hdr"), &job, &[], &["cafebabe".to_string()]).unwrap();
+    let g = patch(
+        &bl4_graph("ltx-upscale-hdr"),
+        &job,
+        &[],
+        &["cafebabe".to_string()],
+    )
+    .unwrap();
     let obj = g.0.as_object().unwrap();
     assert_eq!(
         obj["1"].pointer("/class_type").and_then(Value::as_str),
@@ -1295,12 +1345,16 @@ fn deep_rejected_on_incapable_templates_before_any_work() {
     // PRE-ACCEPT dry-run with empty names also exercises.
     let mut job = job();
     job.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqDisplay);
-    let err = patch(&fixture_graph(), &job, &[], &[]).unwrap_err().to_string();
+    let err = patch(&fixture_graph(), &job, &[], &[])
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("not deep-input capable"), "{err}");
 
     let mut job = iclora_job();
     job.input_wire = Some(fabstir_llm_node::ltx::types::InputWire::ExrseqDisplay);
-    let err = patch(&iclora_graph(), &job, &[], &[]).unwrap_err().to_string();
+    let err = patch(&iclora_graph(), &job, &[], &[])
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("not deep-input capable"), "{err}");
 }
 
@@ -1359,12 +1413,17 @@ fn sdr2hdr_full_patch_lands_every_handle() {
         Some("HDR reconstruction of the street")
     );
     assert_eq!(
-        obj["4832"].pointer("/inputs/noise_seed").and_then(Value::as_u64),
+        obj["4832"]
+            .pointer("/inputs/noise_seed")
+            .and_then(Value::as_u64),
         Some(4815162342)
     );
     // Frame Count -> latent length == billed frames (the edit-family
     // latent-longer-than-guide shape).
-    assert_eq!(obj["95"].pointer("/inputs/value").and_then(Value::as_u64), Some(121));
+    assert_eq!(
+        obj["95"].pointer("/inputs/value").and_then(Value::as_u64),
+        Some(121)
+    );
     // the source clip binds to the core LoadVideo's `file` input
     assert_eq!(
         obj["5106"].pointer("/inputs/file").and_then(Value::as_str),
@@ -1372,7 +1431,9 @@ fn sdr2hdr_full_patch_lands_every_handle() {
     );
     // guide strength landed (guide node present in this template)
     assert_eq!(
-        obj["5012"].pointer("/inputs/strength").and_then(Value::as_f64),
+        obj["5012"]
+            .pointer("/inputs/strength")
+            .and_then(Value::as_f64),
         Some(0.7)
     );
     // exr-frames: the sink is REQUIRED and present

@@ -250,8 +250,9 @@ impl TranscodeProgressTask {
                             if let Some(jid) = job_id {
                                 if tokens > 0 {
                                     if let Some(cm) = server.get_checkpoint_manager().await {
-                                        if let Err(e) =
-                                            cm.track_tokens(jid, tokens, Some(session_id.clone())).await
+                                        if let Err(e) = cm
+                                            .track_tokens(jid, tokens, Some(session_id.clone()))
+                                            .await
                                         {
                                             // Never fail the transcode for a billing error:
                                             // the work is done and the outputs are published.

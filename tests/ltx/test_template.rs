@@ -704,7 +704,10 @@ const UPSCALE_TEMPLATE_HASH: &str =
 fn test_bundle_v11_has_upscale() {
     let store = TemplateStore::new(DIR).expect("store loads");
     assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
-    eprintln!("GOLD ltx-upscale-hdr={}", store.template_hash("ltx-upscale-hdr").unwrap());
+    eprintln!(
+        "GOLD ltx-upscale-hdr={}",
+        store.template_hash("ltx-upscale-hdr").unwrap()
+    );
     assert_eq!(
         store
             .template_hash("ltx-upscale-hdr")
@@ -739,7 +742,10 @@ const INGREDIENTS_TEMPLATE_HASH: &str =
 fn test_bundle_v14_has_ingredients() {
     let store = TemplateStore::new(DIR).expect("store loads");
     assert!(store.bundle().allow_list_version >= 16); // since v16; exact pins rot on every bump
-    eprintln!("GOLD ltx-ingredients-hdr={}", store.template_hash("ltx-ingredients-hdr").unwrap());
+    eprintln!(
+        "GOLD ltx-ingredients-hdr={}",
+        store.template_hash("ltx-ingredients-hdr").unwrap()
+    );
     assert_eq!(
         store
             .template_hash("ltx-ingredients-hdr")
@@ -825,12 +831,15 @@ fn test_bundle_v17_has_crossview() {
 
 // ── Mode 13 (ltx-sdr2hdr-hdr, EXECUTION-MODE13-HDR.md) ──────────────────────
 
-const SDR2HDR_TEMPLATE_HASH: &str = "0xb18cecd50b0d66a8986c3e1c26b0f271932b09ddde95ec993696aa233901612a";
+const SDR2HDR_TEMPLATE_HASH: &str =
+    "0xb18cecd50b0d66a8986c3e1c26b0f271932b09ddde95ec993696aa233901612a";
 
 #[test]
 fn test_bundle_v23_has_sdr2hdr() {
     let store = TemplateStore::new(DIR).expect("store loads");
-    let hash = store.template_hash("ltx-sdr2hdr-hdr").expect("13th template");
+    let hash = store
+        .template_hash("ltx-sdr2hdr-hdr")
+        .expect("13th template");
     eprintln!("GOLD ltx-sdr2hdr-hdr={hash}");
     assert_eq!(hash, SDR2HDR_TEMPLATE_HASH, "sdr2hdr golden hash drifted");
     assert!(store.bundle().allow_list_version >= 23, "since v23");
@@ -862,21 +871,25 @@ fn test_sdr2hdr_template_structural_laws() {
         Some("RadianceDigitalCinemaWrite")
     );
     assert_eq!(
-        exr.pointer("/inputs/image").and_then(|v| v.as_array()).map(|a| {
-            (a[0].as_str().unwrap().to_string(), a[1].as_u64().unwrap())
-        }),
+        exr.pointer("/inputs/image")
+            .and_then(|v| v.as_array())
+            .map(|a| { (a[0].as_str().unwrap().to_string(), a[1].as_u64().unwrap()) }),
         Some(("5114".to_string(), 1))
     );
-    assert!(!obj.values().any(|n| {
-        n.pointer("/class_type").and_then(|v| v.as_str()) == Some("Float32ColorCorrect")
-    }), "no colour-correct node belongs in the scene-linear template");
+    assert!(
+        !obj.values().any(|n| {
+            n.pointer("/class_type").and_then(|v| v.as_str()) == Some("Float32ColorCorrect")
+        }),
+        "no colour-correct node belongs in the scene-linear template"
+    );
 
     // LAW 3: the preview taps tonemapped (slot 0) — the house graph wrongly
     // tapped linear, which is the gamma-dark preview trap.
     assert_eq!(
-        obj["5108"].pointer("/inputs/images").and_then(|v| v.as_array()).map(|a| {
-            (a[0].as_str().unwrap().to_string(), a[1].as_u64().unwrap())
-        }),
+        obj["5108"]
+            .pointer("/inputs/images")
+            .and_then(|v| v.as_array())
+            .map(|a| { (a[0].as_str().unwrap().to_string(), a[1].as_u64().unwrap()) }),
         Some(("5114".to_string(), 0))
     );
 
@@ -886,8 +899,14 @@ fn test_sdr2hdr_template_structural_laws() {
     // touching nothing validated in July. Field-caught on the first shipped
     // render; masters were correct throughout.
     let hdr = &obj["5114"];
-    assert_eq!(hdr.pointer("/inputs/save_exr").and_then(|v| v.as_bool()), Some(false));
-    assert_eq!(hdr.pointer("/inputs/exposure").and_then(|v| v.as_f64()), Some(0.0));
+    assert_eq!(
+        hdr.pointer("/inputs/save_exr").and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        hdr.pointer("/inputs/exposure").and_then(|v| v.as_f64()),
+        Some(0.0)
+    );
 }
 
 #[test]
