@@ -378,6 +378,32 @@ impl CheckpointManager {
             .map_err(|e| anyhow!("sessionJobs decode failed for job {}: {}", job_id, e))
     }
 
+    /// The RAW `sessionJobs(jobId)` return bytes — for callers doing their
+    /// own drift-proof fixed-offset decode (the training A.3 snapshot,
+    /// `training::accept::decode_session_snapshot`). Same selector-only call
+    /// as `query_session_depositor`; fails closed, no fallback.
+    pub async fn query_session_jobs_raw(&self, job_id: u64) -> Result<Vec<u8>> {
+        use tiny_keccak::{Hasher, Keccak};
+        let mut keccak = Keccak::v256();
+        let mut selector = [0u8; 32];
+        keccak.update(b"sessionJobs(uint256)");
+        keccak.finalize(&mut selector);
+
+        let mut call_data = selector[..4].to_vec();
+        call_data.extend_from_slice(&ethers::abi::encode(&[Token::Uint(U256::from(job_id))]));
+
+        let tx = TransactionRequest::new()
+            .to(self.proof_system_address)
+            .data(call_data);
+        let result = self
+            .web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("sessionJobs read failed for job {}: {}", job_id, e))?;
+        Ok(result.to_vec())
+    }
+
     /// Track tokens generated for a specific job
     pub async fn track_tokens(
         &self,
@@ -1744,8 +1770,12 @@ impl CheckpointManager {
                 }
             }
             Err(e) => {
-                // Check if the error is due to dispute window
-                if e.to_string().contains("dispute window") {
+                // Check if the error is due to the dispute window. v8.17.5
+                // matched "dispute window"; the CURRENT deployed contract
+                // reverts "Dispute wait" (training doc round, 2026-08-23) —
+                // both matched so no contract generation slips through.
+                let error_text = e.to_string();
+                if error_text.contains("Dispute wait") || error_text.contains("dispute window") {
                     let dispute_window = self.dispute_window_secs;
 
                     warn!(
@@ -1845,8 +1875,11 @@ impl CheckpointManager {
                                 Err(e) => {
                                     let error_msg = e.to_string();
 
-                                    // Check if it's still the dispute window error
-                                    if error_msg.contains("dispute window") {
+                                    // Check if it's still the dispute-window error
+                                    // ("Dispute wait" on the current contract).
+                                    if error_msg.contains("Dispute wait")
+                                        || error_msg.contains("dispute window")
+                                    {
                                         warn!(
                                             "⏳ Retry {} failed - dispute window still active for job {}",
                                             retry_count + 1, job_id
@@ -3353,10 +3386,18 @@ mod tests {
 
     #[test]
     fn test_dispute_window_error_string_matches_new_contract() {
-        let error = "execution reverted: Wait dispute window";
-        assert!(error.contains("dispute window"));
-        // Prove old check would fail on new contract error
-        assert!(!error.contains("Must wait dispute window"));
+        // The CURRENT deployed contract reverts "Dispute wait" — the string
+        // the v8.17.5-era "dispute window" matcher never matched (dead until
+        // the training round widened it, 2026-08-23).
+        let current = "execution reverted: Dispute wait";
+        assert!(current.contains("Dispute wait") || current.contains("dispute window"));
+        assert!(
+            !current.contains("dispute window"),
+            "proves the OLD matcher alone was dead"
+        );
+        // The widened matcher still covers the older contract generation.
+        let old = "execution reverted: Wait dispute window";
+        assert!(old.contains("Dispute wait") || old.contains("dispute window"));
     }
 
     #[test]
