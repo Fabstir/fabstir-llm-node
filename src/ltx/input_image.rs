@@ -78,7 +78,12 @@ pub struct CapEnvelope {
 pub fn parse_capability_cid(cid: &str) -> Result<CapEnvelope> {
     let b64 = cid
         .strip_prefix('u')
-        .ok_or_else(|| anyhow!("capability CID must be 'u'-multibase: {cid:?}"))?;
+        // Round-7 F-R7-4: rendering the CID here was an amplifier. It is the
+        // CALLER'S OWN input, so it tells them nothing they do not have, and
+        // the socket sets no `max_message_size` — so a multi-MiB CID was
+        // formatted into this string, then into a ServeError, then into a
+        // whitelisted client frame, several copies before any fetch gate.
+        .ok_or_else(|| anyhow!("capability CID must be 'u'-multibase"))?;
     let env = URL_SAFE_NO_PAD
         .decode(b64)
         .map_err(|e| anyhow!("capability CID is not base64url: {e}"))?;

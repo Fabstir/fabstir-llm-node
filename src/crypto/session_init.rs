@@ -38,7 +38,10 @@ pub struct SigContext {
 
 impl Default for SigContext {
     fn default() -> Self {
-        Self { salt: vec![0u8; 32], info: Vec::new() }
+        Self {
+            salt: vec![0u8; 32],
+            info: Vec::new(),
+        }
     }
 }
 
@@ -62,6 +65,9 @@ pub struct SessionInitData {
     /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
     /// Compressed secp256k1 public key (33 bytes = 66 hex chars + 0x prefix)
     pub recovery_public_key: Option<String>,
+    /// Interface E.2 serve-back: the session-scoped LoRA adapter to apply to
+    /// THIS session's requests only. Absent on every ordinary session.
+    pub lora: Option<crate::training::serve::LoraRequest>,
 }
 
 /// Internal structure for parsing decrypted JSON payload
@@ -75,6 +81,11 @@ struct SessionDataJson {
     vector_database: Option<VectorDatabaseInfo>,
     /// User's recovery public key for encrypted checkpoint deltas (SDK v1.8.7+)
     recovery_public_key: Option<String>,
+    /// E.2 `lora`. NOTE the wire spells the CID field `manifestCID`, which
+    /// this struct's `rename_all = "camelCase"` would mangle to `manifestCid`
+    /// and then silently drop — `LoraRequest` carries its own explicit
+    /// `#[serde(rename)]` for exactly that reason. Do not "tidy" it away.
+    lora: Option<crate::training::serve::LoraRequest>,
 }
 
 /// Rebuild the message the client signed (E2EE v1).
@@ -247,6 +258,7 @@ pub fn decrypt_session_init_with_context(
         price_per_token: session_data.price_per_token,
         client_address,
         vector_database: session_data.vector_database,
+        lora: session_data.lora,
         recovery_public_key: session_data.recovery_public_key,
     })
 }
@@ -264,7 +276,8 @@ mod tests {
     // recover over sha256(ciphertext), a message no client ever signed, which
     // produced a different bogus address on every attempt.
     const EPH_PUB: &str = "034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
-    const RECIPIENT_PUB: &str = "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
+    const RECIPIENT_PUB: &str =
+        "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27";
     const NONCE_HEX: &str = "333333333333333333333333333333333333333333333333";
     const EXPECTED_ADDRESS: &str = "0x17c5185167401ed00cf5f5b2fc97d9bbfdb7d025";
 

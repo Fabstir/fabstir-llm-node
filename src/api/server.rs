@@ -175,6 +175,12 @@ impl CircuitBreaker {
     }
 }
 
+/// Wall-clock bound on one serve-back stage (round-2 F-F). The session-init
+/// ack has already gone out by the time staging runs, so this is not the
+/// SDK's 30s init budget; it bounds how long the connection's message loop
+/// can be parked, during which no Ping is answered and no cancel is read.
+const ADAPTER_STAGE_BUDGET_SECS: u64 = 300;
+
 pub struct ApiServer {
     config: ApiConfig,
     addr: SocketAddr,
@@ -232,6 +238,8 @@ pub struct ApiServer {
     // LTX 2.3 generation sidecar (mirror of the transcoder fields).
     ltx_client: Arc<RwLock<Option<Arc<crate::ltx::ComfyClient>>>>,
     ltx_template_store: Arc<RwLock<Option<Arc<crate::ltx::TemplateStore>>>>,
+    /// Training M0 seams (None until TRAIN_ENABLED wiring at startup).
+    training_deps: Arc<RwLock<Option<Arc<crate::training::core::TrainingDeps>>>>,
     ltx_tracker: Arc<crate::ltx::billing::LtxTracker>,
     ltx_rate_limiter: Arc<crate::ltx::rate_limiter::LtxRateLimiter>,
     /// VRAM admission: `MAX_CONCURRENT_GENERATIONS` slots. ComfyUI has no status
@@ -345,6 +353,7 @@ impl ApiServer {
             ),
             ltx_client: Arc::new(RwLock::new(None)),
             ltx_template_store: Arc::new(RwLock::new(None)),
+            training_deps: Arc::new(RwLock::new(None)),
             ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::LtxRateLimiter::new(3)),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -509,6 +518,7 @@ impl ApiServer {
             ),
             ltx_client: Arc::new(RwLock::new(None)),
             ltx_template_store: Arc::new(RwLock::new(None)),
+            training_deps: Arc::new(RwLock::new(None)),
             ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::ltx_rate_limiter()),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(
@@ -666,6 +676,7 @@ impl ApiServer {
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             ltx_client: self.ltx_client.clone(),
             ltx_template_store: self.ltx_template_store.clone(),
+            training_deps: self.training_deps.clone(),
             ltx_tracker: self.ltx_tracker.clone(),
             ltx_rate_limiter: self.ltx_rate_limiter.clone(),
             ltx_semaphore: self.ltx_semaphore.clone(),
@@ -1008,6 +1019,39 @@ impl ApiServer {
         self.node_private_key
     }
 
+    /// Why a prompt on this connection must be refused before ANY billable
+    /// work, or `None` to proceed.
+    ///
+    /// Round-3 R3-3: `handle_streaming_request` refuses correctly, but the
+    /// vision sidecar call and its on-chain `track_tokens` happen in the
+    /// CALLER, ahead of it — so a session whose adapter never staged had
+    /// every image prompt processed and billed before being told no.
+    pub async fn serve_back_refusal(
+        &self,
+        want: &crate::training::serve::SessionAdapter,
+    ) -> Option<String> {
+        if matches!(want, crate::training::serve::SessionAdapter::None) {
+            return None;
+        }
+        match self.training_deps.read().await.clone() {
+            Some(deps) => deps.adapters.resolve(want).err().map(|e| e.to_string()),
+            None => Some(
+                "this session asked for a LoRA adapter but training is not enabled on this node"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// TEST ONLY. Installs a node key so the encrypted session-init path can
+    /// be driven end to end from a test. Production builds this key from the
+    /// environment in `ApiServer::new`; this exists because that path is the
+    /// one that produced two CRITICAL isolation defects in review and needs a
+    /// regression guard that actually goes through the router.
+    #[doc(hidden)]
+    pub fn set_node_private_key_for_test(&mut self, key: [u8; 32]) {
+        self.node_private_key = Some(key);
+    }
+
     /// Get session key metrics
     pub async fn session_key_metrics(&self) -> SessionKeyMetrics {
         SessionKeyMetrics {
@@ -1303,11 +1347,22 @@ impl ApiServer {
         Ok(response)
     }
 
+    /// `session_adapter` says whether THIS connection asked for an E.2
+    /// serve-back adapter, and under which SERVER-MINTED registry key.
+    ///
+    /// The key never comes from the wire (round-2 F1-R2: keying it on
+    /// `request.session_id`, or on the connection's own `session_id`, let a
+    /// client name another's session and resolve to their private adapter).
+    /// It is resolved through the REGISTRY here rather than cached as a path,
+    /// so an eviction is always seen (round-1 F1(b)); a `Required` adapter
+    /// that has gone missing fails the request instead of quietly answering
+    /// from the base model.
     pub async fn handle_streaming_request(
         &self,
         request: InferenceRequest,
         client_ip: String,
         cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+        session_adapter: crate::training::serve::SessionAdapter,
     ) -> Result<
         (
             mpsc::Receiver<StreamingResponse>,
@@ -1317,6 +1372,34 @@ impl ApiServer {
     > {
         // Validate and check limits (same as non-streaming)
         request.validate()?;
+
+        // Resolved FIRST (round-2 F-C). This used to sit at the end of the
+        // preamble, so a request that was about to be refused had already
+        // burned a rate-limit token, run outbound web searches, OVERWRITTEN
+        // the prompt hash bound to this job (proof state) and appended a user
+        // turn to the checkpoint history that would never get a reply.
+        // E.2 resolution: through the registry, and fail-closed.
+        let adapter_path = {
+            let deps = self.training_deps.read().await.clone();
+            let resolved = match (&session_adapter, deps) {
+                (crate::training::serve::SessionAdapter::None, _) => Ok(None),
+                (want, Some(deps)) => deps.adapters.resolve(want),
+                // Round-4 F-R4-5: no `{want:?}` here — Debug on a
+                // `Required` renders the minted key, and this string is
+                // shipped to the client. The caller logs it instead.
+                (_, None) => Err(crate::training::serve::ServeError::Validation(
+ "this session asked for a LoRA adapter but training is not enabled on this node"
+                        .to_string(),
+                )),
+            };
+            match resolved {
+                Ok(path) => path,
+                Err(error) => {
+                    error!("Serve-back resolution failed for {session_adapter:?}: {error}");
+                    return Err(ApiError::InternalError(error.to_string()));
+                }
+            }
+        };
         self.rate_limiter.check_rate_limit(&client_ip).await?;
 
         if self.config.enable_circuit_breaker && self.circuit_breaker.is_open().await {
@@ -1506,7 +1589,7 @@ impl ApiServer {
         // Run streaming inference with real model
         let (token_stream, result_rx) =
             engine
-                .run_inference_stream(engine_request)
+                .run_inference_stream_with_adapter(engine_request, adapter_path)
                 .await
                 .map_err(|e| {
                     error!("Failed to start streaming inference: {}", e);
@@ -1765,6 +1848,7 @@ impl ApiServer {
                 post(crate::api::transcode::handler::transcode_submit_handler),
             )
             .route("/v1/transcode/capacity", get(transcode_capacity_handler))
+            .route("/v1/training/capacity", get(training_capacity_handler))
             .route(
                 "/v1/transcode/:task_id",
                 get(crate::api::transcode::handler::transcode_status_handler),
@@ -1788,6 +1872,52 @@ impl ApiServer {
 // Handler functions as free functions
 async fn health_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
     axum::response::Json(server.health_check().await)
+}
+
+/// Wire the training seams at startup (TRAIN_ENABLED); None = disabled.
+impl ApiServer {
+    pub async fn set_training_deps(&self, deps: Arc<crate::training::core::TrainingDeps>) {
+        *self.training_deps.write().await = Some(deps);
+    }
+
+    pub async fn get_training_deps(&self) -> Option<Arc<crate::training::core::TrainingDeps>> {
+        self.training_deps.read().await.clone()
+    }
+}
+
+/// The pre-escrow training capacity hint (interface v0.3.1): `{available}`
+/// when training is enabled, 404 when not — mirrors /v1/transcode/capacity.
+async fn training_capacity_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    match server.get_training_deps().await {
+        None => (
+            StatusCode::NOT_FOUND,
+            axum::response::Json(serde_json::json!({ "error": "training not enabled" })),
+        )
+            .into_response(),
+        Some(deps) => {
+            // TTL-cached (2 s): a PUBLIC unauthenticated route must never
+            // open a sidecar UDS connection per request (T3 converge round —
+            // the transcode capacity route's cached-status rule).
+            let now = std::time::Instant::now();
+            let cached = deps.capacity_cache.lock().ok().and_then(|guard| *guard);
+            let available = match cached {
+                Some((at, value)) if now.duration_since(at) < std::time::Duration::from_secs(2) => {
+                    value
+                }
+                _ => {
+                    let sidecar_free =
+                        matches!(deps.trainer.status().await, Ok(s) if s.slot == "free");
+                    let gpu_free = server.ltx_semaphore().available_permits() > 0;
+                    let value = sidecar_free && gpu_free;
+                    if let Ok(mut guard) = deps.capacity_cache.lock() {
+                        *guard = Some((now, value));
+                    }
+                    value
+                }
+            };
+            axum::response::Json(serde_json::json!({ "available": available })).into_response()
+        }
+    }
 }
 
 async fn transcode_capacity_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
@@ -2265,6 +2395,36 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
     let mut session_id: Option<String> = None;
     let mut job_id: Option<u64> = None;
     let mut chain_id: Option<u64> = None;
+    // T5.3 / interface E.2. Two connection-local variables, and the split
+    // between them is load bearing (round-1 F1/F2):
+    //
+    //  * `session_adapter` says whether this connection ASKED for an adapter,
+    //    and under which REGISTRY KEY. Set as soon as a `lora` field is seen,
+    //    so a session whose staging later fails still refuses prompts rather
+    //    than quietly answering from the base model.
+    //  * `staged_sid` holds that same key, set ONLY after a stage succeeds,
+    //    and it is the only thing eviction is keyed on.
+    //
+    // The key is MINTED SERVER-SIDE and never comes from the wire. Round-1
+    // keyed eviction on the connection variable `session_id`; round-2 found
+    // that resolution was STILL keyed on it, which was worse: `session_id` is
+    // assigned from the OUTER, UNENCRYPTED json before any gate on a route
+    // with no auth, so naming a victim's session id (they are job ids,
+    // published on-chain) and sending any `lora` at all yielded
+    // `Required(victim)` — and the attacker's own prompts then resolved
+    // straight to the victim's private adapter. A minted key removes the
+    // wire from the lookup entirely, which also kills the reverse attack
+    // (squatting a victim's id so THEIR prompts load the attacker's weights)
+    // and makes eviction correct by construction rather than by comment.
+    let mut session_adapter = crate::training::serve::SessionAdapter::None;
+    let mut staged_sid: Option<String> = None;
+    // Round-6 F-R6-4: which job the adapter was requested FOR. The predicate
+    // used to compare against the connection's mutable `job_id`, but that is
+    // overwritten by EVERY init including refused ones, so it degraded to None
+    // and no later init could ever prove "different job" — permanently
+    // stranding a legitimate new session on that socket. This is written only
+    // where `session_adapter` is, so the two cannot drift apart.
+    let mut adapter_job_id: Option<u64> = None;
 
     // Send connection acknowledgment
     let welcome_msg = json!({
@@ -2307,11 +2467,48 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Track session initialization
                     if json_msg["type"] == "session_init" {
+                        // Round-5 F-R5-2: the same capture the encrypted branch
+                        // takes. Without it a plaintext init naming the SAME job
+                        // evicted an encrypted session's adapter, cleared the
+                        // refusal and acked success, and every later prompt was
+                        // answered from the base model and billed to that job —
+                        // the defect F-R4-6 closed, one branch away.
+                        let previously_wanted_adapter = matches!(
+                            session_adapter,
+                            crate::training::serve::SessionAdapter::Required(_)
+                        );
+
                         // Handle session_id or sessionId
                         session_id = json_msg["session_id"]
                             .as_str()
                             .or_else(|| json_msg["sessionId"].as_str())
                             .map(String::from);
+
+                        // Serve-back state belongs to the session that staged
+                        // it, so a new init releases the previous session's
+                        // weights immediately, before any gate that might
+                        // reject this one (round-2 F-E), and on BOTH branches
+                        // (F-B: the plaintext branch touched neither variable,
+                        // so a plaintext init inherited an encrypted session's
+                        // adapter and served it on a different job's escrow).
+                        //
+                        // What it must NOT do is clear `session_adapter`
+                        // (round-3 R3-1). That turned a fail-closed bug into a
+                        // fail-open one: the old session key stays live in the
+                        // key store and `job_id` is only reassigned inside the
+                        // decrypt's Ok arm, so ONE malformed re-init deleted
+                        // the adapter, cleared the refusal, and every later
+                        // prompt was answered from the BASE MODEL and billed
+                        // to the old job, silently. Leaving it `Required` over
+                        // an evicted key means those prompts are refused
+                        // instead; only an init that actually succeeds
+                        // assigns a new value.
+                        if let Some(previous) = staged_sid.take() {
+                            let deps = server.training_deps.read().await.clone();
+                            if let Some(deps) = deps {
+                                deps.adapters.evict(&previous).await;
+                            }
+                        }
 
                         // Handle job_id (Rust) or jobId (SDK/contracts) as either string or number
                         job_id = json_msg["job_id"]
@@ -2367,7 +2564,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                         None => Err(anyhow::anyhow!("no checkpoint manager")),
                                     };
                                     match depositor {
-                                        Err(e) => Some(format!("depositor unavailable: {}", e)),
+                                        Err(e) => {
+                                            // Round-6 F-R6-1: `e` is a chain-query error,
+                                            // and reqwest's Display writes
+                                            // " for url ({url})" — with the RPC URL
+                                            // commonly holding an API key. This string is
+                                            // shipped to an unauthenticated client in the
+                                            // SESSION_AUTH_DENIED frame. Same class as the
+                                            // serve-back leak; log it, do not echo it.
+                                            error!("depositor lookup failed: {e}");
+                                            Some("the depositor could not be read".to_string())
+                                        }
                                         Ok(dep) => {
                                             if crate::api::session_auth::plaintext_session_allowed(
                                                 &dep,
@@ -2422,6 +2629,23 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             }
                         }
 
+                        // A plaintext session carries no `lora`, so serve-back is
+                        // off for it — but only now that this init has actually
+                        // got past its gates (round-3 R3-1), and only when this
+                        // is provably a DIFFERENT, parseable job (round-5
+                        // F-R5-2/F-R5-3). Same job plus a vanished adapter is a
+                        // downgrade, not a new session.
+                        // Round-7 F-R7-8, as on the encrypted branch.
+                        let is_a_different_job = match (adapter_job_id, job_id) {
+                            (Some(before), Some(now)) => before != now,
+                            (None, Some(_)) => true,
+                            _ => false,
+                        };
+                        if !previously_wanted_adapter || is_a_different_job {
+                            session_adapter = crate::training::serve::SessionAdapter::None;
+                            adapter_job_id = None;
+                        }
+
                         // CRITICAL: Send response to session_init so SDK doesn't timeout!
                         // Must echo back the 'id' field for request-response correlation
                         let mut response = serde_json::json!({
@@ -2448,11 +2672,50 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle encrypted session initialization
                     if json_msg["type"] == "encrypted_session_init" {
+                        // Round-4 F-R4-6: what this connection held BEFORE the
+                        // branch overwrites it. Re-init is a supported flow
+                        // (vectors and history survive it), so the node cannot
+                        // tell "a new session" from "the SDK refreshing this
+                        // session's key" by the message alone — but it CAN tell
+                        // by the job id, and the distinction matters: a refresh
+                        // that drops `lora` must not silently move a paying
+                        // customer onto the base model.
+                        let previously_wanted_adapter = matches!(
+                            session_adapter,
+                            crate::training::serve::SessionAdapter::Required(_)
+                        );
+
                         // Extract session_id and chain_id
                         session_id = json_msg["session_id"]
                             .as_str()
                             .or_else(|| json_msg["sessionId"].as_str())
                             .map(String::from);
+
+                        // Serve-back state belongs to the session that staged
+                        // it, so a new init releases the previous session's
+                        // weights immediately, before any gate that might
+                        // reject this one (round-2 F-E), and on BOTH branches
+                        // (F-B: the plaintext branch touched neither variable,
+                        // so a plaintext init inherited an encrypted session's
+                        // adapter and served it on a different job's escrow).
+                        //
+                        // What it must NOT do is clear `session_adapter`
+                        // (round-3 R3-1). That turned a fail-closed bug into a
+                        // fail-open one: the old session key stays live in the
+                        // key store and `job_id` is only reassigned inside the
+                        // decrypt's Ok arm, so ONE malformed re-init deleted
+                        // the adapter, cleared the refusal, and every later
+                        // prompt was answered from the BASE MODEL and billed
+                        // to the old job, silently. Leaving it `Required` over
+                        // an evicted key means those prompts are refused
+                        // instead; only an init that actually succeeds
+                        // assigns a new value.
+                        if let Some(previous) = staged_sid.take() {
+                            let deps = server.training_deps.read().await.clone();
+                            if let Some(deps) = deps {
+                                deps.adapters.evict(&previous).await;
+                            }
+                        }
 
                         chain_id = json_msg["chain_id"]
                             .as_u64()
@@ -2624,10 +2887,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     )),
                                                                 };
                                                                 match depositor {
-                                                                    Err(e) => Some(format!(
-                                                                        "depositor unavailable: {}",
-                                                                        e
-                                                                    )),
+                                                                    Err(e) => {
+                                                                        // Round-6 F-R6-1,
+                                                                        // as above.
+                                                                        error!(
+                                                                            "depositor lookup failed: {e}"
+                                                                        );
+                                                                        Some(
+                                                                            "the depositor could not be read"
+                                                                                .to_string(),
+                                                                        )
+                                                                    }
                                                                     Ok(dep) => {
                                                                         let authorised = server
                                                                             .session_auth_store
@@ -2795,6 +3065,72 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                         warn!("⚠️ No session_id provided - session key not stored");
                                                     }
 
+                                                    // T5.3 / E.2, part 1 of 2: record the
+                                                    // REQUEST before the ack, under a
+                                                    // SERVER-MINTED key. A session that asked
+                                                    // for an adapter must refuse prompts until
+                                                    // it has one, even if staging later fails,
+                                                    // or the customer is billed for
+                                                    // base-model answers on a session they
+                                                    // believe serves their fine-tune.
+                                                    let lora_request = session_init_data.lora.clone();
+                                                    let adapter_key = lora_request
+                                                        .as_ref()
+                                                        .map(|_| uuid::Uuid::new_v4().to_string());
+                                                    // Round-5 F-R5-3: `previous_job_id ==
+                                                    // job_id` failed OPEN. A re-init whose
+                                                    // jobId does not parse to u64 (`""`,
+                                                    // `"0x309"`, a trailing space) decrypts
+                                                    // fine and yields None, so
+                                                    // `Some(777) == None` was false and the
+                                                    // guard cleared — exactly the case it
+                                                    // exists for. Clear only when this is
+                                                    // provably a DIFFERENT, parseable job.
+                                                    // Round-7 F-R7-8: `(None, Some(_))` used to
+                                                    // fall through to false, so a `lora` whose
+                                                    // jobId did not parse left the connection
+                                                    // Required with no job bound, and NO later
+                                                    // init on any job could ever clear it —
+                                                    // refused for the socket's lifetime. An
+                                                    // adapter that never bound to a job also
+                                                    // never staged, so there is nothing to
+                                                    // protect and a real job IS a new session.
+                                                    let is_a_different_job = match (adapter_job_id, job_id) {
+                                                        (Some(before), Some(now)) => before != now,
+                                                        (None, Some(_)) => true,
+                                                        _ => false,
+                                                    };
+                                                    session_adapter = match (
+                                                        &adapter_key,
+                                                        previously_wanted_adapter && !is_a_different_job,
+                                                    ) {
+                                                        (Some(key), _) => crate::training::serve::SessionAdapter::Required(
+                                                            key.clone(),
+                                                        ),
+                                                        // Same job, previously serving an
+                                                        // adapter, and this init dropped the
+                                                        // `lora`: a refresh, not a new
+                                                        // session. Stay refusing over the
+                                                        // evicted key rather than answering
+                                                        // from the base model (F-R4-6).
+                                                        (None, true) => session_adapter.clone(),
+                                                        (None, false) => crate::training::serve::SessionAdapter::None,
+                                                    };
+                                                    // Written only here and at the plaintext
+                                                    // clear, so it can never drift from
+                                                    // `session_adapter` (F-R6-4).
+                                                    adapter_job_id = match &session_adapter {
+                                                        crate::training::serve::SessionAdapter::Required(_)
+                                                            if adapter_key.is_some() =>
+                                                        {
+                                                            job_id
+                                                        }
+                                                        crate::training::serve::SessionAdapter::Required(_) => {
+                                                            adapter_job_id
+                                                        }
+                                                        crate::training::serve::SessionAdapter::None => None,
+                                                    };
+
                                                     // Send session_init_ack response
                                                     let mut response = json!({
                                                         "type": "session_init_ack",
@@ -2817,6 +3153,185 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                         .await
                                                     {
                                                         error!("Failed to send encrypted session_init_ack: {}", e);
+                                                    }
+
+                                                    // T5.3 / E.2, part 2 of 2: stage AFTER the
+                                                    // ack (round-1 F3: the SDK rejects a
+                                                    // session init after exactly 30s and an
+                                                    // adapter fetch has no such budget, so
+                                                    // blocking the ack timed the client out
+                                                    // while the node went on to stage — and
+                                                    // the client's retry then hit "already has
+                                                    // an adapter", a loop that never
+                                                    // converges). Ordering survives the move
+                                                    // because this message loop is strictly
+                                                    // sequential: no prompt is read until this
+                                                    // returns.
+                                                    if let (Some(lora), Some(sid)) =
+                                                        (lora_request, adapter_key)
+                                                    {
+                                                        let deps =
+                                                            server.training_deps.read().await.clone();
+                                                        let staged = match tokio::time::timeout(
+                                                            std::time::Duration::from_secs(ADAPTER_STAGE_BUDGET_SECS),
+                                                            async {
+                                                                // Round-2 F-F: unbounded, this parked the whole
+                                                                // message loop — 64 shards x a 120s per-request
+                                                                // timeout — during which the node answers no Pings
+                                                                // and defers every cancel, because they are handled
+                                                                // in this same loop.
+                                                                match (deps, job_id) {
+                                                                (Some(deps), Some(jid)) => {
+                                                                    // E.2's base pin, against the
+                                                                    // AUTHORITATIVE on-chain model
+                                                                    // for this job. NOT the
+                                                                    // client's own `modelName`
+                                                                    // (round-1 F4): that is a
+                                                                    // string the client writes
+                                                                    // into its own payload, so as
+                                                                    // a gate it proved nothing,
+                                                                    // and being a NAME it could
+                                                                    // never equal a bytes32 id, so
+                                                                    // no honest serve-back session
+                                                                    // could ever have passed.
+                                                                    match deps.sessions.session_model(jid).await {
+                                                                        Ok(model) => {
+                                                                            deps.adapters
+                                                                                .stage(
+                                                                                    &deps.s5_base,
+                                                                                    &deps.staging_root,
+                                                                                    &sid,
+                                                                                    &format!("0x{}", hex::encode(model)),
+                                                                                    &deps.template.base_serving_model_id,
+                                                                                    &lora,
+                                                                                )
+                                                                                .await
+                                                                        }
+                                                                        Err(e) => Err(
+                                                                            crate::training::serve::ServeError::Chain(
+                                                                                format!("session model read failed: {e}"),
+                                                                            ),
+                                                                        ),
+                                                                    }
+                                                                }
+                                                                (None, _) => Err(
+                                                                    crate::training::serve::ServeError::Validation(
+                                                                        "serve-back unavailable: training is not enabled on this node"
+                                                                            .to_string(),
+                                                                    ),
+                                                                ),
+                                                                (_, None) => Err(
+                                                                    crate::training::serve::ServeError::Validation(
+                                                                        "serve-back needs a jobId: the session's model is read on-chain"
+                                                                            .to_string(),
+                                                                    ),
+                                                                ),
+                                                                }
+                                                            },
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(result) => result,
+                                                            Err(_) => Err(crate::training::serve::ServeError::Budget(format!(
+                                                                "adapter staging exceeded {ADAPTER_STAGE_BUDGET_SECS}s"
+                                                            ))),
+                                                        };
+                                                        match staged {
+                                                            Ok(staged) => {
+                                                                info!(
+                                                                    "🎯 Session {} serves adapter {} ({})",
+                                                                    sid, staged.file, staged.sha256
+                                                                );
+                                                                staged_sid = Some(sid);
+                                                            }
+                                                            Err(error) => {
+                                                                error!(
+                                                                    "❌ Serve-back staging failed for session {}: {}",
+                                                                    sid, error
+                                                                );
+                                                                // `code` + `message` is the
+                                                                // shape the SDK reads (round-1
+                                                                // F5: an `error` key threw the
+                                                                // reason away). `session_adapter`
+                                                                // stays Required, so every
+                                                                // prompt on this session is
+                                                                // refused rather than answered
+                                                                // from the base model.
+                                                                let failure = json!({
+                                                                    "type": "error",
+                                                                    "code": "LORA_STAGING_FAILED",
+                                                                    // Round-4 F-R4-4: the Io class
+                                                                    // embeds the staging PATH, which
+                                                                    // contains the minted key and the
+                                                                    // node's absolute root. Reachable
+                                                                    // on ENOSPC, which is the expected
+                                                                    // failure under exactly the disk
+                                                                    // pressure the cap bounds. The full
+                                                                    // error is in the log above.
+                                                                    // WHITELIST, not blacklist
+                                                                    // (round-5 F-R5-1). Round 4
+                                                                    // blacklisted `Io` and left
+                                                                    // `Transport` echoing a FOREIGN
+                                                                    // error's Display — and reqwest
+                                                                    // writes " for url ({url})", with
+                                                                    // the RPC URL commonly holding an
+                                                                    // API key. Only the classes whose
+                                                                    // text is built purely from the
+                                                                    // client's own claims are echoed;
+                                                                    // the full error is logged above.
+                                                                    // Machine-readable and never
+                                                                    // suppressed (round-6 F-R6-3):
+                                                                    // the whitelist collapsed four
+                                                                    // distinct causes into one
+                                                                    // sentence, so a customer whose
+                                                                    // adapter was simply too large
+                                                                    // to stage in the window was
+                                                                    // told the same thing as one
+                                                                    // hitting a node-side chain
+                                                                    // outage.
+                                                                    "reason": error.reason(),
+                                                                    "message": match &error {
+                                                                        // Built only from the
+                                                                        // client's own claims, or a
+                                                                        // compile-time constant.
+                                                                        crate::training::serve::ServeError::Validation(detail)
+                                                                        | crate::training::serve::ServeError::Integrity(detail)
+                                                                        | crate::training::serve::ServeError::Budget(detail) => {
+                                                                            format!("serve-back staging failed: {detail}")
+                                                                        }
+                                                                        crate::training::serve::ServeError::Transport(_) =>
+                                                                            "serve-back staging failed: the node could not fetch the adapter"
+                                                                                .to_string(),
+                                                                        crate::training::serve::ServeError::Chain(_) =>
+                                                                            "serve-back staging failed: the node could not read this session's model on-chain — try another host"
+                                                                                .to_string(),
+                                                                        crate::training::serve::ServeError::Io(_) =>
+                                                                            "serve-back staging failed: the node could not write the adapter"
+                                                                                .to_string(),
+                                                                        crate::training::serve::ServeError::Cancelled(_) =>
+                                                                            "serve-back staging failed: the session ended during staging"
+                                                                                .to_string(),
+                                                                    },
+                                                                    // The REAL session id, not the minted
+                                                                    // registry key (round-3 R3-2): every
+                                                                    // other error frame in this file puts
+                                                                    // the session id here, and the key is
+                                                                    // deliberately never wire-visible.
+                                                                    "session_id": session_id
+                                                                        .clone()
+                                                                        .unwrap_or_default(),
+                                                                });
+                                                                if ws_sender
+                                                                    .send(axum::extract::ws::Message::Text(
+                                                                        failure.to_string(),
+                                                                    ))
+                                                                    .await
+                                                                    .is_err()
+                                                                {
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                                 Err(e) => {
@@ -3309,6 +3824,183 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     continue;
                                                                 }
 
+                                                                if decrypted_json
+                                                                    .get("action")
+                                                                    .and_then(|v| v.as_str())
+                                                                    == Some("train")
+                                                                {
+                                                                    info!("Routing encrypted message to train handler");
+                                                                    let train_now_secs =
+                                                                        std::time::SystemTime::now(
+                                                                        )
+                                                                        .duration_since(
+                                                                            std::time::UNIX_EPOCH,
+                                                                        )
+                                                                        .map(|d| d.as_secs())
+                                                                        .unwrap_or_default();
+                                                                    let train_deps = server
+                                                                        .get_training_deps()
+                                                                        .await;
+                                                                    let allow_list_version =
+                                                                        train_deps
+                                                                            .as_ref()
+                                                                            .map(|d| {
+                                                                                d.allow_list_version
+                                                                            })
+                                                                            .unwrap_or_default();
+                                                                    let (train_ack, train_task) =
+                                                                        crate::api::websocket::handlers::training::handle_encrypted_train(
+                                                                            train_deps.clone(),
+                                                                            server.ltx_semaphore(),
+                                                                            allow_list_version,
+                                                                            &decrypted_json,
+                                                                            &session_key,
+                                                                            current_session_id.as_deref().unwrap_or("unknown"),
+                                                                            job_id,
+                                                                            json_msg.get("id"),
+                                                                            train_now_secs,
+                                                                        )
+                                                                        .await;
+                                                                    let train_timeout =
+                                                                        crate::api::websocket::handlers::training::train_ws_write_timeout();
+                                                                    let ack_outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                        &mut ws_sender,
+                                                                        axum::extract::ws::Message::Text(train_ack.to_string()),
+                                                                        train_timeout,
+                                                                    )
+                                                                    .await;
+                                                                    if ack_outcome.client_is_gone()
+                                                                    {
+                                                                        // The T4 drop-without-spawn rule (OQ-L24 shape): an accepted
+                                                                        // task whose ack never reached the client must not strand the
+                                                                        // session TrainActive — consume + settle (capacity class, no
+                                                                        // cooldown); the permit frees with the task drop.
+                                                                        if let (
+                                                                            Some(task),
+                                                                            Some(deps),
+                                                                        ) = (
+                                                                            train_task,
+                                                                            train_deps.as_ref(),
+                                                                        ) {
+                                                                            crate::training::core::terminal_reject_effects(
+                                                                                deps,
+                                                                                task.job_id,
+                                                                                &task.accepted.snapshot,
+                                                                                train_now_secs,
+                                                                                false,
+                                                                            )
+                                                                            .await;
+                                                                        }
+                                                                        break;
+                                                                    }
+                                                                    if let (
+                                                                        Some(task),
+                                                                        Some(deps),
+                                                                    ) = (train_task, train_deps)
+                                                                    {
+                                                                        let (train_frame_tx, mut train_frame_rx) =
+                                                                            tokio::sync::mpsc::channel::<serde_json::Value>(64);
+                                                                        let train_cancel =
+                                                                            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                                                                        let train_request_id =
+                                                                            decrypted_json
+                                                                                .get("requestId")
+                                                                                .and_then(|v| {
+                                                                                    v.as_str()
+                                                                                })
+                                                                                .map(
+                                                                                    str::to_string,
+                                                                                );
+                                                                        let exec_session_id = current_session_id
+                                                                            .clone()
+                                                                            .unwrap_or_else(|| "unknown".to_string());
+                                                                        let exec = tokio::spawn(task.execute(
+                                                                            deps,
+                                                                            session_key,
+                                                                            exec_session_id,
+                                                                            train_request_id,
+                                                                            train_frame_tx,
+                                                                            train_cancel.clone(),
+                                                                            std::time::Duration::from_secs(55) /* strictly inside the 60 s rule */,
+                                                                            std::time::Duration::from_secs(120),
+                                                                            train_now_secs,
+                                                                        ));
+                                                                        let mut client_gone = false;
+                                                                        loop {
+                                                                            tokio::select! {
+                                                                                frame = train_frame_rx.recv() => match frame {
+                                                                                    Some(frame) => {
+                                                                                        if client_gone {
+                                                                                            // Dead socket: DISCARD frames — the run keeps settling,
+                                                                                            // but each write must not burn the 900 s bound.
+                                                                                            continue;
+                                                                                        }
+                                                                                        let outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                                            &mut ws_sender,
+                                                                                            axum::extract::ws::Message::Text(frame.to_string()),
+                                                                                            train_timeout,
+                                                                                        )
+                                                                                        .await;
+                                                                                        if outcome.client_is_gone() {
+                                                                                            // Wedged/dead client: abort at the next slice
+                                                                                            // boundary; execute still settles + completes.
+                                                                                            train_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                                                            client_gone = true;
+                                                                                        }
+                                                                                    }
+                                                                                    None => break, // execute finished
+                                                                                },
+                                                                                inbound = ws_receiver.next(), if !client_gone => match inbound {
+                                                                                    Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                                                                                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                                                            let mut is_cancel = value.get("type").and_then(|t| t.as_str()) == Some("train_cancel")
+                                                                                                || value.get("action").and_then(|a| a.as_str()) == Some("train_cancel");
+                                                                                            // The SPEC'd cancel arrives INSIDE an encrypted_message
+                                                                                            // (T4 converge round: the plaintext-only match made the
+                                                                                            // SDK's cancel inoperative — an unstoppable bill).
+                                                                                            if !is_cancel && value.get("type").and_then(|t| t.as_str()) == Some("encrypted_message") {
+                                                                                                if let Some(payload) = value.get("payload") {
+                                                                                                    let hex_field = |k: &str| payload.get(k).and_then(|v| v.as_str()).map(|s| s.trim_start_matches("0x").to_string());
+                                                                                                    if let (Some(ct), Some(nonce), Some(aad)) = (hex_field("ciphertextHex"), hex_field("nonceHex"), hex_field("aadHex")) {
+                                                                                                        if let (Ok(ct), Ok(nonce), Ok(aad)) = (hex::decode(ct), hex::decode(nonce), hex::decode(aad)) {
+                                                                                                            if let Ok(plain) = crate::crypto::decrypt_with_aead(&ct, &nonce, &aad, &session_key) {
+                                                                                                                if let Ok(inner) = serde_json::from_slice::<serde_json::Value>(&plain) {
+                                                                                                                    is_cancel = inner.get("action").and_then(|a| a.as_str()) == Some("train_cancel");
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            if is_cancel {
+                                                                                                info!("train_cancel received; aborting at the next slice boundary");
+                                                                                                train_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    Some(Ok(_)) => {}
+                                                                                    _ => {
+                                                                                        // Disconnect: cancel; keep DRAINING (the run settles its
+                                                                                        // completed slices) — but stop polling the dead receiver
+                                                                                        // (converge round: the select spun hot to run end).
+                                                                                        train_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                                                        client_gone = true;
+                                                                                    }
+                                                                                },
+                                                                            }
+                                                                        }
+                                                                        if let Err(join_error) =
+                                                                            exec.await
+                                                                        {
+                                                                            tracing::error!("training task died abnormally: {join_error}");
+                                                                        }
+                                                                        if client_gone {
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                    continue;
+                                                                }
+
                                                                 // Extract prompt from decrypted JSON or use entire string
                                                                 let plaintext_prompt =
                                                                     decrypted_json
@@ -3316,6 +4008,55 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         .and_then(|v| v.as_str())
                                                                         .unwrap_or(&plaintext_str)
                                                                         .to_string();
+
+                                                                // Refuse BEFORE the vision sidecar
+                                                                // and its on-chain token tracking
+                                                                // (round-3 R3-3).
+                                                                if let Some(reason) = server
+                                                                    .serve_back_refusal(&session_adapter)
+                                                                    .await
+                                                                {
+                                                                    // Round-4 F-R4-1: correlate with
+                                                                    // the request id AND close the
+                                                                    // stream. The path this gate
+                                                                    // displaced did both, and without
+                                                                    // them the SDK's pending promise
+                                                                    // for this id never settles — the
+                                                                    // customer sees a hang instead of
+                                                                    // "your adapter is not staged".
+                                                                    let mut frame = json!({
+                                                                        "type": "error",
+                                                                        "code": "LORA_NOT_STAGED",
+                                                                        "message": reason,
+                                                                        "session_id": current_session_id,
+                                                                    });
+                                                                    let mut ended = json!({
+                                                                        "type": "stream_end",
+                                                                        "reason": "error",
+                                                                        "tokens_used": 0,
+                                                                    });
+                                                                    if let Some(msg_id) =
+                                                                        json_msg.get("id")
+                                                                    {
+                                                                        frame["id"] = msg_id.clone();
+                                                                        ended["id"] = msg_id.clone();
+                                                                    }
+                                                                    if ws_sender
+                                                                        .send(axum::extract::ws::Message::Text(
+                                                                            frame.to_string(),
+                                                                        ))
+                                                                        .await
+                                                                        .is_err()
+                                                                    {
+                                                                        break;
+                                                                    }
+                                                                    let _ = ws_sender
+                                                                        .send(axum::extract::ws::Message::Text(
+                                                                            ended.to_string(),
+                                                                        ))
+                                                                        .await;
+                                                                    continue;
+                                                                }
 
                                                                 // Vision pre-processing: route images to VLM sidecar (v8.15.3+)
                                                                 let mut vlm_tokens_used: u64 = 0;
@@ -3598,6 +4339,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             request,
                                                                             "ws-client".to_string(),
                                                                             cancel_flag.clone(),
+                                                                            session_adapter.clone(),
                                                                         )
                                                                         .await
                                                                     {
@@ -3903,6 +4645,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             } else {
                                                                                 json!({
                                                                                     "type": "error",
+                                                                                    // Round-2 F-D(ii): the SDK reads
+                                                                                    // `message` and branches on `code`;
+                                                                                    // an `error` key alone threw the
+                                                                                    // reason away, which is how a
+                                                                                    // serve-back refusal reached the
+                                                                                    // customer as a bare "Request
+                                                                                    // failed". `error` is kept for
+                                                                                    // older clients.
+                                                                                    "code": "INFERENCE_FAILED",
+                                                                                    "message": error_str,
                                                                                     "error": error_str
                                                                                 })
                                                                             };
@@ -4141,6 +4893,39 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         };
 
                         // Vision pre-processing for plaintext messages (v8.15.3+)
+                        // Refuse BEFORE the vision sidecar and its on-chain token
+                        // tracking (round-3 R3-3).
+                        if let Some(reason) = server.serve_back_refusal(&session_adapter).await {
+                            // Round-4 F-R4-1: correlate and close the stream, as
+                            // the path this gate displaced did.
+                            let mut frame = json!({
+                                "type": "error",
+                                "code": "LORA_NOT_STAGED",
+                                "message": reason,
+                                "session_id": session_id.clone(),
+                            });
+                            let mut ended = json!({
+                                "type": "stream_end",
+                                "reason": "error",
+                                "tokens_used": 0,
+                            });
+                            if let Some(msg_id) = json_msg.get("id") {
+                                frame["id"] = msg_id.clone();
+                                ended["id"] = msg_id.clone();
+                            }
+                            if ws_sender
+                                .send(axum::extract::ws::Message::Text(frame.to_string()))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                            let _ = ws_sender
+                                .send(axum::extract::ws::Message::Text(ended.to_string()))
+                                .await;
+                            continue;
+                        }
+
                         let mut vlm_tokens_used: u64 = 0;
                         let request_value = if let Some(imgs) =
                             json_msg.get("images").and_then(|v| v.as_array())
@@ -4226,6 +5011,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                     request,
                                     "ws-client".to_string(),
                                     cancel_flag.clone(),
+                                    session_adapter.clone(),
                                 )
                                 .await
                             {
@@ -4359,6 +5145,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                     } else {
                                         json!({
                                             "type": "error",
+                                            // Round-2 F-D(ii), as above.
+                                            "code": "INFERENCE_FAILED",
+                                            "message": error_str,
                                             "error": error_str
                                         })
                                     };
@@ -4670,6 +5459,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
     info!("   Session ID: {:?}", session_id);
     info!("   Job ID: {:?}", job_id);
     info!("   Chain ID: {:?}", chain_id);
+
+    // T5.3 / interface E.2: "unloaded at session end". Runs on EVERY close,
+    // before the settlement branch, so a session that never carried a job_id
+    // still has its private weights deleted. A stage still in flight is
+    // flagged rather than dropped; that stage deletes its own bytes.
+    if let Some(sid) = &staged_sid {
+        let deps = server.training_deps.read().await.clone();
+        if let Some(deps) = deps {
+            deps.adapters.evict(sid).await;
+        }
+    }
 
     // Cancel background vector loading task if active (Phase 5)
     if let Some(sid) = &session_id {

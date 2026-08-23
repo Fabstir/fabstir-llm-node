@@ -625,3 +625,101 @@ fn test_decrypt_without_vector_database_backward_compat() {
         "vector_database should be None for backward compatibility"
     );
 }
+
+/// T5.3 / interface E.2: the session-scoped `lora` field must survive the
+/// encrypted session-init decrypt intact.
+///
+/// The trap this pins: `SessionDataJson` carries `rename_all = "camelCase"`,
+/// which would map the CID field to `manifestCid` while the interface spells
+/// it **`manifestCID`**. Serde would then drop it silently and the session
+/// would serve the BASE model while the customer believed their fine-tune was
+/// loaded. `LoraRequest` carries explicit renames for exactly that reason.
+fn seal(session_data: serde_json::Value) -> (EncryptedSessionPayload, [u8; 32]) {
+    let node_secret = SecretKey::random(&mut OsRng);
+    let node_priv_bytes = node_secret.to_bytes();
+    let node_public = node_secret.public_key();
+    let client_secret = SecretKey::random(&mut OsRng);
+    let client_eph_pub_bytes = client_secret.public_key().to_sec1_bytes();
+    let shared_key = derive_shared_key(
+        node_public.to_sec1_bytes().as_ref(),
+        &client_secret.to_bytes(),
+    )
+    .unwrap();
+
+    let nonce = [7u8; 24];
+    let aad = b"session-init";
+    let ciphertext =
+        encrypt_with_aead(session_data.to_string().as_bytes(), &nonce, aad, &shared_key).unwrap();
+    let signature: k256::ecdsa::Signature = SigningKey::random(&mut OsRng).sign(&ciphertext);
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&node_priv_bytes);
+    (
+        EncryptedSessionPayload {
+            eph_pub: client_eph_pub_bytes.to_vec(),
+            ciphertext,
+            nonce: nonce.to_vec(),
+            signature: sig_bytes.to_vec(),
+            aad: aad.to_vec(),
+        },
+        key,
+    )
+}
+
+fn base_session_data() -> serde_json::Value {
+    serde_json::json!({
+        "jobId": "lora-job",
+        "modelName": "qwen3.8-27b",
+        "sessionKey": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        "pricePerToken": 904
+    })
+}
+
+#[test]
+fn session_init_carries_the_e2_lora_field() {
+    let mut data = base_session_data();
+    data["lora"] = serde_json::json!({
+        "manifestCID": "u-capability-cid",
+        "manifestSha256": "0xabc",
+        "file": "adapter.gguf",
+    });
+    let (payload, node_key) = seal(data);
+
+    let session_init = decrypt_session_init(&payload, &node_key).expect("decrypts");
+    let lora = session_init
+        .lora
+        .expect("the E.2 lora field must survive the decrypt");
+    assert_eq!(lora.manifest_cid, "u-capability-cid");
+    assert_eq!(lora.manifest_sha256, "0xabc");
+    assert_eq!(lora.file, "adapter.gguf");
+}
+
+#[test]
+fn an_ordinary_session_init_carries_no_lora() {
+    let (payload, node_key) = seal(base_session_data());
+    let session_init = decrypt_session_init(&payload, &node_key).expect("decrypts");
+    assert!(
+        session_init.lora.is_none(),
+        "serve-back must be opt-in; every ordinary session stays on the base model"
+    );
+}
+
+#[test]
+fn a_miscased_manifest_cid_is_refused_rather_than_silently_dropped() {
+    // `manifestCid` is what a `rename_all = "camelCase"` would emit. It must
+    // FAIL the session init loudly. Silently ignoring it would stage nothing
+    // and answer the customer's prompts from the base model on a paid session.
+    let mut data = base_session_data();
+    data["lora"] = serde_json::json!({
+        "manifestCid": "u-capability-cid",
+        "manifestSha256": "0xabc",
+        "file": "adapter.gguf",
+    });
+    let (payload, node_key) = seal(data);
+    assert!(
+        decrypt_session_init(&payload, &node_key).is_err(),
+        "a misspelled lora.manifestCID must fail the session init, not vanish"
+    );
+}

@@ -470,7 +470,48 @@ impl LlmEngine {
         self.model_info.read().await.keys().cloned().collect()
     }
 
-    pub async fn run_inference(&self, mut request: InferenceRequest) -> Result<InferenceResult> {
+    /// Ordinary inference: no session adapter.
+    pub async fn run_inference(&self, request: InferenceRequest) -> Result<InferenceResult> {
+        self.run_inference_with_adapter(request, None).await
+    }
+
+    /// Inference with an optional SESSION-SCOPED LoRA adapter (training M0,
+    /// interface E.2 / TD9). `adapter_path` must come from that session's
+    /// own `training::serve::AdapterRegistry` entry and from nowhere else:
+    /// the isolation guarantee is that one client's private adapter is never
+    /// visible to a concurrent session on the same base model.
+    ///
+    /// TD9 DEVIATION (recorded; REASON AND COST BOTH CORRECTED in the T5
+    /// converge round). TD9 specified an `unsafe impl Send` newtype so the
+    /// adapter could live in the engine's shared model map. It is not
+    /// needed HERE — but not for the reason first recorded.
+    ///
+    /// The operative invariant is that **the adapter is never live across an
+    /// `.await`**: it is created after `new_context` and dropped at the end
+    /// of the same models-mutex block, and that block contains no await at
+    /// all (the pre-existing `MutexGuard` is itself `!Send`, which is why
+    /// the block ends "Release the mutex here before any await"). A local
+    /// that never spans an await never enters the future's state machine, so
+    /// `Send` is not required of it. The originally recorded reason —
+    /// "generation runs inside `spawn_blocking`" — is NOT why, and is false
+    /// for the non-streaming path that reaches this function.
+    ///
+    /// KNOWN COST, worse than first recorded: `LlamaLoraAdapter` in
+    /// llama-cpp-2 0.1.154 has **no `Drop` impl and the crate never calls
+    /// `llama_adapter_lora_free`** (verified: zero of each in its source), so
+    /// every `lora_adapter_init` LEAKS its adapter allocation — on a CUDA
+    /// build, VRAM. Loading per request therefore leaks once per REQUEST,
+    /// where TD9's per-session design would have leaked once per SESSION.
+    /// That is the real trade the deviation makes, and it runs the opposite
+    /// way from the "a few MB, one-off" first written here. It is accepted
+    /// for M0 and T6 MUST measure per-request VRAM growth, not just latency;
+    /// if the growth bites, the fix is TD9's per-session hold (which buys
+    /// back the `unsafe`) or a vendored `llama_adapter_lora_free` binding.
+    pub async fn run_inference_with_adapter(
+        &self,
+        mut request: InferenceRequest,
+        adapter_path: Option<std::path::PathBuf>,
+    ) -> Result<InferenceResult> {
         let start_time = Instant::now();
 
         // Check if model exists
@@ -604,6 +645,45 @@ impl LlmEngine {
                 .model
                 .new_context(&model.backend, ctx_params)
                 .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
+
+            // TD9 application point: immediately after context creation,
+            // inside the models-mutex scope, at scale 1.0 — and ONLY for a
+            // request carrying this session's own adapter. Bound to a local
+            // so it outlives generation and drops with the context; the
+            // engine keeps no adapter state between requests.
+            let _session_lora = match adapter_path.as_ref() {
+                Some(path) => {
+                    // The crate's `lora_adapter_init` carries a
+                    // `debug_assert!(path.exists())`. A session ending
+                    // mid-request evicts the file, so in a DEBUG build that
+                    // assert panics while this thread holds the models
+                    // mutex — poisoning it and killing inference for the
+                    // whole process (T5 round-1 F7). Check explicitly.
+                    //
+                    // This NARROWS the race, it does not close it (round-2
+                    // R2-15): an evict landing between this check and
+                    // `lora_adapter_init` still hits the assert. Release
+                    // builds compile it out and llama returns null, which
+                    // becomes the Err below, so the residual exposure is
+                    // debug-only. Closing it properly means holding the
+                    // adapter for the session's lifetime — the same change
+                    // the leak already argues for, deferred to T6's measurement.
+                    if !path.exists() {
+                        return Err(anyhow!(
+                            "the session LoRA adapter is no longer present (evicted?)"
+                        ));
+                    }
+                    let mut adapter = model.model.lora_adapter_init(path).map_err(|e| {
+                        anyhow!("failed to load the session LoRA adapter: {e:?}")
+                    })?;
+                    context.lora_adapter_set(&mut adapter, 1.0).map_err(|e| {
+                        anyhow!("failed to apply the session LoRA adapter: {e:?}")
+                    })?;
+                    tracing::info!("🎯 session LoRA adapter applied at scale 1.0: {path:?}");
+                    Some(adapter)
+                }
+                None => None,
+            };
 
             // Create batch with configured batch size
             let mut batch = LlamaBatch::new(self.config.batch_size, 1);
@@ -905,9 +985,23 @@ impl LlmEngine {
         Ok(result)
     }
 
+    /// Ordinary streaming inference: no session adapter.
     pub async fn run_inference_stream(
         &self,
         request: InferenceRequest,
+    ) -> Result<(TokenStream, tokio::sync::oneshot::Receiver<InferenceResult>)> {
+        self.run_inference_stream_with_adapter(request, None).await
+    }
+
+    /// Streaming inference WITH an optional session adapter. The WebSocket
+    /// session type E.2 attaches `lora` to routes through here, so the
+    /// selector must exist on this path too — the first cut put it only on
+    /// the non-streaming HTTP entry, where E.2's sessions never go (T5
+    /// converge round 1, F4).
+    pub async fn run_inference_stream_with_adapter(
+        &self,
+        request: InferenceRequest,
+        adapter_path: Option<std::path::PathBuf>,
     ) -> Result<(TokenStream, tokio::sync::oneshot::Receiver<InferenceResult>)> {
         // Check if model exists
         if !self.model_info.read().await.contains_key(&request.model_id) {
@@ -933,7 +1027,24 @@ impl LlmEngine {
             tokio::task::spawn_blocking(move || {
                 let handle = tokio::runtime::Handle::current();
                 handle.block_on(async move {
-                    let _ = engine.run_inference(inference_request).await;
+                    // Round-5 F-R5-6: this discard is why an adapter that
+                    // fails to LOAD produces no terminal frame at all — the
+                    // token channel just closes and the client waits out its
+                    // own timeout. Reachable on serve-back because the bytes
+                    // are only checked against the CLIENT'S OWN manifest hash,
+                    // so a well-formed manifest over invalid GGUF gets that
+                    // far. Self-inflicted and confined to that session, so it
+                    // is recorded rather than fixed here; the fix is to carry
+                    // this result to a terminal frame. Log it loudly meanwhile,
+                    // so an operator can tell a hang from a silent success.
+                    if let Err(error) = engine
+                        .run_inference_with_adapter(inference_request, adapter_path)
+                        .await
+                    {
+                        tracing::error!(
+                            "streaming generation ended with an error and no terminal chunk: {error}"
+                        );
+                    }
                     // tx drops here → rx returns None → stream ends
                 })
             });
