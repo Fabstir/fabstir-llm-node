@@ -1,0 +1,34 @@
+{
+  "_status": "NODE-LOADABLE, NOT YET SIDECAR-LOADABLE. base.files is deliberately absent: the per-file safetensors sha256 list needs the weights provisioned (T1.4/T6). The sidecar REFUSES to start without it, which is correct and is now enforced rather than passing vacuously. This template is sufficient for the node to wire training and for serve-back verification, which needs no sidecar.",
+  "schema": "training-template-v1",
+  "templateId": "train-qlora-qwen38-27b-v1",
+  "base": {
+    "repo": "unsloth/Qwen3.8-27B",
+    "revision": "3ea932cee0a432ae86e9c7826cbe8aef52323a28",
+    "tokenizerSha256": "0x0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+    "baseServingModelId": "0x892310a339a9c5faaf43c53b8a90fb2a1a1e008ad3f0e455202f4b60878bd650"
+  },
+  "method": {
+    "kind": "qlora-nf4",
+    "ranks": [8, 16, 32],
+    "alphas": [16, 32, 64],
+    "seqLens": [1024, 2048, 4096],
+    "lrs": ["0.0001", "0.0002", "0.0005"],
+    "dropout": "0.0",
+    "packing": "cross-boundary-v1",
+    "targetModules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  },
+  "optimiser": {
+    "kind": "adamw-8bit",
+    "schedule": "cosine",
+    "warmupRatio": "0.03"
+  },
+  "countingRecipe": "count-v1",
+  "specialsPerSample": 1,
+  "bounds": {
+    "maxEpochs": 5,
+    "maxTotalTokens": 15000000
+  },
+  "sliceTokens": 1000000,
+  "vramGb": 40
+}
