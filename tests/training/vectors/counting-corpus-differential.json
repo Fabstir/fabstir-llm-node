@@ -1,0 +1,803 @@
+{
+ "_note": "Differential corpus for count-v1 implementation parity. NOT the frozen C.2 fixture. Every entry: tokens = len(encode(text, add_special_tokens=False)) + 1. Emphasis on non-BMP characters, where a UTF-16 (JS) implementation that iterates code UNITS rather than code POINTS diverges from the Rust core.",
+ "countingRecipe": "count-v1",
+ "specialsPerSample": 1,
+ "tokenizerSha256": "0x0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+ "generator": {
+  "library": "tokenizers",
+  "version": "0.23.1"
+ },
+ "caseCount": 158,
+ "cases": [
+  {
+   "group": "non-bmp",
+   "text": "😀",
+   "tokens": 2
+  },
+  {
+   "group": "non-bmp",
+   "text": "a😀b",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "😀😀😀",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "🚀",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "a🚀b",
+   "tokens": 6
+  },
+  {
+   "group": "non-bmp",
+   "text": "🚀🚀🚀",
+   "tokens": 10
+  },
+  {
+   "group": "non-bmp",
+   "text": "🧪",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "a🧪b",
+   "tokens": 6
+  },
+  {
+   "group": "non-bmp",
+   "text": "🧪🧪🧪",
+   "tokens": 10
+  },
+  {
+   "group": "non-bmp",
+   "text": "🎬",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "a🎬b",
+   "tokens": 6
+  },
+  {
+   "group": "non-bmp",
+   "text": "🎬🎬🎬",
+   "tokens": 10
+  },
+  {
+   "group": "non-bmp",
+   "text": "𠀀",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "a𠀀b",
+   "tokens": 6
+  },
+  {
+   "group": "non-bmp",
+   "text": "𠀀𠀀𠀀",
+   "tokens": 10
+  },
+  {
+   "group": "non-bmp",
+   "text": "𪚲",
+   "tokens": 5
+  },
+  {
+   "group": "non-bmp",
+   "text": "a𪚲b",
+   "tokens": 7
+  },
+  {
+   "group": "non-bmp",
+   "text": "𪚲𪚲𪚲",
+   "tokens": 13
+  },
+  {
+   "group": "non-bmp",
+   "text": "𝐀",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "a𝐀b",
+   "tokens": 6
+  },
+  {
+   "group": "non-bmp",
+   "text": "𝐀𝐀𝐀",
+   "tokens": 10
+  },
+  {
+   "group": "non-bmp",
+   "text": "🂡",
+   "tokens": 4
+  },
+  {
+   "group": "non-bmp",
+   "text": "a🂡b",
+   "tokens": 6
+  },
+  {
+   "group": "non-bmp",
+   "text": "🂡🂡🂡",
+   "tokens": 10
+  },
+  {
+   "group": "non-bmp",
+   "text": "󠁁",
+   "tokens": 5
+  },
+  {
+   "group": "non-bmp",
+   "text": "a󠁁b",
+   "tokens": 7
+  },
+  {
+   "group": "non-bmp",
+   "text": "󠁁󠁁󠁁",
+   "tokens": 13
+  },
+  {
+   "group": "zwj",
+   "text": "👨‍👩‍👧‍👦",
+   "tokens": 19
+  },
+  {
+   "group": "zwj",
+   "text": "👍🏻",
+   "tokens": 7
+  },
+  {
+   "group": "zwj",
+   "text": "👍🏿",
+   "tokens": 7
+  },
+  {
+   "group": "flag",
+   "text": "🇬🇧",
+   "tokens": 7
+  },
+  {
+   "group": "flag",
+   "text": "🇺🇸",
+   "tokens": 7
+  },
+  {
+   "group": "flag",
+   "text": "🇯🇵",
+   "tokens": 7
+  },
+  {
+   "group": "norm-NFC",
+   "text": "café",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFD",
+   "text": "café",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "café",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "café",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFC",
+   "text": "naïve",
+   "tokens": 4
+  },
+  {
+   "group": "norm-NFD",
+   "text": "naïve",
+   "tokens": 4
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "naïve",
+   "tokens": 4
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "naïve",
+   "tokens": 4
+  },
+  {
+   "group": "norm-NFC",
+   "text": "résumé",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFD",
+   "text": "résumé",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "résumé",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "résumé",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFC",
+   "text": "Å",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFD",
+   "text": "Å",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "Å",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "Å",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFC",
+   "text": "ﬁle",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFD",
+   "text": "ﬁle",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "file",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "file",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFC",
+   "text": "①",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFD",
+   "text": "①",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "1",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "1",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFC",
+   "text": "㍿",
+   "tokens": 4
+  },
+  {
+   "group": "norm-NFD",
+   "text": "㍿",
+   "tokens": 4
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "株式会社",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "株式会社",
+   "tokens": 2
+  },
+  {
+   "group": "norm-NFC",
+   "text": "ｦｧ",
+   "tokens": 5
+  },
+  {
+   "group": "norm-NFD",
+   "text": "ｦｧ",
+   "tokens": 5
+  },
+  {
+   "group": "norm-NFKC",
+   "text": "ヲァ",
+   "tokens": 3
+  },
+  {
+   "group": "norm-NFKD",
+   "text": "ヲァ",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": " ",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "¤",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "¨",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "¬",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "°",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "´",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "¸",
+   "tokens": 3
+  },
+  {
+   "group": "high-byte",
+   "text": "¼",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "À",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "Ä",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "È",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "Ì",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "Ð",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "Ô",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "Ø",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "Ü",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "à",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "ä",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "è",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "ì",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "ð",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "ô",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "ø",
+   "tokens": 2
+  },
+  {
+   "group": "high-byte",
+   "text": "ü",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a b",
+   "tokens": 3
+  },
+  {
+   "group": "space",
+   "text": " ",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a  b",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "  ",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a   b",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "   ",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a\tb",
+   "tokens": 3
+  },
+  {
+   "group": "space",
+   "text": "\t",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a\t\tb",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "\t\t",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a\nb",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "\n",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a\r\nb",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "\r\n",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a\rb",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "\r",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a b",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": " ",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a b",
+   "tokens": 5
+  },
+  {
+   "group": "space",
+   "text": " ",
+   "tokens": 3
+  },
+  {
+   "group": "space",
+   "text": "a　b",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "　",
+   "tokens": 2
+  },
+  {
+   "group": "space",
+   "text": "a​b",
+   "tokens": 4
+  },
+  {
+   "group": "space",
+   "text": "​",
+   "tokens": 2
+  },
+  {
+   "group": "control",
+   "text": "x\u0000y",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x\u0001y",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x\u0007y",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x\u000by",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x\fy",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x\u001by",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "xy",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x﻿y",
+   "tokens": 4
+  },
+  {
+   "group": "control",
+   "text": "x y",
+   "tokens": 5
+  },
+  {
+   "group": "control",
+   "text": "x y",
+   "tokens": 5
+  },
+  {
+   "group": "run",
+   "text": "a",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "😀",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "aa",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "😀",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "aaa",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "😀",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaa",
+   "tokens": 4
+  },
+  {
+   "group": "run",
+   "text": "😀",
+   "tokens": 2
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaa",
+   "tokens": 3
+  },
+  {
+   "group": "run",
+   "text": "😀😀",
+   "tokens": 3
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaa",
+   "tokens": 4
+  },
+  {
+   "group": "run",
+   "text": "😀😀",
+   "tokens": 3
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "tokens": 10
+  },
+  {
+   "group": "run",
+   "text": "😀😀😀😀😀😀😀",
+   "tokens": 8
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "tokens": 9
+  },
+  {
+   "group": "run",
+   "text": "😀😀😀😀😀😀😀😀",
+   "tokens": 9
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "tokens": 10
+  },
+  {
+   "group": "run",
+   "text": "😀😀😀😀😀😀😀😀",
+   "tokens": 9
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "tokens": 34
+  },
+  {
+   "group": "run",
+   "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "tokens": 32
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "tokens": 33
+  },
+  {
+   "group": "run",
+   "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "tokens": 33
+  },
+  {
+   "group": "run",
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "tokens": 34
+  },
+  {
+   "group": "run",
+   "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "tokens": 33
+  },
+  {
+   "group": "mixed",
+   "text": "中文 English 日本語 한국어 العربية עברית ру́сский",
+   "tokens": 14
+  },
+  {
+   "group": "mixed",
+   "text": "1234567890 ١٢٣٤٥٦٧٨٩٠ ๑๒๓๔๕๖๗๘๙๐",
+   "tokens": 53
+  },
+  {
+   "group": "mixed",
+   "text": "x́̂̃̄ stacked combining marks",
+   "tokens": 12
+  }
+ ]
+}

@@ -1,0 +1,72 @@
+{
+  "_note": "count-v1 (interface C.2): tokens = len(encode(text, add_special_tokens=False)) + specialsPerSample. tokenizerSha256 must equal the training template's pin. generator records the exact tokenizers library version the counts came from (Open item 7 parity).",
+  "countingRecipe": "count-v1",
+  "tokenizerSha256": "0x0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+  "specialsPerSample": 1,
+  "generator": {
+    "library": "tokenizers",
+    "version": "0.23.1"
+  },
+  "cases": [
+    {
+      "text": "hello world",
+      "tokens": 3
+    },
+    {
+      "text": "a",
+      "tokens": 2
+    },
+    {
+      "text": "The quick brown fox jumps over the lazy dog.",
+      "tokens": 11
+    },
+    {
+      "text": " leading space matters to byte-level BPE",
+      "tokens": 9
+    },
+    {
+      "text": "trailing space matters too ",
+      "tokens": 7
+    },
+    {
+      "text": "double  space   and\ttab and\nnewline runs",
+      "tokens": 11
+    },
+    {
+      "text": "emoji: 🚀🧪🎬 and skin tone 👍🏽",
+      "tokens": 20
+    },
+    {
+      "text": "中文分词测试：训练任务在链上结算。",
+      "tokens": 13
+    },
+    {
+      "text": "日本語と한국어 mixed with English and 12345 digits",
+      "tokens": 16
+    },
+    {
+      "text": "café naïve résumé — accented forms (NFC precomposed)",
+      "tokens": 16
+    },
+    {
+      "text": "café naïve résumé — accented forms (NFD combining marks)",
+      "tokens": 16
+    },
+    {
+      "text": "fn main() { println!(\"{}\", 42_u64.pow(2)); } // code-ish sample",
+      "tokens": 22
+    },
+    {
+      "text": "A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries. A deliberately long sample intended to cross several merge boundaries.",
+      "tokens": 441
+    },
+    {
+      "text": "0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 ",
+      "tokens": 133
+    },
+    {
+      "text": "?!.,;:'\"()[]{}<>|/\\@#$%^&*-_=+~`",
+      "tokens": 21
+    }
+  ]
+}
