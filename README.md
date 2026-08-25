@@ -20,9 +20,11 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Streaming Responses**: Real-time result streaming as generated
 - **Chain-Aware Settlement**: Automatic payment settlement on the correct chain
 - **WebSocket API**: Production-ready with compression, rate limiting, and authentication
-- **Private Fine-Tuning**: LoRA/QLoRA training as a marketplace job — encrypted dataset in,
-  per-slice on-chain settlement, encrypted adapter out; finished adapters serve back into an
-  ordinary session, isolated to it and evicted at its end (v8.52.0+)
+- **Fine-Tuning as a Marketplace Job**: LoRA/QLoRA training with per-slice on-chain
+  settlement; the dataset is encrypted in transit and at rest and the adapter is returned
+  encrypted, but the host decrypts it to train, so this is not yet host-blind. Finished
+  adapters serve back into an ordinary session, isolated to it and evicted at its end
+  (v8.52.0+)
 - **End-to-End Encryption**: ECDH + XChaCha20-Poly1305 for secure sessions (v8.0.0+)
 - **Zero-Knowledge Proofs**: GPU-accelerated STARK proofs via Risc0 zkVM (v8.1.0+)
 - **Host-Side RAG**: Session-scoped vector storage for document retrieval (v8.3.0+)

@@ -3371,7 +3371,12 @@ Watch for these log patterns to monitor checkpoint publishing:
 
 ## Training Endpoints (v8.52.0+)
 
-Private LoRA/QLoRA fine-tuning as a marketplace job. All three routes return **404** when
+LoRA/QLoRA fine-tuning as a marketplace job.
+
+**Confidentiality, stated plainly:** the dataset is encrypted in transit and at rest, and the
+adapter is returned encrypted, but **the host decrypts the dataset to train on it and
+produces the adapter in the clear**. Do not build UI copy claiming the host cannot read a
+customer's training data. All three routes return **404** when
 `TRAIN_ENABLED` is not set on the host, which is the capability statement: a 404 here means
 this host does not offer training, not that the URL is wrong.
 

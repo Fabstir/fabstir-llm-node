@@ -23,6 +23,29 @@ pinned base model, settles on-chain per slice, and returns an encrypted adapter 
 alone can decrypt. Zero smart-contract changes: it rides the existing session-job
 machinery with its own registered model id.
 
+## What the host can see (read this before writing any privacy copy)
+
+**The host decrypts the dataset in order to train on it.** The capability CID in the job
+payload *is* the decryption key (`parse_capability_cid` in `src/ltx/input_image.rs` decodes
+`ct_hash`, a 32-byte key, padding and the plaintext CID), so there is no key-release step to
+gate. `src/training/staging.rs` fetches each shard, decrypts it, and writes the **plaintext
+to `TRAINING_STAGING_ROOT` on the host's filesystem** for the sidecar to read.
+
+**The host also produces the adapter in the clear.** The sidecar writes it to
+`TRAINING_WORK_ROOT`; the node reads it back off that path (`core.rs:1158`) and only then
+mints a random key and encrypts it (`artifact.rs:75`). The adapter is derived from the
+dataset, so leaving it exposed partially undoes the dataset's protection rather than merely
+failing to extend it.
+
+So the honest statement is: **one host operator can read every byte of a customer's training
+data and holds the adapter it produced.** The public cannot — the on-chain commitment carries
+`manifestSha256` hashes, never capabilities, so no key touches the chain.
+
+What is true today: encrypted in transit, encrypted at rest in storage, adapter returned
+encrypted, every slice settled on-chain against a proof. What is **not** true today: that the
+host cannot see it. Do not write copy implying otherwise; see
+`docs/development/DESIGN-CONFIDENTIAL-TRAINING.md` for what would close it.
+
 ## Shape
 
 Two processes, and the split is load bearing.
