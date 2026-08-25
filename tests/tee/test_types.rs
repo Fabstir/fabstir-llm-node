@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! Phase 1.1 — core TEE types: serde roundtrip (task 1.1.4).
 
-use fabstir_llm_node::tee::types::{Claims, Evidence, Policy, WrappedKey};
+use fabstir_llm_node::tee::types::{CcMode,Claims, Evidence, Policy, WrappedKey};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -38,7 +38,7 @@ fn test_types_roundtrip_serde() {
         policy_version: 1,
         allowed_skus: vec!["H100".to_string(), "H200".to_string()],
         expected_measurement: [7u8; 48],
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 1_000,

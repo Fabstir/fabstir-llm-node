@@ -13,8 +13,8 @@ use crate::tee::key_broker::KeyBrokerClient;
 use crate::tee::keywrap::wrap_key;
 use crate::tee::provider::AttestationProvider;
 use crate::tee::types::{
-    cross_bind_report_data, now_unix, sha256_32, Evidence, GpuReportFields, Policy, TeeError,
-    TeeResult, WrappedKey,
+    cross_bind_report_data, now_unix, sha256_32, CcMode, Evidence, GpuReportFields, Policy,
+    TeeError, TeeResult, WrappedKey,
 };
 use crate::tee::verifier::{AttestationVerifier, DefaultVerifier};
 use async_trait::async_trait;
@@ -29,13 +29,13 @@ pub struct MockAttestationProvider {
 }
 
 impl MockAttestationProvider {
-    /// New provider reporting `sku`, image `measurement`, and CC state `cc_on`
+    /// New provider reporting `sku`, image `measurement`, and GPU `cc_mode`
     /// (production TCB, age 0 by default — adjust with the builder setters).
-    pub fn new(sku: impl Into<String>, measurement: [u8; 48], cc_on: bool) -> Self {
+    pub fn new(sku: impl Into<String>, measurement: [u8; 48], cc_mode: CcMode) -> Self {
         Self {
             report: GpuReportFields {
                 sku: sku.into(),
-                cc_on,
+                cc_mode,
                 production_tcb: true,
                 tcb_age_days: 0,
             },

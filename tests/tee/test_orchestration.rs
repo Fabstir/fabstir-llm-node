@@ -14,7 +14,7 @@ use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, policy_signature_digest, SignedModelPolicy,
 };
 use fabstir_llm_node::tee::policy_source::{PolicySource, ProviderRegistry};
-use fabstir_llm_node::tee::types::{Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError, TeeResult};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ fn test_policy(model_id: [u8; 32]) -> Policy {
         policy_version: 1,
         allowed_skus: vec![SKU.to_string()],
         expected_measurement: MEASUREMENT,
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 0,
@@ -91,7 +91,7 @@ impl PolicySource for MockSource {
 }
 
 fn good_provider() -> MockAttestationProvider {
-    MockAttestationProvider::new(SKU, MEASUREMENT, true)
+    MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -224,7 +224,7 @@ async fn prepare_attested_model_fails_closed_on_bad_attestation() {
     let f = fixture();
     let expected = sha256_hex(&f.plaintext);
     // Wrong measurement → verifier rejects → KBS withholds the DEK (no plaintext).
-    let bad = MockAttestationProvider::new(SKU, [0u8; 48], true);
+    let bad = MockAttestationProvider::new(SKU, [0u8; 48], CcMode::On);
     let err = prepare_attested_model(
         &f.loader,
         &f.source,

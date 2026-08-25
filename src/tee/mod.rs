@@ -41,7 +41,7 @@ pub use policy::{
 pub use policy_source::{fetch_validated_policy, PolicySource, ProviderRegistry};
 pub use provider::AttestationProvider;
 pub use types::{
-    cross_bind_report_data, sha256_32, Claims, Evidence, GpuReportFields, Policy, TeeError,
+    cross_bind_report_data, sha256_32, CcMode, Claims, Evidence, GpuReportFields, Policy, TeeError,
     TeeResult, WrappedKey,
 };
 pub use verifier::{AttestationVerifier, DefaultVerifier};

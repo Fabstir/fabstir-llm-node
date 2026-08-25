@@ -8,7 +8,7 @@
 use fabstir_llm_node::tee::mock::MockAttestationProvider;
 use fabstir_llm_node::tee::provider::AttestationProvider;
 use fabstir_llm_node::tee::types::{
-    cross_bind_report_data, sha256_32, Claims, Evidence, Policy, TeeError,
+    cross_bind_report_data, sha256_32, CcMode, Claims, Evidence, Policy, TeeError,
 };
 use fabstir_llm_node::tee::verifier::{AttestationVerifier, DefaultVerifier};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,7 +30,7 @@ fn valid_policy() -> Policy {
         policy_version: 1,
         allowed_skus: vec!["H100".to_string()],
         expected_measurement: MEAS,
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 0,
@@ -57,7 +57,7 @@ fn assert_verification_failed(res: Result<Claims, TeeError>, needle: &str) {
 
 #[tokio::test]
 async fn accepts_valid() {
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     let before = now_unix();
     let claims = DefaultVerifier
@@ -71,7 +71,7 @@ async fn accepts_valid() {
 
 #[tokio::test]
 async fn rejects_wrong_measurement() {
-    let p = MockAttestationProvider::new("H100", OTHER_MEAS, true);
+    let p = MockAttestationProvider::new("H100", OTHER_MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(
         DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
@@ -81,31 +81,31 @@ async fn rejects_wrong_measurement() {
 
 #[tokio::test]
 async fn rejects_disallowed_sku() {
-    let p = MockAttestationProvider::new("H200", MEAS, true);
+    let p = MockAttestationProvider::new("H200", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "sku");
 }
 
 #[tokio::test]
 async fn rejects_cc_off() {
-    let p = MockAttestationProvider::new("H100", MEAS, false);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::Off);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(
         DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
-        "cc off",
+        "cc mode off",
     );
 }
 
 #[tokio::test]
 async fn rejects_stale_tcb() {
-    let p = MockAttestationProvider::new("H100", MEAS, true).with_tcb_age_days(60);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(60);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "tcb");
 }
 
 #[tokio::test]
 async fn rejects_nonce_mismatch() {
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     let wrong_nonce = [8u8; 32];
     assert_verification_failed(
@@ -119,8 +119,8 @@ async fn rejects_cross_bind_mismatch() {
     // A genuine CPU quote from p1 paired with a different (also genuine) GPU
     // report — the classic split-attestation forgery. Both reports are valid in
     // isolation; only the pairing is wrong, so cross-binding must catch it.
-    let p1 = MockAttestationProvider::new("H100", MEAS, true);
-    let p2 = MockAttestationProvider::new("H100", MEAS, true).with_tcb_age_days(5);
+    let p1 = MockAttestationProvider::new("H100", MEAS, CcMode::On);
+    let p2 = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(5);
     let mut ev = gather(&p1, NONCE).await;
     let ev2 = gather(&p2, NONCE).await;
     ev.gpu_report = ev2.gpu_report; // swap report; ev.cpu_quote still commits to p1's
@@ -129,7 +129,7 @@ async fn rejects_cross_bind_mismatch() {
 
 #[tokio::test]
 async fn rejects_expired_policy() {
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
     policy.expiry = now_unix() - 1;
@@ -138,7 +138,7 @@ async fn rejects_expired_policy() {
 
 #[tokio::test]
 async fn rejects_not_yet_valid() {
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
     policy.not_before = now_unix() + 3600;
@@ -148,7 +148,7 @@ async fn rejects_not_yet_valid() {
 #[tokio::test]
 async fn rejects_non_production_tcb() {
     // Check #8: debug/non-production CPU TCB must be rejected when the policy requires it.
-    let p = MockAttestationProvider::new("H100", MEAS, true).with_production_tcb(false);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_production_tcb(false);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(
         DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
@@ -159,7 +159,7 @@ async fn rejects_non_production_tcb() {
 #[tokio::test]
 async fn rejects_cpu_quote_too_short() {
     // Check #2 (fail-closed guard that also prevents a slice panic on `[..64]`).
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let mut ev = gather(&p, NONCE).await;
     ev.cpu_quote.truncate(32);
     assert_verification_failed(
@@ -172,7 +172,7 @@ async fn rejects_cpu_quote_too_short() {
 async fn rejects_gpu_report_decode_failure() {
     // Check #4: a gpu_report that is not valid bincode for GpuReportFields must fail
     // closed at decode — even with a cross-binding deliberately recomputed to match it.
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let mut ev = gather(&p, NONCE).await;
     ev.gpu_report = vec![0xFFu8; 4]; // too short to be a valid GpuReportFields
     let grh = sha256_32(&ev.gpu_report);
@@ -189,7 +189,7 @@ async fn rejects_gpu_report_decode_failure() {
 #[tokio::test]
 async fn rejects_nonzero_report_data_padding() {
     // Check #3 zero-pad half: report_data[32..64] must be zero.
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let mut ev = gather(&p, NONCE).await;
     ev.cpu_quote[40] = 0x01; // a byte inside the [32..64] zero-pad region
     assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "cross");
@@ -198,7 +198,7 @@ async fn rejects_nonzero_report_data_padding() {
 #[tokio::test]
 async fn mock_echoes_nonce_and_pk_att() {
     // Task 1.3.1: the mock echoes the nonce + pk_att (and pins measurement / quote length).
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     assert_eq!(ev.nonce, NONCE);
     assert_eq!(ev.pk_att, PK_ATT.to_vec());
@@ -211,7 +211,7 @@ async fn validity_window_is_inclusive() {
     // Deterministic boundary test of `not_before <= now <= expiry` (inclusive) via
     // verify_at(now). The plan defines the window as inclusive at both ends; revocation
     // is expressed by pushing expiry into the past, not by excluding the exact second.
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
     policy.not_before = 1_000;
@@ -241,21 +241,61 @@ async fn validity_window_is_inclusive() {
 
 #[tokio::test]
 async fn accepts_cc_off_when_not_required() {
-    // Policy-gated check #7: require_cc_on=false must ACCEPT a cc_on=false report.
-    let p = MockAttestationProvider::new("H100", MEAS, false);
+    // Policy-gated check #7: a policy with NO cc requirement accepts any mode.
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::Off);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
-    policy.require_cc_on = false;
+    policy.require_cc_mode = None;
     assert!(
         DefaultVerifier.verify(&ev, &policy, NONCE).is_ok(),
-        "cc_on=false should be accepted when require_cc_on=false"
+        "CcMode::Off should be accepted when require_cc_mode is None"
+    );
+}
+
+#[tokio::test]
+async fn rejects_devtools_when_the_policy_requires_on() {
+    // THE reason CcMode is not a bool. `devtools` enables the CC APIs and
+    // attests, with the memory protections DISABLED. Under the old
+    // `cc_on: bool` this state was inexpressible, so a real report parser
+    // would have mapped "not off" to true and released the dataset key to an
+    // unprotected GPU while `require_cc_on` read as though it had done its job.
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::DevTools);
+    let ev = gather(&p, NONCE).await;
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        "cc mode devtools",
+    );
+}
+
+#[tokio::test]
+async fn devtools_is_accepted_only_when_named_explicitly() {
+    // A policy MAY accept devtools, but only by naming it. There is no way to
+    // reach it by relaxing a flag, which is what made the boolean dangerous:
+    // the unsafe state must be spelled out, never arrived at by loosening.
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::DevTools);
+    let ev = gather(&p, NONCE).await;
+
+    let mut devtools_policy = valid_policy();
+    devtools_policy.require_cc_mode = Some(CcMode::DevTools);
+    assert!(
+        DefaultVerifier.verify(&ev, &devtools_policy, NONCE).is_ok(),
+        "a policy naming DevTools should accept a DevTools report"
+    );
+
+    // ...and that same policy must NOT then accept a protected GPU silently
+    // passing for something else: the match is exact in both directions.
+    let on = MockAttestationProvider::new("H100", MEAS, CcMode::On);
+    let ev_on = gather(&on, NONCE).await;
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev_on, &devtools_policy, NONCE),
+        "cc mode on",
     );
 }
 
 #[tokio::test]
 async fn accepts_non_production_tcb_when_not_required() {
     // Policy-gated check #8: require_production_tcb=false must ACCEPT a debug-TCB report.
-    let p = MockAttestationProvider::new("H100", MEAS, true).with_production_tcb(false);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_production_tcb(false);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
     policy.require_production_tcb = false;
@@ -268,7 +308,7 @@ async fn accepts_non_production_tcb_when_not_required() {
 #[tokio::test]
 async fn accepts_tcb_age_equal_to_max() {
     // Check #9 inclusive boundary: tcb_age_days == max_tcb_age_days is accepted (`>` check).
-    let p = MockAttestationProvider::new("H100", MEAS, true).with_tcb_age_days(30);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(30);
     let ev = gather(&p, NONCE).await;
     assert!(
         DefaultVerifier.verify(&ev, &valid_policy(), NONCE).is_ok(),
@@ -279,7 +319,7 @@ async fn accepts_tcb_age_equal_to_max() {
 #[tokio::test]
 async fn rejects_tcb_age_one_over_max() {
     // Check #9 exact boundary: max + 1 is rejected.
-    let p = MockAttestationProvider::new("H100", MEAS, true).with_tcb_age_days(31);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(31);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "tcb");
 }
@@ -288,7 +328,7 @@ async fn rejects_tcb_age_one_over_max() {
 async fn rejects_on_broken_clock_even_if_never_expires() {
     // now == u64::MAX is now_unix()'s broken-clock sentinel: must fail closed even for a
     // never-expiring (expiry == u64::MAX) policy.
-    let p = MockAttestationProvider::new("H100", MEAS, true);
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
     policy.expiry = u64::MAX;

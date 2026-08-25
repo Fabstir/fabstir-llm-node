@@ -30,7 +30,7 @@ use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, policy_signature_digest, SignedModelPolicy,
 };
 use fabstir_llm_node::tee::policy_source::{PolicySource, ProviderRegistry};
-use fabstir_llm_node::tee::types::{Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, Policy, TeeError, TeeResult};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -82,7 +82,7 @@ fn policy(model_id: [u8; 32]) -> Policy {
         policy_version: 1,
         allowed_skus: vec![SKU.to_string()],
         expected_measurement: MEASUREMENT,
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 0,
@@ -145,7 +145,7 @@ async fn encrypted_model_decrypts_attested_and_loads_on_gpu() {
     let policy_src = OnePolicy { model_id, signed };
     let providers = ProviderRegistry::new().with_provider(model_id, provider_addr);
     let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy(model_id)))]));
-    let attestation = MockAttestationProvider::new(SKU, MEASUREMENT, true);
+    let attestation = MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On);
 
     let prepared = prepare_attested_model(
         &loader,

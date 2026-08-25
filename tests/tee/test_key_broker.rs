@@ -7,7 +7,7 @@ use fabstir_llm_node::tee::key_broker::{KeyBrokerClient, NodeAttestationClient};
 use fabstir_llm_node::tee::keywrap::generate_ephemeral_keypair;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::provider::AttestationProvider;
-use fabstir_llm_node::tee::types::{Policy, TeeError};
+use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError};
 use std::collections::HashMap;
 
 const SKU: &str = "H100";
@@ -18,7 +18,7 @@ fn test_policy(model_id: [u8; 32]) -> Policy {
         policy_version: 1,
         allowed_skus: vec![SKU.to_string()],
         expected_measurement: MEASUREMENT,
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 0,
@@ -28,7 +28,7 @@ fn test_policy(model_id: [u8; 32]) -> Policy {
 }
 
 fn good_provider() -> MockAttestationProvider {
-    MockAttestationProvider::new(SKU, MEASUREMENT, true)
+    MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On)
 }
 
 fn broker(model_id: [u8; 32], dek: [u8; 32]) -> MockKeyBroker {

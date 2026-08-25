@@ -105,9 +105,18 @@ impl DefaultVerifier {
             )));
         }
 
-        // 7. CC must be ON when the policy requires it.
-        if policy.require_cc_on && !fields.cc_on {
-            return Err(TeeError::VerificationFailed("cc off".into()));
+        // 7. CC mode must match the policy EXACTLY when it requires one.
+        //    Exact, not "at least on": `devtools` attests with the protections
+        //    disabled, so anything looser than equality releases the key to an
+        //    unprotected GPU. A policy that genuinely wants devtools has to name
+        //    it.
+        if let Some(required) = policy.require_cc_mode {
+            if fields.cc_mode != required {
+                return Err(TeeError::VerificationFailed(format!(
+                    "cc mode {:?}, policy requires {:?}",
+                    fields.cc_mode, required
+                )));
+            }
         }
 
         // 8. Production TCB when the policy requires it.

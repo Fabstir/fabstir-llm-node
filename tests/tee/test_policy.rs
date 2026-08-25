@@ -7,7 +7,7 @@ use fabstir_llm_node::crypto::recover_client_address;
 use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, check_policy_validity, policy_signature_digest, SignedModelPolicy,
 };
-use fabstir_llm_node::tee::types::{Policy, TeeError};
+use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature, SigningKey};
 
 fn a_policy() -> Policy {
@@ -15,7 +15,7 @@ fn a_policy() -> Policy {
         policy_version: 1,
         allowed_skus: vec!["H100".to_string(), "H200".to_string()],
         expected_measurement: [0x11u8; 48],
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 0,

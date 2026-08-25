@@ -10,7 +10,7 @@ use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::model_source::{
     is_tmpfs, secure_delete, BlobSource, EncryptedModelLoader, EncryptedModelSpec,
 };
-use fabstir_llm_node::tee::types::{Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError, TeeResult};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -22,7 +22,7 @@ fn test_policy(model_id: [u8; 32]) -> Policy {
         policy_version: 1,
         allowed_skus: vec![SKU.to_string()],
         expected_measurement: MEASUREMENT,
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before: 0,
@@ -54,7 +54,7 @@ fn loader() -> (EncryptedModelLoader, tempfile::TempDir) {
 }
 
 fn good_provider() -> MockAttestationProvider {
-    MockAttestationProvider::new(SKU, MEASUREMENT, true)
+    MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On)
 }
 
 fn dir_is_empty(dir: &std::path::Path) -> bool {
@@ -107,7 +107,7 @@ async fn prepare_fails_closed_on_bad_attestation() {
     };
 
     // Provider with a WRONG measurement → verifier rejects → broker withholds the DEK.
-    let bad = MockAttestationProvider::new(SKU, [0u8; 48], true);
+    let bad = MockAttestationProvider::new(SKU, [0u8; 48], CcMode::On);
     let err = loader
         .prepare_encrypted_model(&s5, &kbs, &bad, &spec)
         .await
@@ -515,7 +515,7 @@ async fn e2e_real_attestation_kbs_roundtrip_then_measurement_flip_fails() {
     loader.evict_unreferenced();
 
     // Flip the attested measurement → KBS verification rejects → fail closed, no plaintext.
-    let wrong_meas = MockAttestationProvider::new(SKU, [0xFFu8; 48], true);
+    let wrong_meas = MockAttestationProvider::new(SKU, [0xFFu8; 48], CcMode::On);
     let err = loader
         .prepare_encrypted_model(&s5, &kbs, &wrong_meas, &spec)
         .await

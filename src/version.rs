@@ -3,19 +3,19 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.52.1-staged-log-2026-08-25";
+pub const VERSION: &str = "v8.53.0-cc-mode-tristate-2026-08-25";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.52.1";
+pub const VERSION_NUMBER: &str = "8.53.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 52;
+pub const VERSION_MINOR: u32 = 53;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-08-25";
@@ -571,6 +571,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.53.0 - GPU CC mode is tri-state (Aug 25, 2026)
+    "SECURITY/BREAKING (TEE): GPU Confidential Computing state is now CcMode::{Off,On,DevTools}, not a bool. NVIDIA's --set-cc-mode has THREE values and `devtools` ATTESTS WITH THE MEMORY PROTECTIONS DISABLED. Policy.require_cc_on: bool becomes require_cc_mode: Option<CcMode>, matched EXACTLY; GpuReportFields.cc_on becomes cc_mode",
+    "NOTE: this changes the SIGNED Policy shape (canonical_policy_bytes is serde over the struct), so it had to land before any real policy was signed. Nothing was exploitable yet because the Phase 5 report parser does not exist -- which is precisely the risk: a parser handed a bool maps not-off to true, and devtools then satisfies a policy demanding protection",
+    "NOTE: the pre-existing suite could NOT catch this -- under a not-off check rejects_cc_off still passes. Two new rows pin it: rejects_devtools_when_the_policy_requires_on, and devtools_is_accepted_only_when_named_explicitly",
     // v8.52.1 - Explicit staged log line (Aug 25, 2026)
     "FEAT: the serve-back staged log now names the job id, byte count and shard count. Without a positive line, a stage that SUCCEEDED and was then rejected by llama.cpp read identically to a stage that FAILED, and inferring success from silence is the failure this surface exists to avoid",
     "NOTE: the line carries the minted registry key deliberately. Isolation comes from that key never being accepted from the wire, NOT from secrecy, and it is the only stable handle correlating a stage with its eviction",
@@ -1041,8 +1045,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 52);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 53);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1222,14 +1226,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.52.1"));
+        assert!(version.contains("8.53.0"));
         assert!(version.contains("2026-08-25"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.52.1-staged-log-2026-08-25");
-        assert_eq!(VERSION_NUMBER, "8.52.1");
+        assert_eq!(VERSION, "v8.53.0-cc-mode-tristate-2026-08-25");
+        assert_eq!(VERSION_NUMBER, "8.53.0");
         assert_eq!(BUILD_DATE, "2026-08-25");
     }
 

@@ -11,7 +11,7 @@ use fabstir_llm_node::tee::policy::{
 use fabstir_llm_node::tee::policy_source::{
     fetch_validated_policy, PolicySource, ProviderRegistry,
 };
-use fabstir_llm_node::tee::types::{Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError, TeeResult};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature, SigningKey};
 use std::collections::HashMap;
 
@@ -20,7 +20,7 @@ fn a_policy(model_id: [u8; 32], version: u32, not_before: u64, expiry: u64) -> P
         policy_version: version,
         allowed_skus: vec!["H100".to_string()],
         expected_measurement: [0x11u8; 48],
-        require_cc_on: true,
+        require_cc_mode: Some(CcMode::On),
         require_production_tcb: true,
         max_tcb_age_days: 30,
         not_before,

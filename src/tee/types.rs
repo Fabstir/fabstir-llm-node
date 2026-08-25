@@ -45,6 +45,33 @@ pub struct Evidence {
     pub nonce: [u8; 32],
 }
 
+/// GPU Confidential Computing mode.
+///
+/// **This is three states, not two, and that is the whole point of the type.**
+/// NVIDIA's `nvidia_gpu_tools.py --set-cc-mode` takes `off`, `on` or
+/// `devtools`, and **`devtools` attests while the memory protections are
+/// DISABLED** — it exists so developers can debug inside the CC flow. A GPU in
+/// `devtools` is a real, reachable, *attesting* state that provides no
+/// confidentiality whatsoever.
+///
+/// Modelling this as a `bool` is a silent fail-open: a real report parser
+/// handed a `bool` maps "not off" to `true`, `devtools` then satisfies a policy
+/// that meant to demand protection, and the key is released to an unprotected
+/// GPU while the check reads as though it did its job. Do not collapse this
+/// back to two states.
+///
+/// Serialises to NVIDIA's own spelling (`"off"` / `"on"` / `"devtools"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CcMode {
+    /// Confidential Computing disabled.
+    Off,
+    /// Enabled, protections active. The only production-safe value.
+    On,
+    /// Enabled for debugging with the protections OFF. Attests; protects nothing.
+    DevTools,
+}
+
 /// Model-provider DEK-release policy (off-chain, signed — decision D3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
@@ -55,8 +82,12 @@ pub struct Policy {
     /// Expected 48-byte node-CVM launch measurement (pinned by the provider).
     #[serde(with = "BigArray")]
     pub expected_measurement: [u8; 48],
-    /// Require the GPU to report CC = ON.
-    pub require_cc_on: bool,
+    /// Required GPU CC mode, matched EXACTLY. `Some(CcMode::On)` is the
+    /// production setting; `None` imposes no requirement. Accepting `devtools`
+    /// must be spelled out as `Some(CcMode::DevTools)` rather than reachable by
+    /// relaxing a boolean, so no policy can accept an unprotected GPU by
+    /// accident.
+    pub require_cc_mode: Option<CcMode>,
     /// Require a production (non-debug) CPU TCB.
     pub require_production_tcb: bool,
     /// Maximum acceptable CPU TCB age, in days.
@@ -148,8 +179,9 @@ pub enum TeeError {
 pub struct GpuReportFields {
     /// GPU SKU (e.g. `"H100"`, `"H200"`).
     pub sku: String,
-    /// Whether the GPU reports Confidential Computing = ON.
-    pub cc_on: bool,
+    /// The CC mode the GPU reports. See [`CcMode`]: `DevTools` attests but
+    /// protects nothing, so this must never be narrowed to a boolean.
+    pub cc_mode: CcMode,
     /// Whether the CPU TCB is a production (non-debug) TCB.
     pub production_tcb: bool,
     /// CPU TCB age, in days.
