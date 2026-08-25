@@ -3369,6 +3369,120 @@ Watch for these log patterns to monitor checkpoint publishing:
 
 ---
 
+## Training Endpoints (v8.52.0+)
+
+Private LoRA/QLoRA fine-tuning as a marketplace job. All three routes return **404** when
+`TRAIN_ENABLED` is not set on the host, which is the capability statement: a 404 here means
+this host does not offer training, not that the URL is wrong.
+
+The training job itself runs over the WebSocket session; these are the pre-escrow routes a
+client reads *before* creating a session.
+
+### Training Capacity Hint (v8.49.0+)
+
+```http
+GET /v1/training/capacity
+```
+
+```json
+{ "available": true }
+```
+
+`available` is true only when the trainer sidecar reports a free slot **and** a GPU permit
+is free. Cached for 2 seconds: this is a public unauthenticated route and must never open a
+sidecar connection per request.
+
+### Training Advert (v8.52.0+)
+
+```http
+GET /v1/training/advert
+```
+
+Everything a client needs before escrow. The LTX allow-list bundle cannot carry these
+fields — it is built from ComfyUI workflow graphs, and the training template is a different
+shape — so training has an advert of its own.
+
+```json
+{
+  "allowListVersion": 1,
+  "modelId": "0x892310a3...",
+  "pricePerToken": "904",
+  "rateLimitTokensPerSec": 10000,
+  "template": {
+    "templateId": "train-qlora-qwen38-27b-v1",
+    "templateHash": "0x43e1efbd...",
+    "tokenizerSha256": "0x0997f410...",
+    "baseServingModelId": "0x892310a3...",
+    "ranks": [8, 16, 32],
+    "alphas": [16, 32, 64],
+    "seqLens": [1024, 2048, 4096],
+    "lrs": ["0.0001", "0.0002", "0.0005"],
+    "maxEpochs": 5,
+    "maxTotalTokens": 15000000,
+    "sliceTokens": 1000000,
+    "countingRecipe": "count-v1",
+    "specialsPerSample": 1
+  },
+  "bounds": {
+    "maxDatasetBytes": 1610350592,
+    "maxShardBytes": 25161728,
+    "maxShards": 64,
+    "maxManifestBytes": 1048576,
+    "maxBytesPerToken": 8
+  },
+  "tokenizer": { "available": true, "url": "/v1/training/tokenizer", "sha256": "0x0997f410...", "bytes": 11423963 }
+}
+```
+
+Types are deliberate and differ: **`pricePerToken` is a decimal STRING**, matching
+`train_accepted.billing`; every token count is a JSON **number**, because counts are maths
+inputs and sit inside the JS safe-integer range.
+
+`bounds` sits at the **root**, a sibling of `template`, and holds *node-enforced* limits.
+The template's own training bounds (`maxEpochs`, `maxTotalTokens`, `sliceTokens`) stay
+inside `template`. `maxBytesPerToken` is the C.6 plausibility gate (`totalBytes` must not
+exceed `declaredTokens × 8`) and it rejects **after** escrow, so check it client-side.
+
+`specialsPerSample` cannot be inferred. Guessing 0 mis-counts every sample and surfaces as
+`DECLARED_TOKENS_MISMATCH` on a funded job.
+
+`lrs` is omitted entirely when the template constrains nothing — it is never `null`, so
+"unconstrained" cannot be misread as "constrained to nothing".
+
+When the host serves no verified tokenizer:
+
+```json
+"tokenizer": { "available": false, "reason": "notServed" }
+```
+
+### Training Tokenizer (v8.52.0+)
+
+```http
+GET /v1/training/tokenizer
+```
+
+The tokenizer this host counts with, verified against the template's `tokenizerSha256` at
+boot and held resident, so the bytes cannot change after the advertised hash was computed.
+
+**The client MUST hash what it receives and compare it against the advert's
+`tokenizer.sha256` before use.** The pin is what makes the bytes safe, not this route. A
+client that counts with a different tokenizer than the host bills with gets an
+`ESTIMATE_MISMATCH` on a funded session.
+
+Carries a strong `ETag` and `Cache-Control: public, max-age=31536000, immutable`, and
+answers `If-None-Match` (including a comma-separated list) with **304**. It is a public
+unauthenticated route serving roughly 12 MB, so revalidation matters.
+
+| Status | Meaning |
+|---|---|
+| 200 | The verified tokenizer bytes. |
+| 304 | Your `If-None-Match` matched; nothing changed. |
+| 404 | Training is not enabled on this host. |
+| 503 | Training is enabled but this host serves **no verified tokenizer** — the route exists and has nothing to serve. Not a wrong URL. |
+
+`TRAINING_TOKENIZER_PATH` is optional: serve-back counts nothing, so a host that only serves
+adapters is not required to carry a 12 MB counting asset.
+
 ## Content Moderation Endpoints (v8.42.0+)
 
 The node carries a deterministic content-moderation layer for the media

@@ -100,6 +100,26 @@ run takes the shared GPU permit.
 
 ## Serve-back: what evicts an adapter, and two traps when testing it
 
+**A reconnect must re-send `lora`, or the session silently uses the base model.** The
+node keeps no state across connections, by design: every WebSocket init mints a fresh
+key and stages fresh from S5. So after a node restart (or any reconnect) a client that
+re-sends `lora` simply re-stages and carries on. A client that OMITS it gets
+`SessionAdapter::None`, the resolve path short-circuits before touching the registry,
+and the prompt is answered from the BASE MODEL with no error and no frame.
+
+One consequence for client authors: an ordinary socket drop is fine if every re-init
+re-sends `lora`, but a **rebuilt session manager** (page reload, or an SDK rebuild when a
+wallet reconnects) loses the pointer and cannot re-send what it no longer holds. The fix
+is one layer up: persist `manifestCID` + `manifestSha256` + the file name alongside the
+conversation the client already rebuilds. None of it is secret and the client supplies it
+on every init anyway.
+
+That is not fixable node-side. The protocol has no notion of "this session previously
+had an adapter" — that state would have to be keyed on something the client supplies,
+which is exactly the wire-settable key the isolation defects came from. The fail-closed
+guarantee applies only to a connection that ASKED for an adapter; one that did not ask
+has nothing to fail closed about.
+
 **Publishing a test adapter.** A serve-back `manifestCID` must be a `u`-multibase
 CAPABILITY CID (base64url of the `0xae` envelope carrying the ciphertext hash, the
 XChaCha20-Poly1305 key and the plaintext CID). A plain `PUT /s5/fs/…` to the s5-bridge
