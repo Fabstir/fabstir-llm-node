@@ -183,6 +183,17 @@ inference = []
 # Performance: 0.2-2.3s generation, 194-281KB proofs, <1s verification
 real-ezkl = ["risc0-zkvm", "risc0-build"]
 
+# Occasional dev utilities, OFF by default. `publish-adapter` links the whole
+# lib, so leaving it in the default set would relink a second full binary on
+# every `cargo build` for a tool used a handful of times.
+#   cargo build --release --features dev-tools --bin publish-adapter
+dev-tools = []
+
+[[bin]]
+name = "publish-adapter"
+path = "src/bin/publish-adapter.rs"
+required-features = ["dev-tools"]
+
 [[test]]
 name = "performance_tests"
 path = "tests/performance/mod.rs"

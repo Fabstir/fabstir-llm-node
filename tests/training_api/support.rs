@@ -354,6 +354,8 @@ pub fn spawn_sidecar(
 
 pub fn fixture_template() -> TrainingTemplate {
     TrainingTemplate {
+        counting_recipe: "count-v1".to_string(),
+        specials_per_sample: 1,
         base_serving_model_id: "0x00000000000000000000000000000000000000000000000000000000000000ba"
             .to_string(),
         template_id: "train-qlora-synthetic-test-v1".to_string(),
@@ -483,6 +485,11 @@ pub fn make_deps_with_sidecar(
         expected_price: U256::from(PRICE),
         priced_tokens: vec![addr(0xEC)],
         template: fixture_template(),
+        tokenizer: Some(std::sync::Arc::new(
+            fabstir_llm_node::training::advert::TokenizerAsset::from_bytes_for_tests(
+                b"{\"model\":\"fixture\"}".to_vec(),
+            ),
+        )),
         accept_cfg: AcceptConfig::default(),
         cooldown_secs: 60,
         settle_buffer_secs: 45,

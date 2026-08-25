@@ -85,6 +85,14 @@ pub struct TrainingTemplate {
     /// "0x" + keccak256 of the canonical template JSON (the B.6 pin).
     pub template_hash: String,
     pub tokenizer_sha256: String,
+    /// `count-v1`. Published in the advert so a client counts with the recipe
+    /// this host will recount with, rather than assuming one.
+    pub counting_recipe: String,
+    /// Added to EVERY sample's token count by the count-v1 recipe. Published
+    /// because a client cannot infer it: guessing 0 mis-counts the whole
+    /// dataset and surfaces as DECLARED_TOKENS_MISMATCH on a FUNDED job,
+    /// which is the exact failure pre-escrow counting exists to prevent.
+    pub specials_per_sample: u32,
     pub ranks: Vec<u32>,
     pub alphas: Vec<u32>,
     pub seq_lens: Vec<u32>,
@@ -109,6 +117,13 @@ pub struct TrainingDeps {
     pub expected_price: U256,
     pub priced_tokens: Vec<Address>,
     pub template: TrainingTemplate,
+    /// The tokenizer this host counts with, verified against
+    /// `template.tokenizer_sha256` at boot and served at
+    /// `/v1/training/tokenizer`. Resident so the bytes cannot change after
+    /// the hash we advertise was computed. `None` when the host has not been
+    /// given one, or was given one that fails the pin: serve-back still
+    /// works, counting does not, and the advert says which.
+    pub tokenizer: Option<Arc<crate::training::advert::TokenizerAsset>>,
     /// T5.3: the per-SESSION serve-back registry (E.2). Lives here so the
     /// session-init path and the WebSocket close path reach the same one.
     pub adapters: Arc<crate::training::serve::AdapterRegistry>,
@@ -903,6 +918,14 @@ pub fn load_training_template(path: &std::path::Path) -> Result<TrainingTemplate
             }
             format!("0x{}", hex.to_ascii_lowercase())
         },
+        counting_recipe: get("/countingRecipe")?
+            .as_str()
+            .ok_or("countingRecipe must be a string")?
+            .to_string(),
+        specials_per_sample: get("/specialsPerSample")?
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or("specialsPerSample must be a u32")?,
         ranks: u32_list("/method/ranks")?,
         alphas: u32_list("/method/alphas")?,
         seq_lens: u32_list("/method/seqLens")?,

@@ -11,6 +11,7 @@
 
 pub mod redact;
 pub mod accept;
+pub mod advert;
 pub mod artifact;
 pub mod attestation;
 pub mod chain;

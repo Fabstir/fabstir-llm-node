@@ -190,6 +190,13 @@ pub struct StagedAdapter {
     pub path: PathBuf,
     pub file: String,
     pub sha256: String,
+    /// Reassembled plaintext size, for the operator log. Without a positive
+    /// staged line, a stage that SUCCEEDED and was then rejected by llama.cpp
+    /// reads identically to a stage that failed, and inferring success from
+    /// silence is the failure this surface exists to avoid.
+    pub bytes: u64,
+    /// How many shards the manifest declared for this file.
+    pub shards: usize,
 }
 
 /// How a WebSocket connection resolves its serve-back adapter.
@@ -389,6 +396,8 @@ impl AdapterRegistry {
             path,
             file: request.file.clone(),
             sha256: entry.sha256.clone(),
+            bytes: bytes.len() as u64,
+            shards: entry.shards.len(),
         };
         // Commit, unless an `evict` overtook us (round-3 F1). Both sides
         // decide under the same lock, so the id is never free while either

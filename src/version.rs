@@ -3,25 +3,27 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.50.0-transcode-billing-2026-08-21";
+pub const VERSION: &str = "v8.52.1-staged-log-2026-08-25";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.50.0";
+pub const VERSION_NUMBER: &str = "8.52.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 50;
+pub const VERSION_MINOR: u32 = 52;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-21";
+pub const BUILD_DATE: &str = "2026-08-25";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.51.0 pre-escrow training advert + the pinned tokenizer it serves.
+    "training-advert",
     // v8.46.1 context-window clamp on the generation budget.
     "context-window-clamp",
     // v8.46.0 Qwen3.8-27B support: llama-cpp-2 0.1.146 -> 0.1.154. The 0.1.146
@@ -569,6 +571,18 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.52.1 - Explicit staged log line (Aug 25, 2026)
+    "FEAT: the serve-back staged log now names the job id, byte count and shard count. Without a positive line, a stage that SUCCEEDED and was then rejected by llama.cpp read identically to a stage that FAILED, and inferring success from silence is the failure this surface exists to avoid",
+    "NOTE: the line carries the minted registry key deliberately. Isolation comes from that key never being accepted from the wire, NOT from secrecy, and it is the only stable handle correlating a stage with its eviction",
+    // v8.52.0 - Advert counting fields (Aug 24, 2026)
+    "BREAKING (template authoring): countingRecipe and specialsPerSample are now REQUIRED top-level template keys. A template omitting either fails to load at boot. Previously both were parsed nowhere and silently dropped, so the advert could not publish them",
+    "FEAT: the advert publishes template.specialsPerSample and template.countingRecipe. A client cannot infer specialsPerSample; guessing 0 mis-counts every sample and surfaces as DECLARED_TOKENS_MISMATCH on a FUNDED job, which is what pre-escrow counting exists to prevent",
+    "FEAT: the advert publishes node-enforced dataset bounds (maxDatasetBytes, maxShardBytes, maxShards, maxManifestBytes, maxBytesPerToken) so a client refuses before an upload rather than after posting the whole dataset",
+    "FIX: the training wiring banner rendered the tokenizer note into a format string that still carried its own suffix, printing \"(absent: counting unavailable bytes, pin verified)\"",
+    // v8.51.0 - Training advert + tokenizer route (Aug 24, 2026)
+    "FEAT: GET /v1/training/advert publishes the pre-escrow fields the LTX AllowListBundle structurally cannot carry (tokenizerSha256, baseServingModelId, alphas) plus the bounds, modelId and pricePerToken. pricePerToken is a decimal string matching train_accepted.billing; token counts stay JSON numbers",
+    "FEAT: GET /v1/training/tokenizer serves the tokenizer this host counts with, verified against the template pin at boot and held resident. Strong ETag + immutable caching, If-None-Match (list-aware) answers 304. Clients MUST hash the fetch against the advert before use",
+    "NOTE: TRAINING_TOKENIZER_PATH is OPTIONAL. Serve-back (E.2) counts nothing, so a host without a tokenizer still wires training and still serves adapters; the advert reports tokenizer.available=false reason=notServed and the route returns 503. Requiring it would have made every serve-back session answer 'training is not enabled on this node'",
     // v8.46.1 - Context-window clamp (Aug 19, 2026)
     "FIX: max_tokens is clamped to the context room that remains (context_size - prompt_tokens) instead of being taken at face value. The generation loop runs to prompt + max_tokens, so a request crossing context_size previously failed the decode MID-STREAM, after the session's escrow was open and tokens had been billed. It now ends cleanly with finish_reason=length. Requests that already fit are byte-for-byte unaffected",
     "NOTE: this clamps rather than rejects on purpose — a client that always sends a large max_tokens (the product UI sends 16000) is not misbehaving, and most such requests stop at EOS long before the wall. Rejecting up front would refuse requests that succeed today",
@@ -1027,8 +1041,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 50);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_MINOR, 52);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1208,15 +1222,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.46.1"));
-        assert!(version.contains("2026-08-19"));
+        assert!(version.contains("8.52.1"));
+        assert!(version.contains("2026-08-25"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.50.0-transcode-billing-2026-08-21");
-        assert_eq!(VERSION_NUMBER, "8.50.0");
-        assert_eq!(BUILD_DATE, "2026-08-21");
+        assert_eq!(VERSION, "v8.52.1-staged-log-2026-08-25");
+        assert_eq!(VERSION_NUMBER, "8.52.1");
+        assert_eq!(BUILD_DATE, "2026-08-25");
     }
 
     #[test]

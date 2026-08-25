@@ -1849,6 +1849,8 @@ impl ApiServer {
             )
             .route("/v1/transcode/capacity", get(transcode_capacity_handler))
             .route("/v1/training/capacity", get(training_capacity_handler))
+            .route("/v1/training/advert", get(training_advert_handler))
+            .route("/v1/training/tokenizer", get(training_tokenizer_handler))
             .route(
                 "/v1/transcode/:task_id",
                 get(crate::api::transcode::handler::transcode_status_handler),
@@ -1918,6 +1920,101 @@ async fn training_capacity_handler(State(server): State<Arc<ApiServer>>) -> impl
             axum::response::Json(serde_json::json!({ "available": available })).into_response()
         }
     }
+}
+
+/// The pre-escrow training advert: the three fields the LTX `AllowListBundle`
+/// cannot carry (`tokenizerSha256`, `baseServingModelId`, `alphas`), plus the
+/// bounds and the pinned tokenizer's URL and hash. 404 when training is off,
+/// mirroring the capacity route.
+async fn training_advert_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    match server.get_training_deps().await {
+        None => (
+            StatusCode::NOT_FOUND,
+            axum::response::Json(serde_json::json!({ "error": "training not enabled" })),
+        )
+            .into_response(),
+        Some(deps) => axum::response::Json(crate::training::advert::advert_json(
+            &deps.template,
+            deps.tokenizer.as_ref(),
+            &deps.model_id,
+            &deps.expected_price,
+            deps.allow_list_version,
+            deps.rate_limit_tokens_per_sec,
+        ))
+        .into_response(),
+    }
+}
+
+/// The tokenizer this host counts with, verified against the template pin at
+/// boot. The client MUST hash what it receives and compare against the advert's
+/// `tokenizer.sha256` before use: the pin is what makes the bytes safe, not
+/// this route.
+///
+/// Content is immutable for a given pin, so it carries a strong ETag and a
+/// long-lived immutable cache directive, and answers `If-None-Match` with 304.
+/// That matters because this is a PUBLIC unauthenticated route serving ~12 MB;
+/// a client that revalidates costs bytes once rather than once per session.
+async fn training_tokenizer_handler(
+    State(server): State<Arc<ApiServer>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    use axum::http::header;
+
+    let deps = match server.get_training_deps().await {
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::response::Json(serde_json::json!({ "error": "training not enabled" })),
+            )
+                .into_response()
+        }
+        Some(deps) => deps,
+    };
+    // 503 rather than 404: the route EXISTS on this host, it just has nothing
+    // verified to serve. A client must not read that as "wrong URL".
+    let Some(tokenizer) = deps.tokenizer.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::response::Json(serde_json::json!({
+                "error": "no verified tokenizer on this host",
+                "reason": "notServed",
+            })),
+        )
+            .into_response();
+    };
+    let etag = tokenizer.etag().to_string();
+
+    // If-None-Match may carry a list, and may be `*`. Match on membership
+    // rather than string equality so a conforming client is not made to
+    // re-download because it sent `"a", "b"`.
+    let fresh = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|raw| {
+            raw.trim() == "*"
+                || raw
+                    .split(',')
+                    .map(|candidate| candidate.trim().trim_start_matches("W/"))
+                    .any(|candidate| candidate == etag)
+        });
+
+    let common = [
+        (header::ETAG, etag.clone()),
+        (
+            header::CACHE_CONTROL,
+            "public, max-age=31536000, immutable".to_string(),
+        ),
+    ];
+    if fresh {
+        return (StatusCode::NOT_MODIFIED, common).into_response();
+    }
+    (
+        StatusCode::OK,
+        common,
+        [(header::CONTENT_TYPE, "application/json")],
+        tokenizer.bytes().to_vec(),
+    )
+        .into_response()
 }
 
 async fn transcode_capacity_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
@@ -3238,9 +3335,21 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                         };
                                                         match staged {
                                                             Ok(staged) => {
+                                                                // The positive staged line. `sid` is the
+                                                                // MINTED registry key, and logging it is
+                                                                // deliberate: isolation comes from the key
+                                                                // never being accepted from the wire, not
+                                                                // from secrecy, and it is the only stable
+                                                                // handle that correlates this line with the
+                                                                // eviction below.
                                                                 info!(
-                                                                    "🎯 Session {} serves adapter {} ({})",
-                                                                    sid, staged.file, staged.sha256
+                                                                    "🎯 Adapter STAGED for job {:?}: {} ({} bytes, {} shard(s), sha256 {}) key {}",
+                                                                    job_id,
+                                                                    staged.file,
+                                                                    staged.bytes,
+                                                                    staged.shards,
+                                                                    staged.sha256,
+                                                                    sid
                                                                 );
                                                                 staged_sid = Some(sid);
                                                             }

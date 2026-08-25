@@ -48,7 +48,8 @@ fn template_json() -> serde_json::Value {
         "method": { "ranks": [8, 16], "alphas": [16, 32], "seqLens": [2048], "packing": "cross-boundary-v1" },
         "bounds": { "maxEpochs": 5, "maxTotalTokens": 15_000_000u64 },
         "sliceTokens": 1_000_000u64,
-        "countingRecipe": "count-v1"
+        "countingRecipe": "count-v1",
+        "specialsPerSample": 1
     })
 }
 
@@ -102,6 +103,20 @@ fn loader_enforces_the_numeric_authoring_rule() {
         .remove("maxTotalTokens");
     std::fs::write(&path, serde_json::to_string(&missing).unwrap()).unwrap();
     assert!(load_training_template(&path).is_err());
+
+    // The counting fields are REQUIRED, not defaulted. A template without
+    // specialsPerSample must fail at boot: the alternative is a client
+    // guessing 0, mis-counting every sample, and finding out as a
+    // DECLARED_TOKENS_MISMATCH on a job the customer has already funded.
+    for key in ["specialsPerSample", "countingRecipe"] {
+        let mut dropped = template_json();
+        dropped.as_object_mut().unwrap().remove(key);
+        std::fs::write(&path, serde_json::to_string(&dropped).unwrap()).unwrap();
+        assert!(
+            load_training_template(&path).is_err(),
+            "a template missing {key} must not load"
+        );
+    }
 }
 
 // --- the capacity-hint route through the real router ---

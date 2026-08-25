@@ -143,6 +143,34 @@ pub async fn wire_training_from_env(server: &crate::api::server::ApiServer) {
 
         let template = crate::training::core::load_training_template(&template_path)?;
 
+        // Verified against the template pin BEFORE anything is served, and
+        // OPTIONAL on purpose. Serve-back (E.2) loads an adapter and counts
+        // nothing, so a host that only serves adapters must not be required to
+        // carry a 12 MB counting asset; making this a wiring error would leave
+        // such a host answering "training is not enabled" to every serve-back
+        // session. What must never happen is serving UNVERIFIED bytes, so a
+        // missing or mismatched file degrades to "no tokenizer" (loudly, and
+        // reported in the advert) rather than to a tokenizer we do not trust.
+        let tokenizer = match std::env::var("TRAINING_TOKENIZER_PATH") {
+            Err(_) => {
+                println!("ℹ️  TRAINING_TOKENIZER_PATH unset — serve-back works, counting does not");
+                None
+            }
+            Ok(raw) => {
+                let path = std::path::PathBuf::from(raw);
+                match crate::training::advert::TokenizerAsset::load(
+                    &path,
+                    &template.tokenizer_sha256,
+                ) {
+                    Ok(asset) => Some(std::sync::Arc::new(asset)),
+                    Err(why) => {
+                        println!("⚠️  tokenizer NOT served ({why})");
+                        None
+                    }
+                }
+            }
+        };
+
         // TD15 boot sweeps: at startup nothing is legitimately in flight.
         let swept_staging = crate::training::staging::sweep_orphan_job_dirs(&staging_root);
         let swept_work = crate::training::staging::sweep_orphan_job_dirs(&work_root);
@@ -185,6 +213,10 @@ pub async fn wire_training_from_env(server: &crate::api::server::ApiServer) {
             price,
             model_id,
         ));
+        let tokenizer_note = match &tokenizer {
+            Some(t) => format!("{} bytes, pin verified", t.len()),
+            None => "absent: counting unavailable".to_string(),
+        };
         let deps = crate::training::core::TrainingDeps {
             sessions: match &manager {
                 Some(manager) => std::sync::Arc::new(ChainSessionReader {
@@ -210,6 +242,7 @@ pub async fn wire_training_from_env(server: &crate::api::server::ApiServer) {
             expected_price: ethers::types::U256::from(price),
             priced_tokens: vec![usdc],
             template,
+            tokenizer,
             adapters: std::sync::Arc::new(
                 crate::training::serve::AdapterRegistry::new(),
             ),
@@ -235,7 +268,11 @@ pub async fn wire_training_from_env(server: &crate::api::server::ApiServer) {
             allow_list_version: env_u64("TRAINING_ALLOWLIST_VERSION", 1),
         };
         server.set_training_deps(std::sync::Arc::new(deps)).await;
-        println!("🎓 Training M0 wired: capacity hint live at /v1/training/capacity");
+        println!(
+            "🎓 Training M0 wired: /v1/training/capacity, /v1/training/advert, \
+/v1/training/tokenizer ({})",
+            tokenizer_note
+        );
         Ok(())
     }
     .await;

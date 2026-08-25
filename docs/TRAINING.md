@@ -1,6 +1,22 @@
 # Training M0 — private LoRA fine-tuning as a marketplace job
 
-Status: node side complete. GPU end-to-end (T6) and paid gates (T7) outstanding.
+Status: the node's training and serve-back paths are built and pinned by tests, and the
+pre-escrow surface a client needs is now served. What remains before anything can run end
+to end is deployment rather than node code:
+
+1. ~~No training advert.~~ **Built.** `GET /v1/training/advert` publishes
+   `tokenizerSha256`, `baseServingModelId` and `alphas` plus the bounds, `modelId` and
+   `pricePerToken`. It is a route of its own because the LTX `AllowListBundle` cannot carry
+   them: that bundle is built from ComfyUI workflow graphs (`src/ltx/template.rs`), and the
+   training template is a different shape.
+2. ~~No tokenizer route.~~ **Built.** `GET /v1/training/tokenizer` serves the tokenizer this
+   host counts with, verified against the template pin at boot. See "the tokenizer contract"
+   below: the client MUST hash what it fetches and compare against the advert.
+3. **No registered training model id.** `TRAINING_MODEL_ID` below is a placeholder. It
+   needs a ModelRegistry entry plus a `NodeRegistry` advert with its per-model price; the
+   node never registers itself. Host address and WS endpoint follow that, not before.
+
+GPU end-to-end (T6) and paid gates (T7) remain outstanding after that.
 
 A client submits an encrypted JSONL dataset, the node trains a LoRA adapter against a
 pinned base model, settles on-chain per slice, and returns an encrypted adapter the client
@@ -56,6 +72,7 @@ TRAINER_SOCKET=/var/run/fabstir/trainer.sock
 TRAINING_STAGING_ROOT=/var/lib/fabstir/training/staging
 TRAINING_WORK_ROOT=/var/lib/fabstir/training/work
 TRAINING_TEMPLATE_PATH=/opt/fabstir/templates/train-qlora-qwen38-27b-v1/v1.json
+TRAINING_TOKENIZER_PATH=…/tokenizer.json   # OPTIONAL: needed for counting, NOT for serve-back
 TRAINING_MODEL_ID=0x…              # the TRAINING model id, from the registration record
 TRAINING_PRICE_PER_TOKEN=904       # must equal the registered price
 TRAINING_ALLOWLIST_VERSION=1
@@ -79,6 +96,89 @@ Answering with an adapter does need the base model loaded, so that part wants th
 
 `TRAIN_ENABLED` alone does **not** trigger cross-slot exclusion. Only an active training
 run takes the shared GPU permit.
+
+
+## Serve-back: what evicts an adapter, and two traps when testing it
+
+**Publishing a test adapter.** A serve-back `manifestCID` must be a `u`-multibase
+CAPABILITY CID (base64url of the `0xae` envelope carrying the ciphertext hash, the
+XChaCha20-Poly1305 key and the plaintext CID). A plain `PUT /s5/fs/…` to the s5-bridge
+returns a bare `blob…` content address with **no key in it**, which serve-back refuses
+(`src/ltx/input_image.rs`). The LTX allow-list bundle uses `blob…` happily because it is
+fetched as plaintext; an adapter never is. Do **not** widen the validator to accept both.
+
+Use the node's own publisher rather than a script, so the sharding, encryption and
+canonical manifest are the same tested code a real training run uses:
+
+```bash
+cargo build --release --features dev-tools --bin publish-adapter
+# run it where the bridge resolves, i.e. inside the node's container:
+docker cp target/release/publish-adapter llm-node-prod:/tmp/
+docker cp adapter.gguf llm-node-prod:/tmp/
+docker compose -f docker-compose.prod.yml exec llm-node /tmp/publish-adapter /tmp/adapter.gguf
+```
+
+It is behind `dev-tools` because it links the whole lib; leaving it in the default set
+would relink a second full binary on every `cargo build`.
+
+
+**Session end is the ONLY path that evicts a live adapter.** There is no TTL, no idle
+timeout, no memory-pressure eviction and no LRU: `src/training/serve.rs` contains no
+timer of any kind. At `ADAPTER_MAX_LIVE` (16) the node **refuses the new stage** rather
+than evicting an existing one, so no session can lose its adapter because another
+session wanted one. A `Reservation`'s `Drop` removes its own failed stage, never
+another's.
+
+The one exception worth telling users about: **a node restart clears everything.** The
+registry is in-memory, and `sweep_orphan_adapter_dirs` deletes staged files at boot. So
+a chat that was working an hour ago will refuse if the host restarted in between.
+
+Two traps when testing serve-back through a browser, both of which make the test
+silently measure nothing while appearing to pass:
+
+* **The concurrent session must be a SECOND BROWSER TAB.** Navigating to it inside a
+  single-page app unmounts the first chat, which ends its session, so the two sessions
+  are never concurrent and the isolation test proves nothing. Not UI-specific; anyone
+  driving this through a browser hits it.
+* **Container logs and in-container `ls` are UTC; screenshots carry local time** (BST in
+  summer). On the naive reading an eviction can appear to precede the isolation test that
+  actually ran before it. Realign before drawing conclusions about ordering.
+
+Note also that isolation does not depend on that ordering: a session whose init carries
+no `lora` never reaches the registry at all, because the connection-local
+`SessionAdapter` is `None` and the first match arm in `src/api/server.rs` returns no
+adapter without consulting it. Ordering decides the EVICTION evidence, not the
+isolation evidence.
+
+## The tokenizer contract
+
+A client counts tokens **before** escrow. If its count disagrees with the host's, the result
+is an `ESTIMATE_MISMATCH` on a session the customer has already funded, so the client must
+count with exactly the bytes the host bills with.
+
+That is guaranteed by the **pin**, not by the source:
+
+1. `GET /v1/training/advert` returns `template.tokenizerSha256` and `tokenizer.sha256`.
+2. `GET /v1/training/tokenizer` returns the bytes.
+3. The client hashes what it received and compares. **A fetch that skips the comparison
+   defeats the mechanism entirely** — the hash is published next to the URL for this reason.
+
+**`TRAINING_TOKENIZER_PATH` is optional on purpose.** Serve-back (E.2) loads an adapter and
+counts nothing, so a host that only serves adapters is not made to carry a 12 MB counting
+asset. If it is unset, or set to a file that fails the pin, training still wires and
+serve-back still works; the advert reports `tokenizer.available: false` with reason
+`notServed`, and `GET /v1/training/tokenizer` returns **503** (the route exists, it has
+nothing verified to serve) rather than 404. What never happens is serving unverified bytes.
+
+Node side, the file is read and verified against `template.tokenizerSha256` at boot, then
+held resident. Resident rather than re-read per request so that nothing can swap the file
+underneath a request after the advertised hash was computed. A host whose tokenizer does not
+match its template **fails training wiring and serves no training at all**, rather than
+serving a tokenizer it does not bill with.
+
+The route carries a strong `ETag` and `Cache-Control: immutable`, and honours `If-None-Match`
+(including a comma-separated list) with a 304. That matters because it is a public
+unauthenticated route serving roughly 12 MB.
 
 ## Containers
 
