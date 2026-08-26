@@ -267,6 +267,31 @@ pub fn decrypt_session_init_with_context(
 mod tests {
     use super::*;
 
+    #[test]
+    fn session_1129_payload_shape_parses_with_lora() {
+        // Session 1129 (2026-08-26): the client CAPTURED this exact shape
+        // leaving the browser — keys, casing, nesting — while the node
+        // behaved as though lora was absent. This test settles whether the
+        // PARSE is the quiet arm: if it passes, the loss is elsewhere.
+        let plaintext = r#"{
+            "sessionKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "jobId": "1129",
+            "modelName": "0x892310a339a9c5faaf43c53b8a90fb2a1a1e008ad3f0e455202f4b60878bd650",
+            "pricePerToken": 10000,
+            "recoveryPublicKey": "0x02aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+            "lora": {
+                "manifestCID": "urqYSH0QfQhz5Kg182z-Kocp",
+                "manifestSha256": "0x0843be66f0c926ac6c6395823023644f5873505315f6cb5a36114087a245e44f",
+                "file": "adapter.gguf"
+            }
+        }"#;
+        let parsed: SessionDataJson = serde_json::from_str(plaintext).expect("must parse");
+        let lora = parsed.lora.expect("lora must survive the parse — session 1129");
+        assert_eq!(lora.file, "adapter.gguf");
+        assert_eq!(lora.manifest_cid, "urqYSH0QfQhz5Kg182z-Kocp");
+        assert!(lora.manifest_sha256.starts_with("0x0843be66"));
+    }
+
     // Cross-runtime vectors for the E2EE v1 signed message. Generated with the
     // construction copied VERBATIM from @fabstir/sdk-core 1.34.0
     // (dist/index.js:15200 `makeSigMessage`), signed with a known key, so this

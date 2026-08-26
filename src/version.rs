@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.53.0-cc-mode-tristate-2026-08-25";
+pub const VERSION: &str = "v8.53.1-lora-init-log-2026-08-26";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.53.0";
+pub const VERSION_NUMBER: &str = "8.53.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,10 +15,10 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 53;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-25";
+pub const BUILD_DATE: &str = "2026-08-26";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -571,6 +571,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.53.1 - Session-init lora visibility (Aug 26, 2026)
+    "FEAT: every session init now logs whether the decrypted payload carried lora (and the minted registry key) or not. Session 1126: a client SENT lora, the node never parsed it, and the didnt-ask path is silent by design -- so sent-but-not-parsed and never-sent were indistinguishable in the log. Now one grep separates them",
     // v8.53.0 - GPU CC mode is tri-state (Aug 25, 2026)
     "SECURITY/BREAKING (TEE): GPU Confidential Computing state is now CcMode::{Off,On,DevTools}, not a bool. NVIDIA's --set-cc-mode has THREE values and `devtools` ATTESTS WITH THE MEMORY PROTECTIONS DISABLED. Policy.require_cc_on: bool becomes require_cc_mode: Option<CcMode>, matched EXACTLY; GpuReportFields.cc_on becomes cc_mode",
     "NOTE: this changes the SIGNED Policy shape (canonical_policy_bytes is serde over the struct), so it had to land before any real policy was signed. Nothing was exploitable yet because the Phase 5 report parser does not exist -- which is precisely the risk: a parser handed a bool maps not-off to true, and devtools then satisfies a policy demanding protection",
@@ -1046,7 +1048,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 53);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1226,15 +1228,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.53.0"));
-        assert!(version.contains("2026-08-25"));
+        assert!(version.contains("8.53.1"));
+        assert!(version.contains("2026-08-26"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.53.0-cc-mode-tristate-2026-08-25");
-        assert_eq!(VERSION_NUMBER, "8.53.0");
-        assert_eq!(BUILD_DATE, "2026-08-25");
+        assert_eq!(VERSION, "v8.53.1-lora-init-log-2026-08-26");
+        assert_eq!(VERSION_NUMBER, "8.53.1");
+        assert_eq!(BUILD_DATE, "2026-08-26");
     }
 
     #[test]

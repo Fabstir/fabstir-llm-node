@@ -69,7 +69,20 @@ exists because a retyped id has already cost this project a debugging session.
 | What | Value |
 |---|---|
 | Template id | `train-qlora-qwen38-27b-v1` |
-| Template hash | `0xec40b499f33a534dfaf29501120c83b0b5a585a390fe7b8637624150fce60640` **(FINAL — T1.4 complete 2026-08-26)** |
+| Template hash | `0x257c3bc96e0b53e285dacf58efdd7e93a7186b3fd02a841c8b7f0955d7ed2f3b` **(CURRENT — see the rule below)** |
+
+**Stop calling any template hash "final"** — this document did, twice, and both were
+superseded within a day (`0x43e1efbd…` by T1.4's `base.files`; `0xec40b499…` by restoring
+`base.ggufArch`/`numLayers`, which a T1.4 copy-back had silently clobbered and which cost
+runs 1123 and 1124 their GGUF conversion). The rule that actually holds: the hash is
+canonical **per template content**, every change to it is a changelogged, breaking event,
+and clients must read it from the advert at run time — never pin it. Both client teams
+already comply.
+
+**Template copies must be diffed in BOTH directions.** The clobber happened because a
+deployed copy (from a pre-`ggufArch` tarball) was copied back over the repo copy after
+T1.4 ran on it — the semantic diff was applied to the outbound edit and skipped on the
+copy-back. `python3 -c` one-liner before any template copy: compare `base` key sets.
 
 The template hash is `SHA256` over the template's canonical bytes. **T1.4 landed 2026-08-26**: `base.files` carries 21 pins (18 safetensors shards + the index + config.json + generation_config.json), the sidecar's weight verification is non-vacuous, and the hash above is the final M0 value — safe to quote, safe to register. It is load-bearing: it feeds `inputCommitment` and `sigDigest` in the on-chain attestation, so any future template edit moves it and is a breaking, changelogged event.
 

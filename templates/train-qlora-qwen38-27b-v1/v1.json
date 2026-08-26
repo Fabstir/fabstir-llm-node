@@ -4,6 +4,8 @@
   "base": {
     "repo": "unsloth/Qwen3.8-27B",
     "revision": "3ea932cee0a432ae86e9c7826cbe8aef52323a28",
+    "ggufArch": "qwen35",
+    "numLayers": 64,
     "tokenizerSha256": "0x0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
     "baseServingModelId": "0x892310a339a9c5faaf43c53b8a90fb2a1a1e008ad3f0e455202f4b60878bd650",
     "files": [

@@ -3174,6 +3174,25 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     let adapter_key = lora_request
                                                         .as_ref()
                                                         .map(|_| uuid::Uuid::new_v4().to_string());
+                                                    // Session 1126: a client SENT lora but the
+                                                    // decrypted init did not carry it, and the
+                                                    // didn't-ask path is silent BY DESIGN — so
+                                                    // "sent but not parsed" and "never sent"
+                                                    // were indistinguishable in one grep. This
+                                                    // is the positive opening line matching the
+                                                    // STAGED closing line. Key logging is
+                                                    // deliberate (operator log; isolation is
+                                                    // wire-unacceptance, not secrecy).
+                                                    match &adapter_key {
+                                                        Some(sid) => info!(
+                                                            "🧬 Session init carries lora (job {:?}): registry key {} minted",
+                                                            job_id, sid
+                                                        ),
+                                                        None => info!(
+                                                            "🧬 Session init carries NO lora (job {:?}): base model only",
+                                                            job_id
+                                                        ),
+                                                    }
                                                     // Round-5 F-R5-3: `previous_job_id ==
                                                     // job_id` failed OPEN. A re-init whose
                                                     // jobId does not parse to u64 (`""`,
