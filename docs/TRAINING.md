@@ -69,9 +69,9 @@ exists because a retyped id has already cost this project a debugging session.
 | What | Value |
 |---|---|
 | Template id | `train-qlora-qwen38-27b-v1` |
-| Template hash | `0x43e1efbd802c7cd761dfd2ff24ff4e1a48b47d08a6ee12d24936ea3aa487c904` **(PROVISIONAL)** |
+| Template hash | `0xec40b499f33a534dfaf29501120c83b0b5a585a390fe7b8637624150fce60640` **(FINAL — T1.4 complete 2026-08-26)** |
 
-The template hash is `SHA256` over the template's canonical bytes, so it **will change** when `base.files` is added at T1.4. It is load-bearing: it feeds `inputCommitment` and `sigDigest` in the on-chain attestation. Do not quote it outside this repo, and do not register it, until the file list lands.
+The template hash is `SHA256` over the template's canonical bytes. **T1.4 landed 2026-08-26**: `base.files` carries 21 pins (18 safetensors shards + the index + config.json + generation_config.json), the sidecar's weight verification is non-vacuous, and the hash above is the final M0 value — safe to quote, safe to register. It is load-bearing: it feeds `inputCommitment` and `sigDigest` in the on-chain attestation, so any future template edit moves it and is a breaking, changelogged event.
 
 | Base repo / revision | `unsloth/Qwen3.8-27B` @ `3ea932cee0a432ae86e9c7826cbe8aef52323a28` |
 | `tokenizerSha256` | `0x0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3` |
@@ -91,7 +91,7 @@ needs no sidecar, and a real training run must not start on unverified weights.
 
 ```
 TRAIN_ENABLED=true
-TRAINER_SOCKET=/var/run/fabstir/trainer.sock
+TRAINER_SOCKET=/var/run/fabstir-trainer/trainer.sock   # must equal the deploy doc's value; compose environment overrides a stale .env line SILENTLY
 TRAINING_STAGING_ROOT=/var/lib/fabstir/training/staging
 TRAINING_WORK_ROOT=/var/lib/fabstir/training/work
 TRAINING_TEMPLATE_PATH=/opt/fabstir/templates/train-qlora-qwen38-27b-v1/v1.json
