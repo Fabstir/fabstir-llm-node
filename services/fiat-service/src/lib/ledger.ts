@@ -12,7 +12,7 @@
 // against chain events in production.
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { Gatekeeper, GateRefusal } from './gatekeeper';
+import type { GateDecision, Gatekeeper, GateRefusal, LedgerView, SessionKind } from './gatekeeper';
 
 export interface LedgerStore {
   /** All previously appended lines, in append order. */
@@ -52,7 +52,7 @@ export class JsonlLedgerStore implements LedgerStore {
 // bigint); `at` is epoch ms from the injected clock.
 type Entry =
   | { t: 'purchase'; userId: string; amount: string; eventId: string; pi?: string; at: number }
-  | { t: 'hold'; holdId: string; userId: string; amount: string; host: string; at: number }
+  | { t: 'hold'; holdId: string; userId: string; amount: string; host: string; at: number; kind?: SessionKind }
   | { t: 'create-pending'; holdId: string; txHash: string; at: number }
   | { t: 'bind'; holdId: string; jobId: string; at: number }
   | { t: 'release'; holdId: string; at: number }
@@ -67,6 +67,8 @@ interface Hold {
   host: string;
   atMs: number;
   state: 'held' | 'bound' | 'settled' | 'released';
+  /** Absent on every hold journaled before kinds existed = `standard`. */
+  kind?: SessionKind;
   jobId?: bigint;
   /** The create tx hash, recorded the instant it is submitted (before the
    *  confirmation wait). A `held` hold carrying this is a crash-recoverable
@@ -76,6 +78,14 @@ interface Hold {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+/** FT1 D11 — how long a `held` (not yet bound) hold still counts as a LIVE
+ *  training hold. A create cannot still be in flight after this; an older
+ *  `held` hold is an orphan of a pre-existing kind (a crash between openHold
+ *  and onSubmitted, or a create tx evicted from a public mempool across a
+ *  restart) whose debit stands but which must not lock the user out of
+ *  training for ever. A ledger constant on purpose: never an env re-read
+ *  (`nowMs − atMs < NaN` is false and would count nothing). */
+export const LIVE_HOLD_MS = 2 * 60 * 60 * 1000;
 
 export type OpenHoldResult = { ok: true; holdId: string } | { ok: false; reason: GateRefusal };
 export type CashoutReason = 'INSUFFICIENT_BALANCE' | 'INVALID_AMOUNT' | 'EXCEEDS_REFUNDABLE';
@@ -159,6 +169,7 @@ export class CreditsLedger {
           host: entry.host,
           atMs: entry.at,
           state: 'held',
+          ...(entry.kind ? { kind: entry.kind } : {}),
         });
         break;
       }
@@ -295,22 +306,16 @@ export class CreditsLedger {
     return out;
   }
 
-  /** Bound jobs whose hold was placed more than `ageMs` ago — candidates for an
-   *  on-chain timeout reclaim.
-   *
-   *  A session that is never used strands its escrow for ever: only
-   *  `triggerSessionTimeout(jobId)` releases it, nobody was calling that, and
-   *  until it settles the customer's deposit stays debited from their balance.
-   *  Job 987 sat exactly like this from 26 to 27 July after a failed open
-   *  (the create succeeded, the caller never learned the sessionId). Age is
-   *  taken from the HOLD rather than the chain because that is when our money
-   *  left, and it is the one clock we always have. */
-  boundJobsOlderThan(ageMs: number, nowMs?: number): bigint[] {
+  /** Every job the ledger still waits on, with its kind and age — the
+   *  reclaimer's work-list. Kind matters there: a training session lives up
+   *  to four hours BY DESIGN, and on the chat clock it would read as stranded
+   *  at two. */
+  boundJobsWithAge(nowMs?: number): Array<{ jobId: bigint; kind: SessionKind; ageMs: number }> {
     const now = nowMs ?? this.now();
-    const out: bigint[] = [];
+    const out: Array<{ jobId: bigint; kind: SessionKind; ageMs: number }> = [];
     for (const hold of this.holds.values()) {
       if (hold.state !== 'bound' || hold.jobId === undefined) continue;
-      if (now - hold.atMs >= ageMs) out.push(hold.jobId);
+      out.push({ jobId: hold.jobId, kind: hold.kind ?? 'standard', ageMs: now - hold.atMs });
     }
     return out;
   }
@@ -377,23 +382,73 @@ export class CreditsLedger {
    * The ONLY authoriser of a vault spend: runs the gatekeeper and places the
    * hold atomically on the serial queue. Refusal changes nothing.
    */
+  /** The gatekeeper's view of one user, for a request of `kind`, at `nowMs`. */
+  private viewFor(userId: string, kind: SessionKind, nowMs: number): LedgerView {
+    let spentInWindowMicro = 0n;
+    let opensInWindow = 0;
+    let liveTrainingHolds = 0;
+    for (const hold of this.holds.values()) {
+      if (hold.userId !== userId) continue;
+      const holdKind: SessionKind = hold.kind ?? 'standard';
+      // Each kind's daily cap is its own budget (one training deposit is
+      // the size of a day of chat), so only holds of the request's kind
+      // count toward it. The per-minute open rate stays per user, all kinds.
+      if (nowMs - hold.atMs < DAY_MS && holdKind === kind) {
+        spentInWindowMicro += hold.amountMicro;
+      }
+      if (nowMs - hold.atMs < MINUTE_MS) opensInWindow += 1;
+      // D11: live = bound, or held (hash or not) younger than LIVE_HOLD_MS.
+      if (
+        holdKind === 'training' &&
+        (hold.state === 'bound' || (hold.state === 'held' && nowMs - hold.atMs < LIVE_HOLD_MS))
+      ) {
+        liveTrainingHolds += 1;
+      }
+    }
+    return {
+      availableMicro: this.availableMicro(userId),
+      spentInWindowMicro,
+      opensInWindow,
+      liveTrainingHolds,
+    };
+  }
+
+  /**
+   * FT1 D4 — the gatekeeper's decision WITHOUT a hold: advice for the session
+   * service so every policy refusal precedes any chain read. Runs on the same
+   * serial queue as `openHold`, which re-decides under the mutex and is the
+   * only authority; a preview that allows may still be refused at the hold.
+   */
+  previewOpen(
+    request: { userId: string; host: string; depositMicro: bigint; kind?: SessionKind; modelId?: string },
+    gatekeeper: Gatekeeper
+  ): Promise<GateDecision> {
+    return this.run(async () => {
+      const kind: SessionKind = request.kind ?? 'standard';
+      return gatekeeper(this.viewFor(request.userId, kind, this.now()), {
+        host: request.host,
+        depositMicro: request.depositMicro,
+        kind,
+        ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
+      });
+    });
+  }
+
   openHold(
-    request: { userId: string; host: string; depositMicro: bigint },
+    request: { userId: string; host: string; depositMicro: bigint; kind?: SessionKind; modelId?: string },
     gatekeeper: Gatekeeper
   ): Promise<OpenHoldResult> {
     return this.run(async () => {
       const nowMs = this.now();
-      let spentInWindowMicro = 0n;
-      let opensInWindow = 0;
-      for (const hold of this.holds.values()) {
-        if (hold.userId !== request.userId) continue;
-        if (nowMs - hold.atMs < DAY_MS) spentInWindowMicro += hold.amountMicro;
-        if (nowMs - hold.atMs < MINUTE_MS) opensInWindow += 1;
-      }
-      const decision = gatekeeper(
-        { availableMicro: this.availableMicro(request.userId), spentInWindowMicro, opensInWindow },
-        { host: request.host, depositMicro: request.depositMicro }
-      );
+      const kind: SessionKind = request.kind ?? 'standard';
+      // `modelId` reaches the gatekeeper (D10) and is NEVER journaled: the
+      // fingerprint already carries it and standard lines stay byte-identical.
+      const decision = gatekeeper(this.viewFor(request.userId, kind, nowMs), {
+        host: request.host,
+        depositMicro: request.depositMicro,
+        kind,
+        ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
+      });
       if (!decision.allow) return { ok: false, reason: decision.reason };
 
       const holdId = `h${this.holdCounter}`;
@@ -404,6 +459,9 @@ export class CreditsLedger {
         amount: request.depositMicro.toString(),
         host: request.host,
         at: nowMs,
+        // Journaled only for a non-standard kind: standard lines stay byte-
+        // identical to every line written before kinds existed.
+        ...(kind !== 'standard' ? { kind } : {}),
       });
       return { ok: true, holdId };
     });

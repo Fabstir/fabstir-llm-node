@@ -13,6 +13,7 @@
 // values proven to pass contract validation against the live host.
 import { Interface, type Log } from 'ethers';
 import { usdcTokenAddress } from './balance';
+import type { SessionKind } from './gatekeeper';
 
 export const ESCROW_INTERFACE = new Interface([
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -25,6 +26,67 @@ export const TEST_DEPOSIT_MICRO = 500_000n;
 export const SESSION_MAX_DURATION = 3600n;
 export const SESSION_PROOF_INTERVAL = 1000n;
 export const SESSION_PROOF_TIMEOUT_WINDOW = 300n;
+
+// A training run lives hours and posts a proof per slice. The node's accept
+// gate (DESIGN-TRAINING-M0-INTERFACE A.3) needs remaining lifetime >=
+// TRAIN_JOB_TIMEOUT_SECS (12600) + 600 and proofTimeoutWindow >= 3600 (the
+// contract maximum, MAX_PROOF_TIMEOUT), so a training session takes the
+// SDK's wallet-path shape, proven live by every wallet-paid run. A session
+// created with the constants above passes the vault's gate, funds, and then
+// fails A.3 after escrow — a funded round trip that cannot succeed.
+export const TRAINING_SESSION_MAX_DURATION = 14400n;
+export const TRAINING_SESSION_PROOF_INTERVAL = 1000n;
+export const TRAINING_SESSION_PROOF_TIMEOUT_WINDOW = 3600n;
+/** The contract's MAX_PROOF_TIMEOUT (live probe 2026-08-22). */
+export const MAX_PROOF_TIMEOUT_WINDOW = 3600n;
+
+export interface SessionShape {
+  maxDuration: bigint;
+  proofInterval: bigint;
+  proofTimeoutWindow: bigint;
+}
+
+/** The standard kind's proof window. The contract's timeout is a permission
+ *  any caller gains once proof silence exceeds this window; on 300 s that
+ *  opens for every vault chat that idles five minutes before its first proof.
+ *  Nothing of ours acts on it before the listener's reclaim delay, so the
+ *  window costs the flow nothing and can be raised to the maximum; it is an
+ *  env knob rather than a changed default because a 3600/3600 shape has not
+ *  yet been created on this contract, and the first one should be a probe. */
+function standardProofTimeoutWindow(): bigint {
+  const raw = process.env.FIAT_SESSION_PROOF_TIMEOUT_WINDOW;
+  if (raw === undefined || raw === '') return SESSION_PROOF_TIMEOUT_WINDOW;
+  let value: bigint;
+  try {
+    value = BigInt(raw);
+  } catch {
+    throw new Error(`FIAT_SESSION_PROOF_TIMEOUT_WINDOW must be an integer number of seconds, got "${raw}"`);
+  }
+  if (value <= 0n || value > MAX_PROOF_TIMEOUT_WINDOW) {
+    throw new Error(
+      `FIAT_SESSION_PROOF_TIMEOUT_WINDOW must be 1..${MAX_PROOF_TIMEOUT_WINDOW} seconds (the contract maximum), got ${value}`
+    );
+  }
+  return value;
+}
+
+/** The on-chain session parameters per job kind. The SERVICE owns these:
+ *  the vault fronts the money, so three raw numbers from a browser are never
+ *  accepted. Absent kind = `standard` = the chat/render shape above. */
+export function sessionShapeFor(kind: SessionKind = 'standard'): SessionShape {
+  if (kind === 'training') {
+    return {
+      maxDuration: TRAINING_SESSION_MAX_DURATION,
+      proofInterval: TRAINING_SESSION_PROOF_INTERVAL,
+      proofTimeoutWindow: TRAINING_SESSION_PROOF_TIMEOUT_WINDOW,
+    };
+  }
+  return {
+    maxDuration: SESSION_MAX_DURATION,
+    proofInterval: SESSION_PROOF_INTERVAL,
+    proofTimeoutWindow: standardProofTimeoutWindow(),
+  };
+}
 
 function requireEnv(name: string, value: string | undefined): string {
   if (!value) throw new Error(`${name} is not set — copy .env.example to .env.local`);

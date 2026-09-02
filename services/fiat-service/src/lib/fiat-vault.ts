@@ -8,13 +8,11 @@
 import { Contract, JsonRpcProvider, SigningKey, Wallet, getAddress, keccak256, toUtf8Bytes } from 'ethers';
 import {
   ESCROW_INTERFACE,
-  SESSION_MAX_DURATION,
-  SESSION_PROOF_INTERVAL,
-  SESSION_PROOF_TIMEOUT_WINDOW,
   jobMarketplaceAddress,
+  sessionShapeFor,
 } from './escrow';
 import { rpcUrl, usdcTokenAddress } from './balance';
-import { bigintEnv } from './gatekeeper';
+import { bigintEnv, type SessionKind } from './gatekeeper';
 
 export const SESSION_AUTH_SCHEME = 'fc1-session-auth-v1';
 
@@ -85,6 +83,9 @@ export interface CreateSessionParams {
   host: string;
   modelId: string;
   depositMicro: bigint;
+  /** Selects the SERVICE-OWNED on-chain shape (escrow.ts `sessionShapeFor`).
+   *  Absent = standard (chat/render). Never three raw numbers from a client. */
+  kind?: SessionKind;
   /** Omit to use the registry price for (host, modelId, token) — the norm.
    *  Supply it only to pin a price deliberately; it is never taken from a
    *  client request (a price the caller chooses is a price an attacker
@@ -101,10 +102,23 @@ export interface VaultChain {
    *  exactly the configured float when it cannot cover `depositMicro`. */
   ensureAllowance(depositMicro: bigint): Promise<void>;
   createSession(params: CreateSessionParams): Promise<{ jobId: bigint; depositor: string; txHash: string }>;
+  /** The registry price for (host, model, USDC). 0n = the host has not
+   *  advertised this model, so no session for it can EVER open (a policy
+   *  refusal, MODEL_NOT_PRICED); a throw = the chain could not be read just
+   *  now (chain_error, worth a retry). The service asks this before it
+   *  spends anything, and pins the answer into the create. */
+  modelPrice(host: string, modelId: string): Promise<bigint>;
 }
 
-function allowanceFloatMicro(): bigint {
-  // TODO(Jules): set with the cap numbers.
+/** The standing approve() float: EXACTLY the configured value, never raised
+ *  implicitly (Decision 3b: a small float, topped up as spend happens).
+ *  `ensureAllowance` refuses a deposit above it as a loud config error, so a
+ *  kind whose cap exceeds the float can never open — which is why
+ *  `assertBootInvariants` (fiat-session-service) refuses to boot when an
+ *  ENABLED kind's cap exceeds this figure (FT1 D5): the deploy raises
+ *  FIAT_VAULT_ALLOWANCE_FLOAT_MICRO deliberately, in the same edit as
+ *  FIAT_TRAINING_MODEL_IDS. Exported for that check. */
+export function allowanceFloatMicro(): bigint {
   return bigintEnv('FIAT_VAULT_ALLOWANCE_FLOAT_MICRO', 2_000_000n);
 }
 
@@ -157,6 +171,10 @@ export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
           );
         }
       }
+      // The shape is chosen by KIND, server-side: a training run needs the
+      // 14400 / 1000 / 3600 wallet-path shape or it fails the node's A.3 gate
+      // after escrow (see escrow.ts).
+      const shape = sessionShapeFor(params.kind);
       const send = () =>
         marketplace.createSessionJobForModelWithToken(
           params.host,
@@ -164,9 +182,9 @@ export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
           usdcAddress,
           params.depositMicro,
           pricePerToken,
-          SESSION_MAX_DURATION,
-          SESSION_PROOF_INTERVAL,
-          SESSION_PROOF_TIMEOUT_WINDOW
+          shape.maxDuration,
+          shape.proofInterval,
+          shape.proofTimeoutWindow
         );
       let tx: Awaited<ReturnType<MarketplaceLike['createSessionJobForModelWithToken']>>;
       try {
@@ -195,6 +213,10 @@ export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
         throw new Error(`session ${jobId} depositor ${depositor} is not the vault ${vaultAddress} — mis-wired signer`);
       }
       return { jobId, depositor, txHash: tx.hash };
+    },
+
+    modelPrice(host: string, modelId: string): Promise<bigint> {
+      return modelPrice(host, modelId, usdcAddress);
     },
   };
 }

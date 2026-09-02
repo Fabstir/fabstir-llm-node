@@ -19,6 +19,14 @@ import { jobMarketplaceAddress } from './escrow';
 import { getFiatDeps } from './fiat-session-service';
 import { makeChainReceiptReader, reconcileOrphans, type CreateReceiptReader } from './fiat-reconcile';
 import type { CreditsLedger } from './ledger';
+import {
+  bigintEnv,
+  gatekeeperConfigFromEnv,
+  largestSessionCapMicro,
+  type GatekeeperConfig,
+  type SessionKind,
+} from './gatekeeper';
+import { sessionShapeFor } from './escrow';
 
 // Exact shapes (indexed layout included) from the deployed Upgradeable ABI.
 export const SETTLEMENT_INTERFACE = new Interface([
@@ -180,10 +188,18 @@ export function startSettlementListener(opts: {
    *  the timeout instead and let the ordinary settlement event apply the
    *  contract's OWN refund figure, through the path that is already tested. */
   reclaim?: { trigger(jobId: bigint): Promise<void> };
-  /** How long a bound hold may sit unsettled before we reclaim it. Must exceed
-   *  the contract's session lifetime or the call reverts; default 2h against a
-   *  1h `FIAT_SESSION_MAX_DURATION`, so a slow render is never cut short. */
+  /** How long a bound STANDARD hold may sit unsettled before we reclaim it.
+   *  Must exceed the contract's session lifetime or the call reverts; default
+   *  2h against the 1h standard `maxDuration`, so a slow render is never cut
+   *  short. */
   reclaimAfterMs?: number;
+  /** The same delay per NON-standard kind. A training session lives up to
+   *  four hours by design and posts a proof per slice: on the standard clock
+   *  it would read as stranded at two, and the timeout would be sent — and
+   *  refused by the contract while proofs keep landing — every tick for the
+   *  rest of the run, gas and alarms for nothing. A kind absent here uses
+   *  `reclaimAfterMs`. */
+  reclaimAfterMsByKind?: Partial<Record<SessionKind, number>>;
   /** The tick-freeze lesson (2026-07-23, incident #3): none of the tick's RPC
    *  awaits had a timeout, so ONE hung request silently stopped all future
    *  ticks — the only failure shape no per-event alarm can see. A tick that
@@ -276,24 +292,6 @@ export function startSettlementListener(opts: {
         await opts.cursor.save(Math.max(chunkEnd + 1, from));
         chunkStart = chunkEnd + 1;
       }
-      if (opts.reclaim) {
-        const after = opts.reclaimAfterMs ?? 2 * 60 * 60 * 1000;
-        for (const jobId of opts.ledger.boundJobsOlderThan(after)) {
-          try {
-            // Reclaim only; the settle happens on the resulting event, next
-            // tick, with the contract's own refund figure.
-            await opts.reclaim.trigger(jobId);
-            opts.onAlarm(
-              `reclaimed stranded session ${jobId}: unsettled for over ${Math.round(after / 60000)} minutes, ` +
-                `triggerSessionTimeout sent — the settlement event will return the customer's deposit`
-            );
-          } catch (e) {
-            opts.onAlarm(
-              `reclaim failed on job ${jobId}: ${e instanceof Error ? e.message : String(e)}`
-            );
-          }
-        }
-      }
       if (opts.stateSweep) {
         for (const jobId of opts.ledger.boundJobIds()) {
           try {
@@ -309,6 +307,35 @@ export function startSettlementListener(opts: {
           } catch (e) {
             opts.onAlarm(
               `state-sweep failed on job ${jobId}: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        }
+      }
+      // FT1 D3 — the reclaim pass runs AFTER the state sweep, so a lagging
+      // completion event settles before a (failing) timeout estimate is
+      // attempted for the same job.
+      if (opts.reclaim) {
+        const standardAfter = opts.reclaimAfterMs ?? 2 * 60 * 60 * 1000;
+        for (const { jobId, kind, ageMs } of opts.ledger.boundJobsWithAge()) {
+          // Each kind waits out ITS OWN lifetime before it counts as stranded
+          // (the production wrapper has validated these delays against the
+          // contract's proof-silence clock; see validateReclaimDelays).
+          const after = opts.reclaimAfterMsByKind?.[kind] ?? standardAfter;
+          if (ageMs < after) continue;
+          try {
+            // Reclaim only; the settle happens on the resulting event, next
+            // tick, with the contract's own refund figure.
+            await opts.reclaim.trigger(jobId);
+            // The standard line is byte-identical to the pre-kind text; a
+            // non-standard kind is appended in parentheses.
+            const kindTag = kind === 'standard' ? '' : ` (${kind})`;
+            opts.onAlarm(
+              `reclaimed stranded session ${jobId}${kindTag}: unsettled for over ${Math.round(after / 60000)} minutes, ` +
+                `triggerSessionTimeout sent — the settlement event will return the customer's deposit`
+            );
+          } catch (e) {
+            opts.onAlarm(
+              `reclaim failed on job ${jobId}: ${e instanceof Error ? e.message : String(e)}`
             );
           }
         }
@@ -461,13 +488,85 @@ export function setProductionSettlementListenerForTest(l: SettlementListener | u
   g.__fiatSettlementListener = l;
 }
 
+/** Skew allowed between a hold's `atMs` (written before the approve + create
+ *  txs) and the session's on-chain start. A margin, not a bound. */
+export const RECLAIM_SKEW_MS = 600_000;
+
+/**
+ * FT1 D3 — the reclaim delays, validated against the CONTRACT's clock. The
+ * timeout permission opens only when proof SILENCE exceeds proofTimeoutWindow,
+ * and a full-length run's last proof lands near startTime + maxDuration, so
+ * the earliest guaranteed permission is (maxDuration + proofTimeoutWindow)
+ * after creation — training 18,000 s, standard 3,900 s today and 7,200 s once
+ * the proof-window knob is flipped (the floor moves with the knob, so the flip
+ * and a raised FIAT_RECLAIM_AFTER_MS go in together). A delay below the floor
+ * would try a failing timeout estimate from the vault key every tick until
+ * the permission opened. Pure; the production wrapper calls it BEFORE the
+ * backend is built, so the listener's own options stay unvalidated and the
+ * tests that start it with 0 stay as they are.
+ */
+export function validateReclaimDelays(delays: {
+  standard: number;
+  byKind?: Partial<Record<SessionKind, number>>;
+}): void {
+  const check = (kind: SessionKind, value: number, envName: string) => {
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`${envName} must be a positive integer number of milliseconds, got ${value}`);
+    }
+    const shape = sessionShapeFor(kind);
+    const floor = Number(shape.maxDuration + shape.proofTimeoutWindow) * 1000 + RECLAIM_SKEW_MS;
+    if (value < floor) {
+      throw new Error(
+        `${envName} (${value} ms) is below the ${kind} reclaim floor of ${floor} ms = (maxDuration ${shape.maxDuration} + proofTimeoutWindow ${shape.proofTimeoutWindow}) s + ${RECLAIM_SKEW_MS} ms skew — the contract's timeout opens only after that much proof silence`
+      );
+    }
+  };
+  check('standard', delays.standard, 'FIAT_RECLAIM_AFTER_MS');
+  for (const [kind, value] of Object.entries(delays.byKind ?? {}) as [SessionKind, number][]) {
+    if (kind === 'standard') continue;
+    check(kind, value, `FIAT_${kind.toUpperCase()}_RECLAIM_AFTER_MS`);
+  }
+}
+
 /**
  * Entry point for instrumentation.ts. Gated on FIAT_SETTLEMENT_ENABLED=1 and
  * a process-wide singleton (dev hot reloads must not double-start).
  */
+/** A millisecond env knob: blank or unset = the fallback (the same rule
+ *  `bigintEnv`/`intEnv` apply, and what `.env.example`'s `KEY=` lines rely on);
+ *  anything else goes to the validator as a number. */
+export function msEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  return Number(raw);
+}
+
+/** The production reclaim delays, parsed and validated (FT1 D3). Pure apart
+ *  from the env read, so the wrapper's order can be tested without a backend. */
+export function productionReclaimDelays(): { standard: number; training: number } {
+  // Standard: must exceed the contract's session lifetime or the estimate
+  // fails; default 2h against the 1h standard maxDuration.
+  const standard = msEnv('FIAT_RECLAIM_AFTER_MS', 2 * 60 * 60 * 1000);
+  // Training: 4h maxDuration + the 1h proof window before the permission can
+  // open, so 6h before a training hold counts as stranded.
+  const training = msEnv('FIAT_TRAINING_RECLAIM_AFTER_MS', 6 * 60 * 60 * 1000);
+  validateReclaimDelays({ standard, byKind: { training } });
+  return { standard, training };
+}
+
+/** The spendable-balance alarm floor: the largest ENABLED kind's session cap
+ *  (a training open is the one that reverts first), overridable (FT1 D5). */
+export function productionMinSpendableMicro(config: GatekeeperConfig): bigint {
+  return bigintEnv('FIAT_MIN_SPENDABLE_MICRO', largestSessionCapMicro(config));
+}
+
 export async function startProductionSettlementListener(): Promise<SettlementListener | undefined> {
   if (process.env.FIAT_SETTLEMENT_ENABLED !== '1') return undefined;
   if (g.__fiatSettlementListener) return g.__fiatSettlementListener;
+  // FT1 D3 — validate the reclaim delays BEFORE the backend is built (no
+  // journal opened, no chain touched, on a bad env).
+  const { standard: reclaimAfterMs, training: trainingReclaimAfterMs } = productionReclaimDelays();
+  const gatekeeperConfig = gatekeeperConfigFromEnv();
   const { ledger } = await getFiatDeps();
   const dataDir = process.env.FIAT_DATA_DIR ?? './data/fiat';
   const fromBlock = Number(process.env.FIAT_SETTLEMENT_FROM_BLOCK ?? '0');
@@ -479,8 +578,9 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     onAlarm: (message) => console.error(`[fiat-settlement] ALARM: ${message}`),
     solvency: makeVaultHoldings(),
     // One max-size session is the smallest floor that is still actionable: below
-    // it, the very next open reverts.
-    minSpendableMicro: BigInt(process.env.FIAT_MAX_SESSION_DEPOSIT_MICRO ?? '2000000'),
+    // it, the very next open reverts. The largest cap of any ENABLED kind (a
+    // training open is the one that reverts first), overridable.
+    minSpendableMicro: productionMinSpendableMicro(gatekeeperConfig),
     reconcile: { reader: makeChainReceiptReader() },
     // Public-RPC replica lag protection (see the tickOnce comment). ~2s blocks:
     // lag 5 ≈ 10s behind head, overlap 30 ≈ a minute of re-scan each tick.
@@ -490,15 +590,20 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     stateSweep: makeChainSessionReader(),
     // Stranded-escrow reclaim (job 987). Inert unless FIAT_RECLAIM_STRANDED=1.
     reclaim: makeReclaimer(),
-    // Must exceed the contract's session lifetime or the call reverts. Default
-    // 2h against a 1h FIAT_SESSION_MAX_DURATION, so no live render is cut short.
-    reclaimAfterMs: Number(process.env.FIAT_RECLAIM_AFTER_MS ?? String(2 * 60 * 60 * 1000)),
+    reclaimAfterMs,
+    reclaimAfterMsByKind: { training: trainingReclaimAfterMs },
     // Liveness: abandon hung ticks loudly; heartbeat every 40 ticks (~10 min at
     // the 15s poll) so journal silence beyond that provably means dead.
     tickTimeoutMs: Number(process.env.FIAT_SETTLEMENT_TICK_TIMEOUT_MS ?? '120000'),
     heartbeatEvery: Number(process.env.FIAT_SETTLEMENT_HEARTBEAT_EVERY ?? '40'),
     onHeartbeat: (line) => console.log(`[fiat-settlement] ${line}`),
   });
+  // The effective delays, once, so a defaulted value (an env typo is a silent
+  // default) is distinguishable from a set one.
+  console.log(
+    `[fiat-settlement] reclaim delays: standard ${reclaimAfterMs} ms, training ${trainingReclaimAfterMs} ms` +
+      ` (reclaim ${process.env.FIAT_RECLAIM_STRANDED === '1' ? 'ON' : 'OFF'})`
+  );
   console.log('[fiat-settlement] listener started');
   return g.__fiatSettlementListener;
 }

@@ -13,6 +13,7 @@
 // The journal is the record, not memory: a crash between reserve and complete
 // must leave the key PENDING, since the escrow may exist. Fail closed on money.
 import { createHash } from 'node:crypto';
+import type { SessionKind } from './gatekeeper';
 import type { LedgerStore } from './ledger';
 
 export interface FingerprintInput {
@@ -20,6 +21,9 @@ export interface FingerprintInput {
   modelId: string;
   depositMicro: bigint;
   clientAddress: string;
+  /** Absent = standard. A key first used for a training open and replayed
+   *  as a standard one (or vice versa) is a DIFFERENT session: key_conflict. */
+  kind?: SessionKind;
 }
 
 /** A stable digest of the parameters a key was first used with, so a key reused
@@ -32,6 +36,9 @@ export function requestFingerprint(r: FingerprintInput): string {
         r.modelId.toLowerCase(),
         r.depositMicro.toString(),
         r.clientAddress.toLowerCase(),
+        // Appended ONLY for a non-standard kind, so every fingerprint journaled
+        // before `kind` existed still matches its own replay byte for byte.
+        ...(r.kind && r.kind !== 'standard' ? [r.kind] : []),
       ].join('|')
     )
     .digest('hex')

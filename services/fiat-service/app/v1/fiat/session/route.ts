@@ -29,7 +29,14 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return Response.json({ error: 'body must be JSON' }, { status: 400 });
   }
-  const { host, modelId, depositMicro, clientAddress } = body ?? {};
+  const { host, modelId, depositMicro, clientAddress, kind } = body ?? {};
+  // `kind` selects the SERVICE-OWNED on-chain session shape and the per-kind
+  // caps (a training run lives hours: 14400 / 1000 / 3600). Only the literal
+  // 'training' is accepted; absent = standard, today's chat/render shape. A
+  // browser never sends raw numbers: the vault is the one fronting the money.
+  if (kind !== undefined && kind !== null && kind !== 'training') {
+    return Response.json({ error: "kind must be 'training' when present" }, { status: 400 });
+  }
   // FC2.8: the retry key travels as a header (Stripe's convention) or in the
   // body, whichever suits the caller. Bounded so a key cannot be used as a
   // storage channel; absent = today's behaviour, no dedupe.
@@ -77,6 +84,7 @@ export async function POST(req: Request): Promise<Response> {
       depositMicro: BigInt(depositMicro),
       clientAddress,
       ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(kind === 'training' ? { kind: 'training' as const } : {}),
     });
     switch (outcome.status) {
       case 'ok':

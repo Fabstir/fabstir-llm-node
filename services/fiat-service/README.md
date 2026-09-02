@@ -61,6 +61,61 @@ If you see that, the fix is on the client: send the signing identity when openin
 session. The escrow from the refused attempt is reclaimable (it settles zero and
 refunds in full), but it is a wasted round trip, so get this right before spending.
 
+### `kind` on POST /v1/fiat/session — the service owns the session shape
+
+A fine-tuning run cannot live inside the chat/render session: the node's accept gate
+(DESIGN-TRAINING-M0-INTERFACE A.3) needs remaining lifetime ≥ 12600 + 600 s and a
+proof window of 3600 s, so a session created with the standard 3600 / 1000 / 300 shape
+passes this service's gate, funds from the vault, and then fails after escrow — a funded
+round trip that cannot succeed. The body therefore carries an optional `kind`:
+
+| `kind` | On-chain shape (maxDuration / proofInterval / proofTimeoutWindow) | Caps |
+|---|---|---|
+| absent | 3600 / 1000 / 300 (the standard proof window is an env knob, max 3600) | `FIAT_MAX_SESSION_DEPOSIT_MICRO`, `FIAT_MAX_DAILY_SPEND_MICRO` |
+| `"training"` | 14400 / 1000 / 3600 (the SDK's wallet-path shape, proven live) | `FIAT_TRAINING_MAX_SESSION_DEPOSIT_MICRO`, `FIAT_TRAINING_MAX_DAILY_SPEND_MICRO` |
+
+Only the literal `"training"` is accepted; a JSON `null` counts as absent (the route's
+`idempotencyKey` convention); anything else is a 400. The browser names a kind and never
+numbers, because the vault is the one fronting the money. Everything
+else in the body and the whole response are unchanged. The kind is BOUND to the model
+id in both directions: `"training"` needs a `modelId` from `FIAT_TRAINING_MODEL_IDS`
+(the registered TRAINING model id, `keccak256("fabstir/training/" + templateId)`, not the
+template hash and not the serving model), and one of those ids needs `"training"`;
+either mismatch is `MODEL_KIND_MISMATCH`, and with the list unset the training kind refuses
+every open. Each kind's daily cap is its own budget of GROSS holds over a rolling 24 h (a
+settled hold still counts), one training session may be in flight per user
+(`FIAT_TRAINING_MAX_CONCURRENT`, counted over live holds only), and the stranded-escrow
+reclaimer waits out each kind's own lifetime (`FIAT_TRAINING_RECLAIM_AFTER_MS`, default
+6 h, validated at boot against the contract's proof-silence clock) before sending
+`triggerSessionTimeout` — which is a precondition for card-paid training, since a card
+customer has no wallet to reclaim with. The approve float is exactly
+`FIAT_VAULT_ALLOWANCE_FLOAT_MICRO`; the service refuses to boot when an enabled kind's cap
+exceeds it (raise both in one edit). The node's gate leaves 1,200 s between session
+creation and the `train` frame, so open the session after the dataset upload, immediately
+before `submitTraining`.
+
+### Refusals a client must not retry
+
+`403 refused` carries a machine-readable `reason`; `502 chain_error` means the chain
+could not be reached or the transaction failed and a retry is reasonable — but attempts
+of EVERY outcome count toward the per-user per-minute budget (`FIAT_MAX_OPENS_PER_MINUTE`,
+default 3), so the fourth attempt inside a minute is `RATE_LIMITED`. One case that used
+to come back as `chain_error` is now a refusal, because retrying it can never work:
+
+| `reason` | Meaning |
+|---|---|
+| `HOST_NOT_ALLOWED` | the host is not on `FIAT_ALLOWED_HOSTS` (a list of host addresses, not host + model pairs) |
+| `MODEL_NOT_PRICED` | the host has not advertised this model: `NodeRegistry.getModelPricing(host, model, USDC)` is 0 |
+| `MODEL_KIND_MISMATCH` | `kind` and `modelId` disagree (either direction), or the training list is unset |
+| `DEPOSIT_OVER_CAP`, `DAILY_CAP_EXCEEDED` | the per-kind caps above |
+| `CONCURRENT_CAP_EXCEEDED` | the user already has a live training hold |
+| `INSUFFICIENT_BALANCE`, `RATE_LIMITED`, `INVALID_DEPOSIT` | as named |
+
+None of the refusals journals a hold: the gatekeeper is previewed before the model-price
+read, the read comes before the hold, and every no-hold outcome frees the idempotency key
+so the same key retries cleanly. A FAILED CREATE still journals a hold and still counts
+toward the gross day.
+
 Rule of thumb: if your code can name two different addresses when asked "who is the
 client", you have this bug latent. Pick the one whose private key signs the session
 init.
@@ -145,6 +200,20 @@ Bind `-H 0.0.0.0` (the scripts do) so a Docker port map can forward to the conta
 4. Give the UI the host for `NEXT_PUBLIC_FIAT_SERVICE_URL = https://<host>/v1/fiat`.
 5. Point the Stripe webhook endpoint at `https://<host>/v1/fiat/stripe/webhook` and set
    `FIAT_STRIPE_WEBHOOK_SECRET` to its signing secret.
+
+6. **Post-deploy gate, both halves, scoped to THIS boot:** `/v1/fiat/balance?address=…`
+   answers 200 AND the journal shows `[fiat] gatekeeper:`, `reclaim delays:` and
+   `[fiat-settlement] listener started` for the current invocation
+   (`journalctl -u fiat-service _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value fiat-service)`).
+   `systemctl is-active` proves nothing: a failed boot check (an enabled kind's cap above
+   the float — the STANDARD cap counts too, so read the live `FIAT_MAX_SESSION_DEPOSIT_MICRO`
+   before deploying; a bad proof-window knob; a reclaim delay below its floor, checked whenever
+   settlement is enabled) leaves the unit active with EVERY route at 500 until restart, and an
+   unscoped grep matches yesterday's line. Prove a bad-env boot once on a scratch instance (`npx next start -H 127.0.0.1
+   -p 3021` with a scratch `FIAT_DATA_DIR`), never on the live unit.
+7. With `FIAT_RECLAIM_STRANDED` OFF, a stranded card-paid session (node restart mid-run)
+   keeps its deposit debited AND keeps the user's one training slot occupied until someone
+   sends `triggerSessionTimeout(jobId)` by hand; that manual step is the only path back.
 
 The full paid walk (buy → balance → cash-out, then card-paid render) is a **Jules-run
 live gate**, not part of scaffolding.
