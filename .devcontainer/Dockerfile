@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang libclang-dev llvm-dev cmake \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,12 +43,16 @@ RUN curl -fsSL https://risczero.com/install -o /tmp/rzup.sh \
 
 RUN npm config set prefix "$HOME/.npm-global" \
     && npm config set os linux \
-    && npm install -g @anthropic-ai/claude-code --force --no-os-check
+    && npm install -g @anthropic-ai/claude-code
 
 RUN echo 'export PATH="$HOME/.npm-global/bin:$HOME/.risc0/bin:/usr/local/cargo/bin:$PATH"' >> ~/.bashrc
 
 USER root
-RUN mkdir -p /home/developer/.claude && chown developer:developer /home/developer/.claude
+RUN mkdir -p /home/developer/.claude \
+             /workspace/target \
+             /usr/local/cargo/registry \
+             /usr/local/cargo/git \
+    && chown -R developer:developer /home/developer/.claude /workspace /usr/local/cargo
 USER developer
 
 WORKDIR /workspace
