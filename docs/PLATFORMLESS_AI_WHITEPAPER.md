@@ -684,6 +684,13 @@ session on the same base model, and it is removed when the session ends. The reg
 adapter is held under is minted by the node and never accepted from the wire, so naming
 another user's session buys nothing.
 
+Because the adapter lives on S5 as an encrypted artefact and the capability pointer is the
+whole grant, it is **portable across hosts by construction**: the host that trained it holds
+no privileged position over the host that serves it. This is demonstrated, not theoretical —
+an adapter trained on one operator's GPU has been staged from storage and served on a
+different operator's machine, a different hardware generation, with the same per-session
+isolation. Train anywhere, serve anywhere, keys with the customer throughout.
+
 **Settlement is per slice, not per job.** A run that dies halfway bills for the slices that
 completed and nothing more, and a client that cancels is billed the same way. A job rejected
 before any GPU work — a token count that does not reconcile, a dataset that fails its content
@@ -1640,12 +1647,14 @@ _A parallel security workstream toward host-blind inference (Section 8.6) — so
 - ✅ Proven end-to-end on real NVIDIA GPU hardware (encrypt → attest → key release → decrypt → `llama.cpp` on CUDA → inference → secure delete); ~80 tests; 2 adversarial review rounds
 - ⏳ **Remaining milestone:** swap the mock attestation backend for **real NVIDIA Confidential-Computing attestation** on a Confidential VM (CC-On H100/H200 GPU + Intel TDX or AMD SEV-SNP CPU TEE) — the step that proves a root operator provably cannot read the model or prompt from VRAM
 
-### Private Fine-Tuning (Training M0 — In Progress)
+### Private Fine-Tuning (Training M0 — core demonstrated end to end; paid gates pending)
 
 - ✅ Wire contract with the SDK frozen; node accept, staging, content scan, token re-count, slice loop, per-slice proof and settlement, encrypted adapter delivery
 - ✅ Serve-back: a finished adapter attaches to an ordinary inference session, isolated to that session and removed at its end
 - ✅ Cross-implementation token counting pinned by a frozen fixture and verified on both sides, so a declared count and the node's recount cannot silently diverge
-- ⏳ **First training run on real GPU hardware** — the training stack is pinned on the hardware rather than in advance; throughput, prep time and per-run weight load are owed measurements
+- ✅ **End-to-end fine-tunes on real GPU hardware**, billed exactly per token, with the client's count, an independent count and the node's recount agreeing to the token on every run
+- ✅ **Demonstrable behaviour change**: an adapter trained on an invented-fact corpus answers questions the base model provably cannot (the control names the subject as likely fictional), verified against a base-model session on the same host
+- ✅ **Cross-host serving**: the adapter trained on one host staged and served on a different operator's GPU, a different hardware generation, isolated per session
 - ⏳ Paid settlement gates on testnet: one completed run, one mid-run failure, one cancellation, each billed to the unit
 - ⏳ Model registration and allow-list bundle publication
 - ⏳ **Confidential training** — the host currently decrypts the dataset to train and produces the adapter in the clear, so fine-tuning is not yet host-blind. Closing it reuses the existing attestation machinery, releasing the dataset key only into an attested enclave rather than embedding it in the job payload
