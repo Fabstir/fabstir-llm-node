@@ -521,6 +521,12 @@ GET /v1/models?chain_id={chain_id}
 
 Submit a text generation request to a specific model.
 
+> **Refused on hosts serving vault-paid sessions (v8.54.0+).** A host configured with
+> `FIAT_VAULT_ADDRESSES` answers `403 {"error":"SESSION_AUTH_DENIED"}` on this route: it takes a
+> `job_id` with no session gate and bills against it, so billed inference on such a host goes over
+> the authenticated WebSocket (`/v1/ws`) only. Wallet-only hosts are unchanged. Use `/v1/version`
+> for a post-deploy smoke test on a vault host, not this route.
+
 #### Request
 
 ```http

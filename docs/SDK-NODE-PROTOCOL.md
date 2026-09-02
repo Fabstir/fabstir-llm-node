@@ -87,6 +87,10 @@
 
   2. HTTP/1.1 Protocol (Fallback - Stateless Queries)
 
+  NOTE (v8.54.0+): a host configured with FIAT_VAULT_ADDRESSES refuses POST /v1/inference
+  with 403 SESSION_AUTH_DENIED — it carries a job_id past no session gate. On such a host
+  billed inference is WebSocket-only. Wallet-only hosts are unchanged.
+
   Single Inference Request
 
   POST /v1/inference HTTP/1.1

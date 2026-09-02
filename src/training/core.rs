@@ -467,9 +467,12 @@ pub async fn terminal_reject_effects(
     // terminal record for a session schedules its settle (round-2 catch —
     // concurrent consult failures double-scheduled it; the second on-chain
     // completion would just revert, but exactly-once is exactly-once).
-    let newly_recorded =
-        deps.attempts
-            .record_terminal_reject(job_id, snapshot.depositor, now_secs, arm_cooldown);
+    let newly_recorded = deps.attempts.record_terminal_reject(
+        job_id,
+        snapshot.attempt_address,
+        now_secs,
+        arm_cooldown,
+    );
     let staging_dir = deps.staging_root.join(format!("job-{job_id}"));
     let _ = tokio::fs::remove_dir_all(&staging_dir).await;
     if newly_recorded {
@@ -502,6 +505,23 @@ pub async fn accept_session(
     job: &TrainingJob,
     now_secs: u64,
 ) -> Result<AcceptedSession, TrainReject> {
+    accept_session_for_client(deps, job_id, job, now_secs, None).await
+}
+
+/// `accept_session` with the connection's FC1.6-verified vault client (FT1
+/// D7): `Some` only when the server's init gate verified a vault depositor and
+/// authorised this client, in which case every C.6 registry call for this
+/// session is keyed on the client rather than the shared vault address. The
+/// key is resolved ONCE, immediately after the chain reads and BEFORE the
+/// consumed-session peek and every consuming consult below, so a card
+/// customer's template-shape reject cools that customer and nobody else.
+pub async fn accept_session_for_client(
+    deps: &TrainingDeps,
+    job_id: u64,
+    job: &TrainingJob,
+    now_secs: u64,
+    vault_client: Option<ethers::types::Address>,
+) -> Result<AcceptedSession, TrainReject> {
     // 1. Chain reads FIRST — fail CLOSED but consuming/settling NOTHING (an
     // unverified session must never be completed or burned; retry is safe).
     // Round-7 F-R7-1 (HIGH): these echoed the provider error, whose reqwest
@@ -531,6 +551,11 @@ pub async fn accept_session(
             ),
         )
     })?;
+    // The C.6 key, resolved once for everything that follows (FT1 D7).
+    let snapshot = SessionSnapshot {
+        attempt_address: crate::training::accept::attempt_address(snapshot.depositor, vault_client),
+        ..snapshot
+    };
 
     // 2. Consumed-session short-circuit (advisory peek; `try_begin` below
     // stays the atomic claim): a session the registry already ended must
@@ -624,10 +649,12 @@ pub async fn accept_session(
     // 5. The attempt claim. SessionReused/TrainActive are the two
     // NON-consuming refusals (their settle already exists / is owned by the
     // running attempt); AddressBusy/Cooldown consume + settle per C.3.
-    match deps
-        .attempts
-        .try_begin(job_id, snapshot.depositor, now_secs, deps.cooldown_secs)
-    {
+    match deps.attempts.try_begin(
+        job_id,
+        snapshot.attempt_address,
+        now_secs,
+        deps.cooldown_secs,
+    ) {
         AttemptClaim::Ok => {}
         AttemptClaim::SessionReused => {
             return Err(TrainReject::new(

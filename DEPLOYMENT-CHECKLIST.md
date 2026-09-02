@@ -120,6 +120,9 @@ Use this checklist to track your upgrade progress.
   - [ ] VRAM stays below 95GB during tests
 
 - [ ] **Manual Tests**
+  > On a host with `FIAT_VAULT_ADDRESSES` set (host2, host1 once card-paid), `POST /v1/inference`
+  > is refused by design (v8.54.0+): use `curl -s http://localhost:8080/v1/version` as the smoke
+  > test there and run Test 1 only on wallet-only hosts.
   ```bash
   # Test 1: Simple inference
   curl -s -X POST http://localhost:8080/v1/inference \

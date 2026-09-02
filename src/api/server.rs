@@ -2141,6 +2141,20 @@ async fn simple_inference_handler(
     State(server): State<Arc<ApiServer>>,
     Json(request): Json<InferenceRequest>,
 ) -> impl IntoResponse {
+    // FT1 D7 (c): a host serving vault money bills inference over the gated
+    // WebSocket only. This route takes a wire job id with no gate and reaches
+    // the core that tracks tokens against it, so on a vault host it is refused
+    // outright. Crypto-native hosts: unchanged.
+    if !server.fiat_vault_addresses.is_empty() {
+        return (
+            StatusCode::FORBIDDEN,
+            axum::response::Json(serde_json::json!({
+                "error": "SESSION_AUTH_DENIED",
+                "message": "POST /v1/inference is refused on a host serving vault-paid sessions; use the authenticated WebSocket (/v1/ws)"
+            })),
+        )
+            .into_response();
+    }
     let client_ip = "127.0.0.1".to_string();
 
     match server.handle_inference_request(request, client_ip).await {
@@ -2490,7 +2504,19 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
     // Track session information for settlement
     let mut session_id: Option<String> = None;
+    // Written in exactly ONE place per init arm, AFTER the FC1.6 gate passes
+    // (FT1 D7). A refused init falls through and leaves the previous value —
+    // `None` on a fresh socket, or this connection's own gate-passed job — so
+    // no wire-named job can ever survive a denial. Before this, both arms
+    // assigned it from the message BEFORE the gate and a refused plaintext init
+    // naming a vault-paid job left the connection able to bill or complete it.
     let mut job_id: Option<u64> = None;
+    // The FC1.6-verified client for a VAULT-PAID session (FT1 D7): `Some` only
+    // when the encrypted init's depositor is a configured vault and the
+    // recovered signer passed `authorise_session_client`. Keys the training
+    // registry (C.6) on the customer instead of the shared vault address.
+    // Written beside `job_id`, in the same one place.
+    let mut vault_client: Option<ethers::types::Address> = None;
     let mut chain_id: Option<u64> = None;
     // T5.3 / interface E.2. Two connection-local variables, and the split
     // between them is load bearing (round-1 F1/F2):
@@ -2607,8 +2633,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             }
                         }
 
-                        // Handle job_id (Rust) or jobId (SDK/contracts) as either string or number
-                        job_id = json_msg["job_id"]
+                        // Handle job_id (Rust) or jobId (SDK/contracts) as either string or number.
+                        // Parsed into a LOCAL: the connection's `job_id` is assigned only
+                        // after the FC1.6 gate below passes (FT1 D7).
+                        let parsed_job_id: Option<u64> = json_msg["job_id"]
                             .as_u64()
                             .or_else(|| {
                                 json_msg["job_id"]
@@ -2636,7 +2664,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             session_id
                         );
 
-                        eprintln!("📝 Session init: job={:?} session={:?}", job_id, session_id);
+                        eprintln!("📝 Session init: job={parsed_job_id:?} session={session_id:?}");
 
                         // FC1.6: a plaintext init carries no authenticated client
                         // identity, so vault-paid money must not be spendable
@@ -2644,7 +2672,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         // the per-client check). Crypto-native sessions are
                         // untouched, and with no vault configured this is skipped.
                         if !server.fiat_vault_addresses.is_empty() {
-                            let denial: Option<String> = match job_id {
+                            let denial: Option<String> = match parsed_job_id {
                                 None => Some("job id unparseable".to_string()),
                                 Some(jid) => {
                                     let depositor = match server.get_checkpoint_manager().await {
@@ -2705,6 +2733,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 continue;
                             }
                         }
+                        // The ONE write (FT1 D7): after the gate. A plaintext init is never
+                        // vault-paid past this point, so the vault client is cleared too.
+                        job_id = parsed_job_id;
+                        vault_client = None;
 
                         // FIX: Create session in session_store (was missing - caused "Session not found" errors)
                         if let Some(sid) = &session_id {
@@ -2950,9 +2982,15 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     let client_address =
                                                         session_init_data.client_address;
 
-                                                    // Update tracked session/job info - parse job_id from string
-                                                    job_id =
+                                                    // Parse job_id from string into a LOCAL: the connection's
+                                                    // `job_id` is assigned only after the FC1.6 gate passes (FT1 D7).
+                                                    let parsed: Option<u64> =
                                                         extracted_job_id_str.parse::<u64>().ok();
+                                                    // The FC1.6-verified client, set below ONLY when the depositor
+                                                    // is a configured vault and this client is authorised.
+                                                    let mut vault_client_for_init: Option<
+                                                        ethers::types::Address,
+                                                    > = None;
 
                                                     // FC1.6: vault-paid sessions serve only the depositor or
                                                     // a backend-authorised client. With no vault configured
@@ -2960,7 +2998,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     // With the gate ON, an unreadable depositor fails CLOSED:
                                                     // a node serving vault money must not serve blind.
                                                     if !server.fiat_vault_addresses.is_empty() {
-                                                        let denial: Option<String> = match job_id {
+                                                        let denial: Option<String> = match parsed {
                                                             None => Some(
                                                                 "job id unparseable".to_string(),
                                                             ),
@@ -3009,7 +3047,27 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             &server.fiat_vault_addresses,
                                                                             authorised.as_deref(),
                                                                         ) {
-                                                                            None
+                                                                            // FT1 D7: remember the verified client for a
+                                                                            // VAULT depositor only; a parse failure of the
+                                                                            // recovered address (unreachable by construction:
+                                                                            // it is 0x + 40 hex from recover_client_address)
+                                                                            // fails CLOSED rather than keying on the vault.
+                                                                            if crate::api::session_auth::is_vault_depositor(
+                                                                                &dep,
+                                                                                &server.fiat_vault_addresses,
+                                                                            ) {
+                                                                                match client_address.parse::<ethers::types::Address>() {
+                                                                                    Ok(client) => {
+                                                                                        vault_client_for_init = Some(client);
+                                                                                        None
+                                                                                    }
+                                                                                    Err(_) => Some(format!(
+                                                                                        "recovered client address {client_address} could not be parsed (fail closed)"
+                                                                                    )),
+                                                                                }
+                                                                            } else {
+                                                                                None
+                                                                            }
                                                                         } else {
                                                                             Some(format!(
                                                                                 "client {} (recovered from the E2EE v1 signature) is not authorised for vault-paid job {}; authorised client is {}",
@@ -3045,6 +3103,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                             continue;
                                                         }
                                                     }
+                                                    // The ONE write (FT1 D7): after the gate, both branches.
+                                                    job_id = parsed;
+                                                    vault_client = vault_client_for_init;
 
                                                     eprintln!("🔐 Encrypted session started: job={:?} session={:?} model={}", job_id, session_id, model_name);
 
@@ -3654,6 +3715,60 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             json!({"prompt": plaintext_str})
                                                                         });
 
+                                                                // FT1 D7 vault-host billing rule: on a host serving vault
+                                                                // money, a billed or GPU-bearing frame needs a gate-passed
+                                                                // session on THIS connection. Anchored here, before every
+                                                                // action dispatch and the prompt branch (VLM vision and the
+                                                                // auto-image route included). The inference cores derive a
+                                                                // job from the message's session id when the request has
+                                                                // none, so a job-less connection could bill a wire-named
+                                                                // job. Crypto-native hosts: skipped, byte-identical.
+                                                                if !server
+                                                                    .fiat_vault_addresses
+                                                                    .is_empty()
+                                                                    && job_id.is_none()
+                                                                {
+                                                                    error!("🚫 SESSION_AUTH_DENIED (encrypted frame): no authorised session on this connection");
+                                                                    let mut error_msg = json!({
+                                                                        "type": "error",
+                                                                        "code": "SESSION_AUTH_DENIED",
+                                                                        "message": "session authorisation denied: no authorised session on this connection (send a session init that passes the vault gate first)",
+                                                                        "session_id": current_session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                                                                    });
+                                                                    if let Some(msg_id) =
+                                                                        json_msg.get("id")
+                                                                    {
+                                                                        error_msg["id"] =
+                                                                            msg_id.clone();
+                                                                    }
+                                                                    let _ = ws_sender
+                                                                        .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                                                        .await;
+                                                                    // A prompt-shaped frame owns a pending stream promise
+                                                                    // in the SDK (round-4 F-R4-1): settle it, as the
+                                                                    // LORA_NOT_STAGED gate does, or the client hangs.
+                                                                    if decrypted_json
+                                                                        .get("action")
+                                                                        .is_none()
+                                                                    {
+                                                                        let mut ended = json!({
+                                                                            "type": "stream_end",
+                                                                            "reason": "error",
+                                                                            "tokens_used": 0
+                                                                        });
+                                                                        if let Some(msg_id) =
+                                                                            json_msg.get("id")
+                                                                        {
+                                                                            ended["id"] =
+                                                                                msg_id.clone();
+                                                                        }
+                                                                        let _ = ws_sender
+                                                                            .send(axum::extract::ws::Message::Text(ended.to_string()))
+                                                                            .await;
+                                                                    }
+                                                                    continue;
+                                                                }
+
                                                                 // Log decrypted JSON keys for debugging (v8.15.3+)
                                                                 if let Some(obj) =
                                                                     decrypted_json.as_object()
@@ -3977,7 +4092,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             })
                                                                             .unwrap_or_default();
                                                                     let (train_ack, train_task) =
-                                                                        crate::api::websocket::handlers::training::handle_encrypted_train(
+                                                                        crate::api::websocket::handlers::training::handle_encrypted_train_for_client(
                                                                             train_deps.clone(),
                                                                             server.ltx_semaphore(),
                                                                             allow_list_version,
@@ -3987,6 +4102,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             job_id,
                                                                             json_msg.get("id"),
                                                                             train_now_secs,
+                                                                            vault_client,
                                                                         )
                                                                         .await;
                                                                     let train_timeout =
@@ -4947,6 +5063,37 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                     // Handle both "prompt" and "inference" messages
                     if json_msg["type"] == "prompt" || json_msg["type"] == "inference" {
+                        // FT1 D7 vault-host billing rule (plaintext half): no gate-passed
+                        // session on this connection → refused before anything is built.
+                        // Crypto-native hosts: skipped, byte-identical.
+                        if !server.fiat_vault_addresses.is_empty() && job_id.is_none() {
+                            error!("🚫 SESSION_AUTH_DENIED (plaintext {}): no authorised session on this connection", json_msg["type"]);
+                            let mut error_msg = json!({
+                                "type": "error",
+                                "code": "SESSION_AUTH_DENIED",
+                                "message": "session authorisation denied: no authorised session on this connection (send a session init that passes the vault gate first)",
+                                "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string())
+                            });
+                            if let Some(msg_id) = json_msg.get("id") {
+                                error_msg["id"] = msg_id.clone();
+                            }
+                            let _ = ws_sender
+                                .send(axum::extract::ws::Message::Text(error_msg.to_string()))
+                                .await;
+                            // Settle the SDK's pending stream promise (round-4 F-R4-1).
+                            let mut ended = json!({
+                                "type": "stream_end",
+                                "reason": "error",
+                                "tokens_used": 0
+                            });
+                            if let Some(msg_id) = json_msg.get("id") {
+                                ended["id"] = msg_id.clone();
+                            }
+                            let _ = ws_sender
+                                .send(axum::extract::ws::Message::Text(ended.to_string()))
+                                .await;
+                            continue;
+                        }
                         // DEPRECATED: Plaintext prompt/inference (Phase 6.2.1, Sub-phase 5.4)
                         // SDK v6.2+ uses encryption by default. Plaintext is a fallback for clients with `encryption: false`.
                         warn!(
@@ -4959,8 +5106,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         // Extract message ID for response correlation
                         let message_id = json_msg.get("id").cloned();
 
-                        // Extract job_id from messages if not already set
-                        if job_id.is_none() {
+                        // Extract job_id from messages if not already set. NOT on a vault
+                        // host (FT1 D7): there the connection's job comes only from a
+                        // gate-passed init (and the guard above has already refused None).
+                        if job_id.is_none() && server.fiat_vault_addresses.is_empty() {
                             // Try to get job_id (Rust) or jobId (SDK/contracts)
                             job_id = json_msg["job_id"]
                                 .as_u64()
@@ -5016,8 +5165,18 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 })
                             }
                         } else {
-                            // For inference messages, use the nested request object
-                            json_msg["request"].clone()
+                            // For inference messages, use the nested request object. On a
+                            // vault host the nested job_id/session_id are overwritten with the
+                            // connection's, exactly as the prompt branch above does (FT1 D7):
+                            // a verbatim clone let a wire-named job ride past the guard.
+                            let mut req = json_msg["request"].clone();
+                            if !server.fiat_vault_addresses.is_empty() {
+                                if let Some(obj) = req.as_object_mut() {
+                                    obj.insert("job_id".to_string(), json!(job_id));
+                                    obj.insert("session_id".to_string(), json!(session_id));
+                                }
+                            }
+                            req
                         };
 
                         // Vision pre-processing for plaintext messages (v8.15.3+)
@@ -5111,9 +5270,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         if let Ok(request) =
                             serde_json::from_value::<InferenceRequest>(request_value)
                         {
-                            // Update tracked job_id if not already set
+                            // Update tracked job_id if not already set (never on a vault host, FT1 D7)
                             if let Some(req_job_id) = request.job_id {
-                                if job_id.is_none() {
+                                if job_id.is_none() && server.fiat_vault_addresses.is_empty() {
                                     job_id = Some(req_job_id);
                                 }
                             }

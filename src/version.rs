@@ -3,22 +3,22 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.53.1-lora-init-log-2026-08-26";
+pub const VERSION: &str = "v8.54.0-vault-session-guard-2026-09-02";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.53.1";
+pub const VERSION_NUMBER: &str = "8.54.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 53;
+pub const VERSION_MINOR: u32 = 54;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-08-26";
+pub const BUILD_DATE: &str = "2026-09-02";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -571,6 +571,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.54.0 - Vault-host session guard + C.6 keyed on the authorised client (Sep 2, 2026)
+    "SECURITY (hosts with FIAT_VAULT_ADDRESSES set; wallet-only hosts byte-identical): a session init refused by the FC1.6 vault gate no longer leaves the connection's job id pointing at the refused job -- the connection's job id is written once per init arm, AFTER the gate passes. Before, a refused plaintext init naming a vault-paid job left a served connection able to send train/prompt frames billed to that job, and a disconnect completed it as host",
+    "SECURITY (vault hosts only): a billed or GPU-bearing frame on a connection with no gate-passed session is refused SESSION_AUTH_DENIED -- the guard sits right after the encrypted payload is parsed (before every action dispatch) and at the head of the plaintext prompt/inference arm; the plaintext wire fallbacks that adopted a job id from a prompt no longer run there; the plaintext inference frame's nested request gets the connection's job_id/session_id like prompt already did; POST /v1/inference is refused outright (billed inference goes over the gated WebSocket). Behaviour change on vault hosts: no job-less renders, no job id on a prompt without an init, no HTTP inference",
+    "FEAT (training, vault-paid sessions): the C.6 attempt registry (one in flight per address, post-reject cooldown) is keyed on the backend-authorised client for a vault depositor instead of the shared vault address, so one card customer's real-work reject no longer cools every card customer. SessionSnapshot gains attempt_address (== depositor everywhere but this case); accept_session_for_client / handle_encrypted_train_for_client carry the client; the no-client forms are unchanged",
     // v8.53.1 - Session-init lora visibility (Aug 26, 2026)
     "FEAT: every session init now logs whether the decrypted payload carried lora (and the minted registry key) or not. Session 1126: a client SENT lora, the node never parsed it, and the didnt-ask path is silent by design -- so sent-but-not-parsed and never-sent were indistinguishable in the log. Now one grep separates them",
     // v8.53.0 - GPU CC mode is tri-state (Aug 25, 2026)
@@ -1047,8 +1051,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 53);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 54);
+        assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
@@ -1228,15 +1232,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.53.1"));
-        assert!(version.contains("2026-08-26"));
+        assert!(version.contains("8.54.0"));
+        assert!(version.contains("2026-09-02"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.53.1-lora-init-log-2026-08-26");
-        assert_eq!(VERSION_NUMBER, "8.53.1");
-        assert_eq!(BUILD_DATE, "2026-08-26");
+        assert_eq!(VERSION, "v8.54.0-vault-session-guard-2026-09-02");
+        assert_eq!(VERSION_NUMBER, "8.54.0");
+        assert_eq!(BUILD_DATE, "2026-09-02");
     }
 
     #[test]

@@ -8,6 +8,7 @@
 mod support;
 
 mod test_accept;
+mod test_accept_vault;
 mod test_advert;
 mod test_artifact;
 mod test_attestation_t4;

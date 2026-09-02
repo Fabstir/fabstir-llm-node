@@ -35,6 +35,7 @@ fn passing_snapshot() -> SessionSnapshot {
     // 8,678,400 × 904 / 1000 = 7,845,273.6 → 8,000,000 covers with headroom.
     SessionSnapshot {
         depositor: addr(0xD1),
+        attempt_address: addr(0xD1),
         host: addr(0xB0),
         payment_token: addr(0xEC),
         deposit: U256::from(8_000_000u64),

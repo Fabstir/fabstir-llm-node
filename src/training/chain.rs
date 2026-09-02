@@ -312,6 +312,7 @@ impl MockChainSeams {
         MockChainSeams {
             snapshot: crate::training::accept::SessionSnapshot {
                 depositor: host,
+                attempt_address: host,
                 host,
                 payment_token,
                 // Generous headroom: an unpaid gate must never reject on

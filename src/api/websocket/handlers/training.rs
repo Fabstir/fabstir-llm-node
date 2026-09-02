@@ -27,8 +27,8 @@ use tokio::sync::OwnedSemaphorePermit;
 use tracing::error;
 
 use crate::training::core::{
-    accept_session, AcceptedSession, TrainReject, TrainingDeps, CAPACITY, SIDECAR_UNAVAILABLE,
-    VALIDATION_FAILED,
+    accept_session_for_client, AcceptedSession, TrainReject, TrainingDeps, CAPACITY,
+    SIDECAR_UNAVAILABLE, VALIDATION_FAILED,
 };
 use crate::training::types::TrainingJob;
 
@@ -150,6 +150,8 @@ pub fn train_ws_write_timeout() -> std::time::Duration {
 
 /// Handle one decrypted `{"action":"train", …}` message. Returns the
 /// ENCRYPTED ack/error envelope and, on acceptance, the task to spawn.
+/// The no-client form: the C.6 key is the depositor (every wallet session,
+/// and every existing caller).
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_encrypted_train(
     deps: Option<Arc<TrainingDeps>>,
@@ -161,6 +163,37 @@ pub async fn handle_encrypted_train(
     chain_job_id: Option<u64>,
     message_id: Option<&Value>,
     now_secs: u64,
+) -> (Value, Option<TrainTask>) {
+    handle_encrypted_train_for_client(
+        deps,
+        gpu_semaphore,
+        allow_list_version,
+        decrypted,
+        session_key,
+        session_id,
+        chain_job_id,
+        message_id,
+        now_secs,
+        None,
+    )
+    .await
+}
+
+/// `handle_encrypted_train` with the connection's FC1.6-verified vault
+/// client (FT1 D7): `Some` only when the init gate verified a vault depositor
+/// and authorised this client; it keys C.6 on the client, not the vault.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_encrypted_train_for_client(
+    deps: Option<Arc<TrainingDeps>>,
+    gpu_semaphore: Arc<tokio::sync::Semaphore>,
+    allow_list_version: u64,
+    decrypted: &Value,
+    session_key: &[u8; 32],
+    session_id: &str,
+    chain_job_id: Option<u64>,
+    message_id: Option<&Value>,
+    now_secs: u64,
+    vault_client: Option<ethers::types::Address>,
 ) -> (Value, Option<TrainTask>) {
     let request_id = decrypted.get("requestId").and_then(|v| v.as_str());
     let reject_only = |reject: TrainReject| {
@@ -214,7 +247,7 @@ pub async fn handle_encrypted_train(
             })
         }
     };
-    match accept_session(&deps, job_id, &job, now_secs).await {
+    match accept_session_for_client(&deps, job_id, &job, now_secs, vault_client).await {
         Ok(accepted) => {
             // TD14: one GPU workload at a time — the SAME semaphore LTX
             // holds, taken only now that the session is verified (never
@@ -707,7 +740,7 @@ impl TrainTask {
             }
             deps.attempts.finish(
                 job_id,
-                accepted.snapshot.depositor,
+                accepted.snapshot.attempt_address,
                 now_secs,
                 crate::training::accept::AttemptOutcome::Completed,
             );

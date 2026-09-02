@@ -576,6 +576,10 @@ ws.on('message', (data) => {
 If currently using HTTP endpoints, here's the migration path:
 
 ### Old HTTP Approach
+
+> Refused on vault-configured hosts since v8.54.0 (`403 SESSION_AUTH_DENIED`): the route
+> takes a `job_id` with no session gate. Use the WebSocket flow below on those hosts.
+
 ```typescript
 // Stateless, full context every request
 const response = await fetch('http://host:8080/v1/inference', {

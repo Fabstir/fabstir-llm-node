@@ -70,10 +70,7 @@ pub fn authorise_session_client(
     vault_addresses: &[String],
     authorised_client: Option<&str>,
 ) -> bool {
-    let vault_paid = vault_addresses
-        .iter()
-        .any(|vault| vault.eq_ignore_ascii_case(depositor));
-    if !vault_paid {
+    if !is_vault_depositor(depositor, vault_addresses) {
         return true;
     }
     client_address.eq_ignore_ascii_case(depositor)
@@ -91,7 +88,16 @@ pub fn authorise_session_client(
 /// session. Crypto-native sessions (depositor is not a configured vault) are
 /// untouched, exactly as on the encrypted path.
 pub fn plaintext_session_allowed(depositor: &str, vault_addresses: &[String]) -> bool {
-    !vault_addresses
+    !is_vault_depositor(depositor, vault_addresses)
+}
+
+/// Is this session's depositor one of the configured fiat vaults? The ONE
+/// predicate behind every vault-paid rule (FC1.6's two gates above, and the
+/// FT1 per-connection `vault_client` that keys C.6 on the authorised client
+/// instead of the vault). Case-insensitive; an empty vault list is never a
+/// vault.
+pub fn is_vault_depositor(depositor: &str, vault_addresses: &[String]) -> bool {
+    vault_addresses
         .iter()
         .any(|vault| vault.eq_ignore_ascii_case(depositor))
 }

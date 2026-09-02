@@ -79,7 +79,11 @@ paths:
   /v1/inference:
     post:
       summary: Request Inference
-      description: Submit a text generation request to a specific model
+      description: >-
+        Submit a text generation request to a specific model. Refused with 403
+        SESSION_AUTH_DENIED on a host configured with FIAT_VAULT_ADDRESSES (v8.54.0+):
+        this route takes a job_id with no session gate, so billed inference on such a
+        host goes over the authenticated WebSocket only. Wallet-only hosts are unchanged.
       operationId: requestInference
       tags:
         - Inference

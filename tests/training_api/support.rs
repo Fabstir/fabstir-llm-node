@@ -187,6 +187,7 @@ pub fn snapshot_started_secs_ago(secs: u64) -> SessionSnapshot {
 pub fn passing_snapshot() -> SessionSnapshot {
     SessionSnapshot {
         depositor: addr(0xD1),
+        attempt_address: addr(0xD1),
         host: addr(0xB0),
         payment_token: addr(0xEC),
         deposit: U256::from(1_000_000u64),

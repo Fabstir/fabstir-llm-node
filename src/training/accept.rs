@@ -59,6 +59,15 @@ impl TryFrom<u8> for SessionStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSnapshot {
     pub depositor: Address,
+    /// The C.6 key: the address the attempt registry (one in flight per
+    /// address, post-reject cooldown) is keyed on for THIS session. Equal to
+    /// `depositor` everywhere the snapshot is decoded or mocked; set to the
+    /// backend-authorised client by `accept_session_for_client` ONLY when the
+    /// depositor is a configured fiat vault and the connection's init passed
+    /// FC1.6 (FT1 D7). With the vault as depositor every card customer would
+    /// otherwise share one address: one customer's real-work reject would cool
+    /// every card customer, and a second customer would be `AddressBusy`.
+    pub attempt_address: Address,
     pub host: Address,
     pub payment_token: Address,
     pub deposit: U256,
@@ -89,6 +98,7 @@ pub fn decode_session_snapshot(ret: &[u8]) -> Result<SessionSnapshot, String> {
     let uint = |i: usize| U256::from_big_endian(word(i));
     Ok(SessionSnapshot {
         depositor: addr(1),
+        attempt_address: addr(1),
         host: addr(2),
         payment_token: addr(3),
         deposit: uint(4),
@@ -99,6 +109,16 @@ pub fn decode_session_snapshot(ret: &[u8]) -> Result<SessionSnapshot, String> {
         proof_timeout_window: uint(11),
         status: SessionStatus::try_from(word(12)[31])?,
     })
+}
+
+/// The C.6 key for a session: the backend-authorised client when the
+/// connection's FC1.6 check verified a vault depositor (`Some`), else the
+/// depositor. `vault_client` is `Some` ONLY under that contract — the server
+/// sets it after `authorise_session_client` passed for a depositor that
+/// `is_vault_depositor`, from the E2EE v1 signer it recovered, never from a
+/// wire field — so this function needs no vault list of its own.
+pub fn attempt_address(depositor: Address, vault_client: Option<Address>) -> Address {
+    vault_client.unwrap_or(depositor)
 }
 
 /// Accept-time constants (interface A.3 / C.5; env-plumbed at T4.5).
