@@ -14,23 +14,58 @@ later" round trip.
 
 ```
   browser
-     │ GET/HEAD https://host2.fabstir.net/fabcdn/s5/blob/{cid}
+     │ (1) GET/HEAD https://host2.fabstir.net/fabcdn/s5/blob/{cid}
      ▼
-  nginx @ host2 (server_name host2.fabstir.net, TLS)
-     │ location /fabcdn/
+  nginx @ host2 — location /fabcdn/          [the redirect fetcher]
+     │ proxy_pass https://s5.platformlessai.ai/
+     │ 307 comes back pointing at a presigned R2 URL; proxy_redirect
+     │ rewrites its Location so the browser bounces back to US, not to R2
+     ▼
+     │ (2) GET https://host2.fabstir.net/fabcdn/r2/{bucket}/{key}?X-Amz-…
+     ▼
+  nginx @ host2 — location /fabcdn/r2/       [the byte path]
+     │ slice 1m — each 1 MB slice is a separate cache entry
      ▼
   proxy_cache fabcdn ──► /var/cache/fabcdn   (50 GB LRU, 30d inactive)
      │ cache MISS
      ▼
-  proxy_pass https://s5.platformlessai.ai/   (upstream S5 portal)
-     │
+  proxy_pass https://<acct>.r2.cloudflarestorage.com/   (Host restored,
+     │                    so the presigned SigV4 signature still validates)
      ▼
   cipherbytes streamed back → response rewritten with:
      X-Cache: HIT | MISS | BYPASS | EXPIRED
-     X-Origin: s5.platformlessai.ai
+     X-Origin: r2.cloudflarestorage.com
      Access-Control-Allow-Origin: *
-     Access-Control-Expose-Headers: X-Cache, X-Origin, ETag, Content-Length
+     Access-Control-Expose-Headers: X-Cache, X-Origin, ETag, Content-Length,
+                                    Content-Range, Accept-Ranges
 ```
+
+Step (2) is what makes the edge a cache at all. Without the R2 `proxy_redirect`
+the browser leaves the edge after step (1) and every byte flows direct from R2 —
+the edge caches a redirect and nothing else. `/fabcdn/dl/` is the older byte path
+(`dl.platformlessai.ai`); the portal no longer redirects there, but the block is
+kept correct so it works the moment it ever does again.
+
+### Ranged media: `slice` is not optional
+
+Media players seek, so they send `Range:`. Caching a `206` under a key that does
+not include the range makes two different ranges of one object collide on a
+single cache entry — nginx serves whichever landed first for **both**, and the
+video is silently corrupt. The three byte-serving blocks therefore all use:
+
+```nginx
+slice             1m;
+proxy_set_header  Range $slice_range;
+proxy_cache_key   $scheme$proxy_host$uri$slice_range;   # ← $slice_range REQUIRED
+```
+
+`$args` is deliberately **excluded** from the key: the R2 presigned signature
+rotates, so including it would give every request a fresh key and nothing would
+ever hit. The accepted consequence is that warm bytes are served without
+re-checking the signature — see Known Limitations.
+
+`tests/smoke-test.sh` → `test_range_integrity` is the regression guard; it fails
+loudly if the key ever loses its range component.
 
 ### HEAD-no-write design
 
@@ -38,7 +73,11 @@ The fabstir-v2 client probes cache status with a HEAD before its GET. If
 that HEAD populated the cache with an empty body, the GET would hit an
 empty entry. Two maps fix this:
 
-- `$fabcdn_is_blob` — 1 only for URIs matching `^/fabcdn/s5/blob/`.
+- `$fabcdn_is_blob` — 1 for URIs matching `^/fabcdn/s5/blob/`,
+  `^/fabcdn/dl/` or `^/fabcdn/r2/`. **Every byte-serving location must be
+  listed here.** `$fabcdn_bypass` defaults to 1, so a location missing from
+  the map reads `BYPASS` forever and caches nothing — it fails silently,
+  behind a perfectly healthy-looking 200.
 - `$fabcdn_no_write` — 0 only when `(is_blob=1, is_head=0)`; otherwise 1.
   Fed into `proxy_no_cache`, so HEAD requests *read* the cache (report HIT
   when warm) but never *write* it. Writes are exclusively blob-path GETs.
@@ -122,6 +161,10 @@ include /etc/nginx/snippets/fabcdn-location.conf;
 ### 5. Validate + reload
 
 ```bash
+# The byte paths need the slice module. Stock Ubuntu nginx has it; check anyway,
+# because without it `nginx -t` fails on the `slice` directive.
+nginx -V 2>&1 | tr ' ' '\n' | grep http_slice_module   # expect a match
+
 sudo nginx -t                     # must report "syntax is ok"
 sudo nginx -s reload
 sudo tail -n 20 /var/log/nginx/error.log
@@ -185,6 +228,53 @@ curl -sI -H "Origin: http://localhost:3000" \
 # Access-Control-Allow-Origin: *
 # Access-Control-Allow-Methods: GET, HEAD, OPTIONS
 # Access-Control-Expose-Headers: X-Cache, X-Origin, ETag, Content-Length
+```
+
+### 7. The 307 now points back at the edge (the go/no-go for caching)
+
+This is the one check that says whether the edge caches bytes at all. If the
+`Location` still names `r2.cloudflarestorage.com`, the browser leaves the edge
+and nothing downstream matters.
+
+```bash
+curl -sD- -o/dev/null https://host2.fabstir.net/fabcdn/s5/blob/<CID> \
+    | grep -i '^location:'
+# want: Location: https://host2.fabstir.net/fabcdn/r2/…?X-Amz-…
+# bad:  Location: https://<acct>.r2.cloudflarestorage.com/…   ← proxy_redirect
+#       is not matching; the account host in the config has drifted from the
+#       one the portal presigns. Fix the host, do not chase the cache.
+```
+
+### 8. Bytes are cached, and ranges come back correct
+
+```bash
+# follow the redirect twice — the second must be a HIT
+curl -s -o/dev/null -L -w '%{http_code}\n' https://host2.fabstir.net/fabcdn/s5/blob/<CID>
+curl -sD- -o/dev/null -L https://host2.fabstir.net/fabcdn/s5/blob/<CID> | grep -i x-cache
+# want: 200 (or 206), then X-Cache: HIT
+
+# X-Cache: BYPASS instead of MISS/HIT means the path is not in $fabcdn_is_blob
+# in 10-fabcdn-map.conf. It will never cache and will never error. Check there
+# first — this is the failure mode that looks entirely healthy.
+```
+
+Then the range check, against a **video** CID (>2 MiB — a manifest CID is a few
+hundred bytes and the test will skip):
+
+```bash
+CID_PUBLIC=<video-cid> BASE_URL=https://host2.fabstir.net/fabcdn \
+FLUSH_CMD='ssh host2 "sudo find /var/cache/fabcdn -mindepth 1 -delete && sudo nginx -s reload"' \
+    bash tests/smoke-test.sh
+```
+
+`test_range_integrity` downloads the object whole, then re-reads three byte
+ranges through the edge and compares them byte for byte. It is the guard against
+the range-collision bug — a green run here is what licenses "caching is on".
+
+Finally confirm the indexer survived the reload:
+
+```bash
+curl -s https://host2.fabstir.net/fabindex/health
 ```
 
 ## Rollback
@@ -344,8 +434,18 @@ VPN users bypass it; that is the intended soft-enforcement norm.
   Rust edge-cache service will be containerized and binary-signed.
 - **No upstream keepalive.** Each MISS = fresh TLS handshake to S5;
   `upstream { keepalive 16 }` + `Connection ""` would cut that, post-demo.
-- **Range requests not cache-split** — assumes full-segment GETs (hls.js
-  default). Post-demo: add `slice` module or strip `Range:` at upstream.
+- **The R2 account host is hardcoded** in `proxy_redirect` / `proxy_pass`, as
+  `dl.platformlessai.ai` was before it. If the portal rotates buckets the
+  redirect stops matching and delivery degrades to direct-and-uncached — the
+  safe failure, not an outage, but nothing alerts. Worth a monitor on `X-Cache`
+  never reaching HIT.
+- **Cached bytes are served without re-checking the presigned signature.**
+  Intended — FabCDN is ciphertext-only by design — but it does make these paths
+  an unauthenticated mirror of whatever has been cached.
+- **A cold slice still needs a live presign.** Warm slices serve regardless, but
+  a miss against an expired `X-Amz-Signature` 403s. The `/fabcdn/` block caches
+  the 307 for 5m, well inside the 24h presign, so this only bites a cold cache
+  reached through an old URL.
 - **No payment-contract integration or signed-allowlist flow** — ships
   with the post-demo Rust service.
 
