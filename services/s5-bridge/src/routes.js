@@ -8,6 +8,7 @@
 
 import { getS5Client, getS5Status, getAdvancedClient } from './s5_client.js';
 import { acquireDirectoryLock, parentDir, activeLockCount } from './dir_mutex.js';
+import { classifyS5ReadError } from './s5_read_errors.js';
 import { BlobIdentifier } from '@julesl23/s5js/dist/src/identifier/blob.js';
 import { MULTIHASH_BLAKE3 } from '@julesl23/s5js/dist/src/constants.js';
 
@@ -62,6 +63,12 @@ export async function registerRoutes(fastify) {
         data = Buffer.from(result);
       } else if (ArrayBuffer.isView(result)) {
         data = Buffer.from(result.buffer, result.byteOffset, result.byteLength);
+      } else if (result == null) {
+        // Genuine absence: no registry entry for this path. Definitive, so 404
+        // is the honest answer. A *failed read* of a known directory does not
+        // land here — since beta.50 it throws S5DirectoryLoadError instead,
+        // handled in the catch below.
+        return reply.code(404).send({ error: 'File not found', path });
       } else {
         // Last resort - try to convert to buffer
         fastify.log.warn({ result }, 'Unexpected result type from s5.fs.get()');
@@ -74,12 +81,22 @@ export async function registerRoutes(fastify) {
         .header('X-S5-Path', path)
         .send(data);
     } catch (error) {
-      fastify.log.error({ path, error: error.message }, 'Failed to download file');
-      reply.code(404).send({
-        error: 'File not found or download failed',
-        path,
-        message: error.message,
-      });
+      // ⚠ Do not collapse a failed read into 404. Callers (indexer, node,
+      // transcoder) treat 404 as "this does not exist" and write that down as
+      // fact — which is exactly how a transient S5 directory failure became a
+      // permanently empty storefront. Since s5.js 0.9.0-beta.50 the library
+      // distinguishes the cases for us; honour it.
+      const { status, headers, body } = classifyS5ReadError(error, path);
+      if (status === 404) {
+        fastify.log.error({ path, error: error.message }, 'Failed to download file');
+      } else {
+        fastify.log.error(
+          { path, failedPath: body.failedPath, publicKey: body.publicKey, retryable: body.retryable },
+          'S5 directory load failed — NOT reporting absence'
+        );
+      }
+      for (const [k, v] of Object.entries(headers)) reply.header(k, v);
+      reply.code(status).send(body);
     }
   });
 

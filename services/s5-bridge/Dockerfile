@@ -10,10 +10,13 @@ RUN apk add --no-cache curl
 # Create app directory
 WORKDIR /app
 
-# Copy package files + the vendored s5.js tarball (self-contained build), then install
-COPY package.json ./
-COPY julesl23-s5js-0.9.0-beta.45.tgz ./
-RUN npm install --production
+# @julesl23/s5js resolves from the npm registry at an exact pin (0.9.0-beta.55),
+# not from a vendored tarball. beta.55 is the first published version carrying the
+# unbounded-fetch fix; beta.50 and beta.54 exist only as tarballs and are
+# unreachable by npm, which is why the vendored-tgz build was dropped.
+# npm ci (not install) so the lockfile decides every version, not just this one.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 # Copy application code
 COPY src/ ./src/

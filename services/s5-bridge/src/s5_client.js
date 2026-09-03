@@ -26,6 +26,15 @@ import { ethers } from 'ethers';
 import { installTusLargeUpload } from './tus_upload.js';
 import { bridgeConfig } from './config.js';
 
+// Every portal call below runs BEFORE the HTTP server listens, so an unbounded
+// one does not just fail slowly — it stops the bridge from ever coming up, and
+// the healthcheck cannot report that because nothing is listening to answer it.
+// s5.js bounded its own network waits in 0.9.0-beta.55, but deliberately left
+// account/login.js and account/register.js unbounded, and these four calls are
+// ours anyway. AbortSignal.timeout is the whole fix.
+const PORTAL_FETCH_TIMEOUT_MS = Number(process.env.S5_PORTAL_FETCH_TIMEOUT_MS || 15000);
+
+
 let s5Instance = null;
 let advancedInstance = null;
 let initializationPromise = null;
@@ -57,7 +66,9 @@ async function tryManualLogin(s5, portalUrl, accountId, accountEntry) {
     console.log(`🔄 Manual login attempt for ${accountId}`);
 
     // Step 1: GET challenge
-    const loginGetRes = await fetch(`${portalUrl}/s5/account/login?pubKey=${publicKey}`);
+    const loginGetRes = await fetch(`${portalUrl}/s5/account/login?pubKey=${publicKey}`, {
+      signal: AbortSignal.timeout(PORTAL_FETCH_TIMEOUT_MS),
+    });
     if (!loginGetRes.ok) {
       console.log(`   Login GET failed: HTTP ${loginGetRes.status}`);
       return null;
@@ -77,6 +88,7 @@ async function tryManualLogin(s5, portalUrl, accountId, accountEntry) {
 
     // Step 3: POST signed challenge
     const loginPostRes = await fetch(`${portalUrl}/s5/account/login`, {
+      signal: AbortSignal.timeout(PORTAL_FETCH_TIMEOUT_MS),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -261,6 +273,7 @@ async function tryOnChainRegistration(s5, portalUrl, hostPrivateKey) {
 
     // Step 1: Request challenge from portal
     const challengeRes = await fetch(`${portalUrl}/s5/account/register-host`, {
+      signal: AbortSignal.timeout(PORTAL_FETCH_TIMEOUT_MS),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -336,6 +349,7 @@ async function tryOnChainRegistration(s5, portalUrl, hostPrivateKey) {
     };
     console.log(`   pubKey: ${s5PubKey.length} chars, response: ${responseBase64.length} chars, s5Signature: ${signature.length} chars`);
     const registerRes = await fetch(`${portalUrl}/s5/account/register-host/complete`, {
+      signal: AbortSignal.timeout(PORTAL_FETCH_TIMEOUT_MS),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(completeBody),

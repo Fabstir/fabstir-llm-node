@@ -1,6 +1,6 @@
 {
   "name": "@fabstir/s5-bridge",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Enhanced S5.js P2P Bridge Service for Fabstir LLM Node",
   "main": "src/server.js",
   "type": "module",
@@ -21,7 +21,7 @@
   "license": "BUSL-1.1",
   "dependencies": {
     "@fastify/cors": "^8.5.0",
-    "@julesl23/s5js": "file:./julesl23-s5js-0.9.0-beta.45.tgz",
+    "@julesl23/s5js": "0.9.0-beta.55",
     "dotenv": "^16.3.1",
     "ethers": "^6.13.0",
     "fake-indexeddb": "^6.2.5",
