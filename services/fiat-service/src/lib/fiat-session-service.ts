@@ -105,12 +105,11 @@ export class AttemptsBucket {
   tryTake(userId: string): boolean {
     const t = this.now();
     const recent = (this.rows.get(userId) ?? []).filter((at) => t - at < 60_000);
-    if (recent.length >= this.limit) {
-      this.rows.set(userId, recent);
-      return false;
-    }
-    recent.push(t);
+    // Store the pruned array ONCE, before the decision, so neither outcome can
+    // lose the prune; `push` below lands in the same object.
     this.rows.set(userId, recent);
+    if (recent.length >= this.limit) return false;
+    recent.push(t);
     return true;
   }
 }

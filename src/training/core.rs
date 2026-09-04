@@ -494,11 +494,8 @@ async fn consuming(
     reject
 }
 
-/// Session-level acceptance: template shape → chain reads (fail CLOSED,
-/// retryable, consuming nothing) → attempt claim (keyed on the DEPOSITOR —
-/// the funding address is the C.6 "client address") → the A.3 gates. An A.3
-/// failure is a CONSUMING reject (the claim succeeded) and runs the terminal
-/// side effects.
+/// The no-client form of [`accept_session_for_client`]: the C.6 registry is
+/// keyed on the DEPOSITOR. Wallet-only hosts and the T3 test surface.
 pub async fn accept_session(
     deps: &TrainingDeps,
     job_id: u64,
@@ -508,13 +505,19 @@ pub async fn accept_session(
     accept_session_for_client(deps, job_id, job, now_secs, None).await
 }
 
-/// `accept_session` with the connection's FC1.6-verified vault client (FT1
-/// D7): `Some` only when the server's init gate verified a vault depositor and
-/// authorised this client, in which case every C.6 registry call for this
-/// session is keyed on the client rather than the shared vault address. The
-/// key is resolved ONCE, immediately after the chain reads and BEFORE the
-/// consumed-session peek and every consuming consult below, so a card
-/// customer's template-shape reject cools that customer and nobody else.
+/// Session-level acceptance: template shape → chain reads (fail CLOSED,
+/// retryable, consuming nothing) → attempt claim (keyed on `attempt_address`:
+/// the depositor, or the FC1.6-verified vault client when one is supplied) →
+/// the A.3 gates. An A.3 failure is a CONSUMING reject (the claim succeeded)
+/// and runs the terminal side effects.
+///
+/// `vault_client` is `Some` only when the server's init gate verified a vault
+/// depositor and authorised this client (FT1 D7), in which case every C.6
+/// registry call for this session is keyed on the client rather than the
+/// shared vault address. The key is resolved ONCE, immediately after the chain
+/// reads and BEFORE the consumed-session peek and every consuming consult
+/// below, so a card customer's template-shape reject cools that customer and
+/// nobody else.
 pub async fn accept_session_for_client(
     deps: &TrainingDeps,
     job_id: u64,

@@ -67,7 +67,10 @@ export function isKindEnabled(config: GatekeeperConfig, kind: SessionKind): bool
 /** The largest single deposit any ENABLED kind may open — what the vault's
  *  approve float and the spendable-balance alarm must be sized against. */
 export function largestSessionCapMicro(config: GatekeeperConfig): bigint {
-  let largest = config.maxDepositPerSessionMicro;
+  // Seeded at zero, not at the standard cap: `standard` is always enabled,
+  // so the loop below produces it, and the function then plainly reads as
+  // "the max over ENABLED kinds".
+  let largest = 0n;
   for (const kind of SESSION_KINDS) {
     if (!isKindEnabled(config, kind)) continue;
     const cap = capsFor(config, kind).maxDepositPerSessionMicro;

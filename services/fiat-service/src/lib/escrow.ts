@@ -36,9 +36,12 @@ export const SESSION_PROOF_TIMEOUT_WINDOW = 300n;
 // fails A.3 after escrow — a funded round trip that cannot succeed.
 export const TRAINING_SESSION_MAX_DURATION = 14400n;
 export const TRAINING_SESSION_PROOF_INTERVAL = 1000n;
-export const TRAINING_SESSION_PROOF_TIMEOUT_WINDOW = 3600n;
 /** The contract's MAX_PROOF_TIMEOUT (live probe 2026-08-22). */
 export const MAX_PROOF_TIMEOUT_WINDOW = 3600n;
+/** A.3 wants the window AT the contract maximum, so this is the same number
+ *  BY RULE: if MAX_PROOF_TIMEOUT ever moves, the training shape moves with
+ *  it rather than silently funding a session that fails A.3 after escrow. */
+export const TRAINING_SESSION_PROOF_TIMEOUT_WINDOW = MAX_PROOF_TIMEOUT_WINDOW;
 
 export interface SessionShape {
   maxDuration: bigint;

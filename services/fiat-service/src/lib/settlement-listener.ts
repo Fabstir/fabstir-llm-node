@@ -15,7 +15,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Contract, Interface, JsonRpcProvider, Wallet } from 'ethers';
 import { rpcUrl, usdcTokenAddress } from './balance';
-import { jobMarketplaceAddress } from './escrow';
+import { jobMarketplaceAddress, sessionShapeFor } from './escrow';
 import { getFiatDeps } from './fiat-session-service';
 import { makeChainReceiptReader, reconcileOrphans, type CreateReceiptReader } from './fiat-reconcile';
 import type { CreditsLedger } from './ledger';
@@ -26,7 +26,6 @@ import {
   type GatekeeperConfig,
   type SessionKind,
 } from './gatekeeper';
-import { sessionShapeFor } from './escrow';
 
 // Exact shapes (indexed layout included) from the deployed Upgradeable ABI.
 export const SETTLEMENT_INTERFACE = new Interface([
@@ -507,7 +506,7 @@ export const RECLAIM_SKEW_MS = 600_000;
  */
 export function validateReclaimDelays(delays: {
   standard: number;
-  byKind?: Partial<Record<SessionKind, number>>;
+  byKind?: Partial<Record<Exclude<SessionKind, 'standard'>, number>>;
 }): void {
   const check = (kind: SessionKind, value: number, envName: string) => {
     if (!Number.isInteger(value) || value <= 0) {
@@ -522,16 +521,14 @@ export function validateReclaimDelays(delays: {
     }
   };
   check('standard', delays.standard, 'FIAT_RECLAIM_AFTER_MS');
-  for (const [kind, value] of Object.entries(delays.byKind ?? {}) as [SessionKind, number][]) {
-    if (kind === 'standard') continue;
+  for (const [kind, value] of Object.entries(delays.byKind ?? {}) as [
+    Exclude<SessionKind, 'standard'>,
+    number,
+  ][]) {
     check(kind, value, `FIAT_${kind.toUpperCase()}_RECLAIM_AFTER_MS`);
   }
 }
 
-/**
- * Entry point for instrumentation.ts. Gated on FIAT_SETTLEMENT_ENABLED=1 and
- * a process-wide singleton (dev hot reloads must not double-start).
- */
 /** A millisecond env knob: blank or unset = the fallback (the same rule
  *  `bigintEnv`/`intEnv` apply, and what `.env.example`'s `KEY=` lines rely on);
  *  anything else goes to the validator as a number. */
@@ -560,6 +557,10 @@ export function productionMinSpendableMicro(config: GatekeeperConfig): bigint {
   return bigintEnv('FIAT_MIN_SPENDABLE_MICRO', largestSessionCapMicro(config));
 }
 
+/**
+ * Entry point for instrumentation.ts. Gated on FIAT_SETTLEMENT_ENABLED=1 and
+ * a process-wide singleton (dev hot reloads must not double-start).
+ */
 export async function startProductionSettlementListener(): Promise<SettlementListener | undefined> {
   if (process.env.FIAT_SETTLEMENT_ENABLED !== '1') return undefined;
   if (g.__fiatSettlementListener) return g.__fiatSettlementListener;

@@ -12,7 +12,22 @@
 // against chain events in production.
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { GateDecision, Gatekeeper, GateRefusal, LedgerView, SessionKind } from './gatekeeper';
+import type {
+  GateDecision,
+  Gatekeeper,
+  GateRefusal,
+  LedgerView,
+  OpenRequest,
+  SessionKind,
+} from './gatekeeper';
+
+/** An `OpenRequest` plus the user it is for: everything the ledger needs to
+ *  reach a gate decision. It EXTENDS `OpenRequest` on purpose — a new gate
+ *  input is then declared once and both `previewOpen` and `openHold` carry
+ *  it, so the advice can never drift from the authority. */
+export interface GateRequest extends OpenRequest {
+  userId: string;
+}
 
 export interface LedgerStore {
   /** All previously appended lines, in append order. */
@@ -299,11 +314,7 @@ export class CreditsLedger {
    *  released) — the work-list for the settlement state sweep. Settling a job
    *  flips its hold to 'settled', so recovered jobs drop out automatically. */
   boundJobIds(): bigint[] {
-    const out: bigint[] = [];
-    for (const hold of this.holds.values()) {
-      if (hold.state === 'bound' && hold.jobId !== undefined) out.push(hold.jobId);
-    }
-    return out;
+    return this.boundJobsWithAge().map((job) => job.jobId);
   }
 
   /** Every job the ledger still waits on, with its kind and age — the
@@ -378,10 +389,6 @@ export class CreditsLedger {
     return remaining < 0n ? 0n : remaining;
   }
 
-  /**
-   * The ONLY authoriser of a vault spend: runs the gatekeeper and places the
-   * hold atomically on the serial queue. Refusal changes nothing.
-   */
   /** The gatekeeper's view of one user, for a request of `kind`, at `nowMs`. */
   private viewFor(userId: string, kind: SessionKind, nowMs: number): LedgerView {
     let spentInWindowMicro = 0n;
@@ -413,42 +420,41 @@ export class CreditsLedger {
     };
   }
 
+  /** The gatekeeper's decision for one request at `nowMs`. The caller holds
+   *  the serial queue (this must NOT call `run`, which would deadlock).
+   *  `previewOpen` and `openHold` share it so the advice and the authority
+   *  can never ask different questions: a gate input added here reaches both.
+   *  `modelId` reaches the gatekeeper (D10) and is NEVER journaled — the
+   *  fingerprint already carries it and standard lines stay byte-identical. */
+  private decide(request: GateRequest, gatekeeper: Gatekeeper, nowMs: number): GateDecision {
+    const kind: SessionKind = request.kind ?? 'standard';
+    return gatekeeper(this.viewFor(request.userId, kind, nowMs), {
+      host: request.host,
+      depositMicro: request.depositMicro,
+      kind,
+      ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
+    });
+  }
+
   /**
    * FT1 D4 — the gatekeeper's decision WITHOUT a hold: advice for the session
    * service so every policy refusal precedes any chain read. Runs on the same
    * serial queue as `openHold`, which re-decides under the mutex and is the
    * only authority; a preview that allows may still be refused at the hold.
    */
-  previewOpen(
-    request: { userId: string; host: string; depositMicro: bigint; kind?: SessionKind; modelId?: string },
-    gatekeeper: Gatekeeper
-  ): Promise<GateDecision> {
-    return this.run(async () => {
-      const kind: SessionKind = request.kind ?? 'standard';
-      return gatekeeper(this.viewFor(request.userId, kind, this.now()), {
-        host: request.host,
-        depositMicro: request.depositMicro,
-        kind,
-        ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
-      });
-    });
+  previewOpen(request: GateRequest, gatekeeper: Gatekeeper): Promise<GateDecision> {
+    return this.run(async () => this.decide(request, gatekeeper, this.now()));
   }
 
-  openHold(
-    request: { userId: string; host: string; depositMicro: bigint; kind?: SessionKind; modelId?: string },
-    gatekeeper: Gatekeeper
-  ): Promise<OpenHoldResult> {
+  /**
+   * The ONLY authoriser of a vault spend: runs the gatekeeper and places the
+   * hold atomically on the serial queue. Refusal changes nothing.
+   */
+  openHold(request: GateRequest, gatekeeper: Gatekeeper): Promise<OpenHoldResult> {
     return this.run(async () => {
       const nowMs = this.now();
       const kind: SessionKind = request.kind ?? 'standard';
-      // `modelId` reaches the gatekeeper (D10) and is NEVER journaled: the
-      // fingerprint already carries it and standard lines stay byte-identical.
-      const decision = gatekeeper(this.viewFor(request.userId, kind, nowMs), {
-        host: request.host,
-        depositMicro: request.depositMicro,
-        kind,
-        ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
-      });
+      const decision = this.decide(request, gatekeeper, nowMs);
       if (!decision.allow) return { ok: false, reason: decision.reason };
 
       const holdId = `h${this.holdCounter}`;
