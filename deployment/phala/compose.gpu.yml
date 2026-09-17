@@ -1,0 +1,86 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Phala Cloud GPU CVM compose (Custom Deploy). Phase 5 attested inference, the
+# paid-day configuration. Guarded by `cargo test --test phase5_compose_guard`
+# (gate A-19): no build:, no relative bind mounts, image by digest, and none of
+# TEE_GPU_EVIDENCE / KBS_GPU_EVIDENCE / TEE_CPU_ONLY_STUB may appear here.
+#
+# Every ${VAR} below is supplied through the deploy form's ENCRYPTED environment
+# variables (sealed to the CVM), never written into this file: this file is
+# hashed into RTMR3 (compose_hash) and readable by anyone verifying the quote.
+# List each name under the form's allowed environment variables.
+#
+# Image digest: paste the value build.sh prints. The guard test stays red until
+# it is a real 64-hex sha256.
+services:
+  llm-node:
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:7776e144c88c46caace357a2894100b70c70d0198701340999a4346f9c1a2e4f
+    container_name: llm-node
+    restart: unless-stopped
+    # The dstack OS image this compose expects on the deploy form. Measured into
+    # RTMR3 with the rest of the compose; asserted per file by the guard test.
+    # CPU image dstack-v0.5.9 and GPU image dstack-nvidia-0.5.9 are near-identical
+    # names with different MRTD/RTMRs; a mix-up would look like a measurement
+    # mismatch, not an error. The form's selection MUST equal this label.
+    labels:
+      ai.platformless.dstack_os_image: "dstack-nvidia-0.5.9"
+    # NVML access for nvtrust evidence collection (reference A runs the
+    # evidence container privileged for the same reason).
+    runtime: nvidia
+    privileged: true
+    # /dev/shm is the decrypt dir; size it for the model (A-20). tiny-vicuna is
+    # 0.7 GB; raise for the target model. Not ipc: host: single GPU, no NCCL.
+    shm_size: "16g"
+    ports:
+      - "8080:8080"
+    volumes:
+      # dstack guest agent: /GetQuote, /Info (thin UDS client in src/tee/dstack.rs)
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # --- attested load path (Phase 5) ---
+      # HOST_TEE_ENABLED is read by EVERY build since 8.30 and makes the node
+      # advertise `tee-attested` in the WS handshake and the registry metadata
+      # (protocol.rs, registration.rs). The image pinned above is the v8.54.0
+      # binary, which reads none of the other TEE_* variables and loads plain
+      # models, so it MUST stay "false" here until the P3.3 rebuild, which makes
+      # "true" without a completed attested load a startup failure. The guard
+      # test pins this value; P3.3 flips the compose and the guard in one change
+      # (converge review, rounds 1 and 4, 2026-09-17).
+      HOST_TEE_ENABLED: "false"
+      TEE_MODEL_ID: ${TEE_MODEL_ID}
+      TEE_KBS_URL: ${TEE_KBS_URL}
+      TEE_POLICY_URL: ${TEE_POLICY_URL}
+      TEE_BLOB_URL: ${TEE_BLOB_URL}
+      TEE_DECRYPT_DIR: /dev/shm
+      GPU_LAYERS: "99"
+      LLAMA_BATCH_SIZE: "2048"
+
+      # --- node identity / chain (required by the node at boot) ---
+      HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY}
+      CHAIN_ID: "84532"
+      RPC_URL: ${RPC_URL}
+      BASE_SEPOLIA_RPC_URL: ${RPC_URL}
+      CONTRACT_NODE_REGISTRY: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22"
+      CONTRACT_JOB_MARKETPLACE: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4"
+      CONTRACT_PROOF_SYSTEM: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31"
+      CONTRACT_HOST_EARNINGS: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0"
+      CONTRACT_MODEL_REGISTRY: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2"
+      USDC_TOKEN: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+      FAB_TOKEN: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62"
+      MULTICALL3_ADDRESS: "0xcA11bde05977b3631167028862bE2a173976CA11"
+      REQUIRE_MODEL_VALIDATION: "false"
+
+      # --- storage (proof CIDs); the attested blob comes over TEE_BLOB_URL ---
+      S5_NODE_URL: "https://s5.platformlessai.ai"
+
+      # --- everything optional is OFF on the paid day ---
+      WEB_SEARCH_ENABLED: "false"
+      VLM_ENDPOINT: ""
+      DIFFUSION_ENDPOINT: ""
+      TRANSCODER_ENDPOINT: ""
+      COMFY_URL: ""
+      RUST_LOG: ${RUST_LOG:-info,tee=debug}

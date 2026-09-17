@@ -6,11 +6,15 @@
 //! here as `mod test_X;`, or `cargo test` silently reports 0 tests and exits
 //! success (voiding TDD). Keep this list in sync as test files are added.
 mod test_container;
+mod test_dstack;
+mod test_dstack_provider;
+mod test_gpu_evidence;
 mod test_key_broker;
 mod test_keywrap;
 mod test_model_source;
 mod test_orchestration;
 mod test_policy;
 mod test_policy_source;
+mod test_report_data;
 mod test_types;
 mod test_verify;

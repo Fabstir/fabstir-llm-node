@@ -86,3 +86,10 @@ platformless-blender-addon/
 platformless-helper/
 fabstir-trainer/
 *:Zone.Identifier
+
+# Phase 5 Phala image build context: the extracted release binary is never tracked
+deployment/phala/fabstir-llm-node
+__pycache__/
+*.pyc
+# a copy of the kbs SSH key for the dev container to run kbs-ca/vps-install.sh; never tracked
+deployment/phala/kbs-ca/.ssh/

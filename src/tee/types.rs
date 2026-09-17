@@ -24,24 +24,50 @@ pub type TeeResult<T> = std::result::Result<T, TeeError>;
 
 /// Hardware attestation evidence gathered inside the CVM, sent to the KBS.
 ///
+/// Shape follows what a dstack node ships to its relying party (Phala's
+/// reference `quote.py`: `intel_quote`, `nvidia_payload`, `event_log`,
+/// `vm_config`), plus the two values the KBS needs to bind the release to a
+/// key and a challenge (`pk_att`, `nonce`). The node collects; it never
+/// verifies. Everything here is UNAUTHENTICATED until the verifier has checked
+/// the signed quote and the GPU evidence; in particular `pk_att`, `nonce` and
+/// `image_measurement` are node-asserted and only mean something once the
+/// verifier has tied them to the signed `report_data`.
+///
 /// For Phases 1–4 `cpu_quote` is a synthetic 64-byte blob whose bytes `0..64`
 /// directly carry the `report_data` field (`cpu_quote[0..64]`); Phase 5 parses
-/// real TDX/SNP quotes to extract `report_data`. The canonical cross-binding
-/// commitment (identical in the mock provider and `DefaultVerifier`) is
-/// `report_data[0..32] = sha256(pk_att ‖ gpu_report_hash ‖ nonce)` with
-/// `report_data[32..64] = 0x00…00`, where `gpu_report_hash = sha256(gpu_report)`.
+/// real TDX quotes to extract `report_data`. The `report_data` layout (identical
+/// in the mock provider and every verifier) is [`report_data`]:
+/// `identity(32) ‖ nonce(32)` with `identity = sha256(pk_att)`. The GPU evidence
+/// carries the same 32-byte nonce inside its own signed report; the shared
+/// nonce is the cross-binding between the two independently signed quotes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Evidence {
-    /// GPU attestation report (opaque bytes; `sha256` of this is the cross-bind input).
+    /// GPU attestation evidence, opaque bytes. Mock: bincode of
+    /// [`GpuReportFields`]. Real: the `nvidia_payload` JSON exactly as the
+    /// collector emits it (`{"nonce","evidence_list":[…],"arch"}`, plus
+    /// `"canned": true` in test mode), which the verifier forwards to NRAS.
     pub gpu_report: Vec<u8>,
-    /// CPU TEE quote. Mock: 64 raw bytes = `report_data`. Real: vendor quote (Phase 5).
+    /// CPU TEE quote. Mock: 64 raw bytes = `report_data`. Real: the TDX quote
+    /// bytes from dstack `/GetQuote` (hex-decoded).
     pub cpu_quote: Vec<u8>,
-    /// 48-byte SHA-384 launch measurement of the node-CVM image.
+    /// dstack event log, UTF-8 JSON as returned by `/GetQuote` (`event_log`).
+    /// The verifier replays it to the quote's RTMR3 and reads the
+    /// `compose-hash` / `app-id` / `os-image-hash` / `key-provider` events.
+    /// Empty in the mock.
+    pub event_log: Vec<u8>,
+    /// dstack VM configuration, UTF-8 JSON as returned by `/GetQuote`
+    /// (`vm_config`): the vCPU/RAM/device spec MRTD and RTMR0 depend on, kept so
+    /// a later `dstack-mr` reproduction has its inputs. Empty in the mock.
+    pub vm_config: Vec<u8>,
+    /// 48-byte launch measurement as the NODE reports it. Mock-era field: the
+    /// mock verifier compares it to the policy; a real verifier MUST take MRTD
+    /// from the verified quote body and ignore this. Removed with Policy v2.
     #[serde(with = "BigArray")]
     pub image_measurement: [u8; 48],
     /// Attestation-bound ephemeral public key (compressed secp256k1, 33 bytes).
     pub pk_att: Vec<u8>,
-    /// 32-byte KBS-issued freshness nonce, bound into the cross-binding.
+    /// 32-byte KBS-issued freshness nonce; the second half of `report_data`
+    /// and the nonce the GPU evidence was collected under.
     pub nonce: [u8; 32],
 }
 
@@ -156,6 +182,14 @@ pub enum TeeError {
     /// Attestation verification rejected the evidence (reason in the string).
     #[error("attestation verification failed: {0}")]
     VerificationFailed(String),
+    /// The dstack guest agent could not be reached or answered out of shape
+    /// (Phase 5). Node-side, before any evidence exists; always fail-closed.
+    #[error("dstack guest agent: {0}")]
+    Dstack(String),
+    /// GPU evidence collection failed or returned an out-of-shape / mislabelled
+    /// payload (Phase 5). Node-side; always fail-closed.
+    #[error("gpu evidence: {0}")]
+    GpuEvidence(String),
     /// Cryptographic operation failed (wrap/unwrap, AEAD, key parsing).
     #[error("crypto error: {0}")]
     Crypto(String),
@@ -177,6 +211,12 @@ pub enum TeeError {
 /// conflates them — a real host's GPU report cannot attest CPU-TCB state).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuReportFields {
+    /// The 32-byte challenge nonce the GPU evidence was collected under. Real
+    /// evidence carries it inside the hardware-signed attestation report (NRAS
+    /// checks it against the payload's `nonce`); the mock carries it here so the
+    /// verifier's "same nonce on both halves" check is exercised. This, not a
+    /// hash in `report_data`, is what binds the GPU half to the CPU half.
+    pub nonce: [u8; 32],
     /// GPU SKU (e.g. `"H100"`, `"H200"`).
     pub sku: String,
     /// The CC mode the GPU reports. See [`CcMode`]: `DevTools` attests but
@@ -195,29 +235,33 @@ pub fn sha256_32(data: &[u8]) -> [u8; 32] {
     out
 }
 
-/// Canonical cross-binding commitment `sha256(pk_att ‖ gpu_report_hash ‖ nonce)`.
+/// Length of a TDX/SEV `report_data` field.
+pub const REPORT_DATA_LEN: usize = 64;
+
+/// The 32-byte identity half of `report_data`: `sha256(pk_att)`.
 ///
-/// SECURITY-CRITICAL: the provider and verifier MUST use this identical
-/// construction — it lives here, in the neutral shared home next to [`Evidence`],
-/// so a host cannot pair a genuine CPU quote with a *different* GPU's report
-/// (both individually valid, yet the pairing is forged).
+/// `pk_att` is the 33-byte compressed secp256k1 key the DEK is wrapped to; it
+/// does not fit 32 bytes, so it is hashed (the reference layout's "v2"
+/// identity is likewise a SHA-256). A verifier recomputes this from the
+/// node-asserted `Evidence::pk_att` and compares it to the SIGNED quote body,
+/// which is what turns `pk_att` from a claim into a fact.
+pub fn report_data_identity(pk_att: &[u8]) -> [u8; 32] {
+    sha256_32(pk_att)
+}
+
+/// The 64-byte `report_data` the node asks the CPU TEE to sign:
+/// `identity(32) ‖ nonce(32)`, with `identity = sha256(pk_att)` and the nonce
+/// in the clear (reference: Phala's dstack node, `quote.py::_build_report_data`).
 ///
-/// The inputs are concatenated without length prefixes; this is safe only
-/// because `pk_att` is the sole variable-length input and is followed by two
-/// fixed-length fields (a boundary shift would require a SHA-256 second-preimage).
-/// Phase 5 should add an explicit domain-separation tag + length prefixes when
-/// finalizing `report_data` against the real CPU-quote semantics.
-pub fn cross_bind_report_data(
-    pk_att: &[u8],
-    gpu_report_hash: &[u8; 32],
-    nonce: &[u8; 32],
-) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(pk_att);
-    h.update(gpu_report_hash);
-    h.update(nonce);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&h.finalize());
+/// SECURITY-CRITICAL and deliberately hash-free on the nonce: the same 32
+/// bytes are handed to GPU evidence collection, so the verifier can check that
+/// the CPU quote and the GPU attestation report were both produced for THIS
+/// challenge. Neither quote needs to exist before the other. There is no
+/// domain tag because both halves are fixed-width and positional.
+pub fn report_data(pk_att: &[u8], nonce: &[u8; 32]) -> [u8; REPORT_DATA_LEN] {
+    let mut out = [0u8; REPORT_DATA_LEN];
+    out[..32].copy_from_slice(&report_data_identity(pk_att));
+    out[32..].copy_from_slice(nonce);
     out
 }
 

@@ -7,7 +7,7 @@ use fabstir_llm_node::tee::key_broker::{KeyBrokerClient, NodeAttestationClient};
 use fabstir_llm_node::tee::keywrap::generate_ephemeral_keypair;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::provider::AttestationProvider;
-use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError};
+use fabstir_llm_node::tee::types::{CcMode, GpuReportFields, Policy, TeeError};
 use std::collections::HashMap;
 
 const SKU: &str = "H100";
@@ -62,7 +62,11 @@ async fn request_key_rejects_tampered_evidence() {
     let nonce = kbs.challenge(model_id).await.unwrap();
     let (_sec, pk_att) = generate_ephemeral_keypair();
     let mut ev = provider.gather_evidence(nonce, &pk_att).await.unwrap();
-    ev.gpu_report[0] ^= 0x01; // breaks the cross-binding
+    // GPU evidence re-collected under a different challenge: the CPU half still
+    // carries the issued nonce, the GPU half no longer does.
+    let mut fields: GpuReportFields = bincode::deserialize(&ev.gpu_report).unwrap();
+    fields.nonce[0] ^= 0x01;
+    ev.gpu_report = bincode::serialize(&fields).unwrap();
     let err = kbs
         .request_key(model_id, &ev)
         .await

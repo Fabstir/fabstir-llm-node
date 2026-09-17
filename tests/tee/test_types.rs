@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! Phase 1.1 — core TEE types: serde roundtrip (task 1.1.4).
 
-use fabstir_llm_node::tee::types::{CcMode,Claims, Evidence, Policy, WrappedKey};
+use fabstir_llm_node::tee::types::{CcMode, Claims, Evidence, Policy, WrappedKey};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -28,6 +28,10 @@ fn test_types_roundtrip_serde() {
     assert_roundtrip(&Evidence {
         gpu_report: vec![1, 2, 3, 4, 5],
         cpu_quote: vec![0u8; 64], // mock: bytes 0..64 carry report_data
+        // Phase 5 (P2.1): the dstack event log and VM config ride along as
+        // opaque UTF-8 JSON; real values are ~KB, these just prove the wire.
+        event_log: br#"[{"imr":3,"event_type":134217729,"digest":"ab","event":"compose-hash","event_payload":"cd"}]"#.to_vec(),
+        vm_config: br#"{"spec_version":1,"cpu_count":4,"memory_size":8589934592}"#.to_vec(),
         image_measurement: [7u8; 48],
         pk_att: vec![9u8; 33], // compressed secp256k1 pubkey
         nonce: [3u8; 32],

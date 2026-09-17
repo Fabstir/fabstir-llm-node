@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! Mock attestation backend (Phases 1–4, tests/dev).
 //!
-//! [`MockAttestationProvider`] produces synthetic but **cross-binding-correct**
-//! [`Evidence`]: it bincode-encodes its [`GpuReportFields`] into
-//! `Evidence::gpu_report` and sets the CPU-quote `report_data` to the canonical
-//! `sha256(pk_att ‖ gpu_report_hash ‖ nonce)`, so `DefaultVerifier` exercises the
-//! real cross-binding path. The real `NvidiaCcProvider` replaces this in Phase 5
-//! behind the [`AttestationProvider`] trait.
+//! [`MockAttestationProvider`] produces synthetic but **layout-correct**
+//! [`Evidence`]: it bincode-encodes its [`GpuReportFields`] (carrying the
+//! challenge nonce, as a real GPU attestation report does) into
+//! `Evidence::gpu_report` and sets the CPU-quote `report_data` to
+//! `sha256(pk_att) ‖ nonce` ([`crate::tee::types::report_data`]), so
+//! `DefaultVerifier` exercises the real identity + shared-nonce checks. The real
+//! `DstackAttestationProvider` replaces this in Phase 5 behind the
+//! [`AttestationProvider`] trait.
 
 use crate::tee::key_broker::KeyBrokerClient;
 use crate::tee::keywrap::wrap_key;
 use crate::tee::provider::AttestationProvider;
 use crate::tee::types::{
-    cross_bind_report_data, now_unix, sha256_32, CcMode, Evidence, GpuReportFields, Policy,
-    TeeError, TeeResult, WrappedKey,
+    now_unix, report_data, CcMode, Evidence, GpuReportFields, Policy, TeeError, TeeResult,
+    WrappedKey,
 };
 use crate::tee::verifier::{AttestationVerifier, DefaultVerifier};
 use async_trait::async_trait;
@@ -34,6 +36,7 @@ impl MockAttestationProvider {
     pub fn new(sku: impl Into<String>, measurement: [u8; 48], cc_mode: CcMode) -> Self {
         Self {
             report: GpuReportFields {
+                nonce: [0u8; 32], // replaced per call by the challenge nonce
                 sku: sku.into(),
                 cc_mode,
                 production_tcb: true,
@@ -59,16 +62,24 @@ impl MockAttestationProvider {
 #[async_trait]
 impl AttestationProvider for MockAttestationProvider {
     async fn gather_evidence(&self, nonce: [u8; 32], pk_att: &[u8]) -> TeeResult<Evidence> {
-        let gpu_report = bincode::serialize(&self.report)
+        // The GPU half is collected under the challenge nonce, exactly as the real
+        // collector passes `nonce_hex` to nvtrust; a real report carries it signed.
+        let report = GpuReportFields {
+            nonce,
+            ..self.report.clone()
+        };
+        let gpu_report = bincode::serialize(&report)
             .map_err(|e| TeeError::Crypto(format!("mock gpu_report serialize: {e}")))?;
-        let gpu_report_hash = sha256_32(&gpu_report);
-        // report_data[0..32] = cross-binding commitment; [32..64] = zero padding.
-        let report_data = cross_bind_report_data(pk_att, &gpu_report_hash, &nonce);
-        let mut cpu_quote = vec![0u8; 64];
-        cpu_quote[..32].copy_from_slice(&report_data);
+        // The CPU half: report_data = sha256(pk_att) ‖ nonce, as the mock "quote".
+        let cpu_quote = report_data(pk_att, &nonce).to_vec();
         Ok(Evidence {
             gpu_report,
             cpu_quote,
+            // The mock has no dstack behind it: an empty event log and VM
+            // config, spelled as valid JSON so a verifier that parses them
+            // sees "nothing recorded" rather than a parse error.
+            event_log: b"[]".to_vec(),
+            vm_config: b"{}".to_vec(),
             image_measurement: self.measurement,
             pk_att: pk_att.to_vec(),
             nonce,
@@ -88,7 +99,8 @@ struct NonceRecord {
 /// (v1 DECISION: Option A — `challenge` issues, `request_key` requires the nonce to
 /// be issued, unexpired, and unconsumed, then burns it), verifies submitted
 /// evidence with [`DefaultVerifier`], and on success wraps the DEK to the attested
-/// `ev.pk_att`. The verifier's cross-binding check ties `pk_att` to the issued
+/// `ev.pk_att`. The verifier's identity check ties `pk_att` to the signed
+/// `report_data` and the shared-nonce check ties both quotes to the issued
 /// nonce, so the DEK is released only to the key the attestation committed to. The
 /// real (Phase 5) KBS replaces this behind [`KeyBrokerClient`].
 pub struct MockKeyBroker {
@@ -120,7 +132,7 @@ impl KeyBrokerClient for MockKeyBroker {
         // model_id is intentionally not bound into the nonce: a nonce minted for one
         // model and replayed against another grants no capability — `request_key` selects
         // (dek, policy) by the request's `model_id`, that per-model policy must still pass,
-        // and the cross-binding pins release to the attested `pk_att`; nonces stay
+        // and the identity check pins release to the attested `pk_att`; nonces stay
         // single-use + TTL-bounded regardless. Phase 5 SHOULD bind nonce→model_id for
         // explicit domain separation.
         let mut nonce = [0u8; 32];
@@ -153,9 +165,10 @@ impl KeyBrokerClient for MockKeyBroker {
             }
             rec.consumed = true;
         }
-        // Verify against the model's policy. The cross-binding check
-        // (`report_data == hash(pk_att ‖ gpu_report_hash ‖ nonce)`) ties `ev.pk_att`
-        // to this KBS-issued nonce, so wrapping to `ev.pk_att` releases the DEK only
+        // Verify against the model's policy. The identity check
+        // (`report_data[0..32] == sha256(ev.pk_att)`) and the shared-nonce check
+        // (`report_data[32..64] == nonce == GPU evidence nonce`) tie `ev.pk_att` to
+        // this KBS-issued nonce, so wrapping to `ev.pk_att` releases the DEK only
         // to the key the attestation committed to.
         DefaultVerifier.verify(ev, policy, ev.nonce)?;
         wrap_key(dek, &ev.pk_att)

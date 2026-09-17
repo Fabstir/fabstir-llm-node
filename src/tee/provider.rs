@@ -12,8 +12,9 @@ use async_trait::async_trait;
 /// — the swap is behind this trait, with no call-site changes.
 #[async_trait]
 pub trait AttestationProvider: Send + Sync {
-    /// Produce [`Evidence`] binding the KBS freshness `nonce` and the
-    /// attestation key `pk_att` (compressed secp256k1, 33 bytes) into the
-    /// hardware-signed cross-binding.
+    /// Produce [`Evidence`] for the KBS freshness `nonce` and the attestation
+    /// key `pk_att` (compressed secp256k1, 33 bytes): the CPU quote signs
+    /// `report_data = sha256(pk_att) ‖ nonce` and the GPU evidence is collected
+    /// under the same `nonce`.
     async fn gather_evidence(&self, nonce: [u8; 32], pk_att: &[u8]) -> TeeResult<Evidence>;
 }

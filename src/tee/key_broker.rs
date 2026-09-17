@@ -33,7 +33,7 @@ pub struct NodeAttestationClient;
 
 impl NodeAttestationClient {
     /// Obtain the cleartext DEK for `model_id`: challenge → generate `pk_att` →
-    /// gather evidence (binding `pk_att` + the issued nonce into the cross-binding)
+    /// gather evidence (`report_data = sha256(pk_att) ‖ nonce`; GPU evidence under the same nonce)
     /// → request the wrapped key → unwrap with the matching `pk_att` secret.
     ///
     /// The `pk_att` secret never leaves this function; the DEK arrives wrapped and

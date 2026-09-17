@@ -13,6 +13,9 @@
 //! container, and model-source orchestration — all behind a mock backend so the
 //! pipeline is fully testable on any Linux without CC hardware.
 pub mod container;
+pub mod dstack;
+pub mod dstack_provider;
+pub mod gpu_evidence;
 pub mod key_broker;
 pub mod keywrap;
 pub mod mock;
@@ -28,6 +31,11 @@ pub use container::{
     chunk_count, decrypt_model, encrypt_model, ContainerHeader, AEAD_TAG_LEN, CONTAINER_MAGIC,
     CONTAINER_VERSION, HEADER_LEN,
 };
+pub use dstack::{
+    DstackClient, Endpoint as DstackEndpoint, InfoResponse as DstackInfo, QuoteResponse,
+};
+pub use dstack_provider::DstackAttestationProvider;
+pub use gpu_evidence::{GpuEvidenceCollector, GpuEvidenceMode};
 pub use key_broker::{KeyBrokerClient, NodeAttestationClient};
 pub use keywrap::{generate_ephemeral_keypair, unwrap_key, wrap_key, KEY_WRAP_HKDF_INFO};
 pub use mock::{MockAttestationProvider, MockKeyBroker};
@@ -41,7 +49,7 @@ pub use policy::{
 pub use policy_source::{fetch_validated_policy, PolicySource, ProviderRegistry};
 pub use provider::AttestationProvider;
 pub use types::{
-    cross_bind_report_data, sha256_32, CcMode, Claims, Evidence, GpuReportFields, Policy, TeeError,
-    TeeResult, WrappedKey,
+    report_data, report_data_identity, sha256_32, CcMode, Claims, Evidence, GpuReportFields,
+    Policy, TeeError, TeeResult, WrappedKey, REPORT_DATA_LEN,
 };
 pub use verifier::{AttestationVerifier, DefaultVerifier};

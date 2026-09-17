@@ -1,0 +1,7 @@
+# The build context is this directory only; keep everything but the inputs out.
+*
+!Dockerfile
+!fabstir-llm-node
+!collect_gpu_evidence.py
+!entrypoint.sh
+!kbs-root.pem
