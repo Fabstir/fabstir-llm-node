@@ -1,6 +1,6 @@
 # Confidential Inference on Untrusted GPUs: The Whole Story, End to End
 
-> **What this is, in one breath:** This is the narrative of a feature that lets a model owner ship their *encrypted* AI model to a GPU machine they don't trust, have that machine *cryptographically prove* it's a genuine sealed box running unmodified code, hand it the decryption key *only then*, decrypt the weights *only into encrypted RAM*, run inference on the GPU, and securely wipe everything afterward — all while the machine's root-level operator can run the model and bill for it but can never read the plaintext weights. It works end-to-end on real GPU hardware today (behind a mock attestation backend), and the final 20% — real hardware-rooted attestation on a confidential VM — is Phase 5.
+> **What this is, in one breath:** This is the narrative of a feature that lets a model owner ship their *encrypted* AI model to a GPU machine they don't trust, have that machine *cryptographically prove* it's a genuine sealed box running unmodified code, hand it the decryption key *only then*, decrypt the weights *only into encrypted RAM*, run inference on the GPU, and securely wipe everything afterward — all while the machine's root-level operator can run the model and bill for it but can never read the plaintext weights. The attested load path is proven end to end in integration on real GPU hardware today (behind a mock attestation backend); it is not yet wired into the node binary's live request path, and the final 20% — real hardware-rooted attestation on a confidential VM, plus that wiring — is Phase 5.
 
 > **⚠️ Currency note (updated 2026-07-16).** Sections 1–5 (the software story, the crypto design, and "what's been proven") remain accurate: the TEE feature is still Phases 1–4 complete behind a mock backend, GPU-proven, with Phase 5 outstanding. **Section 6's IONOS specifics are superseded** by later research (2026-06-16). In short: IONOS runs **H200 + DGX B300** (CC-capable), **not** H100/B200; **CPU confidential computing is not exposed to tenants** (their "attestation" marketing means BSI C5 compliance, not a hardware quote); so standing up a CC-On confidential VM with guest attestation on IONOS is a **co-engineering / partnership ask, not self-service**. Do not pitch from Section 6's "just confirm they offer CC and provision" framing.
 
@@ -40,7 +40,7 @@ And the code modules, as characters:
 
 - **`container.rs`** — the *vault builder*. Defines the encrypted container format and the chunked AEAD encryption/decryption. (The raw XChaCha20-Poly1305 primitive itself is *reused* from `src/crypto/encryption.rs`, the existing session-encryption layer — there is no TEE-specific `encryption.rs`.)
 - **`provider.rs`** — the *witness stand*. The `AttestationProvider` trait: the seam the mock backend fills today and the real `NvidiaCcProvider` fills in Phase 5.
-- **`types.rs`** — the *neutral shared rulebook*. Holds `Evidence`, `Policy`, and — crucially — the single canonical `cross_bind_report_data()` function so no two components can compute the cross-binding differently.
+- **`types.rs`** — the *neutral shared rulebook*. Holds `Evidence`, `Policy`, and — crucially — the single canonical `report_data()` layout function so no two components can build or check `report_data` differently.
 - **`keywrap.rs`** — the *key courier*. ECDH + HKDF + AEAD to wrap and unwrap the DEK.
 - **`mock.rs` / `verifier.rs`** — the *judge and the stand-in witness*. The mock attestation provider/KBS and the `DefaultVerifier`.
 - **`key_broker.rs`** — the *choreographer of the handshake* (`obtain_dek`).
@@ -65,15 +65,19 @@ PROVIDER (offline)                      HOST / CONFIDENTIAL VM                  
                                       ask for a challenge nonce  ───────────────────►  mint 32-byte nonce
                                                                                        (issued_at, consumed=false)
                                       gather Evidence:                  ◄────nonce────
-                                        gpu_report, gpu_report_hash,
-                                        report_data = sha256(pk_att‖
-                                          gpu_report_hash‖nonce),
-                                        cpu_quote[0..32]=report_data,
-                                        image_measurement, pk_att, nonce
+                                        GPU evidence collected under
+                                          the nonce (nonce inside the
+                                          signed GPU report),
+                                        report_data = sha256(pk_att)‖nonce,
+                                        cpu_quote signs report_data,
+                                        event_log, vm_config, pk_att, nonce
                                       submit Evidence  ──────────────────────────────►  burn nonce, then
-                                                                                        10 checks (fail-closed):
-                                                                                        nonce, quote len, cross-bind,
-                                                                                        measurement, SKU, CC-On,
+                                                                                        checks (fail-closed):
+                                                                                        nonce, real-payload guard,
+                                                                                        quote len, identity,
+                                                                                        nonce (CPU half), decode,
+                                                                                        nonce (GPU half),
+                                                                                        measurement, SKU, CC mode,
                                                                                         prod-TCB, TCB age, validity
                                       WrappedKey (ECIES)               ◄──wrap DEK──────  wrap_key(dek, pk_att)
                                       unwrap with pk_att_secret -> DEK
@@ -128,33 +132,36 @@ This is the heart of the story, driven by `NodeAttestationClient::obtain_dek()`.
 
 **(b) Ephemeral key.** The node generates a fresh **secp256k1** keypair `(pk_att_secret, pk_att_pub)` — the **attestation key**. The secret *never leaves encrypted RAM*; the public key (33 bytes, compressed) gets bound into the hardware proof. It's used once and discarded (forward secrecy).
 
-**(c) Gather evidence — the cross-binding.** The node builds the `Evidence` structure. It serializes the GPU report fields (SKU, `cc_on`, `production_tcb`, `tcb_age_days`) into `gpu_report`, computes `gpu_report_hash = sha256(gpu_report)`, and then the **security linchpin**:
+**(c) Gather evidence — the shared nonce.** The node builds the `Evidence` structure. It collects the GPU attestation evidence **under the challenge nonce** (the mock serialises the GPU report fields, including that nonce, into `gpu_report`; the real collector hands the same nonce to NVIDIA's nvtrust, which puts it inside the hardware-signed GPU report), and asks the CPU TEE to sign a 64-byte `report_data`:
 
 ```
-report_data[0..32]  = sha256(pk_att ‖ gpu_report_hash ‖ nonce)
-report_data[32..64] = 0x00…00
+report_data[0..32]  = sha256(pk_att)      identity: the key the DEK will be wrapped to
+report_data[32..64] = nonce               the challenge, in the clear
 ```
 
-This is the **cross-binding**. It fuses the GPU report, the attestation key, and the freshness nonce into a single SHA-256 hash, and stuffs it into the CPU quote's signed `report_data` field. Why it matters: without it, a hostile operator could grab a *genuine* CPU quote from its real confidential VM and a *genuine* GPU report from a *different* CC GPU it controls, present them together, and pass both independent checks — even though they're from two different physical machines. Cross-binding makes them **inseparable**: pairing GPU #2's report with CPU #1's quote produces a hash mismatch, and the hardware signature over `report_data` means the attacker can't forge a fix. (In Phases 1–4 the `cpu_quote` is a synthetic 64-byte blob where bytes 0–63 *are* `report_data`; in Phase 5 it's a real TDX/SNP quote from which `report_data` is extracted. The cross-bind formula is computed by the *one shared* `cross_bind_report_data()` in `types.rs`, so the mock and the real verifier can never diverge.)
+This layout (Phase 5, 2026-09-17; it matches Phala's dstack reference node) replaces the earlier `sha256(pk_att ‖ gpu_report_hash ‖ nonce)` commitment. Two independently signed quotes, one nonce: the CPU quote proves a genuine confidential VM holding `pk_att` answered *this* challenge, and the GPU report proves a genuine CC-mode GPU produced evidence for *the same* challenge. A hostile operator who pairs a genuine CPU quote with GPU evidence collected for another challenge (another session, another box, or a replay) fails the nonce comparison on the GPU half; one who substitutes a different `pk_att` to catch the wrapped key fails the identity comparison against the signed quote body. Neither quote has to exist before the other. (In Phases 1–4 the `cpu_quote` is a synthetic 64-byte blob where bytes 0–63 *are* `report_data`; in Phase 5 it is a real TDX quote from which `report_data` is extracted after signature verification. The layout is built by the *one shared* `report_data()` in `types.rs`, so the mock and the real verifier can never diverge.)
 
-**(d) Submit and verify.** The node sends the evidence to the KBS's `request_key()`. The KBS first **burns the nonce** (marks it consumed *before* verifying — so a failed attempt can't be retried with the same nonce), checks it was issued and unexpired, then calls `DefaultVerifier::verify()`, which runs **ten checks in fail-closed order**:
+**(d) Submit and verify.** The node sends the evidence to the KBS's `request_key()`. The KBS first **burns the nonce** (marks it consumed *before* verifying — so a failed attempt can't be retried with the same nonce), checks it was issued and unexpired, then calls `DefaultVerifier::verify()`, which runs these checks **in fail-closed order** (Phase 5 layout, 2026-09-17):
 
-1. Nonce matches the expected nonce.
+1. `ev.nonce` matches the KBS-issued nonce.
+1b. **Real-payload guard:** if `gpu_report` is a real `nvidia_payload` JSON object, refuse with "needs the Phase-5 verifier" (this verifier is mock-only; the real broker verifier judges real evidence).
 2. `cpu_quote.len() >= 64`.
-3. **Cross-binding:** recompute `report_data`, confirm `cpu_quote[0..32]` matches *and* `cpu_quote[32..64]` is all zeros.
-4. Decode `gpu_report` into `GpuReportFields`.
-5. **Measurement:** `image_measurement == policy.expected_measurement` (the 48-byte SHA-384 launch measurement matches the provider's pinned value — proof the node runs *exactly* the approved code).
-6. **SKU allowlist:** the GPU model is approved.
-7. **CC-On:** if required, `cc_on == true`.
-8. **Production TCB:** if required, no debug TCB.
-9. **TCB age:** `tcb_age_days <= max_tcb_age_days` (firmware isn't dangerously stale).
-10. **Validity window:** broken clock fails; `not_before ≤ now ≤ expiry`.
+3. **Identity:** `report_data[0..32] == sha256(pk_att)`, so the key the DEK will be wrapped to is the one the CPU TEE signed for.
+4. **Nonce, CPU half:** `report_data[32..64] ==` the issued nonce, in the clear.
+5. Decode `gpu_report` into `GpuReportFields` (the mock shape; the real path maps NRAS EAT claims into it).
+6. **Nonce, GPU half:** the nonce inside the GPU evidence `==` the issued nonce. Two independently signed quotes, one challenge: this is the whole cross-binding.
+7. **Measurement:** `image_measurement == policy.expected_measurement` (mock-era: the real verifier takes MRTD/RTMRs from the verified quote, never from this node-asserted field; Policy v2 replaces it).
+8. **SKU allowlist:** the GPU model is approved.
+9. **CC mode:** if required, matched *exactly* (`on` ≠ `devtools`).
+10. **Production TCB:** if required, no debug TCB.
+11. **TCB age:** `tcb_age_days <= max_tcb_age_days` (mock-era; Policy v2 uses the TDX TCB status instead).
+12. **Validity window:** broken clock fails; `not_before ≤ now ≤ expiry`.
 
 Any failure → `TeeError::VerificationFailed`, no key released.
 
 ### Step 3 — The key is released, wrapped (ECIES)
 
-If all ten checks pass, the KBS wraps the DEK to the node's `pk_att` using **ECIES** (Elliptic Curve Integrated Encryption Scheme):
+If every check passes, the KBS wraps the DEK to the node's `pk_att` using **ECIES** (Elliptic Curve Integrated Encryption Scheme):
 
 - Generate a fresh ephemeral keypair `(eph_secret, eph_pub)`.
 - **ECDH** (Elliptic Curve Diffie-Hellman key agreement): `ecdh = diffie_hellman(eph_secret, pk_att)`.
@@ -196,15 +203,15 @@ The caller builds a `ModelConfig { encrypted: true, model_path: <tmpfs path>, ..
 | **Guarantee** | Host cannot obtain plaintext weights; decryption happens only in protected RAM/VRAM under attestation. |
 | **Out of scope** | Silicon attacks, side channels, supply-chain compromise, DoS, inference-result correctness (that's Risc0's job). |
 
-The recurring discipline is **fail-closed**: deny by default unless *every* check passes. A mis-set clock (`u64::MAX`) fails closed. An expired policy (`now > expiry`, or `expiry = 0` for instant revocation) fails closed. A mismatched measurement, a disallowed SKU, CC-Off, stale TCB, a cross-bind mismatch, an unknown or stale nonce — all return an error and withhold the DEK. No plaintext is ever written on a failure path.
+The recurring discipline is **fail-closed**: deny by default unless *every* check passes. A mis-set clock (`u64::MAX`) fails closed. An expired policy (`now > expiry`, or `expiry = 0` for instant revocation) fails closed. A mismatched measurement, a disallowed SKU, CC-Off, stale TCB, an identity or nonce mismatch on either half, an unknown or stale nonce — all return an error and withhold the DEK. No plaintext is ever written on a failure path.
 
 The supporting promises:
 
-- **Authentication** — the hardware proves the node holds `pk_att_secret` and that the nonce was KBS-issued; cross-binding ties `pk_att` to the GPU report.
+- **Authentication** — the hardware proves the node holds `pk_att_secret` and that the nonce was KBS-issued; the same nonce inside the signed GPU evidence ties the GPU half to the same challenge.
 - **Integrity** — Poly1305 tags everywhere; tampering breaks decryption.
 - **Confidentiality + forward secrecy** — DEK wrapped under ephemeral ECDH; compromising `pk_att_secret` later can't decrypt past captures.
 - **Freshness + replay protection** — single-use, TTL-bounded nonces; burned up-front.
-- **Two distinct nonces, no overlap** — the 32-byte *KBS nonce* (attestation freshness + cross-binding) and the 16-byte container *nonce_base* (AEAD chunk encryption) never mix, avoiding a false sense of single-nonce safety.
+- **Two distinct nonces, no overlap** — the 32-byte *KBS nonce* (attestation freshness; the value both quotes are bound to) and the 16-byte container *nonce_base* (AEAD chunk encryption) never mix, avoiding a false sense of single-nonce safety.
 - **Provider control via signed policy** — pin the measurement, allowlist SKUs, require CC-On / production TCB, cap TCB age, set a validity window. Policies are off-chain and signed, so they can be rotated (tighten, revoke) *without re-encrypting the weights*.
 - **Capability discovery** — a node advertises `tee-attested` (in registration metadata and the WebSocket handshake) **iff** `HOST_TEE_ENABLED`, so clients select only nodes that will honor encrypted models. Legacy-registry deployments emit no `capabilities` key at all, so they can't accidentally claim TEE support.
 
@@ -212,7 +219,7 @@ The supporting promises:
 
 ## 5. What's been proven
 
-The GPU end-to-end test (`/workspace/fabstir-llm-node/tests/tee_e2e.rs`) ran on **real hardware** (TEST_HOST_1 / 3XS-Z, real NVIDIA GPU with CUDA) and exercised the **complete pipeline as shipped** — driving the production entry point `prepare_attested_model` with *no production edits*:
+The GPU end-to-end test (`/workspace/fabstir-llm-node/tests/tee_e2e.rs`) ran on **real hardware** (TEST_HOST_1 / 3XS-Z, real NVIDIA GPU with CUDA) and exercised the complete attested load path **in integration** — driving the orchestration entry `prepare_attested_model` with *no production edits*. Stated precisely: that test is the only caller of `prepare_attested_model`; the node binary's live request path loads plain models (`src/main.rs`, `encrypted: false`) and does not yet call it. The steps proven are:
 
 1. **Provider-side offline:** sign a policy (ECDSA via k256, address via `recover_client_address`), encrypt a real 1B-parameter GGUF (`tiny-vicuna-1b.q4_k_m.gguf`) with XChaCha20-Poly1305 in 8 MiB chunks.
 2. **Node-side:** validate the policy, attest (mock backend), receive the DEK from `MockKeyBroker`, decrypt to tmpfs.
@@ -220,7 +227,7 @@ The GPU end-to-end test (`/workspace/fabstir-llm-node/tests/tee_e2e.rs`) ran on 
 4. **Real GPU inference:** `LlmEngine::load_model` with `gpu_layers: 99` (all layers on the GPU) on the prompt "The capital of France is" → " Paris, and it is the capital of the Île-de-France region", with `tokens_generated > 0`.
 5. **Secure teardown:** unload, `secure_delete`, assert the file is gone.
 
-**Result: 1 passed in 147 seconds.** This proves the security-critical path (encrypt → policy → attest → DEK → decrypt-to-tmpfs → hash-bind → GPU load → infer → secure_delete) is real, not theoretical.
+**Result: 1 passed in 147 seconds.** This proves the security-critical path (encrypt → policy → attest → DEK → decrypt-to-tmpfs → hash-bind → GPU load → infer → secure_delete) is real, not theoretical — in integration, on real GPU hardware. Wiring it into the live request path is Phase 5 (2026-09-17 correction; see `docs/archive/PHASE5-ATTESTATION-RECON-REPORT.md`).
 
 **The honest asterisk:** the test used `MockAttestationProvider`, which **accepts any challenge nonce and measurement without verifying them against NVIDIA hardware roots**. The *orchestration* is real; only the cryptographic verification of evidence against hardware is bypassed. This is intentional — it lets the entire software pipeline be tested on non-CC hardware and in CI. But it means **during Phases 1–4 a malicious host could pass mock attestation without actually running in a confidential VM.** The full threat model is *not* satisfied until Phase 5.
 
@@ -256,7 +263,7 @@ Phase 5 is the hardware-dependent remainder: swap the mocks for real, hardware-r
 **The real components (behind the existing trait boundaries):**
 
 - **`NvidiaCcProvider`** — real GPU report + real CPU TDX/SNP quote (wraps `nvtrust` / the NVIDIA Attestation SDK).
-- **Real `AttestationVerifier`** — self-hosted **RIM** (Reference Integrity Measurements) verification, CPU/GPU certificate chains, production-TCB + CC=On checks, cross-bind extracted from *real* `report_data`. (Self-hosted RIM is the production target so NVIDIA's **NRAS** isn't permanently in the critical path.)
+- **Real `AttestationVerifier`** — self-hosted **RIM** (Reference Integrity Measurements) verification, CPU/GPU certificate chains, production-TCB + CC=On checks, identity and nonce read from *real* `report_data`. (Self-hosted RIM is the production target so NVIDIA's **NRAS** isn't permanently in the critical path.)
 - **Real KBS** — no backdoors, a trusted host-independent clock, nonces bound to `model_id` (preventing cross-model replay), one-time-use, TTL-bounded.
 
 **Vendor specs to pin (open questions):** NVIDIA Attestation SDK version, CC-driver branch, guest-kernel version; the exact byte sequence of `gpu_report`, whether `gpu_report_hash` covers the full DER blob or parsed fields, nonce composition, and DER/PEM parsing libraries.
@@ -268,14 +275,14 @@ Phase 5 is the hardware-dependent remainder: swap the mocks for real, hardware-r
 **Carried-forward hardening (must land in Phase 5):**
 
 - **`pk_att` hardware binding** — today the mock simply echoes `pk_att`; the real verifier MUST confirm `pk_att` against the hardware quote and validate it as a canonical 33-byte compressed point. *Until this lands, Phases 1–4 do not meet the full threat model.*
-- DEK / key-material `Zeroize`; mutex-poison recovery; cross-bind length-prefix + domain tag.
+- DEK / key-material `Zeroize`; mutex-poison recovery.
 - **Close TOCTOU** — fd-based load / `F_ADD_SEALS` / re-verify-before-mmap.
 
 **Final proof:** validate the mock→real pipeline on real CC hardware, run a `/security-review` of the full Phase-5 wiring, and demonstrate "host cannot read VRAM" with CC-On enabled.
 
 The handoff lives in **`PHASE-4-TO-5-READINESS.md`**, sized for the Phase-5 team (Azure or IONOS) to execute.
 
-**Where things stand:** the software security perimeter is built, clippy-clean, and *proven on real GPU hardware* end-to-end behind a mock backend. Version `8.30.0-tee-confidential-inference` is committable under the relaxed gate. What remains is anchoring that perimeter to a hardware root of trust — real attestation on a confidential VM with CC-On — which is the difference between "the pipeline works" and "the host genuinely cannot steal the weights."
+**Where things stand:** the software security perimeter is built, clippy-clean, and *proven on real GPU hardware* end-to-end in integration behind a mock backend, not yet wired into the node binary's live request path. Version `8.30.0-tee-confidential-inference` is committable under the relaxed gate. What remains is anchoring that perimeter to a hardware root of trust — real attestation on a confidential VM with CC-On — which is the difference between "the pipeline works" and "the host genuinely cannot steal the weights."
 
 ---
 
@@ -319,7 +326,7 @@ The handoff lives in **`PHASE-4-TO-5-READINESS.md`**, sized for the Phase-5 team
 - **`PreparedModel`:** the decrypted, attested, hash-verified result (tmpfs path, model_id, policy_hash, policy), cache-keyed by `(model_id, policy_hash)`.
 - **Refcounting:** tracking how many loads share a decrypted file; deleted only when the count hits zero.
 - **Remote attestation:** a hardware-signed proof a platform is genuine and running specific measured code in a secure state.
-- **Report data:** the 64-byte signed CPU-quote field carrying the cross-binding hash (bytes 0–31) plus zero padding (bytes 32–63).
+- **Report data:** the 64-byte signed CPU-quote field carrying `sha256(pk_att)` (bytes 0–31) and the challenge nonce in the clear (bytes 32–63).
 - **RIM (Reference Integrity Measurement):** NVIDIA's authentic-firmware baseline used by verifiers.
 - **S5:** decentralized storage holding the encrypted container.
 - **Secure delete:** single-pass zeroize (RAM is TEE-encrypted) then unlink; idempotent.

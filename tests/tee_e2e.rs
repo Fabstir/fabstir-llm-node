@@ -2,14 +2,20 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! Phase 4 — GPU END-TO-END proof (`#[ignore]`; run on demand on a GPU host).
 //!
-//! Drives the **production live-request orchestration** ([`prepare_attested_model`],
-//! the same entry the inference load path calls) with NO production edits: a
-//! provider signs a policy + encrypts a real GGUF → the node fetches+validates the
-//! policy → attests (mock backend) → the KBS releases the DEK → the container is
-//! decrypted to **tmpfs** → the decrypted weights are bound to the on-chain model
-//! hash → llama.cpp loads them on the **GPU** → real inference runs → the plaintext
-//! is securely wiped. Proves the wired encrypted-model pipeline end-to-end on real
-//! hardware behind the mock attestation.
+//! Drives the attested-load orchestration ([`prepare_attested_model`]) in
+//! integration, with NO production edits: a provider signs a policy + encrypts a
+//! real GGUF → the node fetches+validates the policy → attests (mock backend) → the
+//! KBS releases the DEK → the container is decrypted to **tmpfs** → the decrypted
+//! weights are bound to the on-chain model hash → llama.cpp loads them on the
+//! **GPU** → real inference runs → the plaintext is securely wiped. Proves the
+//! encrypted-model pipeline end-to-end on real hardware, in integration, behind the
+//! mock attestation.
+//!
+//! **Scope, stated precisely:** this test is the ONLY caller of
+//! `prepare_attested_model`. The node binary's live request path does not yet call
+//! it (`src/main.rs` loads plain models with `encrypted: false`); wiring it into the
+//! live path is Phase 5 work. "Proven end to end" therefore means "in integration on
+//! real GPU hardware", not "in the shipped binary's request path".
 //!
 //! Run (on the GPU host, e.g. 3XS-Z):
 //! ```bash
@@ -134,7 +140,7 @@ async fn encrypted_model_decrypts_attested_and_loads_on_gpu() {
     // the plaintext GGUF; the orchestration binds the decrypted weights to it (4.3.2).
     let expected_hash = format!("{:x}", Sha256::digest(&plaintext));
 
-    // 2. Node side: the SAME production orchestration a live request triggers —
+    // 2. Node side: the orchestration a live request will trigger once wired (Phase 5) —
     //    fetch+validate policy → attest (mock) → KBS DEK → decrypt to tmpfs → hash-bind.
     let decrypt_dir = format!("/dev/shm/tee-e2e-{}", std::process::id());
     let loader = EncryptedModelLoader::new(&decrypt_dir).with_tee_enabled(true);
@@ -158,7 +164,7 @@ async fn encrypted_model_decrypts_attested_and_loads_on_gpu() {
         Some(&expected_hash),
     )
     .await
-    .expect("prepare_attested_model (live-request orchestration)");
+    .expect("prepare_attested_model (attested-load orchestration)");
     println!("[e2e] decrypted to {}", prepared.path.display());
 
     // 3. The plaintext lives ONLY in tmpfs (RAM) and round-trips byte-exact.
