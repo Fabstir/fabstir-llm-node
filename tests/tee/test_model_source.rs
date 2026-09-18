@@ -10,7 +10,7 @@ use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::model_source::{
     is_tmpfs, secure_delete, BlobSource, EncryptedModelLoader, EncryptedModelSpec,
 };
-use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError, TeeResult};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -19,15 +19,32 @@ const MEASUREMENT: [u8; 48] = [0x42u8; 48];
 
 fn test_policy(model_id: [u8; 32]) -> Policy {
     Policy {
+        schema_version: 2,
         policy_version: 1,
-        allowed_skus: vec![SKU.to_string()],
-        expected_measurement: MEASUREMENT,
-        require_cc_mode: Some(CcMode::On),
-        require_production_tcb: true,
-        max_tcb_age_days: 30,
+        model_id: model_id,
         not_before: 0,
-        expiry: u64::MAX - 1, // valid now (avoid the u64::MAX clock-error sentinel)
-        model_id,
+        expiry: u64::MAX - 1,
+        cvm: CvmPolicy {
+            mrtd: hex::encode(MEASUREMENT),
+            rtmr0: "00".repeat(48),
+            rtmr1: "00".repeat(48),
+            rtmr2: "00".repeat(48),
+            os_image_hash: "00".repeat(32),
+            compose_hash: "00".repeat(32),
+            app_id: None,
+            key_provider: None,
+            require_td_debug_off: true,
+            allowed_tcb_status: vec!["UpToDate".to_string()],
+            allowed_advisory_ids: vec![],
+        },
+        gpu: GpuPolicy {
+            allowed_hwmodels: vec![SKU.to_string()],
+            require_cc_mode: Some(CcMode::On),
+            require_secure_boot: true,
+            require_debug_disabled: true,
+            min_driver_version: None,
+            min_vbios_version: None,
+        },
     }
 }
 

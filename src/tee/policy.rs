@@ -28,7 +28,15 @@ use tiny_keccak::{Hasher, Keccak};
 pub struct SignedModelPolicy {
     /// The DEK-release policy this signature authenticates.
     pub policy: Policy,
-    /// S5 path / CID of the encrypted-model container.
+    /// Where the encrypted-model container is, as the node's configured
+    /// [`BlobSource`](crate::tee::model_source::BlobSource) understands it.
+    /// For the Phase 5 HTTP source (`TEE_BLOB_URL`) that is a path relative to
+    /// the base (`models/x.enc`: plain ASCII, no percent-encoding; a colon
+    /// inside a segment is fine, `..` segments, `?` and `#` are refused) or an absolute `https://` URL UNDER
+    /// that base (same origin and path prefix); a `s5://…` style reference
+    /// belongs to an S5 blob source and is refused by the HTTP one at boot.
+    /// NOT covered by the signature:
+    /// the container's AEAD binds it to `model_id ‖ policy_hash` instead.
     pub encrypted_ref: String,
     /// Claimed signer address (0x hex); authoritative check is [`Self::verify_signer`].
     pub signer: String,

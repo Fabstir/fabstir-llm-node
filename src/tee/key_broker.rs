@@ -17,8 +17,12 @@ use async_trait::async_trait;
 /// Client of the Key Broker Service.
 #[async_trait]
 pub trait KeyBrokerClient: Send + Sync {
-    /// Request a fresh freshness nonce for `model_id` (the challenge step).
-    async fn challenge(&self, model_id: [u8; 32]) -> TeeResult<[u8; 32]>;
+    /// Request a fresh freshness nonce for `model_id`, to be redeemed only with
+    /// evidence whose identity half commits to `pk_att` (the challenge step).
+    /// Binding the nonce to the exact key it will be redeemed with (Phase 5 gate
+    /// A-8: nonce bound to `(model_id, requester)`) means a nonce minted for one
+    /// requester grants nothing to another, even inside its TTL.
+    async fn challenge(&self, model_id: [u8; 32], pk_att: &[u8]) -> TeeResult<[u8; 32]>;
     /// Submit `ev`; if it attests against the model's policy and the nonce is fresh,
     /// receive the model's DEK wrapped to `ev.pk_att`.
     async fn request_key(&self, model_id: [u8; 32], ev: &Evidence) -> TeeResult<WrappedKey>;
@@ -32,9 +36,10 @@ pub trait KeyBrokerClient: Send + Sync {
 pub struct NodeAttestationClient;
 
 impl NodeAttestationClient {
-    /// Obtain the cleartext DEK for `model_id`: challenge → generate `pk_att` →
-    /// gather evidence (`report_data = sha256(pk_att) ‖ nonce`; GPU evidence under the same nonce)
-    /// → request the wrapped key → unwrap with the matching `pk_att` secret.
+    /// Obtain the cleartext DEK for `model_id`: generate `pk_att` → challenge
+    /// bound to it → gather evidence (`report_data = sha256(pk_att) ‖ nonce`; GPU
+    /// evidence under the same nonce) → request the wrapped key → unwrap with the
+    /// matching `pk_att` secret.
     ///
     /// The `pk_att` secret never leaves this function; the DEK arrives wrapped and
     /// is unwrapped locally. Fail-closed: any step's error propagates unchanged.
@@ -43,8 +48,8 @@ impl NodeAttestationClient {
         kbs: &dyn KeyBrokerClient,
         model_id: [u8; 32],
     ) -> TeeResult<[u8; 32]> {
-        let nonce = kbs.challenge(model_id).await?;
         let (pk_att_secret, pk_att_pub) = generate_ephemeral_keypair();
+        let nonce = kbs.challenge(model_id, &pk_att_pub).await?;
         let evidence = provider.gather_evidence(nonce, &pk_att_pub).await?;
         let wrapped = kbs.request_key(model_id, &evidence).await?;
         unwrap_key(&wrapped, &pk_att_secret)

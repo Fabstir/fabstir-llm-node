@@ -181,6 +181,9 @@ impl CircuitBreaker {
 /// can be parked, during which no Ping is answered and no cancel is read.
 const ADAPTER_STAGE_BUDGET_SECS: u64 = 300;
 
+/// How long `ApiServer::shutdown` waits for the listener to drain.
+pub const SHUTDOWN_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub struct ApiServer {
     config: ApiConfig,
     addr: SocketAddr,
@@ -265,6 +268,9 @@ pub struct ApiServer {
     session_depositor_cache: Arc<crate::api::session_auth::DepositorCache>,
     session_store: Arc<RwLock<crate::api::websocket::session_store::SessionStore>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
+    /// The HTTP serve task, so `shutdown` can wait (bounded) for the listener
+    /// to close instead of only signalling it.
+    server_task: Option<tokio::task::JoinHandle<()>>,
     listener: Option<tokio::net::TcpListener>,
 }
 
@@ -364,6 +370,7 @@ impl ApiServer {
             session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
+            server_task: None,
             listener: None,
         }
     }
@@ -556,6 +563,7 @@ impl ApiServer {
             session_depositor_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_store,
             shutdown_tx: None,
+            server_task: None,
             listener: Some(listener),
             config,
         };
@@ -627,7 +635,7 @@ impl ApiServer {
 
             let server = self.clone_for_http();
 
-            tokio::spawn(async move {
+            self.server_task = Some(tokio::spawn(async move {
                 let app = Self::create_router(server);
 
                 let serve_future = axum::serve(listener, app).with_graceful_shutdown(async move {
@@ -635,7 +643,7 @@ impl ApiServer {
                 });
 
                 let _ = serve_future.await;
-            });
+            }));
         }
     }
 
@@ -687,6 +695,7 @@ impl ApiServer {
             session_depositor_cache: self.session_depositor_cache.clone(),
             session_store: self.session_store.clone(),
             shutdown_tx: None,
+            server_task: None,
             listener: None,
         })
     }
@@ -1063,9 +1072,18 @@ impl ApiServer {
         self.connection_pool.stats().await
     }
 
-    pub async fn shutdown(mut self) {
+    /// Signal the HTTP server to stop accepting and wait, bounded by
+    /// [`SHUTDOWN_DRAIN`], for it to finish draining. Returns whether the
+    /// listener actually closed within the bound (false = still draining, e.g. a
+    /// long response in flight; the caller decides what that means for it).
+    pub async fn shutdown(mut self) -> bool {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
+        }
+        match self.server_task.take() {
+            // Ok(Err(_)) is a panicked serve task: nothing drained, say so.
+            Some(task) => matches!(tokio::time::timeout(SHUTDOWN_DRAIN, task).await, Ok(Ok(()))),
+            None => true,
         }
     }
 
@@ -1587,14 +1605,13 @@ impl ApiServer {
         };
 
         // Run streaming inference with real model
-        let (token_stream, result_rx) =
-            engine
-                .run_inference_stream_with_adapter(engine_request, adapter_path)
-                .await
-                .map_err(|e| {
-                    error!("Failed to start streaming inference: {}", e);
-                    ApiError::InternalError(format!("Streaming inference failed: {}", e))
-                })?;
+        let (token_stream, result_rx) = engine
+            .run_inference_stream_with_adapter(engine_request, adapter_path)
+            .await
+            .map_err(|e| {
+                error!("Failed to start streaming inference: {}", e);
+                ApiError::InternalError(format!("Streaming inference failed: {}", e))
+            })?;
 
         let (tx, rx) = mpsc::channel(100);
 
@@ -3286,7 +3303,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     // or the customer is billed for
                                                     // base-model answers on a session they
                                                     // believe serves their fine-tune.
-                                                    let lora_request = session_init_data.lora.clone();
+                                                    let lora_request =
+                                                        session_init_data.lora.clone();
                                                     let adapter_key = lora_request
                                                         .as_ref()
                                                         .map(|_| uuid::Uuid::new_v4().to_string());
@@ -3327,11 +3345,14 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     // adapter that never bound to a job also
                                                     // never staged, so there is nothing to
                                                     // protect and a real job IS a new session.
-                                                    let is_a_different_job = match (adapter_job_id, job_id) {
-                                                        (Some(before), Some(now)) => before != now,
-                                                        (None, Some(_)) => true,
-                                                        _ => false,
-                                                    };
+                                                    let is_a_different_job =
+                                                        match (adapter_job_id, job_id) {
+                                                            (Some(before), Some(now)) => {
+                                                                before != now
+                                                            }
+                                                            (None, Some(_)) => true,
+                                                            _ => false,
+                                                        };
                                                     session_adapter = match (
                                                         &adapter_key,
                                                         previously_wanted_adapter && !is_a_different_job,
@@ -3402,8 +3423,11 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     if let (Some(lora), Some(sid)) =
                                                         (lora_request, adapter_key)
                                                     {
-                                                        let deps =
-                                                            server.training_deps.read().await.clone();
+                                                        let deps = server
+                                                            .training_deps
+                                                            .read()
+                                                            .await
+                                                            .clone();
                                                         let staged = match tokio::time::timeout(
                                                             std::time::Duration::from_secs(ADAPTER_STAGE_BUDGET_SECS),
                                                             async {
@@ -4285,7 +4309,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                 // and its on-chain token tracking
                                                                 // (round-3 R3-3).
                                                                 if let Some(reason) = server
-                                                                    .serve_back_refusal(&session_adapter)
+                                                                    .serve_back_refusal(
+                                                                        &session_adapter,
+                                                                    )
                                                                     .await
                                                                 {
                                                                     // Round-4 F-R4-1: correlate with
@@ -4310,8 +4336,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     if let Some(msg_id) =
                                                                         json_msg.get("id")
                                                                     {
-                                                                        frame["id"] = msg_id.clone();
-                                                                        ended["id"] = msg_id.clone();
+                                                                        frame["id"] =
+                                                                            msg_id.clone();
+                                                                        ended["id"] =
+                                                                            msg_id.clone();
                                                                     }
                                                                     if ws_sender
                                                                         .send(axum::extract::ws::Message::Text(

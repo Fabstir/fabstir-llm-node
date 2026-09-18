@@ -472,9 +472,7 @@ pub fn make_deps_with_sidecar(
     let tracker = Arc::new(fabstir_llm_node::training::tracker::TrainTracker::new());
     let artifact_store = Arc::new(fabstir_llm_node::storage::s5_client::MockS5Backend::new());
     let deps = TrainingDeps {
-        adapters: std::sync::Arc::new(
-            fabstir_llm_node::training::serve::AdapterRegistry::new(),
-        ),
+        adapters: std::sync::Arc::new(fabstir_llm_node::training::serve::AdapterRegistry::new()),
         sessions: Arc::new(sessions),
         completer: completer.clone(),
         trainer: Arc::new(TrainerClient::new(sock, Duration::from_secs(5))),

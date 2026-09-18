@@ -31,30 +31,57 @@ pub struct MockAttestationProvider {
 }
 
 impl MockAttestationProvider {
-    /// New provider reporting `sku`, image `measurement`, and GPU `cc_mode`
-    /// (production TCB, age 0 by default — adjust with the builder setters).
-    pub fn new(sku: impl Into<String>, measurement: [u8; 48], cc_mode: CcMode) -> Self {
+    /// New provider reporting `hwmodel`, an image `measurement` (the mock's
+    /// stand-in for MRTD), and GPU `cc_mode`; everything else at the
+    /// production-good values (secure boot on, debug off, TD debug off, TCB
+    /// `UpToDate`, driver `580.95.05`, VBIOS `96.00.9f.00.01`). Adjust with the
+    /// builder setters.
+    pub fn new(hwmodel: impl Into<String>, measurement: [u8; 48], cc_mode: CcMode) -> Self {
         Self {
             report: GpuReportFields {
                 nonce: [0u8; 32], // replaced per call by the challenge nonce
-                sku: sku.into(),
+                hwmodel: hwmodel.into(),
                 cc_mode,
-                production_tcb: true,
-                tcb_age_days: 0,
+                secure_boot: true,
+                debug_disabled: true,
+                driver_version: "580.95.05".into(),
+                vbios_version: "96.00.9f.00.01".into(),
+                td_debug_off: true,
+                tcb_status: "UpToDate".into(),
             },
             measurement,
         }
     }
 
-    /// Override the reported CPU TCB age (days) — for stale-TCB tests.
-    pub fn with_tcb_age_days(mut self, days: u32) -> Self {
-        self.report.tcb_age_days = days;
+    /// Override the reported TCB status (e.g. `"OutOfDate"`).
+    pub fn with_tcb_status(mut self, status: impl Into<String>) -> Self {
+        self.report.tcb_status = status.into();
         self
     }
 
-    /// Override whether the CPU TCB is production — for non-production tests.
-    pub fn with_production_tcb(mut self, production: bool) -> Self {
-        self.report.production_tcb = production;
+    /// Override the TD DEBUG attribute (`false` = debug TD).
+    pub fn with_td_debug_off(mut self, off: bool) -> Self {
+        self.report.td_debug_off = off;
+        self
+    }
+
+    pub fn with_secure_boot(mut self, on: bool) -> Self {
+        self.report.secure_boot = on;
+        self
+    }
+
+    pub fn with_debug_disabled(mut self, disabled: bool) -> Self {
+        self.report.debug_disabled = disabled;
+        self
+    }
+
+    pub fn with_driver_version(mut self, v: impl Into<String>) -> Self {
+        self.report.driver_version = v.into();
+        self
+    }
+
+    pub fn with_vbios_version(mut self, v: impl Into<String>) -> Self {
+        self.report.vbios_version = v.into();
         self
     }
 }
@@ -91,6 +118,10 @@ impl AttestationProvider for MockAttestationProvider {
 struct NonceRecord {
     issued_at: u64,
     consumed: bool,
+    /// Who the nonce was minted for (gate A-8): redeemable only by this model
+    /// and this key.
+    model_id: [u8; 32],
+    pk_att: Vec<u8>,
 }
 
 /// Mock attestation-gated Key Broker Service (Phases 1–4, tests/dev).
@@ -128,13 +159,16 @@ impl MockKeyBroker {
 
 #[async_trait]
 impl KeyBrokerClient for MockKeyBroker {
-    async fn challenge(&self, _model_id: [u8; 32]) -> TeeResult<[u8; 32]> {
-        // model_id is intentionally not bound into the nonce: a nonce minted for one
-        // model and replayed against another grants no capability — `request_key` selects
-        // (dek, policy) by the request's `model_id`, that per-model policy must still pass,
-        // and the identity check pins release to the attested `pk_att`; nonces stay
-        // single-use + TTL-bounded regardless. Phase 5 SHOULD bind nonce→model_id for
-        // explicit domain separation.
+    async fn challenge(&self, model_id: [u8; 32], pk_att: &[u8]) -> TeeResult<[u8; 32]> {
+        // Phase 5 (gate A-8): the nonce is bound to (model_id, pk_att) at mint time.
+        // `request_key` refuses it for any other model or any other key, so a nonce
+        // is a capability for exactly one release attempt by exactly one requester.
+        if pk_att.len() != 33 {
+            return Err(TeeError::Crypto(format!(
+                "challenge: pk_att must be a 33-byte compressed key, got {}",
+                pk_att.len()
+            )));
+        }
         let mut nonce = [0u8; 32];
         OsRng.fill_bytes(&mut nonce);
         self.nonces.lock().expect("kbs nonces poisoned").insert(
@@ -142,6 +176,8 @@ impl KeyBrokerClient for MockKeyBroker {
             NonceRecord {
                 issued_at: now_unix(),
                 consumed: false,
+                model_id,
+                pk_att: pk_att.to_vec(),
             },
         );
         Ok(nonce)
@@ -153,8 +189,8 @@ impl KeyBrokerClient for MockKeyBroker {
             .get(&model_id)
             .ok_or(TeeError::NoProviderBound(model_id))?;
         // Nonce lifecycle — Option A (one-time-use): must be issued, unexpired, and
-        // unconsumed. Burned up-front so any attempt (even a failing verify below)
-        // consumes it — no nonce can be retried.
+        // unconsumed, AND minted for this model and this pk_att. Burned up-front so any
+        // attempt (even a failing verify below) consumes it — no nonce can be retried.
         {
             let mut nonces = self.nonces.lock().expect("kbs nonces poisoned");
             let rec = nonces
@@ -164,6 +200,10 @@ impl KeyBrokerClient for MockKeyBroker {
                 return Err(TeeError::FreshnessFailure);
             }
             rec.consumed = true;
+            if rec.model_id != model_id || rec.pk_att != ev.pk_att {
+                // Minted for someone else: burned (above) and refused.
+                return Err(TeeError::FreshnessFailure);
+            }
         }
         // Verify against the model's policy. The identity check
         // (`report_data[0..32] == sha256(ev.pk_att)`) and the shared-nonce check

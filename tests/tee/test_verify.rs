@@ -8,7 +8,8 @@
 use fabstir_llm_node::tee::mock::MockAttestationProvider;
 use fabstir_llm_node::tee::provider::AttestationProvider;
 use fabstir_llm_node::tee::types::{
-    sha256_32, CcMode, Claims, Evidence, GpuReportFields, Policy, TeeError, REPORT_DATA_LEN,
+    sha256_32, CcMode, Claims, CvmPolicy, Evidence, GpuPolicy, GpuReportFields, Policy, TeeError,
+    REPORT_DATA_LEN,
 };
 use fabstir_llm_node::tee::verifier::{AttestationVerifier, DefaultVerifier};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -27,15 +28,32 @@ fn now_unix() -> u64 {
 
 fn valid_policy() -> Policy {
     Policy {
+        schema_version: 2,
         policy_version: 1,
-        allowed_skus: vec!["H100".to_string()],
-        expected_measurement: MEAS,
-        require_cc_mode: Some(CcMode::On),
-        require_production_tcb: true,
-        max_tcb_age_days: 30,
+        model_id: [1u8; 32],
         not_before: 0,
         expiry: now_unix() + 3600,
-        model_id: [1u8; 32],
+        cvm: CvmPolicy {
+            mrtd: hex::encode(MEAS),
+            rtmr0: "00".repeat(48),
+            rtmr1: "00".repeat(48),
+            rtmr2: "00".repeat(48),
+            os_image_hash: "00".repeat(32),
+            compose_hash: "00".repeat(32),
+            app_id: None,
+            key_provider: None,
+            require_td_debug_off: true,
+            allowed_tcb_status: vec!["UpToDate".to_string()],
+            allowed_advisory_ids: vec![],
+        },
+        gpu: GpuPolicy {
+            allowed_hwmodels: vec!["H100".to_string()],
+            require_cc_mode: Some(CcMode::On),
+            require_secure_boot: true,
+            require_debug_disabled: true,
+            min_driver_version: None,
+            min_vbios_version: None,
+        },
     }
 }
 
@@ -70,20 +88,21 @@ async fn accepts_valid() {
 }
 
 #[tokio::test]
-async fn rejects_wrong_measurement() {
+async fn rejects_wrong_mrtd() {
+    // The mock's image_measurement stands in for MRTD; policy.cvm.mrtd pins it.
     let p = MockAttestationProvider::new("H100", OTHER_MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
-    assert_verification_failed(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
-        "measurement",
-    );
+    assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "mrtd");
 }
 
 #[tokio::test]
-async fn rejects_disallowed_sku() {
+async fn rejects_disallowed_hwmodel() {
     let p = MockAttestationProvider::new("H200", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
-    assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "sku");
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        "hwmodel",
+    );
 }
 
 #[tokio::test]
@@ -97,10 +116,14 @@ async fn rejects_cc_off() {
 }
 
 #[tokio::test]
-async fn rejects_stale_tcb() {
-    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(60);
+async fn rejects_tcb_status_outside_the_allow_list() {
+    // Policy v2: an exact TCB status allow-list, not an age in days.
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_status("OutOfDate");
     let ev = gather(&p, NONCE).await;
-    assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "tcb");
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        "tcb status",
+    );
 }
 
 #[tokio::test]
@@ -133,13 +156,13 @@ async fn rejects_not_yet_valid() {
 }
 
 #[tokio::test]
-async fn rejects_non_production_tcb() {
-    // Check #8: debug/non-production CPU TCB must be rejected when the policy requires it.
-    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_production_tcb(false);
+async fn rejects_td_debug_when_the_policy_requires_it_off() {
+    // Policy v2: the TD DEBUG attribute replaces "production TCB".
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_td_debug_off(false);
     let ev = gather(&p, NONCE).await;
     assert_verification_failed(
         DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
-        "non-production tcb",
+        "td debug",
     );
 }
 
@@ -224,7 +247,7 @@ async fn accepts_cc_off_when_not_required() {
     let p = MockAttestationProvider::new("H100", MEAS, CcMode::Off);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
-    policy.require_cc_mode = None;
+    policy.gpu.require_cc_mode = None;
     assert!(
         DefaultVerifier.verify(&ev, &policy, NONCE).is_ok(),
         "CcMode::Off should be accepted when require_cc_mode is None"
@@ -255,7 +278,7 @@ async fn devtools_is_accepted_only_when_named_explicitly() {
     let ev = gather(&p, NONCE).await;
 
     let mut devtools_policy = valid_policy();
-    devtools_policy.require_cc_mode = Some(CcMode::DevTools);
+    devtools_policy.gpu.require_cc_mode = Some(CcMode::DevTools);
     assert!(
         DefaultVerifier.verify(&ev, &devtools_policy, NONCE).is_ok(),
         "a policy naming DevTools should accept a DevTools report"
@@ -272,35 +295,95 @@ async fn devtools_is_accepted_only_when_named_explicitly() {
 }
 
 #[tokio::test]
-async fn accepts_non_production_tcb_when_not_required() {
-    // Policy-gated check #8: require_production_tcb=false must ACCEPT a debug-TCB report.
-    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_production_tcb(false);
+async fn accepts_td_debug_when_the_policy_does_not_require_it_off() {
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_td_debug_off(false);
     let ev = gather(&p, NONCE).await;
     let mut policy = valid_policy();
-    policy.require_production_tcb = false;
-    assert!(
-        DefaultVerifier.verify(&ev, &policy, NONCE).is_ok(),
-        "production_tcb=false should be accepted when require_production_tcb=false"
-    );
+    policy.cvm.require_td_debug_off = false;
+    assert!(DefaultVerifier.verify(&ev, &policy, NONCE).is_ok());
 }
 
 #[tokio::test]
-async fn accepts_tcb_age_equal_to_max() {
-    // Check #9 inclusive boundary: tcb_age_days == max_tcb_age_days is accepted (`>` check).
-    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(30);
+async fn tcb_status_allow_list_is_exact_and_widenable() {
+    // Widening is a signed policy change: SWHardeningNeeded passes only once listed.
+    let p =
+        MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_status("SWHardeningNeeded");
     let ev = gather(&p, NONCE).await;
-    assert!(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE).is_ok(),
-        "tcb_age == max should be accepted"
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        "tcb status",
     );
+    let mut policy = valid_policy();
+    policy
+        .cvm
+        .allowed_tcb_status
+        .push("SWHardeningNeeded".into());
+    assert!(DefaultVerifier.verify(&ev, &policy, NONCE).is_ok());
 }
 
 #[tokio::test]
-async fn rejects_tcb_age_one_over_max() {
-    // Check #9 exact boundary: max + 1 is rejected.
-    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On).with_tcb_age_days(31);
+async fn gpu_secure_boot_debug_and_version_floors() {
+    let good = || MockAttestationProvider::new("H100", MEAS, CcMode::On);
+    let ev = gather(&good().with_secure_boot(false), NONCE).await;
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        "secure boot",
+    );
+    let ev = gather(&good().with_debug_disabled(false), NONCE).await;
+    assert_verification_failed(
+        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        "gpu debug",
+    );
+    // Version floors: dotted numeric compare; 580.95.05 >= 580.95 passes, > fails.
+    let ev = gather(&good().with_driver_version("580.95.05"), NONCE).await;
+    let mut policy = valid_policy();
+    policy.gpu.min_driver_version = Some("580.95".into());
+    assert!(DefaultVerifier.verify(&ev, &policy, NONCE).is_ok());
+    policy.gpu.min_driver_version = Some("581.0".into());
+    assert_verification_failed(DefaultVerifier.verify(&ev, &policy, NONCE), "driver");
+    let ev = gather(&good().with_vbios_version("96.00.9f.00.01"), NONCE).await;
+    let mut policy = valid_policy();
+    policy.gpu.min_vbios_version = Some("96.00.a0".into());
+    assert_verification_failed(DefaultVerifier.verify(&ev, &policy, NONCE), "vbios");
+}
+
+#[tokio::test]
+async fn policy_form_is_validated_and_never_coerced() {
+    // Expert condition 3 (2026-09-17): a 0x prefix, upper case or a wrong length
+    // is refused; nothing is silently rewritten (the provider signed these bytes).
+    let p = MockAttestationProvider::new("H100", MEAS, CcMode::On);
     let ev = gather(&p, NONCE).await;
-    assert_verification_failed(DefaultVerifier.verify(&ev, &valid_policy(), NONCE), "tcb");
+    for (mutate, needle) in [
+        (
+            Box::new(|pol: &mut Policy| pol.cvm.mrtd = format!("0x{}", pol.cvm.mrtd))
+                as Box<dyn Fn(&mut Policy)>,
+            "cvm.mrtd",
+        ),
+        (
+            Box::new(|pol: &mut Policy| pol.cvm.rtmr1 = "AB".repeat(48)),
+            "cvm.rtmr1",
+        ),
+        (
+            Box::new(|pol: &mut Policy| pol.cvm.compose_hash.pop().map(|_| ()).unwrap_or(())),
+            "cvm.compose_hash",
+        ),
+        (
+            Box::new(|pol: &mut Policy| pol.schema_version = 1),
+            "schema_version",
+        ),
+        (
+            Box::new(|pol: &mut Policy| pol.cvm.allowed_tcb_status.clear()),
+            "allowed_tcb_status",
+        ),
+        (
+            Box::new(|pol: &mut Policy| pol.gpu.allowed_hwmodels.clear()),
+            "allowed_hwmodels",
+        ),
+    ] {
+        let mut policy = valid_policy();
+        mutate(&mut policy);
+        assert_verification_failed(DefaultVerifier.verify(&ev, &policy, NONCE), needle);
+    }
 }
 
 #[tokio::test]

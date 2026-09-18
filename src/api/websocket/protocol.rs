@@ -205,8 +205,9 @@ impl SessionProtocol {
             "batching".to_string(),
         ];
         // Phase 4.2 — advertise `tee-attested` iff this node will honor encrypted
-        // models (HOST_TEE_ENABLED), so clients can discover+select attested nodes.
-        if crate::tee::host_tee_enabled() {
+        // models (HOST_TEE_ENABLED) AND its model was not a test-keyring release
+        // (Phase 5), so clients can discover+select attested nodes.
+        if crate::tee::advertises_tee_attested() {
             capabilities.push("tee-attested".to_string());
         }
         Self {
@@ -492,7 +493,8 @@ impl SessionProtocol {
 mod capability_tests {
     use super::*;
 
-    // Phase 4.2 — the handshake advertises `tee-attested` iff HOST_TEE_ENABLED.
+    // Phase 4.2 — the handshake advertises `tee-attested` iff HOST_TEE_ENABLED
+    // (and, Phase 5, no test-keyring release: `tee::advertises_tee_attested`).
     #[tokio::test]
     async fn server_capabilities_advertise_tee_attested_iff_host_flag() {
         let protocol = SessionProtocol::new();
@@ -510,8 +512,8 @@ mod capability_tests {
             serde_json::from_value(ack.metadata.unwrap()["server_capabilities"].clone()).unwrap();
         assert_eq!(
             caps.contains(&"tee-attested".to_string()),
-            crate::tee::host_tee_enabled(),
-            "server must advertise tee-attested iff HOST_TEE_ENABLED; got {caps:?}"
+            crate::tee::advertises_tee_attested(),
+            "server must advertise tee-attested iff HOST_TEE_ENABLED and no test release; got {caps:?}"
         );
         assert!(
             caps.contains(&"streaming".to_string()),

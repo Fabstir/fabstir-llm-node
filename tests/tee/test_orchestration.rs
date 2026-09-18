@@ -14,7 +14,7 @@ use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, policy_signature_digest, SignedModelPolicy,
 };
 use fabstir_llm_node::tee::policy_source::{PolicySource, ProviderRegistry};
-use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError, TeeResult};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -25,15 +25,32 @@ const BLOB_PATH: &str = "s5://models/proprietary.enc";
 
 fn test_policy(model_id: [u8; 32]) -> Policy {
     Policy {
+        schema_version: 2,
         policy_version: 1,
-        allowed_skus: vec![SKU.to_string()],
-        expected_measurement: MEASUREMENT,
-        require_cc_mode: Some(CcMode::On),
-        require_production_tcb: true,
-        max_tcb_age_days: 30,
+        model_id: model_id,
         not_before: 0,
-        expiry: u64::MAX - 1, // valid now (avoid the u64::MAX clock-error sentinel)
-        model_id,
+        expiry: u64::MAX - 1,
+        cvm: CvmPolicy {
+            mrtd: hex::encode(MEASUREMENT),
+            rtmr0: "00".repeat(48),
+            rtmr1: "00".repeat(48),
+            rtmr2: "00".repeat(48),
+            os_image_hash: "00".repeat(32),
+            compose_hash: "00".repeat(32),
+            app_id: None,
+            key_provider: None,
+            require_td_debug_off: true,
+            allowed_tcb_status: vec!["UpToDate".to_string()],
+            allowed_advisory_ids: vec![],
+        },
+        gpu: GpuPolicy {
+            allowed_hwmodels: vec![SKU.to_string()],
+            require_cc_mode: Some(CcMode::On),
+            require_secure_boot: true,
+            require_debug_disabled: true,
+            min_driver_version: None,
+            min_vbios_version: None,
+        },
     }
 }
 
@@ -59,7 +76,7 @@ fn sign(policy: &Policy, encrypted_ref: &str, sk: &SigningKey) -> (SignedModelPo
 }
 
 /// In-memory blob store standing in for S5.
-struct InMemoryBlobs {
+pub(super) struct InMemoryBlobs {
     blobs: HashMap<String, Vec<u8>>,
 }
 #[async_trait]
@@ -75,7 +92,7 @@ impl BlobSource for InMemoryBlobs {
 }
 
 /// Mock policy source: serves stored policies; an unknown model = fetch failure.
-struct MockSource {
+pub(super) struct MockSource {
     policies: HashMap<[u8; 32], SignedModelPolicy>,
 }
 #[async_trait]
@@ -90,7 +107,7 @@ impl PolicySource for MockSource {
     }
 }
 
-fn good_provider() -> MockAttestationProvider {
+pub(super) fn good_provider() -> MockAttestationProvider {
     MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On)
 }
 
@@ -99,21 +116,27 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Wire a complete fixture: signed policy + container + blob store + KBS + registry.
-struct Fixture {
-    loader: EncryptedModelLoader,
-    _dir: tempfile::TempDir,
-    source: MockSource,
-    providers: ProviderRegistry,
-    s5: InMemoryBlobs,
-    kbs: MockKeyBroker,
-    model_id: [u8; 32],
-    plaintext: Vec<u8>,
+pub(super) struct Fixture {
+    pub(super) loader: EncryptedModelLoader,
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) source: MockSource,
+    pub(super) providers: ProviderRegistry,
+    pub(super) s5: InMemoryBlobs,
+    pub(super) kbs: MockKeyBroker,
+    pub(super) model_id: [u8; 32],
+    pub(super) plaintext: Vec<u8>,
 }
 
-fn fixture() -> Fixture {
+pub(super) fn fixture() -> Fixture {
+    fixture_with_plaintext_len(6000)
+}
+
+/// As [`fixture`], with a plaintext of `len` bytes (large = many awaits in the
+/// post-decrypt hash step, for the cancellation test).
+pub(super) fn fixture_with_plaintext_len(len: u32) -> Fixture {
     let model_id = [0xA1u8; 32];
     let dek = [0xDEu8; 32];
-    let plaintext: Vec<u8> = (0..6000u32).map(|i| (i % 251) as u8).collect();
+    let plaintext: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
 
     let sk = SigningKey::random(&mut rand::rngs::OsRng);
     let policy = test_policy(model_id);

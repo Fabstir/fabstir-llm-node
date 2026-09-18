@@ -9,13 +9,13 @@
 //! Everything here is exercised against `tests/training/vectors/*.json`, the
 //! cross-side truth both the SDK and this node reproduce byte-for-byte.
 
-pub mod redact;
 pub mod accept;
 pub mod advert;
 pub mod artifact;
 pub mod attestation;
 pub mod chain;
 pub mod core;
+pub mod redact;
 pub mod schedule;
 pub mod serve;
 pub mod staging;

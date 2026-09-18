@@ -9,8 +9,8 @@
 use fabstir_llm_node::tee::mock::MockAttestationProvider;
 use fabstir_llm_node::tee::provider::AttestationProvider;
 use fabstir_llm_node::tee::types::{
-    report_data, report_data_identity, CcMode, Claims, Evidence, GpuReportFields, Policy, TeeError,
-    REPORT_DATA_LEN,
+    report_data, report_data_identity, CcMode, Claims, CvmPolicy, Evidence, GpuPolicy,
+    GpuReportFields, Policy, TeeError, REPORT_DATA_LEN,
 };
 use fabstir_llm_node::tee::verifier::{AttestationVerifier, DefaultVerifier};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,15 +28,32 @@ fn now_unix() -> u64 {
 
 fn valid_policy() -> Policy {
     Policy {
+        schema_version: 2,
         policy_version: 1,
-        allowed_skus: vec!["H100".to_string()],
-        expected_measurement: MEAS,
-        require_cc_mode: Some(CcMode::On),
-        require_production_tcb: true,
-        max_tcb_age_days: 30,
+        model_id: [1u8; 32],
         not_before: 0,
         expiry: now_unix() + 3600,
-        model_id: [1u8; 32],
+        cvm: CvmPolicy {
+            mrtd: hex::encode(MEAS),
+            rtmr0: "00".repeat(48),
+            rtmr1: "00".repeat(48),
+            rtmr2: "00".repeat(48),
+            os_image_hash: "00".repeat(32),
+            compose_hash: "00".repeat(32),
+            app_id: None,
+            key_provider: None,
+            require_td_debug_off: true,
+            allowed_tcb_status: vec!["UpToDate".to_string()],
+            allowed_advisory_ids: vec![],
+        },
+        gpu: GpuPolicy {
+            allowed_hwmodels: vec!["H100".to_string()],
+            require_cc_mode: Some(CcMode::On),
+            require_secure_boot: true,
+            require_debug_disabled: true,
+            min_driver_version: None,
+            min_vbios_version: None,
+        },
     }
 }
 

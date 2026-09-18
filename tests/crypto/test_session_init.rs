@@ -648,8 +648,13 @@ fn seal(session_data: serde_json::Value) -> (EncryptedSessionPayload, [u8; 32]) 
 
     let nonce = [7u8; 24];
     let aad = b"session-init";
-    let ciphertext =
-        encrypt_with_aead(session_data.to_string().as_bytes(), &nonce, aad, &shared_key).unwrap();
+    let ciphertext = encrypt_with_aead(
+        session_data.to_string().as_bytes(),
+        &nonce,
+        aad,
+        &shared_key,
+    )
+    .unwrap();
     let signature: k256::ecdsa::Signature = SigningKey::random(&mut OsRng).sign(&ciphertext);
     let mut sig_bytes = [0u8; 65];
     sig_bytes[..64].copy_from_slice(&signature.to_bytes());

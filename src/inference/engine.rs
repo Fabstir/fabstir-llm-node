@@ -673,12 +673,13 @@ impl LlmEngine {
                             "the session LoRA adapter is no longer present (evicted?)"
                         ));
                     }
-                    let mut adapter = model.model.lora_adapter_init(path).map_err(|e| {
-                        anyhow!("failed to load the session LoRA adapter: {e:?}")
-                    })?;
-                    context.lora_adapter_set(&mut adapter, 1.0).map_err(|e| {
-                        anyhow!("failed to apply the session LoRA adapter: {e:?}")
-                    })?;
+                    let mut adapter = model
+                        .model
+                        .lora_adapter_init(path)
+                        .map_err(|e| anyhow!("failed to load the session LoRA adapter: {e:?}"))?;
+                    context
+                        .lora_adapter_set(&mut adapter, 1.0)
+                        .map_err(|e| anyhow!("failed to apply the session LoRA adapter: {e:?}"))?;
                     tracing::info!("🎯 session LoRA adapter applied at scale 1.0: {path:?}");
                     Some(adapter)
                 }

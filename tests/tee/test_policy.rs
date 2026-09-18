@@ -7,20 +7,37 @@ use fabstir_llm_node::crypto::recover_client_address;
 use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, check_policy_validity, policy_signature_digest, SignedModelPolicy,
 };
-use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError};
+use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature, SigningKey};
 
 fn a_policy() -> Policy {
     Policy {
+        schema_version: 2,
         policy_version: 1,
-        allowed_skus: vec!["H100".to_string(), "H200".to_string()],
-        expected_measurement: [0x11u8; 48],
-        require_cc_mode: Some(CcMode::On),
-        require_production_tcb: true,
-        max_tcb_age_days: 30,
+        model_id: [9u8; 32],
         not_before: 0,
         expiry: u64::MAX - 1,
-        model_id: [9u8; 32],
+        cvm: CvmPolicy {
+            mrtd: hex::encode([0x11u8; 48]),
+            rtmr0: "00".repeat(48),
+            rtmr1: "00".repeat(48),
+            rtmr2: "00".repeat(48),
+            os_image_hash: "00".repeat(32),
+            compose_hash: "00".repeat(32),
+            app_id: None,
+            key_provider: None,
+            require_td_debug_off: true,
+            allowed_tcb_status: vec!["UpToDate".to_string()],
+            allowed_advisory_ids: vec![],
+        },
+        gpu: GpuPolicy {
+            allowed_hwmodels: vec!["H100".to_string(), "H200".to_string()],
+            require_cc_mode: Some(CcMode::On),
+            require_secure_boot: true,
+            require_debug_disabled: true,
+            min_driver_version: None,
+            min_vbios_version: None,
+        },
     }
 }
 
@@ -78,7 +95,7 @@ fn verify_rejects_wrong_provider() {
 fn verify_rejects_tampered_policy() {
     let sk = SigningKey::random(&mut rand::rngs::OsRng);
     let (mut signed, provider) = sign_policy(&a_policy(), "s5://blob", &sk);
-    signed.policy.max_tcb_age_days = 999; // tamper after signing
+    signed.policy.cvm.require_td_debug_off = false; // tamper after signing
     let err = signed
         .verify_signer(&provider)
         .expect_err("a tampered policy must fail signature verification");

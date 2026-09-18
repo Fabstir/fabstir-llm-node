@@ -3,25 +3,36 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.54.0-vault-session-guard-2026-09-02";
+pub const VERSION: &str = "v8.55.0-phase5-attested-load-2026-09-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.54.0";
+pub const VERSION_NUMBER: &str = "8.55.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 54;
+pub const VERSION_MINOR: u32 = 55;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-09-02";
+pub const BUILD_DATE: &str = "2026-09-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.55.0 Phase 5 attested load path (Phala Cloud, Intel TDX + NVIDIA H200):
+    // HOST_TEE_ENABLED=true means the model comes from an attested decrypt or
+    // the node does not start; dstack quote + nvtrust GPU evidence, private-root
+    // pinned HTTPS key broker, Policy schema 2, unlink-never-overwrite plaintext
+    // lifecycle with a stop watchdog on its own thread.
+    "tee-attested-load",
+    "tee-policy-schema-2",
+    "tee-kbs-https-pinned-root",
+    "tee-dstack-quote",
+    "tee-nvtrust-gpu-evidence",
+    "stop-watchdog",
     // v8.51.0 pre-escrow training advert + the pinned tokenizer it serves.
     "training-advert",
     // v8.46.1 context-window clamp on the generation budget.
@@ -571,6 +582,12 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.55.0 - Phase 5 attested load path (Sep 18, 2026)
+    "BREAKING (every host): HOST_TEE_ENABLED=true now REQUIRES the attested-load variables (TEE_MODEL_ID, TEE_MODEL_PROVIDER, TEE_KBS_URL, TEE_POLICY_URL, TEE_BLOB_URL; TEE_KBS_CA_FILE from the image) and refuses MODEL_PATH / DISABLE_LLM next to them; a plain node with a stale TEE_MODEL_ID is refused too (exit 78, self-explaining). A Phase-4 host that ran the flag with a plain MODEL_PATH must drop the flag before upgrading",
+    "SECURITY (attested nodes): the node advertises `tee-attested` only when the flag is on AND the model was not released under the broker's TEST keyring; a test-keyring release is refused outright unless TEE_ACCEPT_TEST_RELEASE=1 (CPU gate compose only). Policy schema 2 (cvm registers as lowercase hex, gpu hwmodel allow-list, cc mode exact, secure boot / debug flags, driver+VBIOS floors, tcb status allow-list) is validated on fetch and at every verify, never coerced",
+    "BEHAVIOUR (every host): SIGINT and SIGTERM are handled from the first instruction of main by a watchdog on its own thread (the node is PID 1 in a container, where an unhandled SIGTERM is dropped): during start-up a stop exits 0 at once (attested plaintext unlinked), while serving it runs the orderly path (API drain <= 5 s, P2P leave, plaintext unlink) bounded at 8 s, a second signal exits at once; exits use _exit so a live CUDA context is never torn down under a running decode. Plain nodes: a stop during the synchronous model load now exits cleanly instead of being ignored",
+    "BEHAVIOUR (every host): API_PORT / P2P_PORT are parsed and probe-bound before anything expensive; an unparsable or already-bound port refuses at once (plain: exit 1; attested: exit 78 after a 20 s pause)",
+    "FEAT (attested nodes): the STARK proof witness's model_hash is the attested on-chain model id (plain nodes keep the sha256(MODEL_PATH) placeholder)",
     // v8.54.0 - Vault-host session guard + C.6 keyed on the authorised client (Sep 2, 2026)
     "SECURITY (hosts with FIAT_VAULT_ADDRESSES set; wallet-only hosts byte-identical): a session init refused by the FC1.6 vault gate no longer leaves the connection's job id pointing at the refused job -- the connection's job id is written once per init arm, AFTER the gate passes. Before, a refused plaintext init naming a vault-paid job left a served connection able to send train/prompt frames billed to that job, and a disconnect completed it as host",
     "SECURITY (vault hosts only): a billed or GPU-bearing frame on a connection with no gate-passed session is refused SESSION_AUTH_DENIED -- the guard sits right after the encrypted payload is parsed (before every action dispatch) and at the head of the plaintext prompt/inference arm; the plaintext wire fallbacks that adopted a job id from a prompt no longer run there; the plaintext inference frame's nested request gets the connection's job_id/session_id like prompt already did; POST /v1/inference is refused outright (billed inference goes over the gated WebSocket). Behaviour change on vault hosts: no job-less renders, no job id on a prompt without an init, no HTTP inference",
@@ -1051,10 +1068,14 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 54);
+        assert_eq!(VERSION_MINOR, 55);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.55.0 Phase 5 attested load path
+        assert!(FEATURES.contains(&"tee-attested-load"));
+        assert!(FEATURES.contains(&"tee-policy-schema-2"));
+        assert!(FEATURES.contains(&"stop-watchdog"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
         assert!(FEATURES.contains(&"ltx-video-edit"));
         // v8.35.0 LTX IC-LoRA union control (bundle v6, videos on the seam)
@@ -1232,15 +1253,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.54.0"));
-        assert!(version.contains("2026-09-02"));
+        assert!(version.contains("8.55.0"));
+        assert!(version.contains("2026-09-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.54.0-vault-session-guard-2026-09-02");
-        assert_eq!(VERSION_NUMBER, "8.54.0");
-        assert_eq!(BUILD_DATE, "2026-09-02");
+        assert_eq!(VERSION, "v8.55.0-phase5-attested-load-2026-09-18");
+        assert_eq!(VERSION_NUMBER, "8.55.0");
+        assert_eq!(BUILD_DATE, "2026-09-18");
     }
 
     #[test]

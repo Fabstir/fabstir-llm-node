@@ -11,8 +11,8 @@
 //! policy-validity logic here.
 
 use crate::tee::types::{
-    now_unix, report_data_identity, sha256_32, Claims, Evidence, GpuReportFields, Policy, TeeError,
-    TeeResult, REPORT_DATA_LEN,
+    now_unix, report_data_identity, sha256_32, version_at_least, Claims, Evidence, GpuReportFields,
+    Policy, TeeError, TeeResult, REPORT_DATA_LEN,
 };
 
 /// Verifies attestation [`Evidence`] against a model-provider [`Policy`].
@@ -57,6 +57,10 @@ impl DefaultVerifier {
         expected_nonce: [u8; 32],
         now: u64,
     ) -> TeeResult<Claims> {
+        // 0. The policy itself must be schema 2 in canonical spelling; nothing is
+        //    coerced (the provider signed these exact bytes).
+        policy.validate()?;
+
         // 1. Freshness: evidence must be bound to the KBS-issued nonce. (Nonce issuance,
         //    single-use, and TTL are enforced by the KBS in Phase 3.2; here we only bind the
         //    evidence to the caller's expected nonce.)
@@ -122,17 +126,25 @@ impl DefaultVerifier {
         }
         let gpu_report_hash = sha256_32(&ev.gpu_report);
 
-        // 7. Image measurement must match the provider's pinned value (mock-era; the
-        //    real verifier takes MRTD/RTMRs from the verified quote, never this field).
-        if ev.image_measurement != policy.expected_measurement {
-            return Err(TeeError::VerificationFailed("measurement mismatch".into()));
+        // 7. Measurement (mock-era): the mock's 48-byte `image_measurement` stands in
+        //    for MRTD and is compared with `policy.cvm.mrtd`. The real verifier compares
+        //    MRTD, RTMR0–2 from the VERIFIED quote and replays RTMR3 for os_image_hash /
+        //    compose_hash; the mock cannot, so those fields are validated for form
+        //    (step 0) but not compared here. Never trust this field on a real path.
+        if hex::encode(ev.image_measurement) != policy.cvm.mrtd {
+            return Err(TeeError::VerificationFailed("mrtd mismatch".into()));
         }
 
-        // 8. SKU must be allowed by the policy.
-        if !policy.allowed_skus.iter().any(|s| s == &fields.sku) {
+        // 8. Hardware model must be allowed by the policy.
+        if !policy
+            .gpu
+            .allowed_hwmodels
+            .iter()
+            .any(|s| s == &fields.hwmodel)
+        {
             return Err(TeeError::VerificationFailed(format!(
-                "disallowed sku: {}",
-                fields.sku
+                "disallowed hwmodel: {}",
+                fields.hwmodel
             )));
         }
 
@@ -141,7 +153,7 @@ impl DefaultVerifier {
         //    disabled, so anything looser than equality releases the key to an
         //    unprotected GPU. A policy that genuinely wants devtools has to name
         //    it.
-        if let Some(required) = policy.require_cc_mode {
+        if let Some(required) = policy.gpu.require_cc_mode {
             if fields.cc_mode != required {
                 return Err(TeeError::VerificationFailed(format!(
                     "cc mode {:?}, policy requires {:?}",
@@ -150,17 +162,48 @@ impl DefaultVerifier {
             }
         }
 
-        // 10. Production TCB when the policy requires it.
-        if policy.require_production_tcb && !fields.production_tcb {
-            return Err(TeeError::VerificationFailed("non-production tcb".into()));
+        // 10. TD DEBUG attribute clear when the policy requires it.
+        if policy.cvm.require_td_debug_off && !fields.td_debug_off {
+            return Err(TeeError::VerificationFailed("td debug enabled".into()));
         }
 
-        // 11. TCB age within the policy bound.
-        if fields.tcb_age_days > policy.max_tcb_age_days {
+        // 11. TCB status in the allow-list (exact string, e.g. "UpToDate").
+        if !policy
+            .cvm
+            .allowed_tcb_status
+            .iter()
+            .any(|s| s == &fields.tcb_status)
+        {
             return Err(TeeError::VerificationFailed(format!(
-                "stale tcb: {} days",
-                fields.tcb_age_days
+                "tcb status {} not allowed",
+                fields.tcb_status
             )));
+        }
+
+        // 11b. GPU secure boot / debug status.
+        if policy.gpu.require_secure_boot && !fields.secure_boot {
+            return Err(TeeError::VerificationFailed("gpu secure boot off".into()));
+        }
+        if policy.gpu.require_debug_disabled && !fields.debug_disabled {
+            return Err(TeeError::VerificationFailed("gpu debug enabled".into()));
+        }
+
+        // 11c. Version floors (dotted numeric compare).
+        if let Some(min) = &policy.gpu.min_driver_version {
+            if !version_at_least(&fields.driver_version, min) {
+                return Err(TeeError::VerificationFailed(format!(
+                    "driver {} below policy minimum {min}",
+                    fields.driver_version
+                )));
+            }
+        }
+        if let Some(min) = &policy.gpu.min_vbios_version {
+            if !version_at_least(&fields.vbios_version, min) {
+                return Err(TeeError::VerificationFailed(format!(
+                    "vbios {} below policy minimum {min}",
+                    fields.vbios_version
+                )));
+            }
         }
 
         // 12. Policy validity window: not_before <= now <= expiry (inclusive).

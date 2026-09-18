@@ -77,8 +77,10 @@ PROVIDER (offline)                      HOST / CONFIDENTIAL VM                  
                                                                                         quote len, identity,
                                                                                         nonce (CPU half), decode,
                                                                                         nonce (GPU half),
-                                                                                        measurement, SKU, CC mode,
-                                                                                        prod-TCB, TCB age, validity
+                                                                                        mrtd, hwmodel, CC mode,
+                                                                                        TD debug, TCB status,
+                                                                                        secure boot/debug, version
+                                                                                        floors, validity
                                       WrappedKey (ECIES)               ◄──wrap DEK──────  wrap_key(dek, pk_att)
                                       unwrap with pk_att_secret -> DEK
                                       stream-decrypt container -> tmpfs (0600)
@@ -141,8 +143,9 @@ report_data[32..64] = nonce               the challenge, in the clear
 
 This layout (Phase 5, 2026-09-17; it matches Phala's dstack reference node) replaces the earlier `sha256(pk_att ‖ gpu_report_hash ‖ nonce)` commitment. Two independently signed quotes, one nonce: the CPU quote proves a genuine confidential VM holding `pk_att` answered *this* challenge, and the GPU report proves a genuine CC-mode GPU produced evidence for *the same* challenge. A hostile operator who pairs a genuine CPU quote with GPU evidence collected for another challenge (another session, another box, or a replay) fails the nonce comparison on the GPU half; one who substitutes a different `pk_att` to catch the wrapped key fails the identity comparison against the signed quote body. Neither quote has to exist before the other. (In Phases 1–4 the `cpu_quote` is a synthetic 64-byte blob where bytes 0–63 *are* `report_data`; in Phase 5 it is a real TDX quote from which `report_data` is extracted after signature verification. The layout is built by the *one shared* `report_data()` in `types.rs`, so the mock and the real verifier can never diverge.)
 
-**(d) Submit and verify.** The node sends the evidence to the KBS's `request_key()`. The KBS first **burns the nonce** (marks it consumed *before* verifying — so a failed attempt can't be retried with the same nonce), checks it was issued and unexpired, then calls `DefaultVerifier::verify()`, which runs these checks **in fail-closed order** (Phase 5 layout, 2026-09-17):
+**(d) Submit and verify.** The node sends the evidence to the KBS's `request_key()`. The KBS first **burns the nonce** (marks it consumed *before* verifying — so a failed attempt can't be retried with the same nonce), checks it was issued and unexpired, then calls `DefaultVerifier::verify()`, which runs these checks **in fail-closed order** (Phase 5 layout and Policy schema 2, 2026-09-17):
 
+0. The policy is schema 2 in canonical spelling (lowercase hex, no `0x`, right lengths); nothing non-conforming is coerced, it is refused, because the provider signed those exact bytes.
 1. `ev.nonce` matches the KBS-issued nonce.
 1b. **Real-payload guard:** if `gpu_report` is a real `nvidia_payload` JSON object, refuse with "needs the Phase-5 verifier" (this verifier is mock-only; the real broker verifier judges real evidence).
 2. `cpu_quote.len() >= 64`.
@@ -150,11 +153,11 @@ This layout (Phase 5, 2026-09-17; it matches Phala's dstack reference node) repl
 4. **Nonce, CPU half:** `report_data[32..64] ==` the issued nonce, in the clear.
 5. Decode `gpu_report` into `GpuReportFields` (the mock shape; the real path maps NRAS EAT claims into it).
 6. **Nonce, GPU half:** the nonce inside the GPU evidence `==` the issued nonce. Two independently signed quotes, one challenge: this is the whole cross-binding.
-7. **Measurement:** `image_measurement == policy.expected_measurement` (mock-era: the real verifier takes MRTD/RTMRs from the verified quote, never from this node-asserted field; Policy v2 replaces it).
-8. **SKU allowlist:** the GPU model is approved.
+7. **Measurement:** the mock's `image_measurement` (its stand-in for MRTD) must equal `policy.cvm.mrtd`. The real broker verifier compares MRTD and RTMR0–2 from the *verified* quote and replays RTMR3 for `os_image_hash` / `compose_hash`; the mock cannot, so those are validated for form only.
+8. **Hardware model:** `hwmodel` is in `policy.gpu.allowed_hwmodels`.
 9. **CC mode:** if required, matched *exactly* (`on` ≠ `devtools`).
-10. **Production TCB:** if required, no debug TCB.
-11. **TCB age:** `tcb_age_days <= max_tcb_age_days` (mock-era; Policy v2 uses the TDX TCB status instead).
+10. **TD debug:** if `policy.cvm.require_td_debug_off`, the TD DEBUG attribute must be clear.
+11. **TCB status:** in `policy.cvm.allowed_tcb_status` (exact strings such as `UpToDate`; widening is a signed policy change); then GPU secure boot / debug status and the optional driver and VBIOS version floors.
 12. **Validity window:** broken clock fails; `not_before ≤ now ≤ expiry`.
 
 Any failure → `TeeError::VerificationFailed`, no key released.
@@ -212,8 +215,8 @@ The supporting promises:
 - **Confidentiality + forward secrecy** — DEK wrapped under ephemeral ECDH; compromising `pk_att_secret` later can't decrypt past captures.
 - **Freshness + replay protection** — single-use, TTL-bounded nonces; burned up-front.
 - **Two distinct nonces, no overlap** — the 32-byte *KBS nonce* (attestation freshness; the value both quotes are bound to) and the 16-byte container *nonce_base* (AEAD chunk encryption) never mix, avoiding a false sense of single-nonce safety.
-- **Provider control via signed policy** — pin the measurement, allowlist SKUs, require CC-On / production TCB, cap TCB age, set a validity window. Policies are off-chain and signed, so they can be rotated (tighten, revoke) *without re-encrypting the weights*.
-- **Capability discovery** — a node advertises `tee-attested` (in registration metadata and the WebSocket handshake) **iff** `HOST_TEE_ENABLED`, so clients select only nodes that will honor encrypted models. Legacy-registry deployments emit no `capabilities` key at all, so they can't accidentally claim TEE support.
+- **Provider control via signed policy** (schema 2) — pin the CVM registers (`mrtd`, `rtmr0`–`rtmr2`, `os_image_hash`, `compose_hash`), allow-list GPU models (`hwmodel`), require CC mode, secure boot and debug off, set driver/VBIOS floors, allow-list TCB statuses and advisories, set a validity window. Policies are off-chain and signed, so they can be rotated (tighten, revoke) *without re-encrypting the weights*.
+- **Capability discovery** — a node advertises `tee-attested` (in registration metadata and the WebSocket handshake) **iff** `HOST_TEE_ENABLED` **and** the model behind it was not a test-keyring release (Phase 5: a CPU gate node keyed against canned GPU evidence runs without the advert), so clients select only nodes that will honor encrypted models against real evidence. Legacy-registry deployments emit no `capabilities` key at all, so they can't accidentally claim TEE support.
 
 ---
 
@@ -268,7 +271,7 @@ Phase 5 is the hardware-dependent remainder: swap the mocks for real, hardware-r
 
 **Vendor specs to pin (open questions):** NVIDIA Attestation SDK version, CC-driver branch, guest-kernel version; the exact byte sequence of `gpu_report`, whether `gpu_report_hash` covers the full DER blob or parsed fields, nonce composition, and DER/PEM parsing libraries.
 
-**Reproducible measured-CVM image (D6):** Fabstir publishes deterministic node-CVM images so the launch measurement is stable; providers pin those reference measurements into `SignedModelPolicy.expected_measurement`. This is flagged as the item *most likely to slip* — if the image builds non-deterministically, providers can't pin a measurement and the whole attestation guarantee collapses.
+**Reproducible measured-CVM image (D6):** Fabstir publishes deterministic node-CVM images so the launch measurement is stable; providers pin those reference measurements into the policy's `cvm` block (`mrtd`, `rtmr0`–`rtmr2`, `os_image_hash`, `compose_hash`; schema 2). This is flagged as the item *most likely to slip* — if the image builds non-deterministically, providers can't pin a measurement and the whole attestation guarantee collapses.
 
 **Deploy:** VFIO GPU passthrough; enable CC + ready-state (`nvidia-smi conf-compute -srs 1`); decrypted weights *only* to in-CVM tmpfs (`TEE_DECRYPT_DIR`), sized for the full multi-GB model plus KV cache plus headroom.
 
@@ -332,9 +335,9 @@ The handoff lives in **`PHASE-4-TO-5-READINESS.md`**, sized for the Phase-5 team
 - **Secure delete:** single-pass zeroize (RAM is TEE-encrypted) then unlink; idempotent.
 - **Signed model policy:** the provider-signed off-chain authorization to release the DEK for a model.
 - **Silent-truncation vector:** dropping chunks and editing `num_chunks`; defeated by binding the full header into every chunk's AAD.
-- **SKU:** a GPU model identifier (e.g. H100, H200) the provider can allowlist.
-- **TCB (Trusted Computing Base):** the security-critical firmware/microcode/kernel the TEE relies on; "age" measures patch staleness.
-- **`tee-attested`:** a capability string advertised iff `HOST_TEE_ENABLED`, letting clients select TEE-honoring nodes.
+- **hwmodel:** the GPU model identifier NVIDIA's attestation reports (e.g. H100, H200); the policy's `allowed_hwmodels` allow-lists it.
+- **TCB (Trusted Computing Base):** the security-critical firmware/microcode/kernel the TEE relies on; the policy allow-lists the acceptable TCB statuses (e.g. `UpToDate`) and advisory ids rather than an age.
+- **`tee-attested`:** a capability string advertised iff `HOST_TEE_ENABLED` and the loaded model was not a test-keyring release, letting clients select TEE-honoring nodes.
 - **TEE (Trusted Execution Environment):** a hardware-isolated, memory-encrypted, attestable execution context.
 - **tmpfs:** RAM-backed filesystem (mode 0600 here); decrypted weights live only here, never on disk.
 - **TOCTOU (Time-of-Check-to-Time-of-Use):** a race where a file is swapped between verification and use; logged in Phase 4, closed in Phase 5.

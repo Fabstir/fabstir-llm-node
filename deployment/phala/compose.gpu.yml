@@ -4,7 +4,8 @@
 # Phala Cloud GPU CVM compose (Custom Deploy). Phase 5 attested inference, the
 # paid-day configuration. Guarded by `cargo test --test phase5_compose_guard`
 # (gate A-19): no build:, no relative bind mounts, image by digest, and none of
-# TEE_GPU_EVIDENCE / KBS_GPU_EVIDENCE / TEE_CPU_ONLY_STUB may appear here.
+# TEE_GPU_EVIDENCE / KBS_GPU_EVIDENCE / TEE_CPU_ONLY_STUB / TEE_ACCEPT_TEST_RELEASE
+# may appear here.
 #
 # Every ${VAR} below is supplied through the deploy form's ENCRYPTED environment
 # variables (sealed to the CVM), never written into this file: this file is
@@ -15,9 +16,17 @@
 # it is a real 64-hex sha256.
 services:
   llm-node:
-    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:7776e144c88c46caace357a2894100b70c70d0198701340999a4346f9c1a2e4f
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:715f28be882da2796d411691d8c87542d1b4b22ea6d4da326a73a62dd2bd4c83
     container_name: llm-node
-    restart: unless-stopped
+    # on-failure with a cap, never unless-stopped/always: a refused attested
+    # load exits 78 and an unbounded policy would re-download the container,
+    # burn a broker nonce, collect GPU evidence and decrypt on every loop. The
+    # node also pauses 20 s before that exit. A clean stop (exit 0) never restarts.
+    restart: on-failure:5
+    # The node's own stop path (API drain 5 s + P2P leave, or the watchdog's
+    # 8 s bound) must finish before the daemon's SIGKILL; docker's default
+    # grace is 10 s, too close. Guard-enforced.
+    stop_grace_period: 30s
     # The dstack OS image this compose expects on the deploy form. Measured into
     # RTMR3 with the rest of the compose; asserted per file by the guard test.
     # CPU image dstack-v0.5.9 and GPU image dstack-nvidia-0.5.9 are near-identical
@@ -42,19 +51,27 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
 
       # --- attested load path (Phase 5) ---
-      # HOST_TEE_ENABLED is read by EVERY build since 8.30 and makes the node
-      # advertise `tee-attested` in the WS handshake and the registry metadata
-      # (protocol.rs, registration.rs). The image pinned above is the v8.54.0
-      # binary, which reads none of the other TEE_* variables and loads plain
-      # models, so it MUST stay "false" here until the P3.3 rebuild, which makes
-      # "true" without a completed attested load a startup failure. The guard
-      # test pins this value; P3.3 flips the compose and the guard in one change
-      # (converge review, rounds 1 and 4, 2026-09-17).
-      HOST_TEE_ENABLED: "false"
+      # HOST_TEE_ENABLED=true means the model MUST come from an attested decrypt
+      # or the node does not start (src/tee/live.rs decision table, exit 78):
+      # the image pinned above is v8.55.0, the first build that enforces it and
+      # therefore the first that may advertise `tee-attested`. The flag and the
+      # TEE_* block below are all-or-nothing; the guard test checks they move
+      # together (flipped 2026-09-18 with the v8.55.0 digest).
+      HOST_TEE_ENABLED: "true"
+      # TEE_MODEL_PROVIDER = the 0x address whose signature the policy must
+      # carry. TEE_EXPECTED_MODEL_SHA256 = the on-chain hash of the plaintext
+      # model; optional (absent = a CRITICAL warning, never silent).
       TEE_MODEL_ID: ${TEE_MODEL_ID}
+      TEE_MODEL_PROVIDER: ${TEE_MODEL_PROVIDER}
       TEE_KBS_URL: ${TEE_KBS_URL}
       TEE_POLICY_URL: ${TEE_POLICY_URL}
       TEE_BLOB_URL: ${TEE_BLOB_URL}
+      TEE_EXPECTED_MODEL_SHA256: ${TEE_EXPECTED_MODEL_SHA256}
+      # Container size cap in bytes; the default is 2 GiB and a larger container
+      # FAILS CLOSED at boot (exit 78). Raise it to >= the target model's
+      # container at the real-model day (the whole container is held in RAM
+      # until decrypt: size the CVM for container + plaintext + KV cache).
+      TEE_BLOB_MAX_BYTES: "2147483648"
       TEE_DECRYPT_DIR: /dev/shm
       GPU_LAYERS: "99"
       LLAMA_BATCH_SIZE: "2048"

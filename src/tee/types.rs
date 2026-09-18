@@ -7,10 +7,10 @@
 //! [`WrappedKey`] (the DEK bound to the TEE's attestation key), and the module
 //! error [`TeeError`].
 //!
-//! The 48-byte measurement fields (`Evidence::image_measurement`,
-//! `Policy::expected_measurement`) are SHA-384 launch measurements (AMD SEV-SNP
-//! `LAUNCH_MEASUREMENT` / Intel TDX `MRTD`); serde does not derive for arrays
-//! larger than `[T; 32]`, so they use `#[serde(with = "BigArray")]`.
+//! `Evidence::image_measurement` is a 48-byte SHA-384 launch measurement (Intel
+//! TDX `MRTD`; serde does not derive for arrays larger than `[T; 32]`, so it
+//! uses `#[serde(with = "BigArray")]`). The policy side (schema 2) carries its
+//! registers as lowercase hex strings: `CvmPolicy::mrtd` and `rtmr0..2`.
 
 use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
@@ -98,34 +98,194 @@ pub enum CcMode {
     DevTools,
 }
 
-/// Model-provider DEK-release policy (off-chain, signed — decision D3).
+/// Model-provider DEK-release policy, **schema 2** (Phase 5; off-chain, signed,
+/// decision D3). Frozen by expert review 2026-09-17
+/// (`docs/development/PHASE5-POLICY-V2-DRAFT.md`).
+///
+/// Everything pinned here is checked against SIGNED evidence, never against a
+/// node-asserted field. Measurements are lowercase hex strings, because that is
+/// how dstack's `/Info`, the Phala dashboard, `dstack-mr` and the published
+/// release measurements all spell them; a provider pins by copy and paste.
+/// [`Policy::validate`] REFUSES anything non-conforming (a `0x` prefix, upper
+/// case, a wrong length) rather than coercing it: the signature covers the
+/// canonical JSON of the policy exactly as written, so silently rewriting a
+/// value would break the very thing the signature proves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
-    /// Monotonic policy version (enables rotation + version-based revocation).
+    /// Always [`POLICY_SCHEMA_VERSION`]; anything else is refused.
+    pub schema_version: u32,
+    /// Monotonic per model; a newer version revokes older ones.
     pub policy_version: u32,
-    /// GPU SKUs the provider permits (e.g. `"H100"`, `"H200"`).
-    pub allowed_skus: Vec<String>,
-    /// Expected 48-byte node-CVM launch measurement (pinned by the provider).
-    #[serde(with = "BigArray")]
-    pub expected_measurement: [u8; 48],
-    /// Required GPU CC mode, matched EXACTLY. `Some(CcMode::On)` is the
-    /// production setting; `None` imposes no requirement. Accepting `devtools`
-    /// must be spelled out as `Some(CcMode::DevTools)` rather than reachable by
-    /// relaxing a boolean, so no policy can accept an unprotected GPU by
-    /// accident.
-    pub require_cc_mode: Option<CcMode>,
-    /// Require a production (non-debug) CPU TCB.
-    pub require_production_tcb: bool,
-    /// Maximum acceptable CPU TCB age, in days.
-    pub max_tcb_age_days: u32,
-    /// Policy validity start (unix seconds) — anti-replay / rotation.
-    pub not_before: u64,
-    /// Policy expiry (unix seconds), **inclusive**: valid while `now <= expiry`
-    /// (matches the plan's `not_before ≤ now ≤ expiry`). Revoke by setting it in
-    /// the past (e.g. `0`) — see also version-based revocation, [`Policy::policy_version`].
-    pub expiry: u64,
-    /// The model this policy governs.
+    /// The model this policy governs (bytes; bound into the container header).
     pub model_id: [u8; 32],
+    /// Validity start (unix seconds).
+    pub not_before: u64,
+    /// Validity end (unix seconds), **inclusive**. Revoke by setting it in the past.
+    pub expiry: u64,
+    /// What the confidential VM must prove.
+    pub cvm: CvmPolicy,
+    /// What the GPU must prove.
+    pub gpu: GpuPolicy,
+}
+
+/// The policy schema this code reads and writes.
+pub const POLICY_SCHEMA_VERSION: u32 = 2;
+
+/// Intel TDX + dstack expectations. All hex, lowercase, no `0x`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CvmPolicy {
+    /// TD report registers, 48 bytes each (96 hex chars), byte-exact. A function
+    /// of (dstack image, vCPUs, RAM, devices): resizing the CVM re-pins these.
+    pub mrtd: String,
+    pub rtmr0: String,
+    pub rtmr1: String,
+    pub rtmr2: String,
+    /// dstack OS image hash, 32 bytes (64 hex): the `os-image-hash` RTMR3 event.
+    pub os_image_hash: String,
+    /// sha256 of the deployed app-compose, 32 bytes (64 hex): the `compose-hash`
+    /// RTMR3 event. Pins the compose, hence the image digests, hence the binary.
+    pub compose_hash: String,
+    /// dstack app id (the `app-id` event); `None` = any.
+    pub app_id: Option<String>,
+    /// The `key-provider` event payload; `None` = any. MUST be pinned the moment
+    /// the node takes any key from dstack's key provider (known gap G-13).
+    pub key_provider: Option<String>,
+    /// TD attributes: the DEBUG bit must be clear.
+    pub require_td_debug_off: bool,
+    /// dcap-qvl `VerifiedReport.status` allow-list, e.g. `["UpToDate"]`.
+    pub allowed_tcb_status: Vec<String>,
+    /// Intel advisory ids tolerated. Empty = none tolerated.
+    pub allowed_advisory_ids: Vec<String>,
+}
+
+/// NVIDIA GPU expectations, checked against the NRAS EAT (claim-name mapping
+/// lives in the verifier, never here).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuPolicy {
+    /// Accepted hardware model strings (EAT `hwmodel`); captured on the first real
+    /// report (known gap G-4).
+    pub allowed_hwmodels: Vec<String>,
+    /// Required CC mode, matched EXACTLY. See [`CcMode`]. The signed source for
+    /// this value is known gap G-6.
+    pub require_cc_mode: Option<CcMode>,
+    /// GPU secure boot / debug status.
+    pub require_secure_boot: bool,
+    pub require_debug_disabled: bool,
+    /// Minimum driver / VBIOS versions (dotted numeric compare); `None` = any
+    /// that NRAS accepts.
+    pub min_driver_version: Option<String>,
+    pub min_vbios_version: Option<String>,
+}
+
+fn check_hex(name: &str, s: &str, bytes: usize) -> TeeResult<()> {
+    let ok = s.len() == bytes * 2 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    if ok {
+        Ok(())
+    } else {
+        Err(TeeError::VerificationFailed(format!(
+            "policy {name}: expected {} lowercase hex chars without 0x, got {:?}",
+            bytes * 2,
+            if s.chars().count() > 20 {
+                format!("{}…", s.chars().take(20).collect::<String>())
+            } else {
+                s.to_string()
+            }
+        )))
+    }
+}
+
+impl Policy {
+    /// Refuse a policy that is not schema 2 or whose pinned values are not in
+    /// the canonical spelling. No coercion: the provider signed these bytes.
+    pub fn validate(&self) -> TeeResult<()> {
+        if self.schema_version != POLICY_SCHEMA_VERSION {
+            return Err(TeeError::VerificationFailed(format!(
+                "policy schema_version {} is not {POLICY_SCHEMA_VERSION}",
+                self.schema_version
+            )));
+        }
+        let c = &self.cvm;
+        check_hex("cvm.mrtd", &c.mrtd, 48)?;
+        check_hex("cvm.rtmr0", &c.rtmr0, 48)?;
+        check_hex("cvm.rtmr1", &c.rtmr1, 48)?;
+        check_hex("cvm.rtmr2", &c.rtmr2, 48)?;
+        check_hex("cvm.os_image_hash", &c.os_image_hash, 32)?;
+        check_hex("cvm.compose_hash", &c.compose_hash, 32)?;
+        if c.allowed_tcb_status.is_empty() {
+            return Err(TeeError::VerificationFailed(
+                "policy cvm.allowed_tcb_status is empty: no TCB status could ever pass".into(),
+            ));
+        }
+        if self.gpu.allowed_hwmodels.is_empty() {
+            return Err(TeeError::VerificationFailed(
+                "policy gpu.allowed_hwmodels is empty: no GPU could ever pass".into(),
+            ));
+        }
+        // Version floors must be well-formed by the rule `version_at_least`
+        // applies (dotted, every component non-empty hex), or every real driver
+        // string would fail the floor on the GPU day, one burned nonce per try.
+        for (name, floor) in [
+            ("gpu.min_driver_version", &self.gpu.min_driver_version),
+            ("gpu.min_vbios_version", &self.gpu.min_vbios_version),
+        ] {
+            if let Some(v) = floor {
+                let well_formed = !v.trim().is_empty()
+                    && v.split('.')
+                        .all(|c| !c.trim().is_empty() && u64::from_str_radix(c.trim(), 16).is_ok());
+                if !well_formed {
+                    return Err(TeeError::VerificationFailed(format!(
+                        "policy {name}: expected dotted hex components (e.g. 580.95.05 or 96.00.9f.00.01), got {v:?}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `a >= b` for dotted versions. Each component is compared as a
+/// **hexadecimal** integer, case-insensitively: NVIDIA VBIOS strings carry hex
+/// components (`96.00.9f.00.01`) and driver strings are decimal
+/// (`580.95.05`); parsing decimal digit strings as hex preserves their order
+/// (same digit order, longer = larger), so one rule serves both. A component
+/// that is not hex at all, on either side, makes the answer `false` (refuse;
+/// never a lexical fallback, which would pass `unknown` or `r580` above any
+/// floor). Missing trailing components and EMPTY components (`580.95.05.`,
+/// `580..95`) count as zero, so a formatting quirk never silently refuses a
+/// GPU.
+pub fn version_at_least(a: &str, b: &str) -> bool {
+    let parts = |v: &str| -> Vec<String> {
+        v.split('.')
+            .map(|p| {
+                let p = p.trim().to_ascii_lowercase();
+                if p.is_empty() {
+                    "0".to_string()
+                } else {
+                    p
+                }
+            })
+            .collect()
+    };
+    let (pa, pb) = (parts(a), parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (
+            pa.get(i).map(String::as_str).unwrap_or("0"),
+            pb.get(i).map(String::as_str).unwrap_or("0"),
+        );
+        // A component that is not hex on EITHER side refuses: a lexical
+        // fallback would put letters above digits (`unknown`, `r580` > any
+        // floor) and pass the check open.
+        let ord = match (u64::from_str_radix(x, 16), u64::from_str_radix(y, 16)) {
+            (Ok(x), Ok(y)) => x.cmp(&y),
+            _ => return false,
+        };
+        match ord {
+            std::cmp::Ordering::Greater => return true,
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+    true
 }
 
 /// Result of a successful attestation verification.
@@ -190,6 +350,15 @@ pub enum TeeError {
     /// payload (Phase 5). Node-side; always fail-closed.
     #[error("gpu evidence: {0}")]
     GpuEvidence(String),
+    /// The key broker could not be reached, refused TLS, or answered out of
+    /// contract (Phase 5). Transport-class; the contract errors (freshness,
+    /// verification, no provider) map to their own variants instead.
+    #[error("key broker: {0}")]
+    Kbs(String),
+    /// A policy or container fetch failed or was refused (Phase 5): transport,
+    /// non-2xx, oversize, or an insecure URL. Always fail-closed.
+    #[error("fetch: {0}")]
+    Fetch(String),
     /// Cryptographic operation failed (wrap/unwrap, AEAD, key parsing).
     #[error("crypto error: {0}")]
     Crypto(String),
@@ -198,17 +367,12 @@ pub enum TeeError {
     Io(#[from] std::io::Error),
 }
 
-/// The security-relevant fields a GPU attestation report yields.
-///
-/// In Phases 1–4 the mock provider bincode-encodes this into
-/// `Evidence::gpu_report` and `DefaultVerifier` decodes it; in Phase 5 the real
-/// verifier parses these same logical fields from the real DER attestation
-/// report. It lives here (the neutral shared home), not in `verifier`/`mock`, so
-/// the real verifier can reuse the policy checks without depending on the mock.
-///
-/// Phase 5 note: `production_tcb`/`tcb_age_days` describe the **CPU** TCB and
-/// MUST then be sourced from the CPU quote, not the GPU report (the mock
-/// conflates them — a real host's GPU report cannot attest CPU-TCB state).
+/// The mock-shaped view of the evidence the mock verifier judges (Phases 1–4
+/// and the gate rounds). The mock provider bincode-encodes this into
+/// `Evidence::gpu_report`; the Phase-5 broker verifier builds the same logical
+/// fields from the NRAS EAT (GPU half) and the dcap-qvl report (CVM half)
+/// instead. It lives here, the neutral shared home, so the policy checks are
+/// written once against these names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuReportFields {
     /// The 32-byte challenge nonce the GPU evidence was collected under. Real
@@ -217,15 +381,22 @@ pub struct GpuReportFields {
     /// verifier's "same nonce on both halves" check is exercised. This, not a
     /// hash in `report_data`, is what binds the GPU half to the CPU half.
     pub nonce: [u8; 32],
-    /// GPU SKU (e.g. `"H100"`, `"H200"`).
-    pub sku: String,
+    /// Hardware model string (EAT `hwmodel`).
+    pub hwmodel: String,
     /// The CC mode the GPU reports. See [`CcMode`]: `DevTools` attests but
     /// protects nothing, so this must never be narrowed to a boolean.
     pub cc_mode: CcMode,
-    /// Whether the CPU TCB is a production (non-debug) TCB.
-    pub production_tcb: bool,
-    /// CPU TCB age, in days.
-    pub tcb_age_days: u32,
+    /// GPU secure boot and debug status (EAT `secboot`, `dbgstat`).
+    pub secure_boot: bool,
+    pub debug_disabled: bool,
+    /// Driver and VBIOS versions (EAT claims).
+    pub driver_version: String,
+    pub vbios_version: String,
+    /// CVM side (the mock conflates it here; the real verifier takes these from
+    /// the verified TDX quote): TD DEBUG attribute clear, and the TCB status
+    /// string dcap-qvl reports.
+    pub td_debug_off: bool,
+    pub tcb_status: String,
 }
 
 /// `sha256(data)` as a 32-byte array.

@@ -87,7 +87,10 @@ mod tests {
     #[test]
     fn echo_error_bounds_but_keeps_the_diagnosis_at_the_tail() {
         // The exact shape serde produces, which is why this exists.
-        let long = format!("invalid type: string \"{}\", expected u32", "A".repeat(200_000));
+        let long = format!(
+            "invalid type: string \"{}\", expected u32",
+            "A".repeat(200_000)
+        );
         let out = echo_error(&long);
         assert!(out.len() < 512, "{} bytes", out.len());
         assert!(out.starts_with("invalid type: string"), "{out}");

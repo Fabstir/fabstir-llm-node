@@ -1602,10 +1602,7 @@ pub async fn run_training_session(
                     &accepted.snapshot,
                     now_secs,
                     crate::training::redact::opaque(
-                        &format!(
-                        "sidecar terminal {}",
-                        crate::training::redact::echo(&kind)
-                    ),
+                        &format!("sidecar terminal {}", crate::training::redact::echo(&kind)),
                         detail,
                     ),
                     last_checkpoint,

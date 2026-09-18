@@ -11,21 +11,38 @@ use fabstir_llm_node::tee::policy::{
 use fabstir_llm_node::tee::policy_source::{
     fetch_validated_policy, PolicySource, ProviderRegistry,
 };
-use fabstir_llm_node::tee::types::{CcMode,Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError, TeeResult};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature, SigningKey};
 use std::collections::HashMap;
 
 fn a_policy(model_id: [u8; 32], version: u32, not_before: u64, expiry: u64) -> Policy {
     Policy {
+        schema_version: 2,
         policy_version: version,
-        allowed_skus: vec!["H100".to_string()],
-        expected_measurement: [0x11u8; 48],
-        require_cc_mode: Some(CcMode::On),
-        require_production_tcb: true,
-        max_tcb_age_days: 30,
-        not_before,
-        expiry,
-        model_id,
+        model_id: model_id,
+        not_before: not_before,
+        expiry: expiry,
+        cvm: CvmPolicy {
+            mrtd: hex::encode([0x11u8; 48]),
+            rtmr0: "00".repeat(48),
+            rtmr1: "00".repeat(48),
+            rtmr2: "00".repeat(48),
+            os_image_hash: "00".repeat(32),
+            compose_hash: "00".repeat(32),
+            app_id: None,
+            key_provider: None,
+            require_td_debug_off: true,
+            allowed_tcb_status: vec!["UpToDate".to_string()],
+            allowed_advisory_ids: vec![],
+        },
+        gpu: GpuPolicy {
+            allowed_hwmodels: vec!["H100".to_string()],
+            require_cc_mode: Some(CcMode::On),
+            require_secure_boot: true,
+            require_debug_disabled: true,
+            min_driver_version: None,
+            min_vbios_version: None,
+        },
     }
 }
 

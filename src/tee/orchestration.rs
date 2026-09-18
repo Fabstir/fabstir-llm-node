@@ -91,6 +91,17 @@ pub async fn prepare_attested_model(
     let path = loader
         .prepare_encrypted_model(s5, kbs, attestation, &spec)
         .await?;
+    // From here until the caller owns the result, the plaintext is guarded: an
+    // error OR a cancellation (a caller dropping this future at the hash step's
+    // awaits) purges it. Disarmed only on success. In the node binary a stop
+    // does not cancel this future (the watchdog unlinks from its own thread and
+    // exits); the guard is what makes the function safe for any caller.
+    let mut guard = PlaintextGuard {
+        loader,
+        model_id,
+        policy_hash,
+        armed: true,
+    };
 
     // 3. (4.3.2) Bind decrypted weights to the on-chain-approved model by SHA-256.
     match expected_model_hash {
@@ -104,17 +115,12 @@ pub async fn prepare_attested_model(
                 );
             }
             Ok(got) => {
-                return fail_closed(
-                    loader,
-                    &model_id,
-                    &policy_hash,
-                    TeeError::ModelHashMismatch {
-                        expected: expected.to_string(),
-                        got,
-                    },
-                )
+                return Err(TeeError::ModelHashMismatch {
+                    expected: expected.to_string(),
+                    got,
+                })
             }
-            Err(e) => return fail_closed(loader, &model_id, &policy_hash, e),
+            Err(e) => return Err(e),
         },
         None => tracing::warn!(
             target: "tee",
@@ -123,6 +129,7 @@ pub async fn prepare_attested_model(
         ),
     }
 
+    guard.armed = false;
     Ok(PreparedModel {
         path,
         model_id,
@@ -131,20 +138,27 @@ pub async fn prepare_attested_model(
     })
 }
 
-/// Drop our cache reference and securely delete the plaintext, then return `err`.
-///
-/// `release` + `evict_unreferenced` only deletes the file when no *other* in-flight
-/// load still references it, so this is safe even under a concurrent load of the
-/// same model (each failing caller releases; the file dies when the last ref drops).
-fn fail_closed(
-    loader: &EncryptedModelLoader,
-    model_id: &[u8; 32],
-    policy_hash: &[u8; 32],
-    err: TeeError,
-) -> TeeResult<PreparedModel> {
-    loader.release(model_id, policy_hash);
-    loader.evict_unreferenced();
-    Err(err)
+/// Holds the loader's cache reference for a freshly decrypted plaintext while
+/// `prepare_attested_model` is still working on it. While armed, dropping it
+/// (an `Err` return, or a caller cancelling the future mid-await) drops the
+/// reference and securely deletes the file; `release` + `evict_unreferenced`
+/// only deletes when no *other* in-flight load still references it, so this is
+/// safe under a concurrent load of the same model. Nothing has mapped the file
+/// at this point, so the in-place overwrite is safe here.
+struct PlaintextGuard<'a> {
+    loader: &'a EncryptedModelLoader,
+    model_id: [u8; 32],
+    policy_hash: [u8; 32],
+    armed: bool,
+}
+
+impl Drop for PlaintextGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.loader.release(&self.model_id, &self.policy_hash);
+            self.loader.evict_unreferenced();
+        }
+    }
 }
 
 /// Stream-hash a file to lowercase-hex SHA-256.

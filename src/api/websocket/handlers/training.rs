@@ -244,7 +244,7 @@ pub async fn handle_encrypted_train_for_client(
                     crate::training::redact::echo_error(&e.to_string())
                 ),
                 declared_actual: None,
-            })
+            });
         }
     };
     match accept_session_for_client(&deps, job_id, &job, now_secs, vault_client).await {

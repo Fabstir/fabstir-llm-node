@@ -207,9 +207,8 @@ fn loader_requires_a_wellformed_base_serving_model_id() {
 
     // Happy: read, lower-cased, 0x-prefixed.
     let mut upper = template_json();
-    upper["base"]["baseServingModelId"] = serde_json::json!(
-        "0x00000000000000000000000000000000000000000000000000000000000000BA"
-    );
+    upper["base"]["baseServingModelId"] =
+        serde_json::json!("0x00000000000000000000000000000000000000000000000000000000000000BA");
     std::fs::write(&path, serde_json::to_string(&upper).unwrap()).unwrap();
     let template = load_training_template(&path).expect("loads");
     assert_eq!(

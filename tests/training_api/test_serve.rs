@@ -182,14 +182,22 @@ async fn happy_stage_verifies_writes_0600_and_registers() {
         .expect("stages");
     assert_eq!(staged.session_id, "session-A");
     assert_eq!(staged.file, "adapter.gguf");
-    assert!(staged.path.ends_with("adapters/session-A/adapter.gguf"), "{:?}", staged.path);
+    assert!(
+        staged.path.ends_with("adapters/session-A/adapter.gguf"),
+        "{:?}",
+        staged.path
+    );
     // The staged bytes ARE the artifact.
     assert_eq!(std::fs::read(&staged.path).unwrap(), fx.gguf_bytes);
     // 0600 (TD9: the adapter is private user property on a shared box).
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&staged.path).unwrap().permissions().mode() & 0o777;
+        let mode = std::fs::metadata(&staged.path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600, "staged adapter must be 0600, was {mode:o}");
     }
     assert_eq!(registry.adapter_for("session-A"), Some(staged));
@@ -236,7 +244,10 @@ async fn wrong_file_sha_is_integrity_and_stages_nothing() {
         ServeError::Integrity(detail) => assert!(detail.contains("adapter.gguf"), "{detail}"),
         other => panic!("expected Integrity, got {other:?}"),
     }
-    assert!(registry.adapter_for("s").is_none(), "a failed stage registers nothing");
+    assert!(
+        registry.adapter_for("s").is_none(),
+        "a failed stage registers nothing"
+    );
     assert!(
         !dir.path().join("adapters/s/adapter.gguf").exists(),
         "no half-written adapter survives"
@@ -353,8 +364,14 @@ async fn adapters_are_isolated_per_session() {
         .await
         .expect("B stages");
     assert_ne!(staged_a.path, staged_b.path, "per-session staging paths");
-    assert_eq!(registry.adapter_for("session-A").unwrap().path, staged_a.path);
-    assert_eq!(registry.adapter_for("session-B").unwrap().path, staged_b.path);
+    assert_eq!(
+        registry.adapter_for("session-A").unwrap().path,
+        staged_a.path
+    );
+    assert_eq!(
+        registry.adapter_for("session-B").unwrap().path,
+        staged_b.path
+    );
 }
 
 #[tokio::test]
@@ -376,7 +393,10 @@ async fn eviction_deregisters_and_deletes_the_file() {
     assert!(staged.path.exists());
     registry.evict("session-A").await;
     assert!(registry.adapter_for("session-A").is_none(), "deregistered");
-    assert!(!staged.path.exists(), "the staged adapter FILE must be deleted");
+    assert!(
+        !staged.path.exists(),
+        "the staged adapter FILE must be deleted"
+    );
     // Evicting an unknown session is a no-op, not a panic.
     registry.evict("never-existed").await;
 }
@@ -463,12 +483,26 @@ async fn one_adapter_per_session_a_restage_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let registry = AdapterRegistry::new();
     let first = registry
-        .stage(&fx.base_url, dir.path(), "s", BASE_MODEL, BASE_MODEL, &request(&fx, "adapter.gguf"))
+        .stage(
+            &fx.base_url,
+            dir.path(),
+            "s",
+            BASE_MODEL,
+            BASE_MODEL,
+            &request(&fx, "adapter.gguf"),
+        )
         .await
         .expect("first stages");
     let fx2 = adapter_fixture(true, None).await;
     let second = registry
-        .stage(&fx2.base_url, dir.path(), "s", BASE_MODEL, BASE_MODEL, &request(&fx2, "adapter.gguf"))
+        .stage(
+            &fx2.base_url,
+            dir.path(),
+            "s",
+            BASE_MODEL,
+            BASE_MODEL,
+            &request(&fx2, "adapter.gguf"),
+        )
         .await;
     assert!(
         matches!(second, Err(ServeError::Validation(_))),
@@ -487,11 +521,25 @@ async fn evicting_one_session_leaves_another_intact() {
     let dir = tempfile::tempdir().unwrap();
     let registry = AdapterRegistry::new();
     let a = registry
-        .stage(&fx_a.base_url, dir.path(), "A", BASE_MODEL, BASE_MODEL, &request(&fx_a, "adapter.gguf"))
+        .stage(
+            &fx_a.base_url,
+            dir.path(),
+            "A",
+            BASE_MODEL,
+            BASE_MODEL,
+            &request(&fx_a, "adapter.gguf"),
+        )
         .await
         .unwrap();
     let b = registry
-        .stage(&fx_b.base_url, dir.path(), "B", BASE_MODEL, BASE_MODEL, &request(&fx_b, "adapter.gguf"))
+        .stage(
+            &fx_b.base_url,
+            dir.path(),
+            "B",
+            BASE_MODEL,
+            BASE_MODEL,
+            &request(&fx_b, "adapter.gguf"),
+        )
         .await
         .unwrap();
     registry.evict("A").await;
@@ -544,12 +592,22 @@ async fn a_tampered_second_shard_is_caught_by_the_per_shard_check() {
     let fx = multishard_fixture(true).await;
     let dir = tempfile::tempdir().unwrap();
     match AdapterRegistry::new()
-        .stage(&fx.base_url, dir.path(), "s", BASE_MODEL, BASE_MODEL, &request(&fx, "adapter.gguf"))
+        .stage(
+            &fx.base_url,
+            dir.path(),
+            "s",
+            BASE_MODEL,
+            BASE_MODEL,
+            &request(&fx, "adapter.gguf"),
+        )
         .await
         .unwrap_err()
     {
         ServeError::Integrity(detail) => {
-            assert!(detail.contains("shard 1"), "must name the tampered shard: {detail}")
+            assert!(
+                detail.contains("shard 1"),
+                "must name the tampered shard: {detail}"
+            )
         }
         other => panic!("expected Integrity, got {other:?}"),
     }
@@ -571,11 +629,25 @@ async fn a_preexisting_loose_file_cannot_keep_its_mode() {
         std::fs::write(&victim, b"pre-existing").unwrap();
         std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).unwrap();
         let staged = AdapterRegistry::new()
-            .stage(&fx.base_url, dir.path(), "s", BASE_MODEL, BASE_MODEL, &request(&fx, "adapter.gguf"))
+            .stage(
+                &fx.base_url,
+                dir.path(),
+                "s",
+                BASE_MODEL,
+                BASE_MODEL,
+                &request(&fx, "adapter.gguf"),
+            )
             .await
             .expect("stages over the leftover");
-        let mode = std::fs::metadata(&staged.path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "a leftover file must not keep its loose mode, was {mode:o}");
+        let mode = std::fs::metadata(&staged.path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "a leftover file must not keep its loose mode, was {mode:o}"
+        );
         assert_eq!(std::fs::read(&staged.path).unwrap(), fx.gguf_bytes);
     }
 }
@@ -709,7 +781,11 @@ async fn a_failed_stage_releases_its_reservation() {
         )
         .await;
     assert!(matches!(first, Err(ServeError::Integrity(_))), "{first:?}");
-    assert_eq!(registry.adapter_for("session-A"), None, "a failure must register nothing");
+    assert_eq!(
+        registry.adapter_for("session-A"),
+        None,
+        "a failure must register nothing"
+    );
 
     // The same id must still be stageable.
     let good = adapter_fixture(true, None).await;
@@ -764,14 +840,21 @@ async fn the_boot_sweep_clears_orphan_adapter_dirs() {
     let adapters = root.path().join("adapters");
     std::fs::create_dir_all(adapters.join("dead-session-1")).unwrap();
     std::fs::create_dir_all(adapters.join("dead-session-2")).unwrap();
-    std::fs::write(adapters.join("dead-session-1").join("adapter.gguf"), b"private").unwrap();
+    std::fs::write(
+        adapters.join("dead-session-1").join("adapter.gguf"),
+        b"private",
+    )
+    .unwrap();
     std::fs::write(adapters.join("not-a-dir"), b"stray").unwrap();
 
     let swept = fabstir_llm_node::training::serve::sweep_orphan_adapter_dirs(root.path());
     assert_eq!(swept, 2, "both orphan session dirs must be swept");
     assert!(!adapters.join("dead-session-1").exists());
     assert!(!adapters.join("dead-session-2").exists());
-    assert!(adapters.join("not-a-dir").exists(), "the sweep removes DIRS, not stray files");
+    assert!(
+        adapters.join("not-a-dir").exists(),
+        "the sweep removes DIRS, not stray files"
+    );
 }
 
 #[tokio::test]
@@ -810,7 +893,10 @@ async fn a_symlink_at_the_destination_is_replaced_not_followed() {
         b"untouched",
         "the symlink target outside the session dir must never be written"
     );
-    assert!(!std::fs::symlink_metadata(&staged.path).unwrap().file_type().is_symlink());
+    assert!(!std::fs::symlink_metadata(&staged.path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
     assert_eq!(std::fs::read(&staged.path).unwrap(), fx.gguf_bytes);
 }
 
@@ -853,19 +939,21 @@ async fn gated_adapter_fixture() -> (
 
     let app = axum::Router::new().route(
         "/s5/blob/:cid",
-        axum::routing::get(move |axum::extract::Path(cid): axum::extract::Path<String>| {
-            let (store, a, r, f) = (store.clone(), a.clone(), r.clone(), f.clone());
-            async move {
-                if f.swap(false, Ordering::SeqCst) {
-                    a.notify_one();
-                    r.notified().await;
+        axum::routing::get(
+            move |axum::extract::Path(cid): axum::extract::Path<String>| {
+                let (store, a, r, f) = (store.clone(), a.clone(), r.clone(), f.clone());
+                async move {
+                    if f.swap(false, Ordering::SeqCst) {
+                        a.notify_one();
+                        r.notified().await;
+                    }
+                    match store.get(&cid) {
+                        Some(bytes) => (axum::http::StatusCode::OK, bytes.clone()),
+                        None => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+                    }
                 }
-                match store.get(&cid) {
-                    Some(bytes) => (axum::http::StatusCode::OK, bytes.clone()),
-                    None => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
-                }
-            }
-        }),
+            },
+        ),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -921,7 +1009,11 @@ async fn an_evict_during_staging_cancels_it_and_leaves_nothing_behind() {
         matches!(result, Err(ServeError::Cancelled(_))),
         "a stage overtaken by eviction must report cancellation, got {result:?}"
     );
-    assert_eq!(registry.adapter_for("session-A"), None, "nothing may stay registered");
+    assert_eq!(
+        registry.adapter_for("session-A"),
+        None,
+        "nothing may stay registered"
+    );
     assert!(
         !dir.path().join("adapters").join("session-A").exists(),
         "a cancelled stage must leave no private weights behind"
@@ -1171,8 +1263,7 @@ async fn an_encrypted_init_naming_another_sessions_id_cannot_resolve_its_adapter
         },
     });
     let nonce = [9u8; 24];
-    let ciphertext =
-        encrypt_with_aead(inner.to_string().as_bytes(), &nonce, b"", &shared).unwrap();
+    let ciphertext = encrypt_with_aead(inner.to_string().as_bytes(), &nonce, b"", &shared).unwrap();
     let signature: k256::ecdsa::Signature = SigningKey::random(&mut OsRng).sign(&ciphertext);
     let mut sig = [0u8; 65];
     sig[..64].copy_from_slice(&signature.to_bytes());
@@ -1465,7 +1556,10 @@ async fn a_failed_reinit_refuses_prompts_rather_than_falling_back_to_the_base_mo
          code={code:?} message={message:?}"
     );
     assert!(message.contains("asked for a LoRA adapter"), "{message}");
-    assert_eq!(refusal_id, "req-42", "the refusal must correlate with the request");
+    assert_eq!(
+        refusal_id, "req-42",
+        "the refusal must correlate with the request"
+    );
     assert!(
         saw_stream_end_for_req,
         "a refusal with no stream_end leaves the SDK's promise for this id unsettled, \
@@ -1656,7 +1750,9 @@ async fn a_lora_less_reinit_refuses_on_the_same_job_and_proceeds_on_a_different_
     let _welcome = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await;
 
     // Stage for job 777.
-    ws.send(Message::Text(init(payload("777", true)))).await.unwrap();
+    ws.send(Message::Text(init(payload("777", true))))
+        .await
+        .unwrap();
     let mut staged = false;
     for _ in 0..30 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1665,7 +1761,10 @@ async fn a_lora_less_reinit_refuses_on_the_same_job_and_proceeds_on_a_different_
             break;
         }
     }
-    assert!(staged, "the fixture must stage for real, or neither arm is exercised");
+    assert!(
+        staged,
+        "the fixture must stage for real, or neither arm is exercised"
+    );
 
     // Arm zero: a PLAINTEXT init naming the same job. It evicts the adapter,
     // so if it also cleared the refusal every later prompt would be answered
@@ -1678,8 +1777,7 @@ async fn a_lora_less_reinit_refuses_on_the_same_job_and_proceeds_on_a_different_
         // inverting it to `before == now` left the whole suite green, which
         // would have silently reintroduced F-R5-2. The stale-capture case that
         // omission was covering now has its own row below, sharper.
-        serde_json::json!({ "type": "session_init", "session_id": "s", "job_id": 777 })
-            .to_string(),
+        serde_json::json!({ "type": "session_init", "session_id": "s", "job_id": 777 }).to_string(),
     ))
     .await
     .unwrap();
@@ -1691,7 +1789,9 @@ async fn a_lora_less_reinit_refuses_on_the_same_job_and_proceeds_on_a_different_
     );
 
     // Arm one: SAME job, no lora. A refresh — must keep refusing.
-    ws.send(Message::Text(init(payload("777", false)))).await.unwrap();
+    ws.send(Message::Text(init(payload("777", false))))
+        .await
+        .unwrap();
     ws.send(Message::Text(prompt.clone())).await.unwrap();
     assert_eq!(
         error_code(&mut ws).await,
@@ -1702,7 +1802,9 @@ async fn a_lora_less_reinit_refuses_on_the_same_job_and_proceeds_on_a_different_
 
     // Arm two: a DIFFERENT job, no lora. Genuinely a new session — must proceed
     // (and then fail on the absent engine, which is not our concern here).
-    ws.send(Message::Text(init(payload("888", false)))).await.unwrap();
+    ws.send(Message::Text(init(payload("888", false))))
+        .await
+        .unwrap();
     ws.send(Message::Text(prompt)).await.unwrap();
     // `assert_eq`, not `assert_ne` (round-6 F-R6-5): `error_code` returns an
     // empty string on timeout, so a mutation that merely SILENCES the socket —
@@ -1822,7 +1924,9 @@ async fn a_different_job_still_clears_after_an_init_that_carried_no_job_id() {
     let _welcome = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await;
 
     // 1. Stage for job 777.
-    ws.send(Message::Text(init(payload("777", true)))).await.unwrap();
+    ws.send(Message::Text(init(payload("777", true))))
+        .await
+        .unwrap();
     let mut staged = false;
     for _ in 0..30 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1831,7 +1935,10 @@ async fn a_different_job_still_clears_after_an_init_that_carried_no_job_id() {
             break;
         }
     }
-    assert!(staged, "the fixture must stage for real, or this row proves nothing");
+    assert!(
+        staged,
+        "the fixture must stage for real, or this row proves nothing"
+    );
 
     // 2. An init carrying NO job_id, which clobbers the connection's job_id.
     //    This is the step that used to poison the comparison.
@@ -1843,7 +1950,9 @@ async fn a_different_job_still_clears_after_an_init_that_carried_no_job_id() {
 
     // 3. A genuinely different job, immediately, with no successful same-job
     //    init in between to repair the stale capture.
-    ws.send(Message::Text(init(payload("888", false)))).await.unwrap();
+    ws.send(Message::Text(init(payload("888", false))))
+        .await
+        .unwrap();
     ws.send(Message::Text(
         serde_json::json!({
             "type": "inference",

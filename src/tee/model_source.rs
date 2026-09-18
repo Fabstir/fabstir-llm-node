@@ -24,6 +24,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 /// Default tmpfs directory for decrypted weights (overridable via `TEE_DECRYPT_DIR`).
@@ -52,6 +53,50 @@ fn parse_host_tee_enabled() -> bool {
 pub fn host_tee_enabled() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(parse_host_tee_enabled)
+}
+
+/// Set once by the attested load when the broker released the DEK under its
+/// TEST keyring (`test_release: true`, canned GPU evidence; CPU gate rounds).
+static TEST_RELEASE_LOADED: AtomicBool = AtomicBool::new(false);
+
+/// Record that the model behind this process came from a test-keyring release.
+pub fn mark_test_release_loaded() {
+    TEST_RELEASE_LOADED.store(true, Ordering::SeqCst);
+}
+
+/// Whether the model behind this process came from a test-keyring release.
+pub fn test_release_loaded() -> bool {
+    TEST_RELEASE_LOADED.load(Ordering::SeqCst)
+}
+
+/// The on-chain model id behind this process's attested load, once set.
+static ATTESTED_MODEL_ID: OnceLock<[u8; 32]> = OnceLock::new();
+
+/// Record the attested model's id (the `TEE_MODEL_ID` the policy and container
+/// were bound to). First call wins; one attested model per process.
+pub fn mark_attested_model_id(id: [u8; 32]) {
+    let _ = ATTESTED_MODEL_ID.set(id);
+}
+
+/// The attested model's on-chain id, if this process serves one. The proof
+/// witness uses it as `model_hash` (the plain path has only `MODEL_PATH`).
+pub fn attested_model_id() -> Option<[u8; 32]> {
+    ATTESTED_MODEL_ID.get().copied()
+}
+
+/// The advertisement rule, pure for testing: `tee-attested` is claimed only
+/// when the flag is on AND the model behind it was not a test-keyring release.
+/// A CPU gate node (canned GPU evidence) therefore registers and handshakes as
+/// a plain node; it never tells a client or the NodeRegistry that its weights
+/// were released against real GPU evidence.
+pub fn advertise_tee_attested(tee_enabled: bool, test_release: bool) -> bool {
+    tee_enabled && !test_release
+}
+
+/// What this process advertises as `tee-attested` (registration metadata and
+/// the WS handshake): [`advertise_tee_attested`] over the live values.
+pub fn advertises_tee_attested() -> bool {
+    advertise_tee_attested(host_tee_enabled(), test_release_loaded())
 }
 
 /// Source of encrypted-model container bytes (an S5 blob store in production).
@@ -102,6 +147,22 @@ pub struct EncryptedModelLoader {
     /// **Fail-closed default `false`**: a non-TEE node refuses encrypted models.
     tee_enabled: bool,
     cache: RwLock<HashMap<CacheKey, CacheEntry>>,
+    /// Every plaintext path this loader has created and not yet deleted,
+    /// registered BEFORE the decrypt starts. The emergency exit
+    /// ([`Self::unlink_live_plaintexts`]) walks it, so a file that exists while
+    /// no `AttestedLoad` or cache entry names it yet (the decrypt itself, the
+    /// hash step) is still reachable.
+    live_plaintexts: std::sync::Mutex<LivePlaintexts>,
+}
+
+/// The loader's live-plaintext bookkeeping, under one lock: the paths on disk
+/// and whether an emergency exit has begun. A new plaintext file is created
+/// ONLY under this lock and only while `stopping` is false, so nothing can
+/// appear after [`EncryptedModelLoader::unlink_live_plaintexts`] has run.
+#[derive(Default)]
+struct LivePlaintexts {
+    stopping: bool,
+    paths: std::collections::BTreeSet<PathBuf>,
 }
 
 impl EncryptedModelLoader {
@@ -113,6 +174,7 @@ impl EncryptedModelLoader {
             decrypt_dir: decrypt_dir.into(),
             tee_enabled: false,
             cache: RwLock::new(HashMap::new()),
+            live_plaintexts: std::sync::Mutex::new(LivePlaintexts::default()),
         }
     }
 
@@ -137,6 +199,19 @@ impl EncryptedModelLoader {
     /// persistent disk) but does **not** hard-fail, so Phases 1–4 run on ordinary
     /// dev filesystems — the real tmpfs guarantee is a Phase-5 deploy requirement.
     pub fn verify_decrypt_dir(&self) -> TeeResult<()> {
+        self.probe_decrypt_dir()?;
+        if !is_tmpfs(&self.decrypt_dir) {
+            tracing::warn!(
+                target: "tee",
+                "CRITICAL: TEE_DECRYPT_DIR {} is not tmpfs — decrypted weights may touch persistent disk",
+                self.decrypt_dir.display()
+            );
+        }
+        Ok(())
+    }
+
+    /// Create the decrypt dir (0700) and prove it is writable; no tmpfs opinion.
+    fn probe_decrypt_dir(&self) -> TeeResult<()> {
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -154,12 +229,24 @@ impl EncryptedModelLoader {
             .mode(0o600)
             .open(&probe)?;
         std::fs::remove_file(&probe)?;
+        Ok(())
+    }
+
+    /// The live attested path's stricter form of [`verify_decrypt_dir`]
+    /// (Phase 5): the decrypt dir MUST be tmpfs. The serving-node shutdown
+    /// unlinks the plaintext without overwriting it (a generation may still hold
+    /// the mapping), which is only safe where the pages die with the mount; on
+    /// a persistent filesystem the bytes would stay recoverable. Fail closed at
+    /// boot, before anything is decrypted.
+    pub fn require_tmpfs_decrypt_dir(&self) -> TeeResult<()> {
+        // The probe only: the refusal below is the one message for non-tmpfs.
+        self.probe_decrypt_dir()?;
         if !is_tmpfs(&self.decrypt_dir) {
-            tracing::warn!(
-                target: "tee",
-                "CRITICAL: TEE_DECRYPT_DIR {} is not tmpfs — decrypted weights may touch persistent disk",
+            return Err(TeeError::VerificationFailed(format!(
+                "TEE_DECRYPT_DIR {} is not tmpfs: the attested path decrypts only to memory \
+                 (set it to /dev/shm, sized for the model); refusing to start",
                 self.decrypt_dir.display()
-            );
+            )));
         }
         Ok(())
     }
@@ -210,9 +297,45 @@ impl EncryptedModelLoader {
             .mode(0o700)
             .create(&self.decrypt_dir)?;
         let path = self.fresh_path(&spec.model_id);
-        if let Err(e) = decrypt_to_file(&container, &dek, spec, &path) {
-            purge_or_warn(&path);
+        // Create + register under the live lock, refusing once a stop has begun:
+        // the emergency exit's unlink pass and this creation can never interleave
+        // so that a file appears after the pass.
+        let file = {
+            let mut live = self
+                .live_plaintexts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if live.stopping {
+                return Err(TeeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "stop in progress: refusing to create a plaintext",
+                )));
+            }
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)?;
+            live.paths.insert(path.clone());
+            file
+        };
+        if let Err(e) = decrypt_to_file(&container, &dek, spec, file) {
+            self.purge(&path);
             return Err(e);
+        }
+        // A stop that began during the write already unlinked the path (it was
+        // registered); do not publish a file that is gone.
+        if self
+            .live_plaintexts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stopping
+        {
+            self.purge(&path);
+            return Err(TeeError::Io(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "stop in progress: plaintext discarded",
+            )));
         }
 
         // 4. Publish to the cache (decrypt-twice-keep-one if a concurrent load won the race).
@@ -238,9 +361,58 @@ impl EncryptedModelLoader {
             .collect();
         for k in dead {
             if let Some(entry) = cache.remove(&k) {
-                purge_or_warn(&entry.path);
+                self.purge(&entry.path);
             }
         }
+    }
+
+    /// Securely delete `path` and forget it. Used on every ordinary deletion.
+    fn purge(&self, path: &Path) {
+        purge_or_warn(path);
+        self.forget_plaintext(path);
+    }
+
+    /// Drop `path` from the live set (the caller removed the file some other way).
+    pub fn forget_plaintext(&self, path: &Path) {
+        self.live_plaintexts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .paths
+            .remove(path);
+    }
+
+    /// Emergency exit: unlink (never overwrite; a mapping may be open) every
+    /// plaintext this loader still has on disk, whatever state it is in, and
+    /// return how many there were. Marks the loader as stopping, so no new
+    /// plaintext can be created afterwards (a load in flight fails closed at
+    /// its next step). The cache is left alone; the process is ending.
+    /// Idempotent.
+    pub fn unlink_live_plaintexts(&self) -> usize {
+        let paths: Vec<PathBuf> = {
+            let mut live = self
+                .live_plaintexts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            live.stopping = true;
+            std::mem::take(&mut live.paths).into_iter().collect()
+        };
+        let mut n = 0;
+        for p in paths {
+            match std::fs::remove_file(&p) {
+                Ok(()) => n += 1,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                // `raw_stderr`, not `tracing` or `eprintln!`: both take a lock
+                // (stdout via the fmt subscriber, the reentrant `Stderr` lock),
+                // and the emergency exit calling this must never wait on a main
+                // thread blocked in its own `println!`/`eprintln!` on a stalled
+                // log pipe.
+                Err(e) => raw_stderr(&format!(
+                    "CRITICAL: could not unlink decrypted plaintext {}: {e}\n",
+                    p.display()
+                )),
+            }
+        }
+        n
     }
 
     /// Cache fast-path: if present, take a reference and return the path.
@@ -260,7 +432,7 @@ impl EncryptedModelLoader {
             entry.refcount += 1;
             let winner = entry.path.clone();
             drop(cache);
-            purge_or_warn(&path); // redundant copy from a concurrent decrypt
+            self.purge(&path); // redundant copy from a concurrent decrypt
             return winner;
         }
         cache.insert(
@@ -290,13 +462,8 @@ fn decrypt_to_file(
     container: &[u8],
     dek: &[u8; 32],
     spec: &EncryptedModelSpec,
-    path: &Path,
+    mut file: std::fs::File,
 ) -> TeeResult<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
     decrypt_model(container, dek, &spec.model_id, &spec.policy_hash, &mut file)?;
     file.sync_all()?;
     Ok(())
@@ -315,13 +482,24 @@ pub fn is_tmpfs(path: &Path) -> bool {
 /// `None` if `path` can't be canonicalized or `/proc/mounts` is unavailable.
 ///
 /// Best-effort: mount points containing octal-escaped whitespace (`\040` etc.)
-/// are not decoded, so an exotic mount path with spaces may be skipped — it only
-/// affects the startup tmpfs *warning*, never a security decision, and the
-/// dominant failure direction is to over-warn (classify tmpfs as non-tmpfs).
+/// are not decoded, so an exotic mount path with spaces may be skipped. The
+/// dominant failure direction is to classify tmpfs as non-tmpfs, which the
+/// plain loader turns into a warning and the live attested path
+/// (`require_tmpfs_decrypt_dir`) into a refusal to start: fail closed, and
+/// `/dev/shm` has no spaces.
 fn filesystem_type(path: &Path) -> Option<String> {
     let canon = std::fs::canonicalize(path).ok()?;
     let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
-    // Pick the deepest mount point that is a prefix of the canonical path.
+    filesystem_type_from_mounts(&canon, &mounts)
+}
+
+/// [`filesystem_type`] over an explicit `/proc/mounts` text (pure, for tests).
+/// Picks the deepest mount point that is a prefix of `canon`; on EQUAL depth
+/// the LATER entry wins, because an over-mount (the same mount point listed
+/// twice, e.g. `/dev/shm` first as tmpfs and then bind-mounted from a
+/// persistent directory) is effective in list order and this answer now gates
+/// the attested path (`require_tmpfs_decrypt_dir`).
+pub fn filesystem_type_from_mounts(canon: &Path, mounts: &str) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
     for line in mounts.lines() {
         let mut cols = line.split_whitespace();
@@ -332,12 +510,29 @@ fn filesystem_type(path: &Path) -> Option<String> {
         let mp = Path::new(mount_point);
         if canon.starts_with(mp) {
             let depth = mp.components().count();
-            if best.as_ref().is_none_or(|(d, _)| depth > *d) {
+            if best.as_ref().is_none_or(|(d, _)| depth >= *d) {
                 best = Some((depth, fstype.to_string()));
             }
         }
     }
     best.map(|(_, t)| t)
+}
+
+/// Write `msg` to fd 2 with bare `write(2)` calls: no Rust `Stderr` lock, so
+/// an emergency exit can log while the main thread is blocked inside its own
+/// `eprintln!` on a full log pipe. Partial writes are continued; errors are
+/// ignored (the process is exiting; the line is a courtesy).
+pub fn raw_stderr(msg: &str) {
+    let mut buf = msg.as_bytes();
+    while !buf.is_empty() {
+        // SAFETY: fd 2, a valid pointer/length pair into `buf`; write(2) has no
+        // other preconditions.
+        let n = unsafe { libc::write(2, buf.as_ptr() as *const libc::c_void, buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        buf = &buf[n as usize..];
+    }
 }
 
 /// Overwrite `path` with zeros once, then unlink it.

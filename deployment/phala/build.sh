@@ -37,7 +37,9 @@ chmod 0755 fabstir-llm-node
 echo "    binary sha256: $(sha256sum fabstir-llm-node | cut -d' ' -f1)"
 # `strings | grep -m1` would SIGPIPE `strings` under pipefail and print "v… ?";
 # let grep read to the end instead and take the first match with head.
-VERSION_LINE="$( { strings -n 8 fabstir-llm-node | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | head -n1; } 2>/dev/null || true)"
+# The version constant is not at a line start in the binary's string table
+# (it sits mid-string), so match it anywhere and cut it out.
+VERSION_LINE="$( { strings -n 8 fabstir-llm-node | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9-]+-[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1; } 2>/dev/null || true)"
 echo "    version string: ${VERSION_LINE:-?}"
 
 echo "==> docker build $REF (no cache: the binary changed)"

@@ -77,6 +77,7 @@ pub async fn fetch_validated_policy(
     model_id: [u8; 32],
 ) -> TeeResult<SignedModelPolicy> {
     let signed = source.fetch_policy(model_id).await?;
+    signed.policy.validate()?;
     let provider = providers.expected_provider(&model_id)?;
     signed.verify_signer(&provider)?;
     check_policy_validity(&signed.policy)?;

@@ -807,10 +807,9 @@ async fn prepare_inputs(
         let sub = hex::encode(&hash[..16]);
         let mut total: u64 = 0;
         for (i, frame_cid) in frame_cids.iter().enumerate() {
-            let (_, plaintext) =
-                crate::ltx::input_image::fetch_image_hash(&blob_source, frame_cid)
-                    .await
-                    .map_err(|e| format!("deep frame {i} fetch failed: {e}"))?;
+            let (_, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, frame_cid)
+                .await
+                .map_err(|e| format!("deep frame {i} fetch failed: {e}"))?;
             crate::ltx::deep_input::check_deep_frame(i, &plaintext)?;
             total += plaintext.len() as u64;
             if total > deep_total_cap {

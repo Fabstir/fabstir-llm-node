@@ -17,9 +17,10 @@ use crate::contracts::types::{NodeRegistry, NodeRegistryWithModels};
 /// The capabilities this node advertises in its **new-registry** registration
 /// metadata (`build_metadata_json`, `use_new_registry` branch) and its WebSocket
 /// handshake (`SessionProtocol`). `tee-attested` is appended iff the node will
-/// actually honor TEE-encrypted models (`HOST_TEE_ENABLED`,
-/// [`crate::tee::host_tee_enabled`]) — so a client filtering for attested nodes
-/// (Phase 4.2 / §8) never selects a node that would refuse the encrypted model.
+/// actually honor TEE-encrypted models (`HOST_TEE_ENABLED`) and its model was not
+/// a test-keyring release ([`crate::tee::advertises_tee_attested`]) — so a client
+/// filtering for attested nodes (Phase 4.2 / §8) never selects a node that would
+/// refuse the encrypted model, nor one keyed against canned GPU evidence.
 /// (The deprecated legacy-registry metadata branch emits no `capabilities` key at
 /// all; TEE deployments use the new registry.) Pure + total for direct testing.
 pub(crate) fn node_capabilities(tee_attested: bool) -> Vec<String> {
@@ -504,7 +505,7 @@ impl NodeRegistration {
                     "vram": 24, // Mock VRAM value
                     "ram_gb": self.metadata.ram_gb,
                 },
-                "capabilities": node_capabilities(crate::tee::host_tee_enabled()),
+                "capabilities": node_capabilities(crate::tee::advertises_tee_attested()),
                 "location": "us-east",
                 "maxConcurrent": self.metadata.max_concurrent_jobs,
                 "cost_per_token": self.metadata.cost_per_token,
@@ -671,15 +672,17 @@ mod tests {
 
     #[test]
     fn test_metadata_json_capabilities_reflect_helper() {
-        // The new-registry metadata JSON must serialize exactly the helper's output.
-        let caps = node_capabilities(crate::tee::host_tee_enabled());
+        // The new-registry metadata JSON must serialize exactly the helper's output,
+        // fed by the same rule `build_metadata_json` uses (Phase 5: the flag AND no
+        // test-keyring release).
+        let caps = node_capabilities(crate::tee::advertises_tee_attested());
         let json = serde_json::json!({ "capabilities": caps });
         let parsed: Vec<String> = serde_json::from_value(json["capabilities"].clone()).unwrap();
         assert!(parsed.contains(&"inference".to_string()));
         assert_eq!(
             parsed.contains(&"tee-attested".to_string()),
-            crate::tee::host_tee_enabled(),
-            "advertised tee-attested must equal HOST_TEE_ENABLED"
+            crate::tee::advertises_tee_attested(),
+            "advertised tee-attested must follow tee::advertises_tee_attested"
         );
     }
 

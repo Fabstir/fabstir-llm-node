@@ -207,12 +207,8 @@ pub async fn wire_training_from_env(server: &crate::api::server::ApiServer) {
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(default)
         };
-        let mock_seams = std::sync::Arc::new(MockChainSeams::new(
-            host_address,
-            usdc,
-            price,
-            model_id,
-        ));
+        let mock_seams =
+            std::sync::Arc::new(MockChainSeams::new(host_address, usdc, price, model_id));
         let tokenizer_note = match &tokenizer {
             Some(t) => format!("{} bytes, pin verified", t.len()),
             None => "absent: counting unavailable".to_string(),
@@ -243,9 +239,7 @@ pub async fn wire_training_from_env(server: &crate::api::server::ApiServer) {
             priced_tokens: vec![usdc],
             template,
             tokenizer,
-            adapters: std::sync::Arc::new(
-                crate::training::serve::AdapterRegistry::new(),
-            ),
+            adapters: std::sync::Arc::new(crate::training::serve::AdapterRegistry::new()),
             accept_cfg: crate::training::accept::AcceptConfig {
                 train_job_timeout_secs: env_u64("TRAIN_JOB_TIMEOUT_SECS", 12_600),
                 settle_margin_secs: 600,

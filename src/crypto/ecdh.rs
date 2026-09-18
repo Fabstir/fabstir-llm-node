@@ -106,5 +106,9 @@ mod tests {
 pub fn public_key_from_private(node_priv_key: &[u8]) -> Result<Vec<u8>> {
     let secret = SecretKey::from_slice(node_priv_key)
         .map_err(|e| anyhow!("Invalid node private key: {}", e))?;
-    Ok(secret.public_key().to_encoded_point(true).as_bytes().to_vec())
+    Ok(secret
+        .public_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .to_vec())
 }

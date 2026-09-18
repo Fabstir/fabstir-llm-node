@@ -6,9 +6,10 @@
 //! into RTMR3 and pinned by the key broker's policy, so it must pull by digest,
 //! never build, never bind-mount a host path that does not exist inside a CVM,
 //! and never carry the GPU-half test mode (`TEE_GPU_EVIDENCE=canned`), the
-//! broker's counterpart (`KBS_GPU_EVIDENCE`), or the CPU-only driver stub
-//! (`TEE_CPU_ONLY_STUB`). `compose.cpu.yml` must carry exactly those markers, so
-//! the two files can never be swapped on the deploy form.
+//! broker's counterpart (`KBS_GPU_EVIDENCE`), the CPU-only driver stub
+//! (`TEE_CPU_ONLY_STUB`), or the test-release opt-in (`TEE_ACCEPT_TEST_RELEASE`).
+//! `compose.cpu.yml` must carry exactly those markers, so the two files can
+//! never be swapped on the deploy form.
 //!
 //! Line-based on purpose: no YAML dependency, and a compose is short enough
 //! that structure-by-indentation is unambiguous. Comments are stripped first
@@ -80,19 +81,23 @@ fn volume_items(lines: &[String]) -> Vec<String> {
     out
 }
 
-/// What both composes must set `HOST_TEE_ENABLED` to. The variable is read by
-/// every node build and turns on the `tee-attested` advert (WS handshake +
-/// registry metadata), so it stays "false" while the pinned image is a binary
-/// that loads plain models. **P3.3 flips this to "true" in the same change that
-/// wires the attested load path and makes "true" without an attested load a
-/// startup failure.** Until then a "true" here would advertise what the node
-/// does not honour (converge review, 2026-09-17).
-const EXPECTED_HOST_TEE_ENABLED: &str = "\"false\"";
+/// What both composes must set `HOST_TEE_ENABLED` to. The variable turns on
+/// the `tee-attested` advert (WS handshake + registry metadata) and, from
+/// v8.55.0, makes an attested load mandatory (`tee::live`: "true" without one
+/// is a start-up refusal). It was pinned to "false" while the composes carried
+/// the v8.54.0 image (which loaded plain models regardless) and flipped to
+/// "true" with the v8.55.0 digest on 2026-09-18, in one change with the `TEE_*`
+/// block (`attested_load_variables_move_with_the_flag`). A pinned image that
+/// predates the enforcement must never sit under "true".
+const EXPECTED_HOST_TEE_ENABLED: &str = "\"true\"";
 
-const FORBIDDEN_ON_GPU: [&str; 5] = [
+const FORBIDDEN_ON_GPU: [&str; 6] = [
     "TEE_GPU_EVIDENCE",
     "KBS_GPU_EVIDENCE",
     "TEE_CPU_ONLY_STUB",
+    // the node-side opt-in for a test-keyring release: a GPU node must refuse
+    // a key from a broker left in canned mode (P3 converge round 3)
+    "TEE_ACCEPT_TEST_RELEASE",
     // honoured unconditionally by DstackClient::from_env: a pasted simulator
     // line would make every paid-day quote come from the simulator
     "DSTACK_SIMULATOR_ENDPOINT",
@@ -133,6 +138,56 @@ fn gpu_compose_bind_mounts_are_only_the_dstack_socket() {
             src.starts_with('/'),
             "only absolute in-CVM paths are mountable; got `{src}` (named volumes are not \
              needed on the first run and would need the encrypted data disk sized for them)"
+        );
+    }
+}
+
+#[test]
+fn restart_policy_cannot_hot_loop_a_refusal() {
+    // A refused attested load exits 78; `unless-stopped`/`always` would retry it
+    // forever (container re-download, nonce burn, decrypt per loop). Both
+    // composes must cap restarts on failure.
+    for name in ["compose.gpu.yml", "compose.cpu.yml"] {
+        let lines = code_lines(&compose(name));
+        let value = lines
+            .iter()
+            .filter_map(|l| l.trim().strip_prefix("restart:"))
+            .map(|v| v.trim().to_string())
+            .next()
+            .unwrap_or_else(|| panic!("{name} must set restart: explicitly"));
+        assert!(
+            value.starts_with("on-failure:"),
+            "{name}: restart must be `on-failure:<n>`, got `{value}`"
+        );
+        let n: u32 = value["on-failure:".len()..]
+            .parse()
+            .unwrap_or_else(|_| panic!("{name}: restart cap must be a number, got `{value}`"));
+        assert!(
+            (1..=10).contains(&n),
+            "{name}: restart cap {n} out of 1..=10"
+        );
+    }
+}
+
+#[test]
+fn stop_grace_period_outlasts_the_orderly_shutdown() {
+    // The orderly stop is bounded at 8 s by the watchdog (API drain 5 s + P2P
+    // leave); docker's default 10 s grace leaves no margin before SIGKILL.
+    for name in ["compose.gpu.yml", "compose.cpu.yml"] {
+        let lines = code_lines(&compose(name));
+        let value = lines
+            .iter()
+            .filter_map(|l| l.trim().strip_prefix("stop_grace_period:"))
+            .map(|v| v.trim().trim_matches('"').to_string())
+            .next()
+            .unwrap_or_else(|| panic!("{name} must set stop_grace_period: explicitly"));
+        let secs: u64 = value
+            .strip_suffix('s')
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("{name}: stop_grace_period must be `<n>s`, got `{value}`"));
+        assert!(
+            secs >= 20,
+            "{name}: stop_grace_period {secs}s must be at least 20s (orderly bound 8 s + margin)"
         );
     }
 }
@@ -181,6 +236,7 @@ fn cpu_compose_is_the_cpu_variant_and_nothing_else() {
     for needed in [
         "TEE_CPU_ONLY_STUB: \"1\"",
         "TEE_GPU_EVIDENCE: canned",
+        "TEE_ACCEPT_TEST_RELEASE: \"1\"",
         "GPU_LAYERS: \"0\"",
         "/var/run/dstack.sock:/var/run/dstack.sock",
     ] {
@@ -233,19 +289,78 @@ fn each_compose_names_the_dstack_os_image_it_expects() {
     );
 }
 
+/// The active (uncommented) `HOST_TEE_ENABLED:` value of a compose.
+fn host_tee_enabled_value(name: &str, lines: &[String]) -> String {
+    lines
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("HOST_TEE_ENABLED:"))
+        .map(|v| v.trim().to_string())
+        .next()
+        .unwrap_or_else(|| panic!("{name} must set HOST_TEE_ENABLED explicitly"))
+}
+
 #[test]
 fn host_tee_enabled_matches_what_the_pinned_binary_honours() {
     for name in ["compose.gpu.yml", "compose.cpu.yml"] {
-        let lines = code_lines(&compose(name));
-        let value = lines
-            .iter()
-            .filter_map(|l| l.trim().strip_prefix("HOST_TEE_ENABLED:"))
-            .map(|v| v.trim().to_string())
-            .next()
-            .unwrap_or_else(|| panic!("{name} must set HOST_TEE_ENABLED explicitly"));
+        let value = host_tee_enabled_value(name, &code_lines(&compose(name)));
         assert_eq!(
             value, EXPECTED_HOST_TEE_ENABLED,
             "{name}: HOST_TEE_ENABLED must be {EXPECTED_HOST_TEE_ENABLED} until P3.3 wires the attested load path (see the constant's doc)"
+        );
+    }
+}
+
+/// The variables `src/tee/live.rs` requires on the attested path. Its decision
+/// table refuses `TEE_MODEL_ID` under `HOST_TEE_ENABLED` "false" (exit 78), so
+/// the block is commented out while the flag is "false" and active once it is
+/// "true": the two move in one change, never separately.
+const TEE_LOAD_VARS: [&str; 5] = [
+    "TEE_MODEL_ID",
+    "TEE_MODEL_PROVIDER",
+    "TEE_KBS_URL",
+    "TEE_POLICY_URL",
+    "TEE_BLOB_URL",
+];
+
+#[test]
+fn attested_load_variables_move_with_the_flag() {
+    for name in ["compose.gpu.yml", "compose.cpu.yml"] {
+        let text = compose(name);
+        let lines = code_lines(&text);
+        let enabled = match host_tee_enabled_value(name, &lines).as_str() {
+            "\"true\"" => true,
+            "\"false\"" => false,
+            other => panic!("{name}: HOST_TEE_ENABLED must be quoted true/false, got {other}"),
+        };
+        for var in TEE_LOAD_VARS {
+            let active = lines
+                .iter()
+                .any(|l| l.trim().starts_with(&format!("{var}:")));
+            assert_eq!(
+                active,
+                enabled,
+                "{name}: `{var}:` must be {} while HOST_TEE_ENABLED is {}",
+                if enabled { "set" } else { "commented out" },
+                if enabled { "\"true\"" } else { "\"false\"" },
+            );
+        }
+        // Optional or not, every variable keeps its `${VAR}` template line in the
+        // file, so the flip is an uncomment and the form's allow-list is complete.
+        for var in TEE_LOAD_VARS
+            .iter()
+            .chain(["TEE_EXPECTED_MODEL_SHA256"].iter())
+        {
+            let template = format!("{var}: ${{{var}}}");
+            assert!(
+                text.contains(&template),
+                "{name}: missing the `{template}` line (active or commented)"
+            );
+        }
+        // The container cap is a literal (measured, not secret) and must be in
+        // the file too: its 2 GiB default fails closed on a real-size model.
+        assert!(
+            text.contains("TEE_BLOB_MAX_BYTES:"),
+            "{name}: missing the `TEE_BLOB_MAX_BYTES:` line (active or commented)"
         );
     }
 }

@@ -342,8 +342,7 @@ impl AdapterRegistry {
             match registry.entry(session_id.to_string()) {
                 std::collections::hash_map::Entry::Occupied(_) => {
                     return Err(ServeError::Validation(
-                        "this session already has an adapter (one per session in M0)"
-                            .to_string(),
+                        "this session already has an adapter (one per session in M0)".to_string(),
                     ));
                 }
                 std::collections::hash_map::Entry::Vacant(slot) => {
@@ -549,7 +548,8 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn hex_eq(a: &str, b: &str) -> bool {
-    a.trim_start_matches("0x").eq_ignore_ascii_case(b.trim_start_matches("0x"))
+    a.trim_start_matches("0x")
+        .eq_ignore_ascii_case(b.trim_start_matches("0x"))
 }
 
 /// Fetch the manifest and verify `manifestSha256` over its EXACT stored
@@ -562,7 +562,11 @@ async fn fetch_and_verify_manifest(
     // Pre-fetch bound on the CLIENT-DECLARED length (round-1 F4: without it
     // a capability CID claiming gigabytes is streamed into memory before the
     // sha256 check can fail — the exact hole `staging.rs` closed).
-    gate_declared_len(&request.manifest_cid, ADAPTER_MANIFEST_MAX_BYTES, "adapter manifest")?;
+    gate_declared_len(
+        &request.manifest_cid,
+        ADAPTER_MANIFEST_MAX_BYTES,
+        "adapter manifest",
+    )?;
     let (_h, bytes) = crate::ltx::input_image::fetch_image_hash(s5_base, &request.manifest_cid)
         .await
         .map_err(|e| ServeError::Transport(format!("adapter manifest fetch: {e}")))?;
@@ -596,14 +600,14 @@ async fn fetch_and_verify_manifest(
 
 /// Fetch every shard in order, verify each against its own claim, then the
 /// reassembled file against the entry's sha256 and size.
-async fn reassemble_and_verify(
-    s5_base: &str,
-    entry: &AdapterFile,
-) -> Result<Vec<u8>, ServeError> {
+async fn reassemble_and_verify(s5_base: &str, entry: &AdapterFile) -> Result<Vec<u8>, ServeError> {
     // Every number below is attacker-chosen (see the module header), so each
     // is bounded BEFORE it is trusted (round-1 F4).
     if entry.shards.is_empty() {
-        return Err(ServeError::Validation(format!("{} declares no shards", entry.name)));
+        return Err(ServeError::Validation(format!(
+            "{} declares no shards",
+            entry.name
+        )));
     }
     if entry.shards.len() > ADAPTER_MAX_SHARDS {
         return Err(ServeError::Validation(format!(
@@ -780,7 +784,6 @@ async fn write_private(path: &Path, bytes: &[u8]) -> Result<(), ServeError> {
         .map_err(|e| ServeError::Io(format!("rename into {path:?}: {e}")))?;
     Ok(())
 }
-
 
 /// Boot sweep for staged adapters (round-1 F10). At startup no session is
 /// live, so every `adapters/<sessionId>/` directory is a crash leftover

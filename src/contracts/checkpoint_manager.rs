@@ -144,6 +144,25 @@ impl ProofSubmissionCache {
     }
 }
 
+/// The proof witness's `model_hash`. On the attested path (Phase 5) it is the
+/// on-chain model id the policy and container were bound to
+/// (`tee::attested_model_id`), the one real model identity the node has; the
+/// plain path keeps its placeholder, `sha256(MODEL_PATH)` (a path string, not
+/// the weights; a proper hash is Phase-5 follow-up work for plain nodes). The
+/// id says which container was decrypted, not which keyring released it: a
+/// test-keyring (CPU gate) load carries it too while advertising no
+/// `tee-attested`; never read `model_hash == attested id` as a real release.
+pub fn witness_model_hash() -> [u8; 32] {
+    if let Some(id) = crate::tee::attested_model_id() {
+        return id;
+    }
+    let model_path =
+        std::env::var("MODEL_PATH").unwrap_or_else(|_| "./models/default.gguf".to_string());
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Sha256::digest(model_path.as_bytes()));
+    out
+}
+
 pub struct CheckpointManager {
     web3_client: Arc<Web3Client>,
     job_trackers: Arc<RwLock<HashMap<u64, JobTokenTracker>>>,
@@ -719,12 +738,7 @@ impl CheckpointManager {
             let job_id_hash = Sha256::digest(job_id.to_le_bytes());
             job_id_bytes.copy_from_slice(&job_id_hash);
 
-            // model_hash: Get from MODEL_PATH environment variable
-            let model_path =
-                std::env::var("MODEL_PATH").unwrap_or_else(|_| "./models/default.gguf".to_string());
-            let model_hash = Sha256::digest(model_path.as_bytes());
-            let mut model_hash_bytes = [0u8; 32];
-            model_hash_bytes.copy_from_slice(&model_hash);
+            let model_hash_bytes = witness_model_hash();
 
             // input_hash: Deterministic hash from job_id + "input" marker
             let input_data = format!("job_{}:input", job_id);
@@ -1180,11 +1194,7 @@ impl CheckpointManager {
             let job_id_hash = Sha256::digest(job_id.to_le_bytes());
             job_id_bytes.copy_from_slice(&job_id_hash);
 
-            let model_path =
-                std::env::var("MODEL_PATH").unwrap_or_else(|_| "./models/default.gguf".to_string());
-            let model_hash = Sha256::digest(model_path.as_bytes());
-            let mut model_hash_bytes = [0u8; 32];
-            model_hash_bytes.copy_from_slice(&model_hash);
+            let model_hash_bytes = witness_model_hash();
 
             // Phase 4: Use real content hashes if available, otherwise placeholder
             let (input_hash_bytes, output_hash_bytes) =

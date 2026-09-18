@@ -286,7 +286,9 @@ mod tests {
             }
         }"#;
         let parsed: SessionDataJson = serde_json::from_str(plaintext).expect("must parse");
-        let lora = parsed.lora.expect("lora must survive the parse — session 1129");
+        let lora = parsed
+            .lora
+            .expect("lora must survive the parse — session 1129");
         assert_eq!(lora.file, "adapter.gguf");
         assert_eq!(lora.manifest_cid, "urqYSH0QfQhz5Kg182z-Kocp");
         assert!(lora.manifest_sha256.starts_with("0x0843be66"));
