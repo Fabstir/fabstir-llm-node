@@ -16,6 +16,8 @@ pub mod inference;
 pub mod job_assignment_types;
 pub mod job_claim;
 pub mod job_processor;
+#[cfg(feature = "kbs")]
+pub mod kbs;
 pub mod ltx;
 pub mod model_validation;
 pub mod models;

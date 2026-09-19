@@ -46,12 +46,36 @@ install)
     # Back up whatever nginx serves now, so a failed verify restores it.
     BK="/root/nginx-before-private-ca.$(date -u +%Y%m%dT%H%M%SZ)"
     mkdir -p "$BK" && cp -a /etc/nginx/sites-enabled "$BK/"
+    # The site TARGET and the zone snippet are part of what a failed verify must
+    # undo too (the sites-enabled symlink alone would still point at the new file).
+    [ -f "$SITE" ] && cp -a "$SITE" "$BK/site.conf"
+    [ -f /etc/nginx/conf.d/kbs-limits.conf ] && cp -a /etc/nginx/conf.d/kbs-limits.conf "$BK/kbs-limits.conf"
+    restore_from_backup() {
+        rm -f /etc/nginx/sites-enabled/$NAME; cp -a "$BK/sites-enabled/." /etc/nginx/sites-enabled/
+        if [ -f "$BK/site.conf" ]; then cp -a "$BK/site.conf" "$SITE"; else rm -f "$SITE"; fi
+        if [ -f "$BK/kbs-limits.conf" ]; then
+            cp -a "$BK/kbs-limits.conf" /etc/nginx/conf.d/kbs-limits.conf
+        else
+            rm -f /etc/nginx/conf.d/kbs-limits.conf
+        fi
+    }
+    # The site file's limit_req/limit_conn need http{}-context zones: ship the
+    # snippet first (deployment/kbs/kbs-limits.conf; inline fallback when the
+    # broker tree is not on this box) or nginx -t fails on "zero size shared memory zone".
+    if [ -f "$(dirname "$0")/../../kbs/kbs-limits.conf" ]; then
+        install -m 644 "$(dirname "$0")/../../kbs/kbs-limits.conf" /etc/nginx/conf.d/kbs-limits.conf
+    else
+        printf 'limit_req_zone $binary_remote_addr zone=kbs:1m rate=10r/s;\nlimit_conn_zone $binary_remote_addr zone=kbs_conn:1m;\n' \
+            > /etc/nginx/conf.d/kbs-limits.conf
+    fi
     install -m 644 "$(dirname "$0")/nginx-kbs.conf" "$SITE"
     ln -sf "$SITE" /etc/nginx/sites-enabled/$NAME
     rm -f /etc/nginx/sites-enabled/default
     if ! nginx -t; then
         echo "nginx -t failed; restoring $BK" >&2
-        rm -f /etc/nginx/sites-enabled/$NAME; cp -a "$BK/sites-enabled/." /etc/nginx/sites-enabled/; exit 70
+        restore_from_backup
+        nginx -t || echo "restored config still fails nginx -t; inspect $BK" >&2
+        exit 70
     fi
     systemctl reload nginx
     sleep 1
@@ -62,7 +86,7 @@ install)
         echo "backup of the previous nginx sites: $BK"
     else
         echo "VERIFY FAILED; restoring the previous nginx sites from $BK" >&2
-        rm -f /etc/nginx/sites-enabled/$NAME; cp -a "$BK/sites-enabled/." /etc/nginx/sites-enabled/
+        restore_from_backup
         nginx -t && systemctl reload nginx
         echo "$OUT" | grep -E 'Verify return code|Protocol' >&2
         exit 70

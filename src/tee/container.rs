@@ -11,7 +11,7 @@
 use crate::crypto::{decrypt_with_aead, encrypt_with_aead};
 use crate::tee::types::{TeeError, TeeResult};
 use rand::{rngs::OsRng, RngCore};
-use std::io::Write;
+use std::io::{Read, Write};
 
 /// Container magic — identifies a Fabstir TEE encrypted-model container.
 pub const CONTAINER_MAGIC: [u8; 8] = *b"FABS-TEE";
@@ -23,6 +23,12 @@ pub const CONTAINER_VERSION: u16 = 1;
 pub const HEADER_LEN: usize = 8 + 2 + 32 + 4 + 4 + 16 + 32;
 /// XChaCha20-Poly1305 authentication-tag length appended to every sealed chunk.
 pub const AEAD_TAG_LEN: usize = 16;
+/// Largest `chunk_size` the STREAMING decryptor allocates for (256 MiB): the
+/// header is unauthenticated until the first tag verifies, so a hostile
+/// `chunk_size = 0xFFFF_FFFF` must not cost a 4 GiB allocation. The provider
+/// tooling seals at 4 MiB; the in-memory [`decrypt_model`] slices instead of
+/// allocating and is unaffected.
+pub const MAX_STREAM_CHUNK_SIZE: u32 = 256 * 1024 * 1024;
 
 /// Fixed-size header prefixing an encrypted-model container.
 ///
@@ -168,11 +174,63 @@ pub fn encrypt_model(
     policy_hash: [u8; 32],
     chunk_size: u32,
 ) -> TeeResult<Vec<u8>> {
-    let num_chunks = chunk_count(plaintext.len() as u64, chunk_size)?;
-
     let mut nonce_base = [0u8; 16];
     OsRng.fill_bytes(&mut nonce_base);
+    encrypt_model_with_nonce_base(
+        plaintext,
+        dek,
+        model_id,
+        policy_hash,
+        chunk_size,
+        nonce_base,
+    )
+}
 
+/// [`encrypt_model`] with a caller-supplied `nonce_base` (Phase 5 P4: lets the
+/// streaming and in-memory sealers be compared byte for byte). A `nonce_base`
+/// MUST be fresh per seal under one DEK: reusing one with a different header
+/// reuses XChaCha20 nonces across two authenticated messages.
+pub fn encrypt_model_with_nonce_base(
+    plaintext: &[u8],
+    dek: &[u8; 32],
+    model_id: [u8; 32],
+    policy_hash: [u8; 32],
+    chunk_size: u32,
+    nonce_base: [u8; 16],
+) -> TeeResult<Vec<u8>> {
+    let num_chunks = chunk_count(plaintext.len() as u64, chunk_size)?;
+    let mut out =
+        Vec::with_capacity(HEADER_LEN + plaintext.len() + num_chunks as usize * AEAD_TAG_LEN);
+    encrypt_model_to_writer(
+        std::io::Cursor::new(plaintext),
+        plaintext.len() as u64,
+        &mut out,
+        dek,
+        model_id,
+        policy_hash,
+        chunk_size,
+        nonce_base,
+    )?;
+    Ok(out)
+}
+
+/// Streaming sealer (Phase 5 P4 provider tooling): reads `len` plaintext bytes
+/// from `reader`, writes the container to `writer`, one chunk in memory at a
+/// time. Same construction as [`encrypt_model`] (header, [`chunk_nonce`],
+/// [`chunk_aad`]); the node's decrypt path is untouched. `reader` must deliver
+/// exactly `len` bytes (a short read is an error, never a short container).
+#[allow(clippy::too_many_arguments)]
+pub fn encrypt_model_to_writer<R: Read, W: Write>(
+    mut reader: R,
+    len: u64,
+    writer: &mut W,
+    dek: &[u8; 32],
+    model_id: [u8; 32],
+    policy_hash: [u8; 32],
+    chunk_size: u32,
+    nonce_base: [u8; 16],
+) -> TeeResult<()> {
+    let num_chunks = chunk_count(len, chunk_size)?;
     let header = ContainerHeader {
         magic: CONTAINER_MAGIC,
         version: CONTAINER_VERSION,
@@ -183,23 +241,153 @@ pub fn encrypt_model(
         policy_hash,
     };
     let header_bytes = header.encode();
+    writer.write_all(&header_bytes)?;
 
-    // Pre-size to the exact final length so a multi-GB model needs no reallocation.
-    let mut out =
-        Vec::with_capacity(HEADER_LEN + plaintext.len() + num_chunks as usize * AEAD_TAG_LEN);
-    out.extend_from_slice(&header_bytes);
-
-    let cs = chunk_size as usize;
+    let cs = chunk_size as u64;
+    // Sized by the plaintext, not the chunk: `encrypt_model(small, .., huge chunk)`
+    // must not allocate the chunk.
+    let mut buf = vec![0u8; len.min(cs) as usize];
+    let mut remaining = len;
+    // `num_chunks = ceil(len / cs)`, so the loop consumes exactly `len` bytes; a
+    // reader shorter than `len` fails inside it with `Io(UnexpectedEof)`.
     for chunk_idx in 0..num_chunks {
-        let start = chunk_idx as usize * cs;
-        let end = (start + cs).min(plaintext.len());
+        let this = remaining.min(cs) as usize;
+        reader.read_exact(&mut buf[..this])?;
+        remaining -= this as u64;
         let nonce = chunk_nonce(&nonce_base, chunk_idx);
         let aad = chunk_aad(&header_bytes, chunk_idx);
-        let ct = encrypt_with_aead(&plaintext[start..end], &nonce, &aad, dek)
+        let ct = encrypt_with_aead(&buf[..this], &nonce, &aad, dek)
             .map_err(|e| TeeError::Crypto(format!("chunk {chunk_idx} encryption failed: {e}")))?;
-        out.extend_from_slice(&ct);
+        writer.write_all(&ct)?;
     }
-    Ok(out)
+    debug_assert_eq!(remaining, 0);
+    // The symmetric case to a short read: a source LONGER than `len` (a model still
+    // being copied when `seal` started) must not seal cleanly into a truncated
+    // container that only fails on the node after the swap.
+    let mut extra = [0u8; 1];
+    let more = loop {
+        match reader.read(&mut extra) {
+            Ok(n) => break n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    if more != 0 {
+        return Err(TeeError::Crypto(
+            "plaintext longer than the declared length".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Streaming decrypt (Phase 5 P4 provider tooling, the `reseal` input side):
+/// reads the container from `reader`, writes the plaintext to `writer`, one
+/// chunk in memory at a time. Same checks as [`decrypt_model`] (header binding
+/// before any decryption; a chunk is written only after its tag verifies; the
+/// caller discards partial output on `Err`).
+pub fn decrypt_model_to_writer<R: Read, W: Write>(
+    mut reader: R,
+    writer: &mut W,
+    dek: &[u8; 32],
+    expect_model_id: &[u8; 32],
+    expect_policy_hash: &[u8; 32],
+) -> TeeResult<()> {
+    let mut header_bytes = [0u8; HEADER_LEN];
+    reader.read_exact(&mut header_bytes).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            TeeError::Crypto(format!(
+                "container header truncated: fewer than {HEADER_LEN} bytes"
+            ))
+        } else {
+            TeeError::Io(e)
+        }
+    })?;
+    let header = ContainerHeader::decode(&header_bytes)?;
+    if &header.model_id != expect_model_id {
+        return Err(TeeError::VerificationFailed(
+            "container model_id does not match the expected model".into(),
+        ));
+    }
+    if &header.policy_hash != expect_policy_hash {
+        return Err(TeeError::VerificationFailed(
+            "container policy_hash does not match the expected policy".into(),
+        ));
+    }
+    if header.num_chunks == 0 {
+        // Nothing authenticates the header itself (the AAD binding lives in the
+        // chunks): an empty container must be EXACTLY the header.
+        let mut extra = [0u8; 1];
+        let more = loop {
+            match reader.read(&mut extra) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            }
+        };
+        if more != 0 {
+            return Err(TeeError::Crypto(
+                "container body longer than its header declares".into(),
+            ));
+        }
+        return Ok(());
+    }
+    // The cap applies once a chunk buffer is needed (an empty container never
+    // allocates one, and the in-memory path accepts it whatever its header says).
+    if header.chunk_size > MAX_STREAM_CHUNK_SIZE {
+        return Err(TeeError::Crypto(format!(
+            "container chunk_size {} over the streaming cap {MAX_STREAM_CHUNK_SIZE}",
+            header.chunk_size
+        )));
+    }
+    let full_ct_len = header.chunk_size as usize + AEAD_TAG_LEN;
+    let mut ct = vec![0u8; full_ct_len];
+    for chunk_idx in 0..header.num_chunks {
+        let n = if chunk_idx + 1 == header.num_chunks {
+            // The last chunk is whatever remains, at most a full chunk + tag, read
+            // into the one buffer (no second chunk-sized allocation before any tag
+            // has verified); one more byte than that is an over-long body.
+            let mut filled = 0usize;
+            while filled < full_ct_len {
+                match reader.read(&mut ct[filled..]) {
+                    Ok(0) => break,
+                    Ok(r) => filled += r,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            let mut extra = [0u8; 1];
+            let more = loop {
+                match reader.read(&mut extra) {
+                    Ok(n) => break n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            };
+            if more != 0 {
+                return Err(TeeError::Crypto(
+                    "container body longer than its header declares".into(),
+                ));
+            }
+            filled
+        } else {
+            // A short read here is a truncated container (the in-memory path's
+            // refusal), not an I/O fault of the stream.
+            reader.read_exact(&mut ct).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    TeeError::Crypto(format!("container body truncated at chunk {chunk_idx}"))
+                } else {
+                    e.into()
+                }
+            })?;
+            full_ct_len
+        };
+        let nonce = chunk_nonce(&header.nonce_base, chunk_idx);
+        let aad = chunk_aad(&header_bytes, chunk_idx);
+        let pt = decrypt_with_aead(&ct[..n], &nonce, &aad, dek)
+            .map_err(|e| TeeError::Crypto(format!("chunk {chunk_idx} decryption failed: {e}")))?;
+        writer.write_all(&pt)?;
+    }
+    Ok(())
 }
 
 /// Decrypt a container produced by [`encrypt_model`], streaming the recovered
@@ -236,6 +424,13 @@ pub fn decrypt_model<W: Write>(
     // The exact on-wire header bytes — what was authenticated at encryption.
     let header_bytes = &container[..HEADER_LEN];
     let body = &container[HEADER_LEN..];
+    if header.num_chunks == 0 && !body.is_empty() {
+        // Nothing authenticates the header itself: an empty container is EXACTLY
+        // the header; trailing bytes would otherwise decrypt to a silent empty model.
+        return Err(TeeError::Crypto(
+            "container body longer than its header declares".into(),
+        ));
+    }
     let full_ct_len = header.chunk_size as usize + AEAD_TAG_LEN;
     let mut offset = 0usize;
     for chunk_idx in 0..header.num_chunks {

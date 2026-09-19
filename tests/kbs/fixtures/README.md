@@ -1,0 +1,15 @@
+# Broker test fixtures (real bytes, vendored 2026-09-18)
+
+| File | Origin | Licence | Use |
+|---|---|---|---|
+| `dcap-tdx_quote.bin`, `dcap-tdx_quote_collateral.json` | `dcap-qvl` 0.6.3 crate `sample/` | MIT (crate) | offline `dcap_qvl::verify` → `UpToDate` for `now` < 2025-07-19T10:00:35Z, the **PCK CRL** `nextUpdate` (the earliest of the collateral's dates; use 2025-07-01T00:00:00Z = 1751328000) |
+| `dcap-sgx_quote.bin` | same | same | an SGX quote: `Quote::parse` succeeds, `as_td10()` is `None` → the "not a TDX quote" row |
+| `dcap-tdx_quote_outdated.bin`, `…_outdated_collateral.json` | same | same | ERROR arms only, never a status (the crate itself verifies it only under `dangerous_verify_with_tcb_override`): inside its window → "No matching TCB level found"; `now` in (2026-03-20T10:58:51Z, 2026-04-03T11:21:57Z] → "TCBInfo expired" (use 2026-03-25); later → webpki `CrlExpired` (the root CRL is checked first) |
+| `dstack-0.5.9-simulator-attestation.bin` | dstack v0.5.9 `sdk/simulator/attestation.bin` (recorded real attestation the simulator serves; SCALE `VersionedAttestation`) | MIT | provenance only; the two files below are extracted from it |
+| `dstack-0.5.9-simulator-quote.bin`, `dstack-0.5.9-simulator-eventlog.json` | extracted from the recording above (raw quote, 5010 bytes; the event log in the WIRE form the guest agent serves: JSON array of `{imr, event_type, digest, event, event_payload}` hex, 33 entries, all IMRs, unstripped as the simulator serves it) | MIT | replay of the 9 `imr == 3` entries reproduces the quote's `rt_mr3` (`f28a1490…`, quote offset 520); `report_data` (offset 568..632) is all zeros in the recording, the simulator patches it at serve time; TD attributes: debug bit clear, `SEPT_VE_DISABLE` set |
+| `a17-canned-payload.json` | our collector, canned mode, nonce `48cd5df2…` | ours | the NRAS request body shape |
+| `a17-nras-canned-response.json` | NRAS v3, HTTP 200, 2026-09-18 | NVIDIA response | token layout, `submods` digest rule, `x-nvidia-ver 2.0`, `NONCE_NOT_MATCHING` |
+| `test-policy-signed.json` | produced ONCE with the real tool (`fabstir-kbs policy sign`, built WITH the `kbs` feature, i.e. with `serde_json/preserve_order` on) under a throw-away secp256k1 key that was shredded; signer `0xcc259c75aa6dd43c127d5c0b6a32594640f2e2b6`, `policy_hash` `6cb0a505e4f4e63d66f3a1146f63a699611c77834e680e5de56882b52974cd2f`, model id `7435743a…00f1` (a `t5t:` test id), registers/events of the dstack recording, `allowed_hwmodels: ["PENDING-B3"]` | ours | the `preserve_order` proof: verified by `tests/kbs` (feature on) AND by `tests/tee` (feature off, the node's path); a `sort_json_keys` mutation on either side breaks the signature |
+| `a17-jwks-entry.json` | `https://nras.attestation.nvidia.com/.well-known/jwks.json`, the one entry matching the tokens' `kid` | NVIDIA | signature verification of the captured tokens with `exp`/`nbf` validation OFF (they expired one hour after capture) |
+
+sha256 of each file is in `SHA256SUMS`; a test asserts them so a silently edited fixture fails loudly.

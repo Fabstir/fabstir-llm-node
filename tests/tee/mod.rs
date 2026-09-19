@@ -9,6 +9,7 @@ mod kbs_fixture;
 mod test_attested_load;
 mod test_container;
 mod test_dstack;
+mod test_kbs_presigned_fixture;
 mod test_dstack_provider;
 mod test_gpu_evidence;
 mod test_http_sources;

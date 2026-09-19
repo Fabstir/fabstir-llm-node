@@ -1,0 +1,39 @@
+# fabstir-kbs: the Phase 5 key broker (docs/development/DESIGN-PHASE5-KBS.md §13).
+# Installed by deployment/kbs/install.sh. Exit 78 = a config/keyring/permission/mode
+# refusal (permanent, stays down and loud); everything else restarts.
+[Unit]
+Description=Fabstir Phase 5 key broker (fabstir-kbs)
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+# In [Unit], where systemd reads them (under [Service] the IntervalSec spelling is
+# an unknown key and the 10 s default interval applies silently).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=fabstir-kbs
+Group=fabstir-kbs
+EnvironmentFile=/etc/fabstir-kbs/env
+# Every bin in the node crate links libcuda.so.1; the VPS has no NVIDIA driver, so
+# the A-1 driver stub is shipped alongside. install.sh registers it system-wide
+# (ld.so.conf.d) for the tooling; this line keeps the unit independent of ldconfig.
+Environment=LD_LIBRARY_PATH=/opt/fabstir-kbs/lib
+ExecStart=/usr/local/bin/fabstir-kbs serve
+Restart=on-failure
+RestartSec=2s
+# A stop/restart drains in-flight requests (a burned nonce, a paid NRAS round trip);
+# the drain must outlast the request wall (170 s) and stay under nginx's 200 s.
+TimeoutStopSec=200
+RestartPreventExitStatus=78
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The keyring and the policies are read-only to the service; only memo/ and capture/
+# are written. These MUST match KBS_DATA_DIR: the broker probe-writes both at start
+# and refuses (exit 78) if either is read-only.
+ReadWritePaths=/var/lib/fabstir-kbs/memo /var/lib/fabstir-kbs/capture
+
+[Install]
+WantedBy=multi-user.target

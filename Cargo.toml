@@ -81,6 +81,14 @@ pulldown-cmark = "0.9"
 # Utils
 tempfile = "3.8"
 jsonwebtoken = "9.2"
+# Phase 5 P4 key broker (`fabstir-kbs`), feature `kbs` only. dcap-qvl's DEFAULT
+# features are required: `report` is what gates `http` + `collateral` (it pulls
+# reqwest 0.13 into the graph as a third major; its ReqwestHttp is unused, we
+# supply `HttpClient`). `std` switches `serde_json/preserve_order` on for every
+# `--features kbs` build (canonical_policy_bytes survives: sort_json_keys inserts
+# sorted keys); tee_tests keep running without the feature.
+dcap-qvl = { version = "0.6", optional = true }
+zeroize = { version = "1", features = ["serde"], optional = true }
 
 # Storage
 ipfs-api = "0.17"
@@ -196,14 +204,29 @@ real-ezkl = ["risc0-zkvm", "risc0-build"]
 #   cargo build --release --features dev-tools --bin publish-adapter
 dev-tools = []
 
+# Phase 5 P4 key broker. Every bin in this crate links libcuda.so.1 (llama-cpp-2
+# cuda is non-optional); the broker VPS ships the A-1 driver stub. Build:
+#   cargo build --release --no-default-features --features inference,kbs --bin fabstir-kbs -j 4
+kbs = ["dep:dcap-qvl", "dep:zeroize"]
+
 [[bin]]
 name = "publish-adapter"
 path = "src/bin/publish-adapter.rs"
 required-features = ["dev-tools"]
 
+[[bin]]
+name = "fabstir-kbs"
+path = "src/bin/kbs.rs"
+required-features = ["kbs"]
+
 [[test]]
 name = "performance_tests"
 path = "tests/performance/mod.rs"
+
+[[test]]
+name = "kbs_tests"
+path = "tests/kbs_tests.rs"
+required-features = ["kbs"]
 
 [[bench]]
 name = "embed_benchmark"
