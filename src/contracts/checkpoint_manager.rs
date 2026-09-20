@@ -152,6 +152,10 @@ impl ProofSubmissionCache {
 /// id says which container was decrypted, not which keyring released it: a
 /// test-keyring (CPU gate) load carries it too while advertising no
 /// `tee-attested`; never read `model_hash == attested id` as a real release.
+/// Since v8.56.0 the label is in the id itself: the node accepts a test-keyring
+/// release only for an id starting with the bytes `t5t:` (`7435743a…`) and a
+/// real release only for the rest, so a `model_hash` beginning `7435743a` is a
+/// test release by construction.
 pub fn witness_model_hash() -> [u8; 32] {
     if let Some(id) = crate::tee::attested_model_id() {
         return id;

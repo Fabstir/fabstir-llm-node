@@ -30,6 +30,16 @@ pub trait KeyBrokerClient: Send + Sync {
     fn challenge_nonce_ttl_seconds(&self) -> u32 {
         300
     }
+
+    /// Phase 5 P4.5: a cheap check that this broker can release `model_id` to this
+    /// node at all, run BEFORE the container fetch so a broker left in a test
+    /// evidence mode is discovered before tens of GB are downloaded, not after.
+    /// The default accepts (the mock, and any broker without such a call); the
+    /// HTTPS client asks `GET /info`. Never a security gate: the release itself
+    /// carries `test_release` and is judged again in `request_key`.
+    async fn preflight(&self, _model_id: [u8; 32]) -> TeeResult<()> {
+        Ok(())
+    }
 }
 
 /// Node-side attestation → key-release flow.

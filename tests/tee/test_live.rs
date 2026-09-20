@@ -5,6 +5,7 @@
 //! makes `HOST_TEE_ENABLED=true` safe to put in the composes: a node that
 //! advertises `tee-attested` either has an attested model or does not start.
 
+use fabstir_llm_node::tee::kbs_http::ACCEPT_TEST_RELEASE_ENV;
 use fabstir_llm_node::tee::live::{
     LiveConfig, EXPECTED_SHA256_ENV, MODEL_ID_ENV, PROVIDER_ENV, REQUIRE_VALIDATION_ENV,
 };
@@ -20,6 +21,8 @@ fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
 }
 
 const ID: &str = "abababababababababababababababababababababababababababababababab";
+/// A TEST id: `t5t:` (7435743a) + 28 bytes.
+const TEST_ID: &str = "7435743aabababababababababababababababababababababababababababab";
 const PROVIDER: &str = "0x0123456789abcdef0123456789abcdef01234567";
 
 #[test]
@@ -103,6 +106,32 @@ fn attested_path_refuses_plain_model_path_disable_llm_and_bad_values() {
             other => panic!("{extra:?}: {other:?}"),
         }
     }
+    // P4.5: a TEST id without the opt-in can never be released by any broker;
+    // refused offline at boot, blaming the form (mutation: drop the rule → the
+    // node boots, fetches the policy, reaches /info and fails there).
+    match LiveConfig::resolve(&base(&[(MODEL_ID_ENV, TEST_ID)]), true) {
+        Err(TeeError::VerificationFailed(m)) => {
+            assert!(
+                m.contains("t5t:") && m.contains(ACCEPT_TEST_RELEASE_ENV),
+                "{m}"
+            )
+        }
+        other => panic!("test id without the opt-in: {other:?}"),
+    }
+    // with the opt-in it resolves (the CPU gate compose); the converse, the
+    // opt-in with a real id, is allowed too (P6: harmless)
+    let cfg = LiveConfig::resolve(
+        &base(&[(MODEL_ID_ENV, TEST_ID), (ACCEPT_TEST_RELEASE_ENV, "1")]),
+        true,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(cfg.model_id.starts_with(b"t5t:"));
+    assert!(
+        LiveConfig::resolve(&base(&[(ACCEPT_TEST_RELEASE_ENV, "1")]), true)
+            .unwrap()
+            .is_some()
+    );
     // Missing or malformed provider / model id.
     assert!(matches!(
         LiveConfig::resolve(&env(&[(MODEL_ID_ENV, ID)]), true),

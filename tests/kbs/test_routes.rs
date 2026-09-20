@@ -405,6 +405,25 @@ fn mirror_structs_encode_identically_to_the_nodes() {
         serde_json::from_value::<RequestKeyRequestWire>(with_extra).is_err(),
         "nested unknown field refused"
     );
+    // P4.5: the node's lenient `/info` mirror reads the broker's `InfoResponse`
+    // field for field (every field populated non-default and compared: with the
+    // node's serde defaults, a rename on either side would come back ""/0).
+    let info = fabstir_llm_node::kbs::routes::InfoResponse {
+        keyring: "test".into(),
+        gpu_evidence: "canned".into(),
+        cpu_evidence: "simulator".into(),
+        nonce_ttl_seconds: 123,
+        nras_claims_version: "2.0".into(),
+        version: "v-x".into(),
+    };
+    let node: fabstir_llm_node::tee::kbs_http::BrokerInfo =
+        serde_json::from_slice(&serde_json::to_vec(&info).unwrap()).unwrap();
+    assert_eq!(node.keyring, "test");
+    assert_eq!(node.gpu_evidence, "canned");
+    assert_eq!(node.cpu_evidence, "simulator");
+    assert_eq!(node.nonce_ttl_seconds, 123);
+    assert_eq!(node.nras_claims_version, "2.0");
+    assert_eq!(node.version, "v-x");
 }
 
 #[tokio::test]

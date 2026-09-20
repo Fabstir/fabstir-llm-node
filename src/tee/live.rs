@@ -36,10 +36,11 @@
 use crate::tee::dstack_provider::DstackAttestationProvider;
 use crate::tee::http_sources::{HttpBlobSource, HttpPolicySource};
 use crate::tee::kbs_http::HttpKeyBrokerClient;
+use crate::tee::kbs_http::ACCEPT_TEST_RELEASE_ENV;
 use crate::tee::model_source::{host_tee_enabled, EncryptedModelLoader};
 use crate::tee::orchestration::{prepare_attested_model, PreparedModel};
 use crate::tee::policy_source::ProviderRegistry;
-use crate::tee::types::{TeeError, TeeResult};
+use crate::tee::types::{TeeError, TeeResult, TEST_ID_PREFIX};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -100,6 +101,22 @@ impl LiveConfig {
                         v.len()
                     ))
                 })?;
+                // P4.5: a TEST id (`t5t:` prefix) can only ever be released by a
+                // test-keyring broker, which this node refuses without the opt-in,
+                // and a real-keyring broker refuses the id outright. Nothing
+                // downstream can succeed, so say so here, offline, blaming the
+                // form and not the broker. The converse (opt-in with a real id)
+                // is allowed: a CPU-gate node pointed at production is harmless.
+                let accepts_test = get(ACCEPT_TEST_RELEASE_ENV)
+                    .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                if model_id.starts_with(TEST_ID_PREFIX) && !accepts_test {
+                    return Err(TeeError::VerificationFailed(format!(
+                        "{MODEL_ID_ENV} carries the t5t: prefix (a TEST id, hex 7435743a…) but \
+                         {ACCEPT_TEST_RELEASE_ENV} is not set: a test id is released only by a \
+                         test-keyring broker, which this node would refuse; set the opt-in (CPU gate \
+                         compose) or use a real model id"
+                    )));
+                }
                 let provider = get(PROVIDER_ENV).ok_or_else(|| {
                     TeeError::VerificationFailed(format!(
                         "{PROVIDER_ENV} (the policy signer's 0x address) is required on the attested path"

@@ -65,7 +65,8 @@ def main() -> int:
         # NVSwitch evidence, NRAS /attest/switch) is not built, so fail closed
         # here with the exact reason rather than let nvtrust raise (gate B-1a,
         # known gap G-14). DevTools is printed because the signed report may
-        # not carry it (G-6); this line is the node-asserted reading.
+        # not carry it (G-6); this line is the node-asserted reading, and it is
+        # refused below (D14): the measured collector is the only place that can.
         from verifier.nvml import NvmlHandler
 
         NvmlHandler.init_nvml()
@@ -84,6 +85,14 @@ def main() -> int:
                 "PPCIe (multi-GPU protected PCIe) is ON: nvtrust's single-GPU collection "
                 "path cannot attest a PPCIe system and the multi-GPU path is not built. "
                 "Failing closed (gate B-1a, gap G-14).",
+                file=sys.stderr,
+            )
+            return 75
+        if devtools:
+            print(
+                "GPU is in DevTools (CC development) mode: the attestation report may not "
+                "carry it and the broker cannot verify it (gap G-6), so the node refuses "
+                "to collect evidence here. Production mode only.",
                 file=sys.stderr,
             )
             return 75

@@ -7,7 +7,9 @@
 //! TLS 1.3, bounded bodies, the frozen wire format, and the error mapping.
 //! Harness in `kbs_fixture.rs`.
 
-use super::kbs_fixture::{client, err_body, pki, spawn_tls_broker, DEK, HOST, MODEL, NONCE};
+use super::kbs_fixture::{
+    client, err_body, pki, spawn_tls_broker, DEK, HOST, MODEL, NONCE, TEST_MODEL,
+};
 use fabstir_llm_node::tee::kbs_http::{
     ChallengeRequest, ChallengeResponse, EvidenceWire, HttpKeyBrokerClient, RequestKeyRequest,
     RequestKeyResponse, WrappedKeyWire, MAX_BODY,
@@ -132,14 +134,15 @@ async fn test_release_flag_is_remembered_and_the_key_still_unwraps() {
         }),
     )
     .await;
-    // Accepted only because this client opted in (the CPU gate compose does).
+    // Accepted only because this client opted in (the CPU gate compose does) AND
+    // the id carries the `t5t:` prefix (P4.5 witness rule).
     let kbs = client(&p, addr).with_accept_test_release(true);
     let (sk, pk) = generate_ephemeral_keypair();
     let ev = MockAttestationProvider::new("H100", [9u8; 48], CcMode::On)
         .gather_evidence(NONCE, &pk)
         .await
         .unwrap();
-    let wrapped = kbs.request_key(MODEL, &ev).await.unwrap();
+    let wrapped = kbs.request_key(TEST_MODEL, &ev).await.unwrap();
     assert_eq!(unwrap_key(&wrapped, &sk).unwrap(), DEK);
     assert!(
         kbs.last_release_was_test(),

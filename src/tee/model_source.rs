@@ -280,6 +280,12 @@ impl EncryptedModelLoader {
             return Ok(path);
         }
 
+        // 0. (P4.5) Ask the broker whether it can release this model to this node
+        //    at all, BEFORE the download: a broker left in a test evidence mode is
+        //    found out here, not after tens of GB. Not a security gate (step 2
+        //    judges the release itself).
+        kbs.preflight(spec.model_id).await?;
+
         // 1. Fetch the encrypted container.
         let container = s5.get_file(&spec.encrypted_path).await?;
 

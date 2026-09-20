@@ -7,9 +7,11 @@
 //! - `model_id` 32 bytes, `provider` 20-byte `0x` address, `dek` 32 bytes, all
 //!   lowercase hex, no duplicates, at least one entry;
 //! - `test: true` ⇔ `model_id` starts with the bytes `t5t:` (`7435743a`), a
-//!   labelling convention enforced here and nowhere else; the security boundary is
-//!   the flag × mode coupling: any test evidence mode ⇒ every entry `test: true`;
-//!   both real ⇒ every entry `test: false` ([`Keyring::check_class`]);
+//!   labelling convention enforced here at keyring load and, on the node, at
+//!   `request_key` (`test_release` ⇔ the prefix on `TEE_MODEL_ID`, P4.5); the
+//!   security boundary is the flag × mode coupling: any test evidence mode ⇒ every
+//!   entry `test: true`; both real ⇒ every entry `test: false`
+//!   ([`Keyring::check_class`]);
 //! - `min_policy_version ≥ 1`: a policy below it is refused (revocation = bump the
 //!   floor + replace the file + restart; the immediate lever is a past `expiry`);
 //! - the DEK is held in a `Zeroizing` wrapper, never logged, never captured.
@@ -20,8 +22,9 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use zeroize::Zeroizing;
 
-/// The reserved test-id prefix (`t5t:`), as bytes of the 32-byte model id.
-pub const TEST_ID_PREFIX: &[u8; 4] = b"t5t:";
+/// The reserved test-id prefix (`t5t:`), as bytes of the 32-byte model id (shared
+/// with the node side, which cannot see this feature-gated module).
+pub use crate::tee::types::TEST_ID_PREFIX;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[error("keyring: {0}")]

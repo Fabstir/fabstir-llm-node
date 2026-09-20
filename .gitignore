@@ -93,6 +93,8 @@ __pycache__/
 *.pyc
 # a copy of the kbs SSH key for the dev container to run kbs-ca/vps-install.sh; never tracked
 deployment/phala/kbs-ca/.ssh/
+# the CPU gate rounds' TEST provider key + DEK (P4.5 design §6.0); never tracked
+deployment/phala/kbs-ca/cpu-round/
 
 # Phase 5 broker test fixtures are real bytes and must ship with the tests
 !tests/kbs/fixtures/*.bin

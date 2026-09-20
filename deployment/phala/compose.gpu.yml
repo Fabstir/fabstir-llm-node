@@ -34,6 +34,9 @@ services:
     # mismatch, not an error. The form's selection MUST equal this label.
     labels:
       ai.platformless.dstack_os_image: "dstack-nvidia-0.5.9"
+      # The node release cut into the pinned image; tests/phase5_release_pins.rs
+      # ties it and the digest above to the last RELEASE_PINS row.
+      ai.platformless.node_version: "8.56.0"
     # NVML access for nvtrust evidence collection (reference A runs the
     # evidence container privileged for the same reason).
     runtime: nvidia
@@ -53,10 +56,12 @@ services:
       # --- attested load path (Phase 5) ---
       # HOST_TEE_ENABLED=true means the model MUST come from an attested decrypt
       # or the node does not start (src/tee/live.rs decision table, exit 78):
-      # the image pinned above is v8.55.0, the first build that enforces it and
-      # therefore the first that may advertise `tee-attested`. The flag and the
-      # TEE_* block below are all-or-nothing; the guard test checks they move
-      # together (flipped 2026-09-18 with the v8.55.0 digest).
+      # the image pinned above (v8.56.0; v8.55.0 was the first build that
+      # enforces it and therefore the first that may advertise `tee-attested`;
+      # v8.56.0 adds the broker /info pre-check, the t5t: witness rule and the
+      # collector's DevTools refusal). The flag and the TEE_* block below are
+      # all-or-nothing; the guard test checks they move together (flipped
+      # 2026-09-18 with the v8.55.0 digest).
       HOST_TEE_ENABLED: "true"
       # TEE_MODEL_PROVIDER = the 0x address whose signature the policy must
       # carry. TEE_EXPECTED_MODEL_SHA256 = the on-chain hash of the plaintext

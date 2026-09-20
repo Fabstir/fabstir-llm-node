@@ -23,7 +23,7 @@
 //! broker ran with `KBS_GPU_EVIDENCE=canned` and a test keyring.
 
 use crate::tee::key_broker::KeyBrokerClient;
-use crate::tee::types::{Evidence, TeeError, TeeResult, WrappedKey};
+use crate::tee::types::{Evidence, TeeError, TeeResult, WrappedKey, TEST_ID_PREFIX};
 use async_trait::async_trait;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,14 @@ pub const CA_FILE_ENV: &str = "TEE_KBS_CA_FILE";
 /// Largest response body accepted from the broker. A wrapped key is ~200 bytes
 /// and an error a few hundred; 64 KiB leaves room for nothing but growth.
 pub const MAX_BODY: usize = 64 * 1024;
+/// Per-attempt budget for `GET /info` (P4.5): its own, not the 30 s challenge
+/// budget, so three attempts against a dead broker cost at most 3 × 10 s plus
+/// the two pauses between them, 50 s at the default interval.
+pub const INFO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Attempts `preflight` makes against transport-class `/info` failures.
+pub const INFO_ATTEMPTS: u32 = 3;
+/// Default pause between those attempts (`with_preflight_retry_interval`).
+pub const DEFAULT_PREFLIGHT_RETRY_INTERVAL: Duration = Duration::from_secs(10);
 
 // ---------- wire format (frozen; the broker uses these same types) ----------
 
@@ -97,6 +105,32 @@ pub struct WrappedKeyWire {
     pub nonce_hex: String,
     /// hex
     pub ciphertext_hex: String,
+}
+
+/// `GET {base}/info` → 200 (P4.5). Lenient on purpose: a newer broker may add
+/// fields, and only `keyring` carries a decision; the rest is logged.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrokerInfo {
+    pub keyring: String,
+    #[serde(default)]
+    pub gpu_evidence: String,
+    #[serde(default)]
+    pub cpu_evidence: String,
+    #[serde(default)]
+    pub nonce_ttl_seconds: u32,
+    #[serde(default)]
+    pub nras_claims_version: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+/// How a `GET` failed (P4.5): `Transport` (a send error or any 5xx, whatever the
+/// body) is retried by `preflight`; `Final` (4xx, 3xx, an over-bound or unparseable
+/// 2xx) is not.
+#[derive(Debug)]
+pub enum GetError {
+    Transport(String),
+    Final(TeeError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +261,8 @@ pub struct HttpKeyBrokerClient {
     /// CPU gate compose sets it, so a GPU node meeting a broker left in
     /// `KBS_GPU_EVIDENCE=canned` refuses the key instead of serving under it.
     accept_test_release: bool,
+    /// Pause between `preflight`'s attempts on a transport-class `/info` failure.
+    preflight_retry_interval: Duration,
     /// TTL the broker reported with the most recent nonce (300 until then).
     ttl_seconds: AtomicU32,
     last_release_was_test: AtomicBool,
@@ -293,6 +329,12 @@ impl HttpKeyBrokerClient {
         self
     }
 
+    /// Pause between `preflight` attempts (default 10 s; tests shorten it).
+    pub fn with_preflight_retry_interval(mut self, d: Duration) -> Self {
+        self.preflight_retry_interval = d;
+        self
+    }
+
     /// `base` must be `https://…` (the API prefix, e.g. `https://kbs.fabstir.net/v1/kbs`);
     /// `root_ca_pem` is the ONLY certificate the client will trust; `resolve` pins
     /// a hostname to an address (tests; the hostname is still verified against the
@@ -350,6 +392,7 @@ impl HttpKeyBrokerClient {
             timeout,
             request_key_timeout: timeout,
             accept_test_release: false,
+            preflight_retry_interval: DEFAULT_PREFLIGHT_RETRY_INTERVAL,
             ttl_seconds: AtomicU32::new(300),
             last_release_was_test: AtomicBool::new(false),
         })
@@ -358,6 +401,94 @@ impl HttpKeyBrokerClient {
     /// Whether the most recent successful release was labelled `test_release`.
     pub fn last_release_was_test(&self) -> bool {
         self.last_release_was_test.load(Ordering::SeqCst)
+    }
+
+    /// `GET {base}/{path}` (P4.5): the same bound as `post`, but the failure is
+    /// classified for `preflight`'s retry and NEVER mapped through `map_error` (a
+    /// contract-shaped 5xx body must read as its status, not as a freshness or
+    /// verification verdict).
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<T, GetError> {
+        let url = format!("{}/{}", self.base, path);
+        let resp = self
+            .client
+            .get(&url)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| GetError::Transport(format!("GET {path}: {e}")))?;
+        let status = resp.status();
+        // A body that stops mid-stream (the broker or nginx restarting under a
+        // 200) is the transient the retry exists for, whatever the status; the
+        // size bound is a final answer on a non-5xx (a 5xx retries whatever its
+        // body, per `GetError`).
+        let bytes = match read_bounded(resp, MAX_BODY).await {
+            Ok(b) => b,
+            Err(ReadError::Transport(e)) | Err(ReadError::OverBound(e))
+                if status.is_server_error() =>
+            {
+                return Err(GetError::Transport(format!(
+                    "GET {path}: HTTP {status}: {e}"
+                )))
+            }
+            Err(ReadError::Transport(e)) => {
+                return Err(GetError::Transport(format!(
+                    "GET {path}: HTTP {status}: {e}"
+                )))
+            }
+            Err(ReadError::OverBound(e)) => {
+                return Err(GetError::Final(TeeError::Kbs(format!(
+                    "GET {path}: HTTP {status}: {e}"
+                ))))
+            }
+        };
+        if status.is_success() {
+            return serde_json::from_slice(&bytes).map_err(|e| {
+                GetError::Final(TeeError::Kbs(format!("GET {path}: bad response body: {e}")))
+            });
+        }
+        let text = String::from_utf8_lossy(&bytes)
+            .chars()
+            .take(200)
+            .collect::<String>();
+        let msg = format!("GET {path}: HTTP {status}: {text}");
+        if status.is_server_error() {
+            Err(GetError::Transport(msg))
+        } else {
+            Err(GetError::Final(TeeError::Kbs(msg)))
+        }
+    }
+
+    /// `GET /info` with the P4.5 retry: transport-class failures up to
+    /// [`INFO_ATTEMPTS`] times, [`Self::with_preflight_retry_interval`] apart; a
+    /// `Final` failure and a parsed answer are decided on the first attempt.
+    async fn fetch_info(&self) -> TeeResult<BrokerInfo> {
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            match self.get::<BrokerInfo>("info", INFO_TIMEOUT).await {
+                Ok(info) => return Ok(info),
+                Err(GetError::Final(e)) => {
+                    return Err(match e {
+                        TeeError::Kbs(m) => TeeError::Kbs(format!("broker /info: {m}")),
+                        other => other,
+                    })
+                }
+                Err(GetError::Transport(m)) => {
+                    if attempt >= INFO_ATTEMPTS {
+                        return Err(TeeError::Kbs(format!(
+                            "broker /info: {m} (after {attempt} attempts: the broker or its proxy is down, \
+                             DNS failed, or the pinned root does not match the served certificate)"
+                        )));
+                    }
+                    tracing::warn!(target: "tee", attempt, "broker /info: {m}; retrying");
+                    tokio::time::sleep(self.preflight_retry_interval).await;
+                }
+            }
+        }
     }
 
     async fn post<T: serde::de::DeserializeOwned>(
@@ -380,7 +511,7 @@ impl HttpKeyBrokerClient {
         // read as a 502 in the log, not as "body exceeds the bound".
         let bytes = read_bounded(resp, MAX_BODY)
             .await
-            .map_err(|e| TeeError::Kbs(format!("POST {path}: HTTP {status}: {e}")))?;
+            .map_err(|e| TeeError::Kbs(format!("POST {path}: HTTP {status}: {}", e.message())))?;
         if status.is_success() {
             return serde_json::from_slice(&bytes)
                 .map_err(|e| TeeError::Kbs(format!("POST {path}: bad response body: {e}")));
@@ -413,10 +544,25 @@ fn map_error(e: &ErrorInner, path: &str) -> TeeError {
 }
 
 /// Read at most `max` bytes of the body; more is a failure, never a truncation.
-async fn read_bounded(resp: reqwest::Response, max: usize) -> TeeResult<Vec<u8>> {
+/// Why a bounded body read failed: the size bound (a final answer) or the
+/// stream (a transient, for `get`'s retry classification).
+enum ReadError {
+    OverBound(String),
+    Transport(String),
+}
+
+impl ReadError {
+    fn message(&self) -> &str {
+        match self {
+            ReadError::OverBound(m) | ReadError::Transport(m) => m,
+        }
+    }
+}
+
+async fn read_bounded(resp: reqwest::Response, max: usize) -> Result<Vec<u8>, ReadError> {
     if let Some(len) = resp.content_length() {
         if len as usize > max {
-            return Err(TeeError::Kbs(format!(
+            return Err(ReadError::OverBound(format!(
                 "response body {len} bytes exceeds the {max}-byte bound"
             )));
         }
@@ -424,9 +570,9 @@ async fn read_bounded(resp: reqwest::Response, max: usize) -> TeeResult<Vec<u8>>
     let mut out = Vec::new();
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| TeeError::Kbs(format!("response body: {e}")))?;
+        let chunk = chunk.map_err(|e| ReadError::Transport(format!("response body: {e}")))?;
         if out.len() + chunk.len() > max {
-            return Err(TeeError::Kbs(format!(
+            return Err(ReadError::OverBound(format!(
                 "response body exceeds the {max}-byte bound"
             )));
         }
@@ -475,6 +621,20 @@ impl KeyBrokerClient for HttpKeyBrokerClient {
                 hex::encode(model_id)
             )));
         }
+        // P4.5 witness rule: the label must agree with the id's `t5t:` prefix in
+        // BOTH directions, so the on-chain witness (`model_hash` = this id) and the
+        // advert decision carry the label by construction. Before the store: a
+        // refused release remembers nothing.
+        let is_test_id = model_id.starts_with(TEST_ID_PREFIX);
+        if resp.test_release != is_test_id {
+            return Err(TeeError::Kbs(format!(
+                "witness labelling: broker says test_release={} but TEE_MODEL_ID {} {} the t5t: prefix; \
+                 refusing the key",
+                resp.test_release,
+                hex::encode(model_id),
+                if is_test_id { "carries" } else { "does not carry" }
+            )));
+        }
         self.last_release_was_test
             .store(resp.test_release, Ordering::SeqCst);
         if resp.test_release {
@@ -489,5 +649,57 @@ impl KeyBrokerClient for HttpKeyBrokerClient {
 
     fn challenge_nonce_ttl_seconds(&self) -> u32 {
         self.ttl_seconds.load(Ordering::SeqCst)
+    }
+
+    /// P4.5: `GET /info` before the container fetch. Decides on `keyring` ×
+    /// `accept_test_release` × the id's `t5t:` prefix only; the modes are logged
+    /// (unconditionally, before the decision, so a refusal says WHICH mode the
+    /// broker was left in) but never judged: the broker's own start-up coupling
+    /// already makes any test evidence mode ⇒ `keyring: test`.
+    async fn preflight(&self, model_id: [u8; 32]) -> TeeResult<()> {
+        let info = self.fetch_info().await?;
+        tracing::info!(
+            target: "tee",
+            "broker /info: version={} keyring={} gpu_evidence={} cpu_evidence={} nonce_ttl_seconds={} nras_claims_version={}",
+            info.version, info.keyring, info.gpu_evidence, info.cpu_evidence, info.nonce_ttl_seconds, info.nras_claims_version
+        );
+        let is_test_id = model_id.starts_with(TEST_ID_PREFIX);
+        let id = hex::encode(model_id);
+        // The modes ride in the refusal itself: the INFO line above is filtered
+        // out under RUST_LOG=warn, and the exit-78 log must still say which mode
+        // the broker was left in.
+        let modes = format!(
+            "gpu_evidence={} cpu_evidence={} version={}",
+            info.gpu_evidence, info.cpu_evidence, info.version
+        );
+        match info.keyring.as_str() {
+            "test" if !self.accept_test_release => Err(TeeError::Kbs(format!(
+                "broker /info: keyring is TEST ({modes}) and this node does not accept test releases \
+                 ({ACCEPT_TEST_RELEASE_ENV} unset); not fetching the container"
+            ))),
+            "test" if !is_test_id => Err(TeeError::Kbs(format!(
+                "broker /info: keyring is TEST ({modes}) but TEE_MODEL_ID {id} does not carry the t5t: \
+                 prefix; a test keyring cannot hold this model"
+            ))),
+            "test" => {
+                tracing::warn!(target: "tee", "CRITICAL: broker /info: keyring is TEST; this is a gate run");
+                Ok(())
+            }
+            "real" if is_test_id => Err(TeeError::Kbs(format!(
+                "broker /info: TEE_MODEL_ID {id} carries the t5t: prefix but the keyring is REAL ({modes}); \
+                 a real keyring never holds a test id"
+            ))),
+            "real" => {
+                if self.accept_test_release {
+                    tracing::warn!(
+                        target: "tee",
+                        "broker /info: {ACCEPT_TEST_RELEASE_ENV} is set against a REAL-keyring broker (harmless; a \
+                         CPU-gate node pointed at production?)"
+                    );
+                }
+                Ok(())
+            }
+            other => Err(TeeError::Kbs(format!("broker /info: keyring {other:?} is not test|real"))),
+        }
     }
 }

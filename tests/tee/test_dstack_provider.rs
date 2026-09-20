@@ -231,3 +231,98 @@ async fn real_nvtrust_canned_collection_is_one_json_line_with_our_nonce() {
         "base64 attestation report"
     );
 }
+
+/// P4.5 (design P8): the REAL collector script's real branch, driven through
+/// `GpuEvidenceCollector`, against a GENERATED stub `verifier` package placed
+/// beside a copy of the script (the script's directory is `sys.path[0]`, so the
+/// stub resolves with no `PYTHONPATH`; the collector clears the child's
+/// environment, so the three NVML states are baked into the stub per case).
+/// The stub echoes its nonce into `evidence` and reports `arch` by the
+/// `no_gpu_mode` it was called with, so the one dangerous mutation (real mode
+/// asking nvtrust for sample evidence) is visible.
+fn stubbed_collector(cc_on: bool, ppcie: bool, devtools: bool) -> (GpuEvidenceCollector, Scratch) {
+    let s = tmpdir();
+    let real =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("deployment/phala/collect_gpu_evidence.py");
+    let script = s.0.join("collect_gpu_evidence.py");
+    std::fs::copy(&real, &script).unwrap();
+    let pkg = s.0.join("verifier");
+    std::fs::create_dir_all(pkg.join("nvml")).unwrap();
+    std::fs::write(pkg.join("__init__.py"), b"").unwrap();
+    std::fs::write(
+        pkg.join("cc_admin.py"),
+        b"def collect_gpu_evidence_remote(nonce, no_gpu_mode=False, ppcie_mode=True):\n\
+          \x20   arch = 'STUB-CANNED' if no_gpu_mode else 'STUB-REAL'\n\
+          \x20   return [{'certificate': 'Y2VydA==', 'evidence': 'ev:' + nonce, 'arch': arch}]\n",
+    )
+    .unwrap();
+    let py = |b: bool| if b { "True" } else { "False" };
+    std::fs::write(
+        pkg.join("nvml").join("__init__.py"),
+        format!(
+            "class NvmlHandler:\n\
+             \x20   @staticmethod\n    def init_nvml():\n        pass\n\
+             \x20   @staticmethod\n    def is_cc_enabled():\n        return {}\n\
+             \x20   @staticmethod\n    def is_ppcie_mode_enabled():\n        return {}\n\
+             \x20   @staticmethod\n    def is_cc_dev_mode():\n        return {}\n",
+            py(cc_on),
+            py(ppcie),
+            py(devtools)
+        ),
+    )
+    .unwrap();
+    (
+        GpuEvidenceCollector::new(
+            "python3",
+            script,
+            GpuEvidenceMode::Real,
+            Duration::from_secs(20),
+        ),
+        s,
+    )
+}
+
+#[tokio::test]
+async fn real_collector_refuses_devtools_cc_off_and_ppcie_and_collects_when_clear() {
+    let refused = |m: &str, needle: &str| {
+        assert!(m.contains("collector exited"), "{m}");
+        assert!(
+            m.contains(needle),
+            "the last stderr line names the reason: {m}"
+        );
+    };
+    // DevTools on (mutation: drop the refusal → the script exits 0 and collects)
+    let (c, _s) = stubbed_collector(true, false, true);
+    match c.collect(&NONCE).await {
+        Err(TeeError::GpuEvidence(m)) => refused(&m, "DevTools"),
+        other => panic!("DevTools mode must be refused, got {other:?}"),
+    }
+    // CC off
+    let (c, _s) = stubbed_collector(false, false, false);
+    match c.collect(&NONCE).await {
+        Err(TeeError::GpuEvidence(m)) => refused(&m, "confidential computing is OFF"),
+        other => panic!("CC off must be refused, got {other:?}"),
+    }
+    // PPCIe on
+    let (c, _s) = stubbed_collector(true, true, false);
+    match c.collect(&NONCE).await {
+        Err(TeeError::GpuEvidence(m)) => refused(&m, "PPCIe"),
+        other => panic!("PPCIe must be refused, got {other:?}"),
+    }
+    // all clear: one JSON line, our nonce passed through to nvtrust, real mode
+    let (c, _s) = stubbed_collector(true, false, false);
+    let bytes = c.collect(&NONCE).await.expect("clear host collects");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("one JSON line");
+    assert_eq!(v["nonce"], hex::encode(NONCE));
+    assert_eq!(
+        v["arch"], "STUB-REAL",
+        "real mode must not ask for sample evidence"
+    );
+    let e = &v["evidence_list"].as_array().unwrap()[0];
+    assert_eq!(
+        e["evidence"],
+        format!("ev:{}", hex::encode(NONCE)),
+        "the nonce reached nvtrust"
+    );
+    assert!(v.get("canned").is_none());
+}

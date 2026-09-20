@@ -8,7 +8,7 @@
 
 use super::kbs_fixture::{
     client, client_with_timeout, pki, spawn_tls_broker, spawn_tls_broker_delayed, DEK, HOST, MODEL,
-    NONCE,
+    NONCE, TEST_MODEL,
 };
 use fabstir_llm_node::tee::kbs_http::{
     ChallengeResponse, RequestKeyRequest, RequestKeyResponse, WrappedKeyWire,
@@ -78,8 +78,12 @@ async fn a_test_keyring_release_is_refused_unless_opted_in() {
         .await
         .is_err());
     // Opted in (the CPU gate compose): accepted and labelled.
+    // P4.5 witness rule: an opted-in TEST release is accepted only for a
+    // `t5t:`-prefixed id (`TEST_MODEL`); `MODEL` would be refused as mislabelled.
     let kbs = client(&p, addr).with_accept_test_release(true);
-    kbs.request_key(MODEL, &ev).await.expect("opted-in release");
+    kbs.request_key(TEST_MODEL, &ev)
+        .await
+        .expect("opted-in release");
     assert!(kbs.last_release_was_test());
 }
 
@@ -100,7 +104,7 @@ async fn request_key_has_its_own_budget() {
         Err(TeeError::Kbs(m)) => assert!(m.contains("timed out") || m.contains("timeout"), "{m}"),
         other => panic!("challenge must hit the 300 ms budget: {other:?}"),
     }
-    kbs.request_key(MODEL, &ev)
+    kbs.request_key(TEST_MODEL, &ev)
         .await
         .expect("request_key runs under its own 10 s budget");
 }

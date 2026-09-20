@@ -47,11 +47,14 @@ install -m 0644 "$STUB_SRC" "$LIB/libcuda.so.1"
 # LD_LIBRARY_PATH.
 echo "$LIB" > /etc/ld.so.conf.d/fabstir-kbs.conf
 ldconfig
-if ldd /usr/local/bin/fabstir-kbs | grep -q 'not found'; then
-  ldd /usr/local/bin/fabstir-kbs | grep 'not found' >&2
+# `grep -q` exits on the first match and `ldd` then dies of SIGPIPE, which
+# `pipefail` reports as failure; let grep read to the end (found on the first
+# real install, 2026-09-19; build.sh has the same note for `strings`).
+LDD="$(ldd /usr/local/bin/fabstir-kbs)"
+if printf '%s\n' "$LDD" | grep 'not found' >&2; then
   fail "unresolved shared libraries (libssl3? the stub?)"
 fi
-ldd /usr/local/bin/fabstir-kbs | grep -q "libcuda.so.1 => $LIB/libcuda.so.1" \
+printf '%s\n' "$LDD" | grep "libcuda.so.1 => $LIB/libcuda.so.1" >/dev/null \
   || fail "libcuda.so.1 does not resolve to the stub"
 sudo -u "$USER_NAME" /usr/local/bin/fabstir-kbs --version >/dev/null \
   || fail "the binary does not start as $USER_NAME (ldconfig?)"
@@ -61,10 +64,12 @@ systemctl enable --now systemd-time-wait-sync.service >/dev/null 2>&1 || true
 [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ] || fail "NTP is not synchronised (timedatectl)"
 
 # ISRG Root YE in the system store (pccs.phala.network is issued by Let's Encrypt YE1).
-# The Debian bundle carries no subject text, so decode it rather than grep the file.
+# The Debian bundle carries no subject text, so decode it rather than grep the file. The
+# 2026 root's subject prints as `O = ISRG, CN = Root YE` (NOT "ISRG Root YE": the X1/X2
+# naming), found the hard way on kbs.fabstir.net 2026-09-19.
 openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt 2>/dev/null \
-  | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -q 'ISRG Root YE' \
-  || fail "ISRG Root YE missing from the system store (update-ca-certificates with root-ye.pem)"
+  | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -q 'O = ISRG, CN = Root YE' \
+  || fail "ISRG Root YE missing from the system store: curl -fsSL https://letsencrypt.org/certs/gen-y/root-ye.pem -o /usr/local/share/ca-certificates/isrg-root-ye.crt && update-ca-certificates"
 
 # nginx check + unit
 nginx -t || fail "nginx -t failed with kbs-limits.conf in place"

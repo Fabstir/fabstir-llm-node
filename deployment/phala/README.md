@@ -30,8 +30,11 @@ What goes on the Phala deploy form, and nothing else. Design and gates:
    A-12/B-3) says which image booted.
 3. Encrypted environment variables (the form's secrets, one per `${VAR}` in the compose):
    `HOST_PRIVATE_KEY`, `RPC_URL`, optional `RUST_LOG`, and (both composes carry
-   `HOST_TEE_ENABLED: "true"` with the v8.55.0 image) the attested-load set: `TEE_MODEL_ID`
-   (32-byte hex, no `0x`),
+   `HOST_TEE_ENABLED: "true"` since the v8.55.0 image) the attested-load set: `TEE_MODEL_ID`
+   (32-byte hex, no `0x`; on `compose.cpu.yml` it MUST begin `7435743a`, the bytes `t5t:`,
+   because the canned GPU half is released only by a TEST-keyring broker and the v8.56.0
+   node refuses a test release for any other id, and a real-keyring release for a `t5t:`
+   id, before downloading anything),
    `TEE_MODEL_PROVIDER` (the `0x` address whose signature the policy must carry),
    `TEE_KBS_URL` (`https://kbs.fabstir.net/v1/kbs`), `TEE_POLICY_URL` (may contain
    `{model_id}`), `TEE_BLOB_URL`, optional `TEE_EXPECTED_MODEL_SHA256` (the on-chain hash
@@ -81,7 +84,20 @@ What goes on the Phala deploy form, and nothing else. Design and gates:
   broker LEFT on its test keyring (`KBS_GPU_EVIDENCE=canned`) after a gate day labels every
   release `test_release: true`, and the node refuses such a release unless its compose says
   `TEE_ACCEPT_TEST_RELEASE: "1"`, which only `compose.cpu.yml` does (the guard forbids it on
-  the GPU compose). A GPU node meeting a canned broker exits 78 instead of serving.
+  the GPU compose). A GPU node meeting a canned broker exits 78 instead of serving, and from
+  v8.56.0 it finds out from `GET /v1/kbs/info` BEFORE downloading the container (`broker
+  /info: keyring is TEST …` in its log; `/info` is tried three times on transport failures,
+  10 s budget each and 10 s apart, so a broker restart is ridden out).
+- A `t5t:`-prefixed `TEE_MODEL_ID` without `TEE_ACCEPT_TEST_RELEASE: "1"` is refused at boot,
+  offline (no broker can ever release it to a node that refuses test releases); the message
+  blames the form.
+- The image digest re-pin: `tests/phase5_release_pins.rs` holds the `(version, digest)`
+  history; a release that will be re-cut adds a `("x.y.z", "PENDING")` row with its version
+  bump and the paste fills it. Before pasting, prove the pushed image carries the
+  post-P4.5 collector: `docker run --rm --entrypoint grep <image@digest> -c 'DevTools (CC
+  development) mode' /usr/local/bin/collect_gpu_evidence.py` prints `1` (the Dockerfile
+  copies the collector from the CHECKOUT, not the tarball; a stale checkout bakes the old
+  one).
 - `request_key` waits up to 180 s (`TEE_KBS_URL` client, `DEFAULT_REQUEST_KEY_TIMEOUT`): the
   broker's side spans the DCAP collateral fetch and the NRAS round trip, and a nonce is burned
   on arrival, so a client that gave up early could never retry. `challenge` keeps 30 s.

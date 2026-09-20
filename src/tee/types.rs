@@ -13,6 +13,14 @@
 //! registers as lowercase hex strings: `CvmPolicy::mrtd` and `rtmr0..2`.
 
 use serde::{Deserialize, Serialize};
+
+/// The reserved TEST model-id prefix (`t5t:`, bytes `74 35 74 3a`): a keyring entry is
+/// `test: true` iff its `model_id` starts with it (broker, at keyring load), and a
+/// node accepts a `test_release: true` release iff its `TEE_MODEL_ID` does (node, at
+/// `request_key`). A labelling convention on both sides; the security boundary is the
+/// broker's keyring-flag × evidence-mode coupling and the node's
+/// `TEE_ACCEPT_TEST_RELEASE` opt-in.
+pub const TEST_ID_PREFIX: &[u8; 4] = b"t5t:";
 use serde_big_array::BigArray;
 use sha2::{Digest, Sha256};
 

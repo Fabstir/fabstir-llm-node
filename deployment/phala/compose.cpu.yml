@@ -34,6 +34,8 @@ services:
     # mismatch, not an error. The form's selection MUST equal this label.
     labels:
       ai.platformless.dstack_os_image: "dstack-v0.5.9"
+      # Same release as compose.gpu.yml (one image, two composes; pins test).
+      ai.platformless.node_version: "8.56.0"
     shm_size: "2g"
     ports:
       - "8080:8080"
@@ -49,11 +51,17 @@ services:
       # paid GPU node.
       TEE_ACCEPT_TEST_RELEASE: "1"
 
-      # Attested load enforced by the pinned v8.55.0 image (see compose.gpu.yml);
+      # Attested load enforced by the pinned image (v8.56.0; see compose.gpu.yml);
       # on this compose the GPU half is canned, so the node runs WITHOUT the
       # `tee-attested` advert (test-keyring release). Flag + TEE_* block move
       # together (guard test).
       HOST_TEE_ENABLED: "true"
+      # TEE_MODEL_ID on THIS compose must be a TEST id: 64 hex beginning
+      # 7435743a (the bytes `t5t:`). The canned GPU half is only ever released
+      # by a broker on its TEST keyring, whose ids all carry that prefix, and
+      # the node refuses a test release for any other id (v8.56.0 witness rule)
+      # and refuses at the /info pre-check before downloading anything. The same
+      # id sits in the policy, the container header and the keyring entry.
       # TEE_MODEL_PROVIDER = the 0x address whose signature the policy must
       # carry. TEE_EXPECTED_MODEL_SHA256 = the on-chain hash of the plaintext
       # model; optional (absent = a CRITICAL warning, never silent).

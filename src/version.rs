@@ -3,25 +3,34 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.55.0-phase5-attested-load-2026-09-18";
+pub const VERSION: &str = "v8.56.0-phase5-kbs-bundle-2026-09-19";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.55.0";
+pub const VERSION_NUMBER: &str = "8.56.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 55;
+pub const VERSION_MINOR: u32 = 56;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-09-18";
+pub const BUILD_DATE: &str = "2026-09-19";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.56.0 Phase 5 P4.5 node-side bundle: the node asks the key broker's
+    // /info before downloading a container (a broker left in a test evidence
+    // mode is refused before tens of GB, not after), accepts a test-keyring
+    // release only for a `t5t:`-prefixed TEE_MODEL_ID and a real one only for
+    // the rest (the on-chain witness carries the label by construction), and
+    // the measured in-guest collector refuses a DevTools-mode GPU.
+    "tee-kbs-info-preflight",
+    "tee-t5t-witness-rule",
+    "gpu-devtools-refusal",
     // v8.55.0 Phase 5 attested load path (Phala Cloud, Intel TDX + NVIDIA H200):
     // HOST_TEE_ENABLED=true means the model comes from an attested decrypt or
     // the node does not start; dstack quote + nvtrust GPU evidence, private-root
@@ -582,6 +591,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.56.0 - Phase 5 P4.5 node-side bundle (Sep 19, 2026)
+    "BEHAVIOUR (attested nodes): before fetching the encrypted container the node GETs the broker's /v1/kbs/info and refuses to continue when the broker's keyring class does not fit this node (keyring `test` without TEE_ACCEPT_TEST_RELEASE=1, or with it but a TEE_MODEL_ID that does not start with the bytes `t5t:` (hex 7435743a); keyring `real` with a `t5t:` id); /info is tried three times (10 s budget each, 10 s apart; at most 50 s) on transport-class failures before the load fails. A broker without /info (none was ever deployed) refuses every attested load",
+    "SECURITY (attested nodes): a release's `test_release` label must agree with the `t5t:` prefix of TEE_MODEL_ID in both directions or the key is refused before it is decoded; the STARK witness model_hash therefore carries the label (a model_hash starting 7435743a is a test release). CPU gate rounds must use a `t5t:`-prefixed TEE_MODEL_ID",
+    "SECURITY (Phala image): collect_gpu_evidence.py refuses a GPU in DevTools (CC development) mode with exit 75 (the attestation report carries no verifiable DevTools claim, gap G-6); the image must be re-cut and its digest re-pinned (tests/phase5_release_pins.rs)",
     // v8.55.0 - Phase 5 attested load path (Sep 18, 2026)
     "BREAKING (every host): HOST_TEE_ENABLED=true now REQUIRES the attested-load variables (TEE_MODEL_ID, TEE_MODEL_PROVIDER, TEE_KBS_URL, TEE_POLICY_URL, TEE_BLOB_URL; TEE_KBS_CA_FILE from the image) and refuses MODEL_PATH / DISABLE_LLM next to them; a plain node with a stale TEE_MODEL_ID is refused too (exit 78, self-explaining). A Phase-4 host that ran the flag with a plain MODEL_PATH must drop the flag before upgrading",
     "SECURITY (attested nodes): the node advertises `tee-attested` only when the flag is on AND the model was not released under the broker's TEST keyring; a test-keyring release is refused outright unless TEE_ACCEPT_TEST_RELEASE=1 (CPU gate compose only). Policy schema 2 (cvm registers as lowercase hex, gpu hwmodel allow-list, cc mode exact, secure boot / debug flags, driver+VBIOS floors, tcb status allow-list) is validated on fetch and at every verify, never coerced",
@@ -1068,10 +1081,14 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 55);
+        assert_eq!(VERSION_MINOR, 56);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.56.0 Phase 5 P4.5 node-side bundle
+        assert!(FEATURES.contains(&"tee-kbs-info-preflight"));
+        assert!(FEATURES.contains(&"tee-t5t-witness-rule"));
+        assert!(FEATURES.contains(&"gpu-devtools-refusal"));
         // v8.55.0 Phase 5 attested load path
         assert!(FEATURES.contains(&"tee-attested-load"));
         assert!(FEATURES.contains(&"tee-policy-schema-2"));
@@ -1253,15 +1270,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.55.0"));
-        assert!(version.contains("2026-09-18"));
+        assert!(version.contains("8.56.0"));
+        assert!(version.contains("2026-09-19"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.55.0-phase5-attested-load-2026-09-18");
-        assert_eq!(VERSION_NUMBER, "8.55.0");
-        assert_eq!(BUILD_DATE, "2026-09-18");
+        assert_eq!(VERSION, "v8.56.0-phase5-kbs-bundle-2026-09-19");
+        assert_eq!(VERSION_NUMBER, "8.56.0");
+        assert_eq!(BUILD_DATE, "2026-09-19");
     }
 
     #[test]
