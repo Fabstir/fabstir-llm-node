@@ -16,7 +16,7 @@
 # it is a real 64-hex sha256.
 services:
   llm-node:
-    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:0d7466556c41059a6ea4a3c977c53337194092fb3d07e328aff9d2ae737e9469
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:26ea9818478ee34c8dfae673b7d6f26667f75912f282b3cb5a49e17de42faa73
     container_name: llm-node
     # on-failure with a cap, never unless-stopped/always: a refused attested
     # load exits 78 and an unbounded policy would re-download the container,

@@ -34,7 +34,10 @@ const RELEASE_PINS: &[(&str, &str)] = &[
     // P5.5 streaming load + the plaintext's home: the composes gain two named
     // volumes, TEE_CONTAINER_DIR / TEE_PLAINTEXT_VOLUME literals and the
     // TEE_DECRYPT_ON_DISK / TEE_BLOB_MAX_BYTES placeholders (built 2026-09-20).
-    ("8.57.0", "PENDING"),
+    (
+        "8.57.0",
+        "26ea9818478ee34c8dfae673b7d6f26667f75912f282b3cb5a49e17de42faa73",
+    ),
 ];
 
 const COMPOSES: &[&str] = &["compose.gpu.yml", "compose.cpu.yml"];
