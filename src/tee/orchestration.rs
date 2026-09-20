@@ -20,10 +20,12 @@
 //!      the model-scoped DEK from the KBS.
 //!   3. **On-chain binding** (4.3.2): bind the decrypted weights to the
 //!      on-chain-approved model by SHA-256 (`expected_model_hash`, the hex of
-//!      `ModelInfo.sha256_hash`). **verify-then-load**: a host can swap the tmpfs
-//!      file between this check and llama.cpp opening it (TOCTOU) — Phase 4 logs
-//!      the window (here + in `load_model`); Phase 5 closes it. On mismatch we
-//!      drop our cache reference and securely delete the plaintext.
+//!      `ModelInfo.sha256_hash`). Phase 5 P5.5: the digest comes out of the
+//!      decrypt's tee (design S2), so the file is never read a second time.
+//!      **verify-then-load**: a host can swap the tmpfs file between this check
+//!      and llama.cpp opening it (TOCTOU) — Phase 4 logs the window (here + in
+//!      `load_model`); Phase 5 closes it. On mismatch we drop our cache
+//!      reference and securely delete the plaintext.
 //!
 //! On any failure after a successful decrypt, the cache reference is released and
 //! the decrypted plaintext is securely deleted before returning `Err` — no
@@ -34,9 +36,7 @@ use crate::tee::model_source::{BlobSource, EncryptedModelLoader, EncryptedModelS
 use crate::tee::policy_source::{fetch_validated_policy, PolicySource, ProviderRegistry};
 use crate::tee::provider::AttestationProvider;
 use crate::tee::types::{Policy, TeeError, TeeResult};
-use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
-use tokio::io::AsyncReadExt;
+use std::path::PathBuf;
 
 /// A decrypted, attested, hash-verified model ready to hand to the engine.
 ///
@@ -88,14 +88,15 @@ pub async fn prepare_attested_model(
         policy_hash,
         encrypted_path: signed.encrypted_ref.clone(),
     };
-    let path = loader
-        .prepare_encrypted_model(s5, kbs, attestation, &spec)
+    let (path, digest, outcome) = loader
+        .prepare_encrypted_model_with_digest(s5, kbs, attestation, &spec)
         .await?;
     // From here until the caller owns the result, the plaintext is guarded: an
-    // error OR a cancellation (a caller dropping this future at the hash step's
-    // awaits) purges it. Disarmed only on success. In the node binary a stop
-    // does not cancel this future (the watchdog unlinks from its own thread and
-    // exits); the guard is what makes the function safe for any caller.
+    // `Err` return purges it. Disarmed only on success. There is no await after
+    // the plaintext exists (the digest came out of the decrypt), so the future
+    // publishes or purges inside one poll; in the node binary a stop does not
+    // cancel this future either (the watchdog unlinks from its own thread and
+    // exits). The guard is what makes the function safe for any caller.
     let mut guard = PlaintextGuard {
         loader,
         model_id,
@@ -105,23 +106,27 @@ pub async fn prepare_attested_model(
 
     // 3. (4.3.2) Bind decrypted weights to the on-chain-approved model by SHA-256.
     match expected_model_hash {
-        Some(expected) => match sha256_file_hex(&path).await {
-            Ok(got) if got.eq_ignore_ascii_case(expected) => {
+        Some(expected) => {
+            let got = hex::encode(digest);
+            if got.eq_ignore_ascii_case(expected) {
                 tracing::warn!(
                     target: "tee",
                     "verify-then-load: model {} hash bound to on-chain approval; \
                      TOCTOU window open until llama.cpp opens the file (Phase-4 risk, closed in Phase 5)",
                     hex::encode(model_id)
                 );
-            }
-            Ok(got) => {
+            } else {
+                // A CACHED container that decrypted to the wrong plaintext is
+                // evicted (a corrected re-seal under the same DEK/policy at
+                // the same ref must be fetched at the next boot); a fresh one
+                // is kept. See `note_hash_mismatch` for the cost trade-off.
+                loader.note_hash_mismatch(&spec, outcome);
                 return Err(TeeError::ModelHashMismatch {
                     expected: expected.to_string(),
                     got,
-                })
+                });
             }
-            Err(e) => return Err(e),
-        },
+        }
         None => tracing::warn!(
             target: "tee",
             "CRITICAL: model {} loaded WITHOUT an on-chain hash binding (4.3.2 skipped — no expected hash supplied)",
@@ -140,7 +145,7 @@ pub async fn prepare_attested_model(
 
 /// Holds the loader's cache reference for a freshly decrypted plaintext while
 /// `prepare_attested_model` is still working on it. While armed, dropping it
-/// (an `Err` return, or a caller cancelling the future mid-await) drops the
+/// (an `Err` return; there is no await left to cancel at) drops the
 /// reference and securely deletes the file; `release` + `evict_unreferenced`
 /// only deletes when no *other* in-flight load still references it, so this is
 /// safe under a concurrent load of the same model. Nothing has mapped the file
@@ -159,23 +164,4 @@ impl Drop for PlaintextGuard<'_> {
             self.loader.evict_unreferenced();
         }
     }
-}
-
-/// Stream-hash a file to lowercase-hex SHA-256.
-///
-/// Mirrors `ModelRegistryClient::verify_model_hash` (model_registry.rs) but lives
-/// here so the orchestration stays decoupled from the contracts client and fully
-/// mock-testable; the on-chain `sha256_hash` is fed in by the caller.
-async fn sha256_file_hex(path: &Path) -> TeeResult<String> {
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }

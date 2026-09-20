@@ -13,6 +13,7 @@
 //! container, and model-source orchestration — all behind a mock backend so the
 //! pipeline is fully testable on any Linux without CC hardware.
 pub mod container;
+pub mod container_cache;
 pub mod dstack;
 pub mod dstack_provider;
 pub mod gpu_evidence;
@@ -24,6 +25,7 @@ pub mod live;
 pub mod mock;
 pub mod model_source;
 pub mod orchestration;
+pub mod plaintext_home;
 pub mod policy;
 pub mod policy_source;
 pub mod provider;
@@ -34,6 +36,7 @@ pub use container::{
     chunk_count, decrypt_model, encrypt_model, ContainerHeader, AEAD_TAG_LEN, CONTAINER_MAGIC,
     CONTAINER_VERSION, HEADER_LEN,
 };
+pub use container_cache::{ContainerOutcome, HeaderCheck, Sha256Tee, SpaceCheck};
 pub use dstack::{
     DstackClient, Endpoint as DstackEndpoint, InfoResponse as DstackInfo, QuoteResponse,
 };
@@ -50,6 +53,7 @@ pub use model_source::{
     test_release_loaded, BlobSource, EncryptedModelLoader, EncryptedModelSpec,
 };
 pub use orchestration::{prepare_attested_model, PreparedModel};
+pub use plaintext_home::{home_rule, mount_info, MountInfo};
 pub use policy::{
     canonical_policy_bytes, check_policy_validity, policy_signature_digest, SignedModelPolicy,
 };

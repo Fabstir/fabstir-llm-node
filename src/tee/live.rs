@@ -208,9 +208,11 @@ impl AttestedLoad {
         );
         let loader = Arc::new(EncryptedModelLoader::from_env());
         on_loader(&loader);
-        // tmpfs is a requirement here, not a warning: shutdown unlinks the
-        // plaintext without overwriting it (see `detach_for_exit`).
-        loader.require_tmpfs_decrypt_dir()?;
+        // The plaintext's home is a requirement here, not a warning: tmpfs, or
+        // in disk mode a LUKS device (shutdown unlinks the plaintext without
+        // overwriting it, see `detach_for_exit`); plus the disjointness of the
+        // ciphertext cache and the start-up sweep (design §5).
+        loader.require_decrypt_dir()?;
         let policy_src = HttpPolicySource::from_env()?;
         let providers = ProviderRegistry::new().with_provider(cfg.model_id, cfg.provider.clone());
         let blob = HttpBlobSource::from_env()?;
@@ -266,8 +268,9 @@ impl AttestedLoad {
     /// and its tokens would still be streamed and tracked. Unlinking keeps the
     /// existing mapping coherent (real tokens until the process ends), removes
     /// the path so nothing new can open it, and the pages are freed on exit;
-    /// tmpfs has no medium to scrub, and the live path REQUIRES tmpfs
-    /// (`require_tmpfs_decrypt_dir`) for exactly that reason. `release()` stays
+    /// tmpfs has no medium to scrub, and the live path REQUIRES tmpfs or,
+    /// in disk mode, a LUKS volume whose layer covers the medium
+    /// (`require_decrypt_dir`) for exactly that reason. `release()` stays
     /// for the boot-failure exits, where nothing has mapped the file and zeroing
     /// is safe. Idempotent with `release()`/Drop (a missing file is not an
     /// error there).

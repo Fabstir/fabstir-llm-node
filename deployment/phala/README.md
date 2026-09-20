@@ -39,8 +39,11 @@ What goes on the Phala deploy form, and nothing else. Design and gates:
    `TEE_KBS_URL` (`https://kbs.fabstir.net/v1/kbs`), `TEE_POLICY_URL` (may contain
    `{model_id}`), `TEE_BLOB_URL`, optional `TEE_EXPECTED_MODEL_SHA256` (the on-chain hash
    of the plaintext; absent = a CRITICAL warning). Not a secret but in the same block:
-   `TEE_BLOB_MAX_BYTES` (container cap; default 2 GiB, a larger container is exit 78, so
-   raise it for the real model). The binary's boot decision table is
+   `TEE_BLOB_MAX_BYTES` (form value since v8.57.0, default 2 GiB; it bounds the sealed
+   `.enc`, which is the GGUF + 98 B + 16 B per 4 MiB chunk, so set it from `stat` of the
+   sealed file, never from the GGUF size; a larger container is exit 78) and
+   `TEE_DECRYPT_ON_DISK` (form value, default `0`: the plaintext's home, see below; plus
+   5% headroom on the disk for ext4's reserved blocks). The binary's boot decision table is
    `src/tee/live.rs`: the flag and `TEE_MODEL_ID` are all-or-nothing (a compose with the flag
    `"false"` must have the `TEE_*` block commented out and the form must not supply them;
    the guard test enforces the pairing either way).
@@ -65,9 +68,24 @@ What goes on the Phala deploy form, and nothing else. Design and gates:
   "ISRG Root YE" hierarchy needs that root baked into the image first (the snapshot predates
   it); `tests/tee_fetch_roots.rs` proves the store is honoured. The broker client itself
   pins the private root alone.
-- `shm_size` is the decrypt dir. Smaller than the model = `ENOSPC`, fail-closed, day wasted.
-  `TEE_DECRYPT_DIR` MUST be tmpfs on the attested path (exit 78 otherwise): shutdown unlinks
-  the plaintext without overwriting it, which is only safe where the pages die with the mount.
+- **The plaintext's home is ONE form value (v8.57.0, `TEE_DECRYPT_ON_DISK`).** `0` (default):
+  tmpfs, `/dev/shm` sized by `shm_size` (smaller than the model = a refusal BEFORE the
+  download, naming need and have; RAM ≥ model + KV + node). `1`: the compose's
+  `fabstir-plaintext` volume (`TEE_PLAINTEXT_VOLUME`, on docker's data-root = the CVM's
+  dstack-encrypted data disk); the node refuses to start unless that directory's block
+  device is a dm-crypt LUKS device (sysfs `dm/uuid` beginning `CRYPT-LUKS`, directly or
+  through one LVM slave), so a model larger than the CVM's RAM stays evictable page cache
+  while every layer sits in VRAM. Rule of thumb: tmpfs when RAM ≥ model + 8 GB, disk mode
+  otherwise. Disk mode needs disk ≥ 2× the model + the image + 5%. The switch is an env
+  flip and a container restart, never a compose edit.
+- **The container is streamed to the `fabstir-containers` volume** (`TEE_CONTAINER_DIR`),
+  never held in RAM, and reused across restarts (`container cache: … (hit)`); a redeploy
+  empties both volumes. Pre-warm the target off the clock: one boot with the target's env
+  values downloads it into the cache. Sizing: the container volume 1× the `.enc`, the
+  plaintext volume 1× the GGUF (disk mode), one filesystem holding both = 2×.
+- `TEE_DECRYPT_DIR` (tmpfs mode) MUST be tmpfs on the attested path (exit 78 otherwise):
+  shutdown unlinks the plaintext without overwriting it, which is only safe where the pages
+  die with the mount, or on the LUKS volume in disk mode.
 - The compose file is hashed into RTMR3. Changing one byte changes `compose_hash` and
   invalidates the pinned policy. That is the point; plan edits before pinning.
 - `stop_grace_period: 30s` in both composes: the node's stop path is API drain (≤ 5 s) +

@@ -64,9 +64,16 @@ impl BlobSource for InMemoryBlobs {
     }
 }
 
+/// The decrypt dir is a SUBDIRECTORY of the tempdir (P5.5: the loader's
+/// default container dir is the sibling `<decrypt>.containers`, which then
+/// lands inside the tempdir and is cleaned with it).
+fn plain(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    dir.path().join("decrypt")
+}
+
 fn loader() -> (EncryptedModelLoader, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let loader = EncryptedModelLoader::new(dir.path()).with_tee_enabled(true);
+    let loader = EncryptedModelLoader::new(plain(&dir)).with_tee_enabled(true);
     (loader, dir)
 }
 
@@ -133,7 +140,10 @@ async fn prepare_fails_closed_on_bad_attestation() {
         matches!(err, TeeError::VerificationFailed(_)),
         "got {err:?}"
     );
-    assert!(dir_is_empty(dir.path()), "no decrypted file may be written");
+    assert!(
+        dir_is_empty(&plain(&dir)),
+        "no decrypted file may be written"
+    );
 }
 
 #[tokio::test]
@@ -161,7 +171,7 @@ async fn prepare_fails_closed_on_wrong_key() {
         .await
         .expect_err("wrong DEK must fail the AEAD and fail closed");
     assert!(matches!(err, TeeError::Crypto(_)), "got {err:?}");
-    assert!(dir_is_empty(dir.path()), "no decrypted file may remain");
+    assert!(dir_is_empty(&plain(&dir)), "no decrypted file may remain");
 }
 
 #[tokio::test]
@@ -192,7 +202,7 @@ async fn prepare_secure_deletes_nonempty_partial_on_late_chunk_failure() {
         .expect_err("a tampered later chunk must fail after an earlier chunk was written");
     assert!(matches!(err, TeeError::Crypto(_)), "got {err:?}");
     assert!(
-        dir_is_empty(dir.path()),
+        dir_is_empty(&plain(&dir)),
         "the non-empty partial decrypted file must be securely deleted"
     );
 }
@@ -356,7 +366,7 @@ async fn prepare_dedups_concurrent_loads_of_same_model() {
         p1, p2,
         "concurrent loads of the same model must return the same cached path"
     );
-    let files = std::fs::read_dir(dir.path()).unwrap().flatten().count();
+    let files = std::fs::read_dir(plain(&dir)).unwrap().flatten().count();
     assert_eq!(
         files, 1,
         "the redundant concurrent decrypt must be purged; found {files} files"
@@ -410,7 +420,7 @@ async fn prepare_refuses_encrypted_model_when_tee_disabled() {
     // A non-TEE node (HOST_TEE_ENABLED=false) must refuse encrypted models, fail-closed,
     // before any S5 fetch — no download, no plaintext. (new() defaults tee-disabled.)
     let dir = tempfile::tempdir().unwrap();
-    let loader = EncryptedModelLoader::new(dir.path());
+    let loader = EncryptedModelLoader::new(plain(&dir));
     let (model_id, dek, policy_hash) = ([1u8; 32], [2u8; 32], [3u8; 32]);
     let container = encrypt_model(b"weights", &dek, model_id, policy_hash, 16).unwrap();
     let s5 = InMemoryBlobs {
@@ -432,7 +442,7 @@ async fn prepare_refuses_encrypted_model_when_tee_disabled() {
     );
     assert!(
         dir_is_empty(dir.path()),
-        "no plaintext on a non-TEE refusal"
+        "no plaintext (and no cache dir: the refusal comes before the container step) on a non-TEE refusal"
     );
 }
 
@@ -542,7 +552,7 @@ async fn e2e_real_attestation_kbs_roundtrip_then_measurement_flip_fails() {
         "got {err:?}"
     );
     assert!(
-        dir_is_empty(dir.path()),
+        dir_is_empty(&plain(&dir)),
         "no plaintext may remain after a rejected attestation"
     );
 }

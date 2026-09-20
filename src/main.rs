@@ -89,7 +89,7 @@ async fn stop_watchdog(
         raw_stderr(&format!(
             "⏹️  Stop signal during start-up; not starting the node.{}\n",
             if n > 0 {
-                format!(" Unlinked {n} attested plaintext file(s) from tmpfs.")
+                format!(" Unlinked {n} attested plaintext file(s).")
             } else {
                 String::new()
             }
@@ -111,7 +111,7 @@ async fn stop_watchdog(
     raw_stderr(&format!(
         "⏹️  {why}: exiting now.{}\n",
         if n > 0 {
-            format!(" Unlinked {n} attested plaintext file(s) from tmpfs.")
+            format!(" Unlinked {n} attested plaintext file(s).")
         } else {
             String::new()
         }
@@ -618,7 +618,7 @@ async fn node_main() -> Result<()> {
     let (load_path, encrypted) = match &attested {
         Some(a) => {
             println!(
-                "🔐 Attested model decrypted to tmpfs: {} (model {}{})",
+                "🔐 Attested model decrypted to {} (model {}{})",
                 a.path.display(),
                 hex::encode(a.prepared.model_id),
                 if a.test_release {
@@ -1047,7 +1047,7 @@ async fn node_main() -> Result<()> {
     println!("API Port:       {}", api_port);
     match &attested {
         Some(a) => println!(
-            "Model:          attested {} (tmpfs {})",
+            "Model:          attested {} (plaintext {})",
             hex::encode(a.prepared.model_id),
             a.path.display()
         ),
@@ -1135,7 +1135,7 @@ async fn node_main() -> Result<()> {
         // exit at once so that generation ends with the process. The pages are
         // freed with the mapping; tmpfs has no medium to scrub.
         match a.detach_for_exit() {
-            Ok(()) => println!("🔐 Attested model plaintext unlinked from tmpfs"),
+            Ok(()) => println!("🔐 Attested model plaintext unlinked"),
             Err(e) => eprintln!("⚠️  could not unlink the attested plaintext: {e}"),
         }
         println!("👋 Goodbye!");

@@ -117,28 +117,39 @@ fn gpu_compose_has_no_test_mode_markers_and_never_builds() {
 
 #[test]
 fn gpu_compose_bind_mounts_are_only_the_dstack_socket() {
+    // P5.5: the service mounts are the dstack socket (the ONLY bind mount: any
+    // other host path either does not exist inside a CVM or exposes something
+    // that should not be) plus exactly the two named volumes the design
+    // declares (tests/phase5_storage_guard.rs checks their declaration and
+    // the env literals that point at them).
     let lines = code_lines(&compose("compose.gpu.yml"));
     let vols = volume_items(&lines);
-    // "only": the dstack socket and nothing else. Any other host path either
-    // does not exist inside a CVM or exposes something that should not be.
+    let (binds, named): (Vec<&String>, Vec<&String>) = vols
+        .iter()
+        .partition(|v| v.split(':').next().unwrap_or("").starts_with('/'));
     assert_eq!(
-        vols,
-        vec!["/var/run/dstack.sock:/var/run/dstack.sock".to_string()],
-        "compose.gpu.yml must bind-mount exactly the dstack socket; got {vols:?}"
+        binds,
+        vec!["/var/run/dstack.sock:/var/run/dstack.sock"],
+        "compose.gpu.yml must bind-mount exactly the dstack socket; got {binds:?}"
+    );
+    let mut named: Vec<&str> = named.iter().map(|v| v.as_str()).collect();
+    named.sort();
+    assert_eq!(
+        named,
+        vec![
+            "fabstir-containers:/var/lib/fabstir/containers",
+            "fabstir-plaintext:/var/lib/fabstir/plaintext",
+        ],
+        "compose.gpu.yml must mount exactly the two P5.5 named volumes; got {named:?}"
     );
     for v in &vols {
         let src = v.split(':').next().unwrap_or("");
         for bad in ["./", "../", "${", "~"] {
             assert!(
                 !src.starts_with(bad),
-                "bind mount source `{src}` has nothing to point at inside a CVM (gate A-19)"
+                "mount source `{src}` has nothing to point at inside a CVM (gate A-19)"
             );
         }
-        assert!(
-            src.starts_with('/'),
-            "only absolute in-CVM paths are mountable; got `{src}` (named volumes are not \
-             needed on the first run and would need the encrypted data disk sized for them)"
-        );
     }
 }
 

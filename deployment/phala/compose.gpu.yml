@@ -36,19 +36,25 @@ services:
       ai.platformless.dstack_os_image: "dstack-nvidia-0.5.9"
       # The node release cut into the pinned image; tests/phase5_release_pins.rs
       # ties it and the digest above to the last RELEASE_PINS row.
-      ai.platformless.node_version: "8.56.0"
+      ai.platformless.node_version: "8.57.0"
     # NVML access for nvtrust evidence collection (reference A runs the
     # evidence container privileged for the same reason).
     runtime: nvidia
     privileged: true
-    # /dev/shm is the decrypt dir; size it for the model (A-20). tiny-vicuna is
-    # 0.7 GB; raise for the target model. Not ipc: host: single GPU, no NCCL.
+    # /dev/shm is the tmpfs-mode decrypt dir; a cap, not a reservation (harmless
+    # in disk mode). Set for the target model with the T-1 pins, never on the
+    # day (a compose edit moves compose_hash). Not ipc: host: single GPU, no NCCL.
     shm_size: "16g"
     ports:
       - "8080:8080"
     volumes:
       # dstack guest agent: /GetQuote, /Info (thin UDS client in src/tee/dstack.rs)
       - /var/run/dstack.sock:/var/run/dstack.sock
+      # P5.5: the ciphertext cache (survives restarts: no re-download) and the
+      # disk-mode plaintext home, both on docker's data-root = the CVM's
+      # dstack-encrypted data disk (the node verifies LUKS before writing).
+      - fabstir-containers:/var/lib/fabstir/containers
+      - fabstir-plaintext:/var/lib/fabstir/plaintext
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
@@ -56,10 +62,11 @@ services:
       # --- attested load path (Phase 5) ---
       # HOST_TEE_ENABLED=true means the model MUST come from an attested decrypt
       # or the node does not start (src/tee/live.rs decision table, exit 78):
-      # the image pinned above (v8.56.0; v8.55.0 was the first build that
+      # the image pinned above (v8.57.0; v8.55.0 was the first build that
       # enforces it and therefore the first that may advertise `tee-attested`;
       # v8.56.0 adds the broker /info pre-check, the t5t: witness rule and the
-      # collector's DevTools refusal). The flag and the TEE_* block below are
+      # collector's DevTools refusal; v8.57.0 streams the container to the
+      # cache volume and adds the disk-mode plaintext home). The flag and the TEE_* block below are
       # all-or-nothing; the guard test checks they move together (flipped
       # 2026-09-18 with the v8.55.0 digest).
       HOST_TEE_ENABLED: "true"
@@ -72,11 +79,17 @@ services:
       TEE_POLICY_URL: ${TEE_POLICY_URL}
       TEE_BLOB_URL: ${TEE_BLOB_URL}
       TEE_EXPECTED_MODEL_SHA256: ${TEE_EXPECTED_MODEL_SHA256}
-      # Container size cap in bytes; the default is 2 GiB and a larger container
-      # FAILS CLOSED at boot (exit 78). Raise it to >= the target model's
-      # container at the real-model day (the whole container is held in RAM
-      # until decrypt: size the CVM for container + plaintext + KV cache).
-      TEE_BLOB_MAX_BYTES: "2147483648"
+      # P5.5: the container is STREAMED to the cache volume (never held in RAM)
+      # and stream-decrypted from there. TEE_BLOB_MAX_BYTES bounds the .enc
+      # (GGUF + 98 B + 16 B per 4 MiB chunk): set it from `stat` of the sealed
+      # file, from the form; default 2 GiB fails closed (exit 78) above it.
+      TEE_BLOB_MAX_BYTES: ${TEE_BLOB_MAX_BYTES:-2147483648}
+      TEE_CONTAINER_DIR: /var/lib/fabstir/containers
+      TEE_PLAINTEXT_VOLUME: /var/lib/fabstir/plaintext
+      # The plaintext's home, ONE form value: 0 = tmpfs (/dev/shm, sized by
+      # shm_size: RAM >= model), 1 = the LUKS volume above (a model larger than
+      # RAM stays evictable page cache while every layer sits in VRAM).
+      TEE_DECRYPT_ON_DISK: ${TEE_DECRYPT_ON_DISK:-0}
       TEE_DECRYPT_DIR: /dev/shm
       GPU_LAYERS: "99"
       LLAMA_BATCH_SIZE: "2048"
@@ -106,3 +119,9 @@ services:
       TRANSCODER_ENDPOINT: ""
       COMFY_URL: ""
       RUST_LOG: ${RUST_LOG:-info,tee=debug}
+
+# Named volumes on docker's data-root (the dstack-encrypted data disk). A
+# redeploy empties both; a restart keeps the cache (no re-download).
+volumes:
+  fabstir-containers:
+  fabstir-plaintext:

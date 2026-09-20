@@ -246,6 +246,8 @@ async fn encrypted_model_decrypts_attested_and_loads_on_gpu() {
         "decrypted plaintext must be securely deleted from tmpfs"
     );
     let _ = std::fs::remove_dir_all(&decrypt_dir);
+    // P5.5: the loader's default container dir is the sibling `<dir>.containers`.
+    let _ = std::fs::remove_dir_all(format!("{decrypt_dir}.containers"));
     println!(
         "[e2e] ✅ sign+encrypt → fetch-policy → attest → DEK → decrypt(tmpfs) → \
          hash-bind → GPU load → infer → secure_delete OK"

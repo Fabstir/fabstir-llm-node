@@ -3,7 +3,7 @@
 //! Phase 5 P3 — `AttestedLoad` lifecycle: what happens to the tmpfs plaintext
 //! on every way out of the process. Fixture from `test_orchestration.rs`.
 
-use super::test_orchestration::{fixture, fixture_with_plaintext_len, good_provider};
+use super::test_orchestration::{fixture, good_provider};
 use fabstir_llm_node::tee::live::AttestedLoad;
 use fabstir_llm_node::tee::orchestration::prepare_attested_model;
 use std::sync::Arc;
@@ -106,11 +106,13 @@ fn live_path_requires_a_tmpfs_decrypt_dir() {
         );
         return;
     }
-    let loader = EncryptedModelLoader::new(disk.path()).with_tee_enabled(true);
+    // The live gate is `require_decrypt_dir` (P5.5): in tmpfs mode it is
+    // today's rule plus the container-dir checks and the sweep.
+    let loader = EncryptedModelLoader::new(disk.path().join("decrypt")).with_tee_enabled(true);
     loader
         .verify_decrypt_dir()
         .expect("the plain check only warns");
-    match loader.require_tmpfs_decrypt_dir() {
+    match loader.require_decrypt_dir() {
         Err(TeeError::VerificationFailed(m)) => assert!(m.contains("tmpfs"), "{m}"),
         other => panic!("a non-tmpfs decrypt dir must be refused on the live path: {other:?}"),
     }
@@ -118,10 +120,10 @@ fn live_path_requires_a_tmpfs_decrypt_dir() {
     if is_tmpfs(shm) {
         let dir = shm.join(format!("tee-req-tmpfs-{}", std::process::id()));
         let loader = EncryptedModelLoader::new(&dir).with_tee_enabled(true);
-        loader
-            .require_tmpfs_decrypt_dir()
-            .expect("/dev/shm is tmpfs");
+        let r = loader.require_decrypt_dir();
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(format!("{}.containers", dir.display()));
+        r.expect("/dev/shm is tmpfs");
     }
 }
 
@@ -159,130 +161,111 @@ overlay / overlay rw 0 0\n";
     assert_eq!(filesystem_type_from_mounts(canon, ""), None);
 }
 
-#[tokio::test]
-async fn cancelling_the_load_during_the_hash_step_purges_the_plaintext() {
-    // P3 converge round 23: a stop signal racing the boot drops the load future.
-    // The only awaits AFTER the decrypt are the hash step's file reads, and at
-    // that point no `AttestedLoad` exists yet, so the orchestration's own guard
-    // must purge the plaintext on cancellation. A 4 MiB plaintext gives the
-    // hash step dozens of awaits to be aborted at.
-    let f = fixture_with_plaintext_len(4 * 1024 * 1024);
-    let dir = f._dir.path().to_path_buf();
-    let expected = {
-        use sha2::Digest;
-        format!("{:x}", sha2::Sha256::digest(&f.plaintext))
-    };
-    let f = Arc::new(f);
-    let task = {
-        let f = Arc::clone(&f);
-        tokio::spawn(async move {
-            prepare_attested_model(
-                &f.loader,
-                &f.source,
-                &f.providers,
-                &f.s5,
-                &f.kbs,
-                &good_provider(),
-                f.model_id,
-                Some(&expected),
-            )
-            .await
-            .map(|p| p.path)
-        })
-    };
-    // Wait for the decrypted file to appear (the decrypt itself is synchronous;
-    // the first await after it is the hash step), then cancel.
-    let plaintext_file = loop {
-        let files: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .map(|e| e.path())
-            .collect();
-        if let Some(p) = files.into_iter().next() {
-            break p;
-        }
-        if task.is_finished() {
-            panic!("the load finished before the test could cancel it; enlarge the plaintext");
-        }
-        tokio::task::yield_now().await;
-    };
-    task.abort();
-    assert!(
-        task.await.unwrap_err().is_cancelled(),
-        "the load was cancelled"
-    );
-    assert!(
-        !plaintext_file.exists(),
-        "a load cancelled after the decrypt must purge its plaintext ({})",
-        plaintext_file.display()
-    );
-    assert_eq!(
-        std::fs::read_dir(&dir).unwrap().count(),
-        0,
-        "nothing left in the decrypt dir"
-    );
+/// A `KeyBrokerClient` that parks `request_key` on a gate and says when the
+/// load has reached it: the one-poll property below needs the future stopped
+/// at a known await, then exactly one more poll.
+struct GatedBroker<'a> {
+    inner: &'a fabstir_llm_node::tee::mock::MockKeyBroker,
+    gate: Arc<tokio::sync::Notify>,
+    reached: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl fabstir_llm_node::tee::key_broker::KeyBrokerClient for GatedBroker<'_> {
+    async fn challenge(
+        &self,
+        model_id: [u8; 32],
+        pk_att: &[u8],
+    ) -> fabstir_llm_node::tee::types::TeeResult<[u8; 32]> {
+        self.inner.challenge(model_id, pk_att).await
+    }
+    async fn request_key(
+        &self,
+        model_id: [u8; 32],
+        ev: &fabstir_llm_node::tee::types::Evidence,
+    ) -> fabstir_llm_node::tee::types::TeeResult<fabstir_llm_node::tee::types::WrappedKey> {
+        self.reached
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.gate.notified().await;
+        self.inner.request_key(model_id, ev).await
+    }
 }
 
 #[tokio::test]
-async fn dropping_the_boxed_load_future_after_a_stop_purges_the_plaintext() {
-    // P3 converge round 24 (kept after round 46 retired the race in main): a
-    // caller that cancels the load by dropping its future gets the plaintext
-    // purged by the orchestration guard. That only holds if what is dropped IS
-    // the future: `Box::pin` here, never `pin!` (whose `drop` drops a
-    // reference). "The decrypted file appeared" stands in for the stop.
-    let f = Arc::new(fixture_with_plaintext_len(4 * 1024 * 1024));
-    let dir = f._dir.path().to_path_buf();
+async fn the_load_publishes_or_purges_inside_one_poll() {
+    // P5.5 (design S2): the digest comes out of the decrypt's tee, so there is
+    // NO await after the plaintext exists: the future publishes or purges it
+    // inside one poll. (This replaces the two P3 cancellation tests, which
+    // aborted at the hash step's file reads; that await stretch is gone.) An
+    // await between `create_new` and `cache_publish` would leave a file on
+    // disk with the future `Pending`, which neither arm below accepts.
+    use std::future::Future;
+    use std::task::{Context, Poll};
+    let f = Arc::new(fixture());
+    let dir = f._dir.path().join("decrypt");
     let expected = {
         use sha2::Digest;
         format!("{:x}", sha2::Sha256::digest(&f.plaintext))
     };
-    let load_f = Arc::clone(&f);
-    let mut load = Box::pin(async move {
-        prepare_attested_model(
-            &load_f.loader,
-            &load_f.source,
-            &load_f.providers,
-            &load_f.s5,
-            &load_f.kbs,
-            &good_provider(),
-            load_f.model_id,
-            Some(&expected),
-        )
-        .await
-        .map(|p| p.path)
-    });
-    let stop = async {
-        loop {
-            let first = std::fs::read_dir(&dir)
-                .unwrap()
-                .filter_map(|e| e.ok())
-                .find(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                .map(|e| e.path());
-            if let Some(p) = first {
-                return p;
-            }
-            tokio::task::yield_now().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let broker = GatedBroker {
+        inner: &f.kbs,
+        gate: Arc::clone(&gate),
+        reached: Arc::clone(&reached),
+    };
+    let provider = good_provider();
+    let mut load = Box::pin(prepare_attested_model(
+        &f.loader,
+        &f.source,
+        &f.providers,
+        &f.s5,
+        &broker,
+        &provider,
+        f.model_id,
+        Some(&expected),
+    ));
+    let waker = futures::task::noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let files = |dir: &std::path::Path| -> usize {
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    // Drive the future to the gate (every earlier step is immediately ready).
+    let mut polls = 0;
+    while !reached.load(std::sync::atomic::Ordering::SeqCst) {
+        polls += 1;
+        assert!(polls < 1000, "the load never reached request_key");
+        match load.as_mut().poll(&mut cx) {
+            Poll::Ready(r) => panic!("finished before the gate: {r:?}"),
+            Poll::Pending => tokio::task::yield_now().await,
         }
-    };
-    let outcome = tokio::select! {
-        r = &mut load => Err(r),
-        p = stop => Ok(p),
-    };
-    let plaintext_file = match outcome {
-        Ok(p) => p,
-        Err(r) => panic!("the load finished before the stop fired: {r:?}"),
-    };
-    assert!(
-        plaintext_file.exists(),
-        "still there while the future lives"
-    );
-    drop(load);
-    assert!(
-        !plaintext_file.exists(),
-        "dropping the boxed load future must purge the plaintext"
-    );
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    }
+    assert_eq!(files(&dir), 0, "no plaintext before the DEK");
+    gate.notify_one();
+    match load.as_mut().poll(&mut cx) {
+        Poll::Ready(Ok(p)) => {
+            assert!(p.path.exists(), "published inside the poll that decrypted");
+            f.loader.release(&p.model_id, &p.policy_hash);
+            f.loader.evict_unreferenced();
+            assert_eq!(files(&dir), 0, "released + evicted: purged");
+        }
+        Poll::Ready(Err(e)) => panic!("the load failed: {e}"),
+        Poll::Pending => {
+            assert_eq!(
+                files(&dir),
+                0,
+                "a Pending future must not have a plaintext on disk (an await after create_new)"
+            );
+            drop(load);
+            assert_eq!(files(&dir), 0);
+        }
+    }
 }
 
 #[tokio::test]
@@ -358,7 +341,9 @@ async fn no_plaintext_can_be_created_after_the_emergency_unlink() {
     .expect_err("a loader that is stopping must not create a plaintext");
     assert!(err.to_string().contains("stop in progress"), "{err}");
     assert_eq!(
-        std::fs::read_dir(f._dir.path()).unwrap().count(),
+        std::fs::read_dir(f._dir.path().join("decrypt"))
+            .unwrap()
+            .count(),
         0,
         "nothing on disk"
     );

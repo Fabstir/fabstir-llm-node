@@ -22,17 +22,25 @@
 //! and pins the private root alone.
 //!
 //! Bodies are bounded: a policy is a few KB ([`MAX_POLICY_BYTES`]); a container
-//! is the model, capped by `TEE_BLOB_MAX_BYTES` (default 2 GiB) because it is
-//! held in RAM until decrypt (the streaming decrypt is P3 follow-up work before
-//! the target model; see the tracker).
+//! is capped by `TEE_BLOB_MAX_BYTES` (default 2 GiB; it bounds the `.enc`, the
+//! GGUF plus 98 B plus 16 B per chunk). Phase 5 P5.5: the container is
+//! STREAMED to a file on the CVM's disk ([`BlobSource::get_file_to`]) under a
+//! per-chunk idle timeout and no whole-request budget (a 100 GB download has no
+//! sane total), over HTTP/1.1 only (hyper's HTTP/2 flow-control window would
+//! cap a 100 ms-RTT stream at ~20 MB/s); the buffered [`BlobSource::get_file`]
+//! keeps its 30-minute wrap for tests and the e2e.
 
+use crate::tee::container::HEADER_LEN;
+use crate::tee::container_cache::{FetchHooks, PartGuard};
 use crate::tee::kbs_http::read_ca_pem;
 use crate::tee::model_source::BlobSource;
 use crate::tee::policy::SignedModelPolicy;
 use crate::tee::policy_source::PolicySource;
 use crate::tee::types::{TeeError, TeeResult};
 use async_trait::async_trait;
+use std::path::Path;
 use std::time::Duration;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
 
 /// Env: where the signed policy is. May contain `{model_id}` (hex, no 0x); if it
@@ -46,8 +54,14 @@ pub const POLICY_URL_ENV: &str = "TEE_POLICY_URL";
 pub const BLOB_URL_ENV: &str = "TEE_BLOB_URL";
 /// Env: cap on the container size in bytes (default [`DEFAULT_BLOB_MAX`]).
 pub const BLOB_MAX_ENV: &str = "TEE_BLOB_MAX_BYTES";
+/// Env: seconds the container download may go without a byte (headers or a
+/// chunk) before it is refused (default [`DEFAULT_IDLE_SECS`]).
+pub const BLOB_IDLE_ENV: &str = "TEE_BLOB_IDLE_TIMEOUT_SECS";
 pub const MAX_POLICY_BYTES: usize = 256 * 1024;
 pub const DEFAULT_BLOB_MAX: u64 = 2 * 1024 * 1024 * 1024;
+pub const DEFAULT_IDLE_SECS: u64 = 120;
+/// How often the streaming download logs its progress.
+const PROGRESS_EVERY: Duration = Duration::from_secs(30);
 
 fn require_https_or_loopback(url: &str, what: &str) -> TeeResult<()> {
     // A real parse, not a prefix scan: userinfo (`http://localhost:1@evil/`) and
@@ -68,8 +82,10 @@ fn require_https_or_loopback(url: &str, what: &str) -> TeeResult<()> {
 /// The client: bundled + native roots, plus `extra_root_pem` (one or more PEM
 /// certificates) when given. No redirects: a 302 to http:// would undo the
 /// https rule, which exists precisely to stop a downgrade to an older
-/// still-valid policy.
-fn client(timeout: Duration, extra_root_pem: Option<&[u8]>) -> TeeResult<reqwest::Client> {
+/// still-valid policy. `timeout` is the whole-request budget: the policy
+/// source sets one; the blob source sets NONE (its streaming download is
+/// bounded per chunk instead) and forces HTTP/1.1 (see the module doc).
+fn client(timeout: Option<Duration>, extra_root_pem: Option<&[u8]>) -> TeeResult<reqwest::Client> {
     let extra: Vec<reqwest::Certificate> = match extra_root_pem {
         Some(pem) => {
             let certs = reqwest::Certificate::from_pem_bundle(pem)
@@ -88,7 +104,6 @@ fn client(timeout: Duration, extra_root_pem: Option<&[u8]>) -> TeeResult<reqwest
             .use_rustls_tls()
             .redirect(reqwest::redirect::Policy::none())
             .min_tls_version(reqwest::tls::Version::TLS_1_2)
-            .timeout(timeout)
             .connect_timeout(Duration::from_secs(10))
             .no_proxy()
             .tls_built_in_root_certs(built_in_roots)
@@ -96,6 +111,10 @@ fn client(timeout: Duration, extra_root_pem: Option<&[u8]>) -> TeeResult<reqwest
                 "fabstir-llm-node/{}",
                 crate::version::VERSION_NUMBER
             ));
+        b = match timeout {
+            Some(t) => b.timeout(t),
+            None => b.http1_only(),
+        };
         for c in extra.iter().cloned() {
             b = b.add_root_certificate(c);
         }
@@ -201,7 +220,7 @@ impl HttpPolicySource {
         Ok(Self {
             url_template,
             timeout,
-            client: client(timeout, extra_root)?,
+            client: client(Some(timeout), extra_root)?,
         })
     }
 
@@ -265,7 +284,10 @@ impl PolicySource for HttpPolicySource {
 pub struct HttpBlobSource {
     base: String,
     max_bytes: u64,
+    /// The buffered `get_file`'s whole-request budget (tests, the e2e).
     timeout: Duration,
+    /// The streaming `get_file_to`'s per-chunk (and headers) idle timeout.
+    idle: Duration,
     client: reqwest::Client,
 }
 
@@ -292,7 +314,8 @@ impl HttpBlobSource {
             base,
             max_bytes,
             timeout,
-            client: client(timeout, extra_root)?,
+            idle: Duration::from_secs(DEFAULT_IDLE_SECS),
+            client: client(None, extra_root)?,
         })
     }
 
@@ -317,7 +340,15 @@ impl HttpBlobSource {
     /// Rebuilds the client; production goes through `from_env`, which builds
     /// once with the root in place.
     pub fn with_extra_root(self, pem: &[u8]) -> TeeResult<Self> {
+        let idle = self.idle;
         Self::build(&self.base, self.max_bytes, self.timeout, Some(pem))
+            .map(|s| s.with_idle_timeout(idle))
+    }
+
+    /// The streaming download's idle timeout (headers and each chunk).
+    pub fn with_idle_timeout(mut self, idle: Duration) -> Self {
+        self.idle = idle;
+        self
     }
 
     pub fn from_env() -> TeeResult<Self> {
@@ -332,14 +363,26 @@ impl HttpBlobSource {
                 .map_err(|_| TeeError::Fetch(format!("{BLOB_MAX_ENV}: not a number: {v}")))?,
             _ => DEFAULT_BLOB_MAX,
         };
-        // A large model takes minutes to fetch; the whole-request timeout must
-        // cover it. 30 min is generous for anything the tmpfs could hold.
-        Self::new_with_extra_root(
+        let idle = match std::env::var(BLOB_IDLE_ENV) {
+            Ok(v) if !v.trim().is_empty() => v
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| {
+                    TeeError::Fetch(format!("{BLOB_IDLE_ENV}: not a positive number: {v}"))
+                })?,
+            _ => DEFAULT_IDLE_SECS,
+        };
+        // The buffered path keeps a 30-minute budget (tests, the e2e); the
+        // streaming path the live node uses has none, only the idle timeout.
+        Ok(Self::new_with_extra_root(
             &base,
             max,
             Duration::from_secs(30 * 60),
             &kbs_root_from_env()?,
-        )
+        )?
+        .with_idle_timeout(Duration::from_secs(idle)))
     }
 
     /// Resolve `encrypted_ref`. An absolute URL is accepted only on the SAME
@@ -419,6 +462,324 @@ impl HttpBlobSource {
 impl BlobSource for HttpBlobSource {
     async fn get_file(&self, path: &str) -> TeeResult<Vec<u8>> {
         let url = self.url_for(path)?;
-        get_bounded(&self.client, &url, self.max_bytes).await
+        match tokio::time::timeout(
+            self.timeout,
+            get_bounded(&self.client, &url, self.max_bytes),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => Err(TeeError::Fetch(format!(
+                "GET {url}: no response within {}s",
+                self.timeout.as_secs()
+            ))),
+        }
+    }
+
+    /// Design S1, S1e, §3: stream the container to `dest` through a
+    /// `.part` owned by a [`PartGuard`]. `Content-Length` is required (nginx
+    /// static always sends it): missing, over the bound, or refused by
+    /// `hooks.on_length` → refused before any byte; the first 98 bytes go to
+    /// `hooks.on_head` before they are written (a wrong binding costs 98
+    /// bytes, not the model). Headers and every chunk are under the idle
+    /// timeout; a progress line every 30 s. A stall, a transport error or an
+    /// early end resumes with `Range` (+ `If-Range` on the first response's
+    /// validator, so a replaced object restarts instead of splicing).
+    async fn get_file_to(&self, path: &str, dest: &Path, hooks: FetchHooks<'_>) -> TeeResult<u64> {
+        let url = self.url_for(path)?;
+        let idle = self.idle;
+        let idle_s = idle.as_secs_f64();
+        let resp = match tokio::time::timeout(idle, self.client.get(&url).send()).await {
+            Ok(r) => r.map_err(|e| TeeError::Fetch(format!("GET {url}: {e}")))?,
+            Err(_) => {
+                return Err(TeeError::Fetch(format!(
+                    "GET {url}: no response headers in {idle_s}s"
+                )))
+            }
+        };
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(TeeError::Fetch(format!("GET {url}: HTTP {status}")));
+        }
+        let Some(len) = resp.content_length() else {
+            return Err(TeeError::Fetch(format!(
+                "GET {url}: no Content-Length: refusing an unbounded body"
+            )));
+        };
+        let max = self.max_bytes;
+        if len > max {
+            return Err(TeeError::Fetch(format!(
+                "GET {url}: {len} bytes exceeds the {max}-byte bound"
+            )));
+        }
+        (hooks.on_length)(len)?;
+        // The validator for `If-Range`: nginx sends an ETag (and Last-Modified)
+        // for static files; a resume against a replaced object then gets a
+        // 200, handled as a restart, never a splice of two seals.
+        let mut validator = resp
+            .headers()
+            .get(reqwest::header::ETAG)
+            .or_else(|| resp.headers().get(reqwest::header::LAST_MODIFIED))
+            .cloned();
+        let (guard, file) = PartGuard::create(dest)?;
+        let mut file = tokio::fs::File::from_std(file);
+        let mut stream = resp.bytes_stream();
+        let mut count: u64 = 0;
+        let mut resumes = 0u32;
+        // Restarts from byte zero (a host ignoring Range, no validator, a
+        // changed object) are bounded on their own and never earned back: a
+        // front that restarts a multi-GB download on every blip must fail,
+        // not loop forever below docker's restart policy.
+        let mut restarts = 0u32;
+        // Bytes delivered since the last interruption: enough progress earns
+        // the budget back, so a link that blips every few minutes on a 100 GB
+        // download resumes indefinitely while a host cutting every few MB
+        // still exhausts it.
+        let mut since_resume: u64 = 0;
+        // The first HEADER_LEN bytes, judged once before they are written.
+        let mut head: Vec<u8> = Vec::with_capacity(HEADER_LEN);
+        let mut head_checked = false;
+        let started = std::time::Instant::now();
+        let mut last_log = started;
+        loop {
+            // What interrupted the body, if anything: a stall, a transport
+            // error, or a clean end before `len` (a host that honoured only
+            // part of the range). Each resumes from `count` with a Range
+            // request rather than restart tens of GB from byte zero and burn
+            // one of docker's five restarts on it; five resumes and it is final.
+            let interrupted: Option<String> = match tokio::time::timeout(idle, stream.next()).await
+            {
+                Err(_) => Some(format!("idle for {idle_s}s")),
+                Ok(None) if count < len => Some("ended early".to_string()),
+                Ok(None) => break,
+                Ok(Some(Err(e))) => Some(format!("body: {e}")),
+                Ok(Some(Ok(chunk))) => {
+                    count += chunk.len() as u64;
+                    since_resume += chunk.len() as u64;
+                    if resumes > 0 && since_resume >= RESUME_BUDGET_RESET {
+                        resumes = 0;
+                    }
+                    if count > max {
+                        return Err(TeeError::Fetch(format!(
+                            "GET {url}: body exceeds the {max}-byte bound"
+                        )));
+                    }
+                    if !head_checked {
+                        let take = (HEADER_LEN - head.len()).min(chunk.len());
+                        head.extend_from_slice(&chunk[..take]);
+                        if head.len() == HEADER_LEN || count == len {
+                            head_checked = true;
+                            (hooks.on_head)(&head)?;
+                        }
+                    }
+                    file.write_all(&chunk).await?;
+                    if last_log.elapsed() >= PROGRESS_EVERY {
+                        last_log = std::time::Instant::now();
+                        let secs = started.elapsed().as_secs_f64().max(1e-3);
+                        tracing::info!(
+                            target: "tee",
+                            "container download: {}/{} MB, {:.1} MB/s",
+                            count / 1_000_000,
+                            len / 1_000_000,
+                            count as f64 / 1e6 / secs
+                        );
+                    }
+                    None
+                }
+            };
+            let Some(why) = interrupted else { continue };
+            since_resume = 0;
+            if resumes >= MAX_RESUMES {
+                return Err(TeeError::Fetch(format!(
+                    "GET {url}: {why} (after {resumes} resumes at {count} of {len} bytes)"
+                )));
+            }
+            resumes += 1;
+            tracing::warn!(
+                target: "tee",
+                "container download: {why} at {count} of {len} bytes; resuming ({resumes}/{MAX_RESUMES})"
+            );
+            file.flush().await?;
+            drop(stream);
+            // The resume GET itself may fail during the same blip that
+            // interrupted the body: each failure spends one resume and waits
+            // one idle period (120 s by default), so a blob-host restart of
+            // up to ~10 minutes is a pause, not a boot failure and a
+            // from-zero re-download on the next docker restart.
+            let resumed = loop {
+                match self
+                    .resume(&url, count, len, idle, validator.as_ref())
+                    .await
+                {
+                    Ok(r) => break r,
+                    Err(e) if resumes < MAX_RESUMES => {
+                        resumes += 1;
+                        tracing::warn!(
+                            target: "tee",
+                            "container download: resume failed ({e}); retrying ({resumes}/{MAX_RESUMES})"
+                        );
+                        tokio::time::sleep(idle).await;
+                    }
+                    Err(e) => {
+                        return Err(TeeError::Fetch(format!(
+                            "{e} (after {resumes} resumes at {count} of {len} bytes)"
+                        )))
+                    }
+                }
+            };
+            match resumed {
+                Resumed::Refused(why) => return Err(TeeError::Fetch(why)),
+                Resumed::From(r) => stream = r.bytes_stream(),
+                Resumed::Restart(r) => {
+                    // The host ignored the Range, or the object changed
+                    // (If-Range): start over in the same `.part`, under the
+                    // NEW object's validator.
+                    restarts += 1;
+                    if restarts > MAX_RESTARTS {
+                        return Err(TeeError::Fetch(format!(
+                            "GET {url}: restarted from byte zero {MAX_RESTARTS} times (the host \
+                             ignores Range or sends no validator, or the object keeps changing) \
+                             at {count} of {len} bytes"
+                        )));
+                    }
+                    validator = r
+                        .headers()
+                        .get(reqwest::header::ETAG)
+                        .or_else(|| r.headers().get(reqwest::header::LAST_MODIFIED))
+                        .cloned();
+                    file.set_len(0).await?;
+                    file.seek(std::io::SeekFrom::Start(0)).await?;
+                    count = 0;
+                    head.clear();
+                    head_checked = false;
+                    stream = r.bytes_stream();
+                }
+            }
+        }
+        if count != len {
+            return Err(TeeError::Fetch(format!(
+                "GET {url}: short body {count} of {len} bytes"
+            )));
+        }
+        // tokio's File reports a failed in-flight write on the NEXT operation
+        // and `sync_all` only stores it: flush first, so an EIO/ENOSPC on the
+        // last chunk is this call's error, never a truncated `.enc` renamed
+        // into place and blamed on the container at decrypt.
+        file.flush().await?;
+        file.sync_all().await?;
+        drop(file);
+        guard.finish(dest)?;
+        let secs = started.elapsed().as_secs_f64().max(1e-3);
+        tracing::info!(
+            target: "tee",
+            "container download complete: {} MB in {secs:.1}s ({:.1} MB/s, {resumes} resume(s)) -> {}",
+            len / 1_000_000,
+            len as f64 / 1e6 / secs,
+            dest.display()
+        );
+        Ok(len)
+    }
+}
+
+/// How the host answered a `Range: bytes=<count>-` request. A transport
+/// failure of the request itself is the `Err` of `resume` (retried under the
+/// resume budget); a host that ANSWERS wrongly is `Refused`, which is final.
+enum Resumed {
+    /// `206 Partial Content` from exactly `count`, total `len`: append.
+    From(reqwest::Response),
+    /// `200 OK` with the whole body: the host ignores `Range`; start over.
+    Restart(reqwest::Response),
+    /// A protocol-level refusal (a partial 206, a changed size, another
+    /// status): retrying would ask the same host the same question.
+    Refused(String),
+}
+
+/// Resumes per download before the body error is final. A failed resume GET
+/// waits one idle period before the next, so the budget covers an outage of
+/// about `MAX_RESUMES × idle` (10 minutes at the 120 s default). The budget
+/// is earned back after [`RESUME_BUDGET_RESET`] bytes of progress.
+const MAX_RESUMES: u32 = 5;
+/// Progress after a resume that restores the full resume budget.
+const RESUME_BUDGET_RESET: u64 = 256 * 1024 * 1024;
+/// Restarts from byte zero per download, never earned back.
+const MAX_RESTARTS: u32 = 3;
+
+impl HttpBlobSource {
+    /// Re-GET `url` from byte `count` (nginx static honours `Range`). A 206
+    /// must start at `count` and name the same total; a 200 is a restart;
+    /// anything else is a refusal.
+    async fn resume(
+        &self,
+        url: &str,
+        count: u64,
+        len: u64,
+        idle: Duration,
+        validator: Option<&reqwest::header::HeaderValue>,
+    ) -> TeeResult<Resumed> {
+        // No validator (a front that strips ETag and Last-Modified): never
+        // resume, a same-size replaced object would splice; a plain GET
+        // restarts in place instead.
+        let mut req = self.client.get(url);
+        if let Some(v) = validator {
+            req = req
+                .header(reqwest::header::RANGE, format!("bytes={count}-"))
+                .header(reqwest::header::IF_RANGE, v.clone());
+        }
+        let resp = match tokio::time::timeout(idle, req.send()).await {
+            Ok(r) => r.map_err(|e| TeeError::Fetch(format!("GET {url} (resume): {e}")))?,
+            Err(_) => {
+                return Err(TeeError::Fetch(format!(
+                    "GET {url} (resume): no response headers in {}s",
+                    idle.as_secs_f64()
+                )))
+            }
+        };
+        match resp.status() {
+            reqwest::StatusCode::PARTIAL_CONTENT if validator.is_none() => Ok(Resumed::Refused(
+                format!("GET {url} (resume): 206 to a request without Range"),
+            )),
+            reqwest::StatusCode::PARTIAL_CONTENT => {
+                let range = resp
+                    .headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                // `bytes <start>-<end>/<total>`: the whole remainder, and the
+                // 206's own length agrees, so a host honouring only part of
+                // the range is refused here, not discovered as a short body.
+                let ok = range
+                    .strip_prefix("bytes ")
+                    .and_then(|r| r.split_once('/'))
+                    .and_then(|(span, total)| {
+                        let (start, end) = span.split_once('-')?;
+                        let start: u64 = start.parse().ok()?;
+                        let end: u64 = end.parse().ok()?;
+                        let total: u64 = total.parse().ok()?;
+                        Some(start == count && end + 1 == len && total == len)
+                    })
+                    .unwrap_or(false);
+                if !ok || resp.content_length() != Some(len - count) {
+                    return Ok(Resumed::Refused(format!(
+                        "GET {url} (resume): Content-Range `{range}` (length {:?}) is not bytes {count}-{}/{len}",
+                        resp.content_length(),
+                        len - 1
+                    )));
+                }
+                Ok(Resumed::From(resp))
+            }
+            reqwest::StatusCode::OK => {
+                if resp.content_length() != Some(len) {
+                    return Ok(Resumed::Refused(format!(
+                        "GET {url} (resume): the object changed size ({:?} vs {len})",
+                        resp.content_length()
+                    )));
+                }
+                Ok(Resumed::Restart(resp))
+            }
+            other => Ok(Resumed::Refused(format!(
+                "GET {url} (resume): HTTP {other}"
+            ))),
+        }
     }
 }

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 const SKU: &str = "H100";
 const MEASUREMENT: [u8; 48] = [0x42u8; 48];
-const BLOB_PATH: &str = "s5://models/proprietary.enc";
+pub(super) const BLOB_PATH: &str = "s5://models/proprietary.enc";
 
 fn test_policy(model_id: [u8; 32]) -> Policy {
     Policy {
@@ -146,7 +146,9 @@ pub(super) fn fixture_with_plaintext_len(len: u32) -> Fixture {
     let container = encrypt_model(&plaintext, &dek, model_id, policy_hash, 1024).unwrap();
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let loader = EncryptedModelLoader::new(dir.path()).with_tee_enabled(true);
+    // The decrypt dir is a SUBDIRECTORY of the tempdir (P5.5: the loader's
+    // default container dir is the sibling `<decrypt>.containers`).
+    let loader = EncryptedModelLoader::new(dir.path().join("decrypt")).with_tee_enabled(true);
 
     Fixture {
         loader,
@@ -213,7 +215,7 @@ async fn prepare_attested_model_none_hash_loads_with_warning() {
 #[tokio::test]
 async fn prepare_attested_model_fails_closed_on_hash_mismatch() {
     let f = fixture();
-    let path_dir = f._dir.path().to_path_buf();
+    let path_dir = f._dir.path().join("decrypt");
     let wrong = sha256_hex(b"a different model entirely");
 
     let err = prepare_attested_model(

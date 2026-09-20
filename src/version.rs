@@ -3,25 +3,33 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.56.0-phase5-kbs-bundle-2026-09-19";
+pub const VERSION: &str = "v8.57.0-phase5-streaming-load-2026-09-20";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.56.0";
+pub const VERSION_NUMBER: &str = "8.57.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 56;
+pub const VERSION_MINOR: u32 = 57;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-09-19";
+pub const BUILD_DATE: &str = "2026-09-20";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.57.0 Phase 5 P5.5 streaming load: the encrypted container is streamed
+    // to a ciphertext cache on the CVM's disk (never held in RAM; a restart
+    // does not re-download; its header is judged before any broker traffic)
+    // and stream-decrypted with a SHA-256 tee (peak heap = two chunks); the
+    // plaintext has a second home, the dstack-encrypted data disk
+    // (TEE_DECRYPT_ON_DISK), for a model larger than the CVM's RAM.
+    "tee-streaming-container",
+    "tee-disk-plaintext",
     // v8.56.0 Phase 5 P4.5 node-side bundle: the node asks the key broker's
     // /info before downloading a container (a broker left in a test evidence
     // mode is refused before tens of GB, not after), accepts a test-keyring
@@ -591,6 +599,9 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.57.0 - Phase 5 P5.5 streaming load + the plaintext's home (Sep 20, 2026)
+    "BEHAVIOUR (attested nodes): the encrypted container is STREAMED to `<TEE_CONTAINER_DIR>/<sha256(encrypted_ref)[..16]>.enc` (default /var/lib/fabstir/containers; a compose volume) instead of being held in RAM, under a per-chunk idle timeout (TEE_BLOB_IDLE_TIMEOUT_SECS, default 120) and NO whole-request budget, over HTTP/1.1 only; `Content-Length` is required (a chunked or unbounded body is refused before any byte), TEE_BLOB_MAX_BYTES bounds the .enc (GGUF + 98 B + 16 B per 4 MiB chunk), free space is checked before the first byte (2x the container when the cache and the plaintext share one filesystem). A cached container is reused across restarts: its header (model_id, policy_hash) is checked BEFORE the challenge, a mismatch or an undecodable file is a miss (deleted, re-downloaded, no nonce spent), a fresh download bound to another model/policy is refused before any broker traffic, and a cached container that fails a content check at decrypt is re-downloaded ONCE under the same DEK (an I/O error never evicts the cache). Other keys are pruned from the container dir (one model per process)",
+    "BEHAVIOUR (attested nodes): the plaintext's home is chosen by ONE value, TEE_DECRYPT_ON_DISK: unset/0 = tmpfs (TEE_DECRYPT_DIR, today's rule), 1 = the compose volume TEE_PLAINTEXT_VOLUME (/var/lib/fabstir/plaintext), accepted only when its block device is a dm-crypt LUKS device (sysfs dm uuid CRYPT-LUKS..., directly or through one LVM slave), refused otherwise (exit 78). In disk mode purges are unlink-only. At boot the node refuses a container dir inside/around the home or the volume, creates both directories (0700), and SWEEPS leftovers of a previous process (its own plaintext names in both homes, every .part in the container dir) before the policy fetch; the hash-bind step compares the SHA-256 from the decrypt's tee instead of re-reading the plaintext. The Phala composes declare two named volumes (fabstir-containers, fabstir-plaintext) and template TEE_DECRYPT_ON_DISK and TEE_BLOB_MAX_BYTES from the form; the image must be re-cut and its digest re-pinned (tests/phase5_release_pins.rs)",
     // v8.56.0 - Phase 5 P4.5 node-side bundle (Sep 19, 2026)
     "BEHAVIOUR (attested nodes): before fetching the encrypted container the node GETs the broker's /v1/kbs/info and refuses to continue when the broker's keyring class does not fit this node (keyring `test` without TEE_ACCEPT_TEST_RELEASE=1, or with it but a TEE_MODEL_ID that does not start with the bytes `t5t:` (hex 7435743a); keyring `real` with a `t5t:` id); /info is tried three times (10 s budget each, 10 s apart; at most 50 s) on transport-class failures before the load fails. A broker without /info (none was ever deployed) refuses every attested load",
     "SECURITY (attested nodes): a release's `test_release` label must agree with the `t5t:` prefix of TEE_MODEL_ID in both directions or the key is refused before it is decoded; the STARK witness model_hash therefore carries the label (a model_hash starting 7435743a is a test release). CPU gate rounds must use a `t5t:`-prefixed TEE_MODEL_ID",
@@ -1081,10 +1092,13 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 56);
+        assert_eq!(VERSION_MINOR, 57);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.57.0 Phase 5 P5.5 streaming load
+        assert!(FEATURES.contains(&"tee-streaming-container"));
+        assert!(FEATURES.contains(&"tee-disk-plaintext"));
         // v8.56.0 Phase 5 P4.5 node-side bundle
         assert!(FEATURES.contains(&"tee-kbs-info-preflight"));
         assert!(FEATURES.contains(&"tee-t5t-witness-rule"));
@@ -1270,15 +1284,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.56.0"));
-        assert!(version.contains("2026-09-19"));
+        assert!(version.contains("8.57.0"));
+        assert!(version.contains("2026-09-20"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.56.0-phase5-kbs-bundle-2026-09-19");
-        assert_eq!(VERSION_NUMBER, "8.56.0");
-        assert_eq!(BUILD_DATE, "2026-09-19");
+        assert_eq!(VERSION, "v8.57.0-phase5-streaming-load-2026-09-20");
+        assert_eq!(VERSION_NUMBER, "8.57.0");
+        assert_eq!(BUILD_DATE, "2026-09-20");
     }
 
     #[test]
