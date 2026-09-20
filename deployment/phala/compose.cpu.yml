@@ -16,7 +16,7 @@
 # Same image digest as compose.gpu.yml (one image, two composes).
 services:
   llm-node:
-    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:715f28be882da2796d411691d8c87542d1b4b22ea6d4da326a73a62dd2bd4c83
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:0d7466556c41059a6ea4a3c977c53337194092fb3d07e328aff9d2ae737e9469
     container_name: llm-node
     # on-failure with a cap, never unless-stopped/always: a refused attested
     # load exits 78 and an unbounded policy would re-download the container,

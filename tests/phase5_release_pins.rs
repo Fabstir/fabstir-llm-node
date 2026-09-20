@@ -25,8 +25,12 @@ const RELEASE_PINS: &[(&str, &str)] = &[
         "8.55.0",
         "715f28be882da2796d411691d8c87542d1b4b22ea6d4da326a73a62dd2bd4c83",
     ),
-    // P4.5 bundle: /info preflight, t5t: witness rule, collector DevTools refusal.
-    ("8.56.0", "PENDING"),
+    // P4.5 bundle: /info preflight, t5t: witness rule, collector DevTools refusal
+    // (built 2026-09-20 from 6f40af7; pushed by build.sh on 3XS-Z).
+    (
+        "8.56.0",
+        "0d7466556c41059a6ea4a3c977c53337194092fb3d07e328aff9d2ae737e9469",
+    ),
 ];
 
 const COMPOSES: &[&str] = &["compose.gpu.yml", "compose.cpu.yml"];

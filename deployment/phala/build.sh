@@ -61,8 +61,10 @@ docker push "$REF"
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$REF" | sed 's/.*@//')"
 echo
-echo "==> pushed. Paste this into deployment/phala/compose.gpu.yml AND compose.cpu.yml:"
+echo "==> pushed. First prove the image carries the current collector:"
+echo "    docker run --rm --entrypoint grep ${REGISTRY}/${IMAGE}@${DIGEST} -c 'DevTools (CC development) mode' /usr/local/bin/collect_gpu_evidence.py   # prints 1"
+echo "    then paste this into deployment/phala/compose.gpu.yml AND compose.cpu.yml:"
 echo "    image: ${REGISTRY}/${IMAGE}@${DIGEST}"
-echo
-echo "    then: cargo test --test phase5_compose_guard   (gate A-19)"
+echo "    and into the PENDING row of tests/phase5_release_pins.rs, then:"
+echo "    cargo test --test phase5_compose_guard --test phase5_release_pins   (gate A-19)"
 
