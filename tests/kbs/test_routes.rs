@@ -9,6 +9,7 @@ use super::policy_fixture::{
 };
 use super::test_gpu::{spawn_nras, Nras, NrasOpts};
 use fabstir_llm_node::kbs::config::KbsConfig;
+use fabstir_llm_node::kbs::error::Kind;
 use fabstir_llm_node::kbs::keyring::Keyring;
 use fabstir_llm_node::kbs::routes::{
     release_gate, router, AppState, EvidenceWireIn, RequestKeyRequestWire, Shared,
@@ -141,6 +142,30 @@ async fn challenge_then_request_key_releases_the_test_dek_end_to_end() {
     // the capture landed in the verified ring
     let verified = b.state.cfg.capture_dir().join("verified");
     assert_eq!(std::fs::read_dir(&verified).unwrap().count(), 1);
+    // B-8 reads `cc_mode` out of this file on the paid day and the gate row
+    // names the exact spelling, so the ONE-spelling rule is pinned rather than
+    // left to a `{:?}` that would print the variant name. Mutation: swap
+    // `label()` for `{:?}` in `verified_json`'s `cc_mode` (prints `Canned`).
+    let dir = std::fs::read_dir(&verified)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("verified.json")).unwrap()).unwrap();
+    // Both writers: the derived half (`CcAssertion::label`) and the step-7
+    // record (`CcRecord::label`). This is the exact string B-8 greps for.
+    assert_eq!(
+        v["gpu"]["cc_mode"].as_str(),
+        Some("signed-not-devtools"),
+        "the capture must carry the label spelling, never Debug: {v}"
+    );
+    assert_eq!(
+        v["verified"]["cc_mode"].as_str(),
+        Some("signed-not-devtools"),
+        "the step-7 record must use the same one spelling: {v}"
+    );
     // a replay of the same nonce is freshness (burned)
     let e = client
         .request_key(b.model_id, &evidence(&pk, nonce, None))
@@ -722,21 +747,155 @@ fn source_of_honours_the_header_only_from_a_loopback_peer() {
 
 #[test]
 fn release_gate_is_its_own_check() {
-    let v = Verified {
+    use fabstir_llm_node::kbs::nras_claims::{GpuFields, GpuOutcome};
+
+    let verified_of = |cc: CcRecord| Verified {
         tcb_status: "Simulator".into(),
         advisory_ids: vec![],
         hwmodel: None,
         driver_version: None,
         vbios_version: None,
-        cc_mode: CcRecord::Canned,
+        cc_mode: cc,
         td_debug_off: true,
     };
-    assert!(release_gate(&v, true).is_ok());
-    let e = release_gate(&v, false).unwrap_err();
-    assert!(e.detail.contains("release gate"), "{e}");
-    let real = Verified {
-        cc_mode: CcRecord::NodeAsserted,
-        ..v
+    let gpu_of = |secure_boot: bool, debug_disabled: bool| {
+        GpuOutcome::Real(GpuFields {
+            nonce: [7u8; 32],
+            hwmodel: "GH100 A01 GSP BROM".into(),
+            secure_boot,
+            debug_disabled,
+            driver_version: "580.95.05".into(),
+            vbios_version: "96.00.74.00.1a".into(),
+        })
     };
-    assert!(release_gate(&real, false).is_ok());
+    let good = gpu_of(true, true);
+
+    // Canned tolerance: a test entry may, a real entry may not.
+    let canned = verified_of(CcRecord::Canned);
+    assert!(release_gate(&canned, &GpuOutcome::CannedTolerated, true).is_ok());
+    let e = release_gate(&canned, &GpuOutcome::CannedTolerated, false).unwrap_err();
+    assert!(e.detail.contains("canned tolerance"), "{e}");
+
+    // The ordinary real release.
+    let real = verified_of(CcRecord::SignedNotDevTools);
+    assert!(release_gate(&real, &good, false).is_ok());
+
+    // D14a: the gate is independent of the policy, so claims that leave
+    // DevTools open refuse a real release even when no policy row asked.
+    let e = release_gate(
+        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
+        &gpu_of(true, false),
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        e.detail.contains("rule DevTools out")
+            && e.detail.contains("secboot true")
+            && e.detail.contains("debug disabled false"),
+        "the gate must name the failing claims: {e}"
+    );
+    assert!(
+        release_gate(
+            &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
+            &gpu_of(true, false),
+            true
+        )
+        .is_ok(),
+        "a test entry may"
+    );
+
+    // The gate derives from `map_per_gpu`'s OWN output, so a step-7 bug that
+    // recorded the good verdict over bad claims is still refused here, and the
+    // BAD GPU leads: no key can go to it whatever the broker did. The step-7
+    // bug is named in the same line rather than replacing it.
+    let e = release_gate(&real, &gpu_of(true, false), false).unwrap_err();
+    assert!(
+        e.detail.contains("claims do not rule DevTools out")
+            && e.detail.contains("debug disabled false")
+            && e.detail.contains("also recorded signed-not-devtools"),
+        "a bad GPU must lead, with the step-7 disagreement named too: {e}"
+    );
+    // ... and with step 7 faithful, the same GPU gives the same lead without
+    // the disagreement clause, so that clause cannot be unconditional text.
+    let e = release_gate(
+        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
+        &gpu_of(true, false),
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        e.detail.contains("claims do not rule DevTools out") && !e.detail.contains("also recorded"),
+        "a faithful record must not be reported as a disagreement: {e}"
+    );
+
+    // ... and the mirror: good claims, a bad recorded verdict. Mutation that
+    // proves this arm can fail: delete the `verified.cc_mode != expected`
+    // agreement block (the claims pass, so the release would go out).
+    let e = release_gate(
+        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
+        &good,
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        e.detail
+            .contains("recorded signed-devtools-or-no-secure-boot")
+            && e.detail.contains("disagreement inside the broker")
+            && !e.detail.contains("claims do not rule DevTools out"),
+        "a broker disagreement must not read as a bad GPU: {e}"
+    );
+
+    // Every refusal is a `verification` (403), never an `unavailable` (500):
+    // none of them will pass on a later attempt, so none may tell the reader
+    // to come back later. Mutation: change any arm back to `KbsError::fault`.
+    for e in [
+        release_gate(&canned, &GpuOutcome::CannedTolerated, false).unwrap_err(),
+        release_gate(&real, &GpuOutcome::CannedTolerated, false).unwrap_err(),
+        release_gate(&canned, &good, false).unwrap_err(),
+        release_gate(
+            &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
+            &good,
+            false,
+        )
+        .unwrap_err(),
+        release_gate(&real, &gpu_of(true, false), false).unwrap_err(),
+    ] {
+        assert_eq!(
+            (e.kind, e.status),
+            (Kind::Verification, 403),
+            "release-gate refusals must be terminal, not a retryable outage: {e}"
+        );
+    }
+
+    // Both record-over-evidence contradictions are broker bugs, not bad GPUs.
+    let e = release_gate(&real, &GpuOutcome::CannedTolerated, false).unwrap_err();
+    assert!(
+        e.detail.contains("evidence was canned")
+            && e.detail.contains("disagreement inside the broker"),
+        "{e}"
+    );
+    let e = release_gate(&canned, &good, false).unwrap_err();
+    assert!(
+        e.detail.contains("recorded canned")
+            && e.detail.contains("disagreement inside the broker")
+            && !e.detail.contains("canned tolerance"),
+        "a Canned record over real evidence must read as a broker bug: {e}"
+    );
+
+    // The claims arm has its own failure mode: a GPU whose claims leave
+    // DevTools open, with step 7 recording that state faithfully, is refused
+    // as a bad GPU rather than as a broker bug. Mutation that proves it:
+    // delete the `!matches!(derived, SignedNotDevTools)` block.
+    let e = release_gate(
+        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
+        &gpu_of(false, true),
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        e.detail.contains("do not rule DevTools out")
+            && e.detail.contains("secboot false")
+            && !e.detail.contains("disagreement inside the broker"),
+        "{e}"
+    );
 }

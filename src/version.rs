@@ -3,25 +3,30 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.57.0-phase5-streaming-load-2026-09-20";
+pub const VERSION: &str = "v8.58.0-phase5-gpu-devtools-signed-2026-09-22";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.57.0";
+pub const VERSION_NUMBER: &str = "8.58.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 57;
+pub const VERSION_MINOR: u32 = 58;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-09-20";
+pub const BUILD_DATE: &str = "2026-09-22";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.58.0 Phase 5: the broker decides the GPU's DevTools state from SIGNED
+    // evidence (the per-GPU EAT pair `secboot` + `dbgstat`) instead of
+    // recording it as node-asserted; its release gate refuses a real DEK to a
+    // GPU whose claims leave DevTools open whatever the policy asked for.
+    "kbs-devtools-signed",
     // v8.57.0 Phase 5 P5.5 streaming load: the encrypted container is streamed
     // to a ciphertext cache on the CVM's disk (never held in RAM; a restart
     // does not re-download; its header is judged before any broker traffic)
@@ -599,6 +604,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.58.0 - Phase 5: GPU CC mode from signed evidence (Sep 22, 2026)
+    "SECURITY/BREAKING (broker): `require_cc_mode: On` is now enforced against the SIGNED per-GPU EAT claims `secboot` and `dbgstat` rather than recorded as node-asserted. NVIDIA publishes no literal CC-mode claim, but DevTools mode attests with the debug facilities enabled, so `secboot: true` plus a `dbgstat` in the disabled family rules DevTools out (Phala, 2026-09-22, closing gap G-6; design D14a). Two limits stated plainly: that mapping is NVIDIA's documentation plus Phala's confirmation, not something this chain has observed fail, and gate B-8 captures the real values on the first H200; and the pair does NOT separate CC On from Off, which stays with the measured in-guest collector's NVML reading (new gap G-6a). A broker of this version refuses releases that v8.57.0 and earlier allowed. In practice, for the booking, it cannot: the new row fires only when `secboot` is false or `dbgstat` is not in the disabled family, and any policy that already sets `require_secure_boot: true` and `require_debug_disabled: true` refuses those same GPUs at the existing rows. Every signed Phase-5 policy does (the CPU rounds' archived `policy-signed*.json` and the test fixture all carry the three), so on the day's policy this change cannot refuse a release v8.57.0 would have made",
+    "SECURITY (broker): the step-8 release gate now refuses a non-test keyring entry whose signed claims leave DevTools open EVEN WHEN the policy omits `require_cc_mode`, so `null` is no longer don't-care for a real key; the refusal names both claims. Test entries are unaffected",
+    "BREAKING (broker API surface): `CcAssertion::NodeAsserted` and `CcRecord::NodeAsserted` are replaced by `SignedNotDevTools` / `SignedDevToolsOrNoSecureBoot`; `GpuFields::cc_mode` is removed in favour of the derived `GpuFields::cc_assertion()` (a stored copy could disagree with the two claims it came from); `release_gate` takes the raw `&GpuOutcome` as well, so it derives its own verdict from the mapped claims rather than from anything step 7 produced or copied. Logs and captures carry the ONE spelling `CcRecord::label()` (`signed-not-devtools`), never `Debug`",
     // v8.57.0 - Phase 5 P5.5 streaming load + the plaintext's home (Sep 20, 2026)
     "BEHAVIOUR (attested nodes): the encrypted container is STREAMED to `<TEE_CONTAINER_DIR>/<sha256(encrypted_ref)[..16]>.enc` (default /var/lib/fabstir/containers; a compose volume) instead of being held in RAM, under a per-chunk idle timeout (TEE_BLOB_IDLE_TIMEOUT_SECS, default 120) and NO whole-request budget, over HTTP/1.1 only; `Content-Length` is required (a chunked or unbounded body is refused before any byte), TEE_BLOB_MAX_BYTES bounds the .enc (GGUF + 98 B + 16 B per 4 MiB chunk), free space is checked before the first byte (2x the container when the cache and the plaintext share one filesystem). A cached container is reused across restarts: its header (model_id, policy_hash) is checked BEFORE the challenge, a mismatch or an undecodable file is a miss (deleted, re-downloaded, no nonce spent), a fresh download bound to another model/policy is refused before any broker traffic, and a cached container that fails a content check at decrypt is re-downloaded ONCE under the same DEK (an I/O error never evicts the cache). Other keys are pruned from the container dir (one model per process)",
     "BEHAVIOUR (attested nodes): the plaintext's home is chosen by ONE value, TEE_DECRYPT_ON_DISK: unset/0 = tmpfs (TEE_DECRYPT_DIR, today's rule), 1 = the compose volume TEE_PLAINTEXT_VOLUME (/var/lib/fabstir/plaintext), accepted only when its block device is a dm-crypt LUKS device (sysfs dm uuid CRYPT-LUKS..., directly or through one LVM slave), refused otherwise (exit 78). In disk mode purges are unlink-only. At boot the node refuses a container dir inside/around the home or the volume, creates both directories (0700), and SWEEPS leftovers of a previous process (its own plaintext names in both homes, every .part in the container dir) before the policy fetch; the hash-bind step compares the SHA-256 from the decrypt's tee instead of re-reading the plaintext. The Phala composes declare two named volumes (fabstir-containers, fabstir-plaintext) and template TEE_DECRYPT_ON_DISK and TEE_BLOB_MAX_BYTES from the form; the image must be re-cut and its digest re-pinned (tests/phase5_release_pins.rs)",
@@ -1092,10 +1101,12 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 57);
+        assert_eq!(VERSION_MINOR, 58);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.58.0 Phase 5 GPU CC mode from signed evidence
+        assert!(FEATURES.contains(&"kbs-devtools-signed"));
         // v8.57.0 Phase 5 P5.5 streaming load
         assert!(FEATURES.contains(&"tee-streaming-container"));
         assert!(FEATURES.contains(&"tee-disk-plaintext"));
@@ -1284,15 +1295,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.57.0"));
-        assert!(version.contains("2026-09-20"));
+        assert!(version.contains("8.58.0"));
+        assert!(version.contains("2026-09-22"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.57.0-phase5-streaming-load-2026-09-20");
-        assert_eq!(VERSION_NUMBER, "8.57.0");
-        assert_eq!(BUILD_DATE, "2026-09-20");
+        assert_eq!(VERSION, "v8.58.0-phase5-gpu-devtools-signed-2026-09-22");
+        assert_eq!(VERSION_NUMBER, "8.58.0");
+        assert_eq!(BUILD_DATE, "2026-09-22");
     }
 
     #[test]

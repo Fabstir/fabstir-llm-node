@@ -6,18 +6,77 @@
 //! failing row is reported (design D11) so the first real EAT on the paid day
 //! yields every pin at once.
 //!
-//! "Never" rows (the chain that makes the answer NVIDIA's and this nonce's) live in
-//! `gpu.rs`; this table maps the per-GPU claims that B-4 may show under another
-//! name ("renameable"): a runbook patch renames a key here and nothing else.
+//! The "never" rows (the chain that makes the answer NVIDIA's and this nonce's)
+//! are hardcoded literals: the overall-token ones in `gpu.rs`, the three per-GPU
+//! ones (`eat_nonce`, the absent error details, the report-nonce match) in
+//! `map_per_gpu` below, reading through this table's fields. The table maps the
+//! per-GPU claims that B-4 may show under another name ("renameable"): a runbook
+//! patch renames a key here and nothing else.
 
 use serde_json::{Map, Value};
 
-/// The broker cannot verify CC mode (no signed claim, gap G-6); the measured
-/// in-guest collector refuses CC-off and DevTools before evidence exists. Recorded,
-/// never synthesised as `On` (design D14).
+/// The ONE spelling of each state, so the log line, both halves of a capture
+/// and gate B-8's grep cannot drift apart (`CcRecord::label` returns these too).
+pub const LABEL_NOT_DEVTOOLS: &str = "signed-not-devtools";
+pub const LABEL_DEVTOOLS_OR_NO_SECURE_BOOT: &str = "signed-devtools-or-no-secure-boot";
+
+/// What the SIGNED per-GPU claims say about the GPU's protection state
+/// (design D14, superseded 2026-09-22 by D14a, Phala's answer to the G-6
+/// question).
+///
+/// NVIDIA publishes no literal "CC mode" claim, but its own relying-party
+/// policy example reads the pair `secboot` and `dbgstat`: DevTools mode
+/// attests with the debug facilities enabled and therefore reports
+/// `dbgstat: enabled`, so the pair RULES DEVTOOLS OUT. Both claims come from
+/// the EAT this broker has already verified against NVIDIA's JWKS for this
+/// challenge nonce, so they are signed evidence rather than the node's word.
+/// The mapping itself is NVIDIA's documentation plus Phala's confirmation;
+/// nobody in this chain has yet seen an EAT from a GPU actually in DevTools
+/// mode, which gate B-8 captures on the first real H200 (gap G-6).
+///
+/// What the pair does NOT do is separate CC mode On from Off: a GPU with
+/// confidential computing disabled is expected to report secure boot on and
+/// debug disabled too. That premise is unobserved here, exactly like the
+/// DevTools mapping above; it errs safe, since it only ever makes the pair
+/// weaker and never releases a key the pair would refuse. Off is refused only
+/// by the measured in-guest collector's NVML reading (`collect_gpu_evidence.py`,
+/// exit 75 when `cc_enabled` is false), which is node-asserted; that residual
+/// is gap G-6a.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CcAssertion {
-    NodeAsserted,
+    /// `secboot: true` and a `dbgstat` in the disabled family: DevTools is
+    /// ruled out by signed evidence. On versus Off is not (G-6a).
+    SignedNotDevTools,
+    /// The pair is absent: the debug facilities are enabled (DevTools) or
+    /// secure boot is off. Carries both so a refusal can name them.
+    SignedDevToolsOrNoSecureBoot {
+        secure_boot: bool,
+        debug_disabled: bool,
+    },
+}
+
+impl CcAssertion {
+    /// The pair as NVIDIA's relying-party example reads it. Derive it at every
+    /// use site from the two mapped claims; never store it beside them, or the
+    /// derived value can disagree with what it was derived from.
+    pub fn from_claims(secure_boot: bool, debug_disabled: bool) -> Self {
+        if secure_boot && debug_disabled {
+            Self::SignedNotDevTools
+        } else {
+            Self::SignedDevToolsOrNoSecureBoot {
+                secure_boot,
+                debug_disabled,
+            }
+        }
+    }
+
+    /// The word this state is logged and captured under.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::SignedNotDevTools => LABEL_NOT_DEVTOOLS,
+            Self::SignedDevToolsOrNoSecureBoot { .. } => LABEL_DEVTOOLS_OR_NO_SECURE_BOOT,
+        }
+    }
 }
 
 /// What the broker decides on (design D16).
@@ -29,7 +88,14 @@ pub struct GpuFields {
     pub debug_disabled: bool,
     pub driver_version: String,
     pub vbios_version: String,
-    pub cc_mode: CcAssertion,
+}
+
+impl GpuFields {
+    /// The signed debug/boot verdict, DERIVED here rather than stored: a
+    /// stored copy beside the two claims it comes from can disagree with them.
+    pub fn cc_assertion(&self) -> CcAssertion {
+        CcAssertion::from_claims(self.secure_boot, self.debug_disabled)
+    }
 }
 
 /// The GPU half's outcome.
@@ -177,14 +243,15 @@ pub fn map_per_gpu(
     if !rows.is_empty() || !nonce_ok {
         return Err(rows);
     }
+    let secure_boot = secure_boot.expect("checked");
+    let debug_disabled = debug_disabled.expect("checked");
     Ok(GpuFields {
         nonce: issued_nonce,
         hwmodel: hwmodel.expect("checked"),
-        secure_boot: secure_boot.expect("checked"),
-        debug_disabled: debug_disabled.expect("checked"),
+        secure_boot,
+        debug_disabled,
         driver_version: driver_version.expect("checked"),
         vbios_version: vbios_version.expect("checked"),
-        cc_mode: CcAssertion::NodeAsserted,
     })
 }
 

@@ -12,7 +12,7 @@ use fabstir_llm_node::kbs::eventlog::{
     extract, parse, replay, replay_and_extract, select_runtime, RuntimeEvent, EV_COMPOSE_HASH,
     EV_SYSTEM_READY,
 };
-use fabstir_llm_node::kbs::nras_claims::{CcAssertion, GpuFields, GpuOutcome};
+use fabstir_llm_node::kbs::nras_claims::{GpuFields, GpuOutcome};
 use fabstir_llm_node::kbs::verify::{check_policy, prefilter, CcRecord, Expected};
 use fabstir_llm_node::tee::types::{CcMode, Policy};
 use serde_json::json;
@@ -36,7 +36,19 @@ fn good_gpu() -> GpuOutcome {
         debug_disabled: true,
         driver_version: "550.90.07".into(),
         vbios_version: "96.00.74.00.1a".into(),
-        cc_mode: CcAssertion::NodeAsserted,
+    })
+}
+
+/// `good_gpu` with the signed pair varied: the broker derives `cc_mode` from
+/// `secboot` and `dbgstat` exactly as `map_per_gpu` does.
+fn gpu_with(secure_boot: bool, debug_disabled: bool) -> GpuOutcome {
+    let GpuOutcome::Real(f) = good_gpu() else {
+        unreachable!()
+    };
+    GpuOutcome::Real(GpuFields {
+        secure_boot,
+        debug_disabled,
+        ..f
     })
 }
 
@@ -266,8 +278,63 @@ fn check_policy_passes_on_the_recording() {
     let v = check_policy(&policy, &exp, &good_cpu(), &r, &good_gpu(), true).unwrap();
     assert_eq!(v.tcb_status, "Simulator");
     assert_eq!(v.hwmodel.as_deref(), Some("GH100 A01 GSP BROM"));
-    assert_eq!(v.cc_mode, CcRecord::NodeAsserted);
+    assert_eq!(v.cc_mode, CcRecord::SignedNotDevTools);
     assert!(v.td_debug_off);
+}
+
+/// D14 superseded 2026-09-22 (Phala's answer to the G-6 question): a policy
+/// asking for CC mode On is refused unless the SIGNED pair `secboot: true` +
+/// `dbgstat` in the disabled family rules DevTools out, both read from the
+/// EAT this broker verified against NVIDIA's JWKS for this nonce, rather than
+/// from the node's own NVML reading. The pair does not separate On from Off
+/// (G-6a); that stays with the measured collector.
+#[test]
+fn cc_mode_on_needs_the_signed_pair_that_rules_devtools_out() {
+    let (mut policy, exp) = setup();
+    policy.gpu.require_cc_mode = Some(fabstir_llm_node::tee::types::CcMode::On);
+    // Belt and braces off, so the refusal can only come from the cc-mode row.
+    policy.gpu.require_secure_boot = false;
+    policy.gpu.require_debug_disabled = false;
+    let r = replay_and_extract(&event_log()).unwrap();
+
+    let v = check_policy(&policy, &exp, &good_cpu(), &r, &good_gpu(), true).unwrap();
+    assert_eq!(v.cc_mode, CcRecord::SignedNotDevTools);
+
+    // DevTools: the debug facilities are enabled.
+    let e = check_policy(&policy, &exp, &good_cpu(), &r, &gpu_with(true, false), true).unwrap_err();
+    assert!(
+        e.detail.contains("cc mode") && e.detail.contains("debug disabled false"),
+        "{e}"
+    );
+    // Secure boot off is not the On pair either.
+    let e = check_policy(&policy, &exp, &good_cpu(), &r, &gpu_with(false, true), true).unwrap_err();
+    assert!(e.detail.contains("cc mode"), "{e}");
+
+    // A policy that does not ask for On records the state without refusing.
+    // A TEST entry with no cc-mode row records the state without refusing.
+    policy.gpu.require_cc_mode = None;
+    let v = check_policy(&policy, &exp, &good_cpu(), &r, &gpu_with(true, false), true).unwrap();
+    assert_eq!(v.cc_mode, CcRecord::SignedDevToolsOrNoSecureBoot);
+
+    // A REAL entry with the same lax policy is refused at step 7, so the
+    // capture carries the failing row (D11) instead of recording a pass that
+    // step 8 then refuses.
+    let e = check_policy(
+        &policy,
+        &exp,
+        &good_cpu(),
+        &r,
+        &gpu_with(true, false),
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        e.detail.contains("cc mode") && e.detail.contains("whatever the policy asked"),
+        "{e}"
+    );
+    // ... and the same real entry with the good pair still passes.
+    let v = check_policy(&policy, &exp, &good_cpu(), &r, &good_gpu(), false).unwrap();
+    assert_eq!(v.cc_mode, CcRecord::SignedNotDevTools);
 }
 
 #[test]

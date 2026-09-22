@@ -37,8 +37,29 @@ pub struct Verified {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CcRecord {
-    NodeAsserted,
+    /// The verified EAT showed `secboot: true` + `dbgstat` disabled, which
+    /// rules DevTools out (D14 superseded 2026-09-22 by D14a). It does NOT
+    /// separate On from Off; that is still the collector's NVML reading (G-6a).
+    SignedNotDevTools,
+    /// The EAT verified but did not show that pair: debug enabled (DevTools)
+    /// or secure boot off. A policy asking for `require_cc_mode: On` refuses
+    /// here, and so does the release gate for a non-test entry.
+    SignedDevToolsOrNoSecureBoot,
     Canned,
+}
+
+impl CcRecord {
+    /// The ONE spelling this value is logged, captured and grepped under (the
+    /// runbook and gate B-8 quote it). `Debug` is for panics, not for the day.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::SignedNotDevTools => crate::kbs::nras_claims::LABEL_NOT_DEVTOOLS,
+            Self::SignedDevToolsOrNoSecureBoot => {
+                crate::kbs::nras_claims::LABEL_DEVTOOLS_OR_NO_SECURE_BOOT
+            }
+            Self::Canned => "canned",
+        }
+    }
 }
 
 /// What the pre-filter decoded, handed on to the verified half.
@@ -208,11 +229,41 @@ pub fn check_policy(
                     ));
                 }
             }
-            let CcAssertion::NodeAsserted = f.cc_mode;
             hwmodel = Some(f.hwmodel.clone());
             driver_version = Some(f.driver_version.clone());
             vbios_version = Some(f.vbios_version.clone());
-            CcRecord::NodeAsserted
+            // DERIVED from the two claims just checked, never read from a
+            // field stored beside them (D14a): DevTools attests with the debug
+            // facilities enabled, so `dbgstat: enabled` (or secure boot off)
+            // fails a policy that asks for On. On versus Off is not decided
+            // here; the measured collector refuses CC-off (G-6a).
+            match f.cc_assertion() {
+                CcAssertion::SignedNotDevTools => CcRecord::SignedNotDevTools,
+                CcAssertion::SignedDevToolsOrNoSecureBoot {
+                    secure_boot: sb,
+                    debug_disabled: dd,
+                } => {
+                    // Refused when the policy asks for On, AND for any real
+                    // keyring entry whatever the policy asked: a DEK that
+                    // protects a model never goes to a GPU whose signed claims
+                    // leave DevTools open. Both halves of the rule live here so
+                    // the capture records the failing row (D11); the release
+                    // gate repeats it from the claims themselves (D4).
+                    if policy.gpu.require_cc_mode == Some(CcMode::On) || !entry_test {
+                        rows.push(format!(
+                            "cc mode: the verified claims show secboot {sb} and debug \
+                             disabled {dd}, which does not rule DevTools out (that needs \
+                             secboot true and a dbgstat in the disabled family){}",
+                            if policy.gpu.require_cc_mode == Some(CcMode::On) {
+                                "; the policy requires On"
+                            } else {
+                                "; a real keyring entry requires it whatever the policy asked"
+                            }
+                        ));
+                    }
+                    CcRecord::SignedDevToolsOrNoSecureBoot
+                }
+            }
         }
         GpuOutcome::CannedTolerated => {
             if !entry_test {

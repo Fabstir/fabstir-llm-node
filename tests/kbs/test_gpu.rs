@@ -713,6 +713,41 @@ async fn every_row_is_listed_not_just_the_first() {
     );
 }
 
+/// D14a: the verdict is DERIVED from the two claims `map_per_gpu` maps, at
+/// every use site, so it cannot disagree with them. The claims JSON is the
+/// input here, `cc_assertion()` the output.
+#[test]
+fn cc_assertion_is_derived_from_the_mapped_secboot_and_dbgstat() {
+    use fabstir_llm_node::kbs::nras_claims::CcAssertion;
+    let want = hex::encode(NONCE);
+
+    let f = map_per_gpu(&good_per_gpu(&want), &CLAIMS_2_0, NONCE).unwrap();
+    assert_eq!(f.cc_assertion(), CcAssertion::SignedNotDevTools);
+    assert_eq!(f.cc_assertion().label(), "signed-not-devtools");
+
+    // DevTools: attests, but with the debug facilities enabled.
+    let mut m = good_per_gpu(&want);
+    m["dbgstat"] = json!("enabled");
+    assert_eq!(
+        map_per_gpu(&m, &CLAIMS_2_0, NONCE).unwrap().cc_assertion(),
+        CcAssertion::SignedDevToolsOrNoSecureBoot {
+            secure_boot: true,
+            debug_disabled: false,
+        }
+    );
+
+    // Secure boot off does not rule DevTools out either.
+    let mut m = good_per_gpu(&want);
+    m["secboot"] = json!(false);
+    assert_eq!(
+        map_per_gpu(&m, &CLAIMS_2_0, NONCE).unwrap().cc_assertion(),
+        CcAssertion::SignedDevToolsOrNoSecureBoot {
+            secure_boot: false,
+            debug_disabled: true,
+        }
+    );
+}
+
 #[test]
 fn dbgstat_vocabulary() {
     let want = hex::encode(NONCE);

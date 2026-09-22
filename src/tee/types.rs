@@ -173,8 +173,23 @@ pub struct GpuPolicy {
     /// Accepted hardware model strings (EAT `hwmodel`); captured on the first real
     /// report (known gap G-4).
     pub allowed_hwmodels: Vec<String>,
-    /// Required CC mode, matched EXACTLY. See [`CcMode`]. The signed source for
-    /// this value is known gap G-6.
+    /// Required CC mode, matched EXACTLY. See [`CcMode`]. Two consumers read
+    /// it and they are backed differently:
+    ///
+    /// * the BROKER (`kbs::verify`) enforces `Some(On)` against the signed
+    ///   per-GPU EAT pair `secboot` + `dbgstat`, which rules DevTools out
+    ///   (design D14a, gap G-6 closed 2026-09-22) but does not separate On
+    ///   from Off (gap G-6a). Its release gate refuses a non-test entry whose
+    ///   claims leave DevTools open EVEN WHEN this field is `None`, so absent
+    ///   is not don't-care there;
+    /// * the NODE does NOT check it on the Phase-5 path. `DefaultVerifier`
+    ///   compares it with [`GpuReportFields::cc_mode`], but that verifier is
+    ///   the mock-backed pipeline (Phases 1–4) and refuses a real payload at
+    ///   its step 1b, so the comparison never runs against real evidence.
+    ///   CC-OFF is refused by the measured in-guest collector
+    ///   (`collect_gpu_evidence.py`, exit 75 when `cc_enabled` is false),
+    ///   unconditionally and without consulting this policy at all: setting
+    ///   `Some(On)` does not change the Off behaviour anywhere (gap G-6a).
     pub require_cc_mode: Option<CcMode>,
     /// GPU secure boot / debug status.
     pub require_secure_boot: bool,

@@ -23,7 +23,7 @@ use crate::kbs::gpu::{self, GpuConfig};
 use crate::kbs::keyring::{Keyring, KeyringClass};
 use crate::kbs::memo::MemoHttp;
 use crate::kbs::nonce::NonceStore;
-use crate::kbs::nras_claims::GpuOutcome;
+use crate::kbs::nras_claims::{CcAssertion, GpuOutcome};
 use crate::kbs::policy_file::{load_policy, FilePolicySource};
 use crate::kbs::verify::{check_policy, prefilter, CcRecord, Expected, Verified};
 use crate::tee::kbs_http::{
@@ -557,20 +557,20 @@ async fn run_pipeline(
         let verified = verified.map_err(|e| (e, Ring::Verified))?;
 
         // Step 8: the independent second gate.
-        release_gate(&verified, entry.test).map_err(|e| (e, Ring::Verified))?;
+        release_gate(&verified, &gpu_outcome, entry.test).map_err(|e| (e, Ring::Verified))?;
 
         // Step 9: wrap.
         let wrapped = wrap_key(&entry.dek, &expected.pk_att)
             .map_err(|e| (KbsError::fault(format!("wrap: {e}")), Ring::Verified))?;
         let log = format!(
-            "policy_version={} policy_hash={policy_hash} tcb={} advisories={:?} hwmodel={:?} driver={:?} vbios={:?} cc_mode={:?} test_release={} {}",
+            "policy_version={} policy_hash={policy_hash} tcb={} advisories={:?} hwmodel={:?} driver={:?} vbios={:?} cc_mode={} test_release={} {}",
             signed.policy.policy_version,
             verified.tcb_status,
             verified.advisory_ids,
             verified.hwmodel,
             verified.driver_version,
             verified.vbios_version,
-            verified.cc_mode,
+            verified.cc_mode.label(),
             entry.test,
             timings.join(" ")
         );
@@ -613,15 +613,108 @@ fn step_name(step: u8) -> &'static str {
     }
 }
 
-/// Design §6 step 8 (D4's independent second gate): canned tolerance releases
-/// only a `test: true` entry. Step 7 already refuses this case; the gate exists so
-/// that a mode-plumbing bug upstream cannot release a real DEK, and it is its own
-/// function so it can be tested directly.
-pub fn release_gate(verified: &Verified, entry_test: bool) -> Result<(), KbsError> {
-    if verified.cc_mode == CcRecord::Canned && !entry_test {
-        return Err(KbsError::verification(
-            "release gate: canned tolerance for a non-test keyring entry",
-        ));
+/// Design §6 step 8 (D4's independent second gate), for a non-test entry only.
+/// Step 7 already refuses the canned and the DevTools-open cases; the gate
+/// exists so that a bug in step 7 cannot release a real DEK. It is NOT dead
+/// code even if step 7 is perfect: the disagreement arm is one step 7 cannot
+/// raise, being the thing that produces the record being disagreed with. It is
+/// its own function so it can be tested directly. It takes the RAW
+/// [`GpuOutcome`] and derives its own verdict from `map_per_gpu`'s output,
+/// never from what step 7 produced or copied.
+///
+/// Refuses: canned tolerance; GPU claims that do not rule DevTools out,
+/// whatever the policy asked (D14a), naming both claims; and any disagreement
+/// between those claims and step 7's record, named as such so a broker bug
+/// never reads as a bad GPU. All are `verification` (403): the wire has no
+/// `internal` kind (D10), and of the five that exist `unavailable` (500) is
+/// the one that tells the reader to come back later, which none of these
+/// refusals will reward. What BOUNDS the waste of a repeated refusal is the
+/// compose's `restart: on-failure:5`, not the kind: the node exits 78 on any
+/// refused attested load, so 403 and 500 cost the same six nonces and six
+/// rounds of paid NRAS egress (`on-failure:5` = the first start plus five
+/// restarts; PCCS is memo-served after the first).
+pub fn release_gate(
+    verified: &Verified,
+    gpu: &GpuOutcome,
+    entry_test: bool,
+) -> Result<(), KbsError> {
+    // A test entry may release under canned evidence or unprotected claims;
+    // that is what `test: true` means and step 7 has already said so.
+    if entry_test {
+        return Ok(());
+    }
+    // Which refusal is which matters on the paid day: the capture in
+    // `verified/` is what an operator reads, and "chase the GPU" must never
+    // look like "chase the broker", nor the reverse. Every arm below is a
+    // `verification`, never an `unavailable`: none of them will pass on a
+    // later attempt (design §6 step 8). The detail line says which it is.
+    //
+    // Everything below derives from `map_per_gpu`'s OWN output rather than
+    // from anything step 7 produced or copied: the gate exists so that a bug
+    // in step 7's derivation or in its transcription cannot release a real
+    // DEK, which it could not do if it shared either.
+    match gpu {
+        GpuOutcome::CannedTolerated => {
+            if verified.cc_mode == CcRecord::Canned {
+                return Err(KbsError::verification(
+                    "release gate: canned tolerance for a non-test keyring entry",
+                ));
+            }
+            return Err(KbsError::verification(format!(
+                "release gate: the evidence was canned but the policy step recorded {}; \
+                 refusing rather than releasing on a disagreement inside the broker",
+                verified.cc_mode.label(),
+            )));
+        }
+        GpuOutcome::Real(f) => {
+            // Order matters for the capture an operator reads on the paid day.
+            // A bad GPU is named FIRST, because no key can be released to it
+            // whatever the broker did; a broker that also mis-recorded the
+            // verdict is named in the same message rather than hiding the GPU.
+            let derived = f.cc_assertion();
+            let expected = match derived {
+                CcAssertion::SignedNotDevTools => CcRecord::SignedNotDevTools,
+                CcAssertion::SignedDevToolsOrNoSecureBoot { .. } => {
+                    CcRecord::SignedDevToolsOrNoSecureBoot
+                }
+            };
+            // D14a: a real DEK never goes to a GPU whose signed claims leave
+            // DevTools open, whatever the policy asked for, so
+            // `require_cc_mode: null` is not don't-care for a real entry.
+            if !matches!(derived, CcAssertion::SignedNotDevTools) {
+                return Err(KbsError::verification(format!(
+                    "release gate: the signed GPU claims do not rule DevTools out for a \
+                     non-test keyring entry (secboot {}, debug disabled {}; both must \
+                     hold){}",
+                    f.secure_boot,
+                    f.debug_disabled,
+                    if verified.cc_mode == expected {
+                        String::new()
+                    } else {
+                        format!(
+                            "; the policy step also recorded {}, a disagreement inside \
+                             the broker",
+                            verified.cc_mode.label()
+                        )
+                    }
+                )));
+            }
+            // The claims are good, so any disagreement is the broker arguing
+            // with itself. Refused as `verification` and not as a fault (500):
+            // the wire has no `internal` kind (D10), and of the five it has,
+            // `unavailable` is the one that says come back later. This one
+            // will read the same way for ever.
+            if verified.cc_mode != expected {
+                return Err(KbsError::verification(format!(
+                    "release gate: the claims rule DevTools out (secboot {}, debug \
+                     disabled {}) but the policy step recorded {}; refusing rather than \
+                     releasing on a disagreement inside the broker",
+                    f.secure_boot,
+                    f.debug_disabled,
+                    verified.cc_mode.label(),
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -654,14 +747,15 @@ fn verified_json(
         "gpu": match gpu {
             GpuOutcome::Real(f) => serde_json::json!({
                 "hwmodel": f.hwmodel, "secure_boot": f.secure_boot, "debug_disabled": f.debug_disabled,
-                "driver_version": f.driver_version, "vbios_version": f.vbios_version, "cc_mode": "node-asserted",
+                "driver_version": f.driver_version, "vbios_version": f.vbios_version,
+                "cc_mode": f.cc_assertion().label(),
             }),
             GpuOutcome::CannedTolerated => serde_json::json!({"canned_tolerated": true}),
         },
         "verified": v.map(|v| serde_json::json!({
             "tcb_status": v.tcb_status, "advisory_ids": v.advisory_ids, "hwmodel": v.hwmodel,
             "driver_version": v.driver_version, "vbios_version": v.vbios_version,
-            "cc_mode": format!("{:?}", v.cc_mode), "td_debug_off": v.td_debug_off,
+            "cc_mode": v.cc_mode.label(), "td_debug_off": v.td_debug_off,
         })),
     })
 }
