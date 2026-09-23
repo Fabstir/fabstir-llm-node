@@ -44,7 +44,9 @@ services:
     # /dev/shm is the tmpfs-mode decrypt dir; a cap, not a reservation (harmless
     # in disk mode). Set for the target model with the T-1 pins, never on the
     # day (a compose edit moves compose_hash). Not ipc: host: single GPU, no NCCL.
-    shm_size: "16g"
+    # 40g = the Qwen3.8-27B-Q8_0 target (29.05 GB plaintext) with headroom, so the
+    # plaintext stays in CVM memory and never touches even the LUKS disk.
+    shm_size: "40g"
     ports:
       - "8080:8080"
     volumes:
@@ -93,6 +95,13 @@ services:
       TEE_DECRYPT_DIR: /dev/shm
       GPU_LAYERS: "99"
       LLAMA_BATCH_SIZE: "2048"
+      # The target's prompt format and reasoning budget, measured with the compose
+      # rather than left to a form value. Unset, the node falls back to harmony.
+      # Qwen3.8's own template defaults to xhigh reasoning, which spends a whole
+      # small request inside <think>; only low, high/xhigh or disabled change it
+      # (medium and enabled do not).
+      MODEL_CHAT_TEMPLATE: "chatml"
+      DEFAULT_THINKING_MODE: "low"
 
       # --- node identity / chain (required by the node at boot) ---
       HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY}
