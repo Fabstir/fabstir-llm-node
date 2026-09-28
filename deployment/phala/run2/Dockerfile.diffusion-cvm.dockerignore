@@ -1,0 +1,3 @@
+# Allow-list build context for Dockerfile.diffusion-cvm (BuildKit reads <Dockerfile>.dockerignore).
+*
+!docker/entrypoint-diffusion.sh

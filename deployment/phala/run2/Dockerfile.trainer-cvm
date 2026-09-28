@@ -1,0 +1,56 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Phase 5 run 2: the trainer image for the confidential GPU CVM. It is the
+# fabstir-trainer runtime image (fabstir-trainer/docker/Dockerfile, unchanged)
+# plus the two things the measured compose cannot bind-mount: the training
+# template and the one-shot init script (deployment/phala/run2/cvm-init.sh).
+# The same image runs as the trainer sidecar and, with user 0 and the init
+# entrypoint, as the template and weights init services.
+#
+# The base is the image PROVEN on TEST_HOST_1 on 2026-08-26 (`fabstir-trainer:td6`,
+# fabstir-trainer/docs/DEPLOY-CONTAINER.md), not a rebuild: `pip install ".[train]"`
+# re-resolves the stack, so a rebuild would not be the tested environment.
+# The tokenizer is fetched HERE, at build time, at the template's pinned revision and
+# sha-checked, so template-init needs no network: a Hugging Face outage at boot can
+# then only cost training and images, never the node (and so never chat).
+#
+# Build context: the node repo root, cut down to the needed files by
+# Dockerfile.trainer-cvm.dockerignore beside this file (BuildKit; without it the
+# daemon would be sent the whole tree including target/).
+# Build from the NODE repo root (check the base exists: docker images fabstir-trainer):
+#   docker build -f deployment/phala/run2/Dockerfile.trainer-cvm \
+#     -t ewr.vultrcr.com/fabstir/fabstir-trainer-cvm:run2 .
+ARG TRAINER_IMAGE=fabstir-trainer:td6
+FROM ${TRAINER_IMAGE}
+
+USER root
+# The trainer CODE at the node repo's fabstir-trainer checkout (411933a), reinstalled
+# over td6 with --no-deps: td6's proven dependency stack stays byte-for-byte, and the
+# 411933a GGUF-conversion fixes are guaranteed present (td6 may predate them: runs
+# 1123/1124 lost their conversion to the bug 411933a fixes, and the in-sidecar
+# conversion has not yet run end to end since). The grep refuses a build without it.
+COPY fabstir-trainer/pyproject.toml fabstir-trainer/README.md /tmp/fabstir-trainer/
+COPY fabstir-trainer/src /tmp/fabstir-trainer/src
+RUN pip install --no-cache-dir --no-deps --force-reinstall /tmp/fabstir-trainer \
+    && rm -rf /tmp/fabstir-trainer \
+    && python -c "import fabstir_trainer.run, inspect; \
+src = inspect.getsource(fabstir_trainer.run); \
+assert 'gguf conversion failed for job' in src, 'trainer code predates 411933a'; \
+print('trainer code includes the 411933a conversion fix')"
+COPY templates/train-qlora-qwen38-27b-v1/v1.json /opt/fabstir/template-src/v1.json
+COPY deployment/phala/run2/cvm-init.sh /usr/local/bin/cvm-init.sh
+RUN chmod 755 /usr/local/bin/cvm-init.sh \
+    && mkdir -p /opt/fabstir/template /var/run/fabstir-trainer \
+       /var/lib/fabstir/training/staging /var/lib/fabstir/training/work /weights \
+    && python -c "import hashlib, json, shutil; \
+from huggingface_hub import hf_hub_download; \
+t = json.load(open('/opt/fabstir/template-src/v1.json')); \
+p = hf_hub_download(t['base']['repo'], 'tokenizer.json', revision=t['base']['revision']); \
+got = '0x' + hashlib.sha256(open(p, 'rb').read()).hexdigest(); \
+assert got == t['base']['tokenizerSha256'].lower(), (got, t['base']['tokenizerSha256']); \
+shutil.copyfile(p, '/opt/fabstir/template-src/tokenizer.json'); print('tokenizer baked', got)" \
+    && rm -rf /root/.cache/huggingface \
+    && chown 1000:1000 /var/run/fabstir-trainer /var/lib/fabstir/training/staging /var/lib/fabstir/training/work \
+    && chmod 770 /var/run/fabstir-trainer /var/lib/fabstir/training/staging /var/lib/fabstir/training/work
+USER trainer

@@ -1,0 +1,316 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Phala Cloud GPU CVM compose (Custom Deploy). Phase 5 attested inference, the
+# paid-day configuration. Guarded by `cargo test --test phase5_compose_guard`
+# (gate A-19): no build:, no relative bind mounts, image by digest, and none of
+# TEE_GPU_EVIDENCE / KBS_GPU_EVIDENCE / TEE_CPU_ONLY_STUB / TEE_ACCEPT_TEST_RELEASE
+# may appear here.
+#
+# Every ${VAR} below is supplied through the deploy form's ENCRYPTED environment
+# variables (sealed to the CVM), never written into this file: this file is
+# hashed into RTMR3 (compose_hash) and readable by anyone verifying the quote.
+# List each name under the form's allowed environment variables.
+#
+# Image digest: paste the value build.sh prints. The guard test stays red until
+# it is a real 64-hex sha256.
+# RUN 2 VARIANT (2026-09-30): compose.gpu-s5.yml + the trainer sidecar, the
+# SGLang image sidecar and two one-shot init services. See
+# docs/development/PLAN-PHASE5-RUN2.md. NOTE: phase5_compose_guard does NOT cover
+# this file (it guards compose.gpu.yml and compose.cpu.yml only, which are
+# untouched); the "Guarded by" line in the header above is inherited from there.
+# Before predicting or uploading, the placeholder check (plan section 5) must print 0.
+
+services:
+  llm-node:
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:26ea9818478ee34c8dfae673b7d6f26667f75912f282b3cb5a49e17de42faa73
+    container_name: llm-node
+    # Run 2: the node loads TRAINING_TEMPLATE_PATH once at boot and disables
+    # training for the whole boot if it is missing, so template-init first.
+    depends_on:
+      template-init:
+        condition: service_completed_successfully
+    # on-failure with a cap, never unless-stopped/always: a refused attested
+    # load exits 78 and an unbounded policy would re-download the container,
+    # burn a broker nonce, collect GPU evidence and decrypt on every loop. The
+    # node also pauses 20 s before that exit. A clean stop (exit 0) never restarts.
+    restart: on-failure:5
+    # The node's own stop path (API drain 5 s + P2P leave, or the watchdog's
+    # 8 s bound) must finish before the daemon's SIGKILL; docker's default
+    # grace is 10 s, too close. Guard-enforced.
+    stop_grace_period: 30s
+    # The dstack OS image this compose expects on the deploy form. Measured into
+    # RTMR3 with the rest of the compose; asserted per file by the guard test.
+    # CPU image dstack-v0.5.9 and GPU image dstack-nvidia-0.5.9 are near-identical
+    # names with different MRTD/RTMRs; a mix-up would look like a measurement
+    # mismatch, not an error. The form's selection MUST equal this label.
+    labels:
+      ai.platformless.dstack_os_image: "dstack-nvidia-0.5.9"
+      # The node release cut into the pinned image; tests/phase5_release_pins.rs
+      # ties it and the digest above to the last RELEASE_PINS row.
+      ai.platformless.node_version: "8.57.0"
+    # NVML access for nvtrust evidence collection (reference A runs the
+    # evidence container privileged for the same reason).
+    runtime: nvidia
+    privileged: true
+    # /dev/shm is the tmpfs-mode decrypt dir; a cap, not a reservation (harmless
+    # in disk mode). Set for the target model with the T-1 pins, never on the
+    # day (a compose edit moves compose_hash). Not ipc: host: single GPU, no NCCL.
+    # 40g = the Qwen3.8-27B-Q8_0 target (29.05 GB plaintext) with headroom, so the
+    # plaintext stays in CVM memory and never touches even the LUKS disk.
+    shm_size: "40g"
+    ports:
+      - "8080:8080"
+    volumes:
+      # dstack guest agent: /GetQuote, /Info (thin UDS client in src/tee/dstack.rs)
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      # P5.5: the ciphertext cache (survives restarts: no re-download) and the
+      # disk-mode plaintext home, both on docker's data-root = the CVM's
+      # dstack-encrypted data disk (the node verifies LUKS before writing).
+      - fabstir-containers:/var/lib/fabstir/containers
+      - fabstir-plaintext:/var/lib/fabstir/plaintext
+      # Run 2: the trainer handover views, at the SAME absolute paths as in
+      # trainer-sidecar (fabstir-trainer/docs/DEPLOY-CONTAINER.md rule 1).
+      - trainer-socket:/var/run/fabstir-trainer
+      - training-staging:/var/lib/fabstir/training/staging
+      - training-work:/var/lib/fabstir/training/work
+      - training-template:/opt/fabstir/template:ro
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      # --- attested load path (Phase 5) ---
+      # HOST_TEE_ENABLED=true means the model MUST come from an attested decrypt
+      # or the node does not start (src/tee/live.rs decision table, exit 78):
+      # the image pinned above (v8.57.0; v8.55.0 was the first build that
+      # enforces it and therefore the first that may advertise `tee-attested`;
+      # v8.56.0 adds the broker /info pre-check, the t5t: witness rule and the
+      # collector's DevTools refusal; v8.57.0 streams the container to the
+      # cache volume and adds the disk-mode plaintext home). The flag and the TEE_* block below are
+      # all-or-nothing; the guard test checks they move together (flipped
+      # 2026-09-18 with the v8.55.0 digest).
+      HOST_TEE_ENABLED: "true"
+      # TEE_MODEL_PROVIDER = the 0x address whose signature the policy must
+      # carry. TEE_EXPECTED_MODEL_SHA256 = the on-chain hash of the plaintext
+      # model; optional (absent = a CRITICAL warning, never silent).
+      TEE_MODEL_ID: ${TEE_MODEL_ID}
+      TEE_MODEL_PROVIDER: ${TEE_MODEL_PROVIDER}
+      TEE_KBS_URL: ${TEE_KBS_URL}
+      TEE_POLICY_URL: ${TEE_POLICY_URL}
+      TEE_BLOB_URL: ${TEE_BLOB_URL}
+      TEE_EXPECTED_MODEL_SHA256: ${TEE_EXPECTED_MODEL_SHA256}
+      # P5.5: the container is STREAMED to the cache volume (never held in RAM)
+      # and stream-decrypted from there. TEE_BLOB_MAX_BYTES bounds the .enc
+      # (GGUF + 98 B + 16 B per 4 MiB chunk): set it from `stat` of the sealed
+      # file, from the form; default 2 GiB fails closed (exit 78) above it.
+      TEE_BLOB_MAX_BYTES: ${TEE_BLOB_MAX_BYTES:-2147483648}
+      TEE_CONTAINER_DIR: /var/lib/fabstir/containers
+      TEE_PLAINTEXT_VOLUME: /var/lib/fabstir/plaintext
+      # The plaintext's home, ONE form value: 0 = tmpfs (/dev/shm, sized by
+      # shm_size: RAM >= model), 1 = the LUKS volume above (a model larger than
+      # RAM stays evictable page cache while every layer sits in VRAM).
+      TEE_DECRYPT_ON_DISK: ${TEE_DECRYPT_ON_DISK:-0}
+      TEE_DECRYPT_DIR: /dev/shm
+      GPU_LAYERS: "99"
+      LLAMA_BATCH_SIZE: "2048"
+      # The target's prompt format and reasoning budget, measured with the compose
+      # rather than left to a form value. Unset, the node falls back to harmony.
+      # Qwen3.8's own template defaults to xhigh reasoning, which spends a whole
+      # small request inside <think>; only low, high/xhigh or disabled change it
+      # (medium and enabled do not).
+      MODEL_CHAT_TEMPLATE: "chatml"
+      DEFAULT_THINKING_MODE: "low"
+
+      # --- node identity / chain (required by the node at boot) ---
+      HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY}
+      CHAIN_ID: "84532"
+      RPC_URL: ${RPC_URL}
+      BASE_SEPOLIA_RPC_URL: ${RPC_URL}
+      CONTRACT_NODE_REGISTRY: "0x8BC0Af4aAa2dfb99699B1A24bA85E507de10Fd22"
+      CONTRACT_JOB_MARKETPLACE: "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4"
+      CONTRACT_PROOF_SYSTEM: "0xE8DCa89e1588bbbdc4F7D5F78263632B35401B31"
+      CONTRACT_HOST_EARNINGS: "0xE4F33e9e132E60fc3477509f99b9E1340b91Aee0"
+      CONTRACT_MODEL_REGISTRY: "0x1a9d91521c85bD252Ac848806Ff5096bBb9ACDb2"
+      USDC_TOKEN: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+      FAB_TOKEN: "0xC78949004B4EB6dEf2D66e49Cd81231472612D62"
+      MULTICALL3_ADDRESS: "0xcA11bde05977b3631167028862bE2a173976CA11"
+      REQUIRE_MODEL_VALIDATION: "false"
+
+      # --- storage (proof CIDs); the attested blob comes over TEE_BLOB_URL ---
+      S5_NODE_URL: "https://s5.platformlessai.ai"
+      # Demo variant (2026-09-23): publish proofs and checkpoints through the
+      # s5-bridge sidecar below instead of the mock S5 backend.
+      ENHANCED_S5_URL: "http://s5-bridge:5522"
+      # Rehearsal 2026-09-28: a ~24 MiB training shard PUT already took 72 s, and
+      # bridge 1.5.1 may add up to 2 x 56 s of transient-directory retries; the
+      # default 90 s would cut a healthy upload off and fail the run.
+      S5_UPLOAD_TIMEOUT_SECS: "300"
+
+      # --- run 2: fine-tuning (values as proven on TEST_HOST_1; the price
+      # MUST equal the on-chain per-model price: 904 for 0xa447..., read
+      # 2026-09-27 via NodeRegistry.getModelPricing) ---
+      TRAIN_ENABLED: "true"
+      TRAINER_SOCKET: /var/run/fabstir-trainer/trainer.sock
+      TRAINING_STAGING_ROOT: /var/lib/fabstir/training/staging
+      TRAINING_WORK_ROOT: /var/lib/fabstir/training/work
+      TRAINING_TEMPLATE_PATH: /opt/fabstir/template/v1.json
+      TRAINING_TOKENIZER_PATH: /opt/fabstir/template/tokenizer.json
+      TRAINING_MODEL_ID: "0xa447563341bff3b9bc8a3ad94b874e8724a1892451d576f9575da64b05ea8215"
+      TRAINING_PRICE_PER_TOKEN: "904"
+      TRAINING_ALLOWLIST_VERSION: "1"
+      TRAIN_JOB_TIMEOUT_SECS: "12600"
+      TRAIN_WS_WRITE_TIMEOUT_SECS: "900"
+      TRAIN_ACCEPT_COOLDOWN_SECS: "60"
+      TRAINING_RATE_LIMIT_TOKENS_PER_SEC: "10000"
+
+      # --- run 2: image generation (FLUX.2 Klein 4B via the SGLang sidecar) ---
+      DIFFUSION_ENDPOINT: "http://diffusion-sidecar:8082"
+      DIFFUSION_MODEL_NAME: "flux2-klein-4b"
+
+      # --- everything else optional stays OFF ---
+      WEB_SEARCH_ENABLED: "false"
+      VLM_ENDPOINT: ""
+      TRANSCODER_ENDPOINT: ""
+      COMFY_URL: ""
+      RUST_LOG: ${RUST_LOG:-info,tee=debug}
+
+  # S5 bridge 1.5.1 = run 1's 1.5.0 (feat/fabcdn-s5-bridge 32cfa05, s5.js
+  # 0.9.0-beta.55, bounded fetches) + the upload route retrying a TRANSIENT
+  # directory 404 (src/s5_retry.js; the 2026-09-28 rehearsal lost a training run
+  # to one). Built from temp/s5-bridge-1.5.1, pinned by digest. Internal only: no
+  # published port; the node reaches it on the compose network.
+  s5-bridge:
+    image: ewr.vultrcr.com/fabstir/s5-bridge@sha256:632d135d5734ec091ceafa69ee332f88b66377c7e671c3815683c1fd413b22ab
+    container_name: s5-bridge
+    restart: unless-stopped
+    environment:
+      BRIDGE_PORT: "5522"
+      BRIDGE_HOST: "0.0.0.0"
+      S5_SEED_PHRASE: ${S5_SEED_PHRASE}
+      HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY}
+      S5_PORTAL_URL: "https://s5.platformlessai.ai"
+      LOG_LEVEL: "info"
+
+  # --- Run 2 (2026-09-30): fine-tuning + image generation in the same CVM ---
+  # One image (fabstir-trainer-cvm = the trainer runtime + template + init
+  # script, deployment/phala/run2/Dockerfile.trainer-cvm) serves three roles.
+  # Image digests are placeholders until Jules pushes the images: a placeholder
+  # can never pull, so a forgotten one fails at boot, not silently.
+  template-init:
+    image: ewr.vultrcr.com/fabstir/fabstir-trainer-cvm@sha256:d372b7aca2df7bb37c4cc16957c1ac1ce1ed2293565c745da2623fbf8085da6f
+    container_name: template-init
+    user: "0"
+    restart: "no"
+    entrypoint: ["/usr/local/bin/cvm-init.sh", "template"]
+    volumes:
+      - training-template:/opt/fabstir/template
+      - trainer-socket:/var/run/fabstir-trainer
+      - training-staging:/var/lib/fabstir/training/staging
+      - training-work:/var/lib/fabstir/training/work
+
+  weights-init:
+    image: ewr.vultrcr.com/fabstir/fabstir-trainer-cvm@sha256:d372b7aca2df7bb37c4cc16957c1ac1ce1ed2293565c745da2623fbf8085da6f
+    container_name: weights-init
+    user: "0"
+    # Not a start dependency of anything: the trainer and the image sidecar each wait
+    # for their own model's marker (/weights/.complete-<model>), so `docker compose up`
+    # returns at once (as in run 1), neither waits on the other's download, and a
+    # failed download simply retries here.
+    restart: on-failure
+    entrypoint: ["/usr/local/bin/cvm-init.sh", "weights"]
+    volumes:
+      - model-weights:/weights
+
+  trainer-sidecar:
+    image: ewr.vultrcr.com/fabstir/fabstir-trainer-cvm@sha256:d372b7aca2df7bb37c4cc16957c1ac1ce1ed2293565c745da2623fbf8085da6f
+    container_name: trainer-sidecar
+    restart: unless-stopped
+    depends_on:
+      template-init:
+        condition: service_completed_successfully
+    # Wait for weights-init's marker, then the image's own entrypoint.
+    entrypoint: ["/bin/sh", "-c", "until [ -f /weights/.complete-qwen38-27b ]; do sleep 15; done; exec fabstir-trainer"]
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      # Explicit: python:3.11-slim declares no driver capabilities, and without
+      # `compute` the first run dies at device_map (DEPLOY-CONTAINER.md).
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      TRAINER_SOCKET: /var/run/fabstir-trainer/trainer.sock
+      TRAINER_STAGING_ROOT: /var/lib/fabstir/training/staging
+      TRAINER_WORK_ROOT: /var/lib/fabstir/training/work
+      TRAINER_TEMPLATE_DIR: /opt/fabstir/template
+      TRAINER_WEIGHTS_DIR: /weights/qwen38-27b
+      # TRAINER_BACKEND defaults to real; never set TRAINER_ALLOW_FAKE here.
+    volumes:
+      - trainer-socket:/var/run/fabstir-trainer
+      - training-staging:/var/lib/fabstir/training/staging
+      - training-work:/var/lib/fabstir/training/work
+      - training-template:/opt/fabstir/template:ro
+      - model-weights:/weights:ro
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/trainer-healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      # Startup sha256-verifies ~55 GB of weights before the socket appears.
+      start_period: 900s
+      retries: 3
+
+  diffusion-sidecar:
+    image: ewr.vultrcr.com/fabstir/diffusion-sidecar-cvm@sha256:bb1a55d8803d036718448b34342ff3d980880b39382c2dd4b94101051f1c181b
+    container_name: diffusion-sidecar
+    restart: unless-stopped
+    # Wait for weights-init's marker, then the image's entrypoint with the flags
+    # below as its arguments ($$ is compose's escape for a literal $).
+    entrypoint: ["/bin/bash", "-c", "until [ -f /models/.complete-black-forest-labs_FLUX.2-klein-4B ]; do sleep 15; done; exec /bin/bash /entrypoint-diffusion.sh \"$$@\"", "wait-for-weights"]
+    runtime: nvidia
+    shm_size: "8g"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      # Return freed VRAM at once so the LLM can grow its KV cache.
+      PYTORCH_NO_CUDA_MEMORY_CACHING: "1"
+    volumes:
+      - model-weights:/models:ro
+    # The image (Dockerfile.diffusion-cvm) bakes docker/entrypoint-diffusion.sh in
+    # as its ENTRYPOINT: a WSL2-only NCCL patch, then `exec sglang serve "$@"`, so
+    # the same image runs natively here and under WSL2 in the 3XS-Z rehearsal.
+    # Flags: production's minus --dit-layerwise-offload and --pin-cpu-memory. Those
+    # stream transformer blocks over PCIe on every step to save ~7 GB of VRAM; under
+    # GPU CC mode every such transfer goes through encrypted bounce buffers, and the
+    # H200 has the room (~9 GB resident; budget in the plan). The text encoder stays
+    # on CPU (one transfer per prompt). The 3XS-Z rehearsal runs these same flags.
+    # --log-level warning: at the default (info) SGLang 0.5.8 logs every request's
+    # "Sampling params" INCLUDING THE PROMPT (pipelines_core/schedule_batch.py:277,
+    # logger.info), and this log is PUBLIC on Phala. Caught in the 2026-09-28
+    # rehearsal (unique-word grep). The flag reaches every process (launch_server,
+    # gpu_worker, uvicorn); nothing at warning or above logs prompt text. It also
+    # drops the INFO "Uvicorn running on" ready line: the warm-up image is the
+    # readiness check.
+    command: ["--model-path", "/models/black-forest-labs/FLUX.2-klein-4B",
+              "--port", "8082", "--host", "0.0.0.0",
+              "--text-encoder-cpu-offload", "--backend", "diffusers",
+              "--log-level", "warning"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
+
+# Named volumes on docker's data-root (the dstack-encrypted data disk). A
+# redeploy empties both; a restart keeps the cache (no re-download).
+volumes:
+  fabstir-containers:
+  fabstir-plaintext:
+  # Run 2
+  trainer-socket:
+  # RAM-backed, as run 1's model plaintext (/dev/shm): the dataset shards, the
+  # checkpoints and the adapter never touch even the LUKS disk. uid/gid 1000 at
+  # mount time (the trainer's user); size caps are limits, not reservations.
+  training-staging:
+    driver_opts: {type: tmpfs, device: tmpfs, o: "size=8g,uid=1000,gid=1000,mode=0770"}
+  training-work:
+    driver_opts: {type: tmpfs, device: tmpfs, o: "size=24g,uid=1000,gid=1000,mode=0770"}
+  training-template:
+  model-weights:

@@ -1,0 +1,34 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Phase 5 run 2, Phase B (video): the LTX 2.3 ComfyUI sidecar for the confidential GPU
+# CVM (docs/development/PLAN-PHASE5-RUN2-VIDEO.md D2). It is the image built from
+# docker/Dockerfile.ltx-sidecar (unchanged; it has no COPY from a context, so it is built
+# context-free: `docker build -t fabstir-ltx-sidecar:run2 - < docker/Dockerfile.ltx-sidecar`)
+# plus what the measured compose cannot bind-mount: the LTX allow-list bundle (templates/,
+# byte-identical to fabstir-llm-templates-v25.tar.gz), the pinned weights manifest and the
+# one-shot init script. The same image runs as ltx-init (templates), ltx-weights-init
+# (weights) and ltx-sidecar (ComfyUI).
+#
+# Build context: the node repo root, cut down by Dockerfile.ltx-cvm.dockerignore beside
+# this file (BuildKit). Build from the NODE repo root:
+#   docker build -f deployment/phala/run2/Dockerfile.ltx-cvm \
+#     -t ewr.vultrcr.com/fabstir/ltx-sidecar-cvm:run2 .
+ARG LTX_IMAGE=fabstir-ltx-sidecar:run2
+FROM ${LTX_IMAGE}
+
+COPY templates/ /opt/fabstir/ltx-templates-src/
+COPY deployment/phala/run2/ltx/ltx-weights.txt /opt/fabstir/ltx-weights.txt
+COPY deployment/phala/run2/ltx/ltx-cvm-init.sh /usr/local/bin/ltx-cvm-init.sh
+
+# CRLF would break the script (the repo has been bitten by a committed CRLF entrypoint);
+# the bundle must be v25 and complete, or the node would advertise a hash the chain does
+# not carry (checked HERE so the init that copies it can never fail).
+RUN set -eux; \
+    sed -i 's/\r$//' /usr/local/bin/ltx-cvm-init.sh /opt/fabstir/ltx-weights.txt; \
+    chmod 0755 /usr/local/bin/ltx-cvm-init.sh; \
+    sh -n /usr/local/bin/ltx-cvm-init.sh; \
+    python -c "import json; a = json.load(open('/opt/fabstir/ltx-templates-src/allowlist.json')); assert a['allowListVersion'] == 25, a['allowListVersion']; assert len(a['templates']) == 13, len(a['templates'])"; \
+    test "$(grep -vc '^#' /opt/fabstir/ltx-weights.txt)" -eq 9; \
+    mkdir -p /opt/fabstir/ltx-templates; \
+    echo "ltx-sidecar-cvm: bundle v25 (13 templates) + 9 pinned weight files"

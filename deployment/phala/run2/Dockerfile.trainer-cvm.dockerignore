@@ -1,0 +1,9 @@
+# Allow-list build context for Dockerfile.trainer-cvm (BuildKit reads <Dockerfile>.dockerignore).
+*
+!templates/train-qlora-qwen38-27b-v1/v1.json
+!deployment/phala/run2/cvm-init.sh
+!fabstir-trainer/pyproject.toml
+!fabstir-trainer/README.md
+!fabstir-trainer/src
+fabstir-trainer/src/**/__pycache__
+fabstir-trainer/src/**/*.egg-info

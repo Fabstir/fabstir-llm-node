@@ -1,0 +1,5 @@
+# Allow-list build context for Dockerfile.ltx-cvm (BuildKit reads <Dockerfile>.dockerignore).
+*
+!templates
+!deployment/phala/run2/ltx/ltx-weights.txt
+!deployment/phala/run2/ltx/ltx-cvm-init.sh

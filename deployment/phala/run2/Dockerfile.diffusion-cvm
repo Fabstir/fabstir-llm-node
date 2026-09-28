@@ -1,0 +1,30 @@
+# Copyright (c) 2025 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Phase 5 run 2: the image sidecar for the confidential GPU CVM. A thin layer on the
+# SGLang/FLUX.2 image PROVEN on 3XS-Z (built by docker-compose.prod.yml from
+# docker/Dockerfile.diffusion-sidecar), not a rebuild: that Dockerfile pip-installs
+# sglang[diffusion] unpinned, so a rebuild would not be the tested image.
+# The one change: docker/entrypoint-diffusion.sh is baked in as the ENTRYPOINT (the
+# production compose bind-mounts it, which the measured CVM compose cannot). It
+# patches NCCL to gloo only under WSL2 and is a plain `exec sglang serve "$@"` on
+# native Linux, so the SAME image serves the 3XS-Z rehearsal and the CVM.
+#
+# Build context: the node repo root, cut to one file by Dockerfile.diffusion-cvm.dockerignore.
+# Build from the NODE repo root. No default base on purpose: take the proven image from
+# the RUNNING dev container (docker inspect diffusion-sidecar --format '{{.Config.Image}}')
+# so a stale or wrongly named local image is not picked up (the plan also checks the
+# tag still points at what the running container uses):
+#   docker build -f deployment/phala/run2/Dockerfile.diffusion-cvm \
+#     --build-arg DIFFUSION_IMAGE=<Config.Image> \
+#     -t ewr.vultrcr.com/fabstir/diffusion-sidecar-cvm:run2 .
+ARG DIFFUSION_IMAGE
+FROM ${DIFFUSION_IMAGE}
+COPY docker/entrypoint-diffusion.sh /entrypoint-diffusion.sh
+# The repo file is committed with CRLF line endings, which bash rejects ("unexpected end
+# of file"): strip them, then refuse the build unless bash can parse the result.
+RUN sed -i 's/\r$//' /entrypoint-diffusion.sh \
+    && bash -n /entrypoint-diffusion.sh \
+    && chmod 755 /entrypoint-diffusion.sh
+ENTRYPOINT ["/bin/bash", "/entrypoint-diffusion.sh"]
+CMD ["--host", "0.0.0.0", "--port", "8082"]
