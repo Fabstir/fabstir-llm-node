@@ -1,6 +1,7 @@
 # Rust
 target/
-Cargo.lock
+# Cargo.lock is COMMITTED (binary crate): it pins every dependency version, which a
+# reproducible build from public source needs (Phase 5 gap G-21).
 **/*.rs.bk
 *.pdb
 
