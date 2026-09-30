@@ -174,13 +174,16 @@ services:
       COMFY_URL: ""
       RUST_LOG: ${RUST_LOG:-info,tee=debug}
 
-  # S5 bridge 1.5.1 = run 1's 1.5.0 (feat/fabcdn-s5-bridge 32cfa05, s5.js
+  # S5 bridge 1.5.2 = run 1's 1.5.0 (feat/fabcdn-s5-bridge 32cfa05, s5.js
   # 0.9.0-beta.55, bounded fetches) + the upload route retrying a TRANSIENT
-  # directory 404 (src/s5_retry.js; the 2026-09-28 rehearsal lost a training run
-  # to one). Built from temp/s5-bridge-1.5.1, pinned by digest. Internal only: no
-  # published port; the node reaches it on the compose network.
+  # directory 404 (1.5.1, src/s5_retry.js: the 2026-09-28 rehearsal lost a training
+  # run to one) + 20 s instead of s5.js's 3 s per-location header wait on blob
+  # DOWNLOADS (1.5.2, src/blob_timeouts.js: on the H200 2026-09-30 adapter shards took
+  # 2.5-3.4 s to start and serve-back failed). Built from temp/s5-bridge-1.5.2, pinned
+  # by digest. Internal only: no published port; the node reaches it on the compose
+  # network.
   s5-bridge:
-    image: ewr.vultrcr.com/fabstir/s5-bridge@sha256:632d135d5734ec091ceafa69ee332f88b66377c7e671c3815683c1fd413b22ab
+    image: ewr.vultrcr.com/fabstir/s5-bridge@sha256:a58d92a70243823683638afee43a49ab5646f172b2bece4dab9a882183db248a
     container_name: s5-bridge
     restart: unless-stopped
     environment:

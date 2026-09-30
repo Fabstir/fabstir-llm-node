@@ -87,7 +87,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,tee=debug}
       TEMPLATE_DIR: /opt/fabstir/ltx-templates
   s5-bridge:
-    image: ewr.vultrcr.com/fabstir/s5-bridge@sha256:632d135d5734ec091ceafa69ee332f88b66377c7e671c3815683c1fd413b22ab
+    image: ewr.vultrcr.com/fabstir/s5-bridge@sha256:a58d92a70243823683638afee43a49ab5646f172b2bece4dab9a882183db248a
     container_name: s5-bridge
     restart: unless-stopped
     environment:
