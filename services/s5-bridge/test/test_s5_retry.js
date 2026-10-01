@@ -87,6 +87,33 @@ test('a directory that never recovers still fails, after the bounded attempts', 
   assert.strictEqual(calls, 4);
 });
 
+test('slow attempts stop at the overall deadline, before the node gives up', async () => {
+  // Each attempt's own S5 call takes 100 s on a fake clock. Sleeps alone are
+  // 56 s at most, but with the calls counted eight attempts would run for
+  // about 13 minutes, long after the node's 300 s upload timeout.
+  let clock = 0;
+  let calls = 0;
+  await assert.rejects(
+    withDirectoryRetry(
+      async () => {
+        calls++;
+        clock += 100_000;
+        throw transient();
+      },
+      { deadlineMs: 240_000, now: () => clock, wait: async (ms) => { clock += ms; } },
+    ),
+    (e) => e.retryable === true,
+  );
+  // 100 s, sleep 2, 100 s, sleep 4, 100 s = 306 s: a third sleep would pass 240 s.
+  assert.strictEqual(calls, 3);
+  assert.ok(clock <= 310_000, `gave up at ${clock} ms`);
+});
+
+test('the default deadline sits under the node upload timeout (300 s)', async () => {
+  const { DIR_RETRY_DEADLINE_MS } = await import('../src/s5_retry.js');
+  assert.ok(DIR_RETRY_DEADLINE_MS > 0 && DIR_RETRY_DEADLINE_MS < 300_000);
+});
+
 test('the PUT route wraps BOTH directory reads in the retry', () => {
   // The route needs a live S5 client, so guard its wiring at the source: a
   // bare call here is exactly the 1.5.0 defect.

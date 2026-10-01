@@ -19,25 +19,34 @@
 import { isS5DirectoryLoadError } from '@julesl23/s5js';
 
 export const DIR_RETRY_ATTEMPTS = 8;
-export const DIR_RETRY_BASE_MS = 2000; // linear: 2+4+...+14 s = 56 s worst case
+export const DIR_RETRY_BASE_MS = 2000; // linear sleeps: 2+4+...+14 s = 56 s in total
+// The sleeps are not the whole cost: each attempt's own S5 call can take tens of
+// seconds against a slow portal, so eight attempts could outlast the node's upload
+// timeout (S5_UPLOAD_TIMEOUT_SECS=300 in the run-2 compose) and keep retrying for a
+// request the node has already abandoned. This deadline bounds the whole retry,
+// calls included, and stays under that timeout.
+export const DIR_RETRY_DEADLINE_MS = 240_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * @template T
  * @param {() => Promise<T>} fn
- * @param {{attempts?: number, baseMs?: number,
+ * @param {{attempts?: number, baseMs?: number, deadlineMs?: number,
  *          onRetry?: (info: {attempt: number, delayMs: number, error: any}) => void,
- *          wait?: (ms: number) => Promise<void>}} [opts]
+ *          wait?: (ms: number) => Promise<void>, now?: () => number}} [opts]
  * @returns {Promise<T>}
  */
 export async function withDirectoryRetry(fn, opts = {}) {
   const {
     attempts = DIR_RETRY_ATTEMPTS,
     baseMs = DIR_RETRY_BASE_MS,
+    deadlineMs = DIR_RETRY_DEADLINE_MS,
     onRetry = () => {},
     wait = sleep,
+    now = Date.now,
   } = opts;
+  const start = now();
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
@@ -45,6 +54,7 @@ export async function withDirectoryRetry(fn, opts = {}) {
       const transient = isS5DirectoryLoadError(error) && error.retryable === true;
       if (!transient || attempt >= attempts) throw error;
       const delayMs = baseMs * attempt;
+      if (now() - start + delayMs > deadlineMs) throw error;
       onRetry({ attempt, delayMs, error });
       await wait(delayMs);
     }
