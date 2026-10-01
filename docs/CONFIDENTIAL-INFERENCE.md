@@ -1,8 +1,8 @@
 # Confidential Inference on Untrusted GPUs: The Whole Story, End to End
 
-> **What this is, in one breath:** This is the narrative of a feature that lets a model owner ship their *encrypted* AI model to a GPU machine they don't trust, have that machine *cryptographically prove* it's a genuine sealed box running unmodified code, hand it the decryption key *only then*, decrypt the weights *only into encrypted RAM*, run inference on the GPU, and securely wipe everything afterward — all while the machine's root-level operator can run the model and bill for it but can never read the plaintext weights. The attested load path is proven end to end in integration on real GPU hardware today (behind a mock attestation backend); it is not yet wired into the node binary's live request path, and the final 20% — real hardware-rooted attestation on a confidential VM, plus that wiring — is Phase 5.
+> **What this is, in one breath:** This is the narrative of a feature that lets a model owner ship their *encrypted* AI model to a GPU machine they don't trust, have that machine *cryptographically prove* it's a genuine sealed box running unmodified code, hand it the decryption key *only then*, decrypt the weights *only inside a confidential VM whose memory the operator cannot read*, run inference on the GPU, and securely wipe everything afterward, so that the machine's root-level operator can run the model and bill for it without holding the key. The attested load path is wired into the node binary's live request path and has run end to end on real confidential-computing hardware (Phala Cloud, Intel TDX with an NVIDIA H200: run 1 on 23 September 2026, run 2 on 30 September 2026; Section 5.1). Whether the operator can read GPU memory while the model runs is the one question the signed evidence does not yet settle (Section 6).
 
-> **⚠️ Currency note (updated 2026-07-16).** Sections 1–5 (the software story, the crypto design, and "what's been proven") remain accurate: the TEE feature is still Phases 1–4 complete behind a mock backend, GPU-proven, with Phase 5 outstanding. **Section 6's IONOS specifics are superseded** by later research (2026-06-16). In short: IONOS runs **H200 + DGX B300** (CC-capable), **not** H100/B200; **CPU confidential computing is not exposed to tenants** (their "attestation" marketing means BSI C5 compliance, not a hardware quote); so standing up a CC-On confidential VM with guest attestation on IONOS is a **co-engineering / partnership ask, not self-service**. Do not pitch from Section 6's "just confirm they offer CC and provision" framing.
+> **Currency note (updated 2026-10-01).** Sections 1–4 still describe the design. Section 5 records Phase 4 (integration, mock attestation) as it stood in June; **Section 5.1 records Phase 5 on real hardware**, which is where the feature now stands. Section 6 lists what is left today. Phase 5 ran on **Phala Cloud** (dstack, Intel TDX, one NVIDIA H200 in confidential-computing mode); the earlier Azure and IONOS planning is superseded and survives only in `../development/PHASE-4-TO-5-READINESS.md`.
 
 ---
 
@@ -222,6 +222,8 @@ The supporting promises:
 
 ## 5. What's been proven
 
+*This section records Phase 4 as it stood on 2026-06-03. Its statements about the live request path and the mock backend are historical: Phase 5 (Section 5.1) wired the path into the node binary and replaced the mocks with real attestation.*
+
 The GPU end-to-end test (`/workspace/fabstir-llm-node/tests/tee_e2e.rs`) ran on **real hardware** (TEST_HOST_1 / 3XS-Z, real NVIDIA GPU with CUDA) and exercised the complete attested load path **in integration** — driving the orchestration entry `prepare_attested_model` with *no production edits*. Stated precisely: that test is the only caller of `prepare_attested_model`; the node binary's live request path loads plain models (`src/main.rs`, `encrypted: false`) and does not yet call it. The steps proven are:
 
 1. **Provider-side offline:** sign a policy (ECDSA via k256, address via `recover_client_address`), encrypt a real 1B-parameter GGUF (`tiny-vicuna-1b.q4_k_m.gguf`) with XChaCha20-Poly1305 in 8 MiB chunks.
@@ -250,42 +252,33 @@ A **relaxed baseline-diff gate** was approved for Phase 4: TEE tests green + TEE
 
 For **open-weight models**, none of this is a blocker: the pipeline works end-to-end, and such models skip the KBS entirely, relying on the on-chain `sha256_hash` plus environment attestation. The policy/KBS/key-release machinery only *matters* for proprietary weights with secrets to protect.
 
+### 5.1 Phase 5: real confidential-computing hardware
+
+**Run 1, 23 September 2026 (Phala Cloud, Intel TDX + one NVIDIA H200).** The off-node key broker verified a genuine TDX quote (TCB status up to date, no advisories) and the H200's attestation through NVIDIA's Remote Attestation Service (hardware model `GH100`, driver and VBIOS versions, secure boot on, debug disabled), with the same one-time challenge in both. It released the model key on the first boot after the machine's measurements were pinned; those launch and boot registers had been recomputed independently from the provider's published image and matched the hardware quote before they were pinned, not trusted on first use. The node checked the decrypted Qwen3.8-27B (29 GB) against its on-chain hash, loaded it onto the H200 and served inference; on a clean stop it deleted the plaintext. A replayed key request was refused. Paid testnet chat sessions from the app then ran on that host, with zero-knowledge proofs, checkpoints and settlement on-chain, and a proof published to S5 that an unrelated machine fetched and matched to the on-chain hash.
+
+**Run 2, 30 September 2026 (same hardware): the whole product on one attested machine.** One configuration deployed the node, image generation (FLUX.2), the fine-tuning trainer, the storage bridge and the video pipeline (LTX 2.3) in one confidential VM.
+
+- **The configuration was signed before the machine existed.** Its compose hash was computed in advance from our own compose file and signed into the policy; it matched on the first boot, as did the launch registers pinned after run 1, and the key was released.
+- **A changed configuration needs a new signed policy.** A mid-day change (a storage-bridge fix and the video services) changed the compose hash, so release required a newly signed policy naming the new hash and a container resealed under it, because the container header binds the policy hash into every chunk. The encrypted copy cached on the machine, bound to the previous policy, was detected as stale and re-downloaded. Three boots, three releases, each against a fresh quote and fresh GPU evidence; the third boot reused the cached container and was serving about four minutes after it started.
+- **The hardware view matches the policy.** The provider's own console showed the running machine's MRTD, RTMR0 to RTMR2 and compose hash identical, digit for digit, to the values in the signed policy the broker held.
+- **From the app and the Blender extension:** encrypted chat, images, a fine-tune whose dataset was decrypted only inside the confidential VM and whose adapter came back encrypted and was served into a session on the same machine, and six video-generation modes; every job settled on-chain. Two independent fine-tunes of the same job produced byte-identical adapters.
+- **What it does not show.** The video weights are public and were verified against pinned hashes as they downloaded; they are not sealed or released by the broker. And, as in run 1, nothing in the signed GPU evidence distinguishes confidential-computing mode on from off (Section 6).
+
+The run records, captured artefacts and every decision are in `../development/EXECUTION-PHASE5-ATTESTATION.md` and `../development/PHASE5-KNOWN-GAPS-TOFU.md`.
+
 ---
 
-## 6. What's left — the final 20% (Phase 5)
+## 6. What's left
 
-> **⚠️ The IONOS details in this section are superseded (2026-07-16).** See the currency note at the top of this doc. The hardware/SDK/software points below are still valid; the IONOS *positioning* (candidate vs. default, "just confirm they offer CC") is not — IONOS has H200 + DGX B300, does not expose CPU CC to tenants, and Phase 5 there is a co-engineering ask.
+Phase 5 proved the path on real hardware. These items stand between that and a production guarantee; the gap numbers refer to `../development/PHASE5-KNOWN-GAPS-TOFU.md`.
 
-Phase 5 is the hardware-dependent remainder: swap the mocks for real, hardware-rooted components, run on a genuine confidential VM with CC-On, and prove the host truly can't read VRAM.
-
-**The hardware:**
-
-- **Default (decision D-HW):** Azure **NCCadsH100v5-series** — a managed confidential VM (H100 + AMD SEV-SNP, CC-On, attestation handled by Azure). No hardware purchase; resolves the open question of validated H100 silicon.
-- **Candidate:** **IONOS** — H200 (validated CC silicon) at ~$3.26/€3 per GPU-hr, with £200 in credits (≈ 50–60 GPU-hr) and a direct support contact. The decisive question to ask them: *"Do you offer a confidential VM (AMD SEV-SNP or Intel TDX) with the GPU in CC-On mode and customer-accessible remote attestation (NVIDIA NRAS or local RIM)?"* If yes, IONOS becomes preferred (budget + hands-on support); if not, fall back to Azure.
-
-**The real components (behind the existing trait boundaries):**
-
-- **`NvidiaCcProvider`** — real GPU report + real CPU TDX/SNP quote (wraps `nvtrust` / the NVIDIA Attestation SDK).
-- **Real `AttestationVerifier`** — self-hosted **RIM** (Reference Integrity Measurements) verification, CPU/GPU certificate chains, production-TCB + CC=On checks, identity and nonce read from *real* `report_data`. (Self-hosted RIM is the production target so NVIDIA's **NRAS** isn't permanently in the critical path.)
-- **Real KBS** — no backdoors, a trusted host-independent clock, nonces bound to `model_id` (preventing cross-model replay), one-time-use, TTL-bounded.
-
-**Vendor specs to pin (open questions):** NVIDIA Attestation SDK version, CC-driver branch, guest-kernel version; the exact byte sequence of `gpu_report`, whether `gpu_report_hash` covers the full DER blob or parsed fields, nonce composition, and DER/PEM parsing libraries.
-
-**Reproducible measured-CVM image (D6):** Fabstir publishes deterministic node-CVM images so the launch measurement is stable; providers pin those reference measurements into the policy's `cvm` block (`mrtd`, `rtmr0`–`rtmr2`, `os_image_hash`, `compose_hash`; schema 2). This is flagged as the item *most likely to slip* — if the image builds non-deterministically, providers can't pin a measurement and the whole attestation guarantee collapses.
-
-**Deploy:** VFIO GPU passthrough; enable CC + ready-state (`nvidia-smi conf-compute -srs 1`); decrypted weights *only* to in-CVM tmpfs (`TEE_DECRYPT_DIR`), sized for the full multi-GB model plus KV cache plus headroom.
-
-**Carried-forward hardening (must land in Phase 5):**
-
-- **`pk_att` hardware binding** — today the mock simply echoes `pk_att`; the real verifier MUST confirm `pk_att` against the hardware quote and validate it as a canonical 33-byte compressed point. *Until this lands, Phases 1–4 do not meet the full threat model.*
-- DEK / key-material `Zeroize`; mutex-poison recovery.
-- **Close TOCTOU** — fd-based load / `F_ADD_SEALS` / re-verify-before-mmap.
-
-**Final proof:** validate the mock→real pipeline on real CC hardware, run a `/security-review` of the full Phase-5 wiring, and demonstrate "host cannot read VRAM" with CC-On enabled.
-
-The handoff lives in **`PHASE-4-TO-5-READINESS.md`**, sized for the Phase-5 team (Azure or IONOS) to execute.
-
-**Where things stand:** the software security perimeter is built, clippy-clean, and *proven on real GPU hardware* end-to-end in integration behind a mock backend, not yet wired into the node binary's live request path. Version `8.30.0-tee-confidential-inference` is committable under the relaxed gate. What remains is anchoring that perimeter to a hardware root of trust — real attestation on a confidential VM with CC-On — which is the difference between "the pipeline works" and "the host genuinely cannot steal the weights."
+- **Confidential-computing mode on versus off from signed evidence (G-6a, open).** The signed per-GPU secure-boot and debug claims together exclude the developer-tools mode, and the broker enforces that pair, but they do not distinguish confidential computing switched on from switched off. Whether a Hopper GPU with it switched off can produce evidence NVIDIA's service will pass is not documented; the question is with NVIDIA. **Until it is answered, do not claim that the host cannot read GPU memory.**
+- **Automatic routing to `tee-attested` hosts.** Both runs routed paid sessions by hand, by pointing a test host's on-chain registration at the confidential VM.
+- **Video weights under the attested release.** Only the language model is sealed and broker-released; the LTX weights are public and only hash-checked on download.
+- **Host profiles separate from the sealed model binding (policy schema 3, `../development/DESIGN-POLICY-V3-HOST-PROFILES.md`).** Today every new measurement is a new policy and a reseal of every model, as run 2's mid-day change showed. The ratified design moves host measurements into a separately signed, versioned profile set; not yet built.
+- **A second, independent signer for host approvals (G-20)**, which first needs the node image to reproduce from public source (G-21): `Cargo.lock` is committed and `scripts/build-release.sh` remaps build paths, but the CUDA kernels still embed per-build temporary names.
+- **Deferred hardening:** the verify-then-load window inside the confidential VM (G-12) is logged, not closed; NVIDIA's service is on the release path rather than local verification (G-8); reference-measurement collateral is fetched rather than pinned (G-9); the node-to-broker TLS is one private CA with no revocation path (G-15).
+- **Confidential training as a guarantee.** The dataset key travels in the job payload to whichever host the client chose; releasing it only into an attested confidential VM reuses this machinery and inherits G-6a.
 
 ---
 
@@ -368,3 +361,6 @@ the GPU end-to-end proof `tests/tee_e2e.rs`.
 
 *Written 2026-06-03 for v8.30.0-tee-confidential-inference. Phases 1–4 complete
 (mock backend); Phase 5 (real CC-On attestation) is the remaining 20%.*
+
+*Updated 2026-10-01 after Phase 5 runs 1 and 2 on Phala Cloud (Intel TDX + NVIDIA H200):
+Section 5.1 added, Section 6 rewritten.*

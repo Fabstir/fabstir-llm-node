@@ -1,5 +1,16 @@
 # Training M0 — private LoRA fine-tuning as a marketplace job
 
+Status (2026-10-01): **run on an attested confidential VM, on the real chain.** On
+2026-09-30 two complete fine-tunes ran on a Phala Cloud confidential VM with one H200
+(Phase 5 run 2), paid and settled on Base Sepolia under training model id
+`0xa447563341bff3b9bc8a3ad94b874e8724a1892451d576f9575da64b05ea8215`: jobs 1177 and 1199,
+43,505 billed tokens each, GGUF conversion failures 0. The two runs produced a
+**byte-identical** `adapter.gguf` (sha256 `0xc2d6b85bff780915e3470493ab7c404eb8f06a4d08a107ba7864310cae2f1932`)
+from different encrypted uploads: on this hardware the QLoRA pipeline is deterministic to
+the bit. Serve-back into the same confidential VM worked in every session once the
+s5-bridge was at 1.5.2 (see "Serve-back" below), and with thinking `disabled` the adapter
+answered "512 seconds" and "89" where the base model invented "24 hours".
+
 Status (2026-08-26): **demonstrated end to end.** Complete fine-tunes have run on
 TEST_HOST_1 under `TRAIN_MOCK_CHAIN`: encrypted dataset in, tokens counted exactly (8701,
 three independent counts agreeing on every run), QLoRA train, GGUF conversion, encrypted
@@ -17,15 +28,18 @@ the template pin at boot; see "the tokenizer contract" below.
 
 What remains before this can take **paid** jobs:
 
-1. **No registered training model id.** `TRAINING_MODEL_ID` below is still a placeholder.
-   It needs a ModelRegistry entry plus a `NodeRegistry` advert with its per-model price;
-   the node never registers itself. The T7 paid gates follow registration, not before.
+1. ~~**No registered training model id.**~~ Registered: `0xa4475633…8215` (full id in the
+   status above), priced on TEST_HOST_1, and used for the paid run-2 jobs. The node still
+   never registers itself; a new host needs the `NodeRegistry` advert and per-model price.
+   The T7 paid gates (a mid-run failure and a cancellation, each billed to the unit) remain.
 2. **No durable run record or deposit reclaim** (F5.5). The client holds the only copy of
    the capability CID, and one browser-profile loss has already cost a run record; the
    rescue is under serve-back below.
 3. **The disconnect double-complete guard.** The inference path's disconnect settlement
    does not skip training-tracker jobs and has sent a real transaction from under the
-   mock chain twice. Known, recorded, not yet fixed.
+   mock chain twice. Known, recorded, not yet fixed. On the real chain it shows as
+   `❌ Transaction failed for job <id>` straight after a successful completion (job 1199):
+   the first completion settles, the duplicate reverts and costs only gas.
 
 A client submits an encrypted JSONL dataset, the node trains a LoRA adapter against a
 pinned base model, settles on-chain per slice, and returns an encrypted adapter the client
@@ -54,6 +68,18 @@ What is true today: encrypted in transit, encrypted at rest in storage, adapter 
 encrypted, every slice settled on-chain against a proof. What is **not** true today: that the
 host cannot see it. Do not write copy implying otherwise; see
 `docs/development/DESIGN-CONFIDENTIAL-TRAINING.md` for what would close it.
+
+**On a confidential-VM host the picture improves but does not close.** In Phase 5 run 2
+(2026-09-30, Phala Cloud, one H200) the node, the s5-bridge and the trainer were all
+deployed in one attested confidential VM, and `TRAINING_STAGING_ROOT` and
+`TRAINING_WORK_ROOT` were tmpfs volumes inside it. So the dataset was decrypted, and the
+adapter existed in the clear, only inside the confidential VM, whose memory the provider's
+operator cannot read. The copy you may write is exactly that: *the dataset is decrypted only
+inside a confidential VM*. Two things keep it short of host-blind: the capability still
+travels to whichever host the client chose, with no attestation gate of its own (the
+attested release covers the base model's key, not the dataset's), and training runs on the
+GPU, so the open GPU-memory question (gap G-6a) applies here exactly as to inference. Never
+write that training data is "processed" or "stays" inside the confidential VM.
 
 ## Shape
 
@@ -150,6 +176,31 @@ run takes the shared GPU permit.
 
 
 ## Serve-back: eviction, portability, and the traps when testing it
+
+**The s5-bridge must be 1.5.2 or later, or serve-back fails on any shard from far away.**
+Adapter shards are 24 MiB blobs fetched through the bridge's `GET /s5/blob/{cid}`.
+s5.js 0.9.0-beta.55 gives each storage location only **3 s** to send response headers
+(`downloadBlobAsBytes(hash, 10000, 3000, …)`); a shard from a US datacentre took 2.5-3.4 s,
+so some shards missed it, the portal fallback hung, and the node logged
+`adapter.gguf shard N fetch: s5 /s5/blob returned 502` (jobs 1179 and 1181 on the H200).
+Bridge 1.5.2 wraps the call with a 20 s header wait and 45 s discovery
+(`S5_BLOB_HEADERS_TIMEOUT_MS`, `S5_BLOB_DISCOVERY_TIMEOUT_MS`); afterwards all 26 shards
+staged in every session. Its boot log carries `⏱️  Blob downloads: 20000 ms per-location
+headers` as the check.
+
+**Ask factual questions with thinking `disabled`.** The demo adapter was trained on plain
+fact sentences with no chat template. At the node's default (`DEFAULT_THINKING_MODE=low`)
+the H200 adapter put its whole reply inside the reasoning block and garbled it ("a common
+misconception is 512 seconds… 73 validator seats", jobs 1182-1184); at `medium` it was right
+but still inside the reasoning; at `disabled` and `high` it answered "A Meridian Ledger epoch
+is exactly 512 seconds." Run BOTH arms of an A/B at the same level. Sampling is
+deterministic, so a regenerate or a new session repeats the same answer: "3 out of 3" is one
+sample, not three.
+
+**The product app re-stages the adapter for every message, not once per session.** Each
+prompt arrives with a fresh init carrying `lora`, the node mints a new registry key and
+fetches all shards again, so every answer in an adapter chat costs the staging time
+(about 90 s from the US for the 637 MB demo adapter). Correct but slow; a client-side fix.
 
 **A reconnect must re-send `lora`, or the session silently uses the base model.** The
 node keeps no state across connections, by design: every WebSocket init mints a fresh

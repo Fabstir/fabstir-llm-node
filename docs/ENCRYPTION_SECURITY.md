@@ -4,9 +4,11 @@
 
 The Fabstir LLM Node implements end-to-end encryption for WebSocket communication using industry-standard cryptographic primitives. This document provides comprehensive security information for node operators, SDK developers, and security auditors.
 
-**Version**: January 2025
+**Version**: January 2025 (scope section added October 2026)
 **Implementation Status**: Production Ready (111 tests passing)
 **Security Audit**: No vulnerabilities found
+
+**Scope in one line**: this encryption protects content in transit (client to host) and at rest (S5). The host decrypts in order to run inference, so it does not protect content in use; see [Scope and Confidential Computing](#scope-and-confidential-computing).
 
 ## Table of Contents
 
@@ -20,6 +22,7 @@ The Fabstir LLM Node implements end-to-end encryption for WebSocket communicatio
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
 - [Audit Notes](#audit-notes)
+- [Scope and Confidential Computing](#scope-and-confidential-computing)
 
 ---
 
@@ -1051,6 +1054,26 @@ cargo test test_timing_attack_resistance_basic -- --nocapture
 
 ---
 
+## Scope and Confidential Computing
+
+### What end-to-end means here
+
+"End-to-end" means client to host with no platform, proxy or storage node able to read the content in between. The host the client selected holds `HOST_PRIVATE_KEY`, completes the ECDH, derives the session key and decrypts each prompt in memory to run inference. The same holds for fine-tuning: each dataset shard is encrypted under its own XChaCha20-Poly1305 key carried inside its S5 capability CID, and the host decrypts the shards to train (`docs/TRAINING.md`, "What the host can see"). Nothing in this document makes the host blind to content in use.
+
+### When the host is deployed in an attested confidential VM
+
+Phase 5 deployed the node in a confidential VM (Phala Cloud, Intel TDX with an NVIDIA H200; runs on 23 and 30 September 2026). There, `HOST_PRIVATE_KEY` is supplied as an encrypted secret that only the confidential VM can decrypt, so the session ECDH, the session keys and the decrypted prompts exist only inside a confidential VM whose memory the operator cannot read; the same applies to fine-tuning datasets, whose staging and work directories were memory-backed volumes inside it. The model's own decryption key is released by an off-node key broker only against hardware-signed proof that the machine is genuine and running approved software (`docs/CONFIDENTIAL-INFERENCE.md`).
+
+Three limits remain, and copy must respect them:
+
+- **The client does not verify attestation itself.** A client reaches a confidential-VM host by choosing it; automatic routing to `tee-attested` hosts is not yet built, and in both runs the host was selected by hand.
+- **GPU memory is the open question.** The model and the prompts are processed on the GPU, and the signed GPU evidence does not yet distinguish confidential-computing mode on from off (gap G-6a). Do not claim that the host cannot read GPU memory, and do not describe prompts or data as "processed" or "staying" inside the confidential VM.
+- **The dataset key is not attestation-gated.** It travels in the job payload to whichever host the client chose.
+
+The full account is in `docs/CONFIDENTIAL-INFERENCE.md` and section 8.6 of `docs/PLATFORMLESS_AI_WHITEPAPER.md`.
+
+---
+
 ## References
 
 ### Cryptographic Standards
@@ -1091,6 +1114,6 @@ For security questions or to report vulnerabilities:
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: January 2025
+**Document Version**: 1.1
+**Last Updated**: October 2026 (Scope and Confidential Computing section)
 **Implementation Version**: Phase 9.1 (Complete)
