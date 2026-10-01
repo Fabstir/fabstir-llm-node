@@ -9,6 +9,7 @@
 
 // Polyfill browser APIs for Node.js environment
 import 'fake-indexeddb/auto';
+import { applyBlobTimeouts, DEFAULT_BLOB_HEADERS_TIMEOUT_MS, DEFAULT_BLOB_DISCOVERY_TIMEOUT_MS } from './blob_timeouts.js';
 import { WebSocket } from 'ws';
 import { TextEncoder, TextDecoder } from 'node:util';
 
@@ -504,6 +505,12 @@ export async function initializeS5Client() {
       });
 
       console.log('✅ S5 instance created');
+      // Large blobs need longer than s5.js's 3 s per-location header wait (blob_timeouts.js).
+      const blobTimeouts = applyBlobTimeouts(s5.node, {
+        headersTimeoutMs: Number(process.env.S5_BLOB_HEADERS_TIMEOUT_MS || DEFAULT_BLOB_HEADERS_TIMEOUT_MS),
+        discoveryTimeoutMs: Number(process.env.S5_BLOB_DISCOVERY_TIMEOUT_MS || DEFAULT_BLOB_DISCOVERY_TIMEOUT_MS),
+      });
+      console.log(`⏱️  Blob downloads: ${blobTimeouts.headersTimeoutMs} ms per-location headers, ${blobTimeouts.discoveryTimeoutMs} ms discovery`);
 
       // Step 2: Recover identity from seed phrase (required even for read-only operations)
       if (bridgeConfig.seedPhrase) {

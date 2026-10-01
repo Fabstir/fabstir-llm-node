@@ -9,6 +9,7 @@
 import { getS5Client, getS5Status, getAdvancedClient } from './s5_client.js';
 import { acquireDirectoryLock, parentDir, activeLockCount } from './dir_mutex.js';
 import { classifyS5ReadError } from './s5_read_errors.js';
+import { withDirectoryRetry } from './s5_retry.js';
 import { BlobIdentifier } from '@julesl23/s5js/dist/src/identifier/blob.js';
 import { MULTIHASH_BLAKE3 } from '@julesl23/s5js/dist/src/constants.js';
 
@@ -166,7 +167,12 @@ export async function registerRoutes(fastify) {
       const release = await acquireDirectoryLock(dirKey);
       try {
         fastify.log.debug({ requestId, path }, '📤 [S5-UPLOAD] Calling s5.fs.put()...');
-        await s5.fs.put(path, new Uint8Array(data));
+        await withDirectoryRetry(() => s5.fs.put(path, new Uint8Array(data)), {
+          onRetry: ({ attempt, delayMs, error }) => fastify.log.warn(
+            { requestId, path, attempt, delayMs, failedPath: error.path, error: error.message },
+            '📤 [S5-UPLOAD] ⏳ fs.put(): directory temporarily unavailable, retrying'
+          ),
+        });
       } finally {
         release();
       }
@@ -189,7 +195,12 @@ export async function registerRoutes(fastify) {
           fastify.log.debug({ requestId, path }, '📤 [S5-UPLOAD] Getting CID via Advanced API...');
 
           // pathToCID() returns raw 32-byte BLAKE3 hash
-          const rawHash = await advanced.pathToCID(path);
+          const rawHash = await withDirectoryRetry(() => advanced.pathToCID(path), {
+            onRetry: ({ attempt, delayMs, error }) => fastify.log.warn(
+              { requestId, path, attempt, delayMs, failedPath: error.path, error: error.message },
+              '📤 [S5-UPLOAD] ⏳ pathToCID(): directory temporarily unavailable, retrying'
+            ),
+          });
           rawHashHex = Buffer.from(rawHash).toString('hex');
 
           // Construct 33-byte hash with BLAKE3 multihash prefix (0x1e)
