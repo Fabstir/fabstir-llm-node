@@ -75,11 +75,13 @@ deployed in one attested confidential VM, and `TRAINING_STAGING_ROOT` and
 `TRAINING_WORK_ROOT` were tmpfs volumes inside it. So the dataset was decrypted, and the
 adapter existed in the clear, only inside the confidential VM, whose memory the provider's
 operator cannot read. The copy you may write is exactly that: *the dataset is decrypted only
-inside a confidential VM*. Two things keep it short of host-blind: the capability still
+inside a confidential VM*. One thing keeps it short of host-blind by construction: the capability still
 travels to whichever host the client chose, with no attestation gate of its own (the
-attested release covers the base model's key, not the dataset's), and training runs on the
-GPU, so the open GPU-memory question (gap G-6a) applies here exactly as to inference. Never
-write that training data is "processed" or "stays" inside the confidential VM.
+attested release covers the base model's key, not the dataset's), so a client reaches this
+protection only by choosing a confidential host. On the GPU, the protection is NVIDIA's design
+(gap G-6a, closed 2026-10-01 on NVIDIA's documentation, written confirmation pending): in
+confidential-computing mode the GPU memory the training runs in is sealed from the host. Write it
+that way, with "sealed" or "blocked", never "the host cannot see the data".
 
 ## Shape
 

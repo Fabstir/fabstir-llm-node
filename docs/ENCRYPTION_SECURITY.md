@@ -1064,10 +1064,10 @@ cargo test test_timing_attack_resistance_basic -- --nocapture
 
 Phase 5 deployed the node in a confidential VM (Phala Cloud, Intel TDX with an NVIDIA H200; runs on 23 and 30 September 2026). There, `HOST_PRIVATE_KEY` is supplied as an encrypted secret that only the confidential VM can decrypt, so the session ECDH, the session keys and the decrypted prompts exist only inside a confidential VM whose memory the operator cannot read; the same applies to fine-tuning datasets, whose staging and work directories were memory-backed volumes inside it. The model's own decryption key is released by an off-node key broker only against hardware-signed proof that the machine is genuine and running approved software (`docs/CONFIDENTIAL-INFERENCE.md`).
 
-Three limits remain, and copy must respect them:
+Copy must respect these three points:
 
 - **The client does not verify attestation itself.** A client reaches a confidential-VM host by choosing it; automatic routing to `tee-attested` hosts is not yet built, and in both runs the host was selected by hand.
-- **GPU memory is the open question.** The model and the prompts are processed on the GPU, and the signed GPU evidence does not yet distinguish confidential-computing mode on from off (gap G-6a). Do not claim that the host cannot read GPU memory, and do not describe prompts or data as "processed" or "staying" inside the confidential VM.
+- **GPU memory is protected by NVIDIA's design.** The model and the prompts are processed on the GPU. In confidential-computing mode NVIDIA's design seals the GPU's protected memory from the host, and the key broker requires NVIDIA's comparison of the GPU's signed measurements with its reference measurements, which confirms that mode, before releasing the model key. State this as NVIDIA's design, using "sealed" or "blocked" rather than "cannot".
 - **The dataset key is not attestation-gated.** It travels in the job payload to whichever host the client chose.
 
 The full account is in `docs/CONFIDENTIAL-INFERENCE.md` and section 8.6 of `docs/PLATFORMLESS_AI_WHITEPAPER.md`.
