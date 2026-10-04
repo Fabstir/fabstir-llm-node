@@ -3,25 +3,37 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.58.0-phase5-gpu-devtools-signed-2026-09-22";
+pub const VERSION: &str = "v8.59.0-ltx25-new-modes-2026-10-04";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.58.0";
+pub const VERSION_NUMBER: &str = "8.59.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 58;
+pub const VERSION_MINOR: u32 = 59;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-09-22";
+pub const BUILD_DATE: &str = "2026-10-04";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.59.0 NM1: LTX 2.5 in the ComfyUI sidecar (bundle v26) with two new modes — Alpha Gen
+    // (`ltx-alpha-hdr`: matte EXR, `matte-linear`) and Layout to Render (`ltx-layout-hdr`, mp4 only) —
+    // sized in FRAMES on LTX's 8k+1 grid at 24/25 fps (D21); exact control length where the grid can
+    // deliver every billed frame (D3); the session's model must be the template's (D20); one delivery
+    // filter shared with the live test (D22); a control clip whose audio cannot pass through has its
+    // pass-through removed instead of failing on ComfyUI 0.38 (D23).
+    "ltx25-alpha-gen",
+    "ltx25-layout-to-render",
+    "ltx-frame-grid",
+    "ltx-exact-control",
+    "ltx-session-model-gate",
+    "ltx-silent-audio-drop",
     // v8.58.0 Phase 5: the broker decides the GPU's DevTools state from SIGNED
     // evidence (the per-GPU EAT pair `secboot` + `dbgstat`) instead of
     // recording it as node-asserted; its release gate refuses a real DEK to a
@@ -604,6 +616,14 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.59.0 - NM1: LTX 2.5 new modes (Oct 4, 2026)
+    "BEHAVIOUR (LTX): templates v26 — two new templates (`ltx-alpha-hdr`, `ltx-layout-hdr`) and two edited 2.3 templates (`ltx-sdr2hdr-hdr` gains `transfer: logc3`, `ltx-iclora-hdr` gains `refine_steps` and its frame fix), so their template hashes change; the other eleven are byte-identical. The new templates and the edited sdr2hdr REQUIRE the new sidecar image (ComfyUI core 0.38.0 + the LTX 2.5 weights, `scripts/build-ltx-sidecar.sh`); both edited templates also run on the old image (rollback)",
+    "BEHAVIOUR (LTX): the node refuses, at 0 tokens and before any GPU work, a job whose template is not the model its session was opened (and priced) for, any LTX job without an on-chain job id, and a job whose proof could not land (a session settled or timed out, another host's, or one whose remaining deposit does not cover the job) — two concurrent chain reads per job, retried; a SUSTAINED RPC outage now refuses LTX jobs after escrow (D20)",
+    "BEHAVIOUR (LTX): wherever a template advertises `exactControl` and LTX's grid can deliver every billed frame ((billed - 1) % 8 == 0), the control clip must carry the FULL billed count — one frame short is refused before GPU work (iclora used to accept it and deliver 113 of 121) (D3)",
+    "BEHAVIOUR (LTX): frame-grid templates take `frames` (121, 145, ... on the 8k+1 grid, 24 or 25 fps) with no `duration`, bounded by the entry's `maxFrames` (Alpha 145, Layout 361) and `resolutionRule` (`div64-fhd`) (D7, D21)",
+    "BEHAVIOUR (LTX): a control clip whose audio cannot pass through the pinned graphs (no audio track, an empty track, more than two channels, or an unreadable audio box) is delivered WITHOUT audio instead of failing on ComfyUI 0.38 — the patcher removes the VHS_VideoCombine / CreateVideo audio pass-through (a third sanctioned runtime structural edit, census-first, fail-closed); sdr2hdr no longer fails after the full render on 3/4/8-channel audio; 5.1 audio, which VHS garbled and core's save kept on sdr2hdr's preview, is now dropped (D23)",
+    "INTERNAL (LTX): `ComfyClient::outputs` returns only the deliverables (`type == \"output\"`, sorted by filename) — the filter the handler applied inline since M0, now shared with the live test (D22); no delivery changes",
+    "BEHAVIOUR (all chains): with no RPC_URL set, the node falls back to BASE_SEPOLIA_RPC_URL and then the keyless public endpoint https://base-sepolia-rpc.publicnode.com — no metered provider key ships in the binary",
     // v8.58.0 - Phase 5: GPU CC mode from signed evidence (Sep 22, 2026)
     "SECURITY/BREAKING (broker): `require_cc_mode: On` is now enforced against the SIGNED per-GPU EAT claims `secboot` and `dbgstat` rather than recorded as node-asserted. NVIDIA publishes no literal CC-mode claim, but DevTools mode attests with the debug facilities enabled, so `secboot: true` plus a `dbgstat` in the disabled family rules DevTools out (Phala, 2026-09-22, closing gap G-6; design D14a). Two limits stated plainly: that mapping is NVIDIA's documentation plus Phala's confirmation, not something this chain has observed fail, and gate B-8 captures the real values on the first H200; and the pair does NOT separate CC On from Off, which stays with the measured in-guest collector's NVML reading (new gap G-6a). A broker of this version refuses releases that v8.57.0 and earlier allowed. In practice, for the booking, it cannot: the new row fires only when `secboot` is false or `dbgstat` is not in the disabled family, and any policy that already sets `require_secure_boot: true` and `require_debug_disabled: true` refuses those same GPUs at the existing rows. Every signed Phase-5 policy does (the CPU rounds' archived `policy-signed*.json` and the test fixture all carry the three), so on the day's policy this change cannot refuse a release v8.57.0 would have made",
     "SECURITY (broker): the step-8 release gate now refuses a non-test keyring entry whose signed claims leave DevTools open EVEN WHEN the policy omits `require_cc_mode`, so `null` is no longer don't-care for a real key; the refusal names both claims. Test entries are unaffected",
@@ -1101,10 +1121,17 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 58);
+        assert_eq!(VERSION_MINOR, 59);
         assert_eq!(VERSION_PATCH, 0);
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
+        // v8.59.0 NM1 LTX 2.5 new modes
+        assert!(FEATURES.contains(&"ltx25-alpha-gen"));
+        assert!(FEATURES.contains(&"ltx25-layout-to-render"));
+        assert!(FEATURES.contains(&"ltx-frame-grid"));
+        assert!(FEATURES.contains(&"ltx-exact-control"));
+        assert!(FEATURES.contains(&"ltx-session-model-gate"));
+        assert!(FEATURES.contains(&"ltx-silent-audio-drop"));
         // v8.58.0 Phase 5 GPU CC mode from signed evidence
         assert!(FEATURES.contains(&"kbs-devtools-signed"));
         // v8.57.0 Phase 5 P5.5 streaming load
@@ -1295,15 +1322,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.58.0"));
-        assert!(version.contains("2026-09-22"));
+        assert!(version.contains("8.59.0"));
+        assert!(version.contains("2026-10-04"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.58.0-phase5-gpu-devtools-signed-2026-09-22");
-        assert_eq!(VERSION_NUMBER, "8.58.0");
-        assert_eq!(BUILD_DATE, "2026-09-22");
+        assert_eq!(VERSION, "v8.59.0-ltx25-new-modes-2026-10-04");
+        assert_eq!(VERSION_NUMBER, "8.59.0");
+        assert_eq!(BUILD_DATE, "2026-10-04");
     }
 
     #[test]

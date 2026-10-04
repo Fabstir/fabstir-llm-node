@@ -62,7 +62,7 @@ const RESTORE_TEMPLATE_HASH: &str =
 // v26 (NM1): the sdr2hdr and iclora re-pins, exactControl on iclora and the six edit-family
 // templates, ltx-alpha-hdr + ltx-layout-hdr with their rules, and three new lora adverts
 // (crossview, alpha, layout).
-const BUNDLE_HASH: &str = "0x9aa3afba92e431283286fb5081f88749d543c49e6d0cd8d98790fa0212a4ef4f";
+const BUNDLE_HASH: &str = "0xa388d2d358dc08661ab545d0409970729248936ca16be495d8deda5793f635da";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -1318,7 +1318,8 @@ fn test_new_mode_rules_values() {
     assert_eq!(alpha.video_semantics, vec!["sourceVideo"]);
     let layout = store.entry("ltx-layout-hdr").expect("layout allow-listed");
     assert_eq!(layout.fps, Some(vec![24, 25]));
-    assert!(layout.max_frames.is_some(), "Layout carries a maxFrames");
+    // OQ-N5 (decided 2026-10-04, Jules): 361 frames (15 s at 24 fps), D5 decode gate waived.
+    assert_eq!(layout.max_frames, Some(361), "Layout's cap is 361 frames");
     assert_eq!(layout.resolution_rule.as_deref(), Some("div64-fhd"));
     assert_eq!(layout.exact_control, Some(true));
     assert_eq!(layout.frame_grid, Some(true));

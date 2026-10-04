@@ -1,6 +1,6 @@
 {
   "allowListVersion": 26,
-  "bundleHash": "0x9aa3afba92e431283286fb5081f88749d543c49e6d0cd8d98790fa0212a4ef4f",
+  "bundleHash": "0xa388d2d358dc08661ab545d0409970729248936ca16be495d8deda5793f635da",
   "templates": [
     {
       "templateId": "ltx-alpha-hdr",
@@ -104,7 +104,7 @@
         24,
         25
       ],
-      "maxFrames": 241,
+      "maxFrames": 361,
       "resolutionRule": "div64-fhd",
       "exactControl": true,
       "frameGrid": true
