@@ -49,10 +49,11 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
   (text-to-video, image-to-video, first-last-frame, ingredients, restyle, outpaint, edit, restore,
   upscale, water, day-to-night, new camera angle, convert to HDR) and two on LTX 2.5 (cut-out with
   an alpha matte, layout to render; v8.59.0+). Pinned, hash-committed ComfyUI templates are published
-  as an allow-list bundle (v26) that the client authenticates against the host's on-chain
+  as an allow-list bundle (v26 in this release) that the client authenticates against the host's on-chain
   `bundleHash` before paying; inputs are bound byte-exact into the commitment; billing is per
   megapixel-frame; delivery is encrypted to S5, with opt-in 16-bit EXR masters (v8.43.0+). Drivable
-  from Blender via the `platformless-blender-addon` and `platformless-helper` repositories (v8.31.4+)
+  from Blender via the `platformless-blender-addon` and `platformless-helper` repositories (the
+  thirteen LTX 2.3 modes today; the two LTX 2.5 modes arrive with add-on 0.19.0) (v8.31.4+)
 - **Transcoding Trustless Verification**: Quality metrics, GOP proofs, Merkle tree, checkpoint submission (v8.26.0+)
 - **HLS Adaptive Bitrate Streaming**: Segmented fMP4 output with per-segment encryption and free preview support (v8.28.0+)
 - **Qwen3.6-35B-A3B Support**: llama-cpp-2 0.1.146 (qwen35moe architecture) on a CUDA 13 base image (v8.29.0+)
@@ -463,16 +464,7 @@ For issues and questions:
 
 ### SDK Developer Guides
 - [WebSocket API Integration](docs/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
-- [S5 Vector Loading](docs/sdk-reference/S5_VECTOR_LOADING.md) - Load vector databases from S5 storage (v8.4.0+)
-- [SDK Encryption Integration](docs/sdk-reference/SDK_ENCRYPTION_INTEGRATION.md) - Client-side encryption integration
-- [Model Validation Compatibility](docs/sdk-reference/MODEL-VALIDATION-SDK-COMPATIBILITY.md) - Model authorization guide (v8.14.0+)
-- [SDK Image Generation](docs/sdk-reference/SDK_IMAGE_GENERATION_INTEGRATION.md) - Image generation integration (v8.16.0+)
-- [SDK Transcoding Integration](docs/sdk-reference/SDK_TRANSCODING_INTEGRATION.md) - Video/audio transcoding integration (v8.25.0+)
-- [SDK Transcoding Trustless Verification](docs/sdk-reference/SDK_TRANSCODING_TRUSTLESS_INTEGRATION.md) - Quality metrics, GOP proofs, Merkle tree (v8.26.0+)
-- [SDK Context Usage](docs/sdk-reference/SDK_CONTEXT_USAGE_GUIDE.md) - Token usage and context reporting (v8.21.0+)
-- [LTX Sidecar Interface](docs/sdk-reference/LTX-SIDECAR-M0-INTERFACE.md) - The LTX wire protocol and lifecycle as first agreed (M0, text-to-video; later modes extend it)
-- [LTX Bundle Schema](docs/sdk-reference/LTX-SIDECAR-M0-BUNDLE-SCHEMA.md) - The allow-list bundle the client authenticates before paying (M0 schema)
 
 ### Blender
-- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - All fifteen LTX modes from the Video Sequence Editor
+- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - The LTX modes from the Video Sequence Editor (thirteen today; the two LTX 2.5 modes arrive with add-on 0.19.0)
 - [Helper README](https://github.com/Fabstir/platformless-helper/blob/main/README.md) - The local daemon between the add-on and the node
