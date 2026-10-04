@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.29.0-qwen36-llamacpp146 (May 2026)
+**Version**: v8.59.0-ltx25-new-modes (October 2026); the `VERSION` file is authoritative
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -45,6 +45,14 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 - **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
+- **AI Video Generation (LTX)**: fifteen modes through a ComfyUI sidecar — thirteen on LTX 2.3
+  (text-to-video, image-to-video, first-last-frame, ingredients, restyle, outpaint, edit, restore,
+  upscale, water, day-to-night, new camera angle, convert to HDR) and two on LTX 2.5 (cut-out with
+  an alpha matte, layout to render; v8.59.0+). Pinned, hash-committed ComfyUI templates are published
+  as an allow-list bundle (v26) that the client authenticates against the host's on-chain
+  `bundleHash` before paying; inputs are bound byte-exact into the commitment; billing is per
+  megapixel-frame; delivery is encrypted to S5, with opt-in 16-bit EXR masters (v8.43.0+). Drivable
+  from Blender via the `platformless-blender-addon` and `platformless-helper` repositories (v8.31.4+)
 - **Transcoding Trustless Verification**: Quality metrics, GOP proofs, Merkle tree, checkpoint submission (v8.26.0+)
 - **HLS Adaptive Bitrate Streaming**: Segmented fMP4 output with per-segment encryption and free preview support (v8.28.0+)
 - **Qwen3.6-35B-A3B Support**: llama-cpp-2 0.1.146 (qwen35moe architecture) on a CUDA 13 base image (v8.29.0+)
@@ -92,8 +100,8 @@ cargo build --release --features real-ezkl -j 4
 
 **How to verify**: After building, check that you have real proofs enabled:
 ```bash
-# Check version
-strings target/release/fabstir-llm-node | grep "v8.26"
+# Check version (must match the VERSION file)
+strings target/release/fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 
 # During inference, logs should show:
 # ✅ "🔐 Generating real Risc0 STARK proof" (221KB proofs)
@@ -146,6 +154,12 @@ SESSION_KEY_TTL_SECONDS=3600     # Session key expiration (default: 1 hour)
 REQUIRE_MODEL_VALIDATION=false   # Enable model authorization enforcement
                                  # When true: validates MODEL_PATH, SHA256, host auth
 
+# AI Video Generation (LTX, v8.31.4+)
+COMFY_URL=http://ltx-sidecar:8188  # ComfyUI sidecar; unset = ltx_generate answers 503
+TEMPLATE_DIR=./templates         # Pinned templates + allowlist.json (default ./templates)
+LTX_JOB_TIMEOUT_SECS=1800        # Per-job render timeout (default 1800)
+LTX_RATE_LIMIT=3                 # LTX requests per session per 5-minute window (default 3)
+
 # Image Generation (v8.16.0+)
 AUTO_IMAGE_ROUTING=false         # Auto-detect image intent from chat and route to
                                  # diffusion sidecar (v8.16.1+, opt-in, default off)
@@ -182,8 +196,10 @@ For production deployment:
 # Build optimized binary with REAL proofs (CRITICAL!)
 cargo build --release --features real-ezkl -j 4
 
-# Verify version
-./target/release/fabstir-llm-node --version
+# Verify version: NEVER run the binary with --version (it has no such flag and starts
+# a second node). Check the embedded string instead, or ask the running node:
+strings target/release/fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
+curl -s http://localhost:8080/v1/version
 
 # Run the binary directly
 ./target/release/fabstir-llm-node
@@ -192,8 +208,8 @@ cargo build --release --features real-ezkl -j 4
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.22.4.tar.gz
-./fabstir-llm-node --version
+tar -xzf fabstir-llm-node-v8.59.0-ltx25-new-modes.tar.gz   # binary at the tarball root
+strings fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 ```
 
 ## Smart Contract Configuration
@@ -319,6 +335,8 @@ Once the node is running, it exposes the following endpoints:
   - Image generation via diffusion sidecar (v8.16.0+)
   - Auto-route image intent from chat (v8.16.1+)
   - Video/audio transcoding with progress streaming (v8.25.0+)
+  - AI video generation: `ltx_generate` / `ltx_cancel`, answered by `ltx_accepted`,
+    `ltx_progress`, `ltx_complete` or `ltx_error` (v8.31.4+)
   - Thinking/reasoning mode control (v8.17.0+)
   - Stream cancellation via `stream_cancel` message (v8.19.0+)
   - True token-by-token streaming (v8.19.1+)
@@ -452,3 +470,9 @@ For issues and questions:
 - [SDK Transcoding Integration](docs/sdk-reference/SDK_TRANSCODING_INTEGRATION.md) - Video/audio transcoding integration (v8.25.0+)
 - [SDK Transcoding Trustless Verification](docs/sdk-reference/SDK_TRANSCODING_TRUSTLESS_INTEGRATION.md) - Quality metrics, GOP proofs, Merkle tree (v8.26.0+)
 - [SDK Context Usage](docs/sdk-reference/SDK_CONTEXT_USAGE_GUIDE.md) - Token usage and context reporting (v8.21.0+)
+- [LTX Sidecar Interface](docs/sdk-reference/LTX-SIDECAR-M0-INTERFACE.md) - The LTX wire protocol and lifecycle as first agreed (M0, text-to-video; later modes extend it)
+- [LTX Bundle Schema](docs/sdk-reference/LTX-SIDECAR-M0-BUNDLE-SCHEMA.md) - The allow-list bundle the client authenticates before paying (M0 schema)
+
+### Blender
+- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - All fifteen LTX modes from the Video Sequence Editor
+- [Helper README](https://github.com/Fabstir/platformless-helper/blob/main/README.md) - The local daemon between the add-on and the node
