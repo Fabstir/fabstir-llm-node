@@ -185,3 +185,77 @@ async fn test_health_unreachable_is_false() {
     let client = ComfyClient::new("http://127.0.0.1:59998").unwrap();
     assert!(!client.health().await);
 }
+
+// ── NM1.0b D22: one delivery filter, shared by the handler and the live test ──────────
+
+use fabstir_llm_node::ltx::client::deliverable_refs;
+
+fn r(filename: &str, type_: &str) -> ExrRef {
+    ExrRef {
+        filename: filename.into(),
+        subfolder: String::new(),
+        type_: type_.into(),
+    }
+}
+
+fn names(refs: &[ExrRef]) -> Vec<&str> {
+    refs.iter().map(|r| r.filename.as_str()).collect()
+}
+
+#[test]
+fn test_deliverable_refs_drops_the_input_preview() {
+    // ComfyUI 0.38 lists the uploaded control clip under its LoadVideo node with type "input"
+    // (E-NM1.0: iclora node 199, sdr2hdr node 5106). Mutation: keep everything → two refs, red.
+    let got = deliverable_refs(vec![
+        r("758a6b3d.mp4", "input"),
+        r("ltx2.3_ic_lora_00003_.mp4", "output"),
+    ]);
+    assert_eq!(names(&got), vec!["ltx2.3_ic_lora_00003_.mp4"]);
+}
+
+#[test]
+fn test_deliverable_refs_drops_temp_previews() {
+    // Mutation: filter only "input" → the temp preview survives, red.
+    let got = deliverable_refs(vec![r("preview.png", "temp"), r("clip.mp4", "output")]);
+    assert_eq!(names(&got), vec!["clip.mp4"]);
+}
+
+#[test]
+fn test_deliverable_refs_sorts_by_filename() {
+    // Mutation: skip the sort → history order, red.
+    let got = deliverable_refs(vec![
+        r("x_exr.0002.exr", "output"),
+        r("x_00001_.mp4", "output"),
+        r("x_exr.0001.exr", "output"),
+    ]);
+    assert_eq!(
+        names(&got),
+        vec!["x_00001_.mp4", "x_exr.0001.exr", "x_exr.0002.exr"]
+    );
+}
+
+async fn spawn_history_server(body: serde_json::Value) -> String {
+    use axum::{routing::get, Json, Router};
+    let app = Router::new().route("/history/:id", get(move || async move { Json(body) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn test_outputs_returns_only_deliverables_sorted() {
+    // The guard on the HANDLER's path: the handler only calls outputs(), so outputs() must do the
+    // filtering. Mutation: outputs() returning parse_history unfiltered → input + temp kept, red.
+    let body = json!({ "p-1": { "outputs": {
+        "199": { "images": [ { "filename": "758a6b3d.mp4", "subfolder": "", "type": "input" } ] },
+        "50":  { "images": [ { "filename": "preview.png", "subfolder": "", "type": "temp" } ] },
+        "90":  { "images": [ { "filename": "out_exr.0002.exr", "subfolder": "s", "type": "output" },
+                              { "filename": "out_exr.0001.exr", "subfolder": "s", "type": "output" } ] }
+    } } });
+    let url = spawn_history_server(body).await;
+    let client = ComfyClient::new(&url).unwrap();
+    let got = client.outputs("p-1").await.unwrap();
+    assert_eq!(names(&got), vec!["out_exr.0001.exr", "out_exr.0002.exr"]);
+}

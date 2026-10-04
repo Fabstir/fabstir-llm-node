@@ -1,0 +1,10 @@
+# LTX 2.5 weights for the ltx-sidecar (NM1 D1): mounted read-only at /opt/ComfyUI/extra_model_paths.yaml,
+# beside the 2.3 tree at /opt/ComfyUI/models. The 2.5 tree is the compose mount ${LTX25_MODELS_DIR}:/models_ltx25.
+ltx25:
+    base_path: /models_ltx25/
+    diffusion_models: diffusion_models
+    text_encoders: text_encoders
+    vae: vae
+    loras: loras
+    latent_upscale_models: latent_upscale_models
+    embeddings: embeddings

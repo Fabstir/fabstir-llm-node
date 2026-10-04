@@ -294,7 +294,8 @@
    "audio": [
     "5105",
     1
-   ]
+   ],
+   "bit_depth": 8
   },
   "_meta": {
    "title": "Preview (TONEMAPPED slot 0 \u2014 house wrongly tapped linear)"
@@ -341,7 +342,8 @@
    "save_exr": false,
    "output_dir": "output/hdr_exr3",
    "filename_prefix": "frame",
-   "half_precision": true
+   "half_precision": true,
+   "transfer": "logc3"
   },
   "_meta": {
    "title": "HDR decode (exposure affects PREVIEW ONLY per node source; masters are pre-exposure)"

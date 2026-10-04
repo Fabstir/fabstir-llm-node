@@ -270,11 +270,11 @@ services:
   # 22b + HDR is VRAM-heavy — keep MAX_CONCURRENT_GENERATIONS=1 (L40S 48GB has headroom).
   # Weights are NOT baked into the image — run scripts/download_ltx_models.sh first.
   # To disable: set COMFY_URL= (empty) in .env or stop this service
-  # First build: docker-compose -f docker-compose.prod.yml build ltx-sidecar
+  # The image is built OUTSIDE compose (NM1 D1): scripts/build-ltx-sidecar.sh <tag>. The default is
+  # today's image, retagged ltx-sidecar:v25, so a bare `up -d` can only run the old image; the
+  # deliberate swap sets LTX_SIDECAR_IMAGE=ltx-sidecar:nm1 in .env.
   ltx-sidecar:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.ltx-sidecar
+    image: ${LTX_SIDECAR_IMAGE:-ltx-sidecar:v25}
     container_name: ltx-sidecar
     restart: unless-stopped
     runtime: nvidia
@@ -289,9 +289,15 @@ services:
     ports:
       # localhost-only: ComfyUI must not be reachable off-host
       - "127.0.0.1:8188:8188"
+    # STRING form (NM1 D5): host-specific flags ride LTX_COMFY_ARGS; an empty value adds nothing,
+    # where the list form would pass "" and ComfyUI's strict argument parser would crash-loop.
+    command: "--listen 0.0.0.0 --port 8188 --output-directory /opt/ComfyUI/output ${LTX_COMFY_ARGS:-}"
     volumes:
       # LTX weights + HDR IC-LoRA (read-only) — populated by scripts/download_ltx_models.sh
       - ${LTX_MODELS_DIR:-./models/ltx}:/opt/ComfyUI/models:ro
+      # LTX 2.5 weights (read-only) — scripts/download_ltx25_models.sh; mapped by the yaml below
+      - ${LTX25_MODELS_DIR:-./models/ltx25}:/models_ltx25:ro
+      - ./docker/ltx-extra_model_paths.yaml:/opt/ComfyUI/extra_model_paths.yaml:ro
       # Shared output volume so the node can enumerate rendered EXR frames
       - ltx-output:/opt/ComfyUI/output
     healthcheck:

@@ -6,7 +6,12 @@
 //! `Width`/`Height`/`Frame Rate` primitives. Value substitution ONLY: never
 //! add/remove/rewire nodes, never touch `class_type`, never overwrite a wired
 //! connection — so the pinned-hash provenance guarantee holds (the graph that
-//! runs is the graph that was hashed, with only leaf input scalars changed).
+//! runs is the graph that was hashed, with only leaf input scalars changed) —
+//! EXCEPT three sanctioned runtime structural edits, each census-first and
+//! fail-closed: the `exr_output` sink's removal for non-EXR jobs, the deep
+//! loader swap, and (NM1 D23) `drop_silent_audio`'s removal of a clip's audio
+//! pass-through when its audio cannot pass. (The EXR lineariser is baked into
+//! the templates, not a patcher edit.)
 
 use anyhow::{anyhow, Result};
 use ethers::types::U256;
@@ -128,7 +133,7 @@ pub fn patch(
     // EXR master sink (A2): every template carries a RadianceDigitalCinemaWrite
     // (write_mode "Sequence") titled
     // "exr_output". For jobs that did NOT request `exr-frames` the node is
-    // REMOVED from the runtime copy (the ONE sanctioned structural edit — a
+    // REMOVED from the runtime copy (one of the three sanctioned runtime structural edits — a
     // sink with no consumers, so nothing can dangle); one pinned template
     // serves both deliveries. When `exr-frames` IS requested the handle is
     // REQUIRED — fail closed, a paid EXR request must never quietly render
@@ -216,8 +221,9 @@ pub const DEEP_INPUT_CAPABLE: &[&str] = &[
     "ltx-water-hdr",
 ];
 
-/// The deep-conform structural edit (the THIRD sanctioned one, after
-/// exr_output removal and the EXR lineariser insertion): replace the pinned
+/// The deep-conform structural edit (one of the patcher's three sanctioned
+/// runtime edits, beside the exr_output removal and D23's `drop_silent_audio`;
+/// the EXR lineariser is baked into the templates): replace the pinned
 /// `VHS_LoadVideo` with `RadianceDigitalCinemaRead` reading the staged EXR
 /// subfolder at float, pass-through colour ("Linear (sRGB)" applies no
 /// transform — the wire already carries what the graph expects). The census
@@ -569,4 +575,131 @@ fn set_input(graph: &mut Map<String, Value>, node_id: &str, key: &str, value: Va
     }
     inputs.insert(key.to_string(), value);
     Ok(())
+}
+
+/// Every (consumer node id, input key) linked to output `slot` of node `id`.
+fn consumers_of(obj: &Map<String, Value>, id: &str, slot: u64) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (nid, n) in obj {
+        let Some(inputs) = n.get("inputs").and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, v) in inputs {
+            if let Some(arr) = v.as_array() {
+                if arr.len() == 2 && arr[0].as_str() == Some(id) && arr[1].as_u64() == Some(slot) {
+                    out.push((nid.clone(), key.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn class_of<'a>(obj: &'a Map<String, Value>, id: &str) -> Option<&'a str> {
+    obj.get(id)
+        .and_then(|n| n.get("class_type"))
+        .and_then(Value::as_str)
+}
+
+/// NM1 D23 — a runtime structural edit beside the patcher's other two (`exr_output` removal and the
+/// deep loader swap; the EXR lineariser is baked into templates), applied AFTER [`patch`]: for a
+/// control clip whose audio cannot pass through (`mp4::audio_passthrough_ok` false or unreadable),
+/// remove the clip's audio pass-through instead of letting the job fail. ComfyUI 0.38 iterates a
+/// linked `VHS_LoadVideo` audio output and VHS raises on silent/empty/non-mono-stereo audio; core
+/// `SaveVideo` fails after the full render on 3/4/8 channels (sdr2hdr).
+///
+/// - VHS path: for every `VHS_LoadVideo` whose `inputs.video` is in `silent_videos`, each consumer of
+///   its slot-2 (audio) output must be a `VHS_VideoCombine` input named `audio` (anything else fails
+///   closed — census first, as the deep swap's) and is removed (`audio` is optional on VideoCombine).
+/// - Core path: for every core `LoadVideo` whose `inputs.file` is in `silent_videos`, every
+///   `GetVideoComponents` fed by it — directly or through `Video Slice` nodes — has each consumer of
+///   its slot-1 (audio) output censused (must be `CreateVideo.audio`) and removed. Only sdr2hdr links
+///   it; iclora's sits behind `Video Slice` with slot 1 unlinked (its delivered audio is the model's).
+///
+/// Nothing else is touched; an empty `silent_videos` returns the graph unchanged.
+pub fn drop_silent_audio(graph: &Graph, silent_videos: &[String]) -> Result<Graph> {
+    let mut value = graph.0.clone();
+    if silent_videos.is_empty() {
+        return Ok(Graph(value));
+    }
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("graph is not a node-id object"))?;
+    let names_silent = |n: &Value, key: &str| {
+        n.get("inputs")
+            .and_then(|i| i.get(key))
+            .and_then(Value::as_str)
+            .is_some_and(|v| silent_videos.iter().any(|s| s == v))
+    };
+
+    let mut removals: Vec<(String, String)> = Vec::new();
+    let vhs: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| {
+            n.get("class_type").and_then(Value::as_str) == Some("VHS_LoadVideo")
+                && names_silent(n, "video")
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &vhs {
+        for (nid, key) in consumers_of(obj, id, 2) {
+            if class_of(obj, &nid) != Some("VHS_VideoCombine") || key != "audio" {
+                return Err(anyhow!(
+                    "silent-audio drop: VHS_LoadVideo {id}'s audio feeds {nid}.{key} — no rule for it"
+                ));
+            }
+            removals.push((nid, key));
+        }
+    }
+
+    let core: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| {
+            n.get("class_type").and_then(Value::as_str) == Some("LoadVideo")
+                && names_silent(n, "file")
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &core {
+        // Follow the video through any `Video Slice` chain to the GetVideoComponents it reaches.
+        let mut frontier = vec![id.clone()];
+        let mut seen: Vec<String> = Vec::new();
+        let mut components: Vec<String> = Vec::new();
+        while let Some(node) = frontier.pop() {
+            if seen.contains(&node) {
+                continue;
+            }
+            seen.push(node.clone());
+            for (nid, _) in consumers_of(obj, &node, 0) {
+                match class_of(obj, &nid) {
+                    Some("Video Slice") => frontier.push(nid),
+                    Some("GetVideoComponents") if !components.contains(&nid) => {
+                        components.push(nid)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for gvc in &components {
+            for (nid, key) in consumers_of(obj, gvc, 1) {
+                if class_of(obj, &nid) != Some("CreateVideo") || key != "audio" {
+                    return Err(anyhow!(
+                        "silent-audio drop: GetVideoComponents {gvc}'s audio feeds {nid}.{key} — no rule for it"
+                    ));
+                }
+                removals.push((nid, key));
+            }
+        }
+    }
+
+    for (nid, key) in removals {
+        if let Some(m) = obj
+            .get_mut(&nid)
+            .and_then(|n| n.get_mut("inputs"))
+            .and_then(Value::as_object_mut)
+        {
+            m.remove(&key);
+        }
+    }
+    Ok(Graph(value))
 }

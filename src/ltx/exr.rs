@@ -302,6 +302,9 @@ pub fn colour_encoding_for(job: &LtxJob) -> &'static str {
         // point) — every other template delivers linearised display-referred
         // content. The manifest must say which, so graders trust the label.
         OutputKind::ExrFrames if job.template_id == "ltx-sdr2hdr-hdr" => "scene-linear-rec709",
+        // NM1.1 D9: Alpha Gen's frames are a MATTE — R carries the alpha, linear 0..1 —
+        // not picture content; the label keeps them from being graded as an image.
+        OutputKind::ExrFrames if job.template_id == "ltx-alpha-hdr" => "matte-linear",
         OutputKind::ExrFrames => "linear-rec709",
         OutputKind::ExrSequence => COLOUR_ENCODING,
     }

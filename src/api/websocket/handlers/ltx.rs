@@ -14,7 +14,7 @@
 use crate::api::server::ApiServer;
 use crate::ltx::attestation::EnvMeta;
 use crate::ltx::client::Progress;
-use crate::ltx::template::Bounds;
+use crate::ltx::template::{check_template_rules, Bounds, TemplateEntry};
 use crate::ltx::types::{FrameManifest, LtxJob, OutputKind};
 use crate::ltx::{attestation, exr, patcher, submit, ComfyClient};
 use ethers::types::U256;
@@ -273,6 +273,36 @@ fn validate_duration(job: &LtxJob) -> Result<(), String> {
     Ok(())
 }
 
+/// NM1 D21: the job's LENGTH against its template. `frameGrid` templates take exact
+/// LTX frame counts — on the 8k+1 grid (LTX keeps `8·floor((in−1)/8)+1` frames) and
+/// within the entry's `maxFrames` — so 25 fps lengths such as 121 (4.8 s) bill
+/// exactly what is delivered; every other template, and an unknown one, keeps the
+/// whole-second rule. The bundle's frame minimum and maximum are checked earlier by
+/// `validate_bounds`, and the fps list by `check_template_rules`: this is length only.
+pub fn check_length(entry: Option<&TemplateEntry>, job: &LtxJob) -> Result<(), String> {
+    match entry {
+        Some(e) if e.frame_grid == Some(true) => {
+            let on_grid = job.frames.checked_sub(1).is_some_and(|n| n % 8 == 0);
+            if !on_grid {
+                return Err(format!(
+                    "frames {} is not on LTX's frame grid (8k+1) for {}",
+                    job.frames, e.template_id
+                ));
+            }
+            if let Some(max) = e.max_frames {
+                if job.frames > max {
+                    return Err(format!(
+                        "{} frames is over the {max}-frame maximum for {}",
+                        job.frames, e.template_id
+                    ));
+                }
+            }
+            Ok(())
+        }
+        _ => validate_duration(job),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler: validate + accept (immediate ack) or reject
 // ---------------------------------------------------------------------------
@@ -328,11 +358,20 @@ pub async fn handle_encrypted_ltx_generate(
     if !validate_bounds(&job, &store.bundle().bounds) {
         return reject("VALIDATION_FAILED", "job params out of allow-list bounds");
     }
-    // Clip-duration contract (5..=15 s, exact whole seconds at the job's fps) —
-    // enforced after the bundle bounds so fps membership / frame min-max fire
-    // first with their own message.
-    if let Err(msg) = validate_duration(&job) {
+    // Clip-length contract — enforced after the bundle bounds so fps membership /
+    // frame min-max fire first with their own message. Whole seconds (5..=15 s)
+    // for most templates; exact LTX frame counts for `frameGrid` ones (D21).
+    let entry = store.entry(&job.template_id);
+    if let Err(msg) = check_length(entry, &job) {
         return reject("VALIDATION_FAILED", &msg);
+    }
+    // The template's own rules (D7): its fps list, maxFrames and resolution rule.
+    if let Some(e) = entry {
+        if let Err(msg) =
+            check_template_rules(e, job.resolution.w, job.resolution.h, job.fps, job.frames)
+        {
+            return reject("VALIDATION_FAILED", &msg);
+        }
     }
     // Guide-strength contract: finite, (0, 1]. Enforced BEFORE a slot or the
     // deposit is spent; the patcher separately fails closed when a strength is
@@ -708,7 +747,7 @@ async fn stage_input(
     cid: &str,
     kind: &str,
     ext: &str,
-    check: impl Fn(&[u8]) -> Result<(), String>,
+    mut check: impl FnMut(&[u8]) -> Result<(), String>,
 ) -> Result<(String, [u8; 32]), String> {
     let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(blob_source, cid)
         .await
@@ -746,6 +785,24 @@ async fn stage_input(
 /// The clip's fps must still match the job exactly (conditioning + output
 /// timing derive from it); the TS helper enforces that via ffprobe.
 pub fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), String> {
+    check_control_video_exact(plaintext, billed_frames, false)
+}
+
+/// NM1 D3: does the exact control-length rule apply? Only where the template caps
+/// the control clip at the billed frames (`exactControl`) AND LTX can deliver every
+/// billed frame — `(billed − 1) % 8 == 0`, since LTX keeps `8·floor((in−1)/8)+1`.
+pub fn exact_applies(exact_control: bool, billed: u32) -> bool {
+    exact_control && billed.checked_sub(1).is_some_and(|n| n % 8 == 0)
+}
+
+/// [`check_control_video`] with the D3 rule: when `exact`, the clip must carry
+/// AT LEAST the billed frame count (a clip one short would deliver one frame
+/// short of what was billed); otherwise today's billed − 1 floor applies.
+pub fn check_control_video_exact(
+    plaintext: &[u8],
+    billed_frames: u32,
+    exact: bool,
+) -> Result<(), String> {
     if plaintext.len() < 12 || &plaintext[4..8] != b"ftyp" {
         return Err("input video is not an mp4 (ISO BMFF) container".to_string());
     }
@@ -753,11 +810,15 @@ pub fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), S
         format!("input video frame count unreadable ({e}) — refusing unbounded render")
     })?;
     let billed = u64::from(billed_frames);
-    if samples + 1 < billed {
+    let need = if exact {
+        billed
+    } else {
+        billed.saturating_sub(1)
+    };
+    if samples < need {
         return Err(format!(
             "control video has {samples} frame(s) but the job bills {billed} — \
-             the clip must carry at least {} frame(s) at the job's fps",
-            billed.saturating_sub(1)
+             the clip must carry at least {need} frame(s) at the job's fps"
         ));
     }
     Ok(())
@@ -770,6 +831,7 @@ async fn prepare_inputs(
     image_hashes: &mut Vec<[u8; 32]>,
     video_hashes: &mut Vec<[u8; 32]>,
     deep_total_cap: u64,
+    exact: bool,
 ) -> Result<crate::ltx::Graph, String> {
     let images = job.images.as_deref().unwrap_or_default();
     let videos = job.videos.as_deref().unwrap_or_default();
@@ -785,6 +847,7 @@ async fn prepare_inputs(
         image_hashes.push(hash);
     }
     let mut video_names = Vec::with_capacity(videos.len());
+    let mut silent_videos: Vec<String> = Vec::new();
     if job.input_wire.is_some() {
         // Deep-conform wire, transport v2 (v8.44.2): videos[0] decrypts to a
         // small JSON manifest listing per-frame capability CIDs in delivery
@@ -826,16 +889,34 @@ async fn prepare_inputs(
         video_hashes.push(hash);
     } else {
         for cid in videos {
+            // NM1 D23: can this clip's audio pass through the pinned graphs? Read on the same
+            // plaintext as the control gate; an unreadable audio walk counts as "cannot" (the
+            // pass-through is dropped, never a refusal — Jules: no error in any mode).
+            let mut keep_audio = false;
             let (name, hash) =
                 stage_input(client, &blob_source, cid, "video", "mp4", |plaintext| {
-                    check_control_video(plaintext, job.frames)
+                    check_control_video_exact(plaintext, job.frames, exact)?;
+                    keep_audio =
+                        crate::ltx::mp4::audio_passthrough_ok(plaintext).unwrap_or_else(|e| {
+                            warn!(
+                                "control clip audio unreadable ({e}) — dropping its pass-through"
+                            );
+                            false
+                        });
+                    Ok(())
                 })
                 .await?;
+            if !keep_audio {
+                silent_videos.push(name.clone());
+            }
             video_names.push(name);
             video_hashes.push(hash);
         }
     }
-    patcher::patch(&graph, job, &image_names, &video_names)
+    let patched = patcher::patch(&graph, job, &image_names, &video_names)
+        .map_err(|e| format!("input patch failed: {e}"))?;
+    // D23: AFTER patch (it matches the staged names `patch` wrote into the loaders).
+    patcher::drop_silent_audio(&patched, &silent_videos)
         .map_err(|e| format!("input patch failed: {e}"))
 }
 
@@ -918,6 +999,47 @@ impl LtxGenerateTask {
                         None => {}
                     }
                 }
+                // D20: the session must have been opened for THIS template's
+                // model — settlement pays at the session's model price — and be
+                // one this node's proof can land on (Active, this host's, its
+                // deposit covering the job), or the clip delivers free. Checked
+                // before any input is staged or GPU work starts; skipped where the
+                // server has no checkpoint manager (tests, plaintext mode), as
+                // checkpoint submission is.
+                if let Some(cm) = server.get_checkpoint_manager().await {
+                    let tracked = match job_id {
+                        Some(jid) => server
+                            .ltx_tracker()
+                            .get_job_info(jid)
+                            .await
+                            .map_or(0, |info| info.total_tokens),
+                        None => 0,
+                    };
+                    let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
+                    if let Err(e) = crate::ltx::template::session_gate(
+                        job_id,
+                        &job.template_id,
+                        tokens,
+                        tracked,
+                        &cm.get_host_address(),
+                        |jid| cm.query_session_model(jid),
+                        |jid| cm.query_session_jobs_raw(jid),
+                    )
+                    .await
+                    {
+                        send_err(&progress_tx, "VALIDATION_FAILED", &e, key, sid, rid).await;
+                        return;
+                    }
+                }
+                // D3: whether this job's control clip must carry every billed
+                // frame, from the template's advertised `exactControl`. No store
+                // (`ApiServer::new_for_test()`) → false: never a refusal.
+                let exact = match server.get_ltx_template_store().await {
+                    Some(store) => store
+                        .entry(&job.template_id)
+                        .is_some_and(|e| exact_applies(e.exact_control == Some(true), job.frames)),
+                    None => false,
+                };
                 // Conditioned templates: fetch each input image/video from S5,
                 // upload to ComfyUI, patch the LoadImage/LoadVideo nodes, and
                 // collect the per-input `keccak256(plaintext)` for the v2/v3
@@ -931,6 +1053,7 @@ impl LtxGenerateTask {
                     &mut image_hashes,
                     &mut video_hashes,
                     deep_total_cap,
+                    exact,
                 )
                 .await
                 {
@@ -1030,7 +1153,7 @@ impl LtxGenerateTask {
                 // 3. EXR pipeline. Enumerate THIS prompt's outputs (scoped by prompt_id) —
                 // NOT a glob of the shared output dir, which would leak other concurrent
                 // jobs' frames into this manifest/capability set.
-                let output_refs_raw = match client.outputs(&prompt_id).await {
+                let output_refs = match client.outputs(&prompt_id).await {
                     Ok(r) => r,
                     Err(e) => {
                         send_err(
@@ -1045,12 +1168,9 @@ impl LtxGenerateTask {
                         return;
                     }
                 };
-                // Keep only final "output" frames (drop "temp" previews) so a preview can't
-                // pollute the manifest or trip the count check.
-                let mut output_refs = output_refs_raw;
-                output_refs.retain(|r| r.type_ == "output");
-                // Deterministic order (ComfyUI writes zero-padded frame indices).
-                output_refs.sort_by(|a, b| a.filename.cmp(&b.filename));
+                // `outputs()` already returned only the deliverables, sorted (NM1 D22's ONE
+                // filter, shared with the live test): no "temp" preview or uploaded "input"
+                // clip can pollute the manifest or trip the count check.
                 // A2 (EXR masters): for `exr-frames` jobs, enforce the delivery
                 // convention — frames[0] = the preview mp4, frames[1..] = the EXR
                 // sequence in filename order, EXR count == billed frames (fail

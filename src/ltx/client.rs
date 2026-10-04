@@ -232,7 +232,8 @@ impl ComfyClient {
         }
     }
 
-    /// GET `/history/{prompt_id}`; returns the produced EXR file references.
+    /// GET `/history/{prompt_id}`; returns the job's DELIVERABLE file references (outputs only,
+    /// sorted — [`deliverable_refs`], NM1 D22).
     pub async fn outputs(&self, prompt_id: &str) -> Result<Vec<ExrRef>> {
         let url = format!("{}/history/{}", self.endpoint, prompt_id);
         let response = self.client.get(&url).send().await?;
@@ -240,7 +241,7 @@ impl ComfyClient {
             return Err(anyhow!("comfyui /history returned {}", response.status()));
         }
         let body: Value = response.json().await?;
-        Ok(parse_history(&body, prompt_id))
+        Ok(deliverable_refs(parse_history(&body, prompt_id)))
     }
 
     /// GET `/view` for one rendered output file; returns its raw bytes. Lets the
@@ -313,6 +314,18 @@ pub fn parse_progress(frame: &Value) -> Option<Progress> {
         "executed" => Some(Progress::Executed),
         _ => None,
     }
+}
+
+/// The deliverables among a job's history entries: only `type == "output"` files (ComfyUI also
+/// lists `temp` previews and — since core 0.38 — the UPLOADED control clip as `type: "input"`
+/// under its `LoadVideo` node), sorted by filename (ComfyUI writes zero-padded frame indices).
+/// The ONE delivery filter (NM1 D22): [`ComfyClient::outputs`] returns it, so the handler and the
+/// live test judge exactly the same refs — before D22 the handler filtered inline and the live
+/// test did not, which is where E-NM1.0's "2 refs" came from.
+pub fn deliverable_refs(mut raw: Vec<ExrRef>) -> Vec<ExrRef> {
+    raw.retain(|r| r.type_ == "output");
+    raw.sort_by(|a, b| a.filename.cmp(&b.filename));
+    raw
 }
 
 /// Parse a `/history/{prompt_id}` body into ordered output file refs (pure).

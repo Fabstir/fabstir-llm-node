@@ -30,8 +30,10 @@ const FLF2V_TEMPLATE_HASH: &str =
 /// "Return type mismatch between linked nodes" (caught live, session 847: the
 /// video branch was ignored and the run produced no frames). Widget PATCHING is
 /// unaffected — the patcher writes a JSON number into the `value` leaf either way.
+/// Re-pinned NM1 (D2/D3): MoGe `refine_steps` 3, the slice takes Duration + 1 s, and an
+/// `ImageFromBatch` capped by the "Frame Count" handle feeds all four former consumers.
 const ICLORA_TEMPLATE_HASH: &str =
-    "0x3fbd6084d1d0e9a953569632df75e0ed07e95cd96be44894de3921e2ea4316fb";
+    "0x130a582034c920f6580d337a72775e8c8a6d8c940e7fe21e618615b14457afe1";
 /// BL4 template hashes (authored at V1 from the live-proven host exports in
 /// docs/archive/comfyui/: outpaint ef5d632ed2c5, edit 1fb07c3b4b99, restore
 /// 558cc012978d). One shared 30-node spine — dev-fp8 + distilled-384 + mode
@@ -57,7 +59,10 @@ const RESTORE_TEMPLATE_HASH: &str =
 // truncates for everyone else — 1088/1408 are their renderable neighbours.
 // v15 (2026-07-18) added the ingredients lora advert; v16 adds ltx-water-hdr +
 // ltx-daynight-hdr and their lora ids.
-const BUNDLE_HASH: &str = "0xc5d91799574dc359f5f7b375c276e79bcf15adbdd5441e312aba0dce276a0a78";
+// v26 (NM1): the sdr2hdr and iclora re-pins, exactControl on iclora and the six edit-family
+// templates, ltx-alpha-hdr + ltx-layout-hdr with their rules, and three new lora adverts
+// (crossview, alpha, layout).
+const BUNDLE_HASH: &str = "0x9aa3afba92e431283286fb5081f88749d543c49e6d0cd8d98790fa0212a4ef4f";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -412,10 +417,14 @@ fn test_iclora_handles() {
         .find(|(_, n)| title_of(n).as_deref() == Some("Duration"))
         .map(|(id, _)| id.clone())
         .unwrap();
+    // NM1 D3 (sanctioned update): the slice now takes Duration + 1 s through a math
+    // node, so a clip of billed frames or more always reaches the frame cap.
+    let slice_dur = v.pointer("/692/inputs/duration").expect("Video Slice duration");
+    let mid = slice_dur[0].as_str().expect("duration is a link").to_string();
     assert_eq!(
-        v.pointer("/692/inputs/duration"),
+        v.pointer(&format!("/{mid}/inputs/values.a")),
         Some(&serde_json::json!([did, 0])),
-        "Duration drives Video Slice.duration"
+        "Duration drives Video Slice.duration through Duration + 1"
     );
 
     // Seed lives in the plain KSampler (no RandomNoise anywhere) — the target of
@@ -831,8 +840,9 @@ fn test_bundle_v17_has_crossview() {
 
 // ── Mode 13 (ltx-sdr2hdr-hdr, EXECUTION-MODE13-HDR.md) ──────────────────────
 
+/// Re-pinned NM1 (D2): `transfer: "logc3"` on the HDR decode, `bit_depth: 8` on the preview.
 const SDR2HDR_TEMPLATE_HASH: &str =
-    "0xb18cecd50b0d66a8986c3e1c26b0f271932b09ddde95ec993696aa233901612a";
+    "0xe6a553ba351b670e8afe98b930e9c14f11a0880cff78b831e0538843ac6a5b38";
 
 #[test]
 fn test_bundle_v23_has_sdr2hdr() {
@@ -934,4 +944,471 @@ fn test_sdr2hdr_colour_encoding_is_scene_linear() {
     assert_eq!(colour_encoding_for(&job), "scene-linear-rec709");
     job.template_id = "ltx-edit-hdr".to_string();
     assert_eq!(colour_encoding_for(&job), "linear-rec709");
+}
+
+#[test]
+fn test_alpha_colour_encoding_is_matte_linear() {
+    // NM1.1 D9: Alpha Gen's EXR frames are a MATTE (R carries the alpha), not picture
+    // content — the manifest says so, so nothing grades them as an image.
+    use fabstir_llm_node::ltx::exr::colour_encoding_for;
+    use fabstir_llm_node::ltx::types::{LtxJob, OutputKind, Resolution};
+    let mut job = LtxJob {
+        template_id: "ltx-alpha-hdr".to_string(),
+        template_hash: "0x00".to_string(),
+        prompt: String::new(),
+        seed: "1".to_string(),
+        frames: 121,
+        fps: 25,
+        resolution: Resolution { w: 1920, h: 1088 },
+        lora: "ltx-alpha-hdr@v1".to_string(),
+        output: OutputKind::ExrFrames,
+        images: None,
+        videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
+        input_wire: None,
+    };
+    assert_eq!(colour_encoding_for(&job), "matte-linear");
+    // only the EXR frames are a matte: the legacy single-artefact constant is untouched
+    job.output = OutputKind::ExrSequence;
+    assert_ne!(colour_encoding_for(&job), "matte-linear");
+}
+
+// ── NM1 D7 / D21: per-template rules ──────────────────────────────────────────
+
+/// A synthetic entry carrying NO rules; each test sets exactly one field so only
+/// that rule can fire (the real values are pinned by `test_new_mode_rules_values`).
+fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
+    fabstir_llm_node::ltx::template::TemplateEntry {
+        template_id: id.to_string(),
+        template_hash: "0x00".to_string(),
+        image_inputs: 0,
+        image_semantics: vec![],
+        video_inputs: 1,
+        video_semantics: vec![],
+        fps: None,
+        max_frames: None,
+        resolution_rule: None,
+        exact_control: None,
+        frame_grid: None,
+    }
+}
+
+#[test]
+fn test_template_rules_enforced() {
+    use fabstir_llm_node::ltx::template::check_template_rules;
+
+    // fps list: 25 refused for [24], 24 accepted.
+    let mut e = bare_entry("synthetic-fps");
+    e.fps = Some(vec![24]);
+    let err = check_template_rules(&e, 768, 512, 25, 121).unwrap_err();
+    assert!(err.contains("fps"), "{err}");
+    assert!(check_template_rules(&e, 768, 512, 24, 121).is_ok());
+
+    // maxFrames: 169 refused for 145, 145 accepted.
+    let mut e = bare_entry("synthetic-max");
+    e.max_frames = Some(145);
+    let err = check_template_rules(&e, 768, 512, 25, 169).unwrap_err();
+    assert!(err.contains("145"), "{err}");
+    assert!(check_template_rules(&e, 768, 512, 25, 145).is_ok());
+
+    // div64-fhd: 1280×720 refused (720 is not /64), 768×512 and 1920×1088 accepted,
+    // 2560×1408 refused (over full HD's area even though /64).
+    let mut e = bare_entry("synthetic-res");
+    e.resolution_rule = Some("div64-fhd".to_string());
+    let err = check_template_rules(&e, 1280, 720, 24, 121).unwrap_err();
+    assert!(err.contains("1280x720"), "{err}");
+    assert!(check_template_rules(&e, 768, 512, 24, 121).is_ok());
+    assert!(check_template_rules(&e, 1920, 1088, 24, 121).is_ok());
+    assert!(check_template_rules(&e, 1088, 1920, 24, 121).is_ok());
+    assert!(check_template_rules(&e, 2560, 1408, 24, 121).is_err());
+
+    // An unknown rule name fails closed rather than allowing everything.
+    let mut e = bare_entry("synthetic-unknown");
+    e.resolution_rule = Some("div128-uhd".to_string());
+    assert!(check_template_rules(&e, 768, 512, 24, 121).is_err());
+
+    // No fields → no restriction.
+    assert!(check_template_rules(&bare_entry("synthetic-none"), 3840, 2176, 50, 751).is_ok());
+}
+
+/// A job with the given length, as tests/ltx/test_patcher.rs:314's builder.
+fn job_frames_fps(frames: u32, fps: u32) -> fabstir_llm_node::ltx::types::LtxJob {
+    use fabstir_llm_node::ltx::types::{LtxJob, OutputKind, Resolution};
+    LtxJob {
+        template_id: "ltx-alpha-hdr".to_string(),
+        template_hash: "0x00".to_string(),
+        prompt: String::new(),
+        seed: "1".to_string(),
+        frames,
+        fps,
+        resolution: Resolution { w: 1920, h: 1088 },
+        lora: "ltx-alpha-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+        images: None,
+        videos: None,
+        strength: None,
+        azimuth: None,
+        elevation: None,
+        distance: None,
+        input_wire: None,
+    }
+}
+
+#[test]
+fn test_frame_grid_lengths() {
+    use fabstir_llm_node::api::websocket::handlers::ltx::check_length;
+
+    let mut grid = bare_entry("synthetic-grid");
+    grid.frame_grid = Some(true);
+    grid.max_frames = Some(145);
+    // On LTX's 8k+1 grid at 25 fps: 121 (4.8 s) and 145 (5.76 s) accepted.
+    assert!(check_length(Some(&grid), &job_frames_fps(121, 25)).is_ok());
+    assert!(check_length(Some(&grid), &job_frames_fps(145, 25)).is_ok());
+    // 126 (25 fps 5 s) is off the grid; 169 is on it but over maxFrames.
+    assert!(check_length(Some(&grid), &job_frames_fps(126, 25)).is_err());
+    assert!(check_length(Some(&grid), &job_frames_fps(169, 25)).is_err());
+    // An entry without frameGrid keeps the whole-second rule: 121 at 25 fps is 4 s.
+    assert!(check_length(Some(&bare_entry("synthetic-seconds")), &job_frames_fps(121, 25)).is_err());
+    assert!(check_length(None, &job_frames_fps(121, 25)).is_err());
+    assert!(check_length(None, &job_frames_fps(126, 25)).is_ok());
+}
+
+
+// ── NM1 D2/D3: the two edited 2.3 templates, and the eleven that must not change ──
+
+fn template_json(id: &str) -> serde_json::Value {
+    let raw = std::fs::read(format!("{DIR}/{id}/v1.json")).unwrap();
+    serde_json::from_slice(&raw).unwrap()
+}
+
+/// The ids of every node of `class` in a graph.
+fn ids_of(g: &serde_json::Value, class: &str) -> Vec<String> {
+    g.as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, n)| n.get("class_type").and_then(|c| c.as_str()) == Some(class))
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
+fn only(g: &serde_json::Value, class: &str) -> String {
+    let ids = ids_of(g, class);
+    assert_eq!(ids.len(), 1, "expected exactly one {class}, found {ids:?}");
+    ids[0].clone()
+}
+
+fn titled(g: &serde_json::Value, title: &str) -> Vec<String> {
+    g.as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, n)| n.pointer("/_meta/title").and_then(|t| t.as_str()) == Some(title))
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
+#[test]
+fn test_unedited_hashes_frozen() {
+    // INDEPENDENT literals of the v25 hashes (not the shared golden constants, so a
+    // sanctioned re-pin cannot hide an edit). flf2v first: it is the helper's
+    // startup probe, and any change locks out every older helper.
+    let frozen = [
+        ("ltx-flf2v-hdr", "0xd09fd1325947906d2de26666e45cebd19256e1b6a4730ff3e621fb4137a3b6bf"),
+        ("ltx-t2v-hdr", "0x74ccf9abe4423f908357cb8da2f3a0f6475ec33b129032795d01efbbc79a9f94"),
+        ("ltx-i2v-hdr", "0xbb8c30fcd45f372ce4ed75428fb97fb09c9a3a479215cd7b03af99fddc04d1bb"),
+        ("ltx-outpaint-hdr", "0xdf3e88489d4f73b89c6c3081e8a3929fe8b512e2773013199a504fb7a0bc0f6c"),
+        ("ltx-edit-hdr", "0xf933e8a49781a900c71f19b50b0d704ca7d911645afb488dec213cd5174dfaac"),
+        ("ltx-restore-hdr", "0x5c3344c7260549c1aa6fee5daba4e1d9cb19a4c9c81cf546a0a2fac85c6b2b5c"),
+        ("ltx-upscale-hdr", "0xa36ed9d96fc264b8d97cd03a4628dd1c30161a6a83a7442185c9f58945aaffb5"),
+        ("ltx-ingredients-hdr", "0x9c1a9a0cc84bfd3e79c325cec593e8f838fca4a3eb0f7079b9529f6c53a7c9dc"),
+        ("ltx-water-hdr", "0xc19ed1d99ae6e7fd214afb9ecb10b50f096a137b0c9a0f207e83fc982828ba39"),
+        ("ltx-daynight-hdr", "0xcc1ea6b5eec43f3896fbcd70d2d174c558fcf11546ca73300de328bbad260c74"),
+        ("ltx-crossview-hdr", "0x411f192cffc8417788f2710eb305477427a84a94c3b2e79ae4f22276d80c35ad"),
+    ];
+    let store = TemplateStore::new(DIR).unwrap();
+    for (id, hash) in frozen {
+        assert_eq!(store.template_hash(id), Some(hash), "{id} changed — NM1 edits only sdr2hdr and iclora");
+    }
+}
+
+#[test]
+fn test_sdr2hdr_transfer_logc3() {
+    // D2: the 2.5-era LTXVideo pin reads the HDR LoRA's output as LogC3; without the
+    // pin the masters are decoded under the wrong curve on the new image.
+    let g = template_json("ltx-sdr2hdr-hdr");
+    let post = only(&g, "LTXVHDRDecodePostprocess");
+    assert_eq!(g[&post]["inputs"]["transfer"], "logc3");
+}
+
+#[test]
+fn test_sdr2hdr_bit_depth_pinned() {
+    let g = template_json("ltx-sdr2hdr-hdr");
+    let cv = only(&g, "CreateVideo");
+    assert_eq!(g[&cv]["inputs"]["bit_depth"], 8);
+}
+
+#[test]
+fn test_iclora_moge_refine_steps() {
+    let g = template_json("ltx-iclora-hdr");
+    let moge = only(&g, "MoGeInference");
+    assert_eq!(g[&moge]["inputs"]["refine_steps"], 3);
+}
+
+#[test]
+fn test_iclora_frame_cap() {
+    let g = template_json("ltx-iclora-hdr");
+    // ImageFromBatch(image ← GetVideoComponents 697:70 slot 0, batch_index 0,
+    // length ← INTConstant "Frame Count", which the patcher fills with billed frames).
+    let ifb = only(&g, "ImageFromBatch");
+    let fc = titled(&g, "Frame Count");
+    assert_eq!(fc.len(), 1, "exactly one Frame Count handle");
+    assert_eq!(g[&fc[0]]["class_type"], "INTConstant");
+    assert_eq!(g[&ifb]["inputs"]["image"], serde_json::json!(["697:70", 0]));
+    assert_eq!(g[&ifb]["inputs"]["batch_index"], 0);
+    assert_eq!(g[&ifb]["inputs"]["length"], serde_json::json!([fc[0], 0]), "length is wired, not a literal");
+    // All four former consumers of 697:70 slot 0 now read the capped batch.
+    for (node, input) in [("697:37", "image"), ("697:40", "images"), ("697:42", "on_false"), ("697:53", "on_false")] {
+        assert_eq!(g[node]["inputs"][input], serde_json::json!([ifb, 0]), "{node}.{input}");
+    }
+    // ...and nothing else still reads the uncapped frames.
+    for (id, n) in g.as_object().unwrap() {
+        if *id == ifb {
+            continue;
+        }
+        for (k, v) in n["inputs"].as_object().unwrap() {
+            assert_ne!(v, &serde_json::json!(["697:70", 0]), "{id}.{k} still reads 697:70 slot 0");
+        }
+    }
+    // The slice takes Duration + 1 s, so a clip of billed frames always reaches the cap.
+    let slice = g["692"]["inputs"]["duration"][0].as_str().unwrap().to_string();
+    assert_eq!(g[&slice]["class_type"], "ComfyMathExpression");
+    assert_eq!(g[&slice]["inputs"]["expression"], "a + 1");
+    let dur = titled(&g, "Duration");
+    assert_eq!(g[&slice]["inputs"]["values.a"], serde_json::json!([dur[0], 0]));
+    assert_eq!(g["692"]["inputs"]["duration"], serde_json::json!([slice, 0]), "output slot 0 (FLOAT)");
+}
+
+// ── NM1 D8 / D10: the two new 2.5 templates ───────────────────────────────────
+
+/// Node classes that write output. A template's sinks are exactly these nodes.
+const OUTPUT_CLASSES: &[&str] = &[
+    "SaveImage",
+    "PreviewImage",
+    "SaveVideo",
+    "SaveAnimatedWEBP",
+    "SaveAnimatedPNG",
+    "VHS_VideoCombine",
+    "RadianceDigitalCinemaWrite",
+];
+
+fn sinks(g: &serde_json::Value) -> Vec<String> {
+    let mut classes: Vec<String> = g
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(|n| n["class_type"].as_str())
+        .filter(|c| OUTPUT_CLASSES.contains(c))
+        .map(String::from)
+        .collect();
+    classes.sort();
+    classes
+}
+
+#[test]
+fn test_alpha_template_structure() {
+    let g = template_json("ltx-alpha-hdr");
+    // No Radiance gamma wrapper: its Out node squares soft matte edges.
+    assert!(ids_of(&g, "Float32ColorCorrect").is_empty(), "no Float32ColorCorrect");
+    // Exactly one preview movie and one EXR sink — nothing else writes output.
+    assert_eq!(sinks(&g), vec!["RadianceDigitalCinemaWrite", "VHS_VideoCombine"]);
+    // The EXR master is fed DIRECTLY from the decode, linear, 16-bit half.
+    let dec = only(&g, "VAEDecodeTiled");
+    let exr = titled(&g, "exr_output");
+    assert_eq!(exr.len(), 1);
+    assert_eq!(g[&exr[0]]["class_type"], "RadianceDigitalCinemaWrite");
+    assert_eq!(g[&exr[0]]["inputs"]["image"], serde_json::json!([dec, 0]), "exr_output fed by the decode");
+    assert_eq!(g[&exr[0]]["inputs"]["output_color_space"], "Linear (sRGB)");
+    assert_eq!(g[&exr[0]]["inputs"]["bit_depth"], "16-bit Half Float");
+    assert_eq!(g[&exr[0]]["inputs"]["broadcast_safe"], false);
+    // The preview has no audio input, so the loader never extracts audio.
+    let vc = only(&g, "VHS_VideoCombine");
+    assert_eq!(g[&vc]["_meta"]["title"], "video_output");
+    assert!(g[&vc]["inputs"].get("audio").is_none(), "preview carries no audio input");
+    // IC-LoRA guide: no tiled encode; latent_downscale_factor WIRED from the loader.
+    let loader = only(&g, "LTXICLoRALoaderModelOnly");
+    assert_eq!(g[&loader]["inputs"]["lora_name"], "ltx-2.5-22b-ic-lora-alpha-gen-0.9.safetensors");
+    assert_eq!(g[&loader]["inputs"]["strength_model"], 1.0);
+    for guide in ids_of(&g, "LTXAddVideoICLoRAGuide") {
+        assert_eq!(g[&guide]["inputs"]["use_tiled_encode"], false);
+        assert_eq!(g[&guide]["inputs"]["latent_downscale_factor"], serde_json::json!([loader, 1]));
+    }
+    let resize = only(&g, "ImageResizeKJv2");
+    assert_eq!(g[&resize]["inputs"]["keep_proportion"], "pad");
+    // D6: one temporal pass.
+    assert!(g[&dec]["inputs"]["temporal_size"].as_u64().unwrap() >= 4096);
+    assert_eq!(g[&dec]["inputs"]["tile_size"], 512);
+    assert_eq!(g[&dec]["inputs"]["overlap"], 64);
+    assert_eq!(g[&dec]["inputs"]["temporal_overlap"], 8);
+    assert!(ids_of(&g, "VAEDecode").is_empty(), "no plain decode (silent tiled fallback)");
+    // D21: length comes from the loaded frames, never a Duration handle.
+    assert!(titled(&g, "Duration").is_empty());
+    // Empty prompt (the model card: always empty).
+    assert_eq!(g[&titled(&g, "Prompt")[0]]["inputs"]["text"], "");
+}
+
+#[test]
+fn test_layout_template_structure() {
+    let g = template_json("ltx-layout-hdr");
+    // Movie only: no EXR sink, exactly one movie sink.
+    assert!(titled(&g, "exr_output").is_empty(), "EXR is refused for Layout to Render");
+    assert_eq!(sinks(&g), vec!["SaveVideo"]);
+    assert_eq!(g[&only(&g, "SaveVideo")]["_meta"]["title"], "video_output");
+    // D6 decode.
+    let dec = only(&g, "VAEDecodeTiled");
+    assert!(g[&dec]["inputs"]["temporal_size"].as_u64().unwrap() >= 4096);
+    assert_eq!(g[&dec]["inputs"]["temporal_overlap"], 8);
+    assert!(ids_of(&g, "VAEDecode").is_empty());
+    // Video only: no audio latent anywhere.
+    for cls in ["LTXVEmptyLatentAudio", "LTXVConcatAVLatent", "LTXVAudioVAELoader"] {
+        assert!(ids_of(&g, cls).is_empty(), "{cls} present");
+    }
+    // Two stages, guides re-added on each: layout at frame 0 (crop disabled), look
+    // still at frame -1 (crop center); stage 1 takes the loader's downscale factor,
+    // stage 2 a literal 1.
+    let loader = only(&g, "LTXICLoRALoaderModelOnly");
+    assert_eq!(g[&loader]["inputs"]["lora_name"], "ltx-2.5-22b-ic-lora-layout-to-render-1.0.safetensors");
+    let guides = ids_of(&g, "LTXAddVideoICLoRAGuide");
+    assert_eq!(guides.len(), 4);
+    let still = only(&g, "LoadImage");
+    let mut wired = 0;
+    let mut literal = 0;
+    for id in &guides {
+        let n = &g[id]["inputs"];
+        assert_eq!(n["use_tiled_encode"], false);
+        if n["image"] == serde_json::json!([still, 0]) {
+            assert_eq!(n["frame_idx"], -1);
+            assert_eq!(n["crop"], "center");
+        } else {
+            assert_eq!(n["frame_idx"], 0);
+            assert_eq!(n["crop"], "disabled");
+        }
+        if n["latent_downscale_factor"] == serde_json::json!([loader, 1]) {
+            wired += 1;
+        } else {
+            assert_eq!(n["latent_downscale_factor"], 1);
+            literal += 1;
+        }
+    }
+    assert_eq!((wired, literal), (2, 2), "stage 1 wired, stage 2 literal 1");
+    assert!(titled(&g, "Duration").is_empty());
+}
+
+#[test]
+fn test_new_mode_rules_values() {
+    let store = TemplateStore::new(DIR).unwrap();
+    let alpha = store.entry("ltx-alpha-hdr").expect("alpha allow-listed");
+    assert_eq!(alpha.fps, Some(vec![24, 25]));
+    assert_eq!(alpha.max_frames, Some(145));
+    assert_eq!(alpha.resolution_rule.as_deref(), Some("div64-fhd"));
+    assert_eq!(alpha.exact_control, Some(true));
+    assert_eq!(alpha.frame_grid, Some(true));
+    assert_eq!((alpha.image_inputs, alpha.video_inputs), (0, 1));
+    assert_eq!(alpha.video_semantics, vec!["sourceVideo"]);
+    let layout = store.entry("ltx-layout-hdr").expect("layout allow-listed");
+    assert_eq!(layout.fps, Some(vec![24, 25]));
+    assert!(layout.max_frames.is_some(), "Layout carries a maxFrames");
+    assert_eq!(layout.resolution_rule.as_deref(), Some("div64-fhd"));
+    assert_eq!(layout.exact_control, Some(true));
+    assert_eq!(layout.frame_grid, Some(true));
+    assert_eq!((layout.image_inputs, layout.video_inputs), (1, 1));
+    assert_eq!(layout.image_semantics, vec!["reference"]);
+    assert_eq!(layout.video_semantics, vec!["controlVideo"]);
+    // D3 / OQ-N11: iclora and the six edit-family templates cap at billed frames.
+    for id in [
+        "ltx-iclora-hdr",
+        "ltx-edit-hdr",
+        "ltx-water-hdr",
+        "ltx-restore-hdr",
+        "ltx-daynight-hdr",
+        "ltx-outpaint-hdr",
+        "ltx-upscale-hdr",
+    ] {
+        assert_eq!(store.entry(id).unwrap().exact_control, Some(true), "{id} exactControl");
+    }
+    let loras = &store.bundle().loras;
+    for l in ["ltx-alpha-hdr@v1", "ltx-layout-hdr@v1"] {
+        assert!(loras.iter().any(|x| x == l), "{l} advertised");
+    }
+    assert_eq!(store.bundle().allow_list_version, 26);
+}
+
+#[test]
+fn test_live_templates_unrestricted() {
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    // Every pre-NM1 template carries no fps/maxFrames/resolution rule, so the rule
+    // check must accept its whole range (a missing field means NO restriction).
+    let store = TemplateStore::new(DIR).unwrap();
+    let rungs = store.bundle().bounds.resolutions.clone();
+    let mut checked = 0;
+    for e in &store.bundle().templates {
+        if e.template_id == "ltx-alpha-hdr" || e.template_id == "ltx-layout-hdr" {
+            continue;
+        }
+        for fps in [24, 25, 48, 50] {
+            for frames in [121, 241, 361, 601, 751] {
+                for r in &rungs {
+                    assert!(
+                        check_template_rules(e, r.w, r.h, fps, frames).is_ok(),
+                        "{} refused {}x{} {fps} fps {frames}",
+                        e.template_id, r.w, r.h
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn test_bundle_advertises_rules() {
+    // A temp-dir allow-list carrying every rule field: each must reach the
+    // advertised bundle (the copy at template.rs), or clients never see it.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("rules-t")).unwrap();
+    std::fs::write(
+        dir.path().join("rules-t/v1.json"),
+        br#"{"1":{"class_type":"RandomNoise","inputs":{"noise_seed":0}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("allowlist.json"),
+        br#"{"allowListVersion":1,"templates":[{"templateId":"rules-t","version":"v1",
+            "fps":[24,25],"maxFrames":145,"resolutionRule":"div64-fhd","exactControl":true,"frameGrid":true}],
+            "loras":[],"bounds":{"frames":{"min":121,"max":751},"fps":[24,25],"resolutions":[{"w":768,"h":512}]}}"#,
+    )
+    .unwrap();
+    let store = TemplateStore::new(dir.path()).unwrap();
+    let wire = serde_json::to_value(store.bundle()).unwrap();
+    let t = &wire["templates"][0];
+    assert_eq!(t["fps"], serde_json::json!([24, 25]));
+    assert_eq!(t["maxFrames"], 145);
+    assert_eq!(t["resolutionRule"], "div64-fhd");
+    assert_eq!(t["exactControl"], true);
+    assert_eq!(t["frameGrid"], true);
+    // An entry without rules serialises without the keys (byte-identical wire).
+    let plain = serde_json::to_value(TemplateStore::new(DIR).unwrap().bundle()).unwrap();
+    let t2v = plain["templates"].as_array().unwrap().iter().find(|t| t["templateId"] == "ltx-t2v-hdr").unwrap();
+    for k in ["fps", "maxFrames", "resolutionRule", "exactControl", "frameGrid"] {
+        assert!(t2v.get(k).is_none(), "t2v advertises {k}");
+    }
+}
+
+#[test]
+fn test_crossview_lora_advertised() {
+    // D4: crossview jobs commit their own LoRA id, which the bundle must advertise.
+    let store = TemplateStore::new(DIR).unwrap();
+    assert!(store.bundle().loras.iter().any(|l| l == "ltx-crossview-hdr@v1"));
 }

@@ -1,7 +1,8 @@
 // Copyright (c) 2025 Fabstir
 // SPDX-License-Identifier: BUSL-1.1
 //! Phase 4 param patcher tests, against the real pinned LTX template: substitution
-//! only, by the template's own node names/types, no structural edits.
+//! only, by the template's own node names/types, no structural edits beyond the sanctioned ones
+//! (see `src/ltx/patcher.rs`'s module doc; D23's are tested in `test_silent_audio.rs`).
 
 use fabstir_llm_node::ltx::patcher::patch;
 use fabstir_llm_node::ltx::types::{LtxJob, OutputKind, Resolution};
@@ -458,7 +459,8 @@ fn test_no_structural_edits() {
     let after = patch(&before, &job(), &[], &[]).unwrap();
     let b = before.0.as_object().unwrap();
     let a = after.0.as_object().unwrap();
-    // The ONE sanctioned structural edit (A2): the "exr_output" sink is removed
+    // A sanctioned structural edit (A2; the patcher's others are the deep swap and D23's
+    // drop_silent_audio, neither reachable from this call): the "exr_output" sink is removed
     // for jobs that did not request exr-frames. Everything else must be
     // substitution-only, so compare the id sets with that node excluded.
     let exr_ids: std::collections::BTreeSet<_> = b
@@ -1452,4 +1454,115 @@ fn sdr2hdr_legacy_job_removes_the_exr_sink() {
     let obj = g.0.as_object().unwrap();
     assert!(!obj.contains_key("90"), "legacy jobs drop exr_output");
     assert!(obj.contains_key("5109"), "the preview sink stays");
+}
+
+// ── NM1 D8 / D10: full patches of the two new 2.5 templates ──────────────────
+
+fn new_mode_graph(id: &str) -> Graph {
+    let raw = std::fs::read(format!("{DIR}/{id}/v1.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+fn by_class<'a>(g: &'a Value, class: &str) -> Vec<&'a Value> {
+    g.as_object()
+        .unwrap()
+        .values()
+        .filter(|n| n["class_type"] == class)
+        .collect()
+}
+
+fn by_title<'a>(g: &'a Value, title: &str) -> Vec<&'a Value> {
+    g.as_object()
+        .unwrap()
+        .values()
+        .filter(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
+        .collect()
+}
+
+#[test]
+fn test_patch_alpha_full() {
+    // 145 frames at 25 fps (5.76 s), 1920x1088, EXR frames, empty prompt.
+    let job = LtxJob {
+        template_id: "ltx-alpha-hdr".to_string(),
+        prompt: String::new(),
+        frames: 145,
+        fps: 25,
+        resolution: Resolution { w: 1920, h: 1088 },
+        lora: "ltx-alpha-hdr@v1".to_string(),
+        output: OutputKind::ExrFrames,
+        ..job()
+    };
+    let out = patch(&new_mode_graph("ltx-alpha-hdr"), &job, &[], &["src.mp4".to_string()]).unwrap().0;
+    assert_eq!(by_title(&out, "Prompt")[0]["inputs"]["text"], "", "empty prompt accepted");
+    let seeds = by_class(&out, "RandomNoise");
+    assert!(!seeds.is_empty());
+    for n in seeds {
+        assert_eq!(n["inputs"]["noise_seed"], 4815162342u64);
+    }
+    assert_eq!(by_title(&out, "Width")[0]["inputs"]["value"], 1920);
+    assert_eq!(by_title(&out, "Height")[0]["inputs"]["value"], 1088);
+    let loader = by_class(&out, "VHS_LoadVideo");
+    assert_eq!(loader.len(), 1);
+    assert_eq!(loader[0]["inputs"]["frame_load_cap"], 145, "frame_load_cap = billed");
+    assert_eq!(loader[0]["inputs"]["video"], "src.mp4");
+    assert_eq!(by_title(&out, "exr_output").len(), 1, "EXR frames keep the exr_output sink");
+}
+
+#[test]
+fn test_patch_layout_full() {
+    // 145 frames at 25 fps (5.76 s), 1920x1088, a prompt, the look still and the clip. The frame count
+    // and both input names differ from the values pinned in v1.json (121, "layout.mp4", "look.png"),
+    // so a patcher that never touched Layout's loader or still fails here.
+    let job = LtxJob {
+        template_id: "ltx-layout-hdr".to_string(),
+        prompt: "a weathered stone courtyard at golden hour".to_string(),
+        frames: 145,
+        fps: 25,
+        resolution: Resolution { w: 1920, h: 1088 },
+        lora: "ltx-layout-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+        ..job()
+    };
+    let out = patch(
+        &new_mode_graph("ltx-layout-hdr"),
+        &job,
+        &["ref-x.png".to_string()],
+        &["ctl-x.mp4".to_string()],
+    )
+    .unwrap()
+    .0;
+    assert_eq!(by_title(&out, "Prompt")[0]["inputs"]["text"], job.prompt);
+    let seeds = by_class(&out, "RandomNoise");
+    assert_eq!(seeds.len(), 2, "both stages seeded");
+    for n in seeds {
+        assert_eq!(n["inputs"]["noise_seed"], 4815162342u64);
+    }
+    assert_eq!(by_title(&out, "Width")[0]["inputs"]["value"], 1920);
+    assert_eq!(by_title(&out, "Height")[0]["inputs"]["value"], 1088);
+    // Stage 1 runs at exactly half the patched size: its latent's width and height
+    // come from a/2 of the Width and Height handles.
+    let obj = out.as_object().unwrap();
+    let id_of = |title: &str| {
+        obj.iter()
+            .find(|(_, n)| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
+            .map(|(k, _)| k.clone())
+            .unwrap()
+    };
+    let (w, h) = (id_of("Width"), id_of("Height"));
+    let empty = by_class(&out, "EmptyLTXVLatentVideo");
+    assert_eq!(empty.len(), 1);
+    for (axis, handle) in [("width", &w), ("height", &h)] {
+        let src = empty[0]["inputs"][axis][0].as_str().unwrap();
+        assert_eq!(obj[src]["class_type"], "ComfyMathExpression");
+        assert_eq!(obj[src]["inputs"]["expression"], "a/2");
+        assert_eq!(obj[src]["inputs"]["values.a"], serde_json::json!([handle, 0]));
+    }
+    let loader = by_class(&out, "VHS_LoadVideo");
+    assert_eq!(loader[0]["inputs"]["frame_load_cap"], 145);
+    assert_eq!(loader[0]["inputs"]["video"], "ctl-x.mp4");
+    assert_eq!(by_class(&out, "LoadImage")[0]["inputs"]["image"], "ref-x.png");
+
+    // EXR is refused for this mode: a frames request has no sink to keep.
+    let exr = LtxJob { output: OutputKind::ExrFrames, ..job };
+    assert!(patch(&new_mode_graph("ltx-layout-hdr"), &exr, &["look.png".into()], &["layout.mp4".into()]).is_err());
 }

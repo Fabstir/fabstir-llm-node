@@ -83,6 +83,26 @@ pub struct TemplateEntry {
     /// the node binds `videos[i]` to `LoadVideo` nodes. Empty ⇒ omitted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video_semantics: Vec<String>,
+    /// NM1 D7 per-template rules, advertised so clients refuse before escrow and
+    /// enforced by the node before accept ([`check_template_rules`]). A missing
+    /// field means NO restriction, and is omitted on the wire, so entries without
+    /// rules serialise byte-identically. The template's allowed fps, a subset of
+    /// the bundle's `bounds.fps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fps: Option<Vec<u32>>,
+    /// The longest job the template may run, in frames (measured on host1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_frames: Option<u32>,
+    /// A named resolution rule; `"div64-fhd"` is the only one defined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution_rule: Option<String>,
+    /// D3: the graph caps the control clip at the billed frames, so where LTX
+    /// can deliver every billed frame the clip must carry all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_control: Option<bool>,
+    /// D21: lengths are exact LTX frame counts (8k+1), not whole seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_grid: Option<bool>,
 }
 
 /// Versioned allow-list bundle: advertised in NodeRegistry metadata and echoed
@@ -123,6 +143,17 @@ struct ConfigEntry {
     video_inputs: u32,
     #[serde(default)]
     video_semantics: Vec<String>,
+    /// NM1 D7/D21 rules, copied into the advertised [`TemplateEntry`].
+    #[serde(default)]
+    fps: Option<Vec<u32>>,
+    #[serde(default)]
+    max_frames: Option<u32>,
+    #[serde(default)]
+    resolution_rule: Option<String>,
+    #[serde(default)]
+    exact_control: Option<bool>,
+    #[serde(default)]
+    frame_grid: Option<bool>,
 }
 
 /// Loads and pins the allow-listed templates at startup.
@@ -169,6 +200,11 @@ impl TemplateStore {
                 image_semantics: entry.image_semantics.clone(),
                 video_inputs: entry.video_inputs,
                 video_semantics: entry.video_semantics.clone(),
+                fps: entry.fps.clone(),
+                max_frames: entry.max_frames,
+                resolution_rule: entry.resolution_rule.clone(),
+                exact_control: entry.exact_control,
+                frame_grid: entry.frame_grid,
             });
         }
         // Canonical order so bundleHash is independent of allowlist.json ordering.
@@ -219,7 +255,8 @@ impl TemplateStore {
         self.entry(id).map(|t| t.image_inputs)
     }
 
-    fn entry(&self, id: &str) -> Option<&TemplateEntry> {
+    /// The advertised entry for `id`, rules included. `None` for an unknown id.
+    pub fn entry(&self, id: &str) -> Option<&TemplateEntry> {
         self.bundle.templates.iter().find(|t| t.template_id == id)
     }
 
@@ -233,6 +270,193 @@ impl TemplateStore {
     pub fn bundle(&self) -> &AllowListBundle {
         &self.bundle
     }
+}
+
+/// NM1 D7: refuse a job outside its template's own rules, before accept. Pure, so
+/// the integration tests reach it. A missing field restricts nothing; an unknown
+/// `resolutionRule` refuses (fail closed). Lengths on `frameGrid` templates are
+/// checked by the handler's `check_length`; `maxFrames` is checked here for every
+/// template that carries it.
+pub fn check_template_rules(
+    entry: &TemplateEntry,
+    w: u32,
+    h: u32,
+    fps: u32,
+    frames: u32,
+) -> Result<(), String> {
+    let id = &entry.template_id;
+    if let Some(allowed) = &entry.fps {
+        if !allowed.contains(&fps) {
+            return Err(format!(
+                "fps {fps} is not allowed for {id} (allowed: {allowed:?})"
+            ));
+        }
+    }
+    if let Some(max) = entry.max_frames {
+        if frames > max {
+            return Err(format!(
+                "{frames} frames is over the {max}-frame maximum for {id}"
+            ));
+        }
+    }
+    match entry.resolution_rule.as_deref() {
+        None => {}
+        Some("div64-fhd") => {
+            let fits = w % 64 == 0
+                && h % 64 == 0
+                && u64::from(w) * u64::from(h) <= 1920 * 1088
+                && w.max(h) <= 1920;
+            if !fits {
+                return Err(format!(
+                    "resolution {w}x{h} is not allowed for {id} (sides divisible by 64, at most 1920x1088)"
+                ));
+            }
+        }
+        Some(other) => {
+            return Err(format!(
+                "unknown resolution rule {other:?} for {id} — refusing"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// NM1 D20: the on-chain model id of an LTX template,
+/// `keccak256("Lightricks/LTX-Video/" + template_id)` — the derivation every live
+/// LTX model id follows.
+pub fn ltx_model_id(template_id: &str) -> [u8; 32] {
+    ethers::utils::keccak256(format!("Lightricks/LTX-Video/{template_id}").as_bytes())
+}
+
+/// NM1 D20: an LTX job must run under its OWN template's model id. Settlement pays
+/// at the session's model price, so a session opened for a cheaper model must not
+/// buy this render. `None` = the job has no on-chain id: nobody pays for the GPU
+/// work, so it is refused too. All-zero (unset) refuses.
+pub fn check_session_model(session: Option<[u8; 32]>, template_id: &str) -> Result<(), String> {
+    let Some(model) = session else {
+        return Err(format!(
+            "{template_id} job has no on-chain job id — its session model cannot be checked"
+        ));
+    };
+    if model == [0u8; 32] {
+        return Err(format!("{template_id} job's session has no model id"));
+    }
+    if model != ltx_model_id(template_id) {
+        return Err(format!(
+            "the session was opened for model 0x{}, not {template_id}'s model",
+            hex::encode(model)
+        ));
+    }
+    Ok(())
+}
+
+/// NM1 D20: the session must be one this node's proof can land on — otherwise the
+/// render delivers and the proof reverts, so the clip is free. `submitProofOfWork`
+/// reverts unless the session is Active, `msg.sender` is its host, and the
+/// cumulative claim stays within `deposit × 1000 / price` (the same terms
+/// training's A.3 gate checks, `training::accept::validate_session`).
+/// `tracked_tokens` is this node's `LtxTracker` total for the session — every
+/// clip it completed there, a forfeited one included (so it can over-count,
+/// which only ever refuses): the chain's `tokensUsed` can lag it, so the larger
+/// counts.
+pub fn check_session_terms(
+    snap: &crate::training::accept::SessionSnapshot,
+    this_host: ethers::types::Address,
+    job_tokens: u64,
+    tracked_tokens: u64,
+) -> Result<(), String> {
+    use crate::training::accept::SessionStatus;
+    use ethers::types::U256;
+    if snap.status != SessionStatus::Active {
+        return Err(format!("the session is not Active ({:?})", snap.status));
+    }
+    if snap.host != this_host {
+        return Err(format!("the session belongs to host {:?}, not this host", snap.host));
+    }
+    if snap.price_per_token.is_zero() {
+        return Err("the session has a zero price per token".to_string());
+    }
+    let capacity = snap.deposit.saturating_mul(U256::from(1000u64)) / snap.price_per_token;
+    let used = snap.tokens_used.max(U256::from(tracked_tokens));
+    let remaining = capacity.saturating_sub(used);
+    if remaining < U256::from(job_tokens) {
+        return Err(format!(
+            "the session's remaining deposit covers {remaining} tokens; this job is {job_tokens}"
+        ));
+    }
+    Ok(())
+}
+
+/// NM1 D20: the whole pre-staging session decision, with the two chain reads
+/// injected (`run()` passes `CheckpointManager::query_session_model` and
+/// `query_session_jobs_raw`). No job id → refused without reading anything; else
+/// both reads run concurrently (each retried, each attempt bounded), and the job
+/// passes only if the session's model is the template's (`check_session_model`),
+/// its record decodes (training's fixed-offset decoder, fail closed) and its terms
+/// let this node's proof land (`check_session_terms`).
+#[allow(clippy::too_many_arguments)]
+pub async fn session_gate<MF, MFut, JF, JFut>(
+    job_id: Option<u64>,
+    template_id: &str,
+    job_tokens: u64,
+    tracked_tokens: u64,
+    this_host: &str,
+    read_model: MF,
+    read_session: JF,
+) -> std::result::Result<(), String>
+where
+    MF: Fn(u64) -> MFut,
+    MFut: std::future::Future<Output = Result<[u8; 32]>>,
+    JF: Fn(u64) -> JFut,
+    JFut: std::future::Future<Output = Result<Vec<u8>>>,
+{
+    let Some(jid) = job_id else {
+        return check_session_model(None, template_id);
+    };
+    let (gap, per_attempt) = (
+        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(10),
+    );
+    let (model, raw) = tokio::join!(
+        read_with_retry(3, gap, per_attempt, || read_model(jid)),
+        read_with_retry(3, gap, per_attempt, || read_session(jid)),
+    );
+    check_session_model(Some(model?), template_id)?;
+    let snap = crate::training::accept::decode_session_snapshot(&raw?)?;
+    let host = this_host
+        .parse::<ethers::types::Address>()
+        .map_err(|e| format!("this node's host address {this_host:?} is unreadable: {e}"))?;
+    check_session_terms(&snap, host, job_tokens, tracked_tokens)
+}
+
+/// NM1 D20: one chain read, retried (`query_session_model` and
+/// `query_session_jobs_raw` are single `eth_call`s with no retry of their own),
+/// each attempt bounded by `per_attempt` — the provider has no request timeout,
+/// and an RPC that never answers would otherwise hold the job task, its VRAM
+/// permit and its pending-proof mark. Returns the last error as text after
+/// `attempts` failures — the caller then refuses, fail closed.
+pub async fn read_with_retry<T, F, Fut>(
+    attempts: u32,
+    delay: std::time::Duration,
+    per_attempt: std::time::Duration,
+    mut read: F,
+) -> std::result::Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut last = String::from("no attempt made");
+    for attempt in 0..attempts.max(1) {
+        if attempt > 0 && !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        match tokio::time::timeout(per_attempt, read()).await {
+            Ok(Ok(value)) => return Ok(value),
+            Ok(Err(e)) => last = format!("{e:#}"),
+            Err(_) => last = format!("timed out after {} s", per_attempt.as_secs()),
+        }
+    }
+    Err(format!("chain read failed after {} attempts: {last}", attempts.max(1)))
 }
 
 /// Canonical keccak256 of a JSON value: alphabetically sort all object keys (via

@@ -1,5 +1,5 @@
 {
- "allowListVersion": 25,
+ "allowListVersion": 26,
  "templates": [
   {
    "templateId": "ltx-t2v-hdr",
@@ -32,7 +32,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "controlVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-outpaint-hdr",
@@ -40,7 +41,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "controlVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-edit-hdr",
@@ -48,7 +50,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "controlVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-restore-hdr",
@@ -56,7 +59,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "controlVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-upscale-hdr",
@@ -64,7 +68,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "sourceVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-ingredients-hdr",
@@ -80,7 +85,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "controlVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-daynight-hdr",
@@ -88,7 +94,8 @@
    "videoInputs": 1,
    "videoSemantics": [
     "controlVideo"
-   ]
+   ],
+   "exactControl": true
   },
   {
    "templateId": "ltx-crossview-hdr",
@@ -105,6 +112,42 @@
    "videoSemantics": [
     "sourceVideo"
    ]
+  },
+  {
+   "templateId": "ltx-alpha-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-layout-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "reference"
+   ],
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 241,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
   }
  ],
  "loras": [
@@ -115,7 +158,10 @@
   "ltx-ingredients-hdr@v1",
   "ltx-water-hdr@v1",
   "ltx-daynight-hdr@v1",
-  "ltx-sdr2hdr-hdr@v1"
+  "ltx-sdr2hdr-hdr@v1",
+  "ltx-crossview-hdr@v1",
+  "ltx-alpha-hdr@v1",
+  "ltx-layout-hdr@v1"
  ],
  "bounds": {
   "frames": {

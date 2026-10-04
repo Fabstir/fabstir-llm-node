@@ -31,3 +31,8 @@ pub async fn mark_pending(server: &ApiServer, job_id: u64) {
         "accept gate admits the clip"
     );
 }
+
+/// `ENHANCED_S5_URL` is global to the process and read at fetch time: every test that points it at
+/// its own stub blob server holds this lock for as long as the variable must stay its own (NM1 D23 —
+/// two blob-server tests racing would cross their fetches).
+pub static S5_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

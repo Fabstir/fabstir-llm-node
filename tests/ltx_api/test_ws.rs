@@ -566,3 +566,208 @@ async fn test_camera_rejects_out_of_range_and_cameraless_templates() {
         "fail-closed reason reaches the client: {inner:?}"
     );
 }
+
+// ── NM1 D3 / D7 / D21 through the handler ────────────────────────────────────
+
+/// An Alpha Gen job (the real v26 store) with one control-video CID.
+fn alpha_job(store: &TemplateStore, frames: u32, fps: u32) -> Value {
+    json!({
+        "action": "ltx_generate",
+        "requestId": "r-alpha",
+        "templateId": "ltx-alpha-hdr",
+        "templateHash": store.template_hash("ltx-alpha-hdr").unwrap(),
+        "prompt": "",
+        "seed": "42",
+        "frames": frames,
+        "fps": fps,
+        "resolution": { "w": 1920, "h": 1088 },
+        "lora": "ltx-alpha-hdr@v1",
+        "output": "exr-frames",
+        "videos": [fixture_capability_cid()]
+    })
+}
+
+#[tokio::test]
+async fn test_alpha_off_list_fps_refused_before_accept() {
+    // 48 fps is in the bundle's global list but not in Alpha's [24, 25]; 121 frames
+    // is on the grid, so only the template's fps rule can refuse it.
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
+    let job = alpha_job(&store, 121, 48);
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(Arc::new(store)).await;
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-a48", Some(3), None).await;
+    let inner = decrypt_envelope(&resp, &k);
+    assert!(task.is_none(), "refused before accept: {inner:?}");
+    assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
+    let msg = inner["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("fps 48 is not allowed"), "{msg}");
+}
+
+#[tokio::test]
+async fn test_alpha_25fps_121_frames_accepted() {
+    // D21: 121 frames at 25 fps (4.8 s) is an exact LTX length for a frameGrid
+    // template; the whole-second rule would refuse it as 4 s.
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
+    let job = alpha_job(&store, 121, 25);
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(Arc::new(store)).await;
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-a25", Some(4), None).await;
+    let inner = decrypt_envelope(&resp, &k);
+    assert!(task.is_some(), "accepted: {inner:?}");
+    assert_eq!(inner["type"], "ltx_accepted");
+}
+
+/// A minimal ISO BMFF clip whose one video track claims `samples` frames (the
+/// synthesiser of tests/ltx/test_mp4.rs, condensed).
+fn mp4_clip(samples: u32) -> Vec<u8> {
+    fn boxed(typ: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut out = ((8 + payload.len()) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(typ);
+        out.extend_from_slice(payload);
+        out
+    }
+    let mut hd = vec![0u8; 8];
+    hd.extend_from_slice(b"vide");
+    hd.extend_from_slice(&[0u8; 13]);
+    let mut sz = vec![0u8; 8];
+    sz.extend_from_slice(&samples.to_be_bytes());
+    let stbl = boxed(b"stbl", &boxed(b"stsz", &sz));
+    let mut mdia = boxed(b"hdlr", &hd);
+    mdia.extend_from_slice(&boxed(b"minf", &stbl));
+    let trak = boxed(b"trak", &boxed(b"mdia", &mdia));
+    let mut out = boxed(b"ftyp", b"isom\x00\x00\x02\x00isomiso2");
+    out.extend_from_slice(&boxed(b"moov", &trak));
+    out
+}
+
+/// A real capability CID for `plaintext`, plus the ciphertext the blob server serves.
+fn cap_cid(plaintext: &[u8]) -> (String, Vec<u8>, String) {
+    use fabstir_llm_node::ltx::exr::{capability_cid, encrypt_frame, padding_for};
+    use fabstir_llm_node::ltx::input_image::{blob_download_cid, parse_capability_cid};
+    let key = [0x24u8; 32];
+    let ct = encrypt_frame(plaintext, &key).unwrap();
+    let cid = capability_cid(plaintext, &ct, &key, padding_for(plaintext.len()) as u32);
+    let path = format!("/s5/blob/{}", blob_download_cid(&parse_capability_cid(&cid).unwrap().ct_hash));
+    (cid, ct, path)
+}
+
+#[tokio::test]
+async fn test_exact_control_refuses_short_clip_before_prompt() {
+    use axum::Router;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::mpsc;
+
+    // NM1 D23: this test owns ENHANCED_S5_URL while it runs (see ltx_task_support::S5_ENV_LOCK).
+    let _env = super::ltx_task_support::S5_ENV_LOCK.lock().await;
+    // The blob server: routes by request path, since the still and the clip are
+    // different blobs (a copy of tests/ltx/test_input_image.rs:41-60, path-aware).
+    let (still_cid, still_ct, still_path) = cap_cid(&vec![7u8; 5000]);
+    let (clip_cid, clip_ct, clip_path) = cap_cid(&mp4_clip(120));
+    let blobs = Router::new().fallback(move |uri: axum::http::Uri| {
+        let body = if uri.path() == still_path {
+            still_ct.clone()
+        } else if uri.path() == clip_path {
+            clip_ct.clone()
+        } else {
+            Vec::new()
+        };
+        async move { body }
+    });
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let blob_addr = l.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(l, blobs).await.unwrap() });
+    std::env::set_var("ENHANCED_S5_URL", format!("http://{blob_addr}"));
+
+    // A stub ComfyUI: accepts uploads (the still is staged first), records /prompt.
+    let prompts = Arc::new(AtomicUsize::new(0));
+    let seen = prompts.clone();
+    let comfy_app = Router::new()
+        .route(
+            "/upload/image",
+            axum::routing::post(|| async { axum::Json(json!({"name": "staged", "subfolder": "", "type": "input"})) }),
+        )
+        .route(
+            "/prompt",
+            axum::routing::post(move || {
+                seen.fetch_add(1, Ordering::SeqCst);
+                async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "stub") }
+            }),
+        );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let comfy_addr = l.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(l, comfy_app).await.unwrap() });
+    let stub = Arc::new(ComfyClient::new(&format!("http://{comfy_addr}")).unwrap());
+
+    // iclora (exactControl) at 24 fps 5 s bills 121; the clip carries 120.
+    let server = Arc::new(ApiServer::new_for_test());
+    let k = key();
+    let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
+    let job = json!({
+        "action": "ltx_generate",
+        "requestId": "r-exact",
+        "templateId": "ltx-iclora-hdr",
+        "templateHash": store.template_hash("ltx-iclora-hdr").unwrap(),
+        "prompt": "restyle",
+        "seed": "42",
+        "frames": 121,
+        "fps": 24,
+        "resolution": { "w": 768, "h": 512 },
+        "lora": "ltx-iclora-hdr@v1",
+        "output": "exr-sequence",
+        "images": [still_cid],
+        "videos": [clip_cid]
+    });
+    server.set_ltx_client(stub.clone()).await;
+    server.set_ltx_template_store(Arc::new(store)).await;
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-exact", None, None).await;
+    let task = task.unwrap_or_else(|| panic!("accepted: {:?}", decrypt_envelope(&resp, &k)));
+
+    let (tx, mut rx) = mpsc::channel::<Value>(16);
+    task.run(stub.clone(), k, "sess-exact".to_string(), server.clone(), tx).await;
+    let raw = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+        .await
+        .expect("a terminal frame")
+        .expect("a terminal frame");
+    let inner = decrypt_envelope(&raw, &k);
+    let msg = inner["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("control video has 120 frame(s)"), "{inner:?}");
+    assert_eq!(prompts.load(Ordering::SeqCst), 0, "refused before any /prompt (GPU) call");
+
+    // The negative side, through the same call site: crossview takes a clip but carries NO
+    // `exactControl`, so the same 120-frame clip for 121 billed frames passes the old floor and
+    // reaches /prompt (the stub then fails it). Reading the flag wrongly (a missing flag as true,
+    // or `exact` forced on) would refuse it here, after escrow.
+    let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
+    let job = json!({
+        "action": "ltx_generate",
+        "requestId": "r-exact-off",
+        "templateId": "ltx-crossview-hdr",
+        "templateHash": store.template_hash("ltx-crossview-hdr").unwrap(),
+        "prompt": "a new view of the street",
+        "seed": "42",
+        "frames": 121,
+        "fps": 24,
+        "resolution": { "w": 768, "h": 512 },
+        "lora": "ltx-crossview-hdr@v1",
+        "output": "exr-sequence",
+        "videos": [clip_cid]
+    });
+    server.set_ltx_template_store(Arc::new(store)).await;
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-exact-off", None, None).await;
+    let task = task.unwrap_or_else(|| panic!("accepted: {:?}", decrypt_envelope(&resp, &k)));
+    let (tx, mut rx) = mpsc::channel::<Value>(16);
+    task.run(stub, k, "sess-exact-off".to_string(), server.clone(), tx).await;
+    let mut frames = Vec::new();
+    while let Ok(Some(raw)) = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await {
+        frames.push(decrypt_envelope(&raw, &k));
+    }
+    assert_eq!(prompts.load(Ordering::SeqCst), 1, "reached /prompt once: {frames:?}");
+    assert!(
+        !format!("{frames:?}").contains("control video has"),
+        "the exact rule must not fire without exactControl: {frames:?}"
+    );
+}

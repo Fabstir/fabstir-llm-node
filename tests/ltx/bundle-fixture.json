@@ -1,7 +1,24 @@
 {
-  "allowListVersion": 25,
-  "bundleHash": "0xc5d91799574dc359f5f7b375c276e79bcf15adbdd5441e312aba0dce276a0a78",
+  "allowListVersion": 26,
+  "bundleHash": "0x9aa3afba92e431283286fb5081f88749d543c49e6d0cd8d98790fa0212a4ef4f",
   "templates": [
+    {
+      "templateId": "ltx-alpha-hdr",
+      "templateHash": "0x14e596a6fd1dbced7b5bfbab8aefe6319be8dc1a8f9b0881839f6510a746ff76",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ],
+      "fps": [
+        24,
+        25
+      ],
+      "maxFrames": 145,
+      "resolutionRule": "div64-fhd",
+      "exactControl": true,
+      "frameGrid": true
+    },
     {
       "templateId": "ltx-crossview-hdr",
       "templateHash": "0x411f192cffc8417788f2710eb305477427a84a94c3b2e79ae4f22276d80c35ad",
@@ -18,7 +35,8 @@
       "videoInputs": 1,
       "videoSemantics": [
         "controlVideo"
-      ]
+      ],
+      "exactControl": true
     },
     {
       "templateId": "ltx-edit-hdr",
@@ -27,7 +45,8 @@
       "videoInputs": 1,
       "videoSemantics": [
         "controlVideo"
-      ]
+      ],
+      "exactControl": true
     },
     {
       "templateId": "ltx-flf2v-hdr",
@@ -50,7 +69,7 @@
     },
     {
       "templateId": "ltx-iclora-hdr",
-      "templateHash": "0x3fbd6084d1d0e9a953569632df75e0ed07e95cd96be44894de3921e2ea4316fb",
+      "templateHash": "0x130a582034c920f6580d337a72775e8c8a6d8c940e7fe21e618615b14457afe1",
       "imageInputs": 1,
       "imageSemantics": [
         "reference"
@@ -58,7 +77,8 @@
       "videoInputs": 1,
       "videoSemantics": [
         "controlVideo"
-      ]
+      ],
+      "exactControl": true
     },
     {
       "templateId": "ltx-ingredients-hdr",
@@ -70,13 +90,34 @@
       "videoInputs": 0
     },
     {
+      "templateId": "ltx-layout-hdr",
+      "templateHash": "0xc0e51bfae19a5ca9f967263b932e25df78df3fa7d3aa68b5d0fbb4e133e5c3f1",
+      "imageInputs": 1,
+      "imageSemantics": [
+        "reference"
+      ],
+      "videoInputs": 1,
+      "videoSemantics": [
+        "controlVideo"
+      ],
+      "fps": [
+        24,
+        25
+      ],
+      "maxFrames": 241,
+      "resolutionRule": "div64-fhd",
+      "exactControl": true,
+      "frameGrid": true
+    },
+    {
       "templateId": "ltx-outpaint-hdr",
       "templateHash": "0xdf3e88489d4f73b89c6c3081e8a3929fe8b512e2773013199a504fb7a0bc0f6c",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
         "controlVideo"
-      ]
+      ],
+      "exactControl": true
     },
     {
       "templateId": "ltx-restore-hdr",
@@ -85,11 +126,12 @@
       "videoInputs": 1,
       "videoSemantics": [
         "controlVideo"
-      ]
+      ],
+      "exactControl": true
     },
     {
       "templateId": "ltx-sdr2hdr-hdr",
-      "templateHash": "0xb18cecd50b0d66a8986c3e1c26b0f271932b09ddde95ec993696aa233901612a",
+      "templateHash": "0xe6a553ba351b670e8afe98b930e9c14f11a0880cff78b831e0538843ac6a5b38",
       "imageInputs": 0,
       "videoInputs": 1,
       "videoSemantics": [
@@ -109,7 +151,8 @@
       "videoInputs": 1,
       "videoSemantics": [
         "sourceVideo"
-      ]
+      ],
+      "exactControl": true
     },
     {
       "templateId": "ltx-water-hdr",
@@ -118,7 +161,8 @@
       "videoInputs": 1,
       "videoSemantics": [
         "controlVideo"
-      ]
+      ],
+      "exactControl": true
     }
   ],
   "loras": [
@@ -129,7 +173,10 @@
     "ltx-ingredients-hdr@v1",
     "ltx-water-hdr@v1",
     "ltx-daynight-hdr@v1",
-    "ltx-sdr2hdr-hdr@v1"
+    "ltx-sdr2hdr-hdr@v1",
+    "ltx-crossview-hdr@v1",
+    "ltx-alpha-hdr@v1",
+    "ltx-layout-hdr@v1"
   ],
   "bounds": {
     "frames": {
