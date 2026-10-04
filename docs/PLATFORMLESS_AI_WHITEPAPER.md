@@ -11,7 +11,7 @@ Author: Fabstir
 
 ## Abstract
 
-Platformless AI is a decentralised protocol that enables trustless AI inference, multi-agent orchestration, and agentic AI workflows through a peer-to-peer marketplace of independent compute providers. By combining Ethereum smart contracts, cryptographic proofs, and decentralised storage, the protocol eliminates platform intermediaries while maintaining accountability, privacy, and fair compensation. Beyond chat-based inference, the protocol supports autonomous AI agents — coding assistants, multi-tool workflows, and SaaS AI backends — through both an Anthropic Messages API compatibility layer (Claude Bridge) and an OpenAI Chat Completions API compatibility layer (OpenAI Bridge), enabling any Anthropic-compatible or OpenAI-compatible client to run on decentralised infrastructure. The protocol also supports **fine-tuning as a marketplace job**: a user's dataset trains a LoRA adapter on a rented GPU with per-slice on-chain settlement, so a run that stops halfway bills only for the work done. The dataset is encrypted in transit and at rest and the adapter is returned encrypted, but the host decrypts both in order to train; extending the confidential-computing path described below to training is what would make it host-blind, and a fine-tune has already been run on that confidential-computing host, with the dataset decrypted only inside the confidential VM and two independent runs producing byte-identical adapters. It supports image generation via host-side diffusion model sidecars, AI video generation across thirteen modes — text-to-video, image-to-video, first-last-frame, reference-conditioned generation, video restyling (IC-LoRA union control, where the motion and camera of a control clip drive a newly styled output), outpainting to a new aspect ratio, prompt-driven video editing, restore, 2x upscale, water, day-to-night, novel-view synthesis, and SDR-to-HDR reconstruction — via ComfyUI sidecars running LTX 2.3 (with pinned-template provenance verified client-side and anchored on-chain at settlement, so buyers can verify exactly which inputs, including any control video, produced the clip, and hold the host to a signed, on-chain commitment to the model and template it ran), all of them driven from a native Blender extension that puts paid, provenance-bound generation inside a professional editing timeline, GPU-accelerated video transcoding with end-to-end encryption, HLS adaptive bitrate streaming with per-segment encryption, load balancing across multiple hosts, and experimental multi-agent orchestration via Google's Agent-to-Agent (A2A) protocol (v1.0.0-rc) — decomposing complex goals into task graphs, routing sub-tasks to optimal models across decentralised GPU hosts, and settling payments on-chain with cryptographic proof collection. Platformless AI is, to our knowledge, the first DePIN project to implement the A2A protocol. For privacy-critical workloads, a confidential-computing path, wired into the node's live request path and proven end to end on real confidential-computing hardware (Intel TDX with an NVIDIA H200, September 2026), extends the protocol into Trusted Execution Environments, where the model and the user's inputs are decrypted only inside a confidential VM whose memory the host operator cannot read. This whitepaper describes the technical architecture, economic model, and security mechanisms that enable a truly open AI marketplace where anyone can provide or consume AI services without centralised gatekeepers.
+Platformless AI is a decentralised protocol that enables trustless AI inference, multi-agent orchestration, and agentic AI workflows through a peer-to-peer marketplace of independent compute providers. By combining Ethereum smart contracts, cryptographic proofs, and decentralised storage, the protocol eliminates platform intermediaries while maintaining accountability, privacy, and fair compensation. Beyond chat-based inference, the protocol supports autonomous AI agents — coding assistants, multi-tool workflows, and SaaS AI backends — through both an Anthropic Messages API compatibility layer (Claude Bridge) and an OpenAI Chat Completions API compatibility layer (OpenAI Bridge), enabling any Anthropic-compatible or OpenAI-compatible client to run on decentralised infrastructure. The protocol also supports **fine-tuning as a marketplace job**: a user's dataset trains a LoRA adapter on a rented GPU with per-slice on-chain settlement, so a run that stops halfway bills only for the work done. The dataset is encrypted in transit and at rest and the adapter is returned encrypted, but the host decrypts both in order to train; extending the confidential-computing path described below to training is what would make it host-blind, and a fine-tune has already been run on that confidential-computing host, with the dataset decrypted only inside the confidential VM and two independent runs producing byte-identical adapters. It supports knowledge graphs over a user's encrypted document collections (graph-aware retrieval, with optional paid entity extraction), image generation via host-side diffusion model sidecars, AI video generation across thirteen modes — text-to-video, image-to-video, first-last-frame, reference-conditioned generation, video restyling (IC-LoRA union control, where the motion and camera of a control clip drive a newly styled output), outpainting to a new aspect ratio, prompt-driven video editing, restore, 2x upscale, water, day-to-night, novel-view synthesis, and SDR-to-HDR reconstruction — via ComfyUI sidecars running LTX 2.3 (with pinned-template provenance verified client-side and anchored on-chain at settlement, so buyers can verify exactly which inputs, including any control video, produced the clip, and hold the host to a signed, on-chain commitment to the model and template it ran), all of them driven from a native Blender extension that puts paid, provenance-bound generation inside a professional editing timeline, GPU-accelerated video transcoding with end-to-end encryption, HLS adaptive bitrate streaming with per-segment encryption, load balancing across multiple hosts, and experimental multi-agent orchestration via Google's Agent-to-Agent (A2A) protocol (v1.0.0-rc) — decomposing complex goals into task graphs, routing sub-tasks to optimal models across decentralised GPU hosts, and settling payments on-chain with cryptographic proof collection. Platformless AI is, to our knowledge, the first DePIN project to implement the A2A protocol. For privacy-critical workloads, a confidential-computing path, wired into the node's live request path and proven end to end on real confidential-computing hardware (Intel TDX with an NVIDIA H200, September 2026), extends the protocol into Trusted Execution Environments, where the model and the user's inputs are decrypted only inside a confidential VM whose memory the host operator cannot read. This whitepaper describes the technical architecture, economic model, and security mechanisms that enable a truly open AI marketplace where anyone can provide or consume AI services without centralised gatekeepers.
 
 ---
 
@@ -432,7 +432,8 @@ S5 provides decentralised, content-addressed storage backed by the Sia network.
 | Conversation history  | User's chat records             | User-controlled |
 | Proof data (proofCID) | Complete proof for verification | Public          |
 | Delta CIDs            | Incremental proof changes       | Public          |
-| Vector databases      | RAG document embeddings         | User-controlled |
+| Vector databases      | RAG document embeddings         | User-controlled (sealed with the vault key) |
+| Knowledge graphs      | Graph structure, layout, entities | User-controlled (sealed with a vault-derived key) |
 | Source videos          | Original video content          | User-controlled |
 | Transcoded outputs     | Whole-file video (Phase 1)      | User-controlled |
 | Generated video clips  | LTX video output (all thirteen modes) | User-controlled |
@@ -450,12 +451,14 @@ S5 provides decentralised, content-addressed storage backed by the Sia network.
 
 **Data Sovereignty:**
 
-Each user's S5 identity is derived deterministically from their Ethereum wallet signature. This means:
+Each user's S5 identity and content key come from a **password-protected vault** (Section 8.4): a random 32-byte data key, wrapped under the user's password and under a recovery code, becomes the S5 seed. This means:
 
 - Users own their data (not the platform)
-- Data follows the user across devices
-- No account recovery needed—wallet = identity
-- Data cannot be accessed without the wallet
+- Data follows the user across devices, and across the web app and the Blender extension, which share the vault
+- Nobody at Fabstir can read it, or recover it: lose both the password and the recovery code and the content is gone
+- Data cannot be accessed without the password or the recovery code — knowing the user's wallet address is not enough
+
+Earlier builds derived the seed from the wallet address alone. Every input to that derivation is public, so anyone who knew the address could recompute the seed; the vault replaces it, and since SDK 1.39.0 RAG documents and vector databases are sealed under the vault's key too, with an account's older data migrated at sign-in.
 
 ![S5 Storage Architecture](https://www.platformlessai.org/images/platformless-s5-storage-architecture.png)
 
@@ -719,6 +722,18 @@ touching a deployed contract.
 The same rails extend beyond text. Because a slice is defined by a token budget rather than by
 anything language-specific, video LoRA training sits on the identical accept, slice, settle and
 delivery path, with the template and the counting recipe carrying the difference.
+
+### 4.9 Knowledge Graphs over Private Collections
+
+Retrieval finds the passages closest to a question; it does not see how a user's documents connect. A **knowledge graph** spans one or more of the user's vector databases and makes those connections explicit — without moving the data anywhere new.
+
+**Built in the browser, at no cost.** The graph is computed client-side from embeddings the user already holds: every document and chunk, a link between neighbouring chunks, a similarity link between chunks whose embeddings are close (marked when it crosses from one collection to another), and topics found by clustering. No host sees the documents to build it, and nothing is paid. The library `@fabstir/knowledge-graph` does the work; the result is sealed with a key derived from the user's vault and stored on S5 under random identifiers, with graph names, labels and file names encrypted. A graph never stores chunk text.
+
+**Graph-aware retrieval.** When a graph is linked to a project, chat takes the host's top matches and then follows the graph's links from them, adding a few related passages — often from a different collection — that a similarity search alone would miss. Related passages never displace a search result, and a slow graph never delays the prompt.
+
+**Entity extraction, as a marketplace job.** Optionally, the user pays a host to read the collections and extract entities (people, organisations, products, places) and the relations between them. It is an ordinary escrowed session (Section 7): the user chooses the host, reads a statement naming every collection whose text will be sent to it, and approves an estimate. Extraction prompts are kept out of the conversation log, web search is forced off, and the run pauses for the user's approval if spend reaches 130% of the estimate — it never resumes on its own. Entities and relations are grounded: a name the cited passage does not contain is discarded. They appear as an entity layer in the graph, and chat receives a short block of known relationships — only those supported by the passages actually in the prompt, treated as document content, never as instructions.
+
+**Status (October 2026).** Graphs, graph-aware retrieval and the viewer are verified live on Base Sepolia; the first paid extraction runs, the entity layer and relationship facts in chat are verified too, with a five-chunk run billed exactly to its quote. Extraction stays switched off in released builds until per-host handling of checkpoint deltas is confirmed (Section 8.3), and its estimate is being recalibrated for reasoning models, whose thinking tokens are billed as output.
 
 ---
 
@@ -1241,6 +1256,10 @@ Ephemeral keys are generated fresh per session and discarded after use. Even if 
 
 On-chain data is necessarily public for verification, but contains no content.
 
+**Documents as an attack surface.** Retrieved document text is placed in the prompt, so a document could try to speak for the user. Since SDK 1.39.2 the decision to run a web search is made on the user's own words only, and a turn carrying retrieved context is never routed to image generation, so no retrieved passage can switch either on. The passages a knowledge graph adds, its relationship facts and the file names they cite are also neutralised before they reach a prompt (lines posing as a user or assistant turn are quoted; chat-template tokens are broken).
+
+**Open question: checkpoint deltas.** Hosts publish a delta of each proof interval to S5, listed publicly (Section 4.5). Whether a host encrypts those deltas, and so whether prompts could appear in them in plaintext, is being confirmed per host; knowledge-graph extraction, which would send whole collections, stays off until it is.
+
 ### 8.3.1 In-Use Confidentiality (Current Boundary)
 
 End-to-end encryption protects content **in transit** (client ↔ host) and **at rest** (on S5). It does not, by itself, make computation blind: the host the user selects necessarily decrypts the prompt in memory to run inference. "End-to-end" here means client to host with no platform intermediary in between — not that the host computes on ciphertext.
@@ -1272,7 +1291,9 @@ We state this boundary explicitly because honest scoping of cryptographic guaran
 
 **Client Keys:**
 
-Derived from wallet private key using deterministic signature-based derivation. No additional secrets to manage.
+Content is protected by a **password-derived vault**. A random 32-byte data-encryption key is the user's S5 seed; it is wrapped twice — under `Argon2id(password)` and under a key derived from a 128-bit recovery code — and only the wrapped forms are stored. Changing the password re-wraps the same key, so nothing is re-encrypted and the recovery code keeps working. The vault is shared byte-for-byte with the Blender extension, so one password unlocks both. Knowledge graphs use a separate key derived from the same seed. Losing both the password and the recovery code loses the content: there is no recovery desk, by design.
+
+Earlier builds derived the seed from the wallet address alone, which needs no extra secret but is recomputable by anyone who knows the address; the vault is enabled per deployment and replaces it.
 
 **Host Keys:**
 
@@ -1615,6 +1636,9 @@ _Figure 10: Roadmap Timeline showing development progress across 9 phases, with 
 ### Phase 4: Advanced Features (Completed)
 
 - ✅ RAG/Vector search support
+- ✅ RAG documents and vector databases sealed with the user's vault key (SDK 1.39.0)
+- ✅ Knowledge graphs over private collections (Section 4.9) — built in the browser, sealed, graph-aware retrieval verified live; paid entity extraction verified on testnet (October 2026), released once per-host delta handling is confirmed
+- ✅ Prompt-injection hardening: web search decided on the user's own words, retrieved-context turns never routed to image generation (SDK 1.39.2)
 - ✅ Host-side embeddings
 - ✅ Web search integration
 - ✅ Vision processing (Florence-2, OCR)
