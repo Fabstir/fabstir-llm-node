@@ -960,9 +960,10 @@ async fn node_main() -> Result<()> {
         println!("🔗 Initializing Web3 client for checkpoint submission...");
 
         // Load RPC URL from env or use default
-        let rpc_url = env::var("RPC_URL").unwrap_or_else(|_| {
-            "https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR".to_string()
-        });
+        let rpc_url = env::var("RPC_URL")
+            .or_else(|_| env::var("BASE_SEPOLIA_RPC_URL"))
+            // Public, keyless default: never ship a metered provider key in the binary.
+            .unwrap_or_else(|_| "https://base-sepolia-rpc.publicnode.com".to_string());
 
         let web3_config = Web3Config {
             rpc_url,

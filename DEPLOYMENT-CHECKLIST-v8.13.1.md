@@ -36,7 +36,7 @@ cp .env.contracts .env
 echo "BASE_SEPOLIA_RPC_URL=https://sepolia.base.org" >> .env
 
 # Or use your own RPC provider
-echo "BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_API_KEY" >> .env
+echo "BASE_SEPOLIA_RPC_URL=https://base-sepolia-rpc.publicnode.com" >> .env
 ```
 
 ### 3. Validate Configuration

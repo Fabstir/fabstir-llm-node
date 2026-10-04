@@ -43,7 +43,7 @@ docker run -d \
   -e LLAMA_BATCH_SIZE=2048 \
   -e MODEL_CHAT_TEMPLATE=harmony \
   -e HOST_PRIVATE_KEY="${TEST_HOST_1_PRIVATE_KEY}" \
-  -e RPC_URL="https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR" \
+  -e RPC_URL="https://base-sepolia-rpc.publicnode.com" \
   -e CONTRACT_JOB_MARKETPLACE="${CONTRACT_JOB_MARKETPLACE}" \
   -e CONTRACT_HOST_EARNINGS="${CONTRACT_HOST_EARNINGS}" \
   -e CONTRACT_NODE_REGISTRY="${CONTRACT_NODE_REGISTRY}" \

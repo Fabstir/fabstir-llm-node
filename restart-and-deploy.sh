@@ -19,7 +19,7 @@ docker run -d \
   -e API_PORT=8080 \
   -e MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf \
   -e HOST_PRIVATE_KEY="${TEST_HOST_1_PRIVATE_KEY}" \
-  -e RPC_URL="https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR" \
+  -e RPC_URL="https://base-sepolia-rpc.publicnode.com" \
   -e CONTRACT_JOB_MARKETPLACE="${CONTRACT_JOB_MARKETPLACE}" \
   -e CONTRACT_HOST_EARNINGS="${CONTRACT_HOST_EARNINGS}" \
   -e CONTRACT_NODE_REGISTRY="${CONTRACT_NODE_REGISTRY}" \
@@ -40,7 +40,7 @@ docker run -d \
   -e API_PORT=8083 \
   -e MODEL_PATH=/models/tiny-vicuna-1b.q4_k_m.gguf \
   -e HOST_PRIVATE_KEY="${TEST_USER_2_PRIVATE_KEY}" \
-  -e RPC_URL="https://base-sepolia.g.alchemy.com/v2/1pZoccdtgU8CMyxXzE3l_ghnBBaJABMR" \
+  -e RPC_URL="https://base-sepolia-rpc.publicnode.com" \
   -e CONTRACT_JOB_MARKETPLACE="${CONTRACT_JOB_MARKETPLACE}" \
   -e CONTRACT_HOST_EARNINGS="${CONTRACT_HOST_EARNINGS}" \
   -e CONTRACT_NODE_REGISTRY="${CONTRACT_NODE_REGISTRY}" \
