@@ -287,10 +287,14 @@ pub struct SessionKeyMetrics {
     pub active_sessions: usize,
 }
 
-/// FC1.6 depositor read: attempts and the unit backoff between them. Three
-/// tries over ~750ms covers a public-RPC blip without making a genuinely
-/// unreachable chain slow to refuse.
-const DEPOSITOR_READ_ATTEMPTS: u32 = 3;
+/// FC1.6 depositor read: attempts and the unit backoff between them (linear:
+/// 250 ms × attempt). Ten tries span ≈ 11 s: enough for a public-RPC blip AND
+/// for a just-opened session to become visible to a lagging RPC (NM1 D25: a
+/// zero depositor is retried, never accepted), while a genuinely unreachable
+/// chain still refuses — inside the SDK's 30 s session-init wait only when each
+/// failed read returns quickly (`query_session_depositor` has no timeout of its
+/// own; a hanging RPC was already unbounded before D25). Fail closed either way.
+const DEPOSITOR_READ_ATTEMPTS: u32 = 10;
 const DEPOSITOR_READ_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl ApiServer {

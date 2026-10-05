@@ -37,9 +37,15 @@ fn test_ltx_model_id_matches_live_ids() {
     );
     // The two new modes' ids, recorded at planning (prefix and suffix).
     let alpha = format!("0x{}", hex::encode(ltx_model_id("ltx-alpha-hdr")));
-    assert!(alpha.starts_with("0x0b134c89") && alpha.ends_with("c495"), "{alpha}");
+    assert!(
+        alpha.starts_with("0x0b134c89") && alpha.ends_with("c495"),
+        "{alpha}"
+    );
     let layout = format!("0x{}", hex::encode(ltx_model_id("ltx-layout-hdr")));
-    assert!(layout.starts_with("0xed9d14af") && layout.ends_with("14a5"), "{layout}");
+    assert!(
+        layout.starts_with("0xed9d14af") && layout.ends_with("14a5"),
+        "{layout}"
+    );
 }
 
 #[test]
@@ -112,7 +118,8 @@ async fn test_chain_read_attempt_times_out() {
 /// price 904 → capacity 695,977 × 1000 / 904 = 769,886 tokens; host 0x4594…;
 /// tokensUsed 733,225; status Completed.
 fn live_931() -> SessionSnapshot {
-    let raw = hex::decode(include_str!("../training_api/fixtures/sessionjobs_931.hex").trim()).unwrap();
+    let raw =
+        hex::decode(include_str!("../training_api/fixtures/sessionjobs_931.hex").trim()).unwrap();
     decode_session_snapshot(&raw).unwrap()
 }
 
@@ -125,7 +132,9 @@ fn open_931() -> SessionSnapshot {
 }
 
 fn host_931() -> Address {
-    "0x4594f755f593b517bb3194f4dec20c48a3f04504".parse().unwrap()
+    "0x4594f755f593b517bb3194f4dec20c48a3f04504"
+        .parse()
+        .unwrap()
 }
 
 #[test]
@@ -146,7 +155,9 @@ fn test_session_terms_refuse_a_settled_session() {
 
 #[test]
 fn test_session_terms_refuse_another_hosts_session() {
-    let other: Address = "0x048afa7126a3b684832886b78e7cc1dd4019557e".parse().unwrap();
+    let other: Address = "0x048afa7126a3b684832886b78e7cc1dd4019557e"
+        .parse()
+        .unwrap();
     let err = check_session_terms(&open_931(), other, 1_000, 0).unwrap_err();
     assert!(err.contains("host"), "{err}");
 }
@@ -192,7 +203,8 @@ const HOST_931: &str = "0x4594f755f593b517bb3194f4dec20c48a3f04504";
 /// The raw `sessionJobs` return with its status word (w12) set to Active and
 /// tokensUsed (w6) zeroed — `open_931()` as bytes.
 fn open_931_raw() -> Vec<u8> {
-    let mut raw = hex::decode(include_str!("../training_api/fixtures/sessionjobs_931.hex").trim()).unwrap();
+    let mut raw =
+        hex::decode(include_str!("../training_api/fixtures/sessionjobs_931.hex").trim()).unwrap();
     raw[12 * 32 + 31] = 0;
     raw[6 * 32..7 * 32].fill(0);
     raw
@@ -248,26 +260,89 @@ async fn test_session_gate_refuses_each_failing_part() {
     let model_ok = |_| async { Ok(ltx_model_id("ltx-t2v-hdr")) };
     let raw_ok = |_| async { Ok(open_931_raw()) };
     // Another template's model.
-    let err = session_gate(Some(931), "ltx-alpha-hdr", 50_000, 0, HOST_931, model_ok, raw_ok).await.unwrap_err();
+    let err = session_gate(
+        Some(931),
+        "ltx-alpha-hdr",
+        50_000,
+        0,
+        HOST_931,
+        model_ok,
+        raw_ok,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("session was opened for model"), "{err}");
     // The live, settled session's own bytes.
-    let settled = |_| async { Ok(hex::decode(include_str!("../training_api/fixtures/sessionjobs_931.hex").trim()).unwrap()) };
-    let err = session_gate(Some(931), "ltx-t2v-hdr", 50_000, 0, HOST_931, model_ok, settled).await.unwrap_err();
+    let settled = |_| async {
+        Ok(
+            hex::decode(include_str!("../training_api/fixtures/sessionjobs_931.hex").trim())
+                .unwrap(),
+        )
+    };
+    let err = session_gate(
+        Some(931),
+        "ltx-t2v-hdr",
+        50_000,
+        0,
+        HOST_931,
+        model_ok,
+        settled,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("not Active"), "{err}");
     // Another host (this node is TEST_HOST_4).
-    let err = session_gate(Some(931), "ltx-t2v-hdr", 50_000, 0, "0x048afa7126a3b684832886b78e7cc1dd4019557e", model_ok, raw_ok)
-        .await
-        .unwrap_err();
+    let err = session_gate(
+        Some(931),
+        "ltx-t2v-hdr",
+        50_000,
+        0,
+        "0x048afa7126a3b684832886b78e7cc1dd4019557e",
+        model_ok,
+        raw_ok,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("not this host"), "{err}");
     // More tokens than the deposit covers (capacity 769,886).
-    let err = session_gate(Some(931), "ltx-t2v-hdr", 769_887, 0, HOST_931, model_ok, raw_ok).await.unwrap_err();
+    let err = session_gate(
+        Some(931),
+        "ltx-t2v-hdr",
+        769_887,
+        0,
+        HOST_931,
+        model_ok,
+        raw_ok,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("deposit"), "{err}");
     // An undecodable session record fails closed.
     let short = |_| async { Ok(vec![0u8; 64]) };
-    let err = session_gate(Some(931), "ltx-t2v-hdr", 50_000, 0, HOST_931, model_ok, short).await.unwrap_err();
+    let err = session_gate(
+        Some(931),
+        "ltx-t2v-hdr",
+        50_000,
+        0,
+        HOST_931,
+        model_ok,
+        short,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("too short"), "{err}");
     // An unreadable host address fails closed.
-    let err = session_gate(Some(931), "ltx-t2v-hdr", 50_000, 0, "not-an-address", model_ok, raw_ok).await.unwrap_err();
+    let err = session_gate(
+        Some(931),
+        "ltx-t2v-hdr",
+        50_000,
+        0,
+        "not-an-address",
+        model_ok,
+        raw_ok,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("host address"), "{err}");
 }
 
@@ -297,4 +372,249 @@ async fn test_session_gate_refuses_when_a_read_keeps_failing() {
     .await
     .unwrap_err();
     assert!(err.contains("sessionJobs down"), "{err}");
+}
+
+// ---- NM1 D24: a session the node's RPC has not seen yet is waited for, not refused ----
+
+use fabstir_llm_node::ltx::template::{session_gate_with, GateTiming};
+
+/// Millisecond timing: a 500 ms budget re-read every 20 ms, one attempt per read.
+const FAST: GateTiming = GateTiming {
+    budget: Duration::from_millis(500),
+    gap: Duration::from_millis(20),
+    read_attempts: 1,
+    read_delay: Duration::ZERO,
+    per_attempt: Duration::from_millis(50),
+};
+
+/// A full-length all-zero `sessionJobs` record: what an RPC that has not seen the session returns.
+fn unseen_raw() -> Vec<u8> {
+    vec![0u8; open_931_raw().len()]
+}
+
+const T2V: &str = "ltx-t2v-hdr";
+
+/// (1) Both reads zero for two rounds, then the real pair → accepted. Mutation: no wait → "no model id", red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_waits_for_an_unseen_session_to_become_visible() {
+    let (m, r) = (Cell::new(0u32), Cell::new(0u32));
+    let got = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| {
+            let n = m.get();
+            m.set(n + 1);
+            async move { Ok(if n < 2 { [0u8; 32] } else { ltx_model_id(T2V) }) }
+        },
+        |_| {
+            let n = r.get();
+            r.set(n + 1);
+            async move { Ok(if n < 2 { unseen_raw() } else { open_931_raw() }) }
+        },
+        FAST,
+    )
+    .await;
+    assert!(got.is_ok(), "{got:?}");
+    assert_eq!((m.get(), r.get()), (3, 3), "three rounds of both reads");
+}
+
+/// (2) Record visible from the first read, model zero for two rounds → accepted.
+/// Mutation: wait only on a zero HOST → "no model id", red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_waits_when_only_the_model_lags() {
+    let m = Cell::new(0u32);
+    let got = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| {
+            let n = m.get();
+            m.set(n + 1);
+            async move { Ok(if n < 2 { [0u8; 32] } else { ltx_model_id(T2V) }) }
+        },
+        |_| async { Ok(open_931_raw()) },
+        FAST,
+    )
+    .await;
+    assert!(got.is_ok(), "{got:?}");
+}
+
+/// (3) Model right from the first read, record all-zero for two rounds → accepted.
+/// Mutation: wait only on a zero MODEL → "belongs to host 0x0…", red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_waits_when_only_the_record_lags() {
+    let r = Cell::new(0u32);
+    let got = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| async { Ok(ltx_model_id(T2V)) },
+        |_| {
+            let n = r.get();
+            r.set(n + 1);
+            async move { Ok(if n < 2 { unseen_raw() } else { open_931_raw() }) }
+        },
+        FAST,
+    )
+    .await;
+    assert!(got.is_ok(), "{got:?}");
+}
+
+/// (4) A visible valid record and a model that stays zero → refused "has no model id", after at least
+/// two reads of each. Mutation: judge before the budget → one read, red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_a_genuinely_model_less_session_is_still_refused() {
+    let (m, r) = (Cell::new(0u32), Cell::new(0u32));
+    let fut = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| {
+            m.set(m.get() + 1);
+            async { Ok([0u8; 32]) }
+        },
+        |_| {
+            r.set(r.get() + 1);
+            async { Ok(open_931_raw()) }
+        },
+        FAST,
+    );
+    let err = tokio::time::timeout(Duration::from_secs(5), fut)
+        .await
+        .expect("no hang")
+        .unwrap_err();
+    assert!(err.contains("has no model id"), "{err}");
+    assert!(
+        m.get() >= 2 && r.get() >= 2,
+        "it waited: {} model / {} record reads",
+        m.get(),
+        r.get()
+    );
+}
+
+/// (5) Both stay zero → refused, and only once the budget has passed. Mutation: break on round one → red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_a_session_that_never_appears_is_refused_after_the_budget() {
+    let start = tokio::time::Instant::now();
+    let fut = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| async { Ok([0u8; 32]) },
+        |_| async { Ok(unseen_raw()) },
+        FAST,
+    );
+    let err = tokio::time::timeout(Duration::from_secs(5), fut)
+        .await
+        .expect("no hang")
+        .unwrap_err();
+    assert!(err.contains("has no model id"), "{err}");
+    assert!(
+        start.elapsed() >= FAST.budget,
+        "refused after {:?}, before the budget",
+        start.elapsed()
+    );
+}
+
+/// (6) Visible on the first read → accepted with exactly one read of each and no wait.
+/// Mutations: an unconditional extra round → two reads, red; a stray sleep first → elapsed ≥ gap, red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_a_visible_session_costs_no_extra_read_and_no_wait() {
+    let (m, r) = (Cell::new(0u32), Cell::new(0u32));
+    let start = tokio::time::Instant::now();
+    let got = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| {
+            m.set(m.get() + 1);
+            async { Ok(ltx_model_id(T2V)) }
+        },
+        |_| {
+            r.set(r.get() + 1);
+            async { Ok(open_931_raw()) }
+        },
+        FAST,
+    )
+    .await;
+    assert!(got.is_ok(), "{got:?}");
+    assert_eq!((m.get(), r.get()), (1, 1));
+    assert!(start.elapsed() < FAST.gap, "waited {:?}", start.elapsed());
+}
+
+/// (7) Round one both zero, then every model read errors → refused with that error at once.
+/// Mutation: treat an Err as "not visible" → it re-reads until the budget (~25 reads), red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_a_read_error_during_the_wait_refuses_at_once() {
+    let m = Cell::new(0u32);
+    let fut = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| {
+            let n = m.get();
+            m.set(n + 1);
+            async move {
+                if n == 0 {
+                    Ok([0u8; 32])
+                } else {
+                    Err(anyhow::anyhow!("rpc down"))
+                }
+            }
+        },
+        |_| async { Ok(unseen_raw()) },
+        FAST,
+    );
+    let err = tokio::time::timeout(Duration::from_secs(5), fut)
+        .await
+        .expect("no hang")
+        .unwrap_err();
+    assert!(err.contains("rpc down"), "{err}");
+    assert!(
+        m.get() < 10,
+        "{} model reads: it waited out the budget",
+        m.get()
+    );
+}
+
+/// (8) A record too short to decode → refused "too short" after ONE read of each.
+/// Mutation: treat undecodable as "not visible" → more reads, red.
+#[tokio::test(start_paused = true)]
+async fn test_d24_an_undecodable_record_refuses_at_once() {
+    let (m, r) = (Cell::new(0u32), Cell::new(0u32));
+    let err = session_gate_with(
+        Some(931),
+        T2V,
+        50_000,
+        0,
+        HOST_931,
+        |_| {
+            m.set(m.get() + 1);
+            async { Ok(ltx_model_id(T2V)) }
+        },
+        |_| {
+            r.set(r.get() + 1);
+            async { Ok(vec![0u8; 64]) }
+        },
+        FAST,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("too short"), "{err}");
+    assert_eq!((m.get(), r.get()), (1, 1));
 }

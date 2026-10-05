@@ -102,6 +102,16 @@ pub fn is_vault_depositor(depositor: &str, vault_addresses: &[String]) -> bool {
         .any(|vault| vault.eq_ignore_ascii_case(depositor))
 }
 
+/// The zero address in any case or width ("0x0", "0x000…0"): what an unseen
+/// session's `sessionJobs` record carries in its depositor word.
+fn is_zero_address(addr: &str) -> bool {
+    let hex = addr
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    hex.chars().all(|c| c == '0')
+}
+
 /// jobId -> on-chain depositor. A session's depositor is fixed at creation, so
 /// a cache hit can never be stale; it only ever saves a chain read.
 pub type DepositorCache = Mutex<HashMap<u64, String>>;
@@ -139,6 +149,16 @@ where
             tokio::time::sleep(backoff * attempt).await;
         }
         match fetch().await {
+            // NM1 D25: a session the node's RPC has not seen yet decodes to the zero
+            // depositor without an error. That is "not visible yet", never an answer:
+            // not cached (a cached zero would let a later vault-paid session on this
+            // job id skip the vault check), retried like an error, and still zero when
+            // the attempts run out → Err, so the caller DENIES (fail closed).
+            Ok(depositor) if is_zero_address(&depositor) => {
+                last_error = Some(anyhow::anyhow!(
+                    "job {job_id}'s session is not visible to the RPC yet (zero depositor)"
+                ));
+            }
             Ok(depositor) => {
                 if let Ok(mut c) = cache.lock() {
                     if c.len() >= DEPOSITOR_CACHE_MAX {
@@ -370,6 +390,62 @@ mod tests {
         // Second call served from cache: the depositor is immutable, so this
         // can never be a stale answer.
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// What `depositor_from_session_jobs_return` yields for a session the node's
+    /// RPC has not seen yet: the zero address, without an error.
+    const UNSEEN: &str = "0x0000000000000000000000000000000000000000";
+
+    #[tokio::test]
+    async fn d25_a_zero_depositor_is_not_visible_yet_and_is_re_read() {
+        // NM1 D25. Mutation: accept the zero as before → Ok(0x0) after ONE fetch, red.
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let resolved = resolve_depositor(
+            42,
+            &cache,
+            || async {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(if n < 2 {
+                    UNSEEN.to_string()
+                } else {
+                    VAULT.to_string()
+                })
+            },
+            10,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(resolved.unwrap(), VAULT);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(
+            cache.lock().unwrap().get(&42).map(String::as_str),
+            Some(VAULT)
+        );
+    }
+
+    #[tokio::test]
+    async fn d25_a_depositor_that_stays_zero_denies_and_is_never_cached() {
+        // NM1 D25. Mutations: Ok(0x0) once the attempts run out → red; cache the zero → red.
+        let cache: DepositorCache = Mutex::new(HashMap::new());
+        let calls = std::sync::atomic::AtomicU32::new(0);
+        let resolved = resolve_depositor(
+            42,
+            &cache,
+            || async {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(UNSEEN.to_string())
+            },
+            4,
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert!(resolved.is_err(), "{resolved:?}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert!(
+            cache.lock().unwrap().is_empty(),
+            "the zero poisoned the cache"
+        );
     }
 
     #[test]

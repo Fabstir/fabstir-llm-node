@@ -371,7 +371,10 @@ pub fn check_session_terms(
         return Err(format!("the session is not Active ({:?})", snap.status));
     }
     if snap.host != this_host {
-        return Err(format!("the session belongs to host {:?}, not this host", snap.host));
+        return Err(format!(
+            "the session belongs to host {:?}, not this host",
+            snap.host
+        ));
     }
     if snap.price_per_token.is_zero() {
         return Err("the session has a zero price per token".to_string());
@@ -410,19 +413,107 @@ where
     JF: Fn(u64) -> JFut,
     JFut: std::future::Future<Output = Result<Vec<u8>>>,
 {
+    session_gate_with(
+        job_id,
+        template_id,
+        job_tokens,
+        tracked_tokens,
+        this_host,
+        read_model,
+        read_session,
+        GateTiming::PRODUCTION,
+    )
+    .await
+}
+
+/// NM1 D24: the gate's timing. `budget`/`gap` bound the wait for a session the
+/// node's RPC has not seen yet; the last three feed every `read_with_retry`.
+#[derive(Debug, Clone, Copy)]
+pub struct GateTiming {
+    pub budget: std::time::Duration,
+    pub gap: std::time::Duration,
+    pub read_attempts: u32,
+    pub read_delay: std::time::Duration,
+    pub per_attempt: std::time::Duration,
+}
+
+/// NM1 D24: how long the gate waits for a session its RPC has not seen yet, and
+/// how often it re-reads meanwhile (Base blocks are 2 s; the lag seen was a block
+/// or two). A session that never appears holds the generation slot for about the
+/// budget plus one gap and the reads (≈ 16-18 s) before it is refused.
+pub const VISIBILITY_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
+pub const VISIBILITY_GAP: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl GateTiming {
+    /// Production: the visibility budget and gap above; each read keeps D20's 3
+    /// attempts, 2 s apart, 10 s each.
+    pub const PRODUCTION: GateTiming = GateTiming {
+        budget: VISIBILITY_BUDGET,
+        gap: VISIBILITY_GAP,
+        read_attempts: 3,
+        read_delay: std::time::Duration::from_secs(2),
+        per_attempt: std::time::Duration::from_secs(10),
+    };
+}
+
+/// `session_gate` with explicit timing (tests pass millisecond values).
+#[allow(clippy::too_many_arguments)]
+pub async fn session_gate_with<MF, MFut, JF, JFut>(
+    job_id: Option<u64>,
+    template_id: &str,
+    job_tokens: u64,
+    tracked_tokens: u64,
+    this_host: &str,
+    read_model: MF,
+    read_session: JF,
+    timing: GateTiming,
+) -> std::result::Result<(), String>
+where
+    MF: Fn(u64) -> MFut,
+    MFut: std::future::Future<Output = Result<[u8; 32]>>,
+    JF: Fn(u64) -> JFut,
+    JFut: std::future::Future<Output = Result<Vec<u8>>>,
+{
     let Some(jid) = job_id else {
         return check_session_model(None, template_id);
     };
-    let (gap, per_attempt) = (
-        std::time::Duration::from_secs(2),
-        std::time::Duration::from_secs(10),
-    );
-    let (model, raw) = tokio::join!(
-        read_with_retry(3, gap, per_attempt, || read_model(jid)),
-        read_with_retry(3, gap, per_attempt, || read_session(jid)),
-    );
-    check_session_model(Some(model?), template_id)?;
-    let snap = crate::training::accept::decode_session_snapshot(&raw?)?;
+    let (attempts, delay, per_attempt) =
+        (timing.read_attempts, timing.read_delay, timing.per_attempt);
+    // D24: a session the node's RPC has not seen yet reads as an all-zero model and
+    // an all-zero record (status 0 = Active, host 0x0). That is "not visible yet",
+    // not a verdict: re-read both every `gap` until the pair looks set or `budget`
+    // has passed (no re-read starts after it), then judge the latest pair as D20
+    // always did — so a session that never appears, or a genuinely model-less one,
+    // is still refused (fail closed), only later. An Err, or a record that does
+    // not decode, refuses at once.
+    let start = tokio::time::Instant::now();
+    let mut waited = false;
+    let (model, snap) = loop {
+        let (model, raw) = tokio::join!(
+            read_with_retry(attempts, delay, per_attempt, || read_model(jid)),
+            read_with_retry(attempts, delay, per_attempt, || read_session(jid)),
+        );
+        let model = model?;
+        let snap = crate::training::accept::decode_session_snapshot(&raw?)?;
+        if model != [0u8; 32] && !snap.host.is_zero() {
+            if waited {
+                tracing::info!(
+                    "LTX job {jid}: session visible after {:.1} s (RPC lag)",
+                    start.elapsed().as_secs_f64()
+                );
+            }
+            break (model, snap);
+        }
+        if start.elapsed() >= timing.budget {
+            break (model, snap);
+        }
+        tokio::time::sleep(timing.gap).await;
+        waited = true;
+        if start.elapsed() >= timing.budget {
+            break (model, snap);
+        }
+    };
+    check_session_model(Some(model), template_id)?;
     let host = this_host
         .parse::<ethers::types::Address>()
         .map_err(|e| format!("this node's host address {this_host:?} is unreadable: {e}"))?;
@@ -456,7 +547,10 @@ where
             Err(_) => last = format!("timed out after {} s", per_attempt.as_secs()),
         }
     }
-    Err(format!("chain read failed after {} attempts: {last}", attempts.max(1)))
+    Err(format!(
+        "chain read failed after {} attempts: {last}",
+        attempts.max(1)
+    ))
 }
 
 /// Canonical keccak256 of a JSON value: alphabetically sort all object keys (via

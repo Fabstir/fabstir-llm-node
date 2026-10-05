@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.59.0-ltx25-new-modes-2026-10-04";
+pub const VERSION: &str = "v8.59.1-ltx25-visibility-2026-10-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.59.0";
+pub const VERSION_NUMBER: &str = "8.59.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,18 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 59;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-04";
+pub const BUILD_DATE: &str = "2026-10-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.59.1 NM1 D24/D25: a session the node's RPC has not seen yet is waited for (a 15 s budget), not
+    // judged — D20's gate no longer refuses a just-opened session as "no model id"; and the FC1.6
+    // vault gate never caches or accepts a zero (not-yet-visible) depositor.
+    "ltx-session-visibility-wait",
+    "fc16-zero-depositor-guard",
     // v8.59.0 NM1: LTX 2.5 in the ComfyUI sidecar (bundle v26) with two new modes — Alpha Gen
     // (`ltx-alpha-hdr`: matte EXR, `matte-linear`) and Layout to Render (`ltx-layout-hdr`, mp4 only) —
     // sized in FRAMES on LTX's 8k+1 grid at 24/25 fps (D21); exact control length where the grid can
@@ -616,6 +621,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.59.1 - NM1 D24/D25: RPC-lag fixes (Oct 5, 2026)
+    "FIX (LTX): D20's session gate treated a session its RPC had not seen yet (an all-zero model and an all-zero sessionJobs record) as a verdict and refused just-opened sessions as \"no model id\" — t2v above all, found by end-session (g)'s paid smoke on 8.59.0. It now re-reads both every 2 s until the session is visible or 15 s have passed, then judges as before (a session that never appears, or a model-less one, is still refused); an Err or an undecodable record still refuses at once (D24)",
+    "NOTE (LTX): the wait runs after ltx_accepted, holding the generation slot; a job naming a session id that never appears now holds it for about the 15 s budget plus one 2 s gap and its reads (≈ 16-18 s) instead of one RPC round trip (documented, D24)",
+    "FIX (FC1.6): resolve_depositor cached ANY successful read, and an unseen session decodes to the zero depositor without an error — so an init racing the session's visibility skipped the vault check and the zero stayed cached for that job id (a later vault-paid session could then be used without authorisation). A zero depositor is now never cached and is retried; still zero after the attempts (now 10, ≈ 11 s) → the init is DENIED, fail closed (D25)",
     // v8.59.0 - NM1: LTX 2.5 new modes (Oct 4, 2026)
     "BEHAVIOUR (LTX): templates v26 — two new templates (`ltx-alpha-hdr`, `ltx-layout-hdr`) and two edited 2.3 templates (`ltx-sdr2hdr-hdr` gains `transfer: logc3`, `ltx-iclora-hdr` gains `refine_steps` and its frame fix), so their template hashes change; the other eleven are byte-identical. The new templates and the edited sdr2hdr REQUIRE the new sidecar image (ComfyUI core 0.38.0 + the LTX 2.5 weights, `scripts/build-ltx-sidecar.sh`); both edited templates also run on the old image (rollback)",
     "BEHAVIOUR (LTX): the node refuses, at 0 tokens and before any GPU work, a job whose template is not the model its session was opened (and priced) for, any LTX job without an on-chain job id, and a job whose proof could not land (a session settled or timed out, another host's, or one whose remaining deposit does not cover the job) — two concurrent chain reads per job, retried; a SUSTAINED RPC outage now refuses LTX jobs after escrow (D20)",
@@ -1122,7 +1131,10 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 59);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
+        // v8.59.1 NM1 D24/D25
+        assert!(FEATURES.contains(&"ltx-session-visibility-wait"));
+        assert!(FEATURES.contains(&"fc16-zero-depositor-guard"));
         assert!(FEATURES.contains(&"multi-chain"));
         assert!(FEATURES.contains(&"dual-pricing"));
         // v8.59.0 NM1 LTX 2.5 new modes
@@ -1322,15 +1334,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.59.0"));
-        assert!(version.contains("2026-10-04"));
+        assert!(version.contains("8.59.1"));
+        assert!(version.contains("2026-10-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.59.0-ltx25-new-modes-2026-10-04");
-        assert_eq!(VERSION_NUMBER, "8.59.0");
-        assert_eq!(BUILD_DATE, "2026-10-04");
+        assert_eq!(VERSION, "v8.59.1-ltx25-visibility-2026-10-05");
+        assert_eq!(VERSION_NUMBER, "8.59.1");
+        assert_eq!(BUILD_DATE, "2026-10-05");
     }
 
     #[test]
