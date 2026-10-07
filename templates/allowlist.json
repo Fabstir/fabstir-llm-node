@@ -1,5 +1,5 @@
 {
- "allowListVersion": 26,
+ "allowListVersion": 27,
  "templates": [
   {
    "templateId": "ltx-t2v-hdr",
@@ -148,6 +148,57 @@
    "resolutionRule": "div64-fhd",
    "exactControl": true,
    "frameGrid": true
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "relight-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "sidecar": "relight"
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "relight-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "sidecar": "relight"
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "relight-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "sidecar": "relight"
   }
  ],
  "loras": [
@@ -161,7 +212,10 @@
   "ltx-sdr2hdr-hdr@v1",
   "ltx-crossview-hdr@v1",
   "ltx-alpha-hdr@v1",
-  "ltx-layout-hdr@v1"
+  "ltx-layout-hdr@v1",
+  "cosmos-passes-key@v1",
+  "cosmos-passes-std@v1",
+  "cosmos-passes-full@v1"
  ],
  "bounds": {
   "frames": {

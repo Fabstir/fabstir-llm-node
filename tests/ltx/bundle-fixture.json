@@ -1,7 +1,61 @@
 {
-  "allowListVersion": 26,
-  "bundleHash": "0xa388d2d358dc08661ab545d0409970729248936ca16be495d8deda5793f635da",
+  "allowListVersion": 27,
+  "bundleHash": "0x6a74815ab4ea6bc92f17ded967813e9211b7803bc7bb59a8ae41c377263c4898",
   "templates": [
+    {
+      "templateId": "cosmos-passes-full",
+      "templateHash": "0x20f7eedf2ecdb638cf9a2fb3854a10c91caa859505aa64e4b27702e7560654ac",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ],
+      "fps": [
+        24,
+        25
+      ],
+      "maxFrames": 145,
+      "resolutionRule": "relight-fhd",
+      "exactControl": true,
+      "frameGrid": true,
+      "sidecar": "relight"
+    },
+    {
+      "templateId": "cosmos-passes-key",
+      "templateHash": "0xfadcb1b1e26452782fc899128e25db940db255753d32c39694b30d163967e571",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ],
+      "fps": [
+        24,
+        25
+      ],
+      "maxFrames": 145,
+      "resolutionRule": "relight-fhd",
+      "exactControl": true,
+      "frameGrid": true,
+      "sidecar": "relight"
+    },
+    {
+      "templateId": "cosmos-passes-std",
+      "templateHash": "0x74f5f528bbd7d246be41daaedb89de0fcdc06e84e2c4d9fff550560842f53b96",
+      "imageInputs": 0,
+      "videoInputs": 1,
+      "videoSemantics": [
+        "sourceVideo"
+      ],
+      "fps": [
+        24,
+        25
+      ],
+      "maxFrames": 145,
+      "resolutionRule": "relight-fhd",
+      "exactControl": true,
+      "frameGrid": true,
+      "sidecar": "relight"
+    },
     {
       "templateId": "ltx-alpha-hdr",
       "templateHash": "0x14e596a6fd1dbced7b5bfbab8aefe6319be8dc1a8f9b0881839f6510a746ff76",
@@ -176,7 +230,10 @@
     "ltx-sdr2hdr-hdr@v1",
     "ltx-crossview-hdr@v1",
     "ltx-alpha-hdr@v1",
-    "ltx-layout-hdr@v1"
+    "ltx-layout-hdr@v1",
+    "cosmos-passes-key@v1",
+    "cosmos-passes-std@v1",
+    "cosmos-passes-full@v1"
   ],
   "bounds": {
     "frames": {

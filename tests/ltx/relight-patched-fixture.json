@@ -1,0 +1,359 @@
+{
+  "cosmos-passes-full": {
+    "1": {
+      "class_type": "LoadVideo",
+      "inputs": {
+        "file": "abc.mp4"
+      }
+    },
+    "10": {
+      "_meta": {
+        "title": "exr_output"
+      },
+      "class_type": "RelightEXRWrite",
+      "inputs": {
+        "compression": "zip",
+        "half": true,
+        "passes": [
+          "8",
+          0
+        ]
+      }
+    },
+    "2": {
+      "_meta": {
+        "title": "Prompt"
+      },
+      "class_type": "PrimitiveString",
+      "inputs": {
+        "value": ""
+      }
+    },
+    "3": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 18446744073709551615
+      }
+    },
+    "4": {
+      "_meta": {
+        "title": "Width"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 1920
+      }
+    },
+    "5": {
+      "_meta": {
+        "title": "Height"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 1088
+      }
+    },
+    "6": {
+      "_meta": {
+        "title": "Frame Rate"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 25
+      }
+    },
+    "7": {
+      "_meta": {
+        "title": "Frame Count"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 145
+      }
+    },
+    "8": {
+      "class_type": "CosmosInversePasses",
+      "inputs": {
+        "align": "basecolor,depth",
+        "frames": [
+          "7",
+          0
+        ],
+        "height": [
+          "5",
+          0
+        ],
+        "min_overlap": 16,
+        "model_h": 704,
+        "model_w": 1280,
+        "noise": [
+          "3",
+          0
+        ],
+        "passes": "normal,basecolor,depth,roughness,metallic",
+        "seed_rule": "mod2^32",
+        "steps": 15,
+        "video": [
+          "1",
+          0
+        ],
+        "width": [
+          "4",
+          0
+        ],
+        "window": 57
+      }
+    },
+    "9": {
+      "class_type": "RelightPreview",
+      "inputs": {
+        "fps": [
+          "6",
+          0
+        ],
+        "passes": [
+          "8",
+          0
+        ]
+      }
+    }
+  },
+  "cosmos-passes-key": {
+    "1": {
+      "class_type": "LoadVideo",
+      "inputs": {
+        "file": "abc.mp4"
+      }
+    },
+    "10": {
+      "_meta": {
+        "title": "exr_output"
+      },
+      "class_type": "RelightEXRWrite",
+      "inputs": {
+        "compression": "zip",
+        "half": true,
+        "passes": [
+          "8",
+          0
+        ]
+      }
+    },
+    "2": {
+      "_meta": {
+        "title": "Prompt"
+      },
+      "class_type": "PrimitiveString",
+      "inputs": {
+        "value": ""
+      }
+    },
+    "3": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 18446744073709551615
+      }
+    },
+    "4": {
+      "_meta": {
+        "title": "Width"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 1920
+      }
+    },
+    "5": {
+      "_meta": {
+        "title": "Height"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 1088
+      }
+    },
+    "6": {
+      "_meta": {
+        "title": "Frame Rate"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 25
+      }
+    },
+    "7": {
+      "_meta": {
+        "title": "Frame Count"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 145
+      }
+    },
+    "8": {
+      "class_type": "CosmosInversePasses",
+      "inputs": {
+        "align": "basecolor,depth",
+        "frames": [
+          "7",
+          0
+        ],
+        "height": [
+          "5",
+          0
+        ],
+        "min_overlap": 16,
+        "model_h": 704,
+        "model_w": 1280,
+        "noise": [
+          "3",
+          0
+        ],
+        "passes": "normal",
+        "seed_rule": "mod2^32",
+        "steps": 15,
+        "video": [
+          "1",
+          0
+        ],
+        "width": [
+          "4",
+          0
+        ],
+        "window": 57
+      }
+    },
+    "9": {
+      "class_type": "RelightPreview",
+      "inputs": {
+        "fps": [
+          "6",
+          0
+        ],
+        "passes": [
+          "8",
+          0
+        ]
+      }
+    }
+  },
+  "cosmos-passes-std": {
+    "1": {
+      "class_type": "LoadVideo",
+      "inputs": {
+        "file": "abc.mp4"
+      }
+    },
+    "10": {
+      "_meta": {
+        "title": "exr_output"
+      },
+      "class_type": "RelightEXRWrite",
+      "inputs": {
+        "compression": "zip",
+        "half": true,
+        "passes": [
+          "8",
+          0
+        ]
+      }
+    },
+    "2": {
+      "_meta": {
+        "title": "Prompt"
+      },
+      "class_type": "PrimitiveString",
+      "inputs": {
+        "value": ""
+      }
+    },
+    "3": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 18446744073709551615
+      }
+    },
+    "4": {
+      "_meta": {
+        "title": "Width"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 1920
+      }
+    },
+    "5": {
+      "_meta": {
+        "title": "Height"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 1088
+      }
+    },
+    "6": {
+      "_meta": {
+        "title": "Frame Rate"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 25
+      }
+    },
+    "7": {
+      "_meta": {
+        "title": "Frame Count"
+      },
+      "class_type": "PrimitiveInt",
+      "inputs": {
+        "value": 145
+      }
+    },
+    "8": {
+      "class_type": "CosmosInversePasses",
+      "inputs": {
+        "align": "basecolor,depth",
+        "frames": [
+          "7",
+          0
+        ],
+        "height": [
+          "5",
+          0
+        ],
+        "min_overlap": 16,
+        "model_h": 704,
+        "model_w": 1280,
+        "noise": [
+          "3",
+          0
+        ],
+        "passes": "normal,basecolor",
+        "seed_rule": "mod2^32",
+        "steps": 15,
+        "video": [
+          "1",
+          0
+        ],
+        "width": [
+          "4",
+          0
+        ],
+        "window": 57
+      }
+    },
+    "9": {
+      "class_type": "RelightPreview",
+      "inputs": {
+        "fps": [
+          "6",
+          0
+        ],
+        "passes": [
+          "8",
+          0
+        ]
+      }
+    }
+  }
+}

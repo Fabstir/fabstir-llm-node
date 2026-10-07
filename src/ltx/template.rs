@@ -103,6 +103,11 @@ pub struct TemplateEntry {
     /// D21: lengths are exact LTX frame counts (8k+1), not whole seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_grid: Option<bool>,
+    /// VFX Passes D3: which sidecar runs the template. Absent = the ComfyUI LTX sidecar; `"relight"` = the Cosmos
+    /// DiffusionRenderer sidecar. Any other value refuses at load. Omitted on the wire when absent, so existing entries
+    /// serialise byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidecar: Option<String>,
 }
 
 /// Versioned allow-list bundle: advertised in NodeRegistry metadata and echoed
@@ -154,6 +159,8 @@ struct ConfigEntry {
     exact_control: Option<bool>,
     #[serde(default)]
     frame_grid: Option<bool>,
+    #[serde(default)]
+    sidecar: Option<String>,
 }
 
 /// Loads and pins the allow-listed templates at startup.
@@ -178,6 +185,15 @@ impl TemplateStore {
         for entry in &cfg.templates {
             validate_segment(&entry.template_id)?;
             validate_segment(&entry.version)?;
+            if let Some(sc) = entry.sidecar.as_deref() {
+                if sc != "relight" {
+                    return Err(anyhow!(
+                        "unknown sidecar {:?} for template {:?} — refusing",
+                        sc,
+                        entry.template_id
+                    ));
+                }
+            }
             if graphs.contains_key(&entry.template_id) {
                 return Err(anyhow!(
                     "duplicate templateId {:?} in allow-list",
@@ -205,6 +221,7 @@ impl TemplateStore {
                 resolution_rule: entry.resolution_rule.clone(),
                 exact_control: entry.exact_control,
                 frame_grid: entry.frame_grid,
+                sidecar: entry.sidecar.clone(),
             });
         }
         // Canonical order so bundleHash is independent of allowlist.json ordering.
@@ -312,6 +329,15 @@ pub fn check_template_rules(
                 ));
             }
         }
+        // VFX Passes D5: the relight model runs at a FIXED 1280x704, so smaller or portrait jobs would pay less for the
+        // same GPU work; only 1920x1088 (a 1920x1080 scene runs as 1088, like Cut-out).
+        Some("relight-fhd") => {
+            if (w, h) != (1920, 1088) {
+                return Err(format!(
+                    "resolution {w}x{h} is not allowed for {id} (exactly 1920x1088)"
+                ));
+            }
+        }
         Some(other) => {
             return Err(format!(
                 "unknown resolution rule {other:?} for {id} — refusing"
@@ -328,11 +354,29 @@ pub fn ltx_model_id(template_id: &str) -> [u8; 32] {
     ethers::utils::keccak256(format!("Lightricks/LTX-Video/{template_id}").as_bytes())
 }
 
-/// NM1 D20: an LTX job must run under its OWN template's model id. Settlement pays
-/// at the session's model price, so a session opened for a cheaper model must not
-/// buy this render. `None` = the job has no on-chain id: nobody pays for the GPU
-/// work, so it is refused too. All-zero (unset) refuses.
-pub fn check_session_model(session: Option<[u8; 32]>, template_id: &str) -> Result<(), String> {
+/// VFX Passes D6: the on-chain model id of any allow-listed template — the NVIDIA family for `sidecar == "relight"`,
+/// the Lightricks family otherwise (byte-identical to [`ltx_model_id`] for every existing id).
+pub fn template_model_id(entry: &TemplateEntry) -> [u8; 32] {
+    match entry.sidecar.as_deref() {
+        Some("relight") => crate::ltx::relight::relight_model_id(&entry.template_id),
+        _ => ltx_model_id(&entry.template_id),
+    }
+}
+
+/// VFX Passes D6: the model id `run()`'s D20 gate expects (the entry's family; Lightricks when no entry is known).
+pub fn expected_session_model(entry: Option<&TemplateEntry>, template_id: &str) -> [u8; 32] {
+    match entry {
+        Some(e) => template_model_id(e),
+        None => ltx_model_id(template_id),
+    }
+}
+
+/// NM1 D20 with an explicit expected id (VFX Passes D6). [`check_session_model`] is the Lightricks-family wrapper.
+pub fn check_session_model_for(
+    session: Option<[u8; 32]>,
+    expected: [u8; 32],
+    template_id: &str,
+) -> Result<(), String> {
     let Some(model) = session else {
         return Err(format!(
             "{template_id} job has no on-chain job id — its session model cannot be checked"
@@ -341,13 +385,21 @@ pub fn check_session_model(session: Option<[u8; 32]>, template_id: &str) -> Resu
     if model == [0u8; 32] {
         return Err(format!("{template_id} job's session has no model id"));
     }
-    if model != ltx_model_id(template_id) {
+    if model != expected {
         return Err(format!(
             "the session was opened for model 0x{}, not {template_id}'s model",
             hex::encode(model)
         ));
     }
     Ok(())
+}
+
+/// NM1 D20: an LTX job must run under its OWN template's model id. Settlement pays
+/// at the session's model price, so a session opened for a cheaper model must not
+/// buy this render. `None` = the job has no on-chain id: nobody pays for the GPU
+/// work, so it is refused too. All-zero (unset) refuses.
+pub fn check_session_model(session: Option<[u8; 32]>, template_id: &str) -> Result<(), String> {
+    check_session_model_for(session, ltx_model_id(template_id), template_id)
 }
 
 /// NM1 D20: the session must be one this node's proof can land on — otherwise the
@@ -474,8 +526,42 @@ where
     JF: Fn(u64) -> JFut,
     JFut: std::future::Future<Output = Result<Vec<u8>>>,
 {
+    session_gate_for_model(
+        job_id,
+        ltx_model_id(template_id),
+        template_id,
+        job_tokens,
+        tracked_tokens,
+        this_host,
+        read_model,
+        read_session,
+        timing,
+    )
+    .await
+}
+
+/// VFX Passes D6: the D20/D24 gate against an explicit expected model id (`run()` passes
+/// `expected_session_model(store.entry(id), id)`).
+#[allow(clippy::too_many_arguments)]
+pub async fn session_gate_for_model<MF, MFut, JF, JFut>(
+    job_id: Option<u64>,
+    expected: [u8; 32],
+    template_id: &str,
+    job_tokens: u64,
+    tracked_tokens: u64,
+    this_host: &str,
+    read_model: MF,
+    read_session: JF,
+    timing: GateTiming,
+) -> std::result::Result<(), String>
+where
+    MF: Fn(u64) -> MFut,
+    MFut: std::future::Future<Output = Result<[u8; 32]>>,
+    JF: Fn(u64) -> JFut,
+    JFut: std::future::Future<Output = Result<Vec<u8>>>,
+{
     let Some(jid) = job_id else {
-        return check_session_model(None, template_id);
+        return check_session_model_for(None, expected, template_id);
     };
     let (attempts, delay, per_attempt) =
         (timing.read_attempts, timing.read_delay, timing.per_attempt);
@@ -513,7 +599,7 @@ where
             break (model, snap);
         }
     };
-    check_session_model(Some(model), template_id)?;
+    check_session_model_for(Some(model), expected, template_id)?;
     let host = this_host
         .parse::<ethers::types::Address>()
         .map_err(|e| format!("this node's host address {this_host:?} is unreadable: {e}"))?;

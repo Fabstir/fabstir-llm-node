@@ -62,7 +62,9 @@ const RESTORE_TEMPLATE_HASH: &str =
 // v26 (NM1): the sdr2hdr and iclora re-pins, exactControl on iclora and the six edit-family
 // templates, ltx-alpha-hdr + ltx-layout-hdr with their rules, and three new lora adverts
 // (crossview, alpha, layout).
-const BUNDLE_HASH: &str = "0xa388d2d358dc08661ab545d0409970729248936ca16be495d8deda5793f635da";
+// v27 (VFX Passes): the three cosmos-passes-* entries (sidecar "relight", relight-fhd) and their lora
+// adverts; every existing entry serialises byte-identically.
+const BUNDLE_HASH: &str = "0x6a74815ab4ea6bc92f17ded967813e9211b7803bc7bb59a8ae41c377263c4898";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -993,6 +995,7 @@ fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
         resolution_rule: None,
         exact_control: None,
         frame_grid: None,
+        sidecar: None,
     }
 }
 
@@ -1342,7 +1345,7 @@ fn test_new_mode_rules_values() {
     for l in ["ltx-alpha-hdr@v1", "ltx-layout-hdr@v1"] {
         assert!(loras.iter().any(|x| x == l), "{l} advertised");
     }
-    assert_eq!(store.bundle().allow_list_version, 26);
+    assert_eq!(store.bundle().allow_list_version, 27);
 }
 
 #[test]
@@ -1354,7 +1357,8 @@ fn test_live_templates_unrestricted() {
     let rungs = store.bundle().bounds.resolutions.clone();
     let mut checked = 0;
     for e in &store.bundle().templates {
-        if e.template_id == "ltx-alpha-hdr" || e.template_id == "ltx-layout-hdr" {
+        // VFX Passes (v27): the relight entries carry their own rules (tests/ltx/test_relight_model.rs).
+        if e.template_id == "ltx-alpha-hdr" || e.template_id == "ltx-layout-hdr" || e.sidecar.is_some() {
             continue;
         }
         for fps in [24, 25, 48, 50] {

@@ -209,3 +209,38 @@ pub async fn submit_proof(
     )
     .await
 }
+
+/// VFX Passes D3: total attempts per relight output frame (one 90 s S5 hiccup must not kill a 25 min job).
+pub const RELIGHT_UPLOAD_ATTEMPTS: u32 = 3;
+
+/// VFX Passes D3: encrypt + upload one frame, retried up to `attempts` in total (each attempt draws a fresh frame key
+/// inside `encrypt_bytes_and_upload`, so a retry never reuses a key). Returns `(capability, frame hash)`.
+pub async fn upload_frame_with_retry(
+    s5: &dyn S5Storage,
+    dest: &str,
+    bytes: Vec<u8>,
+    attempts: u32,
+) -> Result<(String, String)> {
+    let attempts = attempts.max(1);
+    let mut last = None;
+    let mut bytes = Some(bytes);
+    for attempt in 1..=attempts {
+        // clone only while a retry may still need the plaintext; the last attempt moves it
+        let plaintext = if attempt == attempts {
+            bytes.take().expect("present until the last attempt")
+        } else {
+            bytes
+                .as_ref()
+                .expect("present until the last attempt")
+                .clone()
+        };
+        match crate::ltx::exr::encrypt_bytes_and_upload(plaintext, s5, dest).await {
+            Ok(pair) => return Ok(pair),
+            Err(e) => {
+                warn!("frame upload {dest} failed (attempt {attempt}/{attempts}): {e:#}");
+                last = Some(e);
+            }
+        }
+    }
+    Err(last.expect("at least one attempt"))
+}

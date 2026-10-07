@@ -582,3 +582,139 @@ fn prepare_drops_audio_only_for_a_silent_clip() {
         .values()
         .all(|n| n["class_type"] != "VHS_LoadVideo"));
 }
+
+// ── VFX Passes (VP1.1): the node's own client against a live relight sidecar ──────────────────────────
+//
+//   RELIGHT_LIVE_URL=http://127.0.0.1:8190 RELIGHT_LIVE_CLIP=<1920x1088 25 fps clip, >= 121 frames> \
+//     cargo test --test ltx_live_tests live_relight_standard_121 -- --exact --ignored --nocapture --test-threads=1
+//
+// A 121-frame Standard job: upload, the real patcher, `/prompt`, the `/ws` end signal, `outputs`, `order_refs`
+// (exactly 121 EXRs + 1 preview), then the first EXR's header is parsed BY HAND (no exr crate): channel names and
+// the `platformless:conventions` attribute.
+
+/// (attribute name, type, raw value) of a scanline EXR header.
+fn exr_header(bytes: &[u8]) -> Result<Vec<(String, String, Vec<u8>)>, String> {
+    if bytes.len() < 8 || bytes[..4] != [0x76, 0x2f, 0x31, 0x01] {
+        return Err("not an OpenEXR file".into());
+    }
+    let mut pos = 8;
+    let cstr = |pos: &mut usize| -> Result<String, String> {
+        let end = bytes[*pos..]
+            .iter()
+            .position(|b| *b == 0)
+            .ok_or("unterminated header string")?
+            + *pos;
+        let s = String::from_utf8_lossy(&bytes[*pos..end]).to_string();
+        *pos = end + 1;
+        Ok(s)
+    };
+    let mut out = Vec::new();
+    loop {
+        let name = cstr(&mut pos)?;
+        if name.is_empty() {
+            return Ok(out);
+        }
+        let ty = cstr(&mut pos)?;
+        let size = u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
+        pos += 4;
+        out.push((name, ty, bytes[pos..pos + size].to_vec()));
+        pos += size;
+    }
+}
+
+/// Channel names from a `chlist` value: name\0 + 16 bytes, repeated, then \0.
+fn chlist_names(v: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut pos = 0;
+    while pos < v.len() && v[pos] != 0 {
+        let end = v[pos..].iter().position(|b| *b == 0).unwrap() + pos;
+        names.push(String::from_utf8_lossy(&v[pos..end]).to_string());
+        pos = end + 1 + 16;
+    }
+    names
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_relight_standard_121() {
+    let (Ok(url), Ok(clip)) = (
+        std::env::var("RELIGHT_LIVE_URL"),
+        std::env::var("RELIGHT_LIVE_CLIP"),
+    ) else {
+        panic!("set RELIGHT_LIVE_URL and RELIGHT_LIVE_CLIP");
+    };
+    let store = TemplateStore::new(TEMPLATES).unwrap();
+    let run = Run {
+        label: "relight-std-121".into(),
+        template: Some("cosmos-passes-std".into()),
+        graph: None,
+        w: 1920,
+        h: 1088,
+        fps: 25,
+        frames: 121,
+        seed: "42".into(),
+        prompt: String::new(),
+        output: OutputKind::ExrFrames,
+        images: vec![],
+        videos: vec![clip.clone()],
+        strength: None,
+        expect_order_refusal: false,
+        timeout_secs: 2100,
+        expect_audio_kept: None,
+        deep_frames: None,
+    };
+    let client = ComfyClient::new(&url).unwrap();
+    let video_names = upload_all(&client, &run.videos).await.unwrap();
+    let (graph, job, _hash) = prepare(&store, &run, &[], &video_names, &[]).unwrap();
+    let started = Instant::now();
+    let prompt_id = client.submit(&graph).await.expect("submit");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    client
+        .watch(&prompt_id, tx, run.timeout_secs)
+        .await
+        .expect("watch");
+    let _ = drain.await;
+    println!(
+        "relight Standard 121 rendered in {:.0} s",
+        started.elapsed().as_secs_f64()
+    );
+    let refs = client.outputs(&prompt_id).await.expect("outputs");
+    let ordered = order_refs(&job.unwrap(), refs).expect("order_refs accepts the delivery");
+    assert_eq!(ordered.len(), 122, "one preview + 121 EXRs");
+    assert!(
+        !ordered[0].filename.ends_with(".exr"),
+        "frames[0] is the preview"
+    );
+    assert!(ordered[1..].iter().all(|r| r.filename.ends_with(".exr")));
+    let bytes = client
+        .download(&ordered[1])
+        .await
+        .expect("download the first EXR");
+    let header = exr_header(&bytes).expect("EXR header");
+    let channels = header
+        .iter()
+        .find(|(n, t, _)| n == "channels" && t == "chlist")
+        .expect("channels");
+    let mut names = chlist_names(&channels.2);
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "basecolor.B",
+            "basecolor.G",
+            "basecolor.R",
+            "normal.B",
+            "normal.G",
+            "normal.R"
+        ]
+    );
+    let conv = header
+        .iter()
+        .find(|(n, _, _)| n == "platformless:conventions")
+        .expect("conventions attribute");
+    let conv: Value = serde_json::from_slice(&conv.2).expect("conventions are JSON");
+    assert_eq!(conv["passes"], json!(["normal", "basecolor"]));
+    assert_eq!(conv["schema"], "vfx-passes-v1", "{conv}");
+    println!("first EXR: {} bytes, conventions {conv}", bytes.len());
+}

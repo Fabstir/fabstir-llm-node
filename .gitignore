@@ -86,6 +86,7 @@ docs/platformlessai-ui-reference/
 platformless-blender-addon/
 platformless-helper/
 fabstir-trainer/
+fabstir-relight/
 *:Zone.Identifier
 
 # Phase 5 Phala image build context: the extracted release binary is never tracked

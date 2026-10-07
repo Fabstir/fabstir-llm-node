@@ -240,6 +240,10 @@ pub struct ApiServer {
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     // LTX 2.3 generation sidecar (mirror of the transcoder fields).
     ltx_client: Arc<RwLock<Option<Arc<crate::ltx::ComfyClient>>>>,
+    /// VFX Passes D3: the relight sidecar client (same ComfyUI-shaped transport), its admission config and pins.
+    relight_client: Arc<RwLock<Option<Arc<crate::ltx::ComfyClient>>>>,
+    admit_cfg: Arc<RwLock<crate::ltx::relight::AdmitCfg>>,
+    relight_pins: Arc<RwLock<Option<crate::ltx::relight::RelightPins>>>,
     ltx_template_store: Arc<RwLock<Option<Arc<crate::ltx::TemplateStore>>>>,
     /// Training M0 seams (None until TRAIN_ENABLED wiring at startup).
     training_deps: Arc<RwLock<Option<Arc<crate::training::core::TrainingDeps>>>>,
@@ -362,6 +366,9 @@ impl ApiServer {
                 crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
             ),
             ltx_client: Arc::new(RwLock::new(None)),
+            relight_client: Arc::new(RwLock::new(None)),
+            admit_cfg: Arc::new(RwLock::new(crate::ltx::relight::AdmitCfg::from_env())),
+            relight_pins: Arc::new(RwLock::new(crate::ltx::relight::RelightPins::from_env())),
             ltx_template_store: Arc::new(RwLock::new(None)),
             training_deps: Arc::new(RwLock::new(None)),
             ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
@@ -528,6 +535,9 @@ impl ApiServer {
                 crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
             ),
             ltx_client: Arc::new(RwLock::new(None)),
+            relight_client: Arc::new(RwLock::new(None)),
+            admit_cfg: Arc::new(RwLock::new(crate::ltx::relight::AdmitCfg::from_env())),
+            relight_pins: Arc::new(RwLock::new(crate::ltx::relight::RelightPins::from_env())),
             ltx_template_store: Arc::new(RwLock::new(None)),
             training_deps: Arc::new(RwLock::new(None)),
             ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
@@ -687,6 +697,9 @@ impl ApiServer {
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             ltx_client: self.ltx_client.clone(),
+            relight_client: self.relight_client.clone(),
+            admit_cfg: self.admit_cfg.clone(),
+            relight_pins: self.relight_pins.clone(),
             ltx_template_store: self.ltx_template_store.clone(),
             training_deps: self.training_deps.clone(),
             ltx_tracker: self.ltx_tracker.clone(),
@@ -815,6 +828,46 @@ impl ApiServer {
     /// Get the LTX generation client (None ⇒ sidecar unconfigured ⇒ 503).
     pub async fn get_ltx_client(&self) -> Option<Arc<crate::ltx::ComfyClient>> {
         self.ltx_client.read().await.clone()
+    }
+
+    /// VFX Passes D3: set the relight sidecar client.
+    pub async fn set_relight_client(&self, client: Arc<crate::ltx::ComfyClient>) {
+        *self.relight_client.write().await = Some(client);
+    }
+
+    /// VFX Passes D3: the relight sidecar client (None ⇒ relight templates are refused).
+    pub async fn get_relight_client(&self) -> Option<Arc<crate::ltx::ComfyClient>> {
+        self.relight_client.read().await.clone()
+    }
+
+    /// VFX Passes D3: the client a task runs on — the relight client for `sidecar == "relight"`, else the LTX client.
+    pub async fn client_for(
+        &self,
+        task: &crate::api::websocket::handlers::ltx::LtxGenerateTask,
+    ) -> Option<Arc<crate::ltx::ComfyClient>> {
+        if task.sidecar.as_deref() == Some("relight") {
+            self.get_relight_client().await
+        } else {
+            self.get_ltx_client().await
+        }
+    }
+
+    /// VFX Passes D8: admission / timing config (tests set short budgets).
+    pub async fn set_admit_cfg(&self, cfg: crate::ltx::relight::AdmitCfg) {
+        *self.admit_cfg.write().await = cfg;
+    }
+
+    pub async fn admit_cfg(&self) -> crate::ltx::relight::AdmitCfg {
+        self.admit_cfg.read().await.clone()
+    }
+
+    /// VFX Passes D11: the expected relight pins (RELIGHT_PINS).
+    pub async fn set_relight_pins(&self, pins: Option<crate::ltx::relight::RelightPins>) {
+        *self.relight_pins.write().await = pins;
+    }
+
+    pub async fn relight_pins(&self) -> Option<crate::ltx::relight::RelightPins> {
+        self.relight_pins.read().await.clone()
     }
 
     /// Set the pinned LTX template store.
@@ -4021,8 +4074,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         // Graceful re-fetch (never None in practice; client is set once
                                                                         // at startup). If it vanished, give the client a terminal error
                                                                         // rather than silence (it already got the "processing" ack).
+                                                                        // VFX Passes D3: route by the verified template's family, so spawn
+                                                                        // and cancel (`cancel_lc` below) always use the same client.
                                                                         let Some(lc) = server
-                                                                            .get_ltx_client()
+                                                                            .client_for(&task)
                                                                             .await
                                                                         else {
                                                                             // The task dies unspawned: resolve the pending the

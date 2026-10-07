@@ -13,6 +13,7 @@ pub mod input_image;
 pub mod mp4;
 pub mod patcher;
 pub mod rate_limiter;
+pub mod relight;
 pub mod submit;
 pub mod template;
 pub mod types;

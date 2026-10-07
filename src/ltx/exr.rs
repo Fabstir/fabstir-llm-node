@@ -305,6 +305,15 @@ pub fn colour_encoding_for(job: &LtxJob) -> &'static str {
         // NM1.1 D9: Alpha Gen's frames are a MATTE — R carries the alpha, linear 0..1 —
         // not picture content; the label keeps them from being graded as an image.
         OutputKind::ExrFrames if job.template_id == "ltx-alpha-hdr" => "matte-linear",
+        // VFX Passes D10: one multi-channel EXR per frame of relight passes (normal, basecolor, …), conventions in its header.
+        OutputKind::ExrFrames
+            if matches!(
+                job.template_id.as_str(),
+                "cosmos-passes-key" | "cosmos-passes-std" | "cosmos-passes-full"
+            ) =>
+        {
+            "vfx-passes-v1"
+        }
         OutputKind::ExrFrames => "linear-rec709",
         OutputKind::ExrSequence => COLOUR_ENCODING,
     }

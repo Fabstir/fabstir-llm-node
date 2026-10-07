@@ -68,6 +68,72 @@ pub fn ltx_complete_inner(
     v
 }
 
+/// VFX Passes D18: what `run()` does after `finalize_clip`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompletionOutcome {
+    /// The plaintext `ltx_complete` frame to encrypt and send (the tracker records the job only on this arm).
+    Complete(Value),
+    /// Wire code and message; no capabilities leave the node.
+    Fail(&'static str, String),
+}
+
+/// VFX Passes D18: the whole delivery choice. `finalize` is `finalize_clip`'s result (error text on the upload failure);
+/// `reread` is the post-submit session read `run()` makes for relight jobs whose proof did not confirm (`None` = not
+/// read). A relight clip is withheld ONLY when the chain shows the session closed AND the proof did not land
+/// (`tokens_used < tokens_before + tokens`); an unconfirmed tx may still mine, so every other case delivers.
+#[allow(clippy::too_many_arguments)]
+pub fn completion_outcome(
+    sidecar: Option<&str>,
+    finalize: std::result::Result<(String, bool), String>,
+    reread: Option<std::result::Result<crate::training::accept::SessionSnapshot, String>>,
+    tokens_before: U256,
+    tokens: u64,
+    output_cid: &str,
+    caps: &[String],
+    manifest: &FrameManifest,
+    price: &str,
+    rid: Option<&str>,
+) -> CompletionOutcome {
+    use crate::training::accept::SessionStatus;
+    let (proof_cid, submitted) = match finalize {
+        Ok(pair) => pair,
+        Err(e) => {
+            return CompletionOutcome::Fail(
+                "GENERATION_FAILED",
+                format!("proof upload failed: {e}"),
+            )
+        }
+    };
+    if sidecar == Some("relight") && !submitted {
+        match reread {
+            None => {
+                return CompletionOutcome::Fail(
+                    "GENERATION_FAILED",
+                    "SESSION_CLOSED: the proof did not confirm and the session was not re-read"
+                        .to_string(),
+                )
+            }
+            Some(Ok(snap)) => {
+                let landed = snap.tokens_used >= tokens_before.saturating_add(U256::from(tokens));
+                if snap.status != SessionStatus::Active && !landed {
+                    return CompletionOutcome::Fail(
+                        "GENERATION_FAILED",
+                        format!(
+                            "SESSION_CLOSED: the session is {:?} and this job's proof did not land",
+                            snap.status
+                        ),
+                    );
+                }
+            }
+            // cannot rule out that the user paid: deliver
+            Some(Err(_)) => {}
+        }
+    }
+    CompletionOutcome::Complete(ltx_complete_inner(
+        output_cid, &proof_cid, caps, manifest, tokens, price, rid,
+    ))
+}
+
 /// `{type:"ltx_error", error:{code, message}, requestId?}` — an error path carries
 /// NO proof (no `proofCID`).
 pub fn ltx_error_inner(code: &str, message: &str, request_id: Option<&str>) -> Value {
@@ -341,8 +407,9 @@ pub async fn handle_encrypted_ltx_generate(
         return reject("CAPACITY", "LTX generation rate limit exceeded");
     }
 
-    // Sidecar availability (the caller hands the spawn a client; here we only gate).
-    if server.get_ltx_client().await.is_none() {
+    // Sidecar availability (the caller hands the spawn a client; here we only gate). VFX Passes D3: this pre-verify
+    // gate refuses only when NO sidecar is configured; the family's own client is checked after `store.verify` below.
+    if server.get_ltx_client().await.is_none() && server.get_relight_client().await.is_none() {
         return reject("SIDECAR_UNAVAILABLE", "LTX sidecar not configured (503)");
     }
 
@@ -372,6 +439,28 @@ pub async fn handle_encrypted_ltx_generate(
         {
             return reject("VALIDATION_FAILED", &msg);
         }
+    }
+    // VFX Passes D5 + D3: relight jobs deliver exr-frames only and carry no prompt (both committed on chain), and each
+    // family needs its own sidecar — refused here, before any permit, proof-pending mark or deposit is spent.
+    let relight = crate::ltx::relight::is_relight(entry);
+    if relight {
+        if job.output != crate::ltx::types::OutputKind::ExrFrames {
+            return reject(
+                "VALIDATION_FAILED",
+                "relight templates deliver exr-frames only (output must be exr-frames)",
+            );
+        }
+        if !job.prompt.is_empty() {
+            return reject("VALIDATION_FAILED", "relight templates take no prompt");
+        }
+        if server.get_relight_client().await.is_none() {
+            return reject(
+                "SIDECAR_UNAVAILABLE",
+                "relight sidecar not configured (503)",
+            );
+        }
+    } else if server.get_ltx_client().await.is_none() {
+        return reject("SIDECAR_UNAVAILABLE", "LTX sidecar not configured (503)");
     }
     // Guide-strength contract: finite, (0, 1]. Enforced BEFORE a slot or the
     // deposit is spent; the patcher separately fails closed when a strength is
@@ -482,10 +571,16 @@ pub async fn handle_encrypted_ltx_generate(
     // Accept.
     server.ltx_rate_limiter().record_request(session_id);
     let allow_list_version = store.bundle().allow_list_version;
-    let timeout_secs = std::env::var("LTX_JOB_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1800);
+    // VFX Passes D3: relight jobs use RELIGHT_JOB_TIMEOUT_SECS (via AdmitCfg) for `watch`.
+    let timeout_secs = if relight {
+        server.admit_cfg().await.watch_timeout_secs
+    } else {
+        std::env::var("LTX_JOB_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1800)
+    };
+    let sidecar = entry.and_then(|e| e.sidecar.clone());
 
     let mut ack_inner = json!({
         "type": "ltx_accepted",
@@ -510,6 +605,7 @@ pub async fn handle_encrypted_ltx_generate(
         permit,
         pending_marked,
         panic_seam: None,
+        sidecar,
     };
     (ack, Some(task))
 }
@@ -545,6 +641,8 @@ pub struct LtxGenerateTask {
     /// be plain `pub` or the test cannot compile.
     #[doc(hidden)]
     pub panic_seam: Option<LtxPanicSeam>,
+    /// VFX Passes D3: the verified template's sidecar family (`Some("relight")` routes to the relight client).
+    pub sidecar: Option<String>,
 }
 
 /// Which panic [`LtxGenerateTask::run`]'s core injects at entry. Test-only;
@@ -965,7 +1063,12 @@ impl LtxGenerateTask {
             permit,
             pending_marked,
             panic_seam,
+            sidecar,
         } = self;
+        // VFX Passes: the whole-job deadline runs from here (D3); relight jobs take the relight-only paths below.
+        let started = std::time::Instant::now();
+        let is_relight = sidecar.as_deref() == Some("relight");
+        let admit_cfg = server.admit_cfg().await;
         // This block is a no-op scope kept deliberately: it was the body of the
         // old `tokio::spawn(async move { … })`, and preserving it keeps A.0's
         // diff to the extraction itself rather than re-indenting ~490 lines of
@@ -978,6 +1081,8 @@ impl LtxGenerateTask {
             // on every internal path); the single-exit cleanup below forfeits
             // the pending for any exit taken BEFORE it.
             let mut pending_resolved = false;
+            // D8: set once the sidecar accepted a prompt; a relight job then always ends with `/interrupt`.
+            let mut submitted_prompt = false;
 
             // The core runs as an inner future so that EVERY exit (there are
             // ~10 early returns) funnels through the ONE cleanup below —
@@ -1016,18 +1121,56 @@ impl LtxGenerateTask {
                         None => 0,
                     };
                     let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
-                    if let Err(e) = crate::ltx::template::session_gate(
+                    // VFX Passes D6: the expected session model follows the template's family.
+                    let store = server.get_ltx_template_store().await;
+                    let expected = crate::ltx::template::expected_session_model(
+                        store.as_ref().and_then(|s| s.entry(&job.template_id)),
+                        &job.template_id,
+                    );
+                    if let Err(e) = crate::ltx::template::session_gate_for_model(
                         job_id,
+                        expected,
                         &job.template_id,
                         tokens,
                         tracked,
                         &cm.get_host_address(),
                         |jid| cm.query_session_model(jid),
                         |jid| cm.query_session_jobs_raw(jid),
+                        crate::ltx::template::GateTiming::PRODUCTION,
                     )
                     .await
                     {
                         send_err(&progress_tx, "VALIDATION_FAILED", &e, key, sid, rid).await;
+                        return;
+                    }
+                }
+                // VFX Passes D8: GPU admission, after D20 and before any input is
+                // staged. A relight job needs the pins to match, the sidecar idle
+                // and enough free VRAM; an LTX job first empties the relight
+                // sidecar when one is configured.
+                let relight_pins = server.relight_pins().await;
+                let mut relight_echo: Option<crate::ltx::relight::RelightEcho> = None;
+                if is_relight {
+                    let comfy = server.get_ltx_client().await;
+                    match crate::ltx::relight::admit_relight(
+                        &client,
+                        comfy.as_deref(),
+                        &admit_cfg,
+                        relight_pins.as_ref(),
+                    )
+                    .await
+                    {
+                        Ok(echo) => relight_echo = Some(echo),
+                        Err((code, msg)) => {
+                            send_err(&progress_tx, code, &msg, key, sid, rid).await;
+                            return;
+                        }
+                    }
+                } else if let Some(rc) = server.get_relight_client().await {
+                    if let Err((code, msg)) =
+                        crate::ltx::relight::free_relight_before_ltx(&rc, &admit_cfg).await
+                    {
+                        send_err(&progress_tx, code, &msg, key, sid, rid).await;
                         return;
                     }
                 }
@@ -1064,9 +1207,21 @@ impl LtxGenerateTask {
                     }
                 };
 
+                // D8 (c) once more: staging the inputs took time.
+                if is_relight {
+                    if let Err((code, msg)) =
+                        crate::ltx::relight::repoll_vram(&client, &admit_cfg).await
+                    {
+                        send_err(&progress_tx, code, &msg, key, sid, rid).await;
+                        return;
+                    }
+                }
                 // 1. Submit graph → prompt_id.
                 let prompt_id = match client.submit(&patched_graph).await {
-                    Ok(p) => p,
+                    Ok(p) => {
+                        submitted_prompt = true;
+                        p
+                    }
                     Err(e) => {
                         send_err(
                             &progress_tx,
@@ -1120,11 +1275,8 @@ impl LtxGenerateTask {
                 match watch_handle.await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
-                        let code = if e.to_string().contains("timed out") {
-                            "TIMEOUT"
-                        } else {
-                            "GENERATION_FAILED"
-                        };
+                        // D8: the sidecar's GPU_BUSY is retryable (CAPACITY).
+                        let code = crate::ltx::relight::watch_error_code(&e.to_string());
                         send_err(
                             &progress_tx,
                             code,
@@ -1150,6 +1302,19 @@ impl LtxGenerateTask {
                     }
                 }
 
+                // D3: the whole-job deadline, first check (right after `watch`).
+                if is_relight {
+                    if let crate::ltx::relight::FinaliseDecision::Abandon(m) =
+                        crate::ltx::relight::relight_finalise_decision(
+                            started.elapsed(),
+                            std::time::Duration::from_secs(admit_cfg.deadline_secs),
+                            Ok(()),
+                        )
+                    {
+                        send_err(&progress_tx, "GENERATION_FAILED", &m, key, sid, rid).await;
+                        return;
+                    }
+                }
                 // 3. EXR pipeline. Enumerate THIS prompt's outputs (scoped by prompt_id) —
                 // NOT a glob of the shared output dir, which would leak other concurrent
                 // jobs' frames into this manifest/capability set.
@@ -1276,7 +1441,13 @@ impl LtxGenerateTask {
                             return;
                         }
                     };
-                    match exr::encrypt_bytes_and_upload(bytes, s5, &dest).await {
+                    // D3: relight frames get RELIGHT_UPLOAD_ATTEMPTS tries in total.
+                    let attempts = if is_relight {
+                        submit::RELIGHT_UPLOAD_ATTEMPTS
+                    } else {
+                        1
+                    };
+                    match submit::upload_frame_with_retry(s5, &dest, bytes, attempts).await {
                         Ok((cap, h)) => {
                             caps.push(cap);
                             hashes.push(h);
@@ -1346,19 +1517,89 @@ impl LtxGenerateTask {
                     warn!("LTX job abandoned pre-submit: client disconnected before delivery");
                     return;
                 }
-                // TODO(GPU-acceptance): real reproduction hashes hydrate envHash.
-                let env_meta = EnvMeta {
-                    weights_hash: env_or("LTX_WEIGHTS_HASH"),
-                    lora_hash: env_or("LTX_LORA_HASH"),
-                    comfy_commit: env_or("LTX_COMFY_COMMIT"),
-                    node_commit: env_or("LTX_NODE_COMMIT"),
-                    cuda_version: env_or("LTX_CUDA_VERSION"),
-                    gpu_class: env_or("LTX_GPU_CLASS"),
+                // `tokens` is the ONE variable feeding tokensClaimed, the wire
+                // billing.tokens and the tracker (§B triple equality).
+                let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
+                // VFX Passes D18 + D3: a relight job re-reads its session right
+                // after the finalising gate (a client can reclaim the deposit
+                // during a long silent render) and checks the whole-job deadline
+                // again; `tokens_before` is this read's `tokens_used`.
+                let mut tokens_before = U256::zero();
+                if is_relight {
+                    let tracked = match job_id {
+                        Some(jid) => server
+                            .ltx_tracker()
+                            .get_job_info(jid)
+                            .await
+                            .map_or(0, |info| info.total_tokens),
+                        None => 0,
+                    };
+                    let snap = match job_id {
+                        Some(jid) => crate::ltx::template::read_with_retry(
+                            3,
+                            std::time::Duration::from_secs(2),
+                            std::time::Duration::from_secs(10),
+                            || cm.query_session_jobs_raw(jid),
+                        )
+                        .await
+                        .and_then(|r| crate::training::accept::decode_session_snapshot(&r)),
+                        None => Err("the job has no session id".to_string()),
+                    };
+                    let this_host = cm.get_host_address();
+                    let terms = snap.as_ref().map_err(Clone::clone).and_then(|s| {
+                        let host = this_host.parse::<ethers::types::Address>().map_err(|e| {
+                            format!("this node's host address {this_host:?} is unreadable: {e}")
+                        })?;
+                        crate::ltx::template::check_session_terms(s, host, tokens, tracked)
+                    });
+                    match crate::ltx::relight::relight_finalise_decision(
+                        started.elapsed(),
+                        std::time::Duration::from_secs(admit_cfg.deadline_secs),
+                        terms,
+                    ) {
+                        crate::ltx::relight::FinaliseDecision::Abandon(m) => {
+                            send_err(&progress_tx, "GENERATION_FAILED", &m, key, sid, rid).await;
+                            return;
+                        }
+                        crate::ltx::relight::FinaliseDecision::Proceed => {
+                            tokens_before = snap
+                                .as_ref()
+                                .map(|s| s.tokens_used)
+                                .expect("Proceed implies Ok");
+                        }
+                    }
+                }
+                // Relight (D11): EnvMeta from the pins and the admission echo.
+                // LTX — TODO(GPU-acceptance): real reproduction hashes hydrate envHash.
+                let env_meta = match (relight_pins.as_ref(), relight_echo.as_ref()) {
+                    (Some(pins), Some(echo)) if is_relight => {
+                        crate::ltx::relight::relight_env_meta(
+                            pins,
+                            echo,
+                            &env_or("LTX_NODE_COMMIT"),
+                        )
+                    }
+                    _ => EnvMeta {
+                        weights_hash: env_or("LTX_WEIGHTS_HASH"),
+                        lora_hash: env_or("LTX_LORA_HASH"),
+                        comfy_commit: env_or("LTX_COMFY_COMMIT"),
+                        node_commit: env_or("LTX_NODE_COMMIT"),
+                        cuda_version: env_or("LTX_CUDA_VERSION"),
+                        gpu_class: env_or("LTX_GPU_CLASS"),
+                    },
                 };
                 let env_hash = attestation::env_hash(&env_meta);
-                // TODO(GPU-acceptance): real registered modelId + node signing key (None ⇒ unsigned).
-                let model_id =
-                    std::env::var("LTX_MODEL_ID").unwrap_or_else(|_| ZERO_BYTES32.to_string());
+                // D7: relight templates attest their own model id; LTX keeps
+                // LTX_MODEL_ID until OQ-V5 (TODO(GPU-acceptance): node signing key).
+                let store_now = server.get_ltx_template_store().await;
+                let relight_model = match store_now.as_ref().and_then(|s| s.entry(&job.template_id))
+                {
+                    Some(entry) => crate::ltx::relight::attestation_model_id(entry),
+                    None => None,
+                };
+                let model_id = relight_model.unwrap_or_else(|| {
+                    std::env::var("LTX_MODEL_ID").unwrap_or_else(|_| ZERO_BYTES32.to_string())
+                });
                 let host = cm.get_host_address();
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1394,14 +1635,12 @@ impl LtxGenerateTask {
                 };
                 // M1 economics: upload the attestation (proofCID) and submit ONE
                 // submitProofOfWork per clip through the ProofSubmit seam on cm
-                // (strict success: tx confirmed with receipt status 1). `tokens` is
-                // the ONE variable feeding tokensClaimed, the wire billing.tokens
-                // and the tracker (§B triple equality). finalize_clip resolves the
-                // pending on every internal path; a submit failure still returns
-                // the proof_cid (clip delivery ≥ revenue — the client paid for and
-                // receives its clip; the node forfeits that clip's revenue).
-                let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
-                let proof_cid = match submit::finalize_clip(
+                // (strict success: tx confirmed with receipt status 1).
+                // finalize_clip resolves the pending on every internal path; a
+                // submit failure still returns the proof_cid (clip delivery ≥
+                // revenue — the node forfeits that clip's revenue), except that a
+                // relight clip whose session closed unpaid is withheld (D18).
+                let finalize = submit::finalize_clip(
                     s5,
                     Some(&*cm),
                     server.ltx_tracker(),
@@ -1412,30 +1651,43 @@ impl LtxGenerateTask {
                     tokens,
                 )
                 .await
-                {
-                    Ok((cid, _submitted)) => {
-                        pending_resolved = true;
-                        cid
-                    }
-                    Err(e) => {
-                        // Upload failure: no proofCID exists at all — the one
-                        // finalize failure that stays an error (pending already
-                        // forfeited inside finalize_clip).
-                        pending_resolved = true;
-                        send_err(
-                            &progress_tx,
-                            "GENERATION_FAILED",
-                            &format!("proof upload failed: {e}"),
-                            key,
-                            sid,
-                            rid,
+                .map_err(|e| e.to_string());
+                pending_resolved = true;
+                // D18: a relight proof that did not confirm may still mine — ask
+                // the chain before withholding anything.
+                let reread = match (&finalize, is_relight, job_id) {
+                    (Ok((_, false)), true, Some(jid)) => Some(
+                        crate::ltx::template::read_with_retry(
+                            3,
+                            std::time::Duration::from_secs(2),
+                            std::time::Duration::from_secs(10),
+                            || cm.query_session_jobs_raw(jid),
                         )
-                        .await;
-                        return;
-                    }
+                        .await
+                        .and_then(|r| crate::training::accept::decode_session_snapshot(&r)),
+                    ),
+                    _ => None,
                 };
                 let price =
                     std::env::var("LTX_PRICE_PER_TOKEN").unwrap_or_else(|_| "0".to_string());
+                let inner = match completion_outcome(
+                    sidecar.as_deref(),
+                    finalize,
+                    reread,
+                    tokens_before,
+                    tokens,
+                    &output_cid,
+                    &caps,
+                    &manifest,
+                    &price,
+                    rid,
+                ) {
+                    CompletionOutcome::Complete(inner) => inner,
+                    CompletionOutcome::Fail(code, msg) => {
+                        send_err(&progress_tx, code, &msg, key, sid, rid).await;
+                        return;
+                    }
+                };
                 if let Some(jid) = job_id {
                     let ppt = U256::from_dec_str(&price).unwrap_or_default();
                     let cost = U256::from(tokens).checked_mul(ppt).unwrap_or(U256::MAX);
@@ -1447,15 +1699,6 @@ impl LtxGenerateTask {
                         .track(jid, Some(session_id.clone()), tokens, cost)
                         .await;
                 }
-                let inner = ltx_complete_inner(
-                    &output_cid,
-                    &proof_cid,
-                    &caps,
-                    &manifest,
-                    tokens,
-                    &price,
-                    rid,
-                );
                 let _ = progress_tx
                     .send(build_encrypted_ltx_response(&inner, key, sid, None))
                     .await;
@@ -1472,6 +1715,15 @@ impl LtxGenerateTask {
             // session. Catching the unwind restores the single exit. (`panic =
             // unwind` is in force; no profile sets `panic = "abort"`.)
             let panicked = AssertUnwindSafe(core).catch_unwind().await.is_err();
+            // VFX Passes D8: a relight job that reached the sidecar always ends
+            // with `/interrupt` to the RELIGHT sidecar (a no-op when idle) BEFORE
+            // the slot is released, so it can never hit the next job. Never to
+            // ComfyUI, which may be an interactive install.
+            if is_relight && submitted_prompt {
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), client.interrupt())
+                        .await;
+            }
             // Render is over on every core exit — release the VRAM slot before
             // any settlement sleeps (the deferred path can wait 35s+).
             drop(_permit);

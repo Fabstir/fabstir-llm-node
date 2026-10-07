@@ -123,6 +123,7 @@ async fn task_with(job_id: Option<u64>, seam: Option<LtxPanicSeam>) -> LtxGenera
         permit: sem.acquire_owned().await.unwrap(),
         pending_marked: true,
         panic_seam: seam,
+        sidecar: None,
     }
 }
 

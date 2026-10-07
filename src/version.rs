@@ -3,25 +3,33 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.59.1-ltx25-visibility-2026-10-05";
+pub const VERSION: &str = "v8.60.0-rc1-vfx-passes-2026-10-06";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.59.1";
+pub const VERSION_NUMBER: &str = "8.60.0-rc1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 59;
+pub const VERSION_MINOR: u32 = 60;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-05";
+pub const BUILD_DATE: &str = "2026-10-06";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.60.0 VFX Passes (VP1): a second sidecar family — NVIDIA Cosmos DiffusionRenderer inverse passes behind the
+    // same ComfyUI-shaped transport (RELIGHT_URL) — with three bundle-v27 templates cosmos-passes-{key,std,full}
+    // (model ids keccak("NVIDIA/Cosmos-DiffusionRenderer/" + id)), GPU admission by free VRAM and pinned weights
+    // (D8/D11), a whole-job deadline and a session re-read before delivery (D3/D18).
+    "vfx-passes",
+    "relight-sidecar",
+    "relight-vram-admission",
+    "relight-session-reread",
     // v8.59.1 NM1 D24/D25: a session the node's RPC has not seen yet is waited for (a 15 s budget), not
     // judged — D20's gate no longer refuses a just-opened session as "no model id"; and the FC1.6
     // vault gate never caches or accepts a zero (not-yet-visible) depositor.
@@ -621,6 +629,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.60.0 - VFX Passes (Oct 6, 2026)
+    "FEATURE (LTX handler): templates may name a sidecar family (`sidecar: \"relight\"` in the allow-list, bundle v27); relight jobs route to RELIGHT_URL, are admitted by the sidecar's free VRAM and pins (CAPACITY + GPU_BUSY: / SIDECAR_UNAVAILABLE + SIDECAR_PIN_MISMATCH:), run under RELIGHT_JOB_TIMEOUT_SECS and a RELIGHT_JOB_DEADLINE_SECS whole-job deadline, re-read the session after the finalising gate, and withhold delivery only when the session closed AND the proof did not land. The node refuses to start with RELIGHT_URL set and MAX_CONCURRENT_GENERATIONS != 1. LTX jobs are unchanged except that, when a relight sidecar is configured, it is emptied (/free) before each LTX job",
     // v8.59.1 - NM1 D24/D25: RPC-lag fixes (Oct 5, 2026)
     "FIX (LTX): D20's session gate treated a session its RPC had not seen yet (an all-zero model and an all-zero sessionJobs record) as a verdict and refused just-opened sessions as \"no model id\" — t2v above all, found by end-session (g)'s paid smoke on 8.59.0. It now re-reads both every 2 s until the session is visible or 15 s have passed, then judges as before (a session that never appears, or a model-less one, is still refused); an Err or an undecodable record still refuses at once (D24)",
     "NOTE (LTX): the wait runs after ltx_accepted, holding the generation slot; a job naming a session id that never appears now holds it for about the 15 s budget plus one 2 s gap and its reads (≈ 16-18 s) instead of one RPC round trip (documented, D24)",
@@ -1130,8 +1140,11 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 59);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 60);
+        assert_eq!(VERSION_PATCH, 0);
+        // v8.60.0 VFX Passes
+        assert!(FEATURES.contains(&"vfx-passes"));
+        assert!(FEATURES.contains(&"relight-sidecar"));
         // v8.59.1 NM1 D24/D25
         assert!(FEATURES.contains(&"ltx-session-visibility-wait"));
         assert!(FEATURES.contains(&"fc16-zero-depositor-guard"));
@@ -1334,14 +1347,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.59.1"));
+        assert!(version.contains("8.60.0-rc1"));
         assert!(version.contains("2026-10-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.59.1-ltx25-visibility-2026-10-05");
-        assert_eq!(VERSION_NUMBER, "8.59.1");
+        assert_eq!(VERSION, "v8.60.0-rc1-vfx-passes-2026-10-06");
+        assert_eq!(VERSION_NUMBER, "8.60.0-rc1");
         assert_eq!(BUILD_DATE, "2026-10-05");
     }
 

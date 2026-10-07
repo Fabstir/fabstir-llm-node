@@ -278,6 +278,78 @@ impl ComfyClient {
         Ok(())
     }
 
+    /// VFX Passes D8: POST `/free` (ComfyUI takes `{"unload_models": true, "free_memory": true}`; the relight sidecar
+    /// ignores the body). Only [`FreeError::Unreachable`] means "nothing resident"; every other failure counts as reachable.
+    pub async fn free(&self, body: Option<Value>) -> std::result::Result<(), FreeError> {
+        let mut req = self.client.post(format!("{}/free", self.endpoint));
+        if let Some(b) = body {
+            req = req.json(&b);
+        }
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(FreeError::Http(resp.status().as_u16())),
+            Err(e) if e.is_connect() => Err(FreeError::Unreachable(e.to_string())),
+            Err(e) => Err(FreeError::Other(e.to_string())),
+        }
+    }
+
+    /// VFX Passes D8: GET `/system_stats`, parsed. The `relight` block is optional, so ComfyUI's stats parse too; the
+    /// relight sidecar answers 503 until its weight hashing finishes ([`StatsError::NotReady`]).
+    pub async fn stats(&self) -> std::result::Result<SystemStats, StatsError> {
+        let resp = match self
+            .client
+            .get(format!("{}/system_stats", self.endpoint))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) if e.is_connect() => return Err(StatsError::Unreachable(e.to_string())),
+            Err(e) => return Err(StatsError::Bad(e.to_string())),
+        };
+        if resp.status().as_u16() == 503 {
+            return Err(StatsError::NotReady);
+        }
+        if !resp.status().is_success() {
+            return Err(StatsError::Bad(format!(
+                "/system_stats returned {}",
+                resp.status()
+            )));
+        }
+        resp.json::<SystemStats>()
+            .await
+            .map_err(|e| StatsError::Bad(e.to_string()))
+    }
+
+    /// VFX Passes D8 (handshake): GET `/queue`; `true` iff nothing is running or pending.
+    pub async fn queue_idle(&self) -> std::result::Result<bool, StatsError> {
+        let resp = match self
+            .client
+            .get(format!("{}/queue", self.endpoint))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) if e.is_connect() => return Err(StatsError::Unreachable(e.to_string())),
+            Err(e) => return Err(StatsError::Bad(e.to_string())),
+        };
+        if !resp.status().is_success() {
+            return Err(StatsError::Bad(format!(
+                "/queue returned {}",
+                resp.status()
+            )));
+        }
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| StatsError::Bad(e.to_string()))?;
+        let empty = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_array)
+                .is_none_or(|a| a.is_empty())
+        };
+        Ok(empty("queue_running") && empty("queue_pending"))
+    }
+
     /// GET `/system_stats`; `true` iff the sidecar answers 2xx.
     pub async fn health(&self) -> bool {
         match self
@@ -293,6 +365,53 @@ impl ComfyClient {
             }
         }
     }
+}
+
+/// VFX Passes D8: why a `/free` failed. `Unreachable` (connection refused, DNS) = nothing resident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FreeError {
+    Unreachable(String),
+    Http(u16),
+    Other(String),
+}
+
+/// VFX Passes D8: why a `/system_stats` (or `/queue`) read failed. `NotReady` = the relight sidecar is still hashing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatsError {
+    Unreachable(String),
+    NotReady,
+    Bad(String),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceStats {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub vram_total: u64,
+    #[serde(default)]
+    pub vram_free: u64,
+}
+
+/// The relight sidecar's own block on `/system_stats` (D2.8 / D11).
+#[derive(Debug, Clone, Deserialize)]
+pub struct RelightStats {
+    pub busy: bool,
+    #[serde(default)]
+    pub loaded: bool,
+    pub pins: Option<crate::ltx::relight::RelightPins>,
+    #[serde(default)]
+    pub gpu: String,
+    #[serde(default)]
+    pub cuda: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SystemStats {
+    #[serde(default)]
+    pub devices: Vec<DeviceStats>,
+    #[serde(default)]
+    pub relight: Option<RelightStats>,
 }
 
 /// Parse one `/ws` frame into a `Progress` event (pure; unit-tested).

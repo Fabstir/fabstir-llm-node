@@ -902,27 +902,19 @@ async fn node_main() -> Result<()> {
 
     // Initialize LTX 2.3 generation sidecar (ComfyUI). Optional: requires COMFY_URL.
     let comfy_url = env::var("COMFY_URL").ok();
+    // VFX Passes D3: the relight sidecar (NVIDIA Cosmos DiffusionRenderer). Optional: RELIGHT_URL.
+    let relight_url = env::var("RELIGHT_URL").ok().filter(|v| !v.is_empty());
+    let max_generations: usize = env::var("MAX_CONCURRENT_GENERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    fabstir_llm_node::ltx::relight::check_relight_start(relight_url.as_deref(), max_generations)
+        .map_err(|e| anyhow::anyhow!(e))?;
     if let Some(ref url) = comfy_url {
-        let template_dir = env::var("TEMPLATE_DIR").unwrap_or_else(|_| "./templates".to_string());
         match fabstir_llm_node::ltx::ComfyClient::new(url) {
             Ok(client) => {
                 api_server.set_ltx_client(Arc::new(client)).await;
-                match fabstir_llm_node::ltx::TemplateStore::new(&template_dir) {
-                    Ok(store) => {
-                        api_server.set_ltx_template_store(Arc::new(store)).await;
-                        println!(
-                            "🎬 LTX sidecar configured: endpoint={}, templates={}",
-                            url, template_dir
-                        );
-                    }
-                    Err(e) => {
-                        println!(
-                            "⚠️  LTX template store failed to load from {}: {}",
-                            template_dir, e
-                        );
-                        println!("   ltx_generate will reject (no pinned templates)");
-                    }
-                }
+                println!("🎬 LTX sidecar configured: endpoint={}", url);
             }
             Err(e) => {
                 println!("⚠️  Failed to create LTX client: {}", e);
@@ -930,7 +922,67 @@ async fn node_main() -> Result<()> {
             }
         }
     } else {
-        println!("   No COMFY_URL set — ltx_generate will return 503");
+        println!("   No COMFY_URL set — LTX templates will return 503");
+    }
+    if let Some(ref url) = relight_url {
+        match fabstir_llm_node::ltx::ComfyClient::new(url) {
+            Ok(client) => {
+                let client = Arc::new(client);
+                api_server.set_relight_client(client.clone()).await;
+                println!("💡 Relight sidecar configured: endpoint={}", url);
+                // Startup: clear anything a previous node left running, then
+                // check the pins (logged and retried with backoff, never fatal:
+                // the per-job check is the authority, D11).
+                let expected = api_server.relight_pins().await;
+                tokio::spawn(async move {
+                    let interrupt = client.interrupt().await;
+                    let free = client.free(None).await;
+                    println!("💡 Relight startup /interrupt: {interrupt:?}, /free: {free:?}");
+                    let mut wait = 5u64;
+                    loop {
+                        match client.stats().await {
+                            Ok(st) => {
+                                let echoed = st.relight.and_then(|r| r.pins);
+                                match fabstir_llm_node::ltx::relight::pins_match(
+                                    expected.as_ref(),
+                                    echoed.as_ref(),
+                                ) {
+                                    Ok(()) => println!("💡 Relight pins match RELIGHT_PINS"),
+                                    Err(e) => println!("⚠️  Relight startup pin check: {e}"),
+                                }
+                                break;
+                            }
+                            Err(e) => {
+                                println!("⚠️  Relight startup stats not ready ({e:?}); retrying in {wait} s");
+                                tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                                wait = (wait * 2).min(300);
+                            }
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                println!("⚠️  Failed to create relight client: {}", e);
+                println!("   VFX Passes templates will return 503");
+            }
+        }
+    }
+    // The template store loads when EITHER sidecar is configured.
+    if comfy_url.is_some() || relight_url.is_some() {
+        let template_dir = env::var("TEMPLATE_DIR").unwrap_or_else(|_| "./templates".to_string());
+        match fabstir_llm_node::ltx::TemplateStore::new(&template_dir) {
+            Ok(store) => {
+                api_server.set_ltx_template_store(Arc::new(store)).await;
+                println!("🎬 Template store loaded: templates={}", template_dir);
+            }
+            Err(e) => {
+                println!(
+                    "⚠️  LTX template store failed to load from {}: {}",
+                    template_dir, e
+                );
+                println!("   ltx_generate will reject (no pinned templates)");
+            }
+        }
     }
 
     // Initialize Web Search Service (v8.7.0+)
