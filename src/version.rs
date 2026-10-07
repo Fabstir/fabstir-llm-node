@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.0-rc1-vfx-passes-2026-10-06";
+pub const VERSION: &str = "v8.60.0-vfx-passes-2026-10-07";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.0-rc1";
+pub const VERSION_NUMBER: &str = "8.60.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -18,7 +18,7 @@ pub const VERSION_MINOR: u32 = 60;
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-06";
+pub const BUILD_DATE: &str = "2026-10-07";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
@@ -1347,15 +1347,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.0-rc1"));
-        assert!(version.contains("2026-10-05"));
+        assert!(version.contains("8.60.0"));
+        assert!(version.contains("2026-10-07"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.0-rc1-vfx-passes-2026-10-06");
-        assert_eq!(VERSION_NUMBER, "8.60.0-rc1");
-        assert_eq!(BUILD_DATE, "2026-10-05");
+        assert_eq!(VERSION, "v8.60.0-vfx-passes-2026-10-07");
+        assert_eq!(VERSION_NUMBER, "8.60.0");
+        assert_eq!(BUILD_DATE, "2026-10-07");
     }
 
     #[test]
