@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.59.0-ltx25-new-modes (October 2026); the `VERSION` file is authoritative
+**Version**: v8.60.0-vfx-passes (October 2026); the `VERSION` file is authoritative
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -45,15 +45,25 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 - **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
-- **AI Video Generation (LTX)**: fifteen modes through a ComfyUI sidecar — thirteen on LTX 2.3
+- **AI Video Generation (LTX)**: fifteen modes through a ComfyUI sidecar: thirteen on LTX 2.3
   (text-to-video, image-to-video, first-last-frame, ingredients, restyle, outpaint, edit, restore,
   upscale, water, day-to-night, new camera angle, convert to HDR) and two on LTX 2.5 (cut-out with
   an alpha matte, layout to render; v8.59.0+). Pinned, hash-committed ComfyUI templates are published
-  as an allow-list bundle (v26 in this release) that the client authenticates against the host's on-chain
+  as an allow-list bundle (v27 in this release) that the client authenticates against the host's on-chain
   `bundleHash` before paying; inputs are bound byte-exact into the commitment; billing is per
   megapixel-frame; delivery is encrypted to S5, with opt-in 16-bit EXR masters (v8.43.0+). Drivable
-  from Blender via the `platformless-blender-addon` and `platformless-helper` repositories (the
-  thirteen LTX 2.3 modes today; the two LTX 2.5 modes arrive with add-on 0.19.0) (v8.31.4+)
+  from Blender via the `platformless-blender-addon` and `platformless-helper` repositories, all
+  sixteen modes including VFX Passes (v8.31.4+)
+- **VFX Passes (NVIDIA Cosmos)**: the sixteenth mode. Normal, base colour, depth, roughness and
+  metallic passes from live-action footage, through a second sidecar (`fabstir-relight`: NVIDIA
+  Cosmos DiffusionRenderer's inverse renderer, unquantised in bf16) that the bundle routes to by
+  the template's `sidecar` field. Three presets (Key, Standard, Full), each its own template and
+  model id; exactly 1920×1088, 121 to 145 frames on the 8k+1 grid (the Blender extension offers 121
+  or 145), 24 or 25 fps, no prompt; delivered as one
+  multi-channel half-float EXR per frame plus a preview. Jobs are admitted on the sidecar's free
+  VRAM and on its weight files matching the SHA-256 pins in `RELIGHT_PINS`, whose hash goes into
+  the attestation; the node needs `MAX_CONCURRENT_GENERATIONS=1` with this sidecar. Relighting
+  from the passes runs locally in the Blender extension (v8.60.0+)
 - **Transcoding Trustless Verification**: Quality metrics, GOP proofs, Merkle tree, checkpoint submission (v8.26.0+)
 - **HLS Adaptive Bitrate Streaming**: Segmented fMP4 output with per-segment encryption and free preview support (v8.28.0+)
 - **Qwen3.6-35B-A3B Support**: llama-cpp-2 0.1.146 (qwen35moe architecture) on a CUDA 13 base image (v8.29.0+)
@@ -161,6 +171,18 @@ TEMPLATE_DIR=./templates         # Pinned templates + allowlist.json (default ./
 LTX_JOB_TIMEOUT_SECS=1800        # Per-job render timeout (default 1800)
 LTX_RATE_LIMIT=3                 # LTX requests per session per 5-minute window (default 3)
 
+# VFX Passes (relight sidecar, NVIDIA Cosmos DiffusionRenderer, v8.60.0+)
+RELIGHT_URL=http://relight-sidecar:8190  # Relight sidecar; unset = no passes jobs. Requires MAX_CONCURRENT_GENERATIONS=1
+RELIGHT_PINS='{"weights":{...},"stack":"..."}'  # One-line JSON: SHA-256 per weight file + stack digest;
+                                 # a sidecar reporting anything else refuses the job (SIDECAR_UNAVAILABLE,
+                                 # "SIDECAR_PIN_MISMATCH: ..."); unset = every passes job refused
+RELIGHT_JOB_TIMEOUT_SECS=2100    # Render watch timeout per job (default 2100)
+RELIGHT_JOB_DEADLINE_SECS=2700   # Whole-job deadline (default 2700). A Full 145-frame job can overrun
+                                 # the defaults on an RTX PRO 6000 Max-Q: 2600 / 3200 give it headroom
+RELIGHT_ADMIT_SECS=180           # How long a job waits for free VRAM and the pins before CAPACITY (default 180)
+RELIGHT_MIN_FREE_VRAM=32212254720  # Free VRAM in bytes needed to admit a job (default 30 GiB)
+RELIGHT_COMFY_HANDSHAKE=0        # 1 = ask the LTX ComfyUI sidecar to free its VRAM first (default off)
+
 # Image Generation (v8.16.0+)
 AUTO_IMAGE_ROUTING=false         # Auto-detect image intent from chat and route to
                                  # diffusion sidecar (v8.16.1+, opt-in, default off)
@@ -209,7 +231,7 @@ curl -s http://localhost:8080/v1/version
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.59.0-ltx25-new-modes.tar.gz   # binary at the tarball root
+tar -xzf fabstir-llm-node-v8.60.0-vfx-passes.tar.gz   # binary at the tarball root
 strings fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 ```
 
@@ -466,5 +488,5 @@ For issues and questions:
 - [WebSocket API Integration](docs/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
 
 ### Blender
-- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - The LTX modes from the Video Sequence Editor (thirteen today; the two LTX 2.5 modes arrive with add-on 0.19.0)
+- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - The sixteen modes from the Video Sequence Editor, VFX Passes and local relighting included
 - [Helper README](https://github.com/Fabstir/platformless-helper/blob/main/README.md) - The local daemon between the add-on and the node
