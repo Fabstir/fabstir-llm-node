@@ -1,0 +1,759 @@
+{
+ "note": "Batch D21 shared deadline vector (node compiled defaults; the helper's submit timeout is built on it). Per-frame slopes are TODO-probe-16 placeholders.",
+ "defaults": {
+  "timeout145": 2600,
+  "slopeKey": 21,
+  "slopeStd": 21,
+  "slopeFull": 21,
+  "margin": 600,
+  "uploadSlope": 2,
+  "rate": 10000,
+  "keepalive": 900
+ },
+ "rows": [
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 121,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 252765,
+   "finalBudgetSecs": 3346
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 129,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 269476,
+   "finalBudgetSecs": 3347
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 137,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 286188,
+   "finalBudgetSecs": 3349
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 145,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 302900,
+   "finalBudgetSecs": 3351
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 153,
+   "watchTimeoutSecs": 2768,
+   "deadlineSecs": 3384,
+   "tokens": 319611,
+   "finalBudgetSecs": 3536
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 161,
+   "watchTimeoutSecs": 2936,
+   "deadlineSecs": 3568,
+   "tokens": 336323,
+   "finalBudgetSecs": 3722
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 169,
+   "watchTimeoutSecs": 3104,
+   "deadlineSecs": 3752,
+   "tokens": 353035,
+   "finalBudgetSecs": 3908
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 177,
+   "watchTimeoutSecs": 3272,
+   "deadlineSecs": 3936,
+   "tokens": 369746,
+   "finalBudgetSecs": 4093
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 185,
+   "watchTimeoutSecs": 3440,
+   "deadlineSecs": 4120,
+   "tokens": 386458,
+   "finalBudgetSecs": 4279
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 193,
+   "watchTimeoutSecs": 3608,
+   "deadlineSecs": 4304,
+   "tokens": 403170,
+   "finalBudgetSecs": 4465
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 201,
+   "watchTimeoutSecs": 3776,
+   "deadlineSecs": 4488,
+   "tokens": 419881,
+   "finalBudgetSecs": 4650
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 209,
+   "watchTimeoutSecs": 3944,
+   "deadlineSecs": 4672,
+   "tokens": 436593,
+   "finalBudgetSecs": 4836
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 217,
+   "watchTimeoutSecs": 4112,
+   "deadlineSecs": 4856,
+   "tokens": 453305,
+   "finalBudgetSecs": 5022
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 225,
+   "watchTimeoutSecs": 4280,
+   "deadlineSecs": 5040,
+   "tokens": 470016,
+   "finalBudgetSecs": 5208
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 233,
+   "watchTimeoutSecs": 4448,
+   "deadlineSecs": 5224,
+   "tokens": 486728,
+   "finalBudgetSecs": 5393
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 241,
+   "watchTimeoutSecs": 4616,
+   "deadlineSecs": 5408,
+   "tokens": 503440,
+   "finalBudgetSecs": 5579
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 249,
+   "watchTimeoutSecs": 4784,
+   "deadlineSecs": 5592,
+   "tokens": 520152,
+   "finalBudgetSecs": 5765
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 257,
+   "watchTimeoutSecs": 4952,
+   "deadlineSecs": 5776,
+   "tokens": 536863,
+   "finalBudgetSecs": 5950
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 265,
+   "watchTimeoutSecs": 5120,
+   "deadlineSecs": 5960,
+   "tokens": 553575,
+   "finalBudgetSecs": 6136
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 273,
+   "watchTimeoutSecs": 5288,
+   "deadlineSecs": 6144,
+   "tokens": 570287,
+   "finalBudgetSecs": 6322
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 281,
+   "watchTimeoutSecs": 5456,
+   "deadlineSecs": 6328,
+   "tokens": 586998,
+   "finalBudgetSecs": 6507
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 289,
+   "watchTimeoutSecs": 5624,
+   "deadlineSecs": 6512,
+   "tokens": 603710,
+   "finalBudgetSecs": 6693
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 297,
+   "watchTimeoutSecs": 5792,
+   "deadlineSecs": 6696,
+   "tokens": 620422,
+   "finalBudgetSecs": 6879
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 305,
+   "watchTimeoutSecs": 5960,
+   "deadlineSecs": 6880,
+   "tokens": 637133,
+   "finalBudgetSecs": 7064
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 313,
+   "watchTimeoutSecs": 6128,
+   "deadlineSecs": 7064,
+   "tokens": 653845,
+   "finalBudgetSecs": 7250
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 321,
+   "watchTimeoutSecs": 6296,
+   "deadlineSecs": 7248,
+   "tokens": 670557,
+   "finalBudgetSecs": 7436
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 329,
+   "watchTimeoutSecs": 6464,
+   "deadlineSecs": 7432,
+   "tokens": 687268,
+   "finalBudgetSecs": 7621
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 337,
+   "watchTimeoutSecs": 6632,
+   "deadlineSecs": 7616,
+   "tokens": 703980,
+   "finalBudgetSecs": 7807
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 345,
+   "watchTimeoutSecs": 6800,
+   "deadlineSecs": 7800,
+   "tokens": 720692,
+   "finalBudgetSecs": 7993
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 353,
+   "watchTimeoutSecs": 6968,
+   "deadlineSecs": 7984,
+   "tokens": 737403,
+   "finalBudgetSecs": 8178
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "frames": 361,
+   "watchTimeoutSecs": 7136,
+   "deadlineSecs": 8168,
+   "tokens": 754115,
+   "finalBudgetSecs": 8364
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 121,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 252765,
+   "finalBudgetSecs": 3346
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 129,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 269476,
+   "finalBudgetSecs": 3347
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 137,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 286188,
+   "finalBudgetSecs": 3349
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 145,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 302900,
+   "finalBudgetSecs": 3351
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 153,
+   "watchTimeoutSecs": 2768,
+   "deadlineSecs": 3384,
+   "tokens": 319611,
+   "finalBudgetSecs": 3536
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 161,
+   "watchTimeoutSecs": 2936,
+   "deadlineSecs": 3568,
+   "tokens": 336323,
+   "finalBudgetSecs": 3722
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 169,
+   "watchTimeoutSecs": 3104,
+   "deadlineSecs": 3752,
+   "tokens": 353035,
+   "finalBudgetSecs": 3908
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 177,
+   "watchTimeoutSecs": 3272,
+   "deadlineSecs": 3936,
+   "tokens": 369746,
+   "finalBudgetSecs": 4093
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 185,
+   "watchTimeoutSecs": 3440,
+   "deadlineSecs": 4120,
+   "tokens": 386458,
+   "finalBudgetSecs": 4279
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 193,
+   "watchTimeoutSecs": 3608,
+   "deadlineSecs": 4304,
+   "tokens": 403170,
+   "finalBudgetSecs": 4465
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 201,
+   "watchTimeoutSecs": 3776,
+   "deadlineSecs": 4488,
+   "tokens": 419881,
+   "finalBudgetSecs": 4650
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 209,
+   "watchTimeoutSecs": 3944,
+   "deadlineSecs": 4672,
+   "tokens": 436593,
+   "finalBudgetSecs": 4836
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 217,
+   "watchTimeoutSecs": 4112,
+   "deadlineSecs": 4856,
+   "tokens": 453305,
+   "finalBudgetSecs": 5022
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 225,
+   "watchTimeoutSecs": 4280,
+   "deadlineSecs": 5040,
+   "tokens": 470016,
+   "finalBudgetSecs": 5208
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 233,
+   "watchTimeoutSecs": 4448,
+   "deadlineSecs": 5224,
+   "tokens": 486728,
+   "finalBudgetSecs": 5393
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 241,
+   "watchTimeoutSecs": 4616,
+   "deadlineSecs": 5408,
+   "tokens": 503440,
+   "finalBudgetSecs": 5579
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 249,
+   "watchTimeoutSecs": 4784,
+   "deadlineSecs": 5592,
+   "tokens": 520152,
+   "finalBudgetSecs": 5765
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 257,
+   "watchTimeoutSecs": 4952,
+   "deadlineSecs": 5776,
+   "tokens": 536863,
+   "finalBudgetSecs": 5950
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 265,
+   "watchTimeoutSecs": 5120,
+   "deadlineSecs": 5960,
+   "tokens": 553575,
+   "finalBudgetSecs": 6136
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 273,
+   "watchTimeoutSecs": 5288,
+   "deadlineSecs": 6144,
+   "tokens": 570287,
+   "finalBudgetSecs": 6322
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 281,
+   "watchTimeoutSecs": 5456,
+   "deadlineSecs": 6328,
+   "tokens": 586998,
+   "finalBudgetSecs": 6507
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 289,
+   "watchTimeoutSecs": 5624,
+   "deadlineSecs": 6512,
+   "tokens": 603710,
+   "finalBudgetSecs": 6693
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 297,
+   "watchTimeoutSecs": 5792,
+   "deadlineSecs": 6696,
+   "tokens": 620422,
+   "finalBudgetSecs": 6879
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 305,
+   "watchTimeoutSecs": 5960,
+   "deadlineSecs": 6880,
+   "tokens": 637133,
+   "finalBudgetSecs": 7064
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 313,
+   "watchTimeoutSecs": 6128,
+   "deadlineSecs": 7064,
+   "tokens": 653845,
+   "finalBudgetSecs": 7250
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 321,
+   "watchTimeoutSecs": 6296,
+   "deadlineSecs": 7248,
+   "tokens": 670557,
+   "finalBudgetSecs": 7436
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 329,
+   "watchTimeoutSecs": 6464,
+   "deadlineSecs": 7432,
+   "tokens": 687268,
+   "finalBudgetSecs": 7621
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 337,
+   "watchTimeoutSecs": 6632,
+   "deadlineSecs": 7616,
+   "tokens": 703980,
+   "finalBudgetSecs": 7807
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 345,
+   "watchTimeoutSecs": 6800,
+   "deadlineSecs": 7800,
+   "tokens": 720692,
+   "finalBudgetSecs": 7993
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 353,
+   "watchTimeoutSecs": 6968,
+   "deadlineSecs": 7984,
+   "tokens": 737403,
+   "finalBudgetSecs": 8178
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "frames": 361,
+   "watchTimeoutSecs": 7136,
+   "deadlineSecs": 8168,
+   "tokens": 754115,
+   "finalBudgetSecs": 8364
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 121,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 252765,
+   "finalBudgetSecs": 3346
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 129,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 269476,
+   "finalBudgetSecs": 3347
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 137,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 286188,
+   "finalBudgetSecs": 3349
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 145,
+   "watchTimeoutSecs": 2600,
+   "deadlineSecs": 3200,
+   "tokens": 302900,
+   "finalBudgetSecs": 3351
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 153,
+   "watchTimeoutSecs": 2768,
+   "deadlineSecs": 3384,
+   "tokens": 319611,
+   "finalBudgetSecs": 3536
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 161,
+   "watchTimeoutSecs": 2936,
+   "deadlineSecs": 3568,
+   "tokens": 336323,
+   "finalBudgetSecs": 3722
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 169,
+   "watchTimeoutSecs": 3104,
+   "deadlineSecs": 3752,
+   "tokens": 353035,
+   "finalBudgetSecs": 3908
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 177,
+   "watchTimeoutSecs": 3272,
+   "deadlineSecs": 3936,
+   "tokens": 369746,
+   "finalBudgetSecs": 4093
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 185,
+   "watchTimeoutSecs": 3440,
+   "deadlineSecs": 4120,
+   "tokens": 386458,
+   "finalBudgetSecs": 4279
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 193,
+   "watchTimeoutSecs": 3608,
+   "deadlineSecs": 4304,
+   "tokens": 403170,
+   "finalBudgetSecs": 4465
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 201,
+   "watchTimeoutSecs": 3776,
+   "deadlineSecs": 4488,
+   "tokens": 419881,
+   "finalBudgetSecs": 4650
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 209,
+   "watchTimeoutSecs": 3944,
+   "deadlineSecs": 4672,
+   "tokens": 436593,
+   "finalBudgetSecs": 4836
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 217,
+   "watchTimeoutSecs": 4112,
+   "deadlineSecs": 4856,
+   "tokens": 453305,
+   "finalBudgetSecs": 5022
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 225,
+   "watchTimeoutSecs": 4280,
+   "deadlineSecs": 5040,
+   "tokens": 470016,
+   "finalBudgetSecs": 5208
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 233,
+   "watchTimeoutSecs": 4448,
+   "deadlineSecs": 5224,
+   "tokens": 486728,
+   "finalBudgetSecs": 5393
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 241,
+   "watchTimeoutSecs": 4616,
+   "deadlineSecs": 5408,
+   "tokens": 503440,
+   "finalBudgetSecs": 5579
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 249,
+   "watchTimeoutSecs": 4784,
+   "deadlineSecs": 5592,
+   "tokens": 520152,
+   "finalBudgetSecs": 5765
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 257,
+   "watchTimeoutSecs": 4952,
+   "deadlineSecs": 5776,
+   "tokens": 536863,
+   "finalBudgetSecs": 5950
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 265,
+   "watchTimeoutSecs": 5120,
+   "deadlineSecs": 5960,
+   "tokens": 553575,
+   "finalBudgetSecs": 6136
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 273,
+   "watchTimeoutSecs": 5288,
+   "deadlineSecs": 6144,
+   "tokens": 570287,
+   "finalBudgetSecs": 6322
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 281,
+   "watchTimeoutSecs": 5456,
+   "deadlineSecs": 6328,
+   "tokens": 586998,
+   "finalBudgetSecs": 6507
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 289,
+   "watchTimeoutSecs": 5624,
+   "deadlineSecs": 6512,
+   "tokens": 603710,
+   "finalBudgetSecs": 6693
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 297,
+   "watchTimeoutSecs": 5792,
+   "deadlineSecs": 6696,
+   "tokens": 620422,
+   "finalBudgetSecs": 6879
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 305,
+   "watchTimeoutSecs": 5960,
+   "deadlineSecs": 6880,
+   "tokens": 637133,
+   "finalBudgetSecs": 7064
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 313,
+   "watchTimeoutSecs": 6128,
+   "deadlineSecs": 7064,
+   "tokens": 653845,
+   "finalBudgetSecs": 7250
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 321,
+   "watchTimeoutSecs": 6296,
+   "deadlineSecs": 7248,
+   "tokens": 670557,
+   "finalBudgetSecs": 7436
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 329,
+   "watchTimeoutSecs": 6464,
+   "deadlineSecs": 7432,
+   "tokens": 687268,
+   "finalBudgetSecs": 7621
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 337,
+   "watchTimeoutSecs": 6632,
+   "deadlineSecs": 7616,
+   "tokens": 703980,
+   "finalBudgetSecs": 7807
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 345,
+   "watchTimeoutSecs": 6800,
+   "deadlineSecs": 7800,
+   "tokens": 720692,
+   "finalBudgetSecs": 7993
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 353,
+   "watchTimeoutSecs": 6968,
+   "deadlineSecs": 7984,
+   "tokens": 737403,
+   "finalBudgetSecs": 8178
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "frames": 361,
+   "watchTimeoutSecs": 7136,
+   "deadlineSecs": 8168,
+   "tokens": 754115,
+   "finalBudgetSecs": 8364
+  }
+ ]
+}

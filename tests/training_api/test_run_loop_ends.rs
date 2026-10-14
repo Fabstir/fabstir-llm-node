@@ -204,3 +204,48 @@ async fn a_sequential_slice_after_the_final_one_fails_closed() {
     assert!(detail.contains("diverged sidecar"), "{detail}");
     assert_eq!(billing.settled_slices, 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_rate_limited_slice_zero_proof_is_retried_and_settles_with_two_calls() {
+    // Batch D21: `RateLimited` (nothing broadcast) is the one retryable
+    // error; slice 0 then lands on its second call, slice 1 on its first.
+    use fabstir_llm_node::ltx::submit::ProofSubmitError;
+    let fx = fixture(None).await;
+    let h = make_deps(
+        &fx,
+        good_sessions(),
+        ScanBehaviour::Cleared,
+        CountBehaviour::Tokens(9),
+    );
+    h.proof
+        .script
+        .lock()
+        .unwrap()
+        .push_back(Err(ProofSubmitError::RateLimited));
+    let script = vec![
+        slice_line(&h, 0, 0, 0, 5),
+        slice_line(&h, 1, 10, 5, 9),
+        finalise_line(&h, 10),
+        line(10, r#"{"event":"done"}"#),
+    ];
+    let (end, _) = drive(&h, script, None).await;
+    let RunEnd::Complete { billing, .. } = end else {
+        panic!("expected Complete, got {end:?}");
+    };
+    assert_eq!((billing.settled_slices, billing.forfeited_slices), (2, 0));
+    assert_eq!(billing.settled_tokens, 9);
+    let slice0: Vec<String> = h
+        .proof
+        .interleave
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| e.ends_with(":5"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        slice0,
+        vec!["proof-err:5".to_string(), "proof:5".to_string()],
+        "slice 0 took two submit calls: the rate-limited one, then the landed retry"
+    );
+}

@@ -17,8 +17,10 @@ import { Contract, Interface, JsonRpcProvider, Wallet } from 'ethers';
 import { rpcUrl, usdcTokenAddress } from './balance';
 import { jobMarketplaceAddress, sessionShapeFor } from './escrow';
 import { getFiatDeps } from './fiat-session-service';
-import { makeChainReceiptReader, reconcileOrphans, type CreateReceiptReader } from './fiat-reconcile';
+import { reconcileOrphans, reconcileVault, type CreateReceiptReader } from './fiat-reconcile';
+import type { IdempotencyStore } from './idempotency';
 import type { CreditsLedger } from './ledger';
+import type { VaultOutbox } from './vault-outbox';
 import {
   bigintEnv,
   gatekeeperConfigFromEnv,
@@ -155,6 +157,11 @@ export function startSettlementListener(opts: {
   /** R5/M2 reconciliation: bind/release orphaned holds (crash between create and
    *  bind) each tick when provided. A no-op when there are no pending creates. */
   reconcile?: { reader: CreateReceiptReader };
+  /** D20 — the vault outbox: each tick resolves its entries (rebroadcasting
+   *  the same bytes where nothing of ours holds a nonce), re-checks the boot
+   *  nonce wait and the stuck rule, then runs R5 over the outbox's verdicts.
+   *  Supersedes `reconcile` (pre-deploy holds are handled inside). */
+  vault?: { outbox: VaultOutbox; idempotency?: IdempotencyStore };
   /** Tests drive tick() themselves; production self-schedules. */
   manual?: boolean;
   /** Scan only to latest − safetyLag. A load-balanced public RPC can answer
@@ -186,7 +193,7 @@ export function startSettlementListener(opts: {
    *  deposit could over-credit a session the chain will pay a host for. Trigger
    *  the timeout instead and let the ordinary settlement event apply the
    *  contract's OWN refund figure, through the path that is already tested. */
-  reclaim?: { trigger(jobId: bigint): Promise<void> };
+  reclaim?: { trigger(jobId: bigint): Promise<void | 'skipped'> };
   /** How long a bound STANDARD hold may sit unsettled before we reclaim it.
    *  Must exceed the contract's session lifetime or the call reverts; default
    *  2h against the 1h standard `maxDuration`, so a slow render is never cut
@@ -227,7 +234,24 @@ export function startSettlementListener(opts: {
 
   async function tickOnce(): Promise<void> {
     try {
-      if (opts.reconcile) {
+      if (opts.vault) {
+        const { outbox } = opts.vault;
+        await outbox.resolve();
+        if (outbox.bootWaiting()) {
+          await outbox.checkBootNonce().catch((e) =>
+            opts.onAlarm(`vault boot nonce check failed: ${e instanceof Error ? e.message : String(e)}`)
+          );
+        }
+        await reconcileVault({
+          ledger: opts.ledger,
+          outbox,
+          ...(opts.vault.idempotency ? { idempotency: opts.vault.idempotency } : {}),
+          onAlarm: opts.onAlarm,
+          // D21 — the SAME delays the sweeper uses below.
+          reclaimAfterMs: opts.reclaimAfterMs ?? 2 * 60 * 60 * 1000,
+          ...(opts.reclaimAfterMsByKind ? { reclaimAfterMsByKind: opts.reclaimAfterMsByKind } : {}),
+        });
+      } else if (opts.reconcile) {
         // Recover orphaned holds (crash between create and bind) BEFORE the
         // solvency check, so a just-reconciled session is counted correctly.
         const r = await reconcileOrphans(opts.ledger, opts.reconcile.reader, opts.onAlarm);
@@ -292,10 +316,26 @@ export function startSettlementListener(opts: {
         chunkStart = chunkEnd + 1;
       }
       if (opts.stateSweep) {
+        // D20 — open vault orphans: a state read showing the session not
+        // Active CLOSES the orphan, so it is never swept twice.
+        for (const orphan of opts.ledger.openVaultOrphans()) {
+          try {
+            const s = await opts.stateSweep.session(orphan.jobId);
+            if (!s || !s.ended) continue;
+            opts.vault?.outbox.inFlight.sweeps.delete(orphan.jobId.toString());
+            if (await opts.ledger.closeVaultOrphan(orphan.holdId)) {
+              opts.onAlarm(`vault-orphan ${orphan.holdId} (session ${orphan.jobId}) closed: the session is no longer Active`);
+            }
+          } catch (e) {
+            opts.onAlarm(`state-sweep failed on orphan ${orphan.holdId}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
         for (const jobId of opts.ledger.boundJobIds()) {
           try {
             const s = await opts.stateSweep.session(jobId);
             if (!s || !s.ended) continue;
+            // Seen not Active: a sweep for it is over, whatever its entry says.
+            opts.vault?.outbox.inFlight.sweeps.delete(jobId.toString());
             const result = await opts.ledger.settle(jobId, s.refundedToUser);
             if (result.applied) {
               // Recovery via state means the event path missed it — say so.
@@ -315,7 +355,14 @@ export function startSettlementListener(opts: {
       // attempted for the same job.
       if (opts.reclaim) {
         const standardAfter = opts.reclaimAfterMs ?? 2 * 60 * 60 * 1000;
-        for (const { jobId, kind, ageMs } of opts.ledger.boundJobsWithAge()) {
+        const nowMs = Date.now();
+        const candidates = [
+          ...opts.ledger.boundJobsWithAge(nowMs),
+          // D20 — open vault orphans wait the same per-kind delay, measured
+          // from when the orphan was journaled.
+          ...opts.ledger.openVaultOrphans().map((o) => ({ jobId: o.jobId, kind: o.kind, ageMs: nowMs - o.atMs })),
+        ];
+        for (const { jobId, kind, ageMs } of candidates) {
           // Each kind waits out ITS OWN lifetime before it counts as stranded
           // (the production wrapper has validated these delays against the
           // contract's proof-silence clock; see validateReclaimDelays).
@@ -324,7 +371,8 @@ export function startSettlementListener(opts: {
           try {
             // Reclaim only; the settle happens on the resulting event, next
             // tick, with the contract's own refund figure.
-            await opts.reclaim.trigger(jobId);
+            const result = await opts.reclaim.trigger(jobId);
+            if (result === 'skipped') continue; // a sweep for it is already in flight
             // The standard line is byte-identical to the pre-kind text; a
             // non-standard kind is appended in parentheses.
             const kindTag = kind === 'standard' ? '' : ` (${kind})`;
@@ -540,15 +588,28 @@ export function msEnv(name: string, fallback: number): number {
 
 /** The production reclaim delays, parsed and validated (FT1 D3). Pure apart
  *  from the env read, so the wrapper's order can be tested without a backend. */
-export function productionReclaimDelays(): { standard: number; training: number } {
+export function productionReclaimDelays(): { standard: number; training: number; passes: number } {
   // Standard: must exceed the contract's session lifetime or the estimate
   // fails; default 2h against the 1h standard maxDuration.
   const standard = msEnv('FIAT_RECLAIM_AFTER_MS', 2 * 60 * 60 * 1000);
   // Training: 4h maxDuration + the 1h proof window before the permission can
   // open, so 6h before a training hold counts as stranded.
   const training = msEnv('FIAT_TRAINING_RECLAIM_AFTER_MS', 6 * 60 * 60 * 1000);
-  validateReclaimDelays({ standard, byKind: { training } });
-  return { standard, training };
+  // Passes (D21): the same 4h + 1h shape as training, so the same 6h default.
+  const passes = msEnv('FIAT_PASSES_RECLAIM_AFTER_MS', 6 * 60 * 60 * 1000);
+  validateReclaimDelays({ standard, byKind: { training, passes } });
+  return { standard, training, passes };
+}
+
+/** The listener's reclaim options from the production delays: every
+ *  non-standard kind waits out ITS OWN delay (a kind left out here would be
+ *  swept at the standard 2 h, while its session can still be live). */
+export function productionReclaimOptions(): {
+  reclaimAfterMs: number;
+  reclaimAfterMsByKind: Partial<Record<SessionKind, number>>;
+} {
+  const { standard, training, passes } = productionReclaimDelays();
+  return { reclaimAfterMs: standard, reclaimAfterMsByKind: { training, passes } };
 }
 
 /** The spendable-balance alarm floor: the largest ENABLED kind's session cap
@@ -566,9 +627,10 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
   if (g.__fiatSettlementListener) return g.__fiatSettlementListener;
   // FT1 D3 — validate the reclaim delays BEFORE the backend is built (no
   // journal opened, no chain touched, on a bad env).
-  const { standard: reclaimAfterMs, training: trainingReclaimAfterMs } = productionReclaimDelays();
+  const reclaimOptions = productionReclaimOptions();
   const gatekeeperConfig = gatekeeperConfigFromEnv();
-  const { ledger } = await getFiatDeps();
+  const deps = await getFiatDeps();
+  const { ledger } = deps;
   const dataDir = process.env.FIAT_DATA_DIR ?? './data/fiat';
   const fromBlock = Number(process.env.FIAT_SETTLEMENT_FROM_BLOCK ?? '0');
   g.__fiatSettlementListener = startSettlementListener({
@@ -582,7 +644,10 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     // it, the very next open reverts. The largest cap of any ENABLED kind (a
     // training open is the one that reverts first), overridable.
     minSpendableMicro: productionMinSpendableMicro(gatekeeperConfig),
-    reconcile: { reader: makeChainReceiptReader() },
+    // D20 — the ONE outbox from the shared deps (never a second copy here).
+    ...(deps.outbox
+      ? { vault: { outbox: deps.outbox, ...(deps.idempotency ? { idempotency: deps.idempotency } : {}) } }
+      : {}),
     // Public-RPC replica lag protection (see the tickOnce comment). ~2s blocks:
     // lag 5 ≈ 10s behind head, overlap 30 ≈ a minute of re-scan each tick.
     safetyLag: Number(process.env.FIAT_SETTLEMENT_SAFETY_LAG ?? '5'),
@@ -590,9 +655,8 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
     // The guarantee layer: log-free, lag-proof reconciliation by executed state.
     stateSweep: makeChainSessionReader(),
     // Stranded-escrow reclaim (job 987). Inert unless FIAT_RECLAIM_STRANDED=1.
-    reclaim: makeReclaimer(),
-    reclaimAfterMs,
-    reclaimAfterMsByKind: { training: trainingReclaimAfterMs },
+    reclaim: await makeProductionReclaimer(),
+    ...reclaimOptions,
     // Liveness: abandon hung ticks loudly; heartbeat every 40 ticks (~10 min at
     // the 15s poll) so journal silence beyond that provably means dead.
     tickTimeoutMs: Number(process.env.FIAT_SETTLEMENT_TICK_TIMEOUT_MS ?? '120000'),
@@ -602,11 +666,99 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
   // The effective delays, once, so a defaulted value (an env typo is a silent
   // default) is distinguishable from a set one.
   console.log(
-    `[fiat-settlement] reclaim delays: standard ${reclaimAfterMs} ms, training ${trainingReclaimAfterMs} ms` +
+    `[fiat-settlement] reclaim delays: standard ${reclaimOptions.reclaimAfterMs} ms, ` +
+      `training ${reclaimOptions.reclaimAfterMsByKind.training} ms, passes ${reclaimOptions.reclaimAfterMsByKind.passes} ms` +
       ` (reclaim ${process.env.FIAT_RECLAIM_STRANDED === '1' ? 'ON' : 'OFF'})`
   );
   console.log('[fiat-settlement] listener started');
   return g.__fiatSettlementListener;
+}
+
+/** A sweep's append must start by 150 s from when the job was CHOSEN. */
+export const SWEEP_APPEND_BY_MS = 150_000;
+/** A sweep's confirmation wait (below the 120 s tick watchdog). */
+export const SWEEP_WAIT_MS = 90_000;
+
+const TIMEOUT_INTERFACE = new Interface(['function triggerSessionTimeout(uint256 jobId)']);
+
+/**
+ * D20 — the sweeper through the ONE outbox (`vaultSend`), never a Wallet of
+ * its own. The job enters the shared in-flight set when it is CHOSEN (before
+ * the lock wait), and the set is re-checked under the lock, so an overlapping
+ * tick (`guardedTick` abandons a tick at 120 s without cancelling it) never
+ * sends a second sweep. It leaves the set at once if the sweep throws before
+ * its append (nothing was sent; the next tick retries), and otherwise when its
+ * outbox entry resolves or the session is seen not Active.
+ */
+export function makeReclaimer(
+  outbox: VaultOutbox,
+  marketplaceAddress: string,
+  opts: { now?: () => number } = {}
+): { trigger(jobId: bigint): Promise<void | 'skipped'> } {
+  const now = opts.now ?? Date.now;
+  return {
+    async trigger(jobId: bigint): Promise<void | 'skipped'> {
+      const id = jobId.toString();
+      if (outbox.inFlight.sweeps.has(id)) return 'skipped';
+      outbox.inFlight.sweeps.add(id);
+      const chosenAt = now();
+      let sent: Awaited<ReturnType<VaultOutbox['vaultSend']>>;
+      try {
+        sent = await outbox.vaultSend(
+          'sweep',
+          { to: marketplaceAddress, data: TIMEOUT_INTERFACE.encodeFunctionData('triggerSessionTimeout', [jobId]) },
+          id,
+          {
+            appendBy: chosenAt + SWEEP_APPEND_BY_MS,
+            // Under the lock: no unresolved sweep entry for this job already.
+            recheck: () => outbox.byLink('sweep', id).every((e) => e.outcome !== undefined),
+          }
+        );
+      } catch (e) {
+        outbox.inFlight.sweeps.delete(id); // nothing was appended: retry next tick
+        throw e;
+      }
+      if (sent === 'vetoed') return 'skipped';
+      if (sent.broadcastError) {
+        throw new Error(`sweep ${sent.hash} broadcast failed after its outbox append (resolution rebroadcasts): ${String(sent.broadcastError)}`);
+      }
+      const receipt = await outbox.waitForReceipt(sent.hash, now() + SWEEP_WAIT_MS);
+      if (!receipt) throw new Error(`sweep ${sent.hash} unconfirmed after ${SWEEP_WAIT_MS / 1000} s — resolution owns it`);
+      if (receipt.status === 0) throw new Error(`sweep ${sent.hash} reverted`);
+    },
+  };
+}
+
+/**
+ * Sends `triggerSessionTimeout(jobId)` for sessions nobody completed. OFF unless
+ * FIAT_RECLAIM_STRANDED=1, because this is the one place the service spends gas
+ * on its own initiative and that should be a decision, not a default.
+ *
+ * Anyone may call it (NODE-MIGRATION-JAN2026), so the vault key is used simply
+ * because it is the key we already hold. We do not credit the customer here:
+ * the resulting SessionTimedOut event settles the hold through the ordinary
+ * path, with the contract's own refund figure rather than a guess of ours.
+ * The outbox comes from the SHARED deps (`getFiatDeps()`), so this bundle and
+ * the routes' bundle sign through one nonce view and one lock.
+ */
+export async function makeProductionReclaimer(): Promise<{ trigger(jobId: bigint): Promise<void | 'skipped'> } | undefined> {
+  if (process.env.FIAT_RECLAIM_STRANDED !== '1') return undefined;
+  const deps = await getFiatDeps();
+  if (!deps.outbox || !deps.marketplaceAddress) return undefined;
+  return makeReclaimer(deps.outbox, deps.marketplaceAddress);
+}
+
+/** D20 — one R5 pass over the SHARED outbox (the same call the tick makes). */
+export async function runProductionVaultReconcile(onAlarm: (message: string) => void): Promise<void> {
+  const deps = await getFiatDeps();
+  if (!deps.outbox) return;
+  await reconcileVault({
+    ledger: deps.ledger,
+    outbox: deps.outbox,
+    ...(deps.idempotency ? { idempotency: deps.idempotency } : {}),
+    onAlarm,
+    ...productionReclaimOptions(),
+  });
 }
 
 /**
@@ -619,34 +771,6 @@ export async function startProductionSettlementListener(): Promise<SettlementLis
  * withdrawToken the latter), so both count toward backing outstanding
  * liabilities — else a pull-pattern refund would look like a solvency shortfall.
  */
-/**
- * Sends `triggerSessionTimeout(jobId)` for sessions nobody completed. OFF unless
- * FIAT_RECLAIM_STRANDED=1, because this is the one place the service spends gas
- * on its own initiative and that should be a decision, not a default.
- *
- * Anyone may call it (NODE-MIGRATION-JAN2026), so the vault key is used simply
- * because it is the key we already hold. We do not credit the customer here:
- * the resulting SessionTimedOut event settles the hold through the ordinary
- * path, with the contract's own refund figure rather than a guess of ours.
- */
-function makeReclaimer(): { trigger(jobId: bigint): Promise<void> } | undefined {
-  if (process.env.FIAT_RECLAIM_STRANDED !== '1') return undefined;
-  const key = process.env.FIAT_VAULT_PRIVATE_KEY;
-  if (!key) return undefined;
-  const wallet = new Wallet(key, new JsonRpcProvider(rpcUrl()));
-  const marketplace = new Contract(
-    jobMarketplaceAddress(),
-    ['function triggerSessionTimeout(uint256 jobId)'],
-    wallet
-  );
-  return {
-    async trigger(jobId: bigint): Promise<void> {
-      const tx = await marketplace.triggerSessionTimeout(jobId);
-      await tx.wait();
-    },
-  };
-}
-
 function makeVaultHoldings():
   | { holdings(): Promise<bigint>; spendableMicro(): Promise<bigint> }
   | undefined {

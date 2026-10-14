@@ -5,10 +5,11 @@
 //! [`ProofSubmit`] (the §B same-variable rule, the first-proof/interval gate,
 //! the "Too many" bounded retry, and failure-still-returns-proof_cid).
 
-use anyhow::Result;
 use ethers::types::H256;
 use fabstir_llm_node::ltx::billing::LtxTracker;
-use fabstir_llm_node::ltx::submit::{finalize_clip, upload_attestation, ProofSubmit};
+use fabstir_llm_node::ltx::submit::{
+    finalize_clip, upload_attestation, ProofReceipt, ProofSubmit, ProofSubmitError, SubmitPolicy,
+};
 use fabstir_llm_node::ltx::types::{Attestation, FrameManifest, Resolution};
 use fabstir_llm_node::storage::s5_client::{MockS5Backend, S5Storage};
 use sha2::{Digest, Sha256};
@@ -64,11 +65,11 @@ async fn test_upload_attestation_returns_cid_and_sha256() {
 // E4 — finalize_clip with a mock ProofSubmit
 // -----------------------------------------------------------------------------
 
-/// Scripted mock: each call pops the next outcome (`Some(msg)` → that error,
-/// `None`/exhausted → success) and records `(job_id, tokens, hash, cid)`.
+/// Scripted mock: each call pops the next outcome (`Some(err)` → that TYPED
+/// error, `None`/exhausted → success) and records `(job_id, tokens, hash, cid)`.
 struct MockSubmit {
     interval: u64,
-    script: Mutex<VecDeque<Option<String>>>,
+    script: Mutex<VecDeque<Option<ProofSubmitError>>>,
     calls: Mutex<Vec<(u64, u64, [u8; 32], String)>>,
 }
 
@@ -76,7 +77,7 @@ impl MockSubmit {
     fn ok(interval: u64) -> Self {
         Self::scripted(interval, vec![])
     }
-    fn scripted(interval: u64, script: Vec<Option<String>>) -> Self {
+    fn scripted(interval: u64, script: Vec<Option<ProofSubmitError>>) -> Self {
         Self {
             interval,
             script: Mutex::new(script.into()),
@@ -96,19 +97,23 @@ impl ProofSubmit for MockSubmit {
         tokens: u64,
         proof_hash: [u8; 32],
         proof_cid: String,
-    ) -> Result<H256> {
+    ) -> std::result::Result<H256, ProofSubmitError> {
         self.calls
             .lock()
             .unwrap()
             .push((job_id, tokens, proof_hash, proof_cid));
         match self.script.lock().unwrap().pop_front().flatten() {
-            Some(msg) => Err(anyhow::anyhow!(msg)),
+            Some(e) => Err(e),
             None => Ok(H256::zero()),
         }
     }
 
     async fn session_proof_interval(&self, _job_id: u64) -> u64 {
         self.interval
+    }
+
+    async fn receipt_of(&self, _tx: H256) -> std::result::Result<Option<ProofReceipt>, String> {
+        Ok(None)
     }
 }
 
@@ -144,6 +149,7 @@ async fn test_finalize_clip_success_upload_then_submit_same_tokens() {
         "42-promptxyz",
         &att,
         tokens,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -186,6 +192,7 @@ async fn test_finalize_clip_first_proof_below_interval_skips_submit() {
         "42-p",
         &att,
         394,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -219,6 +226,7 @@ async fn test_finalize_clip_later_proof_below_interval_submits() {
         "42-p",
         &att,
         394,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -232,7 +240,10 @@ async fn test_finalize_clip_submit_failure_still_returns_proof_cid() {
     // Policy: clip delivery ≥ revenue — a failed tx must NOT turn a rendered
     // clip into an ltx_error; the node forfeits and the client still gets it.
     let (s5, tracker, att) = pending_setup().await;
-    let mock = MockSubmit::scripted(1000, vec![Some("execution reverted".into())]);
+    let mock = MockSubmit::scripted(
+        1000,
+        vec![Some(ProofSubmitError::Other("execution reverted".into()))],
+    );
 
     let (proof_cid, submitted) = finalize_clip(
         &s5,
@@ -243,6 +254,7 @@ async fn test_finalize_clip_submit_failure_still_returns_proof_cid() {
         "42-p",
         &att,
         9_831,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -263,7 +275,7 @@ async fn test_finalize_clip_too_many_retries_once_then_succeeds() {
     // Rate limit: tokensClaimed ≤ elapsed_secs × 2000 reverts "Too many"; the
     // node waits ≈ tokens/2000 (+5s buffer) and retries.
     let (s5, tracker, att) = pending_setup().await;
-    let mock = MockSubmit::scripted(1000, vec![Some("revert: Too many".into()), None]);
+    let mock = MockSubmit::scripted(1000, vec![Some(ProofSubmitError::RateLimited), None]);
 
     let (_cid, submitted) = finalize_clip(
         &s5,
@@ -274,6 +286,7 @@ async fn test_finalize_clip_too_many_retries_once_then_succeeds() {
         "42-p",
         &att,
         111_514,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -293,8 +306,8 @@ async fn test_finalize_clip_too_many_twice_succeeds_on_third() {
     let mock = MockSubmit::scripted(
         1000,
         vec![
-            Some("revert: Too many".into()),
-            Some("revert: Too many".into()),
+            Some(ProofSubmitError::RateLimited),
+            Some(ProofSubmitError::RateLimited),
             None,
         ],
     );
@@ -308,6 +321,7 @@ async fn test_finalize_clip_too_many_twice_succeeds_on_third() {
         "42-p",
         &att,
         111_514,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -326,9 +340,9 @@ async fn test_finalize_clip_too_many_thrice_forfeits() {
     let mock = MockSubmit::scripted(
         1000,
         vec![
-            Some("revert: Too many".into()),
-            Some("revert: Too many".into()),
-            Some("revert: Too many".into()),
+            Some(ProofSubmitError::RateLimited),
+            Some(ProofSubmitError::RateLimited),
+            Some(ProofSubmitError::RateLimited),
         ],
     );
 
@@ -341,6 +355,7 @@ async fn test_finalize_clip_too_many_thrice_forfeits() {
         "42-p",
         &att,
         111_514,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -371,6 +386,7 @@ async fn test_finalize_clip_without_job_id_uploads_only() {
         "unknown-p",
         &att,
         9_831,
+        SubmitPolicy::Ltx,
     )
     .await
     .unwrap();
@@ -400,6 +416,7 @@ async fn test_finalize_clip_upload_failure_forfeits_and_errors() {
         "42-p",
         &att,
         9_831,
+        SubmitPolicy::Ltx,
     )
     .await;
 

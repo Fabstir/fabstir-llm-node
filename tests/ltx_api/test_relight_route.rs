@@ -66,7 +66,8 @@ async fn relight_rules_refuse_before_the_permit() {
         (
             {
                 let mut j = base.clone();
-                j["frames"] = 153.into();
+                // Batch D21: v28 accepts every 8k+1 up to 361 (153 included)
+                j["frames"] = 369.into();
                 j
             },
             "",
@@ -186,7 +187,8 @@ async fn each_family_keeps_its_own_watch_timeout() {
     server.set_relight_pins(Some(pins())).await;
     server
         .set_admit_cfg(AdmitCfg {
-            watch_timeout_secs: 1234,
+            // Batch D21: base 1234, slope 0 ⇒ 1234 at ≤ 145 frames
+            timeout_145_secs: 1234,
             ..test_cfg()
         })
         .await;

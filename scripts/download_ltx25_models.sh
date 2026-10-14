@@ -27,6 +27,10 @@ FILES=(
   "Lightricks/LTX-2.5|latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors|latent_upscale_models"
   "Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen|ltx-2.5-22b-ic-lora-alpha-gen-0.9.safetensors|loras"
   "Lightricks/LTX-2.5-22b-IC-LoRA-Layout-To-Render|ltx-2.5-22b-ic-lora-layout-to-render-1.0.safetensors|loras"
+  "Lightricks/LTX-2.5-22b-IC-LoRA-Colorization|ltx-2.5-22b-ic-lora-colorization-0.9.safetensors|loras"
+  "Lightricks/LTX-2.5-22b-IC-LoRA-Deblur|ltx-2.5-22b-ic-lora-deblur-0.9.safetensors|loras"
+  "Lightricks/LTX-2.5-22b-IC-LoRA-Decompression|ltx-2.5-22b-ic-lora-decompression-0.9.safetensors|loras"
+  "Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details|ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors|loras"
 )
 
 if [ -z "${HF_TOKEN:-}" ]; then read -r -s -p "Hugging Face token (hidden): " HF_TOKEN; echo; fi

@@ -6,15 +6,85 @@
 //! and auth is `msg.sender == session.host` (v8.14.0; no on-chain signature).
 
 use anyhow::Result;
-use ethers::types::{Address, Bytes, TransactionReceipt, H256, U256};
+use ethers::types::{Address, Bytes, TransactionReceipt, H256, U256, U64};
 use sha2::{Digest, Sha256};
 use tracing::{error, info, warn};
 
 use crate::contracts::checkpoint_manager::encode_checkpoint_call;
 use crate::contracts::client::Web3Client;
 use crate::ltx::billing::{LtxTracker, MIN_PROVEN_TOKENS};
+use crate::ltx::final_proof::send_relight_final;
+pub use crate::ltx::final_proof::SubmitPolicy;
 use crate::ltx::types::Attestation;
 use crate::storage::s5_client::S5Storage;
+
+/// Batch D21: why a proof did not land, classified ONCE (inside
+/// `CheckpointManager::submit_ltx_proof`, via [`classify_submit_outcome`]); no
+/// caller reads error text afterwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProofSubmitError {
+    /// The gas estimate failed "Too many" (the proof rate limit): nothing was
+    /// broadcast.
+    RateLimited,
+    /// A mined status-0 receipt at `block` (it never carries a reason).
+    Reverted { block: u64 },
+    /// Broadcast, but no receipt within the queue's 60 s wait: it may still mine.
+    Unconfirmed(H256),
+    /// Anything else (not broadcast, or unclassifiable).
+    Other(String),
+}
+
+impl std::fmt::Display for ProofSubmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProofSubmitError::RateLimited => write!(f, "rate-limited (\"Too many\")"),
+            ProofSubmitError::Reverted { block } => {
+                write!(f, "reverted (status 0) at block {block}")
+            }
+            ProofSubmitError::Unconfirmed(h) => write!(f, "unconfirmed (no receipt, tx {h:?})"),
+            ProofSubmitError::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ProofSubmitError {}
+
+/// Batch D21: a mined transaction's outcome (`ProofSubmit::receipt_of`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofReceipt {
+    /// `status == 1`.
+    pub success: bool,
+    pub block: u64,
+}
+
+/// A receipt as a [`ProofReceipt`]; `None` until it carries a block number.
+pub fn proof_receipt(r: &TransactionReceipt) -> Option<ProofReceipt> {
+    Some(ProofReceipt {
+        success: r.status == Some(U64::from(1)),
+        block: r.block_number?.as_u64(),
+    })
+}
+
+/// Batch D21: the ONE place a proof submission's failure is classified. `sent`
+/// is the tx queue's answer: `Err(text)` = nothing broadcast (the queue's
+/// `Failed`), `Ok((hash, receipt))` = broadcast, with the receipt if one came
+/// within the wait. `Ok` is STRICT: only a status-1 receipt.
+pub fn classify_submit_outcome(
+    sent: std::result::Result<(H256, Option<TransactionReceipt>), String>,
+) -> std::result::Result<H256, ProofSubmitError> {
+    match sent {
+        Err(text) if text.contains("Too many") => Err(ProofSubmitError::RateLimited),
+        Err(text) => Err(ProofSubmitError::Other(text)),
+        Ok((hash, None)) => Err(ProofSubmitError::Unconfirmed(hash)),
+        Ok((hash, Some(r))) => match proof_receipt(&r) {
+            Some(ProofReceipt { success: true, .. }) => Ok(hash),
+            Some(ProofReceipt { block, .. }) => Err(ProofSubmitError::Reverted { block }),
+            None => Err(ProofSubmitError::Other(format!(
+                "receipt for tx {hash:?} carries no block number"
+            ))),
+        },
+    }
+}
 
 /// On-chain proof submission seam for the LTX spawn. Implemented by
 /// `CheckpointManager` (which keeps `Web3Client` encapsulated); mocked in tests
@@ -23,17 +93,21 @@ use crate::storage::s5_client::S5Storage;
 pub trait ProofSubmit: Send + Sync {
     /// Submit `submitProofOfWork(job_id, tokens, proof_hash, proof_cid, "")`
     /// from the host wallet. `Ok` means the proof LANDED: tx confirmed with
-    /// `receipt.status == 1` — anything weaker (no receipt, revert) is `Err`.
+    /// `receipt.status == 1` — anything weaker is a typed [`ProofSubmitError`].
     async fn submit_ltx_proof(
         &self,
         job_id: u64,
         tokens: u64,
         proof_hash: [u8; 32],
         proof_cid: String,
-    ) -> Result<H256>;
+    ) -> std::result::Result<H256, ProofSubmitError>;
 
     /// The session's `proofInterval` (contract minimum for the FIRST proof).
     async fn session_proof_interval(&self, job_id: u64) -> u64;
+
+    /// Batch D21: the receipt of an earlier proof transaction (`None` = not
+    /// mined yet), for polling an `Unconfirmed` final without resending.
+    async fn receipt_of(&self, tx: H256) -> std::result::Result<Option<ProofReceipt>, String>;
 }
 
 /// Megapixel-frame token count: `ceil(frames*w*h / 1000)`, computed in u128 so
@@ -87,8 +161,12 @@ pub async fn upload_attestation(
 ///
 /// RESOLVES the pending it was handed on EVERY internal path (submitted or
 /// forfeited) — including the upload-failure `Err`, the one failure that stays
-/// an error because no proof_cid exists at all. `tokens` must be the SAME
-/// variable that feeds the wire `billing.tokens` (the §B triple equality).
+/// an error because no proof_cid exists at all. `claim` is the ON-CHAIN claim:
+/// the job's tokens for the LTX modes (then also the wire `billing.tokens`, the
+/// §B triple equality); for a relight job after keep-alives, Batch D21's
+/// remainder (the wire carries the cumulative total instead). `policy` picks the
+/// send rules ([`SubmitPolicy`]).
+#[allow(clippy::too_many_arguments)]
 pub async fn finalize_clip(
     s5: &dyn S5Storage,
     submitter: Option<&dyn ProofSubmit>,
@@ -97,8 +175,10 @@ pub async fn finalize_clip(
     pending_marked: bool,
     job_tag: &str,
     att: &Attestation,
-    tokens: u64,
+    claim: u64,
+    policy: SubmitPolicy<'_>,
 ) -> Result<(String, bool)> {
+    let tokens = claim;
     let s5_path = format!("home/ltx/job_{job_tag}_attestation.json");
     let (proof_cid, proof_hash) = match upload_attestation(s5, &s5_path, att).await {
         Ok(pair) => pair,
@@ -128,7 +208,15 @@ pub async fn finalize_clip(
     // every proof needs the MIN_PROVEN_TOKENS floor. Skip a doomed tx.
     let first_proof = tracker.proofs_submitted(jid).await == 0;
     let min_required = if first_proof {
-        MIN_PROVEN_TOKENS.max(sub.session_proof_interval(jid).await)
+        let interval = match &policy {
+            // Batch D21 round 2: the relight final uses the admission snapshot's
+            // w10 and never reads the chain here.
+            SubmitPolicy::Relight(rf) => rf.proof_interval,
+            // Pre-existing (other LTX modes): an UNBOUNDED read — its
+            // `query_session_jobs_raw` has no timeout. Left as it was.
+            SubmitPolicy::Ltx => sub.session_proof_interval(jid).await,
+        };
+        MIN_PROVEN_TOKENS.max(interval)
     } else {
         MIN_PROVEN_TOKENS
     };
@@ -139,6 +227,17 @@ pub async fn finalize_clip(
         );
         tracker.mark_proof_forfeited(jid).await;
         return Ok((proof_cid, false));
+    }
+
+    // Batch D21: a relight final after keep-alives has its own send rules.
+    if let SubmitPolicy::Relight(rf) = &policy {
+        let landed = send_relight_final(sub, jid, tokens, proof_hash, proof_cid.clone(), rf).await;
+        if landed {
+            tracker.mark_proof_submitted(jid).await;
+        } else {
+            tracker.mark_proof_forfeited(jid).await;
+        }
+        return Ok((proof_cid, landed));
     }
 
     // Submit with a bounded rate-limit retry loop. "Too many" means
@@ -164,7 +263,7 @@ pub async fn finalize_clip(
                 tracker.mark_proof_submitted(jid).await;
                 return Ok((proof_cid, true));
             }
-            Err(e) if e.to_string().contains("Too many") && attempt < MAX_SUBMIT_ATTEMPTS => {
+            Err(ProofSubmitError::RateLimited) if attempt < MAX_SUBMIT_ATTEMPTS => {
                 let wait = tokens / 2000 + 5;
                 warn!(
                     "LTX job {jid}: rate-limited (\"Too many\"), attempt \

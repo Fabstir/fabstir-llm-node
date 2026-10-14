@@ -1102,10 +1102,10 @@ fn billing_from(info: Option<TrainRunInfo>) -> TrainRunEndBilling {
     }
 }
 
-/// Bounded proof submission (interface B.2): 3 attempts; a "Too many"
-/// rate-limit revert waits ≈ `tokens / rate_limit` (+5 s buffer) between
+/// Bounded proof submission (interface B.2): 3 attempts; a `RateLimited`
+/// ("Too many") refusal waits ≈ `tokens / rate_limit` (+5 s buffer) between
 /// attempts (recomputed from THIS model's 10,000 rate, not LTX's 2,000);
-/// other errors retry after 2 s. Exhaustion = conservative forfeit (the
+/// any other error forfeits at once. Exhaustion = conservative forfeit (the
 /// artifacts are already delivered — revenue only).
 pub async fn submit_proof_with_retry(
     deps: &TrainingDeps,
@@ -1122,13 +1122,13 @@ pub async fn submit_proof_with_retry(
         {
             Ok(_) => return true,
             Err(error) => {
-                let text = error.to_string();
-                // ONLY the "Too many" rate-limit REVERT retries (provably
-                // nothing landed). Any other error — including an
-                // unconfirmed tx that may still mine — forfeits
+                // ONLY the rate-limit refusal retries (Batch D21: the typed
+                // `RateLimited`, classified once in CheckpointManager —
+                // provably nothing was broadcast). Any other error —
+                // including an unconfirmed tx that may still mine — forfeits
                 // CONSERVATIVELY at once: a retry there can double-claim
                 // the same delta on-chain (T4 converge round, the LTX law).
-                if text.contains("Too many") && attempt < 3 {
+                if error == crate::ltx::submit::ProofSubmitError::RateLimited && attempt < 3 {
                     let wait =
                         Duration::from_secs(tokens / deps.rate_limit_tokens_per_sec.max(1) + 5);
                     tracing::warn!(
@@ -1138,7 +1138,7 @@ pub async fn submit_proof_with_retry(
                     continue;
                 }
                 tracing::error!(
-                    "training proof submit for job {job_id} failed ({text}) — forfeiting the slice's revenue (artifacts delivered)"
+                    "training proof submit for job {job_id} failed ({error}) — forfeiting the slice's revenue (artifacts delivered)"
                 );
                 return false;
             }

@@ -404,8 +404,10 @@ impl CheckpointManager {
     /// The RAW `sessionJobs(jobId)` return bytes — for callers doing their
     /// own drift-proof fixed-offset decode (the training A.3 snapshot,
     /// `training::accept::decode_session_snapshot`). Same selector-only call
-    /// as `query_session_depositor`; fails closed, no fallback.
-    pub async fn query_session_jobs_raw(&self, job_id: u64) -> Result<Vec<u8>> {
+    /// as `query_session_depositor`; fails closed, no fallback. Batch D21:
+    /// `block` = `Some(n)` reads AT that block (a proof's receipt block —
+    /// publicnode's `latest` lags), `None` reads `latest`.
+    pub async fn query_session_jobs_raw(&self, job_id: u64, block: Option<u64>) -> Result<Vec<u8>> {
         use tiny_keccak::{Hasher, Keccak};
         let mut keccak = Keccak::v256();
         let mut selector = [0u8; 32];
@@ -418,10 +420,12 @@ impl CheckpointManager {
         let tx = TransactionRequest::new()
             .to(self.proof_system_address)
             .data(call_data);
+        let at = block
+            .map(|n| ethers::types::BlockId::Number(ethers::types::BlockNumber::Number(n.into())));
         let result = self
             .web3_client
             .provider
-            .call(&tx.into(), None)
+            .call(&tx.into(), at)
             .await
             .map_err(|e| anyhow!("sessionJobs read failed for job {}: {}", job_id, e))?;
         Ok(result.to_vec())
@@ -2092,12 +2096,12 @@ impl crate::ltx::submit::ProofSubmit for CheckpointManager {
         tokens: u64,
         proof_hash: [u8; 32],
         proof_cid: String,
-    ) -> Result<H256> {
+    ) -> std::result::Result<H256, crate::ltx::submit::ProofSubmitError> {
         // Logging only (see `ltx_proof_jobs`): recorded BEFORE the call so a
         // submission that fails mid-flight still marks the job as LTX rather
         // than reporting it as an untracked inference session.
         self.ltx_proof_jobs.write().await.insert(job_id);
-        let (tx_hash, receipt) = crate::ltx::submit::submit_proof(
+        let sent = crate::ltx::submit::submit_proof(
             &self.web3_client,
             self.proof_system_address,
             job_id,
@@ -2105,26 +2109,48 @@ impl crate::ltx::submit::ProofSubmit for CheckpointManager {
             proof_hash,
             proof_cid,
         )
-        .await?;
-        match receipt {
-            Some(r) if r.status == Some(U64::from(1)) => Ok(tx_hash),
-            Some(r) => Err(anyhow!(
-                "submitProofOfWork reverted for job {} (status {:?}, tx {:?})",
-                job_id,
-                r.status,
-                tx_hash
-            )),
-            None => Err(anyhow!(
-                "submitProofOfWork unconfirmed for job {} (no receipt, tx {:?})",
-                job_id,
-                tx_hash
-            )),
-        }
+        .await
+        .map_err(|e| e.to_string());
+        // Batch D21: the one place a failure is classified (afterwards no
+        // caller reads error text).
+        crate::ltx::submit::classify_submit_outcome(sent).inspect_err(|e| {
+            warn!("submitProofOfWork for job {job_id} did not land: {e}");
+        })
+    }
+
+    async fn receipt_of(
+        &self,
+        tx: H256,
+    ) -> std::result::Result<Option<crate::ltx::submit::ProofReceipt>, String> {
+        self.web3_client
+            .provider
+            .get_transaction_receipt(tx)
+            .await
+            .map(|r| r.as_ref().and_then(crate::ltx::submit::proof_receipt))
+            .map_err(|e| format!("receipt read for tx {tx:?} failed: {e}"))
     }
 
     async fn session_proof_interval(&self, job_id: u64) -> u64 {
-        // Falls back internally (CHECKPOINT_THRESHOLD = 1000) on query error.
-        self.query_session_proof_interval(job_id).await
+        // Batch D21: the LTX path reads w10 from the fixed-offset snapshot decode
+        // (the LLM `track_tokens` path keeps its own read). Falls back to
+        // CHECKPOINT_THRESHOLD (1000, the live value) on a read error.
+        let read = self
+            .query_session_jobs_raw(job_id, None)
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|raw| crate::training::accept::decode_session_snapshot(&raw));
+        match read {
+            Ok(snap) => std::cmp::max(
+                snap.proof_interval.min(U256::from(u64::MAX)).as_u64(),
+                MIN_PROVEN_TOKENS,
+            ),
+            Err(e) => {
+                warn!(
+                    "⚠️ proofInterval read for LTX job {job_id} failed ({e}); using {CHECKPOINT_THRESHOLD}"
+                );
+                CHECKPOINT_THRESHOLD
+            }
+        }
     }
 }
 

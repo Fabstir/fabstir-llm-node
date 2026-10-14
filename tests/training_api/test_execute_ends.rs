@@ -208,11 +208,9 @@ async fn forfeit_then_death_is_k0_class_with_executed_detail() {
         ScanBehaviour::Cleared,
         CountBehaviour::Tokens(9),
     );
-    h.proof
-        .script
-        .lock()
-        .unwrap()
-        .push_back(Err("unconfirmed".to_string()));
+    h.proof.script.lock().unwrap().push_back(Err(
+        fabstir_llm_node::ltx::submit::ProofSubmitError::Unconfirmed(ethers::types::H256::zero()),
+    ));
     let script = vec![slice_line(&h, 0, 10)]; // executes, forfeits, then dies
     let out = run_execute(
         h,

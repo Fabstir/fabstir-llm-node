@@ -52,6 +52,8 @@ fn snap(status: SessionStatus, used: u64) -> SessionSnapshot {
         tokens_used: U256::from(used),
         max_duration: U256::zero(),
         start_time: U256::zero(),
+        last_proof_time: U256::zero(),
+        proof_interval: U256::from(1000u64),
         proof_timeout_window: U256::from(300u64),
         status,
     }
@@ -69,7 +71,10 @@ fn manifest() -> FrameManifest {
 }
 
 const BEFORE: u64 = 5000;
+/// The job's estimate = the wire's cumulative `billing.tokens` (Batch D21).
 const TOKENS: u64 = 302_900;
+/// The final proof's claim: the remainder after 1,100 keep-alive tokens.
+const CLAIM: u64 = TOKENS - 1_100;
 
 fn outcome(
     sidecar: Option<&str>,
@@ -82,6 +87,7 @@ fn outcome(
         finalize,
         reread,
         U256::from(BEFORE),
+        CLAIM,
         TOKENS,
         "out",
         &caps,
@@ -168,18 +174,31 @@ fn relight_unsubmitted_never_reread_is_withheld() {
 }
 
 #[test]
-fn growth_by_exactly_the_job_counts_and_one_less_does_not() {
-    // `>` instead of `>=` -> red; any growth counts -> red
+fn growth_by_exactly_the_claim_counts_and_one_less_does_not() {
+    // `>` instead of `>=` -> red; any growth counts -> red; Batch D21: landed
+    // judged on the WIRE total instead of the claim -> the first case withheld, red
     assert!(is_complete(&outcome(
         R,
         ok(false),
-        Some(Ok(snap(SessionStatus::TimedOut, BEFORE + TOKENS)))
+        Some(Ok(snap(SessionStatus::TimedOut, BEFORE + CLAIM)))
     )));
     closed_fail(&outcome(
         R,
         ok(false),
-        Some(Ok(snap(SessionStatus::TimedOut, BEFORE + TOKENS - 1))),
+        Some(Ok(snap(SessionStatus::TimedOut, BEFORE + CLAIM - 1))),
     ));
+}
+
+#[test]
+fn billing_tokens_on_the_wire_is_the_cumulative_estimate_not_the_claim() {
+    // Batch D21: wire = keep-alives + final = the estimate (billing.tokens from
+    // the claim -> red)
+    for sc in [R, None] {
+        match outcome(sc, ok(true), None) {
+            CompletionOutcome::Complete(v) => assert_eq!(v["billing"]["tokens"], TOKENS),
+            c => panic!("{c:?}"),
+        }
+    }
 }
 
 #[test]

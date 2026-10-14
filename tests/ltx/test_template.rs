@@ -64,7 +64,12 @@ const RESTORE_TEMPLATE_HASH: &str =
 // (crossview, alpha, layout).
 // v27 (VFX Passes): the three cosmos-passes-* entries (sidecar "relight", relight-fhd) and their lora
 // adverts; every existing entry serialises byte-identically.
-const BUNDLE_HASH: &str = "0x6a74815ab4ea6bc92f17ded967813e9211b7803bc7bb59a8ae41c377263c4898";
+// v28 (Batch D19 + D21): ltx-sdr2hdr-hdr gains frameGrid + exactControl + maxFrames (361 is
+// PROVISIONAL — TODO-probe-13 sets it, which moves this hash again); the three cosmos-passes-*
+// maxFrames 145 → 361. No template graph, hash or lora changes.
+// v29 (LTX 2.5 restoration modes S1): ltx-colorize/deblur/decompress/refine-hdr (frame grid, maxFrames 361, per-entry
+// maxTokens, refine-hd rule) and their lora adverts; every existing entry serialises byte-identically.
+const BUNDLE_HASH: &str = "0xdd7393f83698bf5826223604cbab529c513157b003a115e885f2ba82c33a4257";
 
 fn keccak_hex(bytes: Vec<u8>) -> String {
     format!("0x{}", hex::encode(ethers::utils::keccak256(bytes)))
@@ -992,6 +997,7 @@ fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
         video_semantics: vec![],
         fps: None,
         max_frames: None,
+        max_tokens: None,
         resolution_rule: None,
         exact_control: None,
         frame_grid: None,
@@ -1345,7 +1351,7 @@ fn test_new_mode_rules_values() {
     for l in ["ltx-alpha-hdr@v1", "ltx-layout-hdr@v1"] {
         assert!(loras.iter().any(|x| x == l), "{l} advertised");
     }
-    assert_eq!(store.bundle().allow_list_version, 27);
+    assert_eq!(store.bundle().allow_list_version, 29);
 }
 
 #[test]
@@ -1358,7 +1364,14 @@ fn test_live_templates_unrestricted() {
     let mut checked = 0;
     for e in &store.bundle().templates {
         // VFX Passes (v27): the relight entries carry their own rules (tests/ltx/test_relight_model.rs).
-        if e.template_id == "ltx-alpha-hdr" || e.template_id == "ltx-layout-hdr" || e.sidecar.is_some() {
+        // Batch D19 (v28): ltx-sdr2hdr-hdr is on the frame grid with its own maxFrames
+        // (test_bundle_v28_sdr2hdr_frame_grid).
+        if e.template_id == "ltx-alpha-hdr"
+            || e.template_id == "ltx-layout-hdr"
+            || e.template_id == "ltx-sdr2hdr-hdr"
+            || e.max_tokens.is_some() // S1 restoration modes (v29): test_restoration_rules_values / _token_caps_
+            || e.sidecar.is_some()
+        {
             continue;
         }
         for fps in [24, 25, 48, 50] {
@@ -1416,4 +1429,244 @@ fn test_crossview_lora_advertised() {
     // D4: crossview jobs commit their own LoRA id, which the bundle must advertise.
     let store = TemplateStore::new(DIR).unwrap();
     assert!(store.bundle().loras.iter().any(|l| l == "ltx-crossview-hdr@v1"));
+}
+
+#[test]
+fn test_bundle_v28_sdr2hdr_frame_grid() {
+    // Batch D19: Convert to HDR bills exact LTX frame counts (8k+1, exact control
+    // clip) up to maxFrames — PROVISIONAL 361 until BM1.0 probe 13 measures it.
+    let store = TemplateStore::new(DIR).unwrap();
+    let e = store.entry("ltx-sdr2hdr-hdr").unwrap();
+    assert_eq!(e.frame_grid, Some(true));
+    assert_eq!(e.exact_control, Some(true));
+    assert_eq!(e.max_frames, Some(361), "TODO-probe-13");
+    assert_eq!(e.fps, None, "no fps list");
+    assert_eq!(store.bundle().allow_list_version, 29);
+}
+
+// ── LTX 2.5 restoration modes (S1): Colorize, Deblur, Fix Compression, Refine Details ─────────────
+// Templates derived node-for-node from the S0 probe graphs that ran green on host1
+// (temp/ltx25-restoration-probe/graphs/); the allow-list entries mirror Alpha Gen's frame-grid rules.
+
+const RESTORATION_SINGLE: &[(&str, &str)] = &[
+    ("ltx-colorize-hdr", "ltx-2.5-22b-ic-lora-colorization-0.9.safetensors"),
+    ("ltx-deblur-hdr", "ltx-2.5-22b-ic-lora-deblur-0.9.safetensors"),
+    ("ltx-decompress-hdr", "ltx-2.5-22b-ic-lora-decompression-0.9.safetensors"),
+];
+
+#[test]
+fn test_restoration_single_stage_template_structure() {
+    for (id, lora) in RESTORATION_SINGLE {
+        let g = template_json(id);
+        // Movie only: one preview sink, no EXR sink (the mode delivers an mp4).
+        assert!(titled(&g, "exr_output").is_empty(), "{id}: no EXR sink");
+        assert_eq!(sinks(&g), vec!["VHS_VideoCombine"], "{id}");
+        assert_eq!(g[&only(&g, "VHS_VideoCombine")]["_meta"]["title"], "video_output", "{id}");
+        // The 2.5 spine: IC-LoRA loader at strength 1.0 and the distilled transformer.
+        let loader = only(&g, "LTXICLoRALoaderModelOnly");
+        assert_eq!(g[&loader]["inputs"]["lora_name"], *lora, "{id}");
+        assert_eq!(g[&loader]["inputs"]["strength_model"], 1.0, "{id}");
+        // The guide: VAE-encoded source at frame 0, strength 1, downscale 1, crop disabled, no tiled encode.
+        let guide = only(&g, "LTXAddVideoICLoRAGuide");
+        let n = &g[&guide]["inputs"];
+        assert_eq!(n["frame_idx"], 0, "{id}");
+        assert_eq!(n["strength"], 1, "{id}");
+        assert_eq!(n["latent_downscale_factor"], 1, "{id}: literal 1 (the probed graph)");
+        assert_eq!(n["crop"], "disabled", "{id}");
+        assert_eq!(n["use_tiled_encode"], false, "{id}");
+        // 8-step distilled sigmas, euler_ancestral, CFG 1.
+        assert_eq!(
+            g[&only(&g, "ManualSigmas")]["inputs"]["sigmas"],
+            "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+            "{id}"
+        );
+        assert_eq!(g[&only(&g, "KSamplerSelect")]["inputs"]["sampler_name"], "euler_ancestral", "{id}");
+        assert_eq!(g[&only(&g, "CFGGuider")]["inputs"]["cfg"], 1, "{id}");
+        // D6: ONE temporal pass, no plain decode.
+        let dec = only(&g, "VAEDecodeTiled");
+        assert!(g[&dec]["inputs"]["temporal_size"].as_u64().unwrap() >= 4096, "{id}");
+        assert_eq!(g[&dec]["inputs"]["temporal_overlap"], 8, "{id}");
+        assert!(ids_of(&g, "VAEDecode").is_empty(), "{id}");
+        assert!(ids_of(&g, "LTXVTiledFusionSampler").is_empty(), "{id}: single stage");
+        // Patch handles: Prompt (constant empty; the helper owns the wording), Width/Height, one seed,
+        // length from the loaded frames (frame grid), never a Duration handle.
+        assert_eq!(titled(&g, "Prompt").len(), 1, "{id}");
+        assert_eq!(g[&titled(&g, "Prompt")[0]]["inputs"]["text"], "", "{id}");
+        assert_eq!(titled(&g, "Width").len(), 1, "{id}");
+        assert_eq!(titled(&g, "Height").len(), 1, "{id}");
+        assert_eq!(ids_of(&g, "RandomNoise").len(), 1, "{id}");
+        assert!(titled(&g, "Duration").is_empty(), "{id}");
+        // The card says no negative prompt.
+        let neg = titled(&g, "CLIP Text Encode (Negative Prompt)");
+        assert_eq!(neg.len(), 1, "{id}");
+        assert_eq!(g[&neg[0]]["inputs"]["text"], "", "{id}");
+        // Video only in the output (no audio input on the sink).
+        assert!(g[&only(&g, "VHS_VideoCombine")]["inputs"].get("audio").is_none(), "{id}");
+    }
+}
+
+#[test]
+fn test_refine_template_structure() {
+    let g = template_json("ltx-refine-hdr");
+    assert!(titled(&g, "exr_output").is_empty());
+    assert_eq!(sinks(&g), vec!["VHS_VideoCombine"]);
+    assert_eq!(g[&only(&g, "VHS_VideoCombine")]["_meta"]["title"], "video_output");
+    let loader = only(&g, "LTXICLoRALoaderModelOnly");
+    assert_eq!(
+        g[&loader]["inputs"]["lora_name"],
+        "ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors"
+    );
+    // Tiled fusion, exactly as the probe: 1024x576 tiles, 97-frame windows, euler, CFG 1.
+    let fusion = only(&g, "LTXVTiledFusionSampler");
+    let f = &g[&fusion]["inputs"];
+    assert_eq!((f["tile_width"].as_u64(), f["tile_height"].as_u64()), (Some(1024), Some(576)));
+    assert_eq!(f["tile_frames"], 97);
+    assert_eq!(f["cfg"], 1.0);
+    assert_eq!(f["overlap_frac"], 0.5);
+    assert_eq!(g[&only(&g, "KSamplerSelect")]["inputs"]["sampler_name"], "euler");
+    // The guide streams the 97-frame windows at downscale 1.
+    let guide = only(&g, "LTXAddVideoICLoRAGuide");
+    assert_eq!(g[&guide]["inputs"]["use_streaming"], true);
+    assert_eq!(g[&guide]["inputs"]["tile_frames"], 97);
+    assert_eq!(g[&guide]["inputs"]["latent_downscale_factor"], 1);
+    // The source is lanczos-resized to the OUTPUT canvas before the guide (the card's rule).
+    let scale = only(&g, "ImageScale");
+    assert_eq!(g[&scale]["inputs"]["upscale_method"], "lanczos");
+    assert_eq!(g[&guide]["inputs"]["image"], serde_json::json!([scale, 0]));
+    // Tiled decode, ONE temporal pass up to the longest clip the entry may ever allow (361 frames; the probe's f361 graph).
+    let dec = only(&g, "VAEDecodeTiled");
+    assert!(g[&dec]["inputs"]["temporal_size"].as_u64().unwrap() >= 361);
+    assert!(ids_of(&g, "VAEDecode").is_empty());
+    // Generic style prompt pinned as the template constant (it is the helper's wire prompt too); the
+    // negative prompt is a template constant. No audio branch in this graph.
+    assert_eq!(
+        g[&titled(&g, "Prompt")[0]]["inputs"]["text"],
+        "sharp photographic detail, crisp natural texture, fine surface detail, clean edges, natural film grain, high resolution footage"
+    );
+    assert_eq!(titled(&g, "Width").len(), 1);
+    assert_eq!(titled(&g, "Height").len(), 1);
+    for cls in ["LTXVEmptyLatentAudio", "LTXVConcatAVLatent"] {
+        assert!(ids_of(&g, cls).is_empty(), "{cls}");
+    }
+    // The seed lives on the fusion sampler (there is no RandomNoise): the patcher stamps it there.
+    assert!(ids_of(&g, "RandomNoise").is_empty());
+    assert!(titled(&g, "Duration").is_empty());
+}
+
+#[test]
+fn test_restoration_rules_values() {
+    // The caps are DATA in allowlist.json (raised from the host1 long-clip probe with no code change): this test
+    // pins their SHAPE and reads the values back from the bundle, so raising them never needs a test edit.
+    let store = TemplateStore::new(DIR).unwrap();
+    for id in ["ltx-colorize-hdr", "ltx-deblur-hdr", "ltx-decompress-hdr", "ltx-refine-hdr"] {
+        let e = store.entry(id).unwrap_or_else(|| panic!("{id} allow-listed"));
+        assert_eq!(e.fps, Some(vec![24, 25]), "{id}");
+        assert!(e.max_frames.is_some_and(|m| m >= 121 && (m - 1) % 8 == 0), "{id}: maxFrames on the 8k+1 grid");
+        assert!(e.max_tokens.is_some_and(|t| t >= 252_765), "{id}: maxTokens at least the largest proven run");
+        assert_eq!(e.exact_control, Some(true), "{id}");
+        assert_eq!(e.frame_grid, Some(true), "{id}");
+        assert_eq!((e.image_inputs, e.video_inputs), (0, 1), "{id}");
+        assert_eq!(e.video_semantics, vec!["sourceVideo"], "{id}");
+        assert!(
+            store.bundle().loras.iter().any(|l| l == &format!("{id}@v1")),
+            "{id} lora advertised"
+        );
+    }
+    for id in ["ltx-colorize-hdr", "ltx-deblur-hdr", "ltx-decompress-hdr"] {
+        assert_eq!(store.entry(id).unwrap().resolution_rule.as_deref(), Some("div64-fhd"), "{id}");
+    }
+    // Refine's OUTPUT is capped at the proven 2x of 768x512.
+    assert_eq!(store.entry("ltx-refine-hdr").unwrap().resolution_rule.as_deref(), Some("refine-hd"));
+    assert_eq!(store.bundle().allow_list_version, 29);
+    // The cap reaches the advertised wire.
+    let wire = serde_json::to_value(store.bundle()).unwrap();
+    let t = wire["templates"].as_array().unwrap().iter().find(|t| t["templateId"] == "ltx-deblur-hdr").unwrap();
+    assert_eq!(t["maxTokens"].as_u64(), store.entry("ltx-deblur-hdr").unwrap().max_tokens);
+}
+
+fn tokens_of(frames: u32, w: u32, h: u32) -> u64 {
+    (u64::from(frames) * u64::from(w) * u64::from(h)).div_ceil(1000)
+}
+
+#[test]
+fn test_refine_hd_rule() {
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let store = TemplateStore::new(DIR).unwrap();
+    let e = store.entry("ltx-refine-hdr").unwrap();
+    let frames = 121; // inside both caps at every size below; the token cap has its own test
+    // 1536x1024 (768x512 x2) is the proven size; its portrait and smaller /64 sizes follow.
+    for (w, h) in [(1536, 1024), (1024, 1536), (1024, 1024), (1280, 768)] {
+        assert!(check_template_rules(e, w, h, 24, frames).is_ok(), "{w}x{h} allowed");
+    }
+    // Beyond the proven output (VRAM peaked at 94 of 96 GB at 1536x1024) or off the /64 grid: refused.
+    for (w, h) in [(1920, 1088), (1792, 1024), (1536, 1088), (1536, 1056), (3840, 2176)] {
+        assert!(check_template_rules(e, w, h, 24, frames).is_err(), "{w}x{h} refused");
+    }
+    // The same fps / maxFrames rules as the other frame-grid modes (bounds read from the entry).
+    assert!(check_template_rules(e, 1536, 1024, 48, frames).is_err());
+    assert!(check_template_rules(e, 768, 512, 24, e.max_frames.unwrap() + 8).is_err());
+}
+
+#[test]
+fn test_restoration_token_caps_gate_frames_and_size() {
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let store = TemplateStore::new(DIR).unwrap();
+    for id in ["ltx-colorize-hdr", "ltx-deblur-hdr", "ltx-decompress-hdr", "ltx-refine-hdr"] {
+        let e = store.entry(id).unwrap();
+        let (cap, max_frames) = (e.max_tokens.unwrap(), e.max_frames.unwrap());
+        // Refine prices its OUTPUT: its sizes are the 2x ones.
+        let sizes: &[(u32, u32)] =
+            if id == "ltx-refine-hdr" { &[(1536, 1024), (1024, 1024), (1280, 768)] } else { &[(768, 512), (960, 576), (1920, 1088), (1280, 704)] };
+        for &(w, h) in sizes {
+            // The longest 8k+1 length the entry's maxFrames and the token cap allow together.
+            let mut best = 0;
+            let mut f = 121;
+            while f <= max_frames {
+                if tokens_of(f, w, h) <= cap {
+                    best = f;
+                }
+                f += 8;
+            }
+            if best == 0 {
+                assert!(check_template_rules(e, w, h, 24, 121).is_err(), "{id} {w}x{h}: nothing fits");
+                continue;
+            }
+            assert!(check_template_rules(e, w, h, 24, best).is_ok(), "{id} {w}x{h} {best} frames fits");
+            if best + 8 <= max_frames {
+                let over = check_template_rules(e, w, h, 24, best + 8).unwrap_err();
+                assert!(over.contains("token"), "{id} {w}x{h}: {over}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_restoration_single_stage_rules_check() {
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let store = TemplateStore::new(DIR).unwrap();
+    for id in ["ltx-colorize-hdr", "ltx-deblur-hdr", "ltx-decompress-hdr"] {
+        let e = store.entry(id).unwrap();
+        for (w, h) in [(768, 512), (960, 576), (1920, 1088), (512, 768), (1088, 1920), (1920, 1080), (2560, 1408)] {
+            // 121 frames is inside every cap that the proven 1920x1088x121 run set.
+            let ok = check_template_rules(e, w, h, 24, 121).is_ok();
+            assert_eq!(ok, w % 64 == 0 && h % 64 == 0 && w * h <= 1920 * 1088 && w.max(h) <= 1920, "{id} {w}x{h}");
+        }
+        assert!(check_template_rules(e, 768, 512, 25, 121).is_ok(), "{id}: 25 fps like Alpha Gen");
+        assert!(check_template_rules(e, 768, 512, 24, e.max_frames.unwrap() + 8).is_err(), "{id}: over maxFrames");
+    }
+}
+
+#[test]
+fn test_restoration_template_hashes_golden() {
+    // Golden templateHash of each restoration template (the helper pins the same four). Update ONLY on an
+    // intentional template change; the helper's registry and the add-on's tests follow.
+    let store = TemplateStore::new(DIR).unwrap();
+    for (id, want) in [
+        ("ltx-colorize-hdr", "0x6c54c95a5dd2ef028d7c877440755fe90965257bd0e69d317f148fa214722da9"),
+        ("ltx-deblur-hdr", "0x4429950257d177e7d7d4b79e6ff069caa4c811c09dc6105dd5a2cfdd22597371"),
+        ("ltx-decompress-hdr", "0x113d1f46156cd5be6e2e027a3a233b82dcdd71397a61733795c84182da407df8"),
+        ("ltx-refine-hdr", "0x9702ba3d2160d6979274d03906868334846a651c07a454011486f2bb5a042850"),
+    ] {
+        assert_eq!(store.template_hash(id).unwrap(), want, "{id} template hash drifted");
+    }
 }

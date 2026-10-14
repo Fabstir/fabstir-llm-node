@@ -23,49 +23,286 @@ pub fn is_relight(entry: Option<&TemplateEntry>) -> bool {
     entry.and_then(|e| e.sidecar.as_deref()) == Some("relight")
 }
 
-/// D8 / D3: admission and timing for relight jobs (filled from env at startup; tests set it directly).
+/// Batch D21: the compiled deadline defaults. The env may only LOWER the six
+/// (so the helper, whose shared vector carries the same numbers, always outlasts
+/// the node); the proof rate must equal its default (either way refuses boot).
+pub const RELIGHT_TIMEOUT_145_SECS: u64 = 2600;
+/// TODO-probe-16: placeholder slopes (s per frame above 145), CONSERVATIVE
+/// (Full's quiet 14–19 s/frame × 1.4, used for all three) until BM1.7 probe 16
+/// measures ceil((t361 − t145) ÷ 216 × 1.4) per preset (Key = Standard's).
+pub const RELIGHT_SECS_PER_EXTRA_FRAME_KEY: u64 = 21;
+/// TODO-probe-16 (see [`RELIGHT_SECS_PER_EXTRA_FRAME_KEY`]).
+pub const RELIGHT_SECS_PER_EXTRA_FRAME_STD: u64 = 21;
+/// TODO-probe-16 (see [`RELIGHT_SECS_PER_EXTRA_FRAME_KEY`]).
+pub const RELIGHT_SECS_PER_EXTRA_FRAME_FULL: u64 = 21;
+pub const RELIGHT_DEADLINE_MARGIN_SECS: u64 = 600;
+/// TODO-probe-16: placeholder upload growth per frame above 145 (Full's five
+/// passes); probe 16 sets ceil(1.4 × (u361 − u145) ÷ 216).
+pub const RELIGHT_UPLOAD_SECS_PER_EXTRA_FRAME: u64 = 2;
+/// BM1.0 probe 15: the registered proof rate of the three relight model ids.
+pub const RELIGHT_RATE_LIMIT_TOKENS_PER_SEC: u64 = 10_000;
+/// Four chances inside the contract's 3600 s proof window; also the boot cap.
+pub const RELIGHT_KEEPALIVE_SECS: u64 = 900;
+/// The keep-alive's boot floor (a faster one burns the job in claims and gas).
+pub const RELIGHT_KEEPALIVE_MIN_SECS: u64 = 300;
+/// The length the base timeout covers; slopes apply to frames above it.
+pub const RELIGHT_BASE_FRAMES: u32 = 145;
+/// The final proof's grace after the deadline (before the rate wait).
+pub const FINAL_PROOF_GRACE_SECS: u64 = 120;
+
+/// D8 / D3 / Batch D21: admission and timing for relight jobs (filled from env at
+/// startup by [`AdmitCfg::from_vars`]; tests set it directly).
 #[derive(Debug, Clone)]
 pub struct AdmitCfg {
     pub budget: Duration,
     pub interval: Duration,
     pub min_free_vram: u64,
-    pub deadline_secs: u64,
-    pub watch_timeout_secs: u64,
     pub comfy_handshake: bool,
+    /// `RELIGHT_TIMEOUT_145_SECS`: the watch timeout at ≤ 145 frames.
+    pub timeout_145_secs: u64,
+    pub secs_per_extra_frame_key: u64,
+    pub secs_per_extra_frame_std: u64,
+    pub secs_per_extra_frame_full: u64,
+    /// `RELIGHT_DEADLINE_MARGIN_SECS`: deadline − watch timeout at ≤ 145 frames.
+    pub deadline_margin_secs: u64,
+    pub upload_secs_per_extra_frame: u64,
+    /// `RELIGHT_RATE_LIMIT_TOKENS_PER_SEC`: the final proof's rate wait (exactly the
+    /// registered rate).
+    pub rate_tokens_per_sec: u64,
+    /// `RELIGHT_KEEPALIVE_SECS`: the keep-alive proof interval (300–900).
+    pub keepalive_secs: u64,
+}
+
+fn extra_frames(frames: u32) -> u64 {
+    u64::from(frames.saturating_sub(RELIGHT_BASE_FRAMES))
 }
 
 impl AdmitCfg {
-    pub fn from_env() -> Self {
-        let num = |k: &str, d: u64| {
-            std::env::var(k)
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(d)
+    /// The compute slope for a template; an unknown relight id takes the largest.
+    fn slope_for(&self, template_id: &str) -> u64 {
+        match template_id {
+            "cosmos-passes-key" => self.secs_per_extra_frame_key,
+            "cosmos-passes-std" => self.secs_per_extra_frame_std,
+            "cosmos-passes-full" => self.secs_per_extra_frame_full,
+            _ => self
+                .secs_per_extra_frame_key
+                .max(self.secs_per_extra_frame_std)
+                .max(self.secs_per_extra_frame_full),
+        }
+    }
+
+    /// `watch`'s timeout: base + slope × max(0, frames − 145).
+    pub fn watch_timeout_for(&self, template_id: &str, frames: u32) -> u64 {
+        self.timeout_145_secs.saturating_add(
+            self.slope_for(template_id)
+                .saturating_mul(extra_frames(frames)),
+        )
+    }
+
+    /// The whole-job deadline: the watch timeout + margin + upload slope ×
+    /// max(0, frames − 145) (so 3200 at ≤ 145 frames).
+    pub fn deadline_for(&self, template_id: &str, frames: u32) -> u64 {
+        self.watch_timeout_for(template_id, frames)
+            .saturating_add(self.deadline_margin_secs)
+            .saturating_add(
+                self.upload_secs_per_extra_frame
+                    .saturating_mul(extra_frames(frames)),
+            )
+    }
+
+    /// ceil(tokens ÷ rate): the final proof's rate-limit wait.
+    pub fn rate_wait_secs(&self, tokens: u64) -> u64 {
+        tokens.div_ceil(self.rate_tokens_per_sec.max(1))
+    }
+
+    /// The final proof's whole budget from the job's start: deadline + 120 s +
+    /// tokens ÷ rate (admission's `SESSION_TOO_SHORT` floor, the retry cap and
+    /// the base of the helper's timeout).
+    pub fn final_budget_secs(&self, template_id: &str, frames: u32, tokens: u64) -> u64 {
+        self.deadline_for(template_id, frames)
+            .saturating_add(FINAL_PROOF_GRACE_SECS)
+            .saturating_add(self.rate_wait_secs(tokens))
+    }
+
+    /// Batch D21: the config from an env lookup, or the boot refusal. Each of the
+    /// six deadline values may only be LOWERED (a higher or unparsable value
+    /// refuses boot); the rate must equal its default; the keep-alive is
+    /// capped at 900 (below 300 refuses). The old flat `RELIGHT_JOB_*_SECS` are
+    /// ignored with a warning. Returns `(cfg, warnings)`.
+    pub fn from_vars(get: &dyn Fn(&str) -> Option<String>) -> Result<(Self, Vec<String>), String> {
+        let mut warnings = Vec::new();
+        let parse =
+            |k: &str| -> Result<Option<u64>, String> {
+                match get(k) {
+                    None => Ok(None),
+                    Some(v) => v.trim().parse::<u64>().map(Some).map_err(|e| {
+                        format!("{k}={v:?} is not a whole number of seconds/tokens: {e}")
+                    }),
+                }
+            };
+        let num = |k: &str, d: u64| -> u64 { parse(k).ok().flatten().unwrap_or(d) };
+        let lower_only = |k: &str, d: u64| -> Result<u64, String> {
+            match parse(k)? {
+                None => Ok(d),
+                Some(v) if v <= d => Ok(v),
+                Some(v) => Err(format!(
+                    "{k}={v} is above its compiled default {d}: the env may only lower it (the \
+                     helper's timeout is built on the compiled value) — refusing to start"
+                )),
+            }
         };
-        AdmitCfg {
+        // the registered rate exactly: below it the final's wait outruns the
+        // helper's; above it every final send is "Too many" and forfeits
+        let rate = match parse("RELIGHT_RATE_LIMIT_TOKENS_PER_SEC")? {
+            None => RELIGHT_RATE_LIMIT_TOKENS_PER_SEC,
+            Some(v) if v == RELIGHT_RATE_LIMIT_TOKENS_PER_SEC => v,
+            Some(v) => {
+                return Err(format!(
+                    "RELIGHT_RATE_LIMIT_TOKENS_PER_SEC={v} differs from the registered proof rate \
+                     {RELIGHT_RATE_LIMIT_TOKENS_PER_SEC}: lower lengthens the final proof's wait \
+                     past the helper's, higher makes every final \"Too many\" — refusing to start"
+                ))
+            }
+        };
+        let keepalive_secs = match parse("RELIGHT_KEEPALIVE_SECS")? {
+            None => RELIGHT_KEEPALIVE_SECS,
+            Some(v) if v < RELIGHT_KEEPALIVE_MIN_SECS => {
+                return Err(format!(
+                    "RELIGHT_KEEPALIVE_SECS={v} is below {RELIGHT_KEEPALIVE_MIN_SECS} — refusing \
+                     to start"
+                ))
+            }
+            Some(v) if v > RELIGHT_KEEPALIVE_SECS => {
+                warnings.push(format!(
+                    "RELIGHT_KEEPALIVE_SECS={v} capped at {RELIGHT_KEEPALIVE_SECS} (four proofs \
+                     inside the 3600 s window)"
+                ));
+                RELIGHT_KEEPALIVE_SECS
+            }
+            Some(v) => v,
+        };
+        for old in ["RELIGHT_JOB_DEADLINE_SECS", "RELIGHT_JOB_TIMEOUT_SECS"] {
+            if get(old).is_some() {
+                warnings.push(format!(
+                    "{old} is ignored since node 8.61.0 (deadlines scale with frames: \
+                     RELIGHT_TIMEOUT_145_SECS + per-frame slopes) — remove it from .env"
+                ));
+            }
+        }
+        let cfg = AdmitCfg {
             budget: Duration::from_secs(num("RELIGHT_ADMIT_SECS", 180)),
             interval: Duration::from_secs(2),
             min_free_vram: num("RELIGHT_MIN_FREE_VRAM", 32_212_254_720),
-            deadline_secs: num("RELIGHT_JOB_DEADLINE_SECS", 2700),
-            watch_timeout_secs: num("RELIGHT_JOB_TIMEOUT_SECS", 2100),
-            comfy_handshake: std::env::var("RELIGHT_COMFY_HANDSHAKE")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-        }
+            comfy_handshake: get("RELIGHT_COMFY_HANDSHAKE").is_some_and(|v| v == "1"),
+            timeout_145_secs: lower_only("RELIGHT_TIMEOUT_145_SECS", RELIGHT_TIMEOUT_145_SECS)?,
+            secs_per_extra_frame_key: lower_only(
+                "RELIGHT_SECS_PER_EXTRA_FRAME_KEY",
+                RELIGHT_SECS_PER_EXTRA_FRAME_KEY,
+            )?,
+            secs_per_extra_frame_std: lower_only(
+                "RELIGHT_SECS_PER_EXTRA_FRAME_STD",
+                RELIGHT_SECS_PER_EXTRA_FRAME_STD,
+            )?,
+            secs_per_extra_frame_full: lower_only(
+                "RELIGHT_SECS_PER_EXTRA_FRAME_FULL",
+                RELIGHT_SECS_PER_EXTRA_FRAME_FULL,
+            )?,
+            deadline_margin_secs: lower_only(
+                "RELIGHT_DEADLINE_MARGIN_SECS",
+                RELIGHT_DEADLINE_MARGIN_SECS,
+            )?,
+            upload_secs_per_extra_frame: lower_only(
+                "RELIGHT_UPLOAD_SECS_PER_EXTRA_FRAME",
+                RELIGHT_UPLOAD_SECS_PER_EXTRA_FRAME,
+            )?,
+            rate_tokens_per_sec: rate,
+            keepalive_secs,
+        };
+        Ok((cfg, warnings))
+    }
+
+    /// The process env, for `ApiServer`'s constructors. `main` runs
+    /// [`AdmitCfg::from_vars`] itself first and refuses to boot on its error, so
+    /// the fallback to the compiled defaults here is never served.
+    pub fn from_env() -> Self {
+        Self::from_vars(&|k| std::env::var(k).ok())
+            .map(|(c, _)| c)
+            .unwrap_or_default()
     }
 }
 
 impl Default for AdmitCfg {
     fn default() -> Self {
-        AdmitCfg {
-            budget: Duration::from_secs(180),
-            interval: Duration::from_secs(2),
-            min_free_vram: 32_212_254_720,
-            deadline_secs: 2700,
-            watch_timeout_secs: 2100,
-            comfy_handshake: false,
+        Self::from_vars(&|_| None)
+            .expect("the compiled defaults are valid")
+            .0
+    }
+}
+
+/// Batch D21: admission at 0 tokens, on the D20 gate's snapshot (relight jobs).
+/// `SESSION_TOO_SHORT`: the session's remaining lifetime is below the final
+/// proof's budget (deadline + 120 s + tokens ÷ rate). `SESSION_TERMS`: its
+/// `proofInterval` exceeds a quarter of the job (the first keep-alive would claim
+/// most of it), or — above 145 frames — its proof window is under two keep-alive
+/// intervals or it is already within one interval + 120 s of timing out.
+pub fn relight_session_admission(
+    cfg: &AdmitCfg,
+    template_id: &str,
+    frames: u32,
+    tokens: u64,
+    snap: &crate::training::accept::SessionSnapshot,
+    now_unix: u64,
+) -> Result<(), AdmitRefusal> {
+    use ethers::types::U256;
+    let now = U256::from(now_unix);
+    let budget = cfg.final_budget_secs(template_id, frames, tokens);
+    let ends = snap.start_time.saturating_add(snap.max_duration);
+    let left = ends.saturating_sub(now);
+    if left < U256::from(budget) {
+        return Err((
+            "SESSION_TOO_SHORT",
+            format!(
+                "the session has {left} s left; this {frames}-frame job needs {budget} s (its \
+                 deadline + {FINAL_PROOF_GRACE_SECS} s + the final proof's rate wait) — open a \
+                 longer session"
+            ),
+        ));
+    }
+    if snap.proof_interval.saturating_mul(U256::from(4u64)) > U256::from(tokens) {
+        return Err((
+            "SESSION_TERMS",
+            format!(
+                "the session's proofInterval {} is above a quarter of this {tokens}-token job",
+                snap.proof_interval
+            ),
+        ));
+    }
+    if frames > RELIGHT_BASE_FRAMES {
+        let keepalive = U256::from(cfg.keepalive_secs);
+        let window = snap.proof_timeout_window;
+        if window < keepalive.saturating_mul(U256::from(2u64)) {
+            return Err((
+                "SESSION_TERMS",
+                format!(
+                    "the session's proof window {window} s is under two keep-alive intervals \
+                     ({} s): it could time out mid-render",
+                    cfg.keepalive_secs
+                ),
+            ));
+        }
+        let since = snap.last_proof_time.max(snap.start_time);
+        let until_timeout = since.saturating_add(window).saturating_sub(now);
+        if until_timeout < keepalive.saturating_add(U256::from(FINAL_PROOF_GRACE_SECS)) {
+            return Err((
+                "SESSION_TERMS",
+                format!(
+                    "the session times out in {until_timeout} s, before the first keep-alive \
+                     proof could land"
+                ),
+            ));
         }
     }
+    Ok(())
 }
 
 /// D3: the node refuses to start with a relight sidecar unless jobs are serialised (one generation slot).

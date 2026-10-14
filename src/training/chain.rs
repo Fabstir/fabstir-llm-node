@@ -23,7 +23,7 @@ impl SessionReader for ChainSessionReader {
     async fn session_snapshot(&self, job_id: u64) -> Result<SessionSnapshot, String> {
         let raw = self
             .manager
-            .query_session_jobs_raw(job_id)
+            .query_session_jobs_raw(job_id, None)
             .await
             .map_err(|e| e.to_string())?;
         decode_session_snapshot(&raw)
@@ -316,6 +316,8 @@ impl MockChainSeams {
                 tokens_used: ethers::types::U256::zero(),
                 max_duration: ethers::types::U256::from(14_400u64),
                 start_time: ethers::types::U256::from(now),
+                last_proof_time: ethers::types::U256::from(now),
+                proof_interval: ethers::types::U256::from(1000u64),
                 proof_timeout_window: ethers::types::U256::from(3_600u64),
                 status: crate::training::accept::SessionStatus::Active,
             },
@@ -365,11 +367,21 @@ impl crate::ltx::submit::ProofSubmit for MockChainSeams {
         tokens: u64,
         _proof_hash: [u8; 32],
         proof_cid: String,
-    ) -> anyhow::Result<ethers::types::H256> {
+    ) -> Result<ethers::types::H256, crate::ltx::submit::ProofSubmitError> {
         println!("🧪 [mock chain] submitProofOfWork(job {job_id}, {tokens} tokens, {proof_cid})");
         Ok(ethers::types::H256::zero())
     }
     async fn session_proof_interval(&self, _job_id: u64) -> u64 {
         1000
+    }
+    async fn receipt_of(
+        &self,
+        _tx: ethers::types::H256,
+    ) -> Result<Option<crate::ltx::submit::ProofReceipt>, String> {
+        // every mock proof lands at once (status 1)
+        Ok(Some(crate::ltx::submit::ProofReceipt {
+            success: true,
+            block: 0,
+        }))
     }
 }

@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
+use fabstir_llm_node::ltx::submit::ProofSubmitError;
 use fabstir_llm_node::storage::s5_client::S5Storage;
 use fabstir_llm_node::training::core::{
     run_training_session, AcceptedSession, PreparedTrain, RunEnd, RunProgress,
@@ -248,7 +249,9 @@ async fn forfeited_slice_still_bills_and_the_run_completes() {
         .script
         .lock()
         .unwrap()
-        .push_back(Err("submitProofOfWork unconfirmed (no receipt)".to_string()));
+        .push_back(Err(ProofSubmitError::Unconfirmed(
+            ethers::types::H256::zero(),
+        )));
     let script = vec![
         slice_line(&h, 0, 0, 0, 5),
         slice_line(&h, 1, 10, 5, 9),
@@ -337,7 +340,7 @@ async fn too_many_retry_waits_by_the_training_rate() {
         .script
         .lock()
         .unwrap()
-        .push_back(Err("execution reverted: Too many".to_string()));
+        .push_back(Err(ProofSubmitError::RateLimited));
     let deps = h.deps;
     let proof = h.proof.clone();
     let task = tokio::spawn(async move {

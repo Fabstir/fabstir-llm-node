@@ -68,8 +68,10 @@ pub fn patch(
     // (`seed`) — the same job seed everywhere is the determinism semantics.
     // Exact class_type equality means KSamplerSelect / SamplerCustomAdvanced are
     // untouched. Required ≥1 match across the two classes (fail closed).
+    // Refine Details (restoration S1) has no RandomNoise: its tiled-fusion sampler carries the seed itself.
     let seed_nodes = patch_by_class(obj, "RandomNoise", "noise_seed", Value::from(seed), false)?
-        + patch_by_class(obj, "KSampler", "seed", Value::from(seed), false)?;
+        + patch_by_class(obj, "KSampler", "seed", Value::from(seed), false)?
+        + patch_by_class(obj, "LTXVTiledFusionSampler", "seed", Value::from(seed), false)?;
     if seed_nodes == 0 {
         return Err(anyhow!(
             "template is missing the required seed handle (RandomNoise or KSampler)"

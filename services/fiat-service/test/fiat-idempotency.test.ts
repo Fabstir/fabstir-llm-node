@@ -99,4 +99,17 @@ describe('requestFingerprint', () => {
     expect(requestFingerprint({ ...REQ, modelId: '0xother' })).not.toBe(base);
     expect(requestFingerprint({ ...REQ, clientAddress: '0xother' })).not.toBe(base);
   });
+
+  it('a corrupt line that is NOT the last raises an alarm (it may have been a reserve) and the rest still loads; a torn LAST line stays silent', async () => {
+    // mutation: skip every unparseable line silently → no alarm.
+    const backing = memoryStore();
+    const good = JSON.stringify({ t: 'reserve', userId: USER, key: 'k2', fp: 'fp2', at: 1, ca: '0xclient' });
+    backing.lines.push('{"t":"reserve","userId":"0xabc', good, '{"t":"rel');
+    const alarms: string[] = [];
+    const store = await IdempotencyStore.open(backing, { onAlarm: (m) => alarms.push(m) });
+    expect(alarms).toHaveLength(1);
+    expect(alarms[0]).toMatch(/line 1/);
+    expect(await store.lookup(USER, 'k2')).toEqual({ state: 'pending', fingerprint: 'fp2' });
+  });
 });
+

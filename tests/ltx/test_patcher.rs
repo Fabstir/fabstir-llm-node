@@ -1566,3 +1566,63 @@ fn test_patch_layout_full() {
     let exr = LtxJob { output: OutputKind::ExrFrames, ..job };
     assert!(patch(&new_mode_graph("ltx-layout-hdr"), &exr, &["look.png".into()], &["layout.mp4".into()]).is_err());
 }
+
+// ── LTX 2.5 restoration modes (S1) ────────────────────────────────────────────
+
+fn restoration_job(id: &str, prompt: &str) -> LtxJob {
+    LtxJob {
+        template_id: id.to_string(),
+        prompt: prompt.to_string(),
+        frames: 121,
+        fps: 24,
+        resolution: Resolution { w: 960, h: 544 },
+        lora: format!("{id}@v1"),
+        output: OutputKind::ExrSequence,
+        ..job()
+    }
+}
+
+#[test]
+fn test_patch_restoration_single_stage_full() {
+    for id in ["ltx-colorize-hdr", "ltx-deblur-hdr", "ltx-decompress-hdr"] {
+        // Values that differ from every pinned literal: 1920x1088, a prompt, 129 frames.
+        let job = LtxJob {
+            frames: 129,
+            resolution: Resolution { w: 1920, h: 1088 },
+            ..restoration_job(id, "a hand-written scene, written twice")
+        };
+        let out = patch(&new_mode_graph(id), &job, &[], &["src-x.mp4".to_string()]).unwrap().0;
+        assert_eq!(by_title(&out, "Prompt")[0]["inputs"]["text"], job.prompt, "{id}");
+        let seeds = by_class(&out, "RandomNoise");
+        assert_eq!(seeds.len(), 1, "{id}");
+        assert_eq!(seeds[0]["inputs"]["noise_seed"], 4815162342u64, "{id}");
+        assert_eq!(by_title(&out, "Width")[0]["inputs"]["value"], 1920, "{id}");
+        assert_eq!(by_title(&out, "Height")[0]["inputs"]["value"], 1088, "{id}");
+        let loader = by_class(&out, "VHS_LoadVideo");
+        assert_eq!(loader[0]["inputs"]["frame_load_cap"], 129, "{id}: frame_load_cap = billed");
+        assert_eq!(loader[0]["inputs"]["video"], "src-x.mp4", "{id}");
+        // No EXR sink in the graph: a master request fails closed (the helper refuses it earlier).
+        let exr = LtxJob { output: OutputKind::ExrFrames, ..job };
+        assert!(patch(&new_mode_graph(id), &exr, &[], &["src.mp4".to_string()]).is_err(), "{id}");
+    }
+}
+
+#[test]
+fn test_patch_refine_full() {
+    // The fusion sampler carries the seed (no RandomNoise in the graph); Width/Height are the OUTPUT canvas.
+    let prompt = "sharp photographic detail, crisp natural texture, fine surface detail, clean edges, natural film grain, high resolution footage";
+    let job = LtxJob {
+        frames: 121,
+        resolution: Resolution { w: 1280, h: 768 },
+        ..restoration_job("ltx-refine-hdr", prompt)
+    };
+    let out = patch(&new_mode_graph("ltx-refine-hdr"), &job, &[], &["src-x.mp4".to_string()]).unwrap().0;
+    let fusion = by_class(&out, "LTXVTiledFusionSampler");
+    assert_eq!(fusion.len(), 1);
+    assert_eq!(fusion[0]["inputs"]["seed"], 4815162342u64, "the job seed reaches the fusion sampler");
+    assert_eq!(by_title(&out, "Prompt")[0]["inputs"]["text"], prompt);
+    assert_eq!(by_title(&out, "Width")[0]["inputs"]["value"], 1280);
+    assert_eq!(by_title(&out, "Height")[0]["inputs"]["value"], 768);
+    assert_eq!(by_class(&out, "VHS_LoadVideo")[0]["inputs"]["frame_load_cap"], 121);
+    assert_eq!(by_class(&out, "VHS_LoadVideo")[0]["inputs"]["video"], "src-x.mp4");
+}

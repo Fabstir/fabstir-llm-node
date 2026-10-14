@@ -5,7 +5,17 @@
 // — deliberately separate, Decision 7) and are never logged or returned.
 //
 // NOT src/lib/vault.ts — that is the CS1 envelope-encryption module.
-import { Contract, JsonRpcProvider, SigningKey, Wallet, getAddress, keccak256, toUtf8Bytes } from 'ethers';
+import {
+  Contract,
+  Interface,
+  JsonRpcProvider,
+  SigningKey,
+  Transaction,
+  Wallet,
+  getAddress,
+  keccak256,
+  toUtf8Bytes,
+} from 'ethers';
 import {
   ESCROW_INTERFACE,
   jobMarketplaceAddress,
@@ -13,6 +23,7 @@ import {
 } from './escrow';
 import { rpcUrl, usdcTokenAddress } from './balance';
 import { bigintEnv, type SessionKind } from './gatekeeper';
+import { DEFAULT_CHAIN_ID, OutboxAppendFailed, type SendResult, type VaultOutbox, type VaultRpc, type VaultSigner } from './vault-outbox';
 
 export const SESSION_AUTH_SCHEME = 'fc1-session-auth-v1';
 
@@ -54,30 +65,20 @@ export function backendAuthAddress(): string {
   return new Wallet(requireAuthKey()).address;
 }
 
-// Minimal contract surfaces so unit tests can inject fakes (no chain in CI).
-export interface Erc20Like {
-  allowance(owner: string, spender: string): Promise<bigint>;
-  approve(spender: string, amount: bigint): Promise<{ wait(): Promise<unknown> }>;
-}
-export interface MarketplaceLike {
-  createSessionJobForModelWithToken(
-    host: string,
-    modelId: string,
-    token: string,
-    deposit: bigint,
-    pricePerToken: bigint,
-    maxDuration: bigint,
-    proofInterval: bigint,
-    proofTimeoutWindow: bigint
-  ): Promise<{ hash: string; wait(): Promise<{ logs: Array<{ topics: readonly string[]; data: string }> } | null> }>;
-}
-
 /** Reads the price the REGISTRY holds for this (host, model, token) triple.
  *  Pricing is per model per host: the LTX video model is 904, the chat models
  *  on the chat host are 10000. A single service-wide constant made every
  *  non-LTX model unopenable (the contract rejects an underpriced create with
  *  "Low price"), so the chain is the only honest source. */
 export type ModelPriceReader = (host: string, modelId: string, token: string) => Promise<bigint>;
+
+/** The create's request bounds (D20 item 1): one 170 s deadline from arrival
+ *  covers the lock wait, the allowance and the confirmation; the outbox append
+ *  must START by 150 s. */
+export const CREATE_APPEND_BY_MS = 150_000;
+export const CREATE_DEADLINE_MS = 170_000;
+/** An approve's confirmation is awaited under the create's lock, bounded. */
+export const APPROVE_WAIT_MS = 120_000;
 
 export interface CreateSessionParams {
   host: string;
@@ -91,16 +92,20 @@ export interface CreateSessionParams {
    *  client request (a price the caller chooses is a price an attacker
    *  chooses). */
   pricePerToken?: bigint;
-  /** Called with the tx hash the instant the create is SUBMITTED (before the
-   *  confirmation wait), so the caller can durably record a crash-recoverable
-   *  orphan marker (M2 / R5 reconciliation). */
+  /** The outbox entry's `link`: the hold this create is for. */
+  link?: string;
+  /** Checked FIRST under the lock: the hold must still be `held`. */
+  assertHeld?: () => boolean;
+  /** Absolute epoch-ms bounds (default: now + 150 s / now + 170 s). */
+  appendByMs?: number;
+  deadlineAtMs?: number;
+  /** Called with the tx hash once the create's outbox entry is appended and its
+   *  broadcast returned or threw (the lock already released). From here on a
+   *  failure must NOT release the hold: the transaction may mine. */
   onSubmitted?: (txHash: string) => Promise<void>;
 }
 
 export interface VaultChain {
-  /** Keep the marketplace allowance a SMALL float (Decision 3b): tops up to
-   *  exactly the configured float when it cannot cover `depositMicro`. */
-  ensureAllowance(depositMicro: bigint): Promise<void>;
   createSession(params: CreateSessionParams): Promise<{ jobId: bigint; depositor: string; txHash: string }>;
   /** The registry price for (host, model, USDC). 0n = the host has not
    *  advertised this model, so no session for it can EVER open (a policy
@@ -112,107 +117,172 @@ export interface VaultChain {
 
 /** The standing approve() float: EXACTLY the configured value, never raised
  *  implicitly (Decision 3b: a small float, topped up as spend happens).
- *  `ensureAllowance` refuses a deposit above it as a loud config error, so a
- *  kind whose cap exceeds the float can never open — which is why
- *  `assertBootInvariants` (fiat-session-service) refuses to boot when an
- *  ENABLED kind's cap exceeds this figure (FT1 D5): the deploy raises
- *  FIAT_VAULT_ALLOWANCE_FLOAT_MICRO deliberately, in the same edit as
- *  FIAT_TRAINING_MODEL_IDS. Exported for that check. */
+ *  A deposit above it is refused as a loud config error, so a kind whose cap
+ *  exceeds the float can never open — which is why `assertBootInvariants`
+ *  (fiat-session-service) refuses to boot when an ENABLED kind's cap exceeds
+ *  this figure (FT1 D5): the deploy raises FIAT_VAULT_ALLOWANCE_FLOAT_MICRO
+ *  deliberately, in the same edit as FIAT_TRAINING_MODEL_IDS. Exported for
+ *  that check. */
 export function allowanceFloatMicro(): bigint {
   return bigintEnv('FIAT_VAULT_ALLOWANCE_FLOAT_MICRO', 2_000_000n);
 }
 
-/** An ERC-20 allowance revert on the create — the signal to top up + retry. */
-function isAllowanceError(e: unknown): boolean {
+/** An ERC-20 allowance revert on the create's estimate — the signal to top up + retry. */
+export function isAllowanceError(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e);
   return /exceeds allowance|insufficient allowance|allowance/i.test(msg);
 }
 
+const ERC20_INTERFACE = new Interface([
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+]);
+
 export interface VaultChainDeps {
+  /** The ONE outbox (shared deps): every vault send goes through it. */
+  outbox: VaultOutbox;
   vaultAddress: string;
   marketplaceAddress: string;
   usdcAddress: string;
-  usdc: Erc20Like;
-  marketplace: MarketplaceLike;
+  /** USDC allowance vault → marketplace (a read). */
+  readAllowance(): Promise<bigint>;
   modelPrice: ModelPriceReader;
+  now?: () => number;
 }
 
-/** Real deps come from server env; tests inject all five. */
-export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
-  const resolved = deps ?? realDeps();
-  const { vaultAddress, marketplaceAddress, usdcAddress, usdc, marketplace, modelPrice } = resolved;
+/** The deposit of an outbox create entry, from its own signed bytes. */
+export function createEntryDeposit(raw: string): bigint {
+  const tx = Transaction.from(raw);
+  const args = ESCROW_INTERFACE.decodeFunctionData('createSessionJobForModelWithToken', tx.data);
+  return BigInt(args[3]);
+}
+
+export function makeVaultChain(deps: VaultChainDeps): VaultChain {
+  const { outbox, vaultAddress, marketplaceAddress, usdcAddress, readAllowance, modelPrice } = deps;
+  const now = deps.now ?? Date.now;
   const createdTopic = ESCROW_INTERFACE.getEvent('SessionJobCreatedForModel')!.topicHash;
 
-  return {
-    async ensureAllowance(depositMicro: bigint): Promise<void> {
-      const float = allowanceFloatMicro();
-      if (depositMicro > float) {
-        throw new Error(
-          `deposit ${depositMicro} exceeds the allowance float ${float} — raise FIAT_VAULT_ALLOWANCE_FLOAT_MICRO deliberately, never implicitly`
-        );
-      }
-      const current = await usdc.allowance(vaultAddress, marketplaceAddress);
-      if (current < depositMicro) {
-        const tx = await usdc.approve(marketplaceAddress, float);
-        await tx.wait();
-      }
-    },
+  /** The allowance minus the deposits of this service's unconfirmed creates:
+   *  a create still in the mempool will consume allowance the RPC still shows. */
+  function unconfirmedCreateDeposits(): bigint {
+    return outbox.unresolved('create').reduce((sum, e) => sum + createEntryDeposit(e.raw), 0n);
+  }
 
+  /** A bounded approve, INSIDE the caller's lock (sendLocked, never vaultSend:
+   *  the lock is non-reentrant). The create's gas estimate needs it mined. */
+  async function approveLocked(appendBy: number, deadline: number): Promise<void> {
+    const sent = await outbox.sendLocked(
+      'approve',
+      { to: usdcAddress, data: ERC20_INTERFACE.encodeFunctionData('approve', [marketplaceAddress, allowanceFloatMicro()]) },
+      'allowance',
+      { appendBy, deadline }
+    );
+    if (sent.broadcastError) {
+      throw new Error(`approve broadcast failed (${String(sent.broadcastError)}) — the create is aborted before any send`);
+    }
+    const receipt = await outbox.waitForReceipt(sent.hash, Math.min(now() + APPROVE_WAIT_MS, deadline));
+    if (!receipt) throw new Error(`approve ${sent.hash} unconfirmed after ${APPROVE_WAIT_MS / 1000} s — the create is aborted before any send`);
+    if (receipt.status === 0) throw new Error(`approve ${sent.hash} reverted — the create is aborted before any send`);
+  }
+
+  return {
     async createSession(params: CreateSessionParams) {
+      const start = now();
+      const appendBy = params.appendByMs ?? start + CREATE_APPEND_BY_MS;
+      const deadline = params.deadlineAtMs ?? start + CREATE_DEADLINE_MS;
       // Registry price unless the caller pinned one. A failed read or a zero
       // price ABORTS: guessing here would either revert on chain ("Low price")
       // or, worse, open a session that bills the host at the wrong rate.
       let pricePerToken = params.pricePerToken;
       if (pricePerToken === undefined) {
-        pricePerToken = await modelPrice(params.host, params.modelId, usdcAddress);
+        pricePerToken = await outbox.timed(modelPrice(params.host, params.modelId, usdcAddress), 'price read');
         if (pricePerToken <= 0n) {
           throw new Error(
             `no registered price for model ${params.modelId} on host ${params.host} — the host must advertise this model before a vault session can pay for it`
           );
         }
       }
+      const float = allowanceFloatMicro();
+      if (params.depositMicro > float) {
+        throw new Error(
+          `deposit ${params.depositMicro} exceeds the allowance float ${float} — raise FIAT_VAULT_ALLOWANCE_FLOAT_MICRO deliberately, never implicitly`
+        );
+      }
       // The shape is chosen by KIND, server-side: a training run needs the
       // 14400 / 1000 / 3600 wallet-path shape or it fails the node's A.3 gate
       // after escrow (see escrow.ts).
       const shape = sessionShapeFor(params.kind);
-      const send = () =>
-        marketplace.createSessionJobForModelWithToken(
-          params.host,
-          params.modelId,
-          usdcAddress,
-          params.depositMicro,
-          pricePerToken,
-          shape.maxDuration,
-          shape.proofInterval,
-          shape.proofTimeoutWindow
-        );
-      let tx: Awaited<ReturnType<MarketplaceLike['createSessionJobForModelWithToken']>>;
+      const data = ESCROW_INTERFACE.encodeFunctionData('createSessionJobForModelWithToken', [
+        params.host,
+        params.modelId,
+        usdcAddress,
+        params.depositMicro,
+        pricePerToken,
+        shape.maxDuration,
+        shape.proofInterval,
+        shape.proofTimeoutWindow,
+      ]);
+      const request = { to: marketplaceAddress, data };
+      const link = params.link ?? 'unlinked';
+
+      // ONE lock across every step up to the broadcast, released when the
+      // broadcast returns or throws (never through the confirmation wait).
+      let sent: SendResult;
       try {
-        tx = await send();
+        sent = await outbox.withVaultLock(
+          async () => {
+            if (params.assertHeld && !params.assertHeld()) {
+              throw new Error('the hold is no longer held — nothing was sent');
+            }
+            const allowance = await outbox.timed(readAllowance(), 'allowance read', appendBy);
+            if (allowance - unconfirmedCreateDeposits() < params.depositMicro) {
+              await approveLocked(appendBy, deadline);
+            }
+            try {
+              return await outbox.sendLocked('create', request, link, { appendBy, deadline });
+            } catch (e) {
+              // A stale or exact-boundary allowance read can make the check above
+              // skip the top-up, so the create's ESTIMATE reverts "exceeds
+              // allowance" — before any append, so nothing was sent. Approve the
+              // float and populate ONCE more (safe: nothing can double-open).
+              if (!isAllowanceError(e)) throw e;
+              await approveLocked(appendBy, deadline);
+              return outbox.sendLocked('create', request, link, { appendBy, deadline });
+            }
+          },
+          { acquireBy: appendBy }
+        );
       } catch (e) {
-        // A stale or exact-boundary allowance read can make ensureAllowance skip
-        // the top-up, so the create reverts "exceeds allowance" — at gas
-        // estimation, BEFORE any session exists. Force the float and retry ONCE
-        // (safe: nothing was created, so this can't double-open).
-        if (!isAllowanceError(e)) throw e;
-        const approveTx = await usdc.approve(marketplaceAddress, allowanceFloatMicro());
-        await approveTx.wait();
-        tx = await send();
+        // D20 — the create's outbox append threw (write or fsync): AMBIGUOUS,
+        // the line may be on disk and a restart rebroadcasts it. Treated as a
+        // throw AFTER the append: the hold stays held, the key pending.
+        if (e instanceof OutboxAppendFailed && e.kind === 'create') {
+          if (params.onSubmitted) await params.onSubmitted(e.hash);
+          throw new Error(`${e.message} — the line may be on disk; the restart's replay decides (R5)`);
+        }
+        throw e;
       }
-      // Submitted — record the pending create BEFORE the confirmation wait, so a
-      // crash during the wait leaves a deterministically recoverable orphan (M2).
-      if (params.onSubmitted) await params.onSubmitted(tx.hash);
-      const receipt = await tx.wait();
-      const log = receipt?.logs.find((l) => l.topics[0] === createdTopic);
+
+      // Appended (and broadcast, or not): from here a failure keeps the hold.
+      if (params.onSubmitted) await params.onSubmitted(sent.hash);
+      if (sent.broadcastError) {
+        throw new Error(`create ${sent.hash} broadcast failed after its outbox append: ${String(sent.broadcastError)}`);
+      }
+      const receipt = await outbox.waitForReceipt(sent.hash, deadline);
+      if (!receipt) {
+        throw new Error(`create ${sent.hash} unconfirmed at the ${CREATE_DEADLINE_MS / 1000} s deadline — R5 resolves it`);
+      }
+      if (receipt.status === 0) throw new Error(`create ${sent.hash} reverted on chain`);
+      const log = receipt.logs.find((l) => l.topics[0] === createdTopic);
       if (!log) {
-        throw new Error(`no SessionJobCreatedForModel event in receipt ${tx.hash} — event inventory mismatch, stop`);
+        throw new Error(`no SessionJobCreatedForModel event in receipt ${sent.hash} — event inventory mismatch, stop`);
       }
       const jobId = BigInt(log.topics[1]!);
       const depositor = getAddress(`0x${log.topics[2]!.slice(26)}`);
       if (depositor.toLowerCase() !== vaultAddress.toLowerCase()) {
         throw new Error(`session ${jobId} depositor ${depositor} is not the vault ${vaultAddress} — mis-wired signer`);
       }
-      return { jobId, depositor, txHash: tx.hash };
+      return { jobId, depositor, txHash: sent.hash };
     },
 
     modelPrice(host: string, modelId: string): Promise<bigint> {
@@ -221,28 +291,70 @@ export function makeVaultChain(deps?: VaultChainDeps): VaultChain {
   };
 }
 
-function realDeps(): VaultChainDeps {
+/** Base's GasPriceOracle predeploy (OP stack). */
+export const GAS_PRICE_ORACLE = '0x420000000000000000000000000000000000000F';
+
+/** The production VaultRpc over one ethers provider (`staticNetwork`). */
+export function makeEthersVaultRpc(provider: JsonRpcProvider, vaultAddress: string): VaultRpc {
+  const oracle = new Contract(GAS_PRICE_ORACLE, ['function getL1Fee(bytes) view returns (uint256)'], provider);
+  return {
+    getNonce: (tag) => provider.getTransactionCount(vaultAddress, tag),
+    getBalance: () => provider.getBalance(vaultAddress),
+    estimateGas: (tx) => provider.estimateGas(tx),
+    async getFeeData() {
+      const fees = await provider.getFeeData();
+      if (fees.maxFeePerGas === null || fees.maxPriorityFeePerGas === null) {
+        throw new Error('the RPC returned no EIP-1559 fee data');
+      }
+      return { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
+    },
+    l1Fee: async (unsigned) => BigInt(await oracle.getFunction('getL1Fee')(unsigned)),
+    async broadcast(raw) {
+      await provider.broadcastTransaction(raw);
+    },
+    async receipt(hash) {
+      const r = await provider.getTransactionReceipt(hash);
+      if (!r) return null;
+      return { status: r.status, blockNumber: r.blockNumber, logs: r.logs.map((l) => ({ topics: l.topics, data: l.data })) };
+    },
+    blockNumber: () => provider.getBlockNumber(),
+  };
+}
+
+export interface ProductionVault {
+  rpc: VaultRpc;
+  signer: VaultSigner;
+  chainId: bigint;
+  vaultAddress: string;
+  marketplaceAddress: string;
+  usdcAddress: string;
+  readAllowance(): Promise<bigint>;
+  modelPrice: ModelPriceReader;
+}
+
+/** The vault's chain parts from server env. Throws the "not configured"
+ *  error when the vault key is unset. */
+export function productionVault(): ProductionVault {
   const key = process.env.FIAT_VAULT_PRIVATE_KEY;
   if (!key) {
     throw new Error('FIAT_VAULT_PRIVATE_KEY is not set — the fiat backend is not configured');
   }
-  const provider = new JsonRpcProvider(rpcUrl());
+  const chainId = BigInt(process.env.FIAT_CHAIN_ID ?? DEFAULT_CHAIN_ID.toString());
+  // staticNetwork: one chain id, never re-detected per call (and never a
+  // detection request hanging under the vault lock).
+  const provider = new JsonRpcProvider(rpcUrl(), Number(chainId), { staticNetwork: true });
   const wallet = new Wallet(key, provider);
   const usdcAddress = usdcTokenAddress();
   const marketplaceAddress = jobMarketplaceAddress();
+  const usdc = new Contract(usdcAddress, ERC20_INTERFACE, provider);
   return {
+    rpc: makeEthersVaultRpc(provider, wallet.address),
+    signer: { address: wallet.address, signTransaction: (tx) => wallet.signTransaction(tx) },
+    chainId,
     vaultAddress: wallet.address,
     marketplaceAddress,
     usdcAddress,
-    usdc: new Contract(
-      usdcAddress,
-      [
-        'function allowance(address owner, address spender) view returns (uint256)',
-        'function approve(address spender, uint256 amount) returns (bool)',
-      ],
-      wallet
-    ) as unknown as Erc20Like,
-    marketplace: new Contract(marketplaceAddress, ESCROW_INTERFACE, wallet) as unknown as MarketplaceLike,
+    readAllowance: async () => BigInt(await usdc.getFunction('allowance')(wallet.address, marketplaceAddress)),
     modelPrice: makeChainModelPriceReader(provider),
   };
 }

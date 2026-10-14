@@ -82,7 +82,9 @@ impl LtxJobInfo {
     }
 }
 
-/// Tracks LTX generation tokens/cost per job for billing.
+/// Tracks LTX generation tokens/cost per job for billing. Clones share one map
+/// (Batch D21: the keep-alive task holds a clone).
+#[derive(Clone)]
 pub struct LtxTracker {
     jobs: Arc<RwLock<HashMap<u64, LtxJobInfo>>>,
 }
@@ -155,6 +157,19 @@ impl LtxTracker {
             entry.last_confirmed_at = Some(Instant::now());
             entry.proofs_submitted += 1;
         }
+    }
+
+    /// Batch D21: a keep-alive (interim) proof CONFIRMED. Bumps `proofs_submitted`
+    /// (the first-proof gate) and `last_confirmed_at` (the dispute wait) ONLY —
+    /// never the pending count, whose decrement (`mark_proof_submitted`) would
+    /// let the disconnect path complete the session mid-render.
+    pub async fn mark_interim_confirmed(&self, job_id: u64) {
+        let mut jobs = self.jobs.write().await;
+        let entry = jobs
+            .entry(job_id)
+            .or_insert_with(|| LtxJobInfo::new(job_id, None));
+        entry.last_confirmed_at = Some(Instant::now());
+        entry.proofs_submitted += 1;
     }
 
     /// The clip's revenue is forfeited (error path, skipped submit, failed tx).

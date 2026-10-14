@@ -30,7 +30,8 @@ fn entry(id: &str, sidecar: Option<&str>) -> TemplateEntry {
         video_inputs: 1,
         video_semantics: vec!["sourceVideo".to_string()],
         fps: Some(vec![24, 25]),
-        max_frames: Some(145),
+        max_frames: Some(361),
+        max_tokens: None,
         resolution_rule: Some("relight-fhd".to_string()),
         exact_control: Some(true),
         frame_grid: Some(true),
@@ -114,8 +115,8 @@ fn store_dir(sidecar_json: &str) -> tempfile::TempDir {
     )
     .unwrap();
     let allow = format!(
-        r#"{{"allowListVersion":27,"templates":[{{"templateId":"cosmos-passes-std","version":"v1","videoInputs":1,
-        "videoSemantics":["sourceVideo"],"fps":[24,25],"maxFrames":145,"resolutionRule":"relight-fhd","exactControl":true,
+        r#"{{"allowListVersion":28,"templates":[{{"templateId":"cosmos-passes-std","version":"v1","videoInputs":1,
+        "videoSemantics":["sourceVideo"],"fps":[24,25],"maxFrames":361,"resolutionRule":"relight-fhd","exactControl":true,
         "frameGrid":true{sidecar_json}}}],"loras":["cosmos-passes-std@v1"],"bounds":{{"frames":{{"min":121,"max":751}},
         "fps":[24,25],"resolutions":[{{"w":1920,"h":1088}}],"imageMaxBytes":1,"imageFormats":["png"],"videoMaxBytes":1,
         "videoFormats":["mp4"],"deepVideoMaxBytes":1}}}}"#
@@ -223,4 +224,49 @@ fn relight_start_needs_one_generation_slot() {
     assert!(check_relight_start(Some("http://relight-sidecar:8190"), 1).is_ok());
     assert!(check_relight_start(Some("http://relight-sidecar:8190"), 2).is_err());
     assert!(check_relight_start(None, 2).is_ok());
+}
+
+#[test]
+fn bundle_v28_lets_the_three_passes_presets_run_to_361_frames() {
+    // Batch D21: maxFrames 145 → 361 for the three cosmos-passes-* entries of the
+    // LIVE bundle (kept at 145 -> 361 refused -> red); 369 and off-grid stay refused
+    use fabstir_llm_node::api::websocket::handlers::ltx::check_length;
+    use fabstir_llm_node::ltx::types::{LtxJob, OutputKind, Resolution};
+    let store = TemplateStore::new("templates").unwrap();
+    assert_eq!(store.bundle().allow_list_version, 29);
+    for id in [
+        "cosmos-passes-key",
+        "cosmos-passes-std",
+        "cosmos-passes-full",
+    ] {
+        let e = store.entry(id).unwrap();
+        assert_eq!(e.max_frames, Some(361), "{id}");
+        let job = |frames: u32| LtxJob {
+            template_id: id.to_string(),
+            template_hash: "0x00".to_string(),
+            prompt: String::new(),
+            seed: "1".to_string(),
+            frames,
+            fps: 25,
+            resolution: Resolution { w: 1920, h: 1088 },
+            lora: format!("{id}@v1"),
+            output: OutputKind::ExrFrames,
+            images: None,
+            videos: None,
+            strength: None,
+            azimuth: None,
+            elevation: None,
+            distance: None,
+            input_wire: None,
+        };
+        for ok in [121, 145, 153, 361] {
+            assert!(check_length(Some(e), &job(ok)).is_ok(), "{id} {ok}");
+            assert!(
+                check_template_rules(e, 1920, 1088, 25, ok).is_ok(),
+                "{id} {ok}"
+            );
+        }
+        assert!(check_length(Some(e), &job(369)).is_err(), "{id} 369");
+        assert!(check_length(Some(e), &job(360)).is_err(), "{id} off-grid");
+    }
 }

@@ -93,7 +93,12 @@ pub struct TemplateEntry {
     /// The longest job the template may run, in frames (measured on host1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_frames: Option<u32>,
-    /// A named resolution rule; `"div64-fhd"` is the only one defined.
+    /// The largest job the template may run, in billed TOKENS (`ceil(frames * w * h / 1000)`, the same unit the
+    /// job is priced in), so one number bounds frames, size and (for Refine) the OUTPUT size together. Raised from
+    /// measurement without a code change. Absent = no per-template token cap. Omitted on the wire when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+    /// A named resolution rule: `"div64-fhd"`, `"relight-fhd"`, `"refine-hd"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_rule: Option<String>,
     /// D3: the graph caps the control clip at the billed frames, so where LTX
@@ -153,6 +158,8 @@ struct ConfigEntry {
     fps: Option<Vec<u32>>,
     #[serde(default)]
     max_frames: Option<u32>,
+    #[serde(default)]
+    max_tokens: Option<u64>,
     #[serde(default)]
     resolution_rule: Option<String>,
     #[serde(default)]
@@ -218,6 +225,7 @@ impl TemplateStore {
                 video_semantics: entry.video_semantics.clone(),
                 fps: entry.fps.clone(),
                 max_frames: entry.max_frames,
+                max_tokens: entry.max_tokens,
                 resolution_rule: entry.resolution_rule.clone(),
                 exact_control: entry.exact_control,
                 frame_grid: entry.frame_grid,
@@ -316,6 +324,14 @@ pub fn check_template_rules(
             ));
         }
     }
+    if let Some(cap) = entry.max_tokens {
+        let tokens = (u64::from(frames) * u64::from(w) * u64::from(h)).div_ceil(1000);
+        if tokens > cap {
+            return Err(format!(
+                "{tokens} tokens ({frames} frames at {w}x{h}) is over the {cap}-token maximum for {id}"
+            ));
+        }
+    }
     match entry.resolution_rule.as_deref() {
         None => {}
         Some("div64-fhd") => {
@@ -335,6 +351,19 @@ pub fn check_template_rules(
             if (w, h) != (1920, 1088) {
                 return Err(format!(
                     "resolution {w}x{h} is not allowed for {id} (exactly 1920x1088)"
+                ));
+            }
+        }
+        // LTX 2.5 Refine Details (restoration modes S1): the OUTPUT is capped at the proven 2x of 768x512
+        // (1536x1024; VRAM peaked at 94 of 96 GB there), on the /64 grid, either orientation.
+        Some("refine-hd") => {
+            let fits = w % 64 == 0
+                && h % 64 == 0
+                && u64::from(w) * u64::from(h) <= 1536 * 1024
+                && w.max(h) <= 1536;
+            if !fits {
+                return Err(format!(
+                    "resolution {w}x{h} is not allowed for {id} (sides divisible by 64, at most 1536x1024)"
                 ));
             }
         }
@@ -458,7 +487,7 @@ pub async fn session_gate<MF, MFut, JF, JFut>(
     this_host: &str,
     read_model: MF,
     read_session: JF,
-) -> std::result::Result<(), String>
+) -> std::result::Result<crate::training::accept::SessionSnapshot, String>
 where
     MF: Fn(u64) -> MFut,
     MFut: std::future::Future<Output = Result<[u8; 32]>>,
@@ -519,7 +548,7 @@ pub async fn session_gate_with<MF, MFut, JF, JFut>(
     read_model: MF,
     read_session: JF,
     timing: GateTiming,
-) -> std::result::Result<(), String>
+) -> std::result::Result<crate::training::accept::SessionSnapshot, String>
 where
     MF: Fn(u64) -> MFut,
     MFut: std::future::Future<Output = Result<[u8; 32]>>,
@@ -541,7 +570,8 @@ where
 }
 
 /// VFX Passes D6: the D20/D24 gate against an explicit expected model id (`run()` passes
-/// `expected_session_model(store.entry(id), id)`).
+/// `expected_session_model(store.entry(id), id)`). Batch D21: returns the session
+/// snapshot it judged.
 #[allow(clippy::too_many_arguments)]
 pub async fn session_gate_for_model<MF, MFut, JF, JFut>(
     job_id: Option<u64>,
@@ -553,7 +583,7 @@ pub async fn session_gate_for_model<MF, MFut, JF, JFut>(
     read_model: MF,
     read_session: JF,
     timing: GateTiming,
-) -> std::result::Result<(), String>
+) -> std::result::Result<crate::training::accept::SessionSnapshot, String>
 where
     MF: Fn(u64) -> MFut,
     MFut: std::future::Future<Output = Result<[u8; 32]>>,
@@ -561,7 +591,9 @@ where
     JFut: std::future::Future<Output = Result<Vec<u8>>>,
 {
     let Some(jid) = job_id else {
-        return check_session_model_for(None, expected, template_id);
+        return Err(check_session_model_for(None, expected, template_id)
+            .err()
+            .unwrap_or_else(|| format!("{template_id} job has no on-chain job id")));
     };
     let (attempts, delay, per_attempt) =
         (timing.read_attempts, timing.read_delay, timing.per_attempt);
@@ -603,7 +635,11 @@ where
     let host = this_host
         .parse::<ethers::types::Address>()
         .map_err(|e| format!("this node's host address {this_host:?} is unreadable: {e}"))?;
-    check_session_terms(&snap, host, job_tokens, tracked_tokens)
+    check_session_terms(&snap, host, job_tokens, tracked_tokens)?;
+    // Batch D21: the admission snapshot (tokens_used = the on-chain delta's
+    // baseline; start_time, max_duration, proof_interval, w9, w11 for the
+    // relight admission rules).
+    Ok(snap)
 }
 
 /// NM1 D20: one chain read, retried (`query_session_model` and

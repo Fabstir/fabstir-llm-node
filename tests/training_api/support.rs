@@ -195,6 +195,8 @@ pub fn passing_snapshot() -> SessionSnapshot {
         tokens_used: U256::zero(),
         max_duration: U256::from(14_400u64),
         start_time: U256::from(NOW - 100),
+        last_proof_time: U256::from(NOW - 100),
+        proof_interval: U256::from(1000u64),
         proof_timeout_window: U256::from(3_600u64),
         status: SessionStatus::Active,
     }
@@ -394,7 +396,10 @@ pub const NODE_KEY: [u8; 32] = [
 /// shared interleave log (the delivery-before-settlement order check).
 pub struct MockProof {
     pub calls: Mutex<Vec<(u64, u64, String)>>,
-    pub script: Mutex<std::collections::VecDeque<Result<(), String>>>,
+    /// Batch D21: scripts the TYPED error (`RateLimited`, `Unconfirmed`, …).
+    pub script: Mutex<
+        std::collections::VecDeque<Result<(), fabstir_llm_node::ltx::submit::ProofSubmitError>>,
+    >,
     pub interleave: Arc<Mutex<Vec<String>>>,
 }
 
@@ -419,7 +424,7 @@ impl fabstir_llm_node::ltx::submit::ProofSubmit for MockProof {
         tokens: u64,
         _proof_hash: [u8; 32],
         proof_cid: String,
-    ) -> anyhow::Result<ethers::types::H256> {
+    ) -> Result<ethers::types::H256, fabstir_llm_node::ltx::submit::ProofSubmitError> {
         let scripted = self.script.lock().unwrap().pop_front();
         match scripted {
             Some(Err(e)) => {
@@ -427,7 +432,7 @@ impl fabstir_llm_node::ltx::submit::ProofSubmit for MockProof {
                     .lock()
                     .unwrap()
                     .push(format!("proof-err:{tokens}"));
-                Err(anyhow::anyhow!(e))
+                Err(e)
             }
             _ => {
                 self.calls.lock().unwrap().push((job_id, tokens, proof_cid));
@@ -442,6 +447,13 @@ impl fabstir_llm_node::ltx::submit::ProofSubmit for MockProof {
 
     async fn session_proof_interval(&self, _job_id: u64) -> u64 {
         1000
+    }
+
+    async fn receipt_of(
+        &self,
+        _tx: ethers::types::H256,
+    ) -> Result<Option<fabstir_llm_node::ltx::submit::ProofReceipt>, String> {
+        Ok(None)
     }
 }
 

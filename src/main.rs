@@ -910,6 +910,16 @@ async fn node_main() -> Result<()> {
         .unwrap_or(1);
     fabstir_llm_node::ltx::relight::check_relight_start(relight_url.as_deref(), max_generations)
         .map_err(|e| anyhow::anyhow!(e))?;
+    // Batch D21: the relight deadlines may only be LOWERED by env and the proof
+    // rate never — the node refuses to boot otherwise (the helper's timeout is
+    // built on the compiled values).
+    let (admit_cfg, admit_warnings) =
+        fabstir_llm_node::ltx::relight::AdmitCfg::from_vars(&|k| env::var(k).ok())
+            .map_err(|e| anyhow::anyhow!(e))?;
+    for w in admit_warnings {
+        println!("⚠️  {w}");
+    }
+    api_server.set_admit_cfg(admit_cfg).await;
     if let Some(ref url) = comfy_url {
         match fabstir_llm_node::ltx::ComfyClient::new(url) {
             Ok(client) => {

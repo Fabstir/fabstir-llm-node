@@ -278,9 +278,15 @@ async fn a_render_past_the_whole_job_deadline_is_abandoned() {
     let _env = S5_ENV_LOCK.lock().await;
     let clip = serve_clip(145).await;
     let (st, rc) = spawn_stub("relight", Log::default()).await;
-    st.finish_after_ms.store(2_500, Ordering::SeqCst);
+    // Batch D21: base 2, margin 0, slopes 0 ⇒ deadline = watch timeout = 2 s; the
+    // prompt takes 1 s and the render 1.5 s, so the watch completes inside its own
+    // 2 s but the whole job passes 2 s (a margin ≥ the watch timeout could never
+    // reach the deadline check first).
+    st.prompt_delay_ms.store(1_000, Ordering::SeqCst);
+    st.finish_after_ms.store(1_500, Ordering::SeqCst);
     let cfg = AdmitCfg {
-        deadline_secs: 2,
+        timeout_145_secs: 2,
+        deadline_margin_secs: 0,
         ..test_cfg()
     };
     let srv = server(Some(rc), None, cfg, Some(pins())).await;

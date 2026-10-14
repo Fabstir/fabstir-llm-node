@@ -43,6 +43,9 @@ pub struct Stub {
     /// The `/ws` terminal: `Some(msg)` = `execution_error` with that text, `None` = success.
     pub ws_error: Mutex<Option<String>>,
     pub finish_after_ms: AtomicU64,
+    /// Batch D21: `/prompt` sleeps this long before answering (the watch starts
+    /// only after `submit` returns).
+    pub prompt_delay_ms: AtomicU64,
 }
 
 impl Stub {
@@ -72,14 +75,21 @@ pub fn pins() -> RelightPins {
 }
 
 /// 3 s budget, 0.1 s interval (IMPLEMENTATION VP1.1); never via process env.
+/// Batch D21: the deadlines come from the base and margin (slopes 0 here, so
+/// every length gets the ≤ 145 values 2100 / 2700).
 pub fn test_cfg() -> AdmitCfg {
     AdmitCfg {
         budget: Duration::from_secs(3),
         interval: Duration::from_millis(100),
         min_free_vram: 30 * GIB,
-        deadline_secs: 2700,
-        watch_timeout_secs: 2100,
         comfy_handshake: false,
+        timeout_145_secs: 2100,
+        secs_per_extra_frame_key: 0,
+        secs_per_extra_frame_std: 0,
+        secs_per_extra_frame_full: 0,
+        deadline_margin_secs: 600,
+        upload_secs_per_extra_frame: 0,
+        ..AdmitCfg::default()
     }
 }
 
@@ -113,6 +123,10 @@ async fn upload(State(s): State<Arc<Stub>>) -> Json<Value> {
 
 async fn prompt(State(s): State<Arc<Stub>>) -> Json<Value> {
     s.rec("/prompt");
+    tokio::time::sleep(Duration::from_millis(
+        s.prompt_delay_ms.load(Ordering::SeqCst),
+    ))
+    .await;
     Json(json!({"prompt_id": "p1", "number": 0, "node_errors": {}}))
 }
 
@@ -175,6 +189,7 @@ pub async fn spawn_stub(name: &'static str, log: Log) -> (Arc<Stub>, Arc<ComfyCl
         queue_busy: AtomicBool::new(false),
         ws_error: Mutex::new(None),
         finish_after_ms: AtomicU64::new(0),
+        prompt_delay_ms: AtomicU64::new(0),
     });
     let app = Router::new()
         .route("/system_stats", get(stats))

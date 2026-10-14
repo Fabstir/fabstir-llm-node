@@ -75,6 +75,12 @@ pub struct SessionSnapshot {
     pub tokens_used: U256,
     pub max_duration: U256,
     pub start_time: U256,
+    /// w9 — `lastProofTime` (unix seconds; the session's start until the first
+    /// proof lands). Batch D21: the final proof's rate-limit clock.
+    pub last_proof_time: U256,
+    /// w10 — `proofInterval`, a TOKEN count: the first proof's floor (1000 on
+    /// live sessions). Batch D21: the keep-alive's first claim.
+    pub proof_interval: U256,
     /// w11 — the per-proof SILENCE window in SECONDS (A.3's ≥ 3600 gate).
     /// NOT w10 `proofInterval`, which is a TOKEN count (the first-proof
     /// floor, 1000 on live sessions).
@@ -106,6 +112,8 @@ pub fn decode_session_snapshot(ret: &[u8]) -> Result<SessionSnapshot, String> {
         tokens_used: uint(6),
         max_duration: uint(7),
         start_time: uint(8),
+        last_proof_time: uint(9),
+        proof_interval: uint(10),
         proof_timeout_window: uint(11),
         status: SessionStatus::try_from(word(12)[31])?,
     })

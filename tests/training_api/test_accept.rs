@@ -43,6 +43,8 @@ fn passing_snapshot() -> SessionSnapshot {
         tokens_used: U256::zero(),
         max_duration: U256::from(14_400u64),
         start_time: U256::from(NOW - 100), // 100 s into the 1,200 s latitude
+        last_proof_time: U256::from(NOW - 100),
+        proof_interval: U256::from(1000u64),
         proof_timeout_window: U256::from(3_600u64),
         status: SessionStatus::Active,
     }
@@ -180,8 +182,8 @@ fn encode_snapshot_blob(snap: &SessionSnapshot, status_byte: u8) -> Vec<u8> {
     put_uint(&mut blob, 6, snap.tokens_used);
     put_uint(&mut blob, 7, snap.max_duration);
     put_uint(&mut blob, 8, snap.start_time);
-    put_uint(&mut blob, 9, U256::from(NOW - 100)); // lastProofTime (ignored)
-    put_uint(&mut blob, 10, U256::from(1000u64)); // proofInterval TOKENS (ignored)
+    put_uint(&mut blob, 9, snap.last_proof_time); // lastProofTime (Batch D21)
+    put_uint(&mut blob, 10, snap.proof_interval); // proofInterval TOKENS (Batch D21)
     put_uint(&mut blob, 11, snap.proof_timeout_window);
     blob[12 * 32 + 31] = status_byte;
     // w13/w14 zero; w15/w17 are dynamic offsets — head-only decode ignores
@@ -386,6 +388,9 @@ fn decode_matches_the_pinned_live_chain_return() {
     assert_eq!(snap.start_time, U256::from(1_784_417_870u64));
     assert_eq!(snap.proof_timeout_window, U256::from(300u64));
     assert_eq!(snap.status, SessionStatus::Completed);
+    // Batch D21: w9 lastProofTime and w10 proofInterval (tokens).
+    assert_eq!(snap.last_proof_time, U256::from(1_784_419_204u64));
+    assert_eq!(snap.proof_interval, U256::from(1000u64));
 }
 
 // --- A.3 boundary pins (round-1: the <↔<= mutations survived without these) ---

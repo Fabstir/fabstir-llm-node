@@ -139,5 +139,138 @@ fn deadline_is_checked_after_watch() {
         "match watch_handle.await",
         "client.outputs(&prompt_id)",
     );
-    assert!(w.contains("relight_finalise_decision(") && w.contains("deadline_secs"));
+    assert!(w.contains("relight_finalise_decision(") && w.contains("deadline_for("));
+}
+
+// ---- Batch D21 wiring (a test server has no checkpoint manager, so these
+// call sites cannot run end to end; the decisions are tested in
+// test_keepalive / test_final_proof / test_relight_admission) ----
+
+#[test]
+fn d21_admission_runs_on_the_gate_snapshot_before_gpu_admission() {
+    // admission after admit_relight (GPU held) or without the gate's snapshot -> red
+    let run = run_body();
+    let w = window(&run, "session_gate_for_model(", "admit_relight(");
+    assert!(w.contains("Ok(snap)=>admission_snap=Some(snap)"), "{w}");
+    assert!(w.contains("relight_session_admission("));
+}
+
+#[test]
+fn d21_keepalive_starts_after_submit_and_feeds_on_watch_progress() {
+    // started before the prompt was accepted -> red; progress never shared -> red
+    let run = run_body();
+    let w = window(&run, "client.submit(&patched_graph)", "wc.watch(");
+    assert!(w.contains("start_keepalive("));
+    // review round 1: its inputs come from the pure, tested keepalive_cfg_for,
+    // fed the D20 admission snapshot
+    // round 2: the FULL argument list, so the job's start (not "now") feeds the
+    // keep-alive's deadline
+    assert!(w.contains(&squash(
+        "keepalive_cfg_for( crate::ltx::keepalive::KeepAliveIds { job_id: jid, job_tag: format!(\"{jid}-{prompt_id}\"), session_id: session_id.clone(), host: cm.get_host_address(), model_id, }, snap, &admit_cfg, &job.template_id, job.frames, submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h), started_at, crate::ltx::keepalive::unix_now(), );"
+    )));
+    assert!(w.contains(&squash("start_keepalive( ka_cfg,")));
+    assert!(w.contains(&squash(
+        "let (Some(jid), Some(snap)) = (job_id, admission_snap.as_ref())"
+    )));
+    // round 3: relight jobs ONLY (an LTX final claims its full tokens under the
+    // Ltx policy — interims there would over-claim), and only this one start
+    assert!(w.contains(&squash(
+        "if is_relight && pending_marked { if let (Some(jid), Some(snap)) = (job_id, admission_snap.as_ref()) {"
+    )));
+    assert_eq!(
+        run.matches("start_keepalive(").count(),
+        1,
+        "one start in run"
+    );
+    let w = window(
+        &run,
+        "while let Some(p) = watch_rx.recv().await",
+        "if client_gone",
+    );
+    assert!(w.contains("set_progress("));
+}
+
+#[test]
+fn d21_keepalive_stops_before_the_finalising_read_and_on_every_exit() {
+    // the stop after the re-read (a tick could add after it) -> red; the claim
+    // gated on the full tokens -> red; no stop in the single-exit cleanup -> red
+    let run = run_body();
+    let w = window(
+        &run,
+        "send_stage(&progress_tx, \"finalising\"",
+        "submit::finalize_clip(",
+    );
+    let stop = w
+        .find("g.stop().await")
+        .expect("stopped on the success path");
+    let read = w.find("read_with_retry(").expect("the finalising re-read");
+    assert!(
+        stop < read,
+        "stop (abort + await) BEFORE the finalising re-read"
+    );
+    // review round 1: the claim and the final's timing come from the pure,
+    // tested relight_final_inputs (admission baseline, interim_sent + flag)
+    assert!(w.contains(&squash(
+        "relight_inputs = snap.as_ref().ok().map(|s| { crate::ltx::final_proof::relight_final_inputs( tokens, admission_snap.as_ref(), s, interim_sent, interim_in_flight, &admit_cfg, &job.template_id, job.frames, started_at, ) });"
+    )));
+    // round 3: every claim (relight or not) goes through the pure final_claim,
+    // which also subtracts interim_sent on the Ltx policy
+    assert!(w.contains(&squash(
+        "claim = crate::ltx::final_proof::final_claim( tokens, relight_inputs.as_ref(), interim_sent, );"
+    )));
+    assert_eq!(
+        run.matches("final_claim(").count(),
+        2,
+        "before and inside the relight read"
+    );
+    assert!(w.contains(&squash("(g.stop().await, g.shared().in_flight())")));
+    assert!(w.contains(&squash("check_session_terms(s, host, claim, tracked)")));
+    let w = window(&run, "catch_unwind()", "finish_ltx_task(");
+    assert!(w.contains(&squash("if let Some(mut guard) = keepalive.take()")));
+    assert!(w.contains("guard.stop().await"));
+    // declared outside the core
+    let decl = run.find("letmutkeepalive:").expect("declared");
+    let core = run.find("letcore=async").expect("core");
+    assert!(decl < core);
+}
+
+#[test]
+fn d21_the_final_claim_and_wire_total_reach_their_own_places() {
+    // the tracker or the on-chain claim fed the wire total (or vice versa) -> red
+    let run = run_body();
+    let w = window(
+        &run,
+        "submit::finalize_clip(",
+        ".send(build_encrypted_ltx_response(",
+    );
+    assert!(w.contains(&squash("&att, claim, policy,")));
+    let w2 = window(&run, "CmSessionReads(&cm)", "submit::finalize_clip(");
+    assert!(w2.contains(&squash("final_policy( relight_inputs.as_ref(),")));
+    assert!(w.contains(&squash("tokens_before, claim, tokens,")));
+    assert!(w.contains(&squash(
+        ".track(jid, Some(session_id.clone()), claim, cost)"
+    )));
+}
+
+#[test]
+fn d21_started_at_is_the_jobs_start_set_once_before_the_core() {
+    // round 2: re-basing started_at on "now" anywhere later would stretch the
+    // keep-alive deadline and the final budget by the render time -> red
+    let run = run_body();
+    let set = squash("let started_at = tokio::time::Instant::now();");
+    assert_eq!(run.matches(&set).count(), 1, "set exactly once");
+    let at = run.find(&set).unwrap();
+    let core = run.find("letcore=async").expect("core");
+    assert!(at < core, "set before the core starts");
+    assert_eq!(
+        run.matches("started_at=").count(),
+        1,
+        "no later `started_at =` assignment"
+    );
+    // round 3: any binding, typed shadows included
+    assert_eq!(
+        run.matches("letstarted_at").count(),
+        1,
+        "bound exactly once"
+    );
 }

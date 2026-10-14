@@ -1,5 +1,5 @@
 {
- "allowListVersion": 27,
+ "allowListVersion": 29,
  "templates": [
   {
    "templateId": "ltx-t2v-hdr",
@@ -111,7 +111,10 @@
    "videoInputs": 1,
    "videoSemantics": [
     "sourceVideo"
-   ]
+   ],
+   "maxFrames": 361,
+   "exactControl": true,
+   "frameGrid": true
   },
   {
    "templateId": "ltx-alpha-hdr",
@@ -150,6 +153,74 @@
    "frameGrid": true
   },
   {
+   "templateId": "ltx-colorize-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 121,
+   "maxTokens": 252765,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-deblur-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 121,
+   "maxTokens": 252765,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-decompress-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 121,
+   "maxTokens": 252765,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-refine-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 121,
+   "maxTokens": 252765,
+   "resolutionRule": "refine-hd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
    "templateId": "cosmos-passes-key",
    "version": "v1",
    "videoInputs": 1,
@@ -160,7 +231,7 @@
     24,
     25
    ],
-   "maxFrames": 145,
+   "maxFrames": 361,
    "resolutionRule": "relight-fhd",
    "exactControl": true,
    "frameGrid": true,
@@ -177,7 +248,7 @@
     24,
     25
    ],
-   "maxFrames": 145,
+   "maxFrames": 361,
    "resolutionRule": "relight-fhd",
    "exactControl": true,
    "frameGrid": true,
@@ -194,7 +265,7 @@
     24,
     25
    ],
-   "maxFrames": 145,
+   "maxFrames": 361,
    "resolutionRule": "relight-fhd",
    "exactControl": true,
    "frameGrid": true,
@@ -213,6 +284,10 @@
   "ltx-crossview-hdr@v1",
   "ltx-alpha-hdr@v1",
   "ltx-layout-hdr@v1",
+  "ltx-colorize-hdr@v1",
+  "ltx-deblur-hdr@v1",
+  "ltx-decompress-hdr@v1",
+  "ltx-refine-hdr@v1",
   "cosmos-passes-key@v1",
   "cosmos-passes-std@v1",
   "cosmos-passes-full@v1"

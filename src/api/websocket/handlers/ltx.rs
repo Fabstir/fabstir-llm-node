@@ -80,14 +80,17 @@ pub enum CompletionOutcome {
 /// VFX Passes D18: the whole delivery choice. `finalize` is `finalize_clip`'s result (error text on the upload failure);
 /// `reread` is the post-submit session read `run()` makes for relight jobs whose proof did not confirm (`None` = not
 /// read). A relight clip is withheld ONLY when the chain shows the session closed AND the proof did not land
-/// (`tokens_used < tokens_before + tokens`); an unconfirmed tx may still mine, so every other case delivers.
+/// (`tokens_used < tokens_before + claim`); an unconfirmed tx may still mine, so every other case delivers.
+/// Batch D21: `claim` is the final proof's on-chain claim (the remainder after keep-alives; D18's `landed` test),
+/// `wire_total` the cumulative total = the estimate (`billing.tokens`).
 #[allow(clippy::too_many_arguments)]
 pub fn completion_outcome(
     sidecar: Option<&str>,
     finalize: std::result::Result<(String, bool), String>,
     reread: Option<std::result::Result<crate::training::accept::SessionSnapshot, String>>,
     tokens_before: U256,
-    tokens: u64,
+    claim: u64,
+    wire_total: u64,
     output_cid: &str,
     caps: &[String],
     manifest: &FrameManifest,
@@ -114,7 +117,7 @@ pub fn completion_outcome(
                 )
             }
             Some(Ok(snap)) => {
-                let landed = snap.tokens_used >= tokens_before.saturating_add(U256::from(tokens));
+                let landed = snap.tokens_used >= tokens_before.saturating_add(U256::from(claim));
                 if snap.status != SessionStatus::Active && !landed {
                     return CompletionOutcome::Fail(
                         "GENERATION_FAILED",
@@ -130,7 +133,7 @@ pub fn completion_outcome(
         }
     }
     CompletionOutcome::Complete(ltx_complete_inner(
-        output_cid, &proof_cid, caps, manifest, tokens, price, rid,
+        output_cid, &proof_cid, caps, manifest, wire_total, price, rid,
     ))
 }
 
@@ -571,9 +574,13 @@ pub async fn handle_encrypted_ltx_generate(
     // Accept.
     server.ltx_rate_limiter().record_request(session_id);
     let allow_list_version = store.bundle().allow_list_version;
-    // VFX Passes D3: relight jobs use RELIGHT_JOB_TIMEOUT_SECS (via AdmitCfg) for `watch`.
+    // VFX Passes D3 + Batch D21: a relight job's `watch` timeout scales with its frames
+    // (`RELIGHT_TIMEOUT_145_SECS` + the preset's per-frame slope, via AdmitCfg).
     let timeout_secs = if relight {
-        server.admit_cfg().await.watch_timeout_secs
+        server
+            .admit_cfg()
+            .await
+            .watch_timeout_for(&job.template_id, job.frames)
     } else {
         std::env::var("LTX_JOB_TIMEOUT_SECS")
             .ok()
@@ -1067,6 +1074,9 @@ impl LtxGenerateTask {
         } = self;
         // VFX Passes: the whole-job deadline runs from here (D3); relight jobs take the relight-only paths below.
         let started = std::time::Instant::now();
+        // Batch D21: the same start on tokio's clock (the keep-alive deadline and
+        // the final proof's budget).
+        let started_at = tokio::time::Instant::now();
         let is_relight = sidecar.as_deref() == Some("relight");
         let admit_cfg = server.admit_cfg().await;
         // This block is a no-op scope kept deliberately: it was the body of the
@@ -1083,6 +1093,12 @@ impl LtxGenerateTask {
             let mut pending_resolved = false;
             // D8: set once the sidecar accepted a prompt; a relight job then always ends with `/interrupt`.
             let mut submitted_prompt = false;
+            // Batch D21: the D20 gate's snapshot (the on-chain delta's baseline).
+            let mut admission_snap: Option<crate::training::accept::SessionSnapshot> = None;
+            // Batch D21: the keep-alive scheduler's guard, declared OUTSIDE the core
+            // so the single-exit cleanup below stops it on EVERY exit (its Drop
+            // aborts too).
+            let mut keepalive: Option<crate::ltx::keepalive::KeepAliveGuard> = None;
 
             // The core runs as an inner future so that EVERY exit (there are
             // ~10 early returns) funnels through the ONE cleanup below —
@@ -1127,7 +1143,7 @@ impl LtxGenerateTask {
                         store.as_ref().and_then(|s| s.entry(&job.template_id)),
                         &job.template_id,
                     );
-                    if let Err(e) = crate::ltx::template::session_gate_for_model(
+                    match crate::ltx::template::session_gate_for_model(
                         job_id,
                         expected,
                         &job.template_id,
@@ -1135,13 +1151,33 @@ impl LtxGenerateTask {
                         tracked,
                         &cm.get_host_address(),
                         |jid| cm.query_session_model(jid),
-                        |jid| cm.query_session_jobs_raw(jid),
+                        |jid| cm.query_session_jobs_raw(jid, None),
                         crate::ltx::template::GateTiming::PRODUCTION,
                     )
                     .await
                     {
-                        send_err(&progress_tx, "VALIDATION_FAILED", &e, key, sid, rid).await;
-                        return;
+                        Ok(snap) => admission_snap = Some(snap),
+                        Err(e) => {
+                            send_err(&progress_tx, "VALIDATION_FAILED", &e, key, sid, rid).await;
+                            return;
+                        }
+                    }
+                    // Batch D21: admission at 0 tokens, on the gate's snapshot — a
+                    // relight job the session cannot outlive (SESSION_TOO_SHORT) or
+                    // whose terms would let a keep-alive claim most of it or time
+                    // out mid-render (SESSION_TERMS) is refused before any GPU work.
+                    if let (true, Some(snap)) = (is_relight, admission_snap.as_ref()) {
+                        if let Err((code, msg)) = crate::ltx::relight::relight_session_admission(
+                            &admit_cfg,
+                            &job.template_id,
+                            job.frames,
+                            tokens,
+                            snap,
+                            crate::ltx::keepalive::unix_now(),
+                        ) {
+                            send_err(&progress_tx, code, &msg, key, sid, rid).await;
+                            return;
+                        }
                     }
                 }
                 // VFX Passes D8: GPU admission, after D20 and before any input is
@@ -1236,6 +1272,52 @@ impl LtxGenerateTask {
                     }
                 };
 
+                // Batch D21: a relight job with a session is kept alive by interim
+                // proofs while it renders (the contract's proof window is 3600 s).
+                if is_relight && pending_marked {
+                    if let (Some(jid), Some(snap)) = (job_id, admission_snap.as_ref()) {
+                        if let Some(cm) = server.get_checkpoint_manager().await {
+                            let model_id = server
+                                .get_ltx_template_store()
+                                .await
+                                .and_then(|st| {
+                                    st.entry(&job.template_id)
+                                        .and_then(crate::ltx::relight::attestation_model_id)
+                                })
+                                .unwrap_or_else(|| ZERO_BYTES32.to_string());
+                            let s5: Arc<dyn crate::storage::s5_client::S5Storage> = Arc::from(
+                                crate::storage::s5_client::S5Storage::clone(cm.get_s5_storage()),
+                            );
+                            let ka_cfg = crate::ltx::keepalive::keepalive_cfg_for(
+                                crate::ltx::keepalive::KeepAliveIds {
+                                    job_id: jid,
+                                    job_tag: format!("{jid}-{prompt_id}"),
+                                    session_id: session_id.clone(),
+                                    host: cm.get_host_address(),
+                                    model_id,
+                                },
+                                snap,
+                                &admit_cfg,
+                                &job.template_id,
+                                job.frames,
+                                submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h),
+                                started_at,
+                                crate::ltx::keepalive::unix_now(),
+                            );
+                            keepalive = Some(crate::ltx::keepalive::start_keepalive(
+                                ka_cfg,
+                                s5,
+                                cm.clone(),
+                                server.ltx_tracker().clone(),
+                                progress_tx.clone(),
+                                Some(client.clone()),
+                                Arc::new(crate::ltx::keepalive::SystemClock),
+                            ));
+                        }
+                    }
+                }
+                let keepalive_shared = keepalive.as_ref().map(|g| g.shared());
+
                 // 2. Watch + stream generating progress. A failed send_stage means
                 // the OUTER progress channel is gone (WS disconnect) — but watch_rx
                 // would stay alive, so `watch` would block until job timeout (the
@@ -1254,6 +1336,9 @@ impl LtxGenerateTask {
                 let mut client_gone = false;
                 while let Some(p) = watch_rx.recv().await {
                     if let Progress::Progress { value, max } = p {
+                        if let Some(ka) = keepalive_shared.as_ref() {
+                            ka.set_progress(value as u64, max as u64);
+                        }
                         let pct = if max > 0 {
                             ((value as u64 * 100) / max as u64) as u32
                         } else {
@@ -1307,7 +1392,9 @@ impl LtxGenerateTask {
                     if let crate::ltx::relight::FinaliseDecision::Abandon(m) =
                         crate::ltx::relight::relight_finalise_decision(
                             started.elapsed(),
-                            std::time::Duration::from_secs(admit_cfg.deadline_secs),
+                            std::time::Duration::from_secs(
+                                admit_cfg.deadline_for(&job.template_id, job.frames),
+                            ),
                             Ok(()),
                         )
                     {
@@ -1517,9 +1604,24 @@ impl LtxGenerateTask {
                     warn!("LTX job abandoned pre-submit: client disconnected before delivery");
                     return;
                 }
-                // `tokens` is the ONE variable feeding tokensClaimed, the wire
-                // billing.tokens and the tracker (§B triple equality).
+                // `tokens` is the job's estimate: the wire billing.tokens (the
+                // cumulative total). `claim` is what THIS proof claims on chain
+                // and feeds the tracker — equal to `tokens` except for a relight
+                // job after keep-alives (Batch D21's remainder).
                 let tokens = submit::ltx_tokens(job.frames, job.resolution.w, job.resolution.h);
+                // Batch D21: stop the keep-alive BEFORE the finalising re-read —
+                // abort, then await its handle, so no tick adds to interim_sent
+                // after it is read here.
+                let (interim_sent, interim_in_flight) = match keepalive.as_mut() {
+                    Some(g) => (g.stop().await, g.shared().in_flight()),
+                    None => (0, false),
+                };
+                // Batch D21 round 3: every claim subtracts interim_sent (0 outside
+                // relight jobs today — defence in depth should that ever change).
+                let mut claim = crate::ltx::final_proof::final_claim(tokens, None, interim_sent);
+                // Batch D21: the relight final's claim and timing (pure, tested on
+                // their own: `final_proof::relight_final_inputs`).
+                let mut relight_inputs: Option<crate::ltx::final_proof::RelightFinalInputs> = None;
                 // VFX Passes D18 + D3: a relight job re-reads its session right
                 // after the finalising gate (a client can reclaim the deposit
                 // during a long silent render) and checks the whole-job deadline
@@ -1539,22 +1641,44 @@ impl LtxGenerateTask {
                             3,
                             std::time::Duration::from_secs(2),
                             std::time::Duration::from_secs(10),
-                            || cm.query_session_jobs_raw(jid),
+                            || cm.query_session_jobs_raw(jid, None),
                         )
                         .await
                         .and_then(|r| crate::training::accept::decode_session_snapshot(&r)),
                         None => Err("the job has no session id".to_string()),
                     };
+                    // Batch D21: the final claim = tokens − max(on-chain delta since
+                    // the D20 admission read, interim_sent), saturating, and its budget.
+                    relight_inputs = snap.as_ref().ok().map(|s| {
+                        crate::ltx::final_proof::relight_final_inputs(
+                            tokens,
+                            admission_snap.as_ref(),
+                            s,
+                            interim_sent,
+                            interim_in_flight,
+                            &admit_cfg,
+                            &job.template_id,
+                            job.frames,
+                            started_at,
+                        )
+                    });
+                    claim = crate::ltx::final_proof::final_claim(
+                        tokens,
+                        relight_inputs.as_ref(),
+                        interim_sent,
+                    );
                     let this_host = cm.get_host_address();
                     let terms = snap.as_ref().map_err(Clone::clone).and_then(|s| {
                         let host = this_host.parse::<ethers::types::Address>().map_err(|e| {
                             format!("this node's host address {this_host:?} is unreadable: {e}")
                         })?;
-                        crate::ltx::template::check_session_terms(s, host, tokens, tracked)
+                        crate::ltx::template::check_session_terms(s, host, claim, tracked)
                     });
                     match crate::ltx::relight::relight_finalise_decision(
                         started.elapsed(),
-                        std::time::Duration::from_secs(admit_cfg.deadline_secs),
+                        std::time::Duration::from_secs(
+                            admit_cfg.deadline_for(&job.template_id, job.frames),
+                        ),
                         terms,
                     ) {
                         crate::ltx::relight::FinaliseDecision::Abandon(m) => {
@@ -1640,6 +1764,15 @@ impl LtxGenerateTask {
                 // submit failure still returns the proof_cid (clip delivery ≥
                 // revenue — the node forfeits that clip's revenue), except that a
                 // relight clip whose session closed unpaid is withheld (D18).
+                // Batch D21: a relight final is timed from the on-chain w9, retried
+                // by its typed outcome and capped at the budget (deadline + 120 s +
+                // tokens ÷ rate, which the helper's timeout outlasts).
+                let reads = crate::ltx::final_proof::CmSessionReads(&cm);
+                let policy = crate::ltx::final_proof::final_policy(
+                    relight_inputs.as_ref(),
+                    &reads,
+                    &crate::ltx::keepalive::SystemClock,
+                );
                 let finalize = submit::finalize_clip(
                     s5,
                     Some(&*cm),
@@ -1648,7 +1781,8 @@ impl LtxGenerateTask {
                     pending_marked,
                     &job_tag,
                     &att,
-                    tokens,
+                    claim,
+                    policy,
                 )
                 .await
                 .map_err(|e| e.to_string());
@@ -1661,7 +1795,7 @@ impl LtxGenerateTask {
                             3,
                             std::time::Duration::from_secs(2),
                             std::time::Duration::from_secs(10),
-                            || cm.query_session_jobs_raw(jid),
+                            || cm.query_session_jobs_raw(jid, None),
                         )
                         .await
                         .and_then(|r| crate::training::accept::decode_session_snapshot(&r)),
@@ -1675,6 +1809,7 @@ impl LtxGenerateTask {
                     finalize,
                     reread,
                     tokens_before,
+                    claim,
                     tokens,
                     &output_cid,
                     &caps,
@@ -1690,13 +1825,13 @@ impl LtxGenerateTask {
                 };
                 if let Some(jid) = job_id {
                     let ppt = U256::from_dec_str(&price).unwrap_or_default();
-                    let cost = U256::from(tokens).checked_mul(ppt).unwrap_or(U256::MAX);
+                    let cost = U256::from(claim).checked_mul(ppt).unwrap_or(U256::MAX);
                     // Metrics/observability totals: includes clips whose submit
                     // was forfeited (delivered but unproven) — the on-chain
                     // claim is what finalize_clip actually submitted.
                     server
                         .ltx_tracker()
-                        .track(jid, Some(session_id.clone()), tokens, cost)
+                        .track(jid, Some(session_id.clone()), claim, cost)
                         .await;
                 }
                 let _ = progress_tx
@@ -1715,6 +1850,12 @@ impl LtxGenerateTask {
             // session. Catching the unwind restores the single exit. (`panic =
             // unwind` is in force; no profile sets `panic = "abort"`.)
             let panicked = AssertUnwindSafe(core).catch_unwind().await.is_err();
+            // Batch D21: the keep-alive ends on EVERY exit (error, disconnect,
+            // deadline, panic) before the slot is released and before
+            // finish_ltx_task — abort, then await its handle.
+            if let Some(mut guard) = keepalive.take() {
+                let _ = guard.stop().await;
+            }
             // VFX Passes D8: a relight job that reached the sidecar always ends
             // with `/interrupt` to the RELIGHT sidecar (a no-op when idle) BEFORE
             // the slot is released, so it can never hit the next job. Never to
