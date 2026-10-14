@@ -1417,3 +1417,18 @@ fn test_crossview_lora_advertised() {
     let store = TemplateStore::new(DIR).unwrap();
     assert!(store.bundle().loras.iter().any(|l| l == "ltx-crossview-hdr@v1"));
 }
+
+#[test]
+fn test_refine_hd_rule() {
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let mut e = bare_entry("synthetic-refine");
+    e.resolution_rule = Some("refine-hd".to_string());
+    for (w, h) in [(1536, 1024), (1024, 1536), (1280, 768), (768, 512)] {
+        assert!(check_template_rules(&e, w, h, 24, 121).is_ok(), "{w}x{h}");
+    }
+    // Above the proven 2x canvas, off the /64 grid, or a long side past 1536: refused.
+    for (w, h) in [(1920, 1088), (1600, 960), (1536, 1088), (1500, 1000)] {
+        let err = check_template_rules(&e, w, h, 24, 121).unwrap_err();
+        assert!(err.contains("1536x1024"), "{w}x{h}: {err}");
+    }
+}

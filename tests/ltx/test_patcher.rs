@@ -1566,3 +1566,31 @@ fn test_patch_layout_full() {
     let exr = LtxJob { output: OutputKind::ExrFrames, ..job };
     assert!(patch(&new_mode_graph("ltx-layout-hdr"), &exr, &["look.png".into()], &["layout.mp4".into()]).is_err());
 }
+
+// ── 8.60.1: tiled-fusion templates (Refine Details, Restore 2.5) ─────────────
+
+#[test]
+fn test_patch_tiled_fusion_seed() {
+    // The fusion sampler carries the seed (no RandomNoise, no KSampler): without the 8.60.1 handle the patch is
+    // refused as "missing the required seed handle"; with it, the job seed reaches the sampler.
+    let raw = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/tiled-fusion-fixture.json")).unwrap();
+    let graph = Graph(serde_json::from_slice(&raw).unwrap());
+    let job = LtxJob {
+        template_id: "ltx-refine-hdr".to_string(),
+        prompt: "sharp photographic detail".to_string(),
+        frames: 121,
+        fps: 24,
+        resolution: Resolution { w: 1280, h: 768 },
+        lora: "ltx-refine-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+        ..job()
+    };
+    let out = patch(&graph, &job, &[], &["src-x.mp4".to_string()]).unwrap().0;
+    let fusion = by_class(&out, "LTXVTiledFusionSampler");
+    assert_eq!(fusion.len(), 1);
+    assert_eq!(fusion[0]["inputs"]["seed"], 4815162342u64, "the job seed reaches the fusion sampler");
+    assert_eq!(by_title(&out, "Prompt")[0]["inputs"]["text"], job.prompt);
+    assert_eq!(by_title(&out, "Width")[0]["inputs"]["value"], 1280);
+    assert_eq!(by_title(&out, "Height")[0]["inputs"]["value"], 768);
+    assert_eq!(by_class(&out, "VHS_LoadVideo")[0]["inputs"]["frame_load_cap"], 121);
+}

@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.0-vfx-passes-2026-10-07";
+pub const VERSION: &str = "v8.60.1-tiled-fusion-2026-10-13";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.0";
+pub const VERSION_NUMBER: &str = "8.60.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,17 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 60;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-07";
+pub const BUILD_DATE: &str = "2026-10-13";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.60.1 LTX 2.5 tiled-fusion templates: the job seed is also stamped on LTXVTiledFusionSampler (Refine Details,
+    // Restore 2.5 carry no RandomNoise) and the `refine-hd` resolution rule (output at most 1536x1024, /64 grid).
+    "tiled-fusion-seed",
+    "refine-hd-rule",
     // v8.60.0 VFX Passes (VP1): a second sidecar family — NVIDIA Cosmos DiffusionRenderer inverse passes behind the
     // same ComfyUI-shaped transport (RELIGHT_URL) — with three bundle-v27 templates cosmos-passes-{key,std,full}
     // (model ids keccak("NVIDIA/Cosmos-DiffusionRenderer/" + id)), GPU admission by free VRAM and pinned weights
@@ -629,6 +633,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.60.1 - LTX 2.5 tiled-fusion templates (Oct 13, 2026)
+    "FEATURE (LTX patcher): a template whose only seed handle is LTXVTiledFusionSampler (`seed`) is now accepted and gets the job seed; resolution rule `refine-hd` added. No change for existing templates",
     // v8.60.0 - VFX Passes (Oct 6, 2026)
     "FEATURE (LTX handler): templates may name a sidecar family (`sidecar: \"relight\"` in the allow-list, bundle v27); relight jobs route to RELIGHT_URL, are admitted by the sidecar's free VRAM and pins (CAPACITY + GPU_BUSY: / SIDECAR_UNAVAILABLE + SIDECAR_PIN_MISMATCH:), run under RELIGHT_JOB_TIMEOUT_SECS and a RELIGHT_JOB_DEADLINE_SECS whole-job deadline, re-read the session after the finalising gate, and withhold delivery only when the session closed AND the proof did not land. The node refuses to start with RELIGHT_URL set and MAX_CONCURRENT_GENERATIONS != 1. LTX jobs are unchanged except that, when a relight sidecar is configured, it is emptied (/free) before each LTX job",
     // v8.59.1 - NM1 D24/D25: RPC-lag fixes (Oct 5, 2026)
@@ -1141,7 +1147,10 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 60);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
+        // v8.60.1 tiled-fusion templates
+        assert!(FEATURES.contains(&"tiled-fusion-seed"));
+        assert!(FEATURES.contains(&"refine-hd-rule"));
         // v8.60.0 VFX Passes
         assert!(FEATURES.contains(&"vfx-passes"));
         assert!(FEATURES.contains(&"relight-sidecar"));
@@ -1347,15 +1356,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.0"));
-        assert!(version.contains("2026-10-07"));
+        assert!(version.contains("8.60.1"));
+        assert!(version.contains("2026-10-13"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.0-vfx-passes-2026-10-07");
-        assert_eq!(VERSION_NUMBER, "8.60.0");
-        assert_eq!(BUILD_DATE, "2026-10-07");
+        assert_eq!(VERSION, "v8.60.1-tiled-fusion-2026-10-13");
+        assert_eq!(VERSION_NUMBER, "8.60.1");
+        assert_eq!(BUILD_DATE, "2026-10-13");
     }
 
     #[test]

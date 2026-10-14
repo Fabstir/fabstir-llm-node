@@ -93,7 +93,7 @@ pub struct TemplateEntry {
     /// The longest job the template may run, in frames (measured on host1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_frames: Option<u32>,
-    /// A named resolution rule; `"div64-fhd"` is the only one defined.
+    /// A named resolution rule: `"div64-fhd"`, `"relight-fhd"`, `"refine-hd"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_rule: Option<String>,
     /// D3: the graph caps the control clip at the billed frames, so where LTX
@@ -335,6 +335,19 @@ pub fn check_template_rules(
             if (w, h) != (1920, 1088) {
                 return Err(format!(
                     "resolution {w}x{h} is not allowed for {id} (exactly 1920x1088)"
+                ));
+            }
+        }
+        // LTX 2.5 Refine Details (restoration S1): the OUTPUT is capped at the proven 2x of 768x512
+        // (1536x1024; VRAM peaked at 94 of 96 GB there), on the /64 grid, either orientation.
+        Some("refine-hd") => {
+            let fits = w % 64 == 0
+                && h % 64 == 0
+                && u64::from(w) * u64::from(h) <= 1536 * 1024
+                && w.max(h) <= 1536;
+            if !fits {
+                return Err(format!(
+                    "resolution {w}x{h} is not allowed for {id} (sides divisible by 64, at most 1536x1024)"
                 ));
             }
         }
