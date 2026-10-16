@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.60.0-vfx-passes (October 2026); the `VERSION` file is authoritative
+**Version**: v8.60.1-tiled-fusion (October 2026); the `VERSION` file is authoritative
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -45,16 +45,29 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 - **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
-- **AI Video Generation (LTX)**: fifteen modes through a ComfyUI sidecar: thirteen on LTX 2.3
+- **AI Video Generation (LTX)**: twenty-one modes through a ComfyUI sidecar: thirteen on LTX 2.3
   (text-to-video, image-to-video, first-last-frame, ingredients, restyle, outpaint, edit, restore,
-  upscale, water, day-to-night, new camera angle, convert to HDR) and two on LTX 2.5 (cut-out with
-  an alpha matte, layout to render; v8.59.0+). Pinned, hash-committed ComfyUI templates are published
-  as an allow-list bundle (v27 in this release) that the client authenticates against the host's on-chain
+  upscale, water, day-to-night, new camera angle, convert to HDR) and eight on LTX 2.5 (cut-out with
+  an alpha matte, layout to render; v8.59.0+; and the six restoration modes below). Pinned, hash-committed ComfyUI templates are published
+  as an allow-list bundle (v27 is the one in this repository; hosts publish later versions as templates are added, v35 on the launch render host) that the client authenticates against the host's on-chain
   `bundleHash` before paying; inputs are bound byte-exact into the commitment; billing is per
   megapixel-frame; delivery is encrypted to S5, with opt-in 16-bit EXR masters (v8.43.0+). Drivable
   from Blender via the `platformless-blender-addon` and `platformless-helper` repositories, all
-  sixteen modes including VFX Passes (v8.31.4+)
-- **VFX Passes (NVIDIA Cosmos)**: the sixteenth mode. Normal, base colour, depth, roughness and
+  twenty-two modes including VFX Passes (v8.31.4+)
+- **LTX 2.5 Restoration Modes**: Colorize, Deblur, Fix Compression, Refine Details, Restore (LTX 2.5)
+  and Restore (LTX 2.5) with reference, each its own template and model id. They are the LTX 2.5
+  restoration IC-LoRAs from Lightricks, run tiled (`LTXVTiledFusionSampler`, 960×544 tiles with 0.5
+  overlap) so the result keeps the source colour. A job is 121 frames on the 121 + 24k grid (capped per
+  job by the bundle; 121 at 1920×1088), at 24, 25 or 30 fps, on sides divisible by 64 up to
+  1920×1088. Colorize, Deblur, Fix Compression and Restore take a one-line scene description; Refine
+  Details takes no prompt and outputs twice the source size or the source size, up to 1920×1088
+  under the bundle entry's rule (`div64-fhd` on the launch render host; the stricter `refine-hd` rule
+  caps it at 1536×1024). Restore with reference takes one extra still as a reference image (one per
+  job) to keep a real person's likeness. Restore (LTX 2.3) and Upscale also accept 30 fps. Longer
+  shots are covered by the client as several overlapping jobs, not by longer jobs, which exceed
+  the 96 GB GPU's memory at 1920×1088. 8.60.1 stamps the job seed on the tiled sampler (these
+  graphs carry no `RandomNoise` node) and adds the `refine-hd` resolution rule (v8.60.1+)
+- **VFX Passes (NVIDIA Cosmos)**: the twenty-second mode. Normal, base colour, depth, roughness and
   metallic passes from live-action footage, through a second sidecar (`fabstir-relight`: NVIDIA
   Cosmos DiffusionRenderer's inverse renderer, unquantised in bf16) that the bundle routes to by
   the template's `sidecar` field. Three presets (Key, Standard, Full), each its own template and
@@ -231,7 +244,7 @@ curl -s http://localhost:8080/v1/version
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.60.0-vfx-passes.tar.gz   # binary at the tarball root
+tar -xzf fabstir-llm-node-v8.60.1-tiled-fusion.tar.gz   # binary at the tarball root
 strings fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 ```
 
@@ -488,5 +501,5 @@ For issues and questions:
 - [WebSocket API Integration](docs/WEBSOCKET_API_SDK_GUIDE.md) - WebSocket protocol for SDK developers
 
 ### Blender
-- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - The sixteen modes from the Video Sequence Editor, VFX Passes and local relighting included
+- [Blender Extension Guide](https://github.com/Fabstir/platformless-blender-addon/blob/main/docs/BLENDER-EXTENSION-GUIDE.md) - The twenty-two modes from the Video Sequence Editor, VFX Passes and local relighting included, with Batch for whole edits
 - [Helper README](https://github.com/Fabstir/platformless-helper/blob/main/README.md) - The local daemon between the add-on and the node
