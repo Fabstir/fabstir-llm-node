@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.60.2-reference-strength (October 2026); the `VERSION` file is authoritative
+**Version**: v8.60.3-short-clips (October 2026); the `VERSION` file is authoritative
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -57,8 +57,8 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **LTX 2.5 Restoration Modes**: Colorize, Deblur, Fix Compression, Refine Details, Restore (LTX 2.5)
   and Restore (LTX 2.5) with reference, each its own template and model id. They are the LTX 2.5
   restoration IC-LoRAs from Lightricks, run tiled (`LTXVTiledFusionSampler`, 960×544 tiles with 0.5
-  overlap) so the result keeps the source colour. A job is 121 frames on the 121 + 24k grid (capped per
-  job by the bundle; 121 at 1920×1088), at 24, 25 or 30 fps, on sides divisible by 64 up to
+  overlap) so the result keeps the source colour. A job is up to 121 frames at 1920×1088 on LTX's 8k+1 grid (capped per
+  job by the bundle), at 24, 25 or 30 fps, on sides divisible by 64 up to
   1920×1088. Colorize, Deblur, Fix Compression and Restore take a one-line scene description; Refine
   Details takes no prompt and outputs twice the source size or the source size, up to 1920×1088
   under the bundle entry's rule (`div64-fhd` on the launch render host; the stricter `refine-hd` rule
@@ -67,7 +67,8 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
   shots are covered by the client as several overlapping jobs, not by longer jobs, which exceed
   the 96 GB GPU's memory at 1920×1088. 8.60.1 stamps the job seed on the tiled sampler (these
   graphs carry no `RandomNoise` node) and adds the `refine-hd` resolution rule (v8.60.1+). In 8.60.2 a job `strength` on Restore (LTX 2.5) with reference weights the reference
-  image's guide only, never the shot's own guide (v8.60.2+)
+  image's guide only, never the shot's own guide (v8.60.2+). 8.60.3 adds a per-template `minFrames` to the allow-list, so a
+  host can let the restoration modes run short clips (from 9 frames) while every other mode keeps its own floor (v8.60.3+)
 - **VFX Passes (NVIDIA Cosmos)**: the twenty-second mode. Normal, base colour, depth, roughness and
   metallic passes from live-action footage, through a second sidecar (`fabstir-relight`: NVIDIA
   Cosmos DiffusionRenderer's inverse renderer, unquantised in bf16) that the bundle routes to by
@@ -245,7 +246,7 @@ curl -s http://localhost:8080/v1/version
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.60.2-reference-strength.tar.gz   # binary at the tarball root
+tar -xzf fabstir-llm-node-v8.60.3-short-clips.tar.gz   # binary at the tarball root
 strings fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 ```
 
