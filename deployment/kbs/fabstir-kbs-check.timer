@@ -1,0 +1,13 @@
+# Runs fabstir-kbs-check.service once a day (policy schema 3, D17): expiries
+# within 30 days, an expired profile, a served bundle the broker has not loaded
+# (or one behind its high-water mark) and a policy with no candidate all alert.
+[Unit]
+Description=Fabstir key broker: daily authority bundle check
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -8,6 +8,7 @@
 //! and never carry the GPU-half test mode (`TEE_GPU_EVIDENCE=canned`), the
 //! broker's counterpart (`KBS_GPU_EVIDENCE`), the CPU-only driver stub
 //! (`TEE_CPU_ONLY_STUB`), or the test-release opt-in (`TEE_ACCEPT_TEST_RELEASE`).
+//! Neither compose may carry the broker's `KBS_AUTHORITY_DIR` (policy schema 3).
 //! `compose.cpu.yml` must carry exactly those markers, so the two files can
 //! never be swapped on the deploy form.
 //!
@@ -91,7 +92,7 @@ fn volume_items(lines: &[String]) -> Vec<String> {
 /// predates the enforcement must never sit under "true".
 const EXPECTED_HOST_TEE_ENABLED: &str = "\"true\"";
 
-const FORBIDDEN_ON_GPU: [&str; 6] = [
+const FORBIDDEN_ON_GPU: [&str; 7] = [
     "TEE_GPU_EVIDENCE",
     "KBS_GPU_EVIDENCE",
     "TEE_CPU_ONLY_STUB",
@@ -101,6 +102,8 @@ const FORBIDDEN_ON_GPU: [&str; 6] = [
     // honoured unconditionally by DstackClient::from_env: a pasted simulator
     // line would make every paid-day quote come from the simulator
     "DSTACK_SIMULATOR_ENDPOINT",
+    // the broker's authority-bundle directory (policy schema 3), never a node one
+    "KBS_AUTHORITY_DIR",
     "build:",
 ];
 
@@ -111,6 +114,19 @@ fn gpu_compose_has_no_test_mode_markers_and_never_builds() {
         assert!(
             !contains_token(&lines, token),
             "compose.gpu.yml must not contain `{token}` outside comments (gate A-19)"
+        );
+    }
+}
+
+#[test]
+fn the_broker_bundle_directory_is_refused_in_either_compose() {
+    // On the list (drop it -> red), and absent from the CPU compose too.
+    assert!(FORBIDDEN_ON_GPU.contains(&"KBS_AUTHORITY_DIR"));
+    for name in ["compose.gpu.yml", "compose.cpu.yml"] {
+        let lines = code_lines(&compose(name));
+        assert!(
+            !contains_token(&lines, "KBS_AUTHORITY_DIR"),
+            "{name}: a broker variable"
         );
     }
 }

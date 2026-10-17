@@ -1,0 +1,22 @@
+# fabstir-kbs-check: the daily, read-only authority check (policy schema 3, D17).
+# Started by fabstir-kbs-check.timer; installed by deployment/kbs/install.sh.
+# Fails (non-zero exit) on any refusal OR warning, each logged as a CRITICAL line:
+#   journalctl -u fabstir-kbs-check | grep CRITICAL
+# A failed unit is the alert (systemctl --failed; the ntfy hook keys on it).
+[Unit]
+Description=Fabstir key broker: daily authority bundle check (read-only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=fabstir-kbs
+Group=fabstir-kbs
+EnvironmentFile=/etc/fabstir-kbs/env
+Environment=LD_LIBRARY_PATH=/opt/fabstir-kbs/lib
+ExecStart=/usr/local/lib/fabstir-kbs/fabstir-kbs-check.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Read-only by construction: no ReadWritePaths at all (the tool never writes the
+# HWM, the archive or the ledger; L1).

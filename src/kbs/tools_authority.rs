@@ -83,6 +83,19 @@ pub fn sign_document<T: Serialize>(doc: &T, sk: &SigningKey) -> Result<Vec<u8>, 
     Ok(out)
 }
 
+/// The lowercase `0x` Ethereum address of `sk`: the last 20 bytes of the
+/// keccak-256 of its uncompressed public key. What a manifest names as its
+/// root or a signer, printed by `key address` for the ceremony (D16).
+pub fn address_of(sk: &SigningKey) -> String {
+    use tiny_keccak::{Hasher, Keccak};
+    let point = sk.verifying_key().to_encoded_point(false);
+    let mut k = Keccak::v256();
+    k.update(&point.as_bytes()[1..]);
+    let mut h = [0u8; 32];
+    k.finalize(&mut h);
+    format!("0x{}", hex::encode(&h[12..]))
+}
+
 /// An externally produced signature (`--signature-file`, D2): 130 hex chars
 /// (optional `0x`, surrounding whitespace ignored) or the raw 65 bytes.
 pub fn read_signature_file(bytes: &[u8]) -> Result<Vec<u8>, ToolError> {

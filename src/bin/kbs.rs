@@ -57,6 +57,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProfileCmd,
     },
+    /// Signing keys (the authority ceremony, D16).
+    Key {
+        #[command(subcommand)]
+        cmd: KeyCmd,
+    },
     /// Seal a plaintext model into a container bound to a signed policy (streaming).
     Seal {
         #[arg(long)]
@@ -231,6 +236,16 @@ enum AuthorityCmd {
 }
 
 #[derive(Subcommand)]
+enum KeyCmd {
+    /// Print the Ethereum address of a key file (64 hex): the root or signer address a
+    /// manifest names. The key itself is never printed.
+    Address {
+        #[arg(long)]
+        key_file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProfileCmd {
     /// A new UNPINNED profile from predicted values (dstack-mr, image digest, compose rule).
     New {
@@ -363,6 +378,9 @@ fn main() {
         Cmd::Policy { cmd } => run_policy(cmd),
         Cmd::Authority { cmd } => run_authority(cmd),
         Cmd::Profile { cmd } => run_profile(cmd),
+        Cmd::Key {
+            cmd: KeyCmd::Address { key_file },
+        } => read_key(&key_file).map(|sk| println!("address={}", ta::address_of(&sk))),
         Cmd::Seal {
             model,
             dek_file,

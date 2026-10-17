@@ -86,8 +86,11 @@ What goes on the Phala deploy form, and nothing else. Design and gates:
 - `TEE_DECRYPT_DIR` (tmpfs mode) MUST be tmpfs on the attested path (exit 78 otherwise):
   shutdown unlinks the plaintext without overwriting it, which is only safe where the pages
   die with the mount, or on the LUKS volume in disk mode.
-- The compose file is hashed into RTMR3. Changing one byte changes `compose_hash` and
-  invalidates the pinned policy. That is the point; plan edits before pinning.
+- The compose file is hashed into RTMR3. Changing one byte changes `compose_hash`, which
+  the key broker matches against the approved host profiles (policy schema 3): a compose
+  change needs a new profile epoch from the host authority (`deployment/phala/authority/`),
+  never a reseal of the model. Predict the hash before the booking (`fabstir-kbs profile
+  new`, Phala's compose rule) and plan edits before the epoch is signed.
 - `stop_grace_period: 30s` in both composes: the node's stop path is API drain (≤ 5 s) +
   P2P leave, bounded at 8 s by its watchdog, which then ends the process itself. That
   bound runs from the signal, so a stop landing during a slow post-start step (LTX bundle

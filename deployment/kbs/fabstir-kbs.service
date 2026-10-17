@@ -30,10 +30,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-# The keyring and the policies are read-only to the service; only memo/ and capture/
-# are written. These MUST match KBS_DATA_DIR: the broker probe-writes both at start
-# and refuses (exit 78) if either is read-only.
-ReadWritePaths=/var/lib/fabstir-kbs/memo /var/lib/fabstir-kbs/capture
+# The keyring, the policies and the authority bundles are read-only to the service;
+# only memo/, capture/ and (policy schema 3) hwm/ and archive/ are written. These MUST
+# match KBS_DATA_DIR: the broker probe-writes all four at start and refuses (exit 78)
+# if any is read-only, so a rollback after a restart can never go unnoticed.
+ReadWritePaths=/var/lib/fabstir-kbs/memo /var/lib/fabstir-kbs/capture /var/lib/fabstir-kbs/hwm /var/lib/fabstir-kbs/archive
 
 [Install]
 WantedBy=multi-user.target

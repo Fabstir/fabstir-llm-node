@@ -43,7 +43,7 @@ fn cli_flags_match_the_design() {
     // Policy schema 3 (D14): every flag the runbook types, by its design
     // spelling; `profile new` takes NO capture (a capture never sources a
     // profile, H2).
-    let design: [(&[&str], &[&str], &[&str]); 11] = [
+    let design: [(&[&str], &[&str], &[&str]); 12] = [
         (
             &["authority", "sign"],
             &[
@@ -165,6 +165,7 @@ fn cli_flags_match_the_design() {
         ),
         (&["policy", "sign"], &["--authority"], &[]),
         (&["seal"], &["--authority"], &[]),
+        (&["key", "address"], &["--key-file"], &[]),
     ];
     for (cmd, want, never) in design {
         let mut args = cmd.to_vec();
@@ -321,4 +322,30 @@ fn has_flag(help: &str, flag: &str) -> bool {
             None | Some(' ' | '\n' | ',' | ']')
         )
     })
+}
+
+#[test]
+fn key_address_prints_the_address_an_independent_wallet_derives() {
+    // ethers 6.17 derived 0x19e7…ff2a from the throw-away key 0x11…11
+    // (`test_host_profile_vectors.rs`): the ceremony's addresses (D16) come
+    // from the same keys the tool signs with, and the key never reaches stdout.
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("k"), format!("0x{}\n", "11".repeat(32))).unwrap();
+    let out = super::policy_fixture::kbs_in(d.path(), "key address --key-file @k");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout.trim(),
+        "address=0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a"
+    );
+    // A malformed key file refuses without echoing its content.
+    std::fs::write(d.path().join("bad"), "zz-secret-zz").unwrap();
+    let out = super::policy_fixture::kbs_in(d.path(), "key address --key-file @bad");
+    assert!(
+        !out.status.success() && !String::from_utf8_lossy(&out.stderr).contains("zz-secret-zz")
+    );
 }

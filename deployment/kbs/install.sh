@@ -34,7 +34,10 @@ grep -qs 'location /v1/kbs/' /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/d
 id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home "$DATA" --shell /usr/sbin/nologin "$USER_NAME"
 install -d -m 0711 -o "$USER_NAME" -g "$USER_NAME" "$DATA"
 install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA/memo" "$DATA/capture"
-install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$DATA/public" "$DATA/public/policies" "$DATA/public/blobs"
+# Policy schema 3 (D10): the high-water marks and the write-once archive of accepted
+# bundles. Back both up WITH the keyring; there is no HWM reset (README).
+install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA/hwm" "$DATA/archive"
+install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$DATA/public" "$DATA/public/policies" "$DATA/public/blobs" "$DATA/public/authority"
 install -d -m 0750 -o root -g "$USER_NAME" /etc/fabstir-kbs
 [ -f /etc/fabstir-kbs/env ] || install -m 0640 -o root -g "$USER_NAME" "$HERE/env.example" /etc/fabstir-kbs/env
 
@@ -71,13 +74,21 @@ openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt 2>/dev/nul
   | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -q 'O = ISRG, CN = Root YE' \
   || fail "ISRG Root YE missing from the system store: curl -fsSL https://letsencrypt.org/certs/gen-y/root-ye.pem -o /usr/local/share/ca-certificates/isrg-root-ye.crt && update-ca-certificates"
 
-# nginx check + unit
+# nginx check + units (the broker, and the daily read-only authority check, D17)
 nginx -t || fail "nginx -t failed with kbs-limits.conf in place"
+grep -qs 'location /authority/' /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null \
+  || fail "nginx does not serve /authority/ yet (deployment/phala/kbs-ca/nginx-kbs.conf, policy schema 3)"
 install -m 0644 "$HERE/fabstir-kbs.service" /etc/systemd/system/fabstir-kbs.service
+install -d -m 0755 /usr/local/lib/fabstir-kbs
+install -m 0755 "$HERE/fabstir-kbs-check.sh" /usr/local/lib/fabstir-kbs/fabstir-kbs-check.sh
+install -m 0644 "$HERE/fabstir-kbs-check.service" /etc/systemd/system/fabstir-kbs-check.service
+install -m 0644 "$HERE/fabstir-kbs-check.timer" /etc/systemd/system/fabstir-kbs-check.timer
 systemctl daemon-reload
 systemctl enable fabstir-kbs >/dev/null
+systemctl enable --now fabstir-kbs-check.timer >/dev/null
 systemctl reload nginx
 
 echo "install.sh: done. Next: keyring (as $USER_NAME: sudo -u $USER_NAME fabstir-kbs keyring add ...),"
-echo "policies in $DATA/public/policies/, then: systemctl restart fabstir-kbs && journalctl -u fabstir-kbs -f"
+echo "policies in $DATA/public/policies/, the authority bundle(s) in $DATA/public/authority/,"
+echo "then: systemctl restart fabstir-kbs && journalctl -u fabstir-kbs -f (README: deploy order, confirm-loaded)"
 echo "If it refuses (exit 78) fix the cause, then: systemctl reset-failed fabstir-kbs && systemctl start fabstir-kbs"

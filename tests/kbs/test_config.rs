@@ -275,3 +275,33 @@ fn serve_probe_creates_hwm_and_archive_0700() {
         assert_eq!(mode, 0o700, "{}", d.display());
     }
 }
+
+#[test]
+fn the_shipped_env_example_is_a_valid_broker_config() {
+    // deployment/kbs/env.example is what install.sh copies to /etc/fabstir-kbs/env:
+    // every KBS_* in it must be known and valid (a typo = exit 78 on a fresh box).
+    // The two paths point at a temp dir; every other value is used as shipped.
+    let dir = tempfile::tempdir().unwrap();
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/deployment/kbs/env.example");
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(
+        text.contains("\nKBS_AUTHORITY_DIR="),
+        "schema 3's directory is in the template"
+    );
+    let mut m = base(&dir);
+    for (k, v) in text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, _)| k.starts_with("KBS_") && *k != "KBS_DATA_DIR")
+    {
+        m.insert(k.into(), v.into());
+    }
+    let authority = dir.path().join("public/authority");
+    m.insert(
+        "KBS_AUTHORITY_DIR".into(),
+        authority.to_string_lossy().into_owned(),
+    );
+    KbsConfig::from_map(&m).unwrap();
+}
