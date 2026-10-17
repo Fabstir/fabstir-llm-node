@@ -1594,3 +1594,65 @@ fn test_patch_tiled_fusion_seed() {
     assert_eq!(by_title(&out, "Height")[0]["inputs"]["value"], 768);
     assert_eq!(by_class(&out, "VHS_LoadVideo")[0]["inputs"]["frame_load_cap"], 121);
 }
+
+// ── 8.60.2: the reference strength (Restore (LTX 2.5) with reference) ────────
+
+fn reference_graph() -> Graph {
+    // the SHIPPED template (ltx-restore25-ref-hdr v1): node 52 guides on the shot, node 55 "Reference guide (frame -1)"
+    // on the reference image
+    let raw = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/reference-guide-fixture.json")).unwrap();
+    Graph(serde_json::from_slice(&raw).unwrap())
+}
+
+fn reference_job(strength: Option<f64>) -> LtxJob {
+    LtxJob {
+        template_id: "ltx-restore25-ref-hdr".to_string(),
+        prompt: "a woman on a river bank at night".to_string(),
+        frames: 121,
+        fps: 30,
+        resolution: Resolution { w: 1920, h: 1088 },
+        lora: "ltx-restore25-ref-hdr@v1".to_string(),
+        output: OutputKind::ExrSequence,
+        strength,
+        ..job()
+    }
+}
+
+#[test]
+fn test_reference_strength_reaches_only_the_reference_guide() {
+    // the job strength weakens the REFERENCE only: the shot's own guide (52) stays at the pinned 1 — patched by class it
+    // would loosen the restoration's hold on the footage too (mutation: keep the by-class patch -> 52 = 0.5 -> red)
+    let out = patch(&reference_graph(), &reference_job(Some(0.5)), &["ref.png".into()], &["shot.mp4".into()])
+        .unwrap()
+        .0;
+    let reference = by_title(&out, "Reference guide (frame -1)");
+    assert_eq!(reference.len(), 1);
+    assert_eq!(reference[0]["inputs"]["strength"], 0.5);
+    assert_eq!(reference[0]["inputs"]["image"], serde_json::json!(["15", 0]), "the guide fed by the reference image");
+    let guides = by_class(&out, "LTXAddVideoICLoRAGuide");
+    assert_eq!(guides.len(), 2);
+    let shot: Vec<_> = guides.iter().filter(|g| g["inputs"]["frame_idx"] == 0).collect();
+    assert_eq!(shot.len(), 1);
+    assert_eq!(shot[0]["inputs"]["strength"].as_f64(), Some(1.0), "the shot's guide keeps its pinned strength");
+}
+
+#[test]
+fn test_reference_strength_absent_leaves_both_guides_pinned() {
+    let out = patch(&reference_graph(), &reference_job(None), &["ref.png".into()], &["shot.mp4".into()]).unwrap().0;
+    for g in by_class(&out, "LTXAddVideoICLoRAGuide") {
+        assert_eq!(g["inputs"]["strength"].as_f64(), Some(1.0));
+    }
+}
+
+#[test]
+fn test_strength_without_a_reference_guide_still_patches_every_guide() {
+    // every other template keeps the by-class rule (mutation: patch by the reference title only -> the edit graph's guide
+    // keeps 1.0 and the strength is refused -> red)
+    let mut j = bl4_job("ltx-edit-hdr");
+    j.strength = Some(0.4);
+    let patched = patch(&bl4_graph("ltx-edit-hdr"), &j, &[], &["control.mp4".to_string()]).unwrap();
+    assert_eq!(
+        nodes_by_class(&patched, "LTXAddVideoICLoRAGuide")[0].pointer("/inputs/strength").unwrap().as_f64().unwrap(),
+        0.4
+    );
+}

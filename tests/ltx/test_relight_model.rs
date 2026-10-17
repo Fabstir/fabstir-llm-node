@@ -31,6 +31,7 @@ fn entry(id: &str, sidecar: Option<&str>) -> TemplateEntry {
         video_semantics: vec!["sourceVideo".to_string()],
         fps: Some(vec![24, 25]),
         max_frames: Some(145),
+        min_frames: None,
         resolution_rule: Some("relight-fhd".to_string()),
         exact_control: Some(true),
         frame_grid: Some(true),
