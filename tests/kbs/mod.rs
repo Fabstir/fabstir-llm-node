@@ -11,6 +11,7 @@ mod test_cpu;
 mod test_eventlog;
 mod test_gpu;
 mod test_keyring;
+mod test_local_driver;
 mod test_memo;
 mod test_nonce;
 mod test_policy_file;
