@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.60.1-tiled-fusion (October 2026); the `VERSION` file is authoritative
+**Version**: v8.60.2-reference-strength (October 2026); the `VERSION` file is authoritative
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -66,7 +66,8 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
   job) to keep a real person's likeness. Restore (LTX 2.3) and Upscale also accept 30 fps. Longer
   shots are covered by the client as several overlapping jobs, not by longer jobs, which exceed
   the 96 GB GPU's memory at 1920×1088. 8.60.1 stamps the job seed on the tiled sampler (these
-  graphs carry no `RandomNoise` node) and adds the `refine-hd` resolution rule (v8.60.1+)
+  graphs carry no `RandomNoise` node) and adds the `refine-hd` resolution rule (v8.60.1+). In 8.60.2 a job `strength` on Restore (LTX 2.5) with reference weights the reference
+  image's guide only, never the shot's own guide (v8.60.2+)
 - **VFX Passes (NVIDIA Cosmos)**: the twenty-second mode. Normal, base colour, depth, roughness and
   metallic passes from live-action footage, through a second sidecar (`fabstir-relight`: NVIDIA
   Cosmos DiffusionRenderer's inverse renderer, unquantised in bf16) that the bundle routes to by
@@ -244,7 +245,7 @@ curl -s http://localhost:8080/v1/version
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.60.1-tiled-fusion.tar.gz   # binary at the tarball root
+tar -xzf fabstir-llm-node-v8.60.2-reference-strength.tar.gz   # binary at the tarball root
 strings fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 ```
 
