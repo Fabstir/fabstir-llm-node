@@ -17,6 +17,7 @@ pub mod container_cache;
 pub mod dstack;
 pub mod dstack_provider;
 pub mod gpu_evidence;
+pub mod host_profile;
 pub mod http_sources;
 pub mod kbs_http;
 pub mod key_broker;
@@ -42,6 +43,11 @@ pub use dstack::{
 };
 pub use dstack_provider::DstackAttestationProvider;
 pub use gpu_evidence::{GpuEvidenceCollector, GpuEvidenceMode};
+pub use host_profile::{
+    canonical_bytes, document_digest, eip191_digest, match_profile, verify_manifest, verify_set,
+    AuthorityBundle, AuthorityManifest, Counted, HostProfile, HostProfileSet, HwModel, Observed,
+    ProfileCvm, ProfileGpu, SignedAuthorityManifest, SignedHostProfileSet,
+};
 pub use http_sources::{HttpBlobSource, HttpPolicySource};
 pub use kbs_http::HttpKeyBrokerClient;
 pub use key_broker::{KeyBrokerClient, NodeAttestationClient};
@@ -61,7 +67,7 @@ pub use policy_source::{fetch_validated_policy, PolicySource, ProviderRegistry};
 pub use provider::AttestationProvider;
 pub use types::{
     report_data, report_data_identity, sha256_32, version_at_least, CcMode, Claims, CvmPolicy,
-    Evidence, GpuPolicy, GpuReportFields, Policy, TeeError, TeeResult, WrappedKey,
-    POLICY_SCHEMA_VERSION, REPORT_DATA_LEN,
+    Evidence, GpuPolicy, GpuReportFields, HostAuthority, Policy, TeeError, TeeResult, WrappedKey,
+    POLICY_DOC, POLICY_SCHEMA_VERSION, REPORT_DATA_LEN,
 };
 pub use verifier::{AttestationVerifier, DefaultVerifier};

@@ -10,12 +10,11 @@
 use async_trait::async_trait;
 use fabstir_llm_node::tee::container::encrypt_model;
 use fabstir_llm_node::tee::container_cache::{cache_key, write_via_part, FetchHooks};
+use fabstir_llm_node::tee::host_profile::HostProfile;
 use fabstir_llm_node::tee::key_broker::KeyBrokerClient;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::model_source::{BlobSource, EncryptedModelLoader, EncryptedModelSpec};
-use fabstir_llm_node::tee::types::{
-    CcMode, CvmPolicy, Evidence, GpuPolicy, Policy, TeeError, TeeResult, WrappedKey,
-};
+use fabstir_llm_node::tee::types::{CcMode, Evidence, Policy, TeeError, TeeResult, WrappedKey};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,34 +26,11 @@ pub(super) const REF: &str = "models/target.enc";
 pub(super) const CHUNK: u32 = 1024;
 
 pub(super) fn test_policy(model_id: [u8; 32]) -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id,
-        not_before: 0,
-        expiry: u64::MAX - 1,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEASUREMENT),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec![SKU.to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    super::profile_fixture::a_policy(model_id, 0, u64::MAX - 1, &[SKU])
+}
+
+pub(super) fn test_profile() -> HostProfile {
+    super::profile_fixture::a_profile(MEASUREMENT, &[SKU])
 }
 
 pub(super) fn good_provider() -> MockAttestationProvider {
@@ -138,7 +114,10 @@ pub(super) struct LoggingBroker {
 impl LoggingBroker {
     pub(super) fn new(log: Log, model_id: [u8; 32], dek: [u8; 32]) -> Self {
         Self {
-            inner: MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))])),
+            inner: MockKeyBroker::new(HashMap::from([(
+                model_id,
+                (dek, test_policy(model_id), test_profile()),
+            )])),
             log,
             challenges: AtomicUsize::new(0),
         }

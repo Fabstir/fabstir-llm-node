@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 use fabstir_llm_node::crypto::recover_client_address;
 use fabstir_llm_node::tee::container::encrypt_model;
+use fabstir_llm_node::tee::host_profile::HostProfile;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::model_source::{BlobSource, EncryptedModelLoader, EncryptedModelSpec};
 use fabstir_llm_node::tee::orchestration::prepare_attested_model;
@@ -14,7 +15,7 @@ use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, policy_signature_digest, SignedModelPolicy,
 };
 use fabstir_llm_node::tee::policy_source::{PolicySource, ProviderRegistry};
-use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, Policy, TeeError, TeeResult};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -24,34 +25,11 @@ const MEASUREMENT: [u8; 48] = [0x42u8; 48];
 pub(super) const BLOB_PATH: &str = "s5://models/proprietary.enc";
 
 fn test_policy(model_id: [u8; 32]) -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: model_id,
-        not_before: 0,
-        expiry: u64::MAX - 1,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEASUREMENT),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec![SKU.to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    super::profile_fixture::a_policy(model_id, 0, u64::MAX - 1, &[SKU])
+}
+
+pub(super) fn test_profile() -> HostProfile {
+    super::profile_fixture::a_profile(MEASUREMENT, &[SKU])
 }
 
 /// Sign `policy` as the provider; return the signed blob (carrying `encrypted_ref`)
@@ -160,7 +138,7 @@ pub(super) fn fixture_with_plaintext_len(len: u32) -> Fixture {
         s5: InMemoryBlobs {
             blobs: HashMap::from([(BLOB_PATH.to_string(), container)]),
         },
-        kbs: MockKeyBroker::new(HashMap::from([(model_id, (dek, policy))])),
+        kbs: MockKeyBroker::new(HashMap::from([(model_id, (dek, policy, test_profile()))])),
         model_id,
         plaintext,
     }
@@ -289,7 +267,7 @@ async fn prepare_attested_model_fails_closed_on_expired_policy() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([(BLOB_PATH.to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy))]));
+    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy, test_profile()))]));
 
     let err = prepare_attested_model(
         &loader,
@@ -334,7 +312,7 @@ async fn prepare_attested_model_refuses_on_non_tee_node() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([(BLOB_PATH.to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy))]));
+    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy, test_profile()))]));
 
     let err = prepare_attested_model(
         &loader,

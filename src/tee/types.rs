@@ -9,8 +9,8 @@
 //!
 //! `Evidence::image_measurement` is a 48-byte SHA-384 launch measurement (Intel
 //! TDX `MRTD`; serde does not derive for arrays larger than `[T; 32]`, so it
-//! uses `#[serde(with = "BigArray")]`). The policy side (schema 2) carries its
-//! registers as lowercase hex strings: `CvmPolicy::mrtd` and `rtmr0..2`.
+//! uses `#[serde(with = "BigArray")]`). Under policy schema 3 the registers live
+//! in host profiles (`crate::tee::host_profile`) as lowercase hex strings.
 
 use serde::{Deserialize, Serialize};
 
@@ -106,20 +106,26 @@ pub enum CcMode {
     DevTools,
 }
 
-/// Model-provider DEK-release policy, **schema 2** (Phase 5; off-chain, signed,
-/// decision D3). Frozen by expert review 2026-09-17
-/// (`docs/development/PHASE5-POLICY-V2-DRAFT.md`).
+/// Model-provider DEK-release policy, **schema 3** (Phase 5; off-chain, signed,
+/// decision D3; `docs/development/IMPLEMENTATION-POLICY-V3-HOST-PROFILES.md`).
 ///
-/// Everything pinned here is checked against SIGNED evidence, never against a
-/// node-asserted field. Measurements are lowercase hex strings, because that is
-/// how dstack's `/Info`, the Phala dashboard, `dstack-mr` and the published
-/// release measurements all spell them; a provider pins by copy and paste.
-/// [`Policy::validate`] REFUSES anything non-conforming (a `0x` prefix, upper
-/// case, a wrong length) rather than coercing it: the signature covers the
-/// canonical JSON of the policy exactly as written, so silently rewriting a
-/// value would break the very thing the signature proves.
+/// Schema 3 separates WHO may vouch for host machines from WHICH machines they
+/// are. This policy, the only document bound into the container (its
+/// `policy_hash` is in every chunk's AAD), carries the provider's own
+/// requirements and names one authority root (`host_authority.root`); the host
+/// identities (registers, OS image, compose hashes, app id, key provider, GPU
+/// models and floors) live in a separately signed, epoch-versioned
+/// [`HostProfileSet`](crate::tee::host_profile::HostProfileSet) the broker
+/// checks. A host change is a new epoch, never a reseal.
+///
+/// Values are refused, never coerced: the signature covers the canonical JSON
+/// exactly as written. Unknown fields are refused too, so a schema-2 file can
+/// never half-parse as schema 3.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
+    /// Always [`POLICY_DOC`]: the document-type tag inside the signed body.
+    pub doc: String,
     /// Always [`POLICY_SCHEMA_VERSION`]; anything else is refused.
     pub schema_version: u32,
     /// Monotonic per model; a newer version revokes older ones.
@@ -130,48 +136,47 @@ pub struct Policy {
     pub not_before: u64,
     /// Validity end (unix seconds), **inclusive**. Revoke by setting it in the past.
     pub expiry: u64,
-    /// What the confidential VM must prove.
+    /// The provider's confidential-VM requirements.
     pub cvm: CvmPolicy,
-    /// What the GPU must prove.
+    /// The provider's GPU requirements.
     pub gpu: GpuPolicy,
+    /// Who may approve host machines, and the provider's floor on that authority.
+    pub host_authority: HostAuthority,
 }
 
-/// The policy schema this code reads and writes.
-pub const POLICY_SCHEMA_VERSION: u32 = 2;
+/// The policy schema this code reads and writes. Schema 2 is refused everywhere.
+pub const POLICY_SCHEMA_VERSION: u32 = 3;
 
-/// Intel TDX + dstack expectations. All hex, lowercase, no `0x`.
+/// The `doc` tag of a model release policy.
+pub const POLICY_DOC: &str = "fabstir-model-release-policy";
+
+/// The provider's Intel TDX requirements. The measurements themselves are a
+/// host profile's (schema 3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CvmPolicy {
-    /// TD report registers, 48 bytes each (96 hex chars), byte-exact. A function
-    /// of (dstack image, vCPUs, RAM, devices): resizing the CVM re-pins these.
-    pub mrtd: String,
-    pub rtmr0: String,
-    pub rtmr1: String,
-    pub rtmr2: String,
-    /// dstack OS image hash, 32 bytes (64 hex): the `os-image-hash` RTMR3 event.
-    pub os_image_hash: String,
-    /// sha256 of the deployed app-compose, 32 bytes (64 hex): the `compose-hash`
-    /// RTMR3 event. Pins the compose, hence the image digests, hence the binary.
-    pub compose_hash: String,
-    /// dstack app id (the `app-id` event); `None` = any.
-    pub app_id: Option<String>,
-    /// The `key-provider` event payload; `None` = any. MUST be pinned the moment
-    /// the node takes any key from dstack's key provider (known gap G-13).
-    pub key_provider: Option<String>,
     /// TD attributes: the DEBUG bit must be clear.
     pub require_td_debug_off: bool,
     /// dcap-qvl `VerifiedReport.status` allow-list, e.g. `["UpToDate"]`.
     pub allowed_tcb_status: Vec<String>,
     /// Intel advisory ids tolerated. Empty = none tolerated.
     pub allowed_advisory_ids: Vec<String>,
+    /// Only profiles that pin the dstack `app-id` are candidates. Implies
+    /// `require_key_provider_pinned`: an app id is host-asserted in dstack's
+    /// KMS mode and means something only with the key provider pinned (D18).
+    pub require_app_id_pinned: bool,
+    /// Only profiles that pin the `key-provider` event payload are candidates.
+    pub require_key_provider_pinned: bool,
 }
 
 /// NVIDIA GPU expectations, checked against the NRAS EAT (claim-name mapping
 /// lives in the verifier, never here).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GpuPolicy {
-    /// Accepted hardware model strings (EAT `hwmodel`); captured on the first real
-    /// report (known gap G-4).
+    /// Accepted hardware model strings (EAT `hwmodel`), non-empty. A GPU must
+    /// be in this list AND in the matched profile's `hwmodels`: the
+    /// Hopper/Blackwell boundary (gap G-6a) stays the PROVIDER's.
     pub allowed_hwmodels: Vec<String>,
     /// Required CC mode, matched EXACTLY. See [`CcMode`]. Two consumers read
     /// it and they are backed differently:
@@ -195,48 +200,154 @@ pub struct GpuPolicy {
     pub require_secure_boot: bool,
     pub require_debug_disabled: bool,
     /// Minimum driver / VBIOS versions (dotted numeric compare); `None` = any
-    /// that NRAS accepts.
+    /// that NRAS accepts. The mainnet policy seals these as `None` and puts
+    /// per-family floors on the profiles (D15).
     pub min_driver_version: Option<String>,
     pub min_vbios_version: Option<String>,
 }
 
-fn check_hex(name: &str, s: &str, bytes: usize) -> TeeResult<()> {
-    let ok = s.len() == bytes * 2 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-    if ok {
+/// The one authority this policy trusts to approve host machines, and the
+/// provider's floor on its documents (D3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostAuthority {
+    /// The authority root, `0x` + 40 lowercase hex: the only key whose
+    /// manifest the broker accepts for this model.
+    pub root: String,
+    /// The broker refuses a manifest below this version.
+    pub min_manifest_version: u32,
+    /// The broker refuses a manifest whose threshold is below this (`≥ 1`).
+    pub min_threshold: u32,
+    /// The broker refuses a profile set below this epoch.
+    pub min_profile_epoch: u64,
+    /// Host classes this model may run on, non-empty; a profile of another
+    /// class is never a candidate (D7).
+    pub allowed_classes: Vec<String>,
+}
+
+fn shown(s: &str) -> String {
+    if s.chars().count() > 20 {
+        format!("{}…", s.chars().take(20).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+fn is_lower_hex(s: &str) -> bool {
+    s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `s` is exactly `bytes * 2` lowercase hex characters, no `0x`. `what` names
+/// the field in the refusal (e.g. `profile p1 cvm.mrtd`).
+pub(crate) fn check_hex(what: &str, s: &str, bytes: usize) -> TeeResult<()> {
+    if s.len() == bytes * 2 && is_lower_hex(s) {
         Ok(())
     } else {
         Err(TeeError::VerificationFailed(format!(
-            "policy {name}: expected {} lowercase hex chars without 0x, got {:?}",
+            "{what}: expected {} lowercase hex chars without 0x, got {:?}",
             bytes * 2,
-            if s.chars().count() > 20 {
-                format!("{}…", s.chars().take(20).collect::<String>())
-            } else {
-                s.to_string()
-            }
+            shown(s)
         )))
     }
 }
 
+/// Variable-length lowercase hex, even length, `min_bytes..=max_bytes` bytes.
+pub(crate) fn check_hex_var(
+    what: &str,
+    s: &str,
+    min_bytes: usize,
+    max_bytes: usize,
+) -> TeeResult<()> {
+    let ok = s.len().is_multiple_of(2)
+        && (min_bytes * 2..=max_bytes * 2).contains(&s.len())
+        && is_lower_hex(s);
+    if ok {
+        Ok(())
+    } else {
+        Err(TeeError::VerificationFailed(format!(
+            "{what}: expected an even number ({}..={}) of lowercase hex chars without 0x, got {} chars {:?}",
+            min_bytes * 2,
+            max_bytes * 2,
+            s.len(),
+            shown(s)
+        )))
+    }
+}
+
+/// An Ethereum address as every schema-3 document spells it: `0x` + 40
+/// lowercase hex.
+pub(crate) fn check_address(what: &str, s: &str) -> TeeResult<()> {
+    match s.strip_prefix("0x") {
+        Some(rest) if rest.len() == 40 && is_lower_hex(rest) => Ok(()),
+        _ => Err(TeeError::VerificationFailed(format!(
+            "{what}: expected 0x + 40 lowercase hex chars, got {:?}",
+            shown(s)
+        ))),
+    }
+}
+
+/// A class token: `[a-z0-9][a-z0-9-]{0,62}`.
+pub(crate) fn check_token(what: &str, s: &str) -> TeeResult<()> {
+    let b = s.as_bytes();
+    let ok = !b.is_empty()
+        && b.len() <= 63
+        && matches!(b[0], b'a'..=b'z' | b'0'..=b'9')
+        && b[1..]
+            .iter()
+            .all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(TeeError::VerificationFailed(format!(
+            "{what}: expected [a-z0-9][a-z0-9-]{{0,62}}, got {:?}",
+            shown(s)
+        )))
+    }
+}
+
+/// A version floor must be well-formed by the rule [`version_at_least`]
+/// applies (dotted, every component non-empty hex), or every real driver
+/// string would fail the floor on the GPU day, one burned nonce per try.
+pub(crate) fn check_version_floor(what: &str, floor: &Option<String>) -> TeeResult<()> {
+    if let Some(v) = floor {
+        let well_formed = !v.trim().is_empty()
+            && v.split('.')
+                .all(|c| !c.trim().is_empty() && u64::from_str_radix(c.trim(), 16).is_ok());
+        if !well_formed {
+            return Err(TeeError::VerificationFailed(format!(
+                "{what}: expected dotted hex components (e.g. 580.95.05 or 96.00.9f.00.01), got {v:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl Policy {
-    /// Refuse a policy that is not schema 2 or whose pinned values are not in
-    /// the canonical spelling. No coercion: the provider signed these bytes.
+    /// Refuse a policy that is not schema 3 or breaks a D3 rule. No coercion:
+    /// the provider signed these bytes.
     pub fn validate(&self) -> TeeResult<()> {
+        if self.doc != POLICY_DOC {
+            return Err(TeeError::VerificationFailed(format!(
+                "policy doc {:?} is not {POLICY_DOC:?}",
+                self.doc
+            )));
+        }
         if self.schema_version != POLICY_SCHEMA_VERSION {
             return Err(TeeError::VerificationFailed(format!(
                 "policy schema_version {} is not {POLICY_SCHEMA_VERSION}",
                 self.schema_version
             )));
         }
-        let c = &self.cvm;
-        check_hex("cvm.mrtd", &c.mrtd, 48)?;
-        check_hex("cvm.rtmr0", &c.rtmr0, 48)?;
-        check_hex("cvm.rtmr1", &c.rtmr1, 48)?;
-        check_hex("cvm.rtmr2", &c.rtmr2, 48)?;
-        check_hex("cvm.os_image_hash", &c.os_image_hash, 32)?;
-        check_hex("cvm.compose_hash", &c.compose_hash, 32)?;
-        if c.allowed_tcb_status.is_empty() {
+        if self.cvm.allowed_tcb_status.is_empty() {
             return Err(TeeError::VerificationFailed(
                 "policy cvm.allowed_tcb_status is empty: no TCB status could ever pass".into(),
+            ));
+        }
+        if self.cvm.require_app_id_pinned && !self.cvm.require_key_provider_pinned {
+            return Err(TeeError::VerificationFailed(
+                "policy cvm.require_app_id_pinned without require_key_provider_pinned: an app id \
+                 is host-asserted unless the key provider is pinned too"
+                    .into(),
             ));
         }
         if self.gpu.allowed_hwmodels.is_empty() {
@@ -244,23 +355,25 @@ impl Policy {
                 "policy gpu.allowed_hwmodels is empty: no GPU could ever pass".into(),
             ));
         }
-        // Version floors must be well-formed by the rule `version_at_least`
-        // applies (dotted, every component non-empty hex), or every real driver
-        // string would fail the floor on the GPU day, one burned nonce per try.
-        for (name, floor) in [
-            ("gpu.min_driver_version", &self.gpu.min_driver_version),
-            ("gpu.min_vbios_version", &self.gpu.min_vbios_version),
-        ] {
-            if let Some(v) = floor {
-                let well_formed = !v.trim().is_empty()
-                    && v.split('.')
-                        .all(|c| !c.trim().is_empty() && u64::from_str_radix(c.trim(), 16).is_ok());
-                if !well_formed {
-                    return Err(TeeError::VerificationFailed(format!(
-                        "policy {name}: expected dotted hex components (e.g. 580.95.05 or 96.00.9f.00.01), got {v:?}"
-                    )));
-                }
-            }
+        check_version_floor(
+            "policy gpu.min_driver_version",
+            &self.gpu.min_driver_version,
+        )?;
+        check_version_floor("policy gpu.min_vbios_version", &self.gpu.min_vbios_version)?;
+        let a = &self.host_authority;
+        check_address("policy host_authority.root", &a.root)?;
+        if a.min_threshold == 0 {
+            return Err(TeeError::VerificationFailed(
+                "policy host_authority.min_threshold is 0: must be at least 1".into(),
+            ));
+        }
+        if a.allowed_classes.is_empty() {
+            return Err(TeeError::VerificationFailed(
+                "policy host_authority.allowed_classes is empty: no host could ever pass".into(),
+            ));
+        }
+        for (i, c) in a.allowed_classes.iter().enumerate() {
+            check_token(&format!("policy host_authority.allowed_classes[{i}]"), c)?;
         }
         Ok(())
     }

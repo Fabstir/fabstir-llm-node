@@ -5,16 +5,15 @@
 
 use super::harness::{egress_for, kbs_fixture, pki, spawn_tls_axum, TestPki, HOST};
 use super::policy_fixture::{
-    event_log, gpu_payload, patched_quote, recording_policy, sign, signer, test_model_id,
+    event_log, gpu_payload, patched_quote, recording_bundle, recording_policy, sign, signer,
+    test_model_id, write_bundle, NOW,
 };
 use super::test_gpu::{spawn_nras, Nras, NrasOpts};
 use fabstir_llm_node::kbs::config::KbsConfig;
-use fabstir_llm_node::kbs::error::Kind;
 use fabstir_llm_node::kbs::keyring::Keyring;
 use fabstir_llm_node::kbs::routes::{
-    release_gate, router, AppState, EvidenceWireIn, RequestKeyRequestWire, Shared,
+    router, AppState, EvidenceWireIn, RequestKeyRequestWire, Shared,
 };
-use fabstir_llm_node::kbs::verify::{CcRecord, Verified};
 use fabstir_llm_node::tee::kbs_http::{EvidenceWire, HttpKeyBrokerClient, RequestKeyRequest};
 use fabstir_llm_node::tee::key_broker::KeyBrokerClient;
 use fabstir_llm_node::tee::keywrap::{generate_ephemeral_keypair, unwrap_key};
@@ -42,6 +41,15 @@ pub struct Broker {
 /// A simulator-CPU, real-GPU (fake NRAS) test broker with one test entry and a
 /// signed policy for it. `extra_env` overrides the config.
 pub async fn spawn_broker(extra_env: &[(&str, &str)], nras_opts: NrasOpts) -> Broker {
+    spawn_broker_with(extra_env, nras_opts, || NOW).await
+}
+
+/// [`spawn_broker`] with the broker's clock injected (schema 3, D7).
+pub async fn spawn_broker_with(
+    extra_env: &[(&str, &str)],
+    nras_opts: NrasOpts,
+    now_fn: impl Fn() -> u64 + Send + Sync + 'static,
+) -> Broker {
     let p = pki(HOST);
     let nras = spawn_nras(&p, nras_opts).await;
     let dir = tempfile::tempdir().unwrap();
@@ -55,6 +63,8 @@ pub async fn spawn_broker(extra_env: &[(&str, &str)], nras_opts: NrasOpts) -> Br
         serde_json::to_vec(&signed).unwrap(),
     )
     .unwrap();
+    // Schema 3: the recording's authority bundle, judged at the fixed NOW.
+    write_bundle(&dir.path().join("public/authority"), &recording_bundle());
     let keyring_path = dir.path().join("keyring.json");
     let keyring_json = json!({"schema": 1, "keys": [{"model_id": hex::encode(model_id), "provider": provider, "dek": hex::encode(DEK), "test": true}]});
     std::fs::write(&keyring_path, serde_json::to_vec(&keyring_json).unwrap()).unwrap();
@@ -83,7 +93,11 @@ pub async fn spawn_broker(extra_env: &[(&str, &str)], nras_opts: NrasOpts) -> Br
     let cfg = KbsConfig::from_map(&env).unwrap();
     let keyring = Keyring::load(&cfg.keyring_file, cfg.test_keyring_required()).unwrap();
     let egress = egress_for(&p, nras.fake.addr, &[]);
-    let state: Shared = Arc::new(AppState::new(cfg, keyring, egress).unwrap());
+    let state: Shared = Arc::new(
+        AppState::new(cfg, keyring, egress)
+            .unwrap()
+            .with_now_fn(now_fn),
+    );
     let addr = spawn_tls_axum(&p, router(state.clone())).await;
     Broker {
         pki: p,
@@ -96,11 +110,11 @@ pub async fn spawn_broker(extra_env: &[(&str, &str)], nras_opts: NrasOpts) -> Br
     }
 }
 
-fn node_client(b: &Broker) -> HttpKeyBrokerClient {
+pub fn node_client(b: &Broker) -> HttpKeyBrokerClient {
     kbs_fixture::client(&b.pki, b.addr).with_accept_test_release(true)
 }
 
-fn evidence(pk_att: &[u8], nonce: [u8; 32], canned: Option<serde_json::Value>) -> Evidence {
+pub fn evidence(pk_att: &[u8], nonce: [u8; 32], canned: Option<serde_json::Value>) -> Evidence {
     let pk: [u8; 33] = pk_att.try_into().unwrap();
     Evidence {
         gpu_report: gpu_payload(&nonce, canned),
@@ -743,159 +757,4 @@ fn source_of_honours_the_header_only_from_a_loopback_peer() {
     assert_eq!(source_of(&h, mapped), "10.9.9.9");
     let v6lo: SocketAddr = "[::1]:5000".parse().unwrap();
     assert_eq!(source_of(&h, v6lo), "10.9.9.9");
-}
-
-#[test]
-fn release_gate_is_its_own_check() {
-    use fabstir_llm_node::kbs::nras_claims::{GpuFields, GpuOutcome};
-
-    let verified_of = |cc: CcRecord| Verified {
-        tcb_status: "Simulator".into(),
-        advisory_ids: vec![],
-        hwmodel: None,
-        driver_version: None,
-        vbios_version: None,
-        cc_mode: cc,
-        td_debug_off: true,
-    };
-    let gpu_of = |secure_boot: bool, debug_disabled: bool| {
-        GpuOutcome::Real(GpuFields {
-            nonce: [7u8; 32],
-            hwmodel: "GH100 A01 GSP BROM".into(),
-            secure_boot,
-            debug_disabled,
-            driver_version: "580.95.05".into(),
-            vbios_version: "96.00.74.00.1a".into(),
-        })
-    };
-    let good = gpu_of(true, true);
-
-    // Canned tolerance: a test entry may, a real entry may not.
-    let canned = verified_of(CcRecord::Canned);
-    assert!(release_gate(&canned, &GpuOutcome::CannedTolerated, true).is_ok());
-    let e = release_gate(&canned, &GpuOutcome::CannedTolerated, false).unwrap_err();
-    assert!(e.detail.contains("canned tolerance"), "{e}");
-
-    // The ordinary real release.
-    let real = verified_of(CcRecord::SignedNotDevTools);
-    assert!(release_gate(&real, &good, false).is_ok());
-
-    // D14a: the gate is independent of the policy, so claims that leave
-    // DevTools open refuse a real release even when no policy row asked.
-    let e = release_gate(
-        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
-        &gpu_of(true, false),
-        false,
-    )
-    .unwrap_err();
-    assert!(
-        e.detail.contains("rule DevTools out")
-            && e.detail.contains("secboot true")
-            && e.detail.contains("debug disabled false"),
-        "the gate must name the failing claims: {e}"
-    );
-    assert!(
-        release_gate(
-            &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
-            &gpu_of(true, false),
-            true
-        )
-        .is_ok(),
-        "a test entry may"
-    );
-
-    // The gate derives from `map_per_gpu`'s OWN output, so a step-7 bug that
-    // recorded the good verdict over bad claims is still refused here, and the
-    // BAD GPU leads: no key can go to it whatever the broker did. The step-7
-    // bug is named in the same line rather than replacing it.
-    let e = release_gate(&real, &gpu_of(true, false), false).unwrap_err();
-    assert!(
-        e.detail.contains("claims do not rule DevTools out")
-            && e.detail.contains("debug disabled false")
-            && e.detail.contains("also recorded signed-not-devtools"),
-        "a bad GPU must lead, with the step-7 disagreement named too: {e}"
-    );
-    // ... and with step 7 faithful, the same GPU gives the same lead without
-    // the disagreement clause, so that clause cannot be unconditional text.
-    let e = release_gate(
-        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
-        &gpu_of(true, false),
-        false,
-    )
-    .unwrap_err();
-    assert!(
-        e.detail.contains("claims do not rule DevTools out") && !e.detail.contains("also recorded"),
-        "a faithful record must not be reported as a disagreement: {e}"
-    );
-
-    // ... and the mirror: good claims, a bad recorded verdict. Mutation that
-    // proves this arm can fail: delete the `verified.cc_mode != expected`
-    // agreement block (the claims pass, so the release would go out).
-    let e = release_gate(
-        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
-        &good,
-        false,
-    )
-    .unwrap_err();
-    assert!(
-        e.detail
-            .contains("recorded signed-devtools-or-no-secure-boot")
-            && e.detail.contains("disagreement inside the broker")
-            && !e.detail.contains("claims do not rule DevTools out"),
-        "a broker disagreement must not read as a bad GPU: {e}"
-    );
-
-    // Every refusal is a `verification` (403), never an `unavailable` (500):
-    // none of them will pass on a later attempt, so none may tell the reader
-    // to come back later. Mutation: change any arm back to `KbsError::fault`.
-    for e in [
-        release_gate(&canned, &GpuOutcome::CannedTolerated, false).unwrap_err(),
-        release_gate(&real, &GpuOutcome::CannedTolerated, false).unwrap_err(),
-        release_gate(&canned, &good, false).unwrap_err(),
-        release_gate(
-            &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
-            &good,
-            false,
-        )
-        .unwrap_err(),
-        release_gate(&real, &gpu_of(true, false), false).unwrap_err(),
-    ] {
-        assert_eq!(
-            (e.kind, e.status),
-            (Kind::Verification, 403),
-            "release-gate refusals must be terminal, not a retryable outage: {e}"
-        );
-    }
-
-    // Both record-over-evidence contradictions are broker bugs, not bad GPUs.
-    let e = release_gate(&real, &GpuOutcome::CannedTolerated, false).unwrap_err();
-    assert!(
-        e.detail.contains("evidence was canned")
-            && e.detail.contains("disagreement inside the broker"),
-        "{e}"
-    );
-    let e = release_gate(&canned, &good, false).unwrap_err();
-    assert!(
-        e.detail.contains("recorded canned")
-            && e.detail.contains("disagreement inside the broker")
-            && !e.detail.contains("canned tolerance"),
-        "a Canned record over real evidence must read as a broker bug: {e}"
-    );
-
-    // The claims arm has its own failure mode: a GPU whose claims leave
-    // DevTools open, with step 7 recording that state faithfully, is refused
-    // as a bad GPU rather than as a broker bug. Mutation that proves it:
-    // delete the `!matches!(derived, SignedNotDevTools)` block.
-    let e = release_gate(
-        &verified_of(CcRecord::SignedDevToolsOrNoSecureBoot),
-        &gpu_of(false, true),
-        false,
-    )
-    .unwrap_err();
-    assert!(
-        e.detail.contains("do not rule DevTools out")
-            && e.detail.contains("secboot false")
-            && !e.detail.contains("disagreement inside the broker"),
-        "{e}"
-    );
 }

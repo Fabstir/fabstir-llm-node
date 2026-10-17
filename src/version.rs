@@ -79,7 +79,9 @@ pub const FEATURES: &[&str] = &[
     // pinned HTTPS key broker, Policy schema 2, unlink-never-overwrite plaintext
     // lifecycle with a stop watchdog on its own thread.
     "tee-attested-load",
-    "tee-policy-schema-2",
+    // Policy schema 3 (host profiles separated from the sealed model binding;
+    // IMPLEMENTATION-POLICY-V3-HOST-PROFILES.md): schema 2 is refused.
+    "tee-policy-schema-3",
     "tee-kbs-https-pinned-root",
     "tee-dstack-quote",
     "tee-nvtrust-gpu-evidence",
@@ -1144,6 +1146,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn version_advertises_schema_3() {
+        // Policy schema 3 (host profiles): the node refuses schema 2, so it must
+        // not keep advertising it.
+        assert!(FEATURES.contains(&"tee-policy-schema-3"));
+        assert!(!FEATURES.contains(&"tee-policy-schema-2"));
+    }
+
+    #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 60);
@@ -1177,7 +1187,6 @@ mod tests {
         assert!(FEATURES.contains(&"gpu-devtools-refusal"));
         // v8.55.0 Phase 5 attested load path
         assert!(FEATURES.contains(&"tee-attested-load"));
-        assert!(FEATURES.contains(&"tee-policy-schema-2"));
         assert!(FEATURES.contains(&"stop-watchdog"));
         // v8.36.0 BL4 video-edit trio (bundle v7: outpaint/edit/restore)
         assert!(FEATURES.contains(&"ltx-video-edit"));

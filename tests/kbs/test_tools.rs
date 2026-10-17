@@ -407,7 +407,7 @@ fn policy_sign_round_trips_through_the_nodes_verifier_and_validates_first() {
         .verify_signer("0x0000000000000000000000000000000000000001")
         .is_err());
     let mut bad = recording_policy(id, 1);
-    bad.cvm.mrtd = "0x00".into();
+    bad.host_authority.root = "0x00".into();
     assert!(
         sign_policy(&bad, "models/x.enc", &sk).is_err(),
         "a malformed policy is never signed"

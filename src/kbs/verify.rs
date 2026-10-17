@@ -3,15 +3,28 @@
 
 //! The pure checks (design §6 step 4, §11): `prefilter` over the UNVERIFIED
 //! evidence before any egress, and `check_policy` over the VERIFIED values. Both
-//! are clock-free (the policy window is checked once, in step 3), evaluate EVERY
-//! row and report every failing row (design D11); the first row is the headline.
+//! evaluate EVERY row and report every failing row (design D11); the first row is
+//! the headline.
+//!
+//! Policy schema 3 (`IMPLEMENTATION-POLICY-V3-HOST-PROFILES.md` D7–D9): the host
+//! identity rows (registers, OS image, compose, app id, key provider, hwmodel)
+//! are judged per CANDIDATE profile of the root's authority bundle by the shared
+//! matcher; the profile-independent rows (report data, the RTMR3 replay, model
+//! id, TD debug, TCB, advisories, CC and the policy's GPU rows) are evaluated
+//! once. A refusal with no matching profile names the closest candidate with its
+//! rows, the candidate counts, and every EXCLUDED or REMOVED profile whose
+//! identity rows all hold, with the reason it was excluded (D8). The prefilter
+//! never feeds the authoritative check: step 7 re-runs identity on the verified
+//! values over the FULL candidate list (D9).
 
+use crate::kbs::authority::Authority;
 use crate::kbs::config::GpuEvidenceMode;
 use crate::kbs::cpu::{self, TdxEvidence};
 use crate::kbs::error::KbsError;
 use crate::kbs::eventlog::{self, Replayed};
 use crate::kbs::gpu::CANNED_LABEL;
 use crate::kbs::nras_claims::{CcAssertion, GpuOutcome};
+use crate::tee::host_profile::{match_profile, HostProfile, HwModel, Observed};
 use crate::tee::types::{sha256_32, version_at_least, CcMode, Policy};
 use serde_json::Value;
 
@@ -21,6 +34,21 @@ pub struct Expected {
     pub model_id: [u8; 32],
     pub pk_att: [u8; 33],
     pub nonce: [u8; 32],
+}
+
+/// Which profile(s) released this request and under which documents (D12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchedProfiles {
+    /// The first matching profile by `id`: the one the log names.
+    pub headline: String,
+    /// Every matching profile, sorted by `id`.
+    pub all: Vec<String>,
+    /// The headline profile's class.
+    pub class: String,
+    pub epoch: u64,
+    pub manifest_version: u32,
+    /// The distinct current signers counted on the set.
+    pub counted_signers: Vec<String>,
 }
 
 /// The decision record for the log and the capture (design D16).
@@ -33,6 +61,7 @@ pub struct Verified {
     pub vbios_version: Option<String>,
     pub cc_mode: CcRecord,
     pub td_debug_off: bool,
+    pub profile: MatchedProfiles,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,14 +101,20 @@ pub struct Prefiltered {
 }
 
 /// Design §6 step 4. Decides only whether the two paid/rate-limited egresses are
-/// worth making; nothing here is authoritative.
+/// worth making; nothing here is authoritative (D9). The identity rows run over
+/// the candidates on the UNVERIFIED quote with the hwmodel not yet known; zero
+/// survivors refuse before PCCS/NRAS with the same self-explaining rows step 7
+/// would print (D8: a boot with zero candidates never reaches NRAS).
+#[allow(clippy::too_many_arguments)]
 pub fn prefilter(
     policy: &Policy,
+    auth: &Authority,
     expected: &Expected,
     quote: &[u8],
     event_log: &[u8],
     gpu_report: &[u8],
     mode: GpuEvidenceMode,
+    now: u64,
 ) -> Result<Prefiltered, KbsError> {
     let mut rows: Vec<String> = Vec::new();
 
@@ -93,14 +128,6 @@ pub fn prefilter(
     };
     if let Some(td) = &td {
         check_report_data(&td.report_data, expected, &mut rows);
-        check_registers(
-            &policy.cvm,
-            td.mr_td,
-            td.rt_mr0,
-            td.rt_mr1,
-            td.rt_mr2,
-            &mut rows,
-        );
     }
 
     // Event log replay + extraction, against the unverified rt_mr3.
@@ -112,7 +139,16 @@ pub fn prefilter(
         }
     };
     if let (Some(td), Some(r)) = (&td, &replayed) {
-        check_events(&policy.cvm, td.rt_mr3, r, &mut rows);
+        rtmr3_row(td.rt_mr3, r, &mut rows);
+        let o = observed(
+            td.mr_td,
+            td.rt_mr0,
+            td.rt_mr1,
+            td.rt_mr2,
+            r,
+            HwModel::NotYetKnown,
+        );
+        rows.extend(judge_identity(auth, policy, &o, now).refusal);
     }
 
     // GPU payload shape, wrapper nonce, canned label vs mode.
@@ -134,15 +170,23 @@ pub fn prefilter(
     })
 }
 
-/// Design §11. Every row of the pre-filter again on the VERIFIED report, then
-/// TCB status, advisories, the GPU rows and the canned gate.
+/// Design §11 + schema 3 D7. The profile-independent rows on the VERIFIED
+/// report once, the identity rows over the FULL candidate list (never the
+/// prefilter's survivors, D9), then the floor: the policy's GPU rows as before
+/// plus, for EVERY matched profile, its own floors applied independently (a
+/// profile only adds requirements). In `GpuOutcome::CannedTolerated` (test
+/// entries only) no GPU evidence row runs at all, profile floors and the
+/// hwmodel row included: there is no GPU data.
+#[allow(clippy::too_many_arguments)]
 pub fn check_policy(
     policy: &Policy,
+    auth: &Authority,
     expected: &Expected,
     cpu: &TdxEvidence,
     events: &Replayed,
     gpu: &GpuOutcome,
     entry_test: bool,
+    now: u64,
 ) -> Result<Verified, KbsError> {
     let mut rows: Vec<String> = Vec::new();
 
@@ -154,15 +198,14 @@ pub fn check_policy(
         ));
     }
     check_report_data(&cpu.report_data, expected, &mut rows);
-    check_registers(
-        &policy.cvm,
-        cpu.mr_td,
-        cpu.rt_mr0,
-        cpu.rt_mr1,
-        cpu.rt_mr2,
-        &mut rows,
-    );
-    check_events(&policy.cvm, cpu.rt_mr3, events, &mut rows);
+    rtmr3_row(cpu.rt_mr3, events, &mut rows);
+    let hw = match gpu {
+        GpuOutcome::Real(f) => HwModel::Known(f.hwmodel.clone()),
+        GpuOutcome::CannedTolerated => HwModel::CannedTestEntry,
+    };
+    let o = observed(cpu.mr_td, cpu.rt_mr0, cpu.rt_mr1, cpu.rt_mr2, events, hw);
+    let identity = judge_identity(auth, policy, &o, now);
+    rows.extend(identity.refusal.iter().cloned());
     if policy.cvm.require_td_debug_off && cpu.td_debug {
         rows.push("td debug: TUD.DEBUG is set".into());
     }
@@ -196,37 +239,53 @@ pub fn check_policy(
             "policy require_cc_mode {other:?} is malformed (only On or absent is meaningful)"
         )),
     }
+    let profiles = auth.profiles();
     let mut hwmodel = None;
     let mut driver_version = None;
     let mut vbios_version = None;
     let cc_mode = match gpu {
         GpuOutcome::Real(f) => {
-            if !policy.gpu.allowed_hwmodels.iter().any(|h| h == &f.hwmodel) {
-                rows.push(format!(
-                    "hwmodel: {:?} not in {:?}",
-                    f.hwmodel, policy.gpu.allowed_hwmodels
-                ));
-            }
+            // The hwmodel rows are identity rows now (profile list AND policy
+            // list, D7), judged above per candidate.
             if policy.gpu.require_secure_boot && !f.secure_boot {
                 rows.push("secure boot: off".into());
             }
             if policy.gpu.require_debug_disabled && !f.debug_disabled {
                 rows.push("gpu debug: enabled".into());
             }
-            if let Some(floor) = &policy.gpu.min_driver_version {
-                if !version_at_least(&f.driver_version, floor) {
-                    rows.push(format!(
-                        "driver version: {} below floor {floor}",
-                        f.driver_version
-                    ));
+            let floors = [(
+                None,
+                &policy.gpu.min_driver_version,
+                &policy.gpu.min_vbios_version,
+            )]
+            .into_iter()
+            .chain(identity.matched.iter().map(|&i| {
+                let p = &profiles[i];
+                (
+                    Some(p.id.as_str()),
+                    &p.gpu.min_driver_version,
+                    &p.gpu.min_vbios_version,
+                )
+            }));
+            // Every floor independently (D7): no stricter-of arithmetic, so a
+            // malformed floor refuses rather than being skipped.
+            for (whose, driver, vbios) in floors {
+                let of = whose.map_or_else(String::new, |id| format!(" of profile {id}"));
+                if let Some(floor) = driver {
+                    if !version_at_least(&f.driver_version, floor) {
+                        rows.push(format!(
+                            "driver version: {} below floor {floor}{of}",
+                            f.driver_version
+                        ));
+                    }
                 }
-            }
-            if let Some(floor) = &policy.gpu.min_vbios_version {
-                if !version_at_least(&f.vbios_version, floor) {
-                    rows.push(format!(
-                        "vbios version: {} below floor {floor}",
-                        f.vbios_version
-                    ));
+                if let Some(floor) = vbios {
+                    if !version_at_least(&f.vbios_version, floor) {
+                        rows.push(format!(
+                            "vbios version: {} below floor {floor}{of}",
+                            f.vbios_version
+                        ));
+                    }
                 }
             }
             hwmodel = Some(f.hwmodel.clone());
@@ -276,6 +335,7 @@ pub fn check_policy(
     if !rows.is_empty() {
         return Err(KbsError::verification_rows(&rows));
     }
+    let head = &profiles[identity.matched[0]];
     Ok(Verified {
         tcb_status: cpu.tcb_status.clone(),
         advisory_ids: cpu.advisory_ids.clone(),
@@ -284,7 +344,171 @@ pub fn check_policy(
         vbios_version,
         cc_mode,
         td_debug_off: !cpu.td_debug,
+        profile: MatchedProfiles {
+            headline: head.id.clone(),
+            all: identity
+                .matched
+                .iter()
+                .map(|&i| profiles[i].id.clone())
+                .collect(),
+            class: head.class.clone(),
+            epoch: auth.set.set.epoch,
+            manifest_version: auth.manifest().manifest_version,
+            counted_signers: auth.counted.signers.clone(),
+        },
     })
+}
+
+/// The outcome of judging the host identity against the candidates (D7, D8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityOutcome {
+    /// Indices into the set of the candidates whose identity rows all hold,
+    /// sorted by profile `id` (the first is the headline).
+    pub matched: Vec<usize>,
+    /// When nothing matched: the refusal rows (closest candidate + its rows,
+    /// the counts, the excluded/removed hints). Empty when something matched.
+    pub refusal: Vec<String>,
+}
+
+/// Judge `o` against every candidate of `auth` (D7) and, when none matches,
+/// build the self-explaining refusal (D8): the closest candidate (fewest
+/// failing identity rows; ties by `id`) with ALL its rows, the counts, and a
+/// hint for every excluded or removed profile whose identity rows all hold.
+/// Pure and clock-free apart from `now` for the expiry wording; the removed
+/// profiles come from the cached ledger in `auth`, so no IO happens here.
+pub fn judge_identity(
+    auth: &Authority,
+    policy: &Policy,
+    o: &Observed,
+    now: u64,
+) -> IdentityOutcome {
+    let profiles = auth.profiles();
+    let hw = &policy.gpu.allowed_hwmodels;
+    let judged: Vec<(usize, Vec<String>)> = auth
+        .candidates
+        .list
+        .iter()
+        .map(|&i| (i, match_profile(&profiles[i], o, hw)))
+        .collect();
+    let mut matched: Vec<usize> = judged
+        .iter()
+        .filter(|(_, rows)| rows.is_empty())
+        .map(|(i, _)| *i)
+        .collect();
+    matched.sort_by(|a, b| profiles[*a].id.cmp(&profiles[*b].id));
+    if !matched.is_empty() {
+        return IdentityOutcome {
+            matched,
+            refusal: vec![],
+        };
+    }
+    let mut refusal = Vec::new();
+    if let Some((i, rows)) = judged.iter().min_by(|(a, ra), (b, rb)| {
+        ra.len()
+            .cmp(&rb.len())
+            .then(profiles[*a].id.cmp(&profiles[*b].id))
+    }) {
+        refusal.push(format!(
+            "no profile matches: closest is profile {} ({} failing row(s))",
+            profiles[*i].id,
+            rows.len()
+        ));
+        refusal.extend(rows.iter().cloned());
+    } else {
+        refusal.push("no profile matches: no candidate profile".into());
+    }
+    let c = &auth.candidates;
+    refusal.push(format!(
+        "candidates={} of {} (expired={}, class_filtered={}, unpinned={}) in epoch {} manifest v{}",
+        c.list.len(),
+        profiles.len(),
+        c.expired.len(),
+        c.class_filtered.len(),
+        c.unpinned.len(),
+        auth.set.set.epoch,
+        auth.manifest().manifest_version
+    ));
+    let matches = |p: &HostProfile| match_profile(p, o, hw).is_empty();
+    for &i in &c.expired {
+        let p = &profiles[i];
+        if matches(p) {
+            refusal.push(if now < p.not_before {
+                format!(
+                    "matches {} but it is not valid before {}",
+                    p.id, p.not_before
+                )
+            } else {
+                format!("matches {} but expired at {}", p.id, p.expiry)
+            });
+        }
+    }
+    for &i in &c.class_filtered {
+        let p = &profiles[i];
+        if matches(p) {
+            refusal.push(format!(
+                "matches {} but class {} is not allowed by the policy",
+                p.id, p.class
+            ));
+        }
+    }
+    for &i in &c.unpinned {
+        let p = &profiles[i];
+        if matches(p) {
+            refusal.push(format!(
+                "matches {} but the policy requires a pinned {}",
+                p.id,
+                if policy.cvm.require_app_id_pinned && p.cvm.app_id.is_none() {
+                    "app id"
+                } else {
+                    "key provider"
+                }
+            ));
+        }
+    }
+    for r in &auth.removed {
+        if matches(&r.profile) {
+            refusal.push(format!(
+                "matches {}, present in the archived bundle {} but absent from epoch {}",
+                r.profile.id, r.archive_file, r.epoch
+            ));
+        }
+    }
+    IdentityOutcome {
+        matched: vec![],
+        refusal,
+    }
+}
+
+/// The identity the evidence shows, as the matcher reads it.
+pub fn observed(
+    mr_td: [u8; 48],
+    rt_mr0: [u8; 48],
+    rt_mr1: [u8; 48],
+    rt_mr2: [u8; 48],
+    r: &Replayed,
+    hwmodel: HwModel,
+) -> Observed {
+    Observed {
+        mr_td,
+        rt_mr0,
+        rt_mr1,
+        rt_mr2,
+        compose_hash: r.compose_hash,
+        os_image_hash: r.os_image_hash,
+        app_id: r.app_id.clone(),
+        key_provider: r.key_provider.clone(),
+        hwmodel,
+    }
+}
+
+fn rtmr3_row(rt_mr3: [u8; 48], r: &Replayed, rows: &mut Vec<String>) {
+    if r.rtmr3 != rt_mr3 {
+        rows.push(format!(
+            "event log: replayed rtmr3 {} != quote {}",
+            hex::encode(r.rtmr3),
+            hex::encode(rt_mr3)
+        ));
+    }
 }
 
 fn check_report_data(report_data: &[u8; 64], expected: &Expected, rows: &mut Vec<String>) {
@@ -302,72 +526,6 @@ fn check_report_data(report_data: &[u8; 64], expected: &Expected, rows: &mut Vec
             hex::encode(&report_data[32..]),
             hex::encode(expected.nonce)
         ));
-    }
-}
-
-fn check_registers(
-    cvm: &crate::tee::types::CvmPolicy,
-    mr_td: [u8; 48],
-    rt_mr0: [u8; 48],
-    rt_mr1: [u8; 48],
-    rt_mr2: [u8; 48],
-    rows: &mut Vec<String>,
-) {
-    for (name, got, want) in [
-        ("mrtd", mr_td, &cvm.mrtd),
-        ("rtmr0", rt_mr0, &cvm.rtmr0),
-        ("rtmr1", rt_mr1, &cvm.rtmr1),
-        ("rtmr2", rt_mr2, &cvm.rtmr2),
-    ] {
-        if !hex_eq(&got, want) {
-            rows.push(format!("{name}: {} != policy {want}", hex::encode(got)));
-        }
-    }
-}
-
-fn check_events(
-    cvm: &crate::tee::types::CvmPolicy,
-    rt_mr3: [u8; 48],
-    r: &Replayed,
-    rows: &mut Vec<String>,
-) {
-    if r.rtmr3 != rt_mr3 {
-        rows.push(format!(
-            "event log: replayed rtmr3 {} != quote {}",
-            hex::encode(r.rtmr3),
-            hex::encode(rt_mr3)
-        ));
-    }
-    if !hex_eq(&r.compose_hash, &cvm.compose_hash) {
-        rows.push(format!(
-            "compose hash: {} != policy {}",
-            hex::encode(r.compose_hash),
-            cvm.compose_hash
-        ));
-    }
-    if !hex_eq(&r.os_image_hash, &cvm.os_image_hash) {
-        rows.push(format!(
-            "os image: {} != policy {}",
-            hex::encode(r.os_image_hash),
-            cvm.os_image_hash
-        ));
-    }
-    if let Some(want) = &cvm.app_id {
-        match &r.app_id {
-            Some(got) if hex_eq(got, want) => {}
-            Some(got) => rows.push(format!("app id: {} != policy {want}", hex::encode(got))),
-            None => rows.push("app id: event absent, policy pins one".into()),
-        }
-    }
-    if let Some(want) = &cvm.key_provider {
-        match &r.key_provider {
-            Some(got) if hex_eq(got, want) => {}
-            Some(got) => rows.push(format!(
-                "key provider: {} != policy {want}",
-                hex::encode(got)
-            )),
-            None => rows.push("key provider: event absent, policy pins one".into()),
-        }
     }
 }
 
@@ -411,9 +569,4 @@ fn check_gpu_payload(
         _ => {}
     }
     Ok((v, label_present))
-}
-
-/// Bytes vs the policy's hex string, case-insensitive on the hex.
-fn hex_eq(bytes: &[u8], hex_str: &str) -> bool {
-    hex::decode(hex_str).map(|h| h == bytes).unwrap_or(false)
 }

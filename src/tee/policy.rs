@@ -13,15 +13,14 @@
 //! over `keccak256("\x19Ethereum Signed Message:\n"+len+canonical)` (EIP-191), the
 //! Ethereum-wallet standard that [`recover_client_address`] expects.
 //!
-//! **Canonical bytes (locked):** `serde_json::to_value` → [`sort_json_keys`]
+//! **Canonical bytes (locked):** `serde_json::to_value` → `sort_json_keys`
 //! (alphabetical object keys) → `to_string` → bytes, so provider and node derive
 //! byte-identical input.
 
-use crate::checkpoint::delta::sort_json_keys;
 use crate::crypto::recover_client_address;
+use crate::tee::host_profile::{canonical_bytes, eip191_digest};
 use crate::tee::types::{now_unix, sha256_32, Policy, TeeError, TeeResult};
 use serde::{Deserialize, Serialize};
-use tiny_keccak::{Hasher, Keccak};
 
 /// A provider-signed model policy + a pointer to the encrypted container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,27 +44,18 @@ pub struct SignedModelPolicy {
 }
 
 /// Canonical, byte-stable serialization of a [`Policy`]: JSON with alphabetically
-/// sorted object keys. Provider and node MUST produce identical bytes here.
+/// sorted object keys. Provider and node MUST produce identical bytes here. A thin
+/// wrapper over [`canonical_bytes`], which every schema-3 document shares.
 pub fn canonical_policy_bytes(policy: &Policy) -> TeeResult<Vec<u8>> {
-    let value = serde_json::to_value(policy)
-        .map_err(|e| TeeError::Crypto(format!("policy to_value: {e}")))?;
-    let sorted = sort_json_keys(&value);
-    let s = serde_json::to_string(&sorted)
-        .map_err(|e| TeeError::Crypto(format!("policy to_string: {e}")))?;
-    Ok(s.into_bytes())
+    canonical_bytes(policy)
 }
 
 /// EIP-191 personal-sign digest of the canonical policy:
 /// `keccak256("\x19Ethereum Signed Message:\n" + len(canonical) + canonical)`,
-/// the 32-byte value [`recover_client_address`] recovers against.
+/// the 32-byte value [`recover_client_address`] recovers against. A thin wrapper
+/// over [`eip191_digest`].
 pub fn policy_signature_digest(canonical: &[u8]) -> [u8; 32] {
-    let prefix = format!("\x19Ethereum Signed Message:\n{}", canonical.len());
-    let mut k = Keccak::v256();
-    k.update(prefix.as_bytes());
-    k.update(canonical);
-    let mut out = [0u8; 32];
-    k.finalize(&mut out);
-    out
+    eip191_digest(canonical)
 }
 
 /// Synchronously enforce the policy validity window (`not_before ≤ now ≤ expiry`,

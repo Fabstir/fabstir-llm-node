@@ -32,11 +32,12 @@
 
 use crate::tee::container::HEADER_LEN;
 use crate::tee::container_cache::{FetchHooks, PartGuard};
+use crate::tee::host_profile::parse_signed_document;
 use crate::tee::kbs_http::read_ca_pem;
 use crate::tee::model_source::BlobSource;
 use crate::tee::policy::SignedModelPolicy;
 use crate::tee::policy_source::PolicySource;
-use crate::tee::types::{TeeError, TeeResult};
+use crate::tee::types::{TeeError, TeeResult, POLICY_DOC, POLICY_SCHEMA_VERSION};
 use async_trait::async_trait;
 use std::path::Path;
 use std::time::Duration;
@@ -264,8 +265,16 @@ impl PolicySource for HttpPolicySource {
     async fn fetch_policy(&self, model_id: [u8; 32]) -> TeeResult<SignedModelPolicy> {
         let url = self.url_for(model_id);
         let body = get_bounded(&self.client, &url, MAX_POLICY_BYTES as u64).await?;
-        let signed: SignedModelPolicy = serde_json::from_slice(&body)
-            .map_err(|e| TeeError::Fetch(format!("GET {url}: policy JSON: {e}")))?;
+        // Schema peek BEFORE the typed parse (D3, F12): a schema-2 file or a
+        // document of another type is a permanent `VerificationFailed`, never
+        // a `Fetch` the caller would retry; only non-JSON bytes stay `Fetch`.
+        let signed: SignedModelPolicy = parse_signed_document(
+            &body,
+            &format!("GET {url}: policy"),
+            "/policy",
+            POLICY_DOC,
+            POLICY_SCHEMA_VERSION,
+        )?;
         // Whatever the URL served, it must be THIS model's policy; the signature
         // check (`fetch_validated_policy`) comes after and stays the authority.
         if signed.policy.model_id != model_id {

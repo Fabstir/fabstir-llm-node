@@ -104,18 +104,3 @@ fn path_is_lowercase_hex() {
         format!("/x/{}.json", "ab".repeat(32))
     );
 }
-
-#[test]
-fn tool_signed_fixture_verifies_under_the_kbs_feature() {
-    // The other half of the preserve_order proof lives in tests/tee (feature off).
-    let signed: fabstir_llm_node::tee::policy::SignedModelPolicy =
-        serde_json::from_slice(&super::fixtures::fixture("test-policy-signed.json")).unwrap();
-    signed
-        .verify_signer("0xcc259c75aa6dd43c127d5c0b6a32594640f2e2b6")
-        .unwrap();
-    assert_eq!(
-        hex::encode(signed.policy_hash().unwrap()),
-        "6cb0a505e4f4e63d66f3a1146f63a699611c77834e680e5de56882b52974cd2f"
-    );
-    assert!(signed.policy.model_id.starts_with(b"t5t:"));
-}

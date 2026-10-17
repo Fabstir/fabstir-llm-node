@@ -16,7 +16,11 @@ use fabstir_llm_node::tee::container::encrypt_model_to_writer;
 use fabstir_llm_node::tee::http_sources::HttpBlobSource;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::model_source::{EncryptedModelLoader, EncryptedModelSpec};
-use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy};
+use fabstir_llm_node::tee::types::{CcMode, Policy};
+
+#[path = "tee/profile_fixture.rs"]
+mod profile_fixture;
+
 use futures::TryStreamExt;
 use http_body_util::{combinators::BoxBody, BodyExt, StreamBody};
 use hyper::body::{Bytes, Frame, Incoming};
@@ -37,34 +41,7 @@ const SKU: &str = "H100";
 const MEASUREMENT: [u8; 48] = [0x42u8; 48];
 
 fn policy(model_id: [u8; 32]) -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id,
-        not_before: 0,
-        expiry: u64::MAX - 1,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEASUREMENT),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec![SKU.to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    profile_fixture::a_policy(model_id, 0, u64::MAX - 1, &[SKU])
 }
 
 /// `VmHWM` from `/proc/self/status`, in bytes.
@@ -149,7 +126,14 @@ async fn peak_heap_stays_below_the_container_size() {
         Duration::from_secs(600),
     )
     .unwrap();
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy(model_id)))]));
+    let kbs = MockKeyBroker::new(HashMap::from([(
+        model_id,
+        (
+            dek,
+            policy(model_id),
+            profile_fixture::a_profile(MEASUREMENT, &[SKU]),
+        ),
+    )]));
     let provider = MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On);
     let loader = EncryptedModelLoader::new(tmp.path().join("decrypt"))
         .with_tee_enabled(true)

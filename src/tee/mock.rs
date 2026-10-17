@@ -11,6 +11,7 @@
 //! `DstackAttestationProvider` replaces this in Phase 5 behind the
 //! [`AttestationProvider`] trait.
 
+use crate::tee::host_profile::HostProfile;
 use crate::tee::key_broker::KeyBrokerClient;
 use crate::tee::keywrap::wrap_key;
 use crate::tee::provider::AttestationProvider;
@@ -126,23 +127,27 @@ struct NonceRecord {
 
 /// Mock attestation-gated Key Broker Service (Phases 1–4, tests/dev).
 ///
-/// Holds `model_id → (dek, policy)`, mints **one-time-use** freshness nonces
+/// Holds `model_id → (dek, policy, host profile)`, mints **one-time-use** freshness nonces
 /// (v1 DECISION: Option A — `challenge` issues, `request_key` requires the nonce to
 /// be issued, unexpired, and unconsumed, then burns it), verifies submitted
-/// evidence with [`DefaultVerifier`], and on success wraps the DEK to the attested
+/// evidence with [`DefaultVerifier`] against the policy AND the one host
+/// profile standing in for the broker's authority bundle (schema 3, D13), and on success wraps the DEK to the attested
 /// `ev.pk_att`. The verifier's identity check ties `pk_att` to the signed
 /// `report_data` and the shared-nonce check ties both quotes to the issued
 /// nonce, so the DEK is released only to the key the attestation committed to. The
 /// real (Phase 5) KBS replaces this behind [`KeyBrokerClient`].
 pub struct MockKeyBroker {
-    entries: HashMap<[u8; 32], ([u8; 32], Policy)>,
+    entries: HashMap<[u8; 32], ([u8; 32], Policy, HostProfile)>,
     nonces: Mutex<HashMap<[u8; 32], NonceRecord>>,
     ttl_seconds: u32,
 }
 
 impl MockKeyBroker {
-    /// New broker serving `entries` (`model_id → (dek, policy)`), default 300 s TTL.
-    pub fn new(entries: HashMap<[u8; 32], ([u8; 32], Policy)>) -> Self {
+    /// New broker serving `entries` (`model_id → (dek, policy, profile)`),
+    /// default 300 s TTL. The profile is the host approval the real broker
+    /// would find in the policy's authority bundle; the mock does not model
+    /// manifests, signatures or epochs (the broker's tests do).
+    pub fn new(entries: HashMap<[u8; 32], ([u8; 32], Policy, HostProfile)>) -> Self {
         Self {
             entries,
             nonces: Mutex::new(HashMap::new()),
@@ -184,7 +189,7 @@ impl KeyBrokerClient for MockKeyBroker {
     }
 
     async fn request_key(&self, model_id: [u8; 32], ev: &Evidence) -> TeeResult<WrappedKey> {
-        let (dek, policy) = self
+        let (dek, policy, profile) = self
             .entries
             .get(&model_id)
             .ok_or(TeeError::NoProviderBound(model_id))?;
@@ -210,7 +215,7 @@ impl KeyBrokerClient for MockKeyBroker {
         // (`report_data[32..64] == nonce == GPU evidence nonce`) tie `ev.pk_att` to
         // this KBS-issued nonce, so wrapping to `ev.pk_att` releases the DEK only
         // to the key the attestation committed to.
-        DefaultVerifier.verify(ev, policy, ev.nonce)?;
+        DefaultVerifier.verify(ev, policy, profile, ev.nonce)?;
         wrap_key(dek, &ev.pk_att)
     }
 

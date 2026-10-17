@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! Phase 1.1 — core TEE types: serde roundtrip (task 1.1.4).
 
-use fabstir_llm_node::tee::types::{
-    version_at_least, CcMode, Claims, CvmPolicy, Evidence, GpuPolicy, Policy, WrappedKey,
-};
+use super::profile_fixture::{a_bundle, a_policy as v3_policy, a_profile};
+use fabstir_llm_node::tee::types::{version_at_least, Claims, Evidence, Policy, WrappedKey};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -25,34 +24,7 @@ where
 }
 
 fn a_policy() -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: [5u8; 32],
-        not_before: 1_000,
-        expiry: 2_000,
-        cvm: CvmPolicy {
-            mrtd: hex::encode([7u8; 48]),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec!["H100".to_string(), "H200".to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    v3_policy([5u8; 32], 1_000, 2_000, &["H100", "H200"])
 }
 
 #[test]
@@ -120,11 +92,13 @@ fn policy_validation_reports_a_multibyte_value_without_panicking() {
     // The refusal message truncates the offending value for the log; slicing it
     // by BYTE could land inside a multibyte char and panic (a hostile policy
     // must be refused, never crash the node).
+    // Schema 3: the measurements moved to profiles; the policy's own string
+    // field checked for form is the authority root.
     let mut p = a_policy();
-    p.cvm.mrtd = "\u{20ac}".repeat(30); // 90 bytes, 30 chars; byte 20 is mid-char
-    let err = p.validate().expect_err("non-hex mrtd is refused");
+    p.host_authority.root = "\u{20ac}".repeat(30); // 90 bytes, 30 chars; byte 20 is mid-char
+    let err = p.validate().expect_err("non-hex root is refused");
     let msg = err.to_string();
-    assert!(msg.contains("cvm.mrtd"), "{msg}");
+    assert!(msg.contains("host_authority.root"), "{msg}");
     assert!(msg.contains(&"\u{20ac}".repeat(20)), "{msg}");
     assert!(
         !msg.contains(&"\u{20ac}".repeat(21)),
@@ -149,35 +123,17 @@ fn test_types_roundtrip_serde() {
         nonce: [3u8; 32],
     });
 
-    // Policy v2 — nested cvm/gpu objects, hex strings, Options, both serializers.
-    assert_roundtrip(&Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: [5u8; 32],
-        not_before: 1_000,
-        expiry: 2_000,
-        cvm: CvmPolicy {
-            mrtd: hex::encode([7u8; 48]),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec!["H100".to_string(), "H200".to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    });
+    // Policy v3 — nested cvm/gpu/host_authority objects, Options, both
+    // serializers; and the two signed documents beneath it.
+    let mut policy = a_policy();
+    policy.gpu.min_driver_version = Some("580.95.05".into());
+    policy.gpu.min_vbios_version = Some("96.00.9f.00.01".into());
+    assert_roundtrip(&policy);
+    let mut profile = a_profile([7u8; 48], &["H100"]);
+    profile.cvm.app_id = Some("ab".repeat(20));
+    profile.cvm.key_provider = Some("cd".repeat(8));
+    let (bundle, _keys) = a_bundle(vec![profile]);
+    assert_roundtrip(&bundle);
 
     assert_roundtrip(&Claims {
         verified_at: 1_234,

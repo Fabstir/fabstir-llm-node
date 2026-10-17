@@ -6,11 +6,12 @@
 
 use async_trait::async_trait;
 use fabstir_llm_node::tee::container::{encrypt_model, AEAD_TAG_LEN, HEADER_LEN};
+use fabstir_llm_node::tee::host_profile::HostProfile;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::model_source::{
     is_tmpfs, secure_delete, BlobSource, EncryptedModelLoader, EncryptedModelSpec,
 };
-use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, Policy, TeeError, TeeResult};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -18,34 +19,18 @@ const SKU: &str = "H100";
 const MEASUREMENT: [u8; 48] = [0x42u8; 48];
 
 fn test_policy(model_id: [u8; 32]) -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: model_id,
-        not_before: 0,
-        expiry: u64::MAX - 1,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEASUREMENT),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec![SKU.to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    super::profile_fixture::a_policy(model_id, 0, u64::MAX - 1, &[SKU])
+}
+
+fn test_profile() -> HostProfile {
+    super::profile_fixture::a_profile(MEASUREMENT, &[SKU])
+}
+
+fn mock_broker(model_id: [u8; 32], dek: [u8; 32]) -> MockKeyBroker {
+    MockKeyBroker::new(HashMap::from([(
+        model_id,
+        (dek, test_policy(model_id), test_profile()),
+    )]))
 }
 
 /// In-memory blob store standing in for S5.
@@ -97,7 +82,7 @@ async fn prepare_decrypts_attested_model_to_tmpfs() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("models/m.enc".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -123,7 +108,7 @@ async fn prepare_fails_closed_on_bad_attestation() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -158,7 +143,7 @@ async fn prepare_fails_closed_on_wrong_key() {
     // AEAD tag immediately (no bytes written). The empty file must still be removed.
     let kbs = MockKeyBroker::new(HashMap::from([(
         model_id,
-        (wrong_dek, test_policy(model_id)),
+        (wrong_dek, test_policy(model_id), test_profile()),
     )]));
     let spec = EncryptedModelSpec {
         model_id,
@@ -189,7 +174,7 @@ async fn prepare_secure_deletes_nonempty_partial_on_late_chunk_failure() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -216,7 +201,7 @@ async fn prepare_caches_by_model_identity_and_refcounts() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -271,7 +256,7 @@ async fn prepare_re_decrypts_when_policy_hash_changes() {
             ("b".to_string(), container_b),
         ]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec_a = EncryptedModelSpec {
         model_id,
         policy_hash: hash_a,
@@ -338,7 +323,7 @@ async fn prepare_dedups_concurrent_loads_of_same_model() {
     });
     let kbs = Arc::new(MockKeyBroker::new(HashMap::from([(
         model_id,
-        (dek, test_policy(model_id)),
+        (dek, test_policy(model_id), test_profile()),
     )])));
     let spec = EncryptedModelSpec {
         model_id,
@@ -396,7 +381,7 @@ async fn decrypted_file_is_private_0600() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -426,7 +411,7 @@ async fn prepare_refuses_encrypted_model_when_tee_disabled() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -489,7 +474,7 @@ async fn decrypt_file_exists_then_secure_delete_makes_read_fail() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,
@@ -521,7 +506,7 @@ async fn e2e_real_attestation_kbs_roundtrip_then_measurement_flip_fails() {
     let s5 = InMemoryBlobs {
         blobs: HashMap::from([("m".to_string(), container)]),
     };
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]));
+    let kbs = mock_broker(model_id, dek);
     let spec = EncryptedModelSpec {
         model_id,
         policy_hash,

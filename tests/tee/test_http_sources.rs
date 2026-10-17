@@ -9,7 +9,7 @@ use fabstir_llm_node::tee::http_sources::{HttpBlobSource, HttpPolicySource, MAX_
 use fabstir_llm_node::tee::model_source::BlobSource;
 use fabstir_llm_node::tee::policy::SignedModelPolicy;
 use fabstir_llm_node::tee::policy_source::PolicySource;
-use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError};
+use fabstir_llm_node::tee::types::TeeError;
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
@@ -61,34 +61,7 @@ const MODEL: [u8; 32] = [0x5Au8; 32];
 
 fn signed(model_id: [u8; 32]) -> SignedModelPolicy {
     SignedModelPolicy {
-        policy: Policy {
-            schema_version: 2,
-            policy_version: 1,
-            model_id: model_id,
-            not_before: 0,
-            expiry: u64::MAX - 1,
-            cvm: CvmPolicy {
-                mrtd: hex::encode([9u8; 48]),
-                rtmr0: "00".repeat(48),
-                rtmr1: "00".repeat(48),
-                rtmr2: "00".repeat(48),
-                os_image_hash: "00".repeat(32),
-                compose_hash: "00".repeat(32),
-                app_id: None,
-                key_provider: None,
-                require_td_debug_off: true,
-                allowed_tcb_status: vec!["UpToDate".to_string()],
-                allowed_advisory_ids: vec![],
-            },
-            gpu: GpuPolicy {
-                allowed_hwmodels: vec!["H100".into()],
-                require_cc_mode: Some(CcMode::On),
-                require_secure_boot: true,
-                require_debug_disabled: true,
-                min_driver_version: None,
-                min_vbios_version: None,
-            },
-        },
+        policy: super::profile_fixture::a_policy(model_id, 0, u64::MAX - 1, &["H100"]),
         encrypted_ref: "models/x.enc".into(),
         signer: "0x0000000000000000000000000000000000000000".into(),
         signature: vec![0u8; 65],
@@ -137,6 +110,55 @@ async fn policy_url_template_and_model_check() {
         Err(TeeError::VerificationFailed(m)) => assert!(m.contains("is for model"), "{m}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[tokio::test]
+async fn schema_2_json_is_refused_as_verification_not_fault() {
+    // Policy schema 3 (D3, F12): a schema-2 file must be a permanent
+    // VerificationFailed (the node exits 78 and the operator reads why), never a
+    // Fetch the caller retries; so must a document of another type or a
+    // schema-3 body with a field schema 3 does not have. Only bytes that are
+    // not JSON at all stay Fetch (a half-copied file is transient).
+    let mut v2 = serde_json::to_value(signed(MODEL)).unwrap();
+    let body = v2["policy"].as_object_mut().unwrap();
+    body.remove("doc");
+    body.remove("host_authority");
+    body.insert("schema_version".into(), 2.into());
+    body["cvm"]["mrtd"] = hex::encode([9u8; 48]).into();
+    let mut wrong_doc = serde_json::to_value(signed(MODEL)).unwrap();
+    wrong_doc["policy"]["doc"] = "fabstir-host-profile-set".into();
+    let mut extra = serde_json::to_value(signed(MODEL)).unwrap();
+    extra["policy"]["cvm"]["mrtd"] = hex::encode([9u8; 48]).into();
+    let bodies = Arc::new(std::collections::HashMap::from([
+        ("/v2".to_string(), serde_json::to_vec(&v2).unwrap()),
+        ("/doc".to_string(), serde_json::to_vec(&wrong_doc).unwrap()),
+        ("/extra".to_string(), serde_json::to_vec(&extra).unwrap()),
+        ("/torn".to_string(), b"{\"policy\": {\"doc\"".to_vec()),
+    ]));
+    let addr = spawn_http(Arc::new(move |path| match bodies.get(path) {
+        Some(b) => (StatusCode::OK, b.clone()),
+        None => (StatusCode::NOT_FOUND, Vec::new()),
+    }))
+    .await;
+    let fetch = |path: &str| {
+        let src = HttpPolicySource::new(
+            &format!("http://127.0.0.1:{}{path}", addr.port()),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        async move { src.fetch_policy(MODEL).await }
+    };
+    for (path, needle) in [
+        ("/v2", "schema_version 2"),
+        ("/doc", "doc"),
+        ("/extra", "mrtd"),
+    ] {
+        match fetch(path).await {
+            Err(TeeError::VerificationFailed(m)) => assert!(m.contains(needle), "{path}: {m}"),
+            other => panic!("{path}: want VerificationFailed, got {other:?}"),
+        }
+    }
+    assert!(matches!(fetch("/torn").await, Err(TeeError::Fetch(_))));
 }
 
 #[tokio::test]

@@ -3,47 +3,24 @@
 //! Phase 3.2 — attestation-gated key broker: challenge → evidence → wrapped DEK,
 //! with one-time-use freshness nonces (Option A) and policy verification.
 
+use super::profile_fixture::{a_policy, a_profile};
+use fabstir_llm_node::tee::host_profile::HostProfile;
 use fabstir_llm_node::tee::key_broker::{KeyBrokerClient, NodeAttestationClient};
 use fabstir_llm_node::tee::keywrap::generate_ephemeral_keypair;
 use fabstir_llm_node::tee::mock::{MockAttestationProvider, MockKeyBroker};
 use fabstir_llm_node::tee::provider::AttestationProvider;
-use fabstir_llm_node::tee::types::{
-    CcMode, CvmPolicy, GpuPolicy, GpuReportFields, Policy, TeeError,
-};
+use fabstir_llm_node::tee::types::{CcMode, GpuReportFields, Policy, TeeError};
 use std::collections::HashMap;
 
 const SKU: &str = "H100";
 const MEASUREMENT: [u8; 48] = [0x42u8; 48];
 
 fn test_policy(model_id: [u8; 32]) -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: model_id,
-        not_before: 0,
-        expiry: u64::MAX - 1,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEASUREMENT),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec![SKU.to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    a_policy(model_id, 0, u64::MAX - 1, &[SKU])
+}
+
+fn test_profile() -> HostProfile {
+    a_profile(MEASUREMENT, &[SKU])
 }
 
 fn good_provider() -> MockAttestationProvider {
@@ -51,7 +28,10 @@ fn good_provider() -> MockAttestationProvider {
 }
 
 fn broker(model_id: [u8; 32], dek: [u8; 32]) -> MockKeyBroker {
-    MockKeyBroker::new(HashMap::from([(model_id, (dek, test_policy(model_id)))]))
+    MockKeyBroker::new(HashMap::from([(
+        model_id,
+        (dek, test_policy(model_id), test_profile()),
+    )]))
 }
 
 #[tokio::test]
@@ -161,8 +141,8 @@ async fn request_key_rejects_a_nonce_minted_for_another_model() {
     let (model_a, model_b) = ([1u8; 32], [3u8; 32]);
     let dek = [2u8; 32];
     let kbs = MockKeyBroker::new(HashMap::from([
-        (model_a, (dek, test_policy(model_a))),
-        (model_b, (dek, test_policy(model_b))),
+        (model_a, (dek, test_policy(model_a), test_profile())),
+        (model_b, (dek, test_policy(model_b), test_profile())),
     ]));
     let provider = good_provider();
     let (_sec, pk_att) = generate_ephemeral_keypair();

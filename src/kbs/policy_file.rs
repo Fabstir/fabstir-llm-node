@@ -8,10 +8,11 @@
 //! `policy_version >= keyring.min_policy_version`.
 
 use crate::kbs::error::KbsError;
+use crate::tee::host_profile::parse_signed_document;
 use crate::tee::http_sources::MAX_POLICY_BYTES;
 use crate::tee::policy::SignedModelPolicy;
 use crate::tee::policy_source::{fetch_validated_policy, PolicySource, ProviderRegistry};
-use crate::tee::types::{TeeError, TeeResult};
+use crate::tee::types::{TeeError, TeeResult, POLICY_DOC, POLICY_SCHEMA_VERSION};
 use async_trait::async_trait;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -55,8 +56,16 @@ impl PolicySource for FilePolicySource {
             }
             Err(e) => return Err(TeeError::Io(e)),
         };
-        let signed: SignedModelPolicy = serde_json::from_slice(&bytes)
-            .map_err(|e| TeeError::Fetch(format!("policy {}: {e}", path.display())))?;
+        // Schema peek BEFORE the typed parse (schema 3, D3): a schema-2 file is
+        // a permanent `verification`, never a `fault` the node retries; only
+        // bytes that are not JSON at all (a half-copied swap) stay `Fetch`.
+        let signed: SignedModelPolicy = parse_signed_document(
+            &bytes,
+            &format!("policy {}", path.display()),
+            "/policy",
+            POLICY_DOC,
+            POLICY_SCHEMA_VERSION,
+        )?;
         if signed.policy.model_id != model_id {
             return Err(TeeError::VerificationFailed(format!(
                 "model id: policy file {} is for {}, requested {}",

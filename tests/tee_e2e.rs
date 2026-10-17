@@ -36,7 +36,11 @@ use fabstir_llm_node::tee::policy::{
     canonical_policy_bytes, policy_signature_digest, SignedModelPolicy,
 };
 use fabstir_llm_node::tee::policy_source::{PolicySource, ProviderRegistry};
-use fabstir_llm_node::tee::types::{CcMode, CvmPolicy, GpuPolicy, Policy, TeeError, TeeResult};
+use fabstir_llm_node::tee::types::{CcMode, Policy, TeeError, TeeResult};
+
+#[path = "tee/profile_fixture.rs"]
+mod profile_fixture;
+
 use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -84,34 +88,7 @@ impl PolicySource for OnePolicy {
 }
 
 fn policy(model_id: [u8; 32]) -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: model_id,
-        not_before: 0,
-        expiry: u64::MAX - 1,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEASUREMENT),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec![SKU.to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+    profile_fixture::a_policy(model_id, 0, u64::MAX - 1, &[SKU])
 }
 
 /// Sign `policy` as the provider; return the signed blob + the provider `0x` address.
@@ -167,7 +144,14 @@ async fn encrypted_model_decrypts_attested_and_loads_on_gpu() {
     };
     let policy_src = OnePolicy { model_id, signed };
     let providers = ProviderRegistry::new().with_provider(model_id, provider_addr);
-    let kbs = MockKeyBroker::new(HashMap::from([(model_id, (dek, policy(model_id)))]));
+    let kbs = MockKeyBroker::new(HashMap::from([(
+        model_id,
+        (
+            dek,
+            policy(model_id),
+            profile_fixture::a_profile(MEASUREMENT, &[SKU]),
+        ),
+    )]));
     let attestation = MockAttestationProvider::new(SKU, MEASUREMENT, CcMode::On);
 
     let prepared = prepare_attested_model(

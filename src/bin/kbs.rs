@@ -391,6 +391,10 @@ fn run_serve() {
     for (dir, what) in [
         (cfg.memo_dir(), "memo dir"),
         (cfg.capture_dir(), "capture dir"),
+        // Policy schema 3 (D10, R3): the HWM and the archive must persist, or a
+        // rollback after a restart would go unnoticed.
+        (cfg.hwm_dir(), "hwm dir"),
+        (cfg.archive_dir(), "archive dir"),
     ] {
         if let Err(e) = fabstir_llm_node::kbs::config::probe_writable(&dir) {
             refuse(what, e);
@@ -418,6 +422,39 @@ fn run_serve() {
         Ok(s) => Arc::new(s),
         Err(e) => refuse("keyring", e),
     };
+    // Reconcile every HWM with its archive (D10) BEFORE logging it: a crash
+    // between an archive write and its HWM write, or a lost / stale HWM, is
+    // walked forward through the re-verified archive (CRITICAL log per step);
+    // an entry that does not verify, or a stray file, refuses to start (78).
+    match state.authority.reconcile_with_archive() {
+        Ok(done) => {
+            for line in done {
+                tracing::error!("CRITICAL: {line}");
+            }
+        }
+        Err(e) => refuse("hwm", e),
+    }
+    // Every root's high-water mark at start (D10): after a backup restore the
+    // operator compares these with the served bundles' digests.
+    match state.authority.hwm().roots() {
+        Ok(roots) => {
+            for root in roots {
+                match state.authority.hwm().read(&root) {
+                    Ok(Some(h)) => tracing::info!(
+                        root,
+                        manifest_version = h.manifest_version,
+                        epoch = h.epoch,
+                        manifest_digest = &h.manifest_digest[..16],
+                        set_digest = &h.set_digest[..16],
+                        "authority high-water mark"
+                    ),
+                    Ok(None) => {}
+                    Err(e) => refuse("hwm", e),
+                }
+            }
+        }
+        Err(e) => refuse("hwm dir", e),
+    }
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

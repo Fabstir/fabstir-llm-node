@@ -3,7 +3,8 @@
 //! event-log test (a quote whose `rt_mr3` = replay of a doctored log).
 
 use super::policy_fixture::{
-    event_log, gpu_payload, patched_quote, recording_policy, test_model_id,
+    check_policy, check_with, event_log, gpu_payload, patched_quote, prefilter, prefilter_with,
+    recording_policy, recording_profile, test_model_id, Profile,
 };
 use fabstir_llm_node::kbs::config::GpuEvidenceMode;
 use fabstir_llm_node::kbs::cpu::{simulator, TdxEvidence};
@@ -13,7 +14,7 @@ use fabstir_llm_node::kbs::eventlog::{
     EV_SYSTEM_READY,
 };
 use fabstir_llm_node::kbs::nras_claims::{GpuFields, GpuOutcome};
-use fabstir_llm_node::kbs::verify::{check_policy, prefilter, CcRecord, Expected};
+use fabstir_llm_node::kbs::verify::{CcRecord, Expected};
 use fabstir_llm_node::tee::types::{CcMode, Policy};
 use serde_json::json;
 
@@ -77,15 +78,16 @@ fn prefilter_passes_on_the_recording_and_lists_every_failing_row() {
     assert!(!pf.label_present);
     assert_eq!(
         hex::encode(pf.replayed.compose_hash),
-        policy.cvm.compose_hash
+        recording_profile().cvm.compose_hashes[0]
     );
 
     // three independent failures → three rows (mutation: return at first failure → one)
-    let mut bad_policy = policy.clone();
-    bad_policy.cvm.mrtd = "00".repeat(48);
-    bad_policy.cvm.compose_hash = "11".repeat(32);
-    let e = prefilter(
-        &bad_policy,
+    let mut bad = recording_profile();
+    bad.cvm.mrtd = "00".repeat(48);
+    bad.cvm.compose_hashes = vec!["11".repeat(32)];
+    let e = prefilter_with(
+        &policy,
+        &bad,
         &exp,
         &q,
         &event_log(),
@@ -117,13 +119,14 @@ fn prefilter_identity_nonce_and_register_rows() {
     assert!(e.detail.contains("nonce:"), "{e}");
     // each register
     for (i, name) in ["rtmr0", "rtmr1", "rtmr2"].iter().enumerate() {
-        let mut p = policy.clone();
+        let mut p = recording_profile();
         match i {
             0 => p.cvm.rtmr0 = "ab".repeat(48),
             1 => p.cvm.rtmr1 = "ab".repeat(48),
             _ => p.cvm.rtmr2 = "ab".repeat(48),
         }
-        let e = prefilter(
+        let e = prefilter_with(
+            &policy,
             &p,
             &exp,
             &patched_quote(&PK, &NONCE),
@@ -348,30 +351,27 @@ fn check_policy_rows_one_at_a_time() {
         assert_eq!(err.kind, Kind::Verification);
         assert!(err.detail.contains(needle), "want {needle:?} in {err}");
     };
-    // model id
+    // model id, then identity / nonce
     let mut e2 = exp.clone();
     e2.model_id = test_model_id(2);
     refuse(&policy, &e2, &cpu, &gpu, "model id");
-    // identity / nonce
     let mut e2 = exp.clone();
     e2.pk_att = [0x03; 33];
     refuse(&policy, &e2, &cpu, &gpu, "identity:");
     let mut e2 = exp.clone();
     e2.nonce = [1; 32];
     refuse(&policy, &e2, &cpu, &gpu, "nonce:");
-    // registers, event rows
-    let mut p = policy.clone();
-    p.cvm.mrtd = "00".repeat(48);
-    refuse(&p, &exp, &cpu, &gpu, "mrtd:");
-    let mut p = policy.clone();
-    p.cvm.os_image_hash = "00".repeat(32);
-    refuse(&p, &exp, &cpu, &gpu, "os image");
-    let mut p = policy.clone();
-    p.cvm.app_id = Some("00".repeat(20));
-    refuse(&p, &exp, &cpu, &gpu, "app id");
-    let mut p = policy.clone();
-    p.cvm.key_provider = Some("00".repeat(10));
-    refuse(&p, &exp, &cpu, &gpu, "key provider");
+    let rp = |f: fn(&mut Profile), needle: &str| {
+        // registers, event rows: the PROFILE's (schema 3)
+        let mut prof = recording_profile();
+        f(&mut prof);
+        let err = check_with(&policy, &prof, &exp, &cpu, &r, &gpu, true).unwrap_err();
+        assert!(err.detail.contains(needle), "want {needle:?} in {err}");
+    };
+    rp(|p| p.cvm.mrtd = "00".repeat(48), "mrtd:");
+    rp(|p| p.cvm.os_image_hash = "00".repeat(32), "os image");
+    rp(|p| p.cvm.app_id = Some("00".repeat(20)), "app id");
+    rp(|p| p.cvm.key_provider = Some("ab".into()), "key provider");
     let mut c2 = cpu.clone();
     c2.rt_mr3 = [0; 48];
     refuse(&policy, &exp, &c2, &gpu, "event log");

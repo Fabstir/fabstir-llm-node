@@ -10,21 +10,28 @@
 //! Phase 5 behind this same trait, reusing the identity, shared-nonce and
 //! policy-validity logic here.
 
+use crate::tee::host_profile::{admitted_by_policy, match_profile_mock, HostProfile};
 use crate::tee::types::{
     now_unix, report_data_identity, sha256_32, version_at_least, Claims, Evidence, GpuReportFields,
     Policy, TeeError, TeeResult, REPORT_DATA_LEN,
 };
 
-/// Verifies attestation [`Evidence`] against a model-provider [`Policy`].
+/// Verifies attestation [`Evidence`] against a model-provider [`Policy`] and
+/// the [`HostProfile`] that approves the host (policy schema 3).
 ///
 /// Synchronous and HW-agnostic at the trait level: implementations perform pure
 /// checks (identity, shared nonce, measurement, SKU, CC-on, TCB, policy validity) and, in
 /// Phase 5, RIM and CPU/GPU certificate-chain verification.
 pub trait AttestationVerifier: Send + Sync {
-    /// Verify `ev` against `policy`, requiring both quotes to be bound to
-    /// `expected_nonce`. Returns [`Claims`] on success, else [`TeeError`].
-    fn verify(&self, ev: &Evidence, policy: &Policy, expected_nonce: [u8; 32])
-        -> TeeResult<Claims>;
+    /// Verify `ev` against `policy` and `profile`, requiring both quotes to be
+    /// bound to `expected_nonce`. Returns [`Claims`] on success, else [`TeeError`].
+    fn verify(
+        &self,
+        ev: &Evidence,
+        policy: &Policy,
+        profile: &HostProfile,
+        expected_nonce: [u8; 32],
+    ) -> TeeResult<Claims>;
 }
 
 /// Pure, hardware-agnostic verifier for the mock-backed pipeline (Phases 1–4).
@@ -32,6 +39,13 @@ pub trait AttestationVerifier: Send + Sync {
 /// Performs the identity, shared-nonce, measurement, SKU, CC-on, TCB, and policy-validity
 /// checks in fail-closed order: any check that does not pass returns
 /// [`TeeError::VerificationFailed`] with no [`Claims`].
+///
+/// It mirrors the broker (schema 3, D13) with the rows the mock can observe: the
+/// profile must be admitted by the policy (class, pins) and inside its window,
+/// its `mrtd` and `hwmodel` rows must hold ([`match_profile_mock`]), and its
+/// GPU floors apply on top of the policy's. Mock evidence has no registers or
+/// event log, so the other identity rows are form-checked only; the broker
+/// compares all of them.
 pub struct DefaultVerifier;
 
 impl AttestationVerifier for DefaultVerifier {
@@ -39,9 +53,10 @@ impl AttestationVerifier for DefaultVerifier {
         &self,
         ev: &Evidence,
         policy: &Policy,
+        profile: &HostProfile,
         expected_nonce: [u8; 32],
     ) -> TeeResult<Claims> {
-        self.verify_at(ev, policy, expected_nonce, now_unix())
+        self.verify_at(ev, policy, profile, expected_nonce, now_unix())
     }
 }
 
@@ -54,12 +69,17 @@ impl DefaultVerifier {
         &self,
         ev: &Evidence,
         policy: &Policy,
+        profile: &HostProfile,
         expected_nonce: [u8; 32],
         now: u64,
     ) -> TeeResult<Claims> {
-        // 0. The policy itself must be schema 2 in canonical spelling; nothing is
-        //    coerced (the provider signed these exact bytes).
+        // 0. The policy must be schema 3 and the profile well-formed, both in
+        //    canonical spelling; nothing is coerced (they were signed as written).
+        //    The profile must be one this policy admits: its class is allowed and
+        //    it is pinned wherever the policy requires a pin.
         policy.validate()?;
+        profile.validate()?;
+        admitted_by_policy(profile, policy).map_err(TeeError::VerificationFailed)?;
 
         // 1. Freshness: evidence must be bound to the KBS-issued nonce. (Nonce issuance,
         //    single-use, and TTL are enforced by the KBS in Phase 3.2; here we only bind the
@@ -126,26 +146,21 @@ impl DefaultVerifier {
         }
         let gpu_report_hash = sha256_32(&ev.gpu_report);
 
-        // 7. Measurement (mock-era): the mock's 48-byte `image_measurement` stands in
-        //    for MRTD and is compared with `policy.cvm.mrtd`. The real verifier compares
-        //    MRTD, RTMR0–2 from the VERIFIED quote and replays RTMR3 for os_image_hash /
-        //    compose_hash; the mock cannot, so those fields are validated for form
-        //    (step 0) but not compared here. Never trust this field on a real path.
-        if hex::encode(ev.image_measurement) != policy.cvm.mrtd {
-            return Err(TeeError::VerificationFailed("mrtd mismatch".into()));
-        }
-
-        // 8. Hardware model must be allowed by the policy.
-        if !policy
-            .gpu
-            .allowed_hwmodels
-            .iter()
-            .any(|s| s == &fields.hwmodel)
-        {
-            return Err(TeeError::VerificationFailed(format!(
-                "disallowed hwmodel: {}",
-                fields.hwmodel
-            )));
+        // 7–8. Identity against the PROFILE (schema 3): the mock's 48-byte
+        //    `image_measurement` stands in for MRTD, and the hardware model must be
+        //    in the profile's `hwmodels` AND the policy's `allowed_hwmodels`. The
+        //    real verifier (the broker) compares MRTD, RTMR0–2 from the VERIFIED
+        //    quote and replays RTMR3 for os image / compose / app id / key
+        //    provider; the mock cannot, so those are validated for form (step 0)
+        //    but not compared here. Every failing row is reported.
+        let rows = match_profile_mock(
+            profile,
+            &ev.image_measurement,
+            &fields.hwmodel,
+            &policy.gpu.allowed_hwmodels,
+        );
+        if !rows.is_empty() {
+            return Err(TeeError::VerificationFailed(rows.join("; ")));
         }
 
         // 9. CC mode must match the policy EXACTLY when it requires one.
@@ -205,6 +220,24 @@ impl DefaultVerifier {
                 )));
             }
         }
+        // 11d. The profile's own floors, each applied independently on top of
+        //     the policy's (D7): a profile can only add requirements.
+        if let Some(min) = &profile.gpu.min_driver_version {
+            if !version_at_least(&fields.driver_version, min) {
+                return Err(TeeError::VerificationFailed(format!(
+                    "driver {} below profile {} minimum {min}",
+                    fields.driver_version, profile.id
+                )));
+            }
+        }
+        if let Some(min) = &profile.gpu.min_vbios_version {
+            if !version_at_least(&fields.vbios_version, min) {
+                return Err(TeeError::VerificationFailed(format!(
+                    "vbios {} below profile {} minimum {min}",
+                    fields.vbios_version, profile.id
+                )));
+            }
+        }
 
         // 12. Policy validity window: not_before <= now <= expiry (inclusive).
         //     A broken (pre-epoch) clock surfaces as now == u64::MAX (see `now_unix`); fail
@@ -220,6 +253,13 @@ impl DefaultVerifier {
         }
         if now > policy.expiry {
             return Err(TeeError::VerificationFailed("policy expired".into()));
+        }
+        // 13. The profile's own window, inclusive, at the same `now`.
+        if !profile.in_window(now) {
+            return Err(TeeError::VerificationFailed(format!(
+                "profile {} outside its window {}..={} at {now}",
+                profile.id, profile.not_before, profile.expiry
+            )));
         }
 
         Ok(Claims {

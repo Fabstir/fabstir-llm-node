@@ -6,6 +6,7 @@
 //! request path reuses the node's `tee::{types, policy, policy_source, keywrap, container,
 //! kbs_http}` and decides on broker-local types (design D16).
 
+pub mod authority;
 pub mod capture;
 pub mod config;
 pub mod cpu;

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 fn base(dir: &tempfile::TempDir) -> HashMap<String, String> {
     std::fs::create_dir_all(dir.path().join("public/policies")).unwrap();
+    std::fs::create_dir_all(dir.path().join("public/authority")).unwrap();
     let mut m = HashMap::new();
     m.insert(
         "KBS_DATA_DIR".into(),
@@ -237,4 +238,40 @@ fn allowed_hosts_carry_configured_ports_and_intel_hosts() {
         1,
         "deduped, case-folded"
     );
+}
+
+#[test]
+fn kbs_authority_dir_is_known_and_must_exist() {
+    // Policy schema 3 (D17c). Mutation: remove it from `KNOWN` → "unknown
+    // variable"; drop the existence check → a typo boots and answers
+    // `no_provider` to every node.
+    let dir = tempfile::tempdir().unwrap();
+    let c = KbsConfig::from_map(&base(&dir)).unwrap();
+    assert_eq!(c.authority_dir, dir.path().join("public/authority"));
+    assert_eq!(c.hwm_dir(), dir.path().join("hwm"));
+    assert_eq!(c.archive_dir(), dir.path().join("archive"));
+    let other = dir.path().join("elsewhere");
+    std::fs::create_dir(&other).unwrap();
+    let c = with(&dir, "KBS_AUTHORITY_DIR", &other.to_string_lossy()).unwrap();
+    assert_eq!(c.authority_dir, other);
+    let e = with(&dir, "KBS_AUTHORITY_DIR", "/nonexistent/authority").unwrap_err();
+    assert!(
+        e.contains("KBS_AUTHORITY_DIR") && e.contains("not a directory"),
+        "{e}"
+    );
+}
+
+#[test]
+fn serve_probe_creates_hwm_and_archive_0700() {
+    // The start-up probe creates the schema-3 dirs owner-only (D10, R3).
+    // Mutation: default permissions (0755 under the usual umask) → red.
+    use fabstir_llm_node::kbs::config::probe_writable;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let c = KbsConfig::from_map(&base(&dir)).unwrap();
+    for d in [c.hwm_dir(), c.archive_dir()] {
+        probe_writable(&d).unwrap();
+        let mode = std::fs::metadata(&d).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{}", d.display());
+    }
 }

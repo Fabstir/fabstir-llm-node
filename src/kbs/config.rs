@@ -47,6 +47,8 @@ pub struct KbsConfig {
     pub data_dir: PathBuf,
     pub keyring_file: PathBuf,
     pub policy_dir: PathBuf,
+    /// Policy schema 3: one authority bundle per root, `{dir}/{root}.json` (D6).
+    pub authority_dir: PathBuf,
     pub gpu_evidence: GpuEvidenceMode,
     pub cpu_evidence: CpuEvidenceMode,
     pub pccs_url: Url,
@@ -113,6 +115,18 @@ impl KbsConfig {
             return Err(ConfigError(format!(
                 "KBS_POLICY_DIR {} is not a directory",
                 policy_dir.display()
+            )));
+        }
+
+        let authority_dir = get("KBS_AUTHORITY_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("public").join("authority"));
+        if !authority_dir.is_dir() {
+            // Like the policy dir: a typo would otherwise boot cleanly and answer
+            // `no_provider` to every node after each one's nonce was burned.
+            return Err(ConfigError(format!(
+                "KBS_AUTHORITY_DIR {} is not a directory",
+                authority_dir.display()
             )));
         }
 
@@ -265,6 +279,7 @@ impl KbsConfig {
             data_dir,
             keyring_file,
             policy_dir,
+            authority_dir,
             gpu_evidence,
             cpu_evidence,
             pccs_url,
@@ -302,6 +317,16 @@ impl KbsConfig {
         self.data_dir.join("capture")
     }
 
+    /// Policy schema 3: the per-root high-water marks (D10). Only `serve` writes.
+    pub fn hwm_dir(&self) -> PathBuf {
+        self.data_dir.join("hwm")
+    }
+
+    /// Policy schema 3: the write-once archive of accepted bundles (D10).
+    pub fn archive_dir(&self) -> PathBuf {
+        self.data_dir.join("archive")
+    }
+
     /// The egress allow-list (design §12): the configured PCCS/NRAS/JWKS hosts plus
     /// Intel's PCS and CRL-distribution-point hosts, each with the port the
     /// configured URL names (443 when unstated).
@@ -319,11 +344,18 @@ impl KbsConfig {
     }
 }
 
-/// Create `dir` if absent and prove it is writable (a temp file created and
+/// Create `dir` if absent (mode 0700: the HWM, archive, memo and capture dirs
+/// are the broker's alone) and prove it is writable (a temp file created and
 /// removed). The unit's `ReadWritePaths` must match `KBS_DATA_DIR`; a mismatch
-/// would otherwise let the broker start with a silently dead memo and capture.
+/// would otherwise let the broker start with a silently dead memo and capture,
+/// or (schema 3) an HWM it cannot persist.
 pub fn probe_writable(dir: &std::path::Path) -> Result<(), ConfigError> {
-    std::fs::create_dir_all(dir).map_err(|e| ConfigError(format!("{}: {e}", dir.display())))?;
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .map_err(|e| ConfigError(format!("{}: {e}", dir.display())))?;
     let probe = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| ConfigError(format!("{} is not writable: {e}", dir.display())))?;
     probe
@@ -383,6 +415,7 @@ const KNOWN: &[&str] = &[
     "KBS_DATA_DIR",
     "KBS_KEYRING_FILE",
     "KBS_POLICY_DIR",
+    "KBS_AUTHORITY_DIR",
     "KBS_GPU_EVIDENCE",
     "KBS_CPU_EVIDENCE",
     "KBS_PCCS_URL",

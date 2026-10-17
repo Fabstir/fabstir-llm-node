@@ -6,55 +6,26 @@
 //! the retired `sha256(pk_att ‖ sha256(gpu_report) ‖ nonce)` layout was deleted
 //! rather than updated so nothing stayed green across the change.
 
+use super::profile_fixture::{a_policy, a_profile, now_unix};
+use fabstir_llm_node::tee::host_profile::HostProfile;
 use fabstir_llm_node::tee::mock::MockAttestationProvider;
 use fabstir_llm_node::tee::provider::AttestationProvider;
 use fabstir_llm_node::tee::types::{
-    report_data, report_data_identity, CcMode, Claims, CvmPolicy, Evidence, GpuPolicy,
-    GpuReportFields, Policy, TeeError, REPORT_DATA_LEN,
+    report_data, report_data_identity, CcMode, Claims, Evidence, GpuReportFields, Policy, TeeError,
+    REPORT_DATA_LEN,
 };
 use fabstir_llm_node::tee::verifier::{AttestationVerifier, DefaultVerifier};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const MEAS: [u8; 48] = [9u8; 48];
 const PK_ATT: [u8; 33] = [2u8; 33];
 const NONCE: [u8; 32] = [7u8; 32];
 
-fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+fn valid_policy() -> Policy {
+    a_policy([1u8; 32], 0, now_unix() + 3600, &["H100"])
 }
 
-fn valid_policy() -> Policy {
-    Policy {
-        schema_version: 2,
-        policy_version: 1,
-        model_id: [1u8; 32],
-        not_before: 0,
-        expiry: now_unix() + 3600,
-        cvm: CvmPolicy {
-            mrtd: hex::encode(MEAS),
-            rtmr0: "00".repeat(48),
-            rtmr1: "00".repeat(48),
-            rtmr2: "00".repeat(48),
-            os_image_hash: "00".repeat(32),
-            compose_hash: "00".repeat(32),
-            app_id: None,
-            key_provider: None,
-            require_td_debug_off: true,
-            allowed_tcb_status: vec!["UpToDate".to_string()],
-            allowed_advisory_ids: vec![],
-        },
-        gpu: GpuPolicy {
-            allowed_hwmodels: vec!["H100".to_string()],
-            require_cc_mode: Some(CcMode::On),
-            require_secure_boot: true,
-            require_debug_disabled: true,
-            min_driver_version: None,
-            min_vbios_version: None,
-        },
-    }
+fn profile() -> HostProfile {
+    a_profile(MEAS, &["H100"])
 }
 
 async fn gather(p: &MockAttestationProvider, nonce: [u8; 32]) -> Evidence {
@@ -85,7 +56,7 @@ async fn rejects_gpu_evidence_from_another_challenge() {
     let other = gather(&p, [8u8; 32]).await;
     ev.gpu_report = other.gpu_report; // CPU half still says NONCE; GPU half says [8; 32]
     assert_verification_failed(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        DefaultVerifier.verify(&ev, &valid_policy(), &profile(), NONCE),
         "gpu evidence nonce",
     );
 }
@@ -101,7 +72,7 @@ async fn rejects_gpu_evidence_nonce_tamper() {
     fields.nonce[31] ^= 0x01;
     ev.gpu_report = bincode::serialize(&fields).unwrap();
     assert_verification_failed(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        DefaultVerifier.verify(&ev, &valid_policy(), &profile(), NONCE),
         "gpu evidence nonce",
     );
 }
@@ -115,7 +86,7 @@ async fn rejects_report_data_identity_mismatch() {
     let mut ev = gather(&p, NONCE).await;
     ev.pk_att = vec![3u8; 33];
     assert_verification_failed(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        DefaultVerifier.verify(&ev, &valid_policy(), &profile(), NONCE),
         "identity",
     );
 }
@@ -128,7 +99,7 @@ async fn rejects_report_data_nonce_tamper() {
     let mut ev = gather(&p, NONCE).await;
     ev.cpu_quote[40] ^= 0x01;
     assert_verification_failed(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        DefaultVerifier.verify(&ev, &valid_policy(), &profile(), NONCE),
         "report_data nonce",
     );
 }
@@ -143,7 +114,7 @@ async fn accepts_a_nonce_whose_first_byte_looks_like_json() {
     nonce[0] = b'{';
     let ev = gather(&p, nonce).await;
     DefaultVerifier
-        .verify(&ev, &valid_policy(), nonce)
+        .verify(&ev, &valid_policy(), &profile(), nonce)
         .expect("a nonce beginning 0x7B is ordinary mock evidence");
 }
 
@@ -161,7 +132,7 @@ async fn real_nvidia_payload_is_refused_as_needing_the_phase5_verifier() {
         .chain(std::iter::repeat(0x5Au8).take(4000))
         .collect();
     assert_verification_failed(
-        DefaultVerifier.verify(&ev, &valid_policy(), NONCE),
+        DefaultVerifier.verify(&ev, &valid_policy(), &profile(), NONCE),
         "phase-5 verifier",
     );
 }
