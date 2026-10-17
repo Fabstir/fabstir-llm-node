@@ -137,7 +137,7 @@ fn refuse_output(input: &Path, out: &Path) -> Result<(), ToolError> {
 
 /// The output file, created exclusively: `refuse_output`'s existence check is not
 /// atomic on its own, so the create itself must refuse an existing (or planted) file.
-fn create_new_0644(out: &Path) -> Result<std::fs::File, ToolError> {
+pub(crate) fn create_new_0644(out: &Path) -> Result<std::fs::File, ToolError> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let f = std::fs::OpenOptions::new()
         .write(true)
@@ -154,7 +154,10 @@ fn create_new_0644(out: &Path) -> Result<std::fs::File, ToolError> {
 /// Run `f` writing `out`, which this invocation CREATED exclusively (so it is ours);
 /// on `Err` the partial output is removed so an atomic swap can never pick up a
 /// half-written container.
-fn with_output<T>(out: &Path, f: impl FnOnce() -> Result<T, ToolError>) -> Result<T, ToolError> {
+pub(crate) fn with_output<T>(
+    out: &Path,
+    f: impl FnOnce() -> Result<T, ToolError>,
+) -> Result<T, ToolError> {
     match f() {
         Ok(v) => Ok(v),
         Err(e) => {
@@ -426,9 +429,12 @@ pub fn write_0600(path: &Path, bytes: &[u8]) -> Result<(), ToolError> {
 /// next run).
 pub fn write_new(path: &Path, bytes: &[u8]) -> Result<(), ToolError> {
     let mut f = create_new_0644(path)?;
-    f.write_all(bytes).map_err(te)?;
-    f.sync_all().map_err(te)?;
-    Ok(())
+    // A failed write (a full disk) must not leave a truncated document that
+    // the next, never-overwriting run then refuses to replace.
+    with_output(path, || {
+        f.write_all(bytes).map_err(te)?;
+        f.sync_all().map_err(te)
+    })
 }
 
 /// Write a NEW file at mode 0600, refusing an existing one (`create_new`): a DEK

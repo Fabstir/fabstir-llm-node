@@ -104,3 +104,40 @@ fn path_is_lowercase_hex() {
         format!("/x/{}.json", "ab".repeat(32))
     );
 }
+
+#[test]
+fn tool_signed_fixture_verifies_under_the_kbs_feature() {
+    // The other half of the preserve_order proof lives in tests/tee (feature
+    // off): both documents were signed by the tool built WITH this feature.
+    use fabstir_llm_node::tee::host_profile::{
+        parse_bundle, parse_signed_document, verify_manifest, verify_set,
+    };
+    use fabstir_llm_node::tee::types::{POLICY_DOC, POLICY_SCHEMA_VERSION};
+    let signed: fabstir_llm_node::tee::policy::SignedModelPolicy = parse_signed_document(
+        &super::fixtures::fixture("v3-policy-signed.json"),
+        "fixture",
+        "/policy",
+        POLICY_DOC,
+        POLICY_SCHEMA_VERSION,
+    )
+    .unwrap();
+    signed
+        .verify_signer("0x18abb9ca9428d272c8796158b1f5ac321855a5bd")
+        .unwrap();
+    assert_eq!(
+        hex::encode(signed.policy_hash().unwrap()),
+        "46977c3b366ad8e1a32d9870a9d39d1a2dffe5820475b84eea469a3debfe7f9f"
+    );
+    signed.policy.validate().unwrap();
+    let b = parse_bundle(
+        &super::fixtures::fixture("authority-bundle.json"),
+        "fixture",
+    )
+    .unwrap();
+    verify_manifest(&b.manifest, "0xd84fbf720e8a90fabf5fc1ca07f20be85b508420").unwrap();
+    let counted = verify_set(&b.set, &b.manifest.manifest).unwrap();
+    assert_eq!(
+        counted.signers,
+        ["0x76c3ad3e393994992d754584e9fc7d6006a2c3fb"]
+    );
+}

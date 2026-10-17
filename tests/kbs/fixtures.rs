@@ -21,5 +21,5 @@ fn every_fixture_matches_sha256sums() {
         assert_eq!(got, want, "fixture {name} changed");
         n += 1;
     }
-    assert_eq!(n, 12, "SHA256SUMS lists every vendored fixture");
+    assert_eq!(n, 17, "SHA256SUMS lists every vendored fixture");
 }

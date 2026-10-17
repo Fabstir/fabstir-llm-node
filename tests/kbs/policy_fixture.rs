@@ -310,3 +310,29 @@ pub fn check_policy(
 ) -> Result<Verified, KbsError> {
     check_with(policy, &recording_profile(), exp, cpu, r, gpu, test)
 }
+
+/// Run the real `fabstir-kbs` with `args` split on whitespace; an argument
+/// `@name` is `dir/name` (the V3.3 tool tests).
+pub fn kbs_in(dir: &std::path::Path, args: &str) -> std::process::Output {
+    kbs_in_env(dir, args, &[])
+}
+
+/// [`kbs_in`] with extra environment (e.g. `HOME` for the authority ledger).
+pub fn kbs_in_env(
+    dir: &std::path::Path,
+    args: &str,
+    env: &[(&str, &std::path::Path)],
+) -> std::process::Output {
+    let args: Vec<std::ffi::OsString> = args
+        .split_whitespace()
+        .map(|a| match a.strip_prefix('@') {
+            Some(name) => dir.join(name).into_os_string(),
+            None => a.into(),
+        })
+        .collect();
+    std::process::Command::new(env!("CARGO_BIN_EXE_fabstir-kbs"))
+        .args(args)
+        .envs(env.iter().copied())
+        .output()
+        .unwrap()
+}

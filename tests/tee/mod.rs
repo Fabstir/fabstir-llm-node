@@ -22,6 +22,7 @@ mod test_http_streaming;
 mod test_kbs_http;
 mod test_kbs_http_release;
 mod test_kbs_preflight;
+mod test_kbs_presigned_fixture;
 mod test_key_broker;
 mod test_keywrap;
 mod test_live;

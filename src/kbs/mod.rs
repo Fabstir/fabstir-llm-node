@@ -21,6 +21,7 @@ pub mod nras_claims;
 pub mod policy_file;
 pub mod routes;
 pub mod tools;
+pub mod tools_authority;
 pub mod verify;
 
 pub use error::{KbsError, Kind};
