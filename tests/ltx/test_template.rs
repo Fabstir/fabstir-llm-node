@@ -992,6 +992,7 @@ fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
         video_semantics: vec![],
         fps: None,
         max_frames: None,
+        min_frames: None,
         resolution_rule: None,
         exact_control: None,
         frame_grid: None,
@@ -1431,4 +1432,47 @@ fn test_refine_hd_rule() {
         let err = check_template_rules(&e, w, h, 24, 121).unwrap_err();
         assert!(err.contains("1536x1024"), "{w}x{h}: {err}");
     }
+}
+
+// ── 8.60.3 SC1: a per-template frame minimum ────────────────────────────────────
+
+#[test]
+fn test_min_frames_refuses_under_and_accepts_at() {
+    // a frame-grid entry keeps its own floor when the bundle's global floor is lowered for the restoration modes
+    // (mutation: drop the min check -> 113 accepted -> red; compare with <= -> 121 refused -> red)
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let mut e = bare_entry("synthetic-min");
+    e.min_frames = Some(121);
+    let err = check_template_rules(&e, 768, 512, 24, 113).unwrap_err();
+    assert!(err.contains("121") && err.contains("minimum"), "{err}");
+    assert!(check_template_rules(&e, 768, 512, 24, 121).is_ok());
+    // absent: only the global floor applies (validate_bounds)
+    assert!(check_template_rules(&bare_entry("synthetic-nomin"), 768, 512, 24, 9).is_ok());
+}
+
+#[test]
+fn test_bundle_advertises_min_frames() {
+    // the published bundle carries minFrames (the helper and add-on read it), and omits it when absent
+    let dir = tempfile::tempdir().unwrap();
+    for id in ["short-t", "long-t"] {
+        std::fs::create_dir(dir.path().join(id)).unwrap();
+        std::fs::write(
+            dir.path().join(format!("{id}/v1.json")),
+            br#"{"1":{"class_type":"RandomNoise","inputs":{"noise_seed":0}}}"#,
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        dir.path().join("allowlist.json"),
+        br#"{"allowListVersion":1,"templates":[{"templateId":"short-t","version":"v1","maxFrames":121,"frameGrid":true},
+            {"templateId":"long-t","version":"v1","minFrames":121,"maxFrames":361,"frameGrid":true}],
+            "loras":[],"bounds":{"frames":{"min":9,"max":751},"fps":[24,25],"resolutions":[{"w":768,"h":512}]}}"#,
+    )
+    .unwrap();
+    let store = TemplateStore::new(dir.path()).unwrap();
+    let wire = serde_json::to_value(store.bundle()).unwrap();
+    let by_id = |id: &str| wire["templates"].as_array().unwrap().iter().find(|t| t["templateId"] == id).unwrap().clone();
+    assert_eq!(by_id("long-t")["minFrames"], 121);
+    assert!(by_id("short-t").get("minFrames").is_none());
+    assert_eq!(wire["bounds"]["frames"]["min"], 9);
 }

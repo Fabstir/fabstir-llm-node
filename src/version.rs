@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.2-reference-strength-2026-10-17";
+pub const VERSION: &str = "v8.60.3-short-clips-2026-10-17";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.2";
+pub const VERSION_NUMBER: &str = "8.60.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,16 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 60;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-10-17";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.60.3 SC1: a per-template `minFrames` in the allow-list (published in the bundle, checked with the other template
+    // rules), so the global frames floor can drop for the LTX 2.5 restoration modes while every other mode keeps 121.
+    "template-min-frames",
     // v8.60.2 the job strength on a template with a reference guide (Restore (LTX 2.5) with reference) weights the
     // REFERENCE only: patched onto the guide titled "Reference guide (frame -1)", never the shot's own guide.
     "reference-strength",
@@ -636,6 +639,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.60.3 - short clips (Oct 17, 2026)
+    "FEATURE (LTX allow-list): an entry may carry `minFrames`; a job under it is refused like one over `maxFrames`, and the published bundle advertises it. No change for entries without it",
     // v8.60.2 - reference strength (Oct 17, 2026)
     "BEHAVIOUR (LTX patcher): on a template with a node titled \"Reference guide (frame -1)\" (ltx-restore25-ref-hdr) the job `strength` is patched onto that guide only; before, it was patched onto every LTXAddVideoICLoRAGuide, which also weakened the shot's own guide. No change for any other template",
     // v8.60.1 - LTX 2.5 tiled-fusion templates (Oct 13, 2026)
@@ -1152,7 +1157,9 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 60);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_PATCH, 3);
+        // v8.60.3 short clips
+        assert!(FEATURES.contains(&"template-min-frames"));
         // v8.60.2 reference strength
         assert!(FEATURES.contains(&"reference-strength"));
         // v8.60.1 tiled-fusion templates
@@ -1363,14 +1370,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.2"));
+        assert!(version.contains("8.60.3"));
         assert!(version.contains("2026-10-17"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.2-reference-strength-2026-10-17");
-        assert_eq!(VERSION_NUMBER, "8.60.2");
+        assert_eq!(VERSION, "v8.60.3-short-clips-2026-10-17");
+        assert_eq!(VERSION_NUMBER, "8.60.3");
         assert_eq!(BUILD_DATE, "2026-10-17");
     }
 
