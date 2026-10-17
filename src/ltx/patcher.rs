@@ -97,13 +97,20 @@ pub fn patch(
     // node (t2v/i2v/flf2v/iclora/upscale): billing a paid render whose knob
     // was silently ignored would be worse than rejecting it.
     if let Some(s) = job.strength {
-        let n = patch_by_class(
-            obj,
-            "LTXAddVideoICLoRAGuide",
-            "strength",
-            Value::from(s),
-            false,
-        )?;
+        // 8.60.2: a template with a reference guide (Restore (LTX 2.5) with reference) takes the strength on THAT guide
+        // only — the reference's weight — never on the shot's own guide, which would loosen the restoration's hold on
+        // the footage. Every other template keeps the by-class patch.
+        let n = if has_title(obj, REFERENCE_GUIDE_TITLE) {
+            patch_by_title(obj, REFERENCE_GUIDE_TITLE, "strength", Value::from(s), true)?
+        } else {
+            patch_by_class(
+                obj,
+                "LTXAddVideoICLoRAGuide",
+                "strength",
+                Value::from(s),
+                false,
+            )?
+        };
         if n == 0 {
             return Err(anyhow!(
                 "strength was provided but template {} has no IC-LoRA guide node",
@@ -494,6 +501,13 @@ fn prompt_input_key(graph: &Map<String, Value>, node_id: &str) -> Result<&'stati
 
 /// Set `key` on every node whose `_meta.title` equals `title`. If none match and
 /// `required`, error (fail closed); if none match and optional, no-op.
+/// 8.60.2: the title of a template's reference-image guide (`ltx-restore25-ref-hdr` node 55); the job strength is its weight.
+const REFERENCE_GUIDE_TITLE: &str = "Reference guide (frame -1)";
+
+fn has_title(graph: &Map<String, Value>, title: &str) -> bool {
+    graph.values().any(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
+}
+
 fn patch_by_title(
     graph: &mut Map<String, Value>,
     title: &str,

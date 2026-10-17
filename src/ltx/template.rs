@@ -93,6 +93,10 @@ pub struct TemplateEntry {
     /// The longest job the template may run, in frames (measured on host1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_frames: Option<u32>,
+    /// 8.60.3 (SC1): the shortest job the template may run, in frames — the bundle's global `frames.min` is the
+    /// floor for every template, this raises it per template (absent: the global floor only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_frames: Option<u32>,
     /// A named resolution rule: `"div64-fhd"`, `"relight-fhd"`, `"refine-hd"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_rule: Option<String>,
@@ -153,6 +157,8 @@ struct ConfigEntry {
     fps: Option<Vec<u32>>,
     #[serde(default)]
     max_frames: Option<u32>,
+    #[serde(default)]
+    min_frames: Option<u32>,
     #[serde(default)]
     resolution_rule: Option<String>,
     #[serde(default)]
@@ -218,6 +224,7 @@ impl TemplateStore {
                 video_semantics: entry.video_semantics.clone(),
                 fps: entry.fps.clone(),
                 max_frames: entry.max_frames,
+                min_frames: entry.min_frames,
                 resolution_rule: entry.resolution_rule.clone(),
                 exact_control: entry.exact_control,
                 frame_grid: entry.frame_grid,
@@ -313,6 +320,13 @@ pub fn check_template_rules(
         if frames > max {
             return Err(format!(
                 "{frames} frames is over the {max}-frame maximum for {id}"
+            ));
+        }
+    }
+    if let Some(min) = entry.min_frames {
+        if frames < min {
+            return Err(format!(
+                "{frames} frames is under the {min}-frame minimum for {id}"
             ));
         }
     }
