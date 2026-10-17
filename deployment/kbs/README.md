@@ -49,7 +49,8 @@ retried fault). Authority procedures (keys, epochs, signers, recovery) are in
 1. `policy migrate-v2` (once, from a signed v2 policy) or write the v3 policy by hand.
 2. `policy sign --policy p.json --key-file provider.key --encrypted-ref qwen.enc --authority
    <bundle> --out p.signed.json`: `--authority` refuses a root that does not match, minimums
-   above the bundle, `min_threshold` above the manifest's, or classes the set never uses.
+   above the bundle, `min_threshold` above the manifest's, or `allowed_classes` sharing no
+   class with the set's profiles (extra classes for host families still to come are fine).
 3. `seal … --authority <bundle>` (the same check, before hours of sealing). The mainnet cut
    is a FRESH seal under a new DEK, never a reseal of a run-1/run-2 container (D19).
 4. Any change to the policy itself (floors, minimums, classes, pins, TCB/advisory lists,
@@ -71,11 +72,19 @@ retried fault). Authority procedures (keys, epochs, signers, recovery) are in
    the same `mv` batch put the bundle at `public/authority/{root}.json`, the policy at
    `public/policies/{model_id}.json` (replacing the v2 file) and the container.
 4. `systemctl restart fabstir-kbs`; `curl -s http://127.0.0.1:3030/v1/kbs/info`.
-5. Dry run on the box: `sudo -u fabstir-kbs fabstir-kbs authority check --bundle
-   /var/lib/fabstir-kbs/public/authority/{root}.json --policy <every served policy naming that
-   root, absolute path> --replay <a vendored verified capture dir>`. It must print
-   `outcome=release` for the replay. The capture dir must be readable by the service user
-   (copy it to e.g. `/var/lib/fabstir-kbs/replay/`, owner `fabstir-kbs`).
+5. Dry runs on the box, as the service user. (a) The served documents: `sudo -u fabstir-kbs
+   fabstir-kbs authority check --bundle /var/lib/fabstir-kbs/public/authority/{root}.json
+   --policy <every served policy naming that root, absolute path>`. On the first deploy of an
+   image it prints `result=warn` with "no candidate profile until one is pinned" (the D18
+   first epoch); any `refused:` line stops the deploy. (b) The binary's judgement, on a known
+   pair: copy `tests/kbs/fixtures/{authority-bundle.json,v3-policy-signed.json}` and a
+   directory holding `run1-boot2-request.json` as `request.json` and
+   `run1-boot2-verified.json` as `verified.json` to `/var/lib/fabstir-kbs/replay/` (owner
+   `fabstir-kbs`), then `authority check --bundle <that bundle> --policy <that policy>
+   --replay <that dir>`: it must print `outcome=release` (the fixtures' windows run to
+   2027-09-01). A capture of the NEW deployment cannot release on the first epoch (unpinned,
+   and run 1's capture is another compose), so it is never the replay here; once boot 2 has
+   released, its `verified/` capture is the one to vendor for later checks.
 6. **Confirm loaded** (below). Revocation and every new epoch take effect only once the
    broker has LOADED the bundle.
 
