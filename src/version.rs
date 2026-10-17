@@ -3,19 +3,19 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.3-short-clips-2026-10-17";
+pub const VERSION: &str = "v8.61.0-host-profiles-2026-10-17";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.3";
+pub const VERSION_NUMBER: &str = "8.61.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 60;
+pub const VERSION_MINOR: u32 = 61;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-10-17";
@@ -85,7 +85,7 @@ pub const FEATURES: &[&str] = &[
     // pinned HTTPS key broker, Policy schema 2, unlink-never-overwrite plaintext
     // lifecycle with a stop watchdog on its own thread.
     "tee-attested-load",
-    // Policy schema 3 (host profiles separated from the sealed model binding;
+    // v8.61.0 Policy schema 3 (host profiles separated from the sealed model binding;
     // IMPLEMENTATION-POLICY-V3-HOST-PROFILES.md): schema 2 is refused.
     "tee-policy-schema-3",
     "tee-kbs-https-pinned-root",
@@ -641,6 +641,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.61.0 - policy schema 3, host profiles (Oct 17, 2026)
+    "BREAKING (TEE attested load, HOST_TEE_ENABLED=true only): release policies are schema 3. The sealed policy names a host authority root, minimums and allowed host classes; host identity (TD registers, OS image, compose hashes, app_id and key-provider pins, GPU model and floors) moves to a signed, epoch-versioned host profile set that the key broker loads, so a host change is a new profile epoch, never a reseal. A schema-2 policy is refused (`verification`, never retried): a container sealed under schema 2 needs a fresh seal under a schema-3 policy. Nodes without HOST_TEE_ENABLED: no change",
     // v8.60.3 - short clips (Oct 17, 2026)
     "FEATURE (LTX allow-list): an entry may carry `minFrames`; a job under it is refused like one over `maxFrames`, and the published bundle advertises it. No change for entries without it",
     // v8.60.2 - reference strength (Oct 17, 2026)
@@ -1166,8 +1168,10 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 60);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_MINOR, 61);
+        assert_eq!(VERSION_PATCH, 0);
+        // v8.61.0 policy schema 3 (host profiles)
+        assert!(FEATURES.contains(&"tee-policy-schema-3"));
         // v8.60.3 short clips
         assert!(FEATURES.contains(&"template-min-frames"));
         // v8.60.2 reference strength
@@ -1379,14 +1383,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.3"));
+        assert!(version.contains("8.61.0"));
         assert!(version.contains("2026-10-17"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.3-short-clips-2026-10-17");
-        assert_eq!(VERSION_NUMBER, "8.60.3");
+        assert_eq!(VERSION, "v8.61.0-host-profiles-2026-10-17");
+        assert_eq!(VERSION_NUMBER, "8.61.0");
         assert_eq!(BUILD_DATE, "2026-10-17");
     }
 

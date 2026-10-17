@@ -16,7 +16,7 @@
 # Same image digest as compose.gpu.yml (one image, two composes).
 services:
   llm-node:
-    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:26ea9818478ee34c8dfae673b7d6f26667f75912f282b3cb5a49e17de42faa73
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:b97f209c2671795a2ae4576749c3a1b204204b68e7cc3676cee054403d619b26
     container_name: llm-node
     # on-failure with a cap, never unless-stopped/always: a refused attested
     # load exits 78 and an unbounded policy would re-download the container,
@@ -35,7 +35,7 @@ services:
     labels:
       ai.platformless.dstack_os_image: "dstack-v0.5.9"
       # Same release as compose.gpu.yml (one image, two composes; pins test).
-      ai.platformless.node_version: "8.57.0"
+      ai.platformless.node_version: "8.61.0"
     # tmpfs-mode cap for round 3's A-20 dummy on the 8 GB tdx.large.
     shm_size: "6g"
     ports:
@@ -56,7 +56,7 @@ services:
       # paid GPU node.
       TEE_ACCEPT_TEST_RELEASE: "1"
 
-      # Attested load enforced by the pinned image (v8.57.0; see compose.gpu.yml);
+      # Attested load enforced by the pinned image (v8.61.0; see compose.gpu.yml);
       # on this compose the GPU half is canned, so the node runs WITHOUT the
       # `tee-attested` advert (test-keyring release). Flag + TEE_* block move
       # together (guard test).

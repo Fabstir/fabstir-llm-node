@@ -16,7 +16,7 @@
 # it is a real 64-hex sha256.
 services:
   llm-node:
-    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:26ea9818478ee34c8dfae673b7d6f26667f75912f282b3cb5a49e17de42faa73
+    image: ewr.vultrcr.com/fabstir/llm-node-phala@sha256:b97f209c2671795a2ae4576749c3a1b204204b68e7cc3676cee054403d619b26
     container_name: llm-node
     # on-failure with a cap, never unless-stopped/always: a refused attested
     # load exits 78 and an unbounded policy would re-download the container,
@@ -36,7 +36,7 @@ services:
       ai.platformless.dstack_os_image: "dstack-nvidia-0.5.9"
       # The node release cut into the pinned image; tests/phase5_release_pins.rs
       # ties it and the digest above to the last RELEASE_PINS row.
-      ai.platformless.node_version: "8.57.0"
+      ai.platformless.node_version: "8.61.0"
     # NVML access for nvtrust evidence collection (reference A runs the
     # evidence container privileged for the same reason).
     runtime: nvidia
@@ -64,11 +64,12 @@ services:
       # --- attested load path (Phase 5) ---
       # HOST_TEE_ENABLED=true means the model MUST come from an attested decrypt
       # or the node does not start (src/tee/live.rs decision table, exit 78):
-      # the image pinned above (v8.57.0; v8.55.0 was the first build that
+      # the image pinned above (v8.61.0; v8.55.0 was the first build that
       # enforces it and therefore the first that may advertise `tee-attested`;
       # v8.56.0 adds the broker /info pre-check, the t5t: witness rule and the
       # collector's DevTools refusal; v8.57.0 streams the container to the
-      # cache volume and adds the disk-mode plaintext home). The flag and the TEE_* block below are
+      # cache volume and adds the disk-mode plaintext home; v8.61.0 accepts only
+      # schema-3 release policies, host identity in the broker's profiles). The flag and the TEE_* block below are
       # all-or-nothing; the guard test checks they move together (flipped
       # 2026-09-18 with the v8.55.0 digest).
       HOST_TEE_ENABLED: "true"

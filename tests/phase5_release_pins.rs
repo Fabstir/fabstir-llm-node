@@ -38,6 +38,14 @@ const RELEASE_PINS: &[(&str, &str)] = &[
         "8.57.0",
         "26ea9818478ee34c8dfae673b7d6f26667f75912f282b3cb5a49e17de42faa73",
     ),
+    // Policy schema 3 (host profiles; IMPLEMENTATION-POLICY-V3-HOST-PROFILES.md
+    // V3.5): the node refuses schema 2, so the image must move with it (built
+    // 2026-10-17 from the 8.61.0 real-ezkl tarball; build.sh on host1, DevTools
+    // grep = 1).
+    (
+        "8.61.0",
+        "b97f209c2671795a2ae4576749c3a1b204204b68e7cc3676cee054403d619b26",
+    ),
 ];
 
 const COMPOSES: &[&str] = &["compose.gpu.yml", "compose.cpu.yml"];
