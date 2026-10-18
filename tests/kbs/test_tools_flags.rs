@@ -35,7 +35,8 @@ fn cli_flags_match_the_design() {
     assert!(
         add.contains("--generate")
             && add.contains("--dek-out")
-            && add.contains("--min-policy-version"),
+            && add.contains("--min-policy-version")
+            && add.contains("--replace"),
         "{add}"
     );
     let ver = help(&["--version"]);
@@ -104,6 +105,7 @@ fn cli_flags_match_the_design() {
             &[
                 "--profile",
                 "--capture",
+                "--provision",
                 "--app-id",
                 "--key-provider-override",
                 "--out",
@@ -189,6 +191,7 @@ fn cli_flags_match_the_design() {
         true,
         1,
         "",
+        false,
     )
     .unwrap();
     let out = std::process::Command::new(bin)

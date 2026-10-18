@@ -302,6 +302,7 @@ fn seal_then_reseal_moves_the_container_to_the_new_policy_hash() {
         true,
         1,
         "",
+        false,
     )
     .unwrap();
     keyring_add(
@@ -312,6 +313,7 @@ fn seal_then_reseal_moves_the_container_to_the_new_policy_hash() {
         true,
         1,
         "",
+        false,
     )
     .unwrap();
     let names: Vec<String> = std::fs::read_dir(kdir.path())
@@ -507,7 +509,7 @@ fn keyring_add_and_check_apply_the_broker_rules() {
     let t1 = hex::encode(test_model_id(1));
     let provider = "0x00112233445566778899aabbccddeeff00112233";
     assert_eq!(
-        keyring_add(&path, &t1, provider, &DEK, true, 1, "one").unwrap(),
+        keyring_add(&path, &t1, provider, &DEK, true, 1, "one", false).unwrap(),
         1
     );
     assert_eq!(keyring_check(&path).unwrap(), 1);
@@ -517,14 +519,14 @@ fn keyring_add_and_check_apply_the_broker_rules() {
         0o600
     );
     // the prefix rule
-    let e = keyring_add(&path, &t1, provider, &DEK, false, 1, "").unwrap_err();
+    let e = keyring_add(&path, &t1, provider, &DEK, false, 1, "", false).unwrap_err();
     assert!(e.0.contains("carries the t5t: prefix"), "{e}");
     let real = hex::encode([0xab; 32]);
-    let e = keyring_add(&path, &real, provider, &DEK, true, 1, "").unwrap_err();
+    let e = keyring_add(&path, &real, provider, &DEK, true, 1, "", false).unwrap_err();
     assert!(e.0.contains("does not carry"), "{e}");
     // a duplicate is refused and the file is left as it was
     let before = std::fs::read(&path).unwrap();
-    let e = keyring_add(&path, &t1, provider, &DEK, true, 1, "dup").unwrap_err();
+    let e = keyring_add(&path, &t1, provider, &DEK, true, 1, "dup", false).unwrap_err();
     assert!(e.0.contains("duplicate"), "{e}");
     assert_eq!(std::fs::read(&path).unwrap(), before);
     // a second, distinct entry
@@ -536,7 +538,8 @@ fn keyring_add_and_check_apply_the_broker_rules() {
             &DEK,
             true,
             2,
-            ""
+            "",
+            false
         )
         .unwrap(),
         2
@@ -553,6 +556,7 @@ fn keyring_add_and_check_apply_the_broker_rules() {
         true,
         1,
         "",
+        false,
     )
     .unwrap_err();
     assert!(e.0.contains("symlink"), "{e}");

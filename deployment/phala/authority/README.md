@@ -105,7 +105,17 @@ Production policies require both pins (`require_app_id_pinned` and
 `app-id` differs from the dashboard, STOP. Never take either value from the capture (that is
 exactly what an attacker wants copied); `--key-provider-override` exists for a documented KMS
 change only and prints this rule. This recurs for every new Phala deployment (each is a new
-`app_id`) unless Phala returns the `app_id` before the CVM starts (OQ-V3-2).
+`app_id`).
+
+**One boot instead, when deploying through Phala's API (OQ-V3-2).** The provision step reserves
+the CVM without starting it and returns its `app_id`. Save that response as JSON, then
+`fabstir-kbs profile pin --profile profile.json --provision provision.json --out
+profile-pinned.json` pins `app_id` from it and `key_provider` as above, only after the
+response's compose hash is one of the profile's and its OS image hash, when present, equals the
+profile's. Assemble the next epoch with the pinned profile, deploy, confirm loaded, and only then
+commit the provision (the CVM starts): boot 1 releases. The registers and the key provider are
+confirmed only by that boot: a differing row refuses it by name, and the two-boot path above
+applies. A response without `app_id` (not Phala's own KMS) is refused.
 
 ## 5. Routine epochs
 

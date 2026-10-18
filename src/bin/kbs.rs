@@ -121,6 +121,10 @@ enum KeyringCmd {
         /// The keyring file (default `$KBS_KEYRING_FILE` or `/var/lib/fabstir-kbs/keyring.json`).
         #[arg(long)]
         file: Option<PathBuf>,
+        /// Swap the model's existing entry for this one (a fresh seal, same provider); other entries
+        /// are kept. The old DEK is NOT kept: copy the keyring first.
+        #[arg(long)]
+        replace: bool,
     },
     /// Validate a keyring file with the broker's rules.
     Check {
@@ -281,14 +285,25 @@ enum ProfileCmd {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Pin app_id (out of band) and the Phala KMS key provider, once a capture confirms every row.
+    /// Pin app_id (out of band) and the Phala KMS key provider, once a capture confirms every row,
+    /// or from Phala's provision response before the CVM starts (one boot, OQ-V3-2).
     Pin {
         #[arg(long)]
         profile: PathBuf,
+        /// Boot 1's capture directory (D18's two boots); needs --app-id.
+        #[arg(
+            long,
+            required_unless_present = "provision",
+            conflicts_with = "provision",
+            requires = "app_id"
+        )]
+        capture: Option<PathBuf>,
+        /// Phala's provision response for this CVM, saved as JSON before the commit step.
         #[arg(long)]
-        capture: PathBuf,
-        #[arg(long)]
-        app_id: String,
+        provision: Option<PathBuf>,
+        /// The dashboard's app id (with --capture; --provision takes it from the response).
+        #[arg(long, conflicts_with = "provision")]
+        app_id: Option<String>,
         /// Replace the committed Phala KMS key provider (prints the STOP rule).
         #[arg(long)]
         key_provider_override: Option<String>,
@@ -480,6 +495,7 @@ fn run_keyring(cmd: KeyringCmd) -> Result<(), String> {
             min_policy_version,
             note,
             file,
+            replace,
         } => {
             let (dek, generated): (zeroize::Zeroizing<[u8; 32]>, Option<PathBuf>) = if generate {
                 let out = dek_out.ok_or("--generate needs --dek-out")?;
@@ -503,6 +519,7 @@ fn run_keyring(cmd: KeyringCmd) -> Result<(), String> {
                 test,
                 min_policy_version,
                 &note,
+                replace,
             ) {
                 Ok(n) => n,
                 Err(e) => {
@@ -515,6 +532,13 @@ fn run_keyring(cmd: KeyringCmd) -> Result<(), String> {
             };
             if let Some(out) = &generated {
                 eprintln!("fabstir-kbs: fresh DEK written to {} (mode 0600; use it for `seal`, then shred it)", out.display());
+            }
+            if replace {
+                eprintln!(
+                    "fabstir-kbs: replaced the entry for {model_id}; its old DEK is gone from this \
+                     file, so a container sealed under it can be released only from the copy \
+                     made before --replace"
+                );
             }
             eprintln!(
                 "fabstir-kbs: {} now holds {n} entr{}",
@@ -889,20 +913,46 @@ fn run_profile(cmd: ProfileCmd) -> Result<(), String> {
         ProfileCmd::Pin {
             profile,
             capture,
+            provision,
             app_id,
             key_provider_override,
             out,
         } => {
             let p: HostProfile = read_json(&profile)?;
-            let id = ta::capture_identity(&read_file(&capture.join("request.json"))?)
-                .map_err(|e| e.to_string())?;
-            let pinned = ta::pin_profile(p, &id, &app_id, key_provider_override.as_deref())
-                .map_err(|e| e.to_string())?;
+            let over = key_provider_override.as_deref();
+            let (pinned, provided) = match (capture, provision, app_id) {
+                (Some(capture), None, Some(app_id)) => {
+                    let id = ta::capture_identity(&read_file(&capture.join("request.json"))?)
+                        .map_err(|e| e.to_string())?;
+                    (ta::pin_profile(p, &id, &app_id, over), None)
+                }
+                (None, Some(provision), None) => {
+                    let r = ta::provision_identity(&read_file(&provision)?)
+                        .map_err(|e| e.to_string())?;
+                    (ta::pin_profile_provision(p, &r, over), Some(r))
+                }
+                _ => return Err("give --capture with --app-id, or --provision alone".into()),
+            };
+            let pinned = pinned.map_err(|e| e.to_string())?;
             if let Some(notice) = pinned.notice {
                 eprintln!("fabstir-kbs: {notice}");
             }
             write_json(&out, &pinned.profile)?;
             println!("profile={}\npinned=true", pinned.profile.id);
+            if let Some(r) = provided {
+                let os = if r.os_image_hash.is_some() {
+                    "confirmed"
+                } else {
+                    "not in the response (boot 1 confirms it)"
+                };
+                println!(
+                    "source=provision\napp_id={}\ncompose_hash=confirmed\nos_image={os}\n\
+                     registers=unconfirmed until boot 1 (predicted values)\n\
+                     key_provider=unconfirmed until boot 1\nkms_id={}",
+                    pinned.profile.cvm.app_id.as_deref().unwrap_or(""),
+                    r.kms_id.as_deref().unwrap_or("none")
+                );
+            }
             Ok(())
         }
         ProfileCmd::Check {

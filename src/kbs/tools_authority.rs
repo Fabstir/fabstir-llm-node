@@ -1315,6 +1315,119 @@ pub fn pin_profile(
     })
 }
 
+/// What Phala's provision step (`provisionCvm`, the reserve-before-start half
+/// of an API deployment) returns about OUR CVM before it boots (OQ-V3-2). Only
+/// the documented fields `profile pin --provision` needs; every other field is
+/// ignored. Hex values are canonical lowercase without `0x`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionIdentity {
+    pub app_id: Option<String>,
+    pub compose_hash: String,
+    pub os_image_hash: Option<String>,
+    pub kms_id: Option<String>,
+}
+
+/// Read a saved provision response. Phala documents no example values, so a
+/// hex field is accepted with or without `0x` and in either case, then
+/// canonicalised; anything that is not hex is refused (never guessed at).
+pub fn provision_identity(bytes: &[u8]) -> Result<ProvisionIdentity, ToolError> {
+    let v: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| ToolError(format!("provision response: {e}")))?;
+    let text = |name: &str| -> Result<Option<String>, ToolError> {
+        match v.get(name) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(s)) => Ok(Some(s.clone())),
+            Some(other) => refuse(format!(
+                "provision response: {name} is not a string: {other}"
+            )),
+        }
+    };
+    let hex = |name: &str| -> Result<Option<String>, ToolError> {
+        let Some(s) = text(name)? else {
+            return Ok(None);
+        };
+        let bare = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .unwrap_or(&s)
+            .to_ascii_lowercase();
+        if bare.is_empty() || hex::decode(&bare).is_err() {
+            return refuse(format!("provision response: {name} is not hex: {s:?}"));
+        }
+        Ok(Some(bare))
+    };
+    let Some(compose_hash) = hex("compose_hash")? else {
+        return refuse(
+            "provision response: no compose_hash (is this the provision step's response?)",
+        );
+    };
+    Ok(ProvisionIdentity {
+        app_id: hex("app_id")?,
+        compose_hash,
+        os_image_hash: hex("os_image_hash")?,
+        kms_id: text("kms_id")?,
+    })
+}
+
+/// `profile pin --provision`: the one-boot variant of D18 (OQ-V3-2). Pins
+/// `app_id` from Phala's provision response for OUR CVM (Phala's own answer,
+/// before any boot and independent of any capture) and `key_provider` exactly
+/// as [`pin_profile`] does (the constant unless overridden, which prints
+/// STOP), only after the response's compose hash is one of the profile's and
+/// its OS image hash, when present, equals the profile's. The registers and
+/// the key provider cannot be confirmed before a boot: boot 1 confirms them,
+/// and a differing row refuses it by name (then the two-boot path applies).
+pub fn pin_profile_provision(
+    mut p: HostProfile,
+    r: &ProvisionIdentity,
+    key_provider_override: Option<&str>,
+) -> Result<Pinned, ToolError> {
+    if p.cvm.app_id.is_some() || p.cvm.key_provider.is_some() {
+        return refuse(format!(
+            "profile {} is already pinned: pin the unpinned profile `profile new` wrote",
+            p.id
+        ));
+    }
+    let Some(app_id) = &r.app_id else {
+        return refuse(format!(
+            "profile {}: the provision response has no app_id (Phala returns it only for its own \
+             KMS): use the two-boot path, `profile pin --capture`",
+            p.id
+        ));
+    };
+    let cv = &p.cvm;
+    let mut rows = Vec::new();
+    if !cv.compose_hashes.contains(&r.compose_hash) {
+        rows.push(format!(
+            "compose hash: provision {} not in profile {:?}",
+            r.compose_hash, cv.compose_hashes
+        ));
+    }
+    if let Some(os) = &r.os_image_hash {
+        if *os != cv.os_image_hash {
+            rows.push(format!(
+                "os image: provision {os} != profile {}",
+                cv.os_image_hash
+            ));
+        }
+    }
+    if !rows.is_empty() {
+        return refuse(format!(
+            "profile {}: the provision response does not confirm it: {}",
+            p.id,
+            rows.join("; ")
+        ));
+    }
+    let key_provider = key_provider_override.unwrap_or(PHALA_KMS_KEY_PROVIDER);
+    p.cvm.app_id = Some(app_id.clone());
+    p.cvm.key_provider = Some(key_provider.to_string());
+    p.validate().map_err(te)?;
+    Ok(Pinned {
+        profile: p,
+        notice: key_provider_override.map(|_| KEY_PROVIDER_STOP),
+    })
+}
+
 /// `profile assemble`: an unsigned set; its own counter against `prior`.
 pub fn assemble_set(
     root: &str,

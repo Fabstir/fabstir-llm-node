@@ -322,7 +322,12 @@ pub fn generate_dek() -> [u8; 32] {
 
 /// Add an entry to the keyring file (created if absent), validating the result
 /// with the same rules the broker applies at load. The caller (the CLI) runs as
-/// the service user so the file stays owned by it.
+/// the service user so the file stays owned by it. With `replace`, the model's
+/// existing entry is swapped for the new one (a fresh seal under a fresh DEK,
+/// the same provider), every other entry kept; it refuses when there is no entry
+/// to replace, so a mistyped id never adds silently. The old DEK is not kept
+/// anywhere: the caller copies the keyring first.
+#[allow(clippy::too_many_arguments)]
 pub fn keyring_add(
     path: &Path,
     model_id_hex: &str,
@@ -331,6 +336,7 @@ pub fn keyring_add(
     test: bool,
     min_policy_version: u32,
     note: &str,
+    replace: bool,
 ) -> Result<usize, ToolError> {
     // SAFETY: geteuid has no preconditions.
     if unsafe { libc::geteuid() } == 0 {
@@ -380,6 +386,22 @@ pub fn keyring_add(
                 "does not carry"
             }
         )));
+    }
+    if replace {
+        let Some(i) = file.keys.iter().position(|e| e.model_id == model_id_hex) else {
+            return Err(ToolError(format!(
+                "--replace: {} has no entry for {model_id_hex} (add it without --replace)",
+                path.display()
+            )));
+        };
+        // A fresh seal keeps the provider; a different one is a paste error, not a reseal.
+        if !file.keys[i].provider.eq_ignore_ascii_case(provider) {
+            return Err(ToolError(format!(
+                "--replace keeps the provider: the entry's is {}, not {provider}",
+                file.keys[i].provider
+            )));
+        }
+        file.keys.remove(i);
     }
     file.keys.push(KeyringFileEntry {
         model_id: model_id_hex.to_string(),
