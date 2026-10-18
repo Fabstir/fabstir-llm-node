@@ -474,6 +474,18 @@ pub async fn handle_encrypted_ltx_generate(
             );
         }
     }
+    // SM1 (8.60.5): Slow Motion's speed — finite, [0.025, 1.0] (Lightricks' card tests 1.0 down to 0.025), and the job
+    // and the pinned graph must agree on whether there is one (`speed_handle_problem`): BEFORE a slot or the deposit.
+    if let Some(msg) = crate::ltx::patcher::speed_range_problem(job.speed) {
+        return reject("VALIDATION_FAILED", &msg);
+    }
+    if let Some(graph) = store.graph(&job.template_id) {
+        if let Some(msg) =
+            crate::ltx::patcher::speed_handle_problem(&graph, &job.template_id, job.speed)
+        {
+            return reject("VALIDATION_FAILED", &msg);
+        }
+    }
     // CrossView camera ranges: the trained yellow-zone envelope (Cseti's card;
     // the green zone is azimuth +/-45, elevation +30/-15 — we allow out to the
     // yellow edge and no further). Enforced BEFORE any slot or deposit is
@@ -1800,6 +1812,7 @@ mod tests {
             // v8.44.x added this field; this helper was not updated with it, so
             // `cargo test --lib` has not compiled since. Duration validation
             // does not read it, so None is the right value here.
+            speed: None,
             input_wire: None,
         }
     }

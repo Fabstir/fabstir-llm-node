@@ -941,6 +941,7 @@ fn test_sdr2hdr_colour_encoding_is_scene_linear() {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     };
     assert_eq!(colour_encoding_for(&job), "scene-linear-rec709");
@@ -970,6 +971,7 @@ fn test_alpha_colour_encoding_is_matte_linear() {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     };
     assert_eq!(colour_encoding_for(&job), "matte-linear");
@@ -1058,6 +1060,7 @@ fn job_frames_fps(frames: u32, fps: u32) -> fabstir_llm_node::ltx::types::LtxJob
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }

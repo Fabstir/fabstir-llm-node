@@ -168,6 +168,7 @@ fn colour_encoding_for_relight_templates() {
             azimuth: None,
             elevation: None,
             distance: None,
+            speed: None,
             input_wire: None,
         };
         assert_eq!(colour_encoding_for(&job), "vfx-passes-v1");

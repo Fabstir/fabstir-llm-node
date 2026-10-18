@@ -47,6 +47,7 @@ fn job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -516,6 +517,7 @@ fn iclora_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -653,6 +655,7 @@ fn bl4_job(id: &str) -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -1399,6 +1402,7 @@ fn sdr2hdr_job(output: OutputKind) -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -1655,4 +1659,76 @@ fn test_strength_without_a_reference_guide_still_patches_every_guide() {
         nodes_by_class(&patched, "LTXAddVideoICLoRAGuide")[0].pointer("/inputs/strength").unwrap().as_f64().unwrap(),
         0.4
     );
+}
+
+// ── 8.60.5 SM1: Slow Motion's speed and the Frames handle ───────────────────────
+
+fn slowmo_graph() -> Graph {
+    // a minimal Slow Motion shape: the Prompt, a RandomNoise seed, the Speed and Frames handles
+    Graph(serde_json::json!({
+        "1": {"class_type": "PrimitiveStringMultiline", "_meta": {"title": "Prompt"}, "inputs": {"value": ""}},
+        "2": {"class_type": "RandomNoise", "inputs": {"noise_seed": 0}},
+        "3": {"class_type": "PrimitiveFloat", "_meta": {"title": "Speed"}, "inputs": {"value": 0.2}},
+        "4": {"class_type": "PrimitiveInt", "_meta": {"title": "Frames"}, "inputs": {"value": 121}}
+    }))
+}
+
+#[test]
+fn test_speed_and_frames_are_patched() {
+    // mutation: skip the Speed patch -> the template default 0.2 stays -> red; skip Frames -> 121 stays -> red
+    let mut j = job();
+    j.speed = Some(0.1);
+    j.frames = 49;
+    let out = patch(&slowmo_graph(), &j, &[], &[]).unwrap();
+    assert_eq!(node_by_title(&out, "Speed")["inputs"]["value"], 0.1);
+    assert_eq!(node_by_title(&out, "Frames")["inputs"]["value"], 49);
+}
+
+#[test]
+fn test_speed_template_without_a_speed_is_an_error() {
+    // the backstop for an SDK that dropped the field (the handler refuses it pre-accept): never the default speed
+    let err = patch(&slowmo_graph(), &job(), &[], &[]).unwrap_err().to_string();
+    assert!(err.contains("needs a speed"), "{err}");
+}
+
+#[test]
+fn test_speed_on_a_template_without_the_handle_is_an_error() {
+    // mutation: make the Speed patch optional -> the speed is silently ignored and billed -> red
+    let mut j = job();
+    j.speed = Some(0.5);
+    assert!(patch(&fixture_graph(), &j, &[], &[]).is_err());
+}
+
+#[test]
+fn test_patch_refuses_an_out_of_range_speed() {
+    // review: the handler's range check is backstopped here (mutation: drop the backstop -> 5.0 written -> red)
+    for bad in [5.0, 0.0, f64::NAN] {
+        let mut j = job();
+        j.speed = Some(bad);
+        assert!(patch(&slowmo_graph(), &j, &[], &[]).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn test_frames_handle_absent_is_a_no_op() {
+    // every live template: no Frames title, unchanged
+    assert!(patch(&fixture_graph(), &job(), &[], &[]).is_ok());
+}
+
+#[test]
+fn test_speed_range_and_handle_checks() {
+    use fabstir_llm_node::ltx::patcher::{speed_handle_problem, speed_range_problem};
+    // range: [0.025, 1.0], finite (mutation: < instead of <= at either end -> red)
+    for ok in [0.025, 0.2, 1.0] {
+        assert!(speed_range_problem(Some(ok)).is_none(), "{ok}");
+    }
+    for bad in [0.0, 0.0249, 1.01, -0.5, f64::NAN, f64::INFINITY] {
+        assert!(speed_range_problem(Some(bad)).is_some(), "{bad}");
+    }
+    assert!(speed_range_problem(None).is_none());
+    // the job and the graph must agree on having a speed (mutation: drop either arm -> red)
+    assert!(speed_handle_problem(&slowmo_graph(), "ltx-slowmo-hdr", Some(0.2)).is_none());
+    assert!(speed_handle_problem(&slowmo_graph(), "ltx-slowmo-hdr", None).unwrap().contains("needs a speed"));
+    assert!(speed_handle_problem(&fixture_graph(), "ltx-iclora-hdr", Some(0.2)).unwrap().contains("only valid"));
+    assert!(speed_handle_problem(&fixture_graph(), "ltx-iclora-hdr", None).is_none());
 }
