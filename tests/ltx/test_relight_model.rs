@@ -32,6 +32,7 @@ fn entry(id: &str, sidecar: Option<&str>) -> TemplateEntry {
         fps: Some(vec![24, 25]),
         max_frames: Some(145),
         min_frames: None,
+        max_tokens: None,
         resolution_rule: Some("relight-fhd".to_string()),
         exact_control: Some(true),
         frame_grid: Some(true),

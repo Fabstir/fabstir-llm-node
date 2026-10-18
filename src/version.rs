@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.3-short-clips-2026-10-17";
+pub const VERSION: &str = "v8.60.4-uhd-refine-2026-10-18";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.3";
+pub const VERSION_NUMBER: &str = "8.60.4";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,18 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 60;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 3;
+pub const VERSION_PATCH: u32 = 4;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-17";
+pub const BUILD_DATE: &str = "2026-10-18";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.60.4 CL1: resolution rule `div64-uhd` (output up to 3840x2176 on the /64 grid: Refine Details at 4K, Lightricks'
+    // TiledFusion Upscale recipe) and a per-template `maxTokens` (published, checked with the other template rules) that
+    // holds a template's length at large sizes.
+    "div64-uhd-rule",
+    "template-max-tokens",
     // v8.60.3 SC1: a per-template `minFrames` in the allow-list (published in the bundle, checked with the other template
     // rules), so the global frames floor can drop for the LTX 2.5 restoration modes while every other mode keeps 121.
     "template-min-frames",
@@ -639,6 +644,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.60.4 - 4K Refine (Oct 18, 2026)
+    "FEATURE (LTX allow-list): resolution rule `div64-uhd` (sides /64, at most 3840x2176) and an entry `maxTokens` (a job over ceil(frames*w*h/1000) is refused like one over `maxFrames`; the published bundle advertises it). No change for entries without them",
     // v8.60.3 - short clips (Oct 17, 2026)
     "FEATURE (LTX allow-list): an entry may carry `minFrames`; a job under it is refused like one over `maxFrames`, and the published bundle advertises it. No change for entries without it",
     // v8.60.2 - reference strength (Oct 17, 2026)
@@ -1157,7 +1164,10 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 60);
-        assert_eq!(VERSION_PATCH, 3);
+        assert_eq!(VERSION_PATCH, 4);
+        // v8.60.4 4K Refine
+        assert!(FEATURES.contains(&"div64-uhd-rule"));
+        assert!(FEATURES.contains(&"template-max-tokens"));
         // v8.60.3 short clips
         assert!(FEATURES.contains(&"template-min-frames"));
         // v8.60.2 reference strength
@@ -1370,15 +1380,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.3"));
-        assert!(version.contains("2026-10-17"));
+        assert!(version.contains("8.60.4"));
+        assert!(version.contains("2026-10-18"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.3-short-clips-2026-10-17");
-        assert_eq!(VERSION_NUMBER, "8.60.3");
-        assert_eq!(BUILD_DATE, "2026-10-17");
+        assert_eq!(VERSION, "v8.60.4-uhd-refine-2026-10-18");
+        assert_eq!(VERSION_NUMBER, "8.60.4");
+        assert_eq!(BUILD_DATE, "2026-10-18");
     }
 
     #[test]
