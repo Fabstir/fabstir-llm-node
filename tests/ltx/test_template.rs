@@ -941,6 +941,7 @@ fn test_sdr2hdr_colour_encoding_is_scene_linear() {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     };
     assert_eq!(colour_encoding_for(&job), "scene-linear-rec709");
@@ -970,6 +971,7 @@ fn test_alpha_colour_encoding_is_matte_linear() {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     };
     assert_eq!(colour_encoding_for(&job), "matte-linear");
@@ -993,6 +995,7 @@ fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
         fps: None,
         max_frames: None,
         min_frames: None,
+        max_tokens: None,
         resolution_rule: None,
         exact_control: None,
         frame_grid: None,
@@ -1057,6 +1060,7 @@ fn job_frames_fps(frames: u32, fps: u32) -> fabstir_llm_node::ltx::types::LtxJob
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -1432,6 +1436,75 @@ fn test_refine_hd_rule() {
         let err = check_template_rules(&e, w, h, 24, 121).unwrap_err();
         assert!(err.contains("1536x1024"), "{w}x{h}: {err}");
     }
+}
+
+// ── 8.60.4 CL1: Refine Details at 4K (div64-uhd) and a per-template token cap ─────
+
+#[test]
+fn test_div64_uhd_rule() {
+    // the 4K output rule: /64 sides, long side <= 3840, w*h <= 3840x2176 (mutation: drop the arm -> "unknown rule" -> red;
+    // 2176 -> 2160 in the area cap -> 3840x2176 refused -> red; drop the %64 test -> 3840x2160 accepted -> red)
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let mut e = bare_entry("synthetic-uhd");
+    e.resolution_rule = Some("div64-uhd".to_string());
+    for (w, h) in [(3840, 2176), (2176, 3840), (2560, 1408), (1920, 1088), (1536, 1024)] {
+        assert!(check_template_rules(&e, w, h, 24, 49).is_ok(), "{w}x{h}");
+    }
+    // 4224x1920 / 1920x4224 pass the area cap and the /64 test: only the long-side limit refuses them
+    for (w, h) in [(3840, 2160), (4096, 2176), (3904, 2176), (1920, 1080), (2560, 1440), (4224, 1920), (1920, 4224)] {
+        let err = check_template_rules(&e, w, h, 24, 49).unwrap_err();
+        assert!(err.contains("3840x2176"), "{w}x{h}: {err}");
+    }
+}
+
+#[test]
+fn test_max_tokens_refuses_over_and_accepts_at() {
+    // tokens = ceil(frames*w*h/1000); 73 frames at 3840x2176 = 609,976.32 -> 609,977 (mutation: drop the check -> 121 at
+    // 4K accepted -> red; compare with >= -> exactly-at-cap refused -> red; floor instead of ceil -> 609,976 accepted -> red)
+    use fabstir_llm_node::ltx::template::check_template_rules;
+    let mut e = bare_entry("synthetic-cap");
+    e.max_tokens = Some(609_977);
+    assert!(check_template_rules(&e, 3840, 2176, 24, 73).is_ok());
+    let err = check_template_rules(&e, 3840, 2176, 24, 81).unwrap_err();
+    assert!(err.contains("609977") && err.contains("tokens"), "{err}");
+    // one token under the ceil: refused (pins the rounding)
+    let mut floor_cap = bare_entry("synthetic-ceil");
+    floor_cap.max_tokens = Some(609_976);
+    assert!(check_template_rules(&floor_cap, 3840, 2176, 24, 73).is_err());
+    // the same cap leaves a 121-frame full-HD job alone (252,765 tokens)
+    assert!(check_template_rules(&e, 1920, 1088, 24, 121).is_ok());
+    // absent: no token cap
+    assert!(check_template_rules(&bare_entry("synthetic-nocap"), 3840, 2176, 24, 121).is_ok());
+}
+
+#[test]
+fn test_bundle_advertises_max_tokens() {
+    // the published bundle carries maxTokens (the helper and add-on hold lengths to it) and omits it when absent
+    let dir = tempfile::tempdir().unwrap();
+    for id in ["capped-t", "plain-t"] {
+        std::fs::create_dir(dir.path().join(id)).unwrap();
+        std::fs::write(
+            dir.path().join(format!("{id}/v1.json")),
+            br#"{"1":{"class_type":"RandomNoise","inputs":{"noise_seed":0}}}"#,
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        dir.path().join("allowlist.json"),
+        br#"{"allowListVersion":1,"templates":[{"templateId":"capped-t","version":"v1","maxTokens":609976,"resolutionRule":"div64-uhd"},
+            {"templateId":"plain-t","version":"v1"}],
+            "loras":[],"bounds":{"frames":{"min":9,"max":751},"fps":[24,25],"resolutions":[{"w":768,"h":512}]}}"#,
+    )
+    .unwrap();
+    let store = TemplateStore::new(dir.path()).unwrap();
+    let wire = serde_json::to_value(store.bundle()).unwrap();
+    let t = wire["templates"].as_array().unwrap();
+    let capped = t.iter().find(|t| t["templateId"] == "capped-t").unwrap();
+    assert_eq!(capped["maxTokens"], 609976);
+    assert_eq!(capped["resolutionRule"], "div64-uhd");
+    let plain = t.iter().find(|t| t["templateId"] == "plain-t").unwrap();
+    assert!(plain.get("maxTokens").is_none());
+    assert_eq!(store.entry("capped-t").unwrap().max_tokens, Some(609976));
 }
 
 // ── 8.60.3 SC1: a per-template frame minimum ────────────────────────────────────

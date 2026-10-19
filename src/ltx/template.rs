@@ -97,7 +97,13 @@ pub struct TemplateEntry {
     /// floor for every template, this raises it per template (absent: the global floor only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_frames: Option<u32>,
-    /// A named resolution rule: `"div64-fhd"`, `"relight-fhd"`, `"refine-hd"`.
+    /// The largest job the template may run, in billed TOKENS (`ceil(frames * w * h / 1000)`, the same unit the
+    /// job is priced in), so one number bounds frames, size and (for Refine) the OUTPUT size together. Raised from
+    /// measurement without a code change. Absent = no per-template token cap. Omitted on the wire when absent.
+    /// (8.60.4 CL1: the same field and check as feat/batch-mode's, so its merge is keep-one.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+    /// A named resolution rule: `"div64-fhd"`, `"div64-uhd"`, `"relight-fhd"`, `"refine-hd"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_rule: Option<String>,
     /// D3: the graph caps the control clip at the billed frames, so where LTX
@@ -159,6 +165,8 @@ struct ConfigEntry {
     max_frames: Option<u32>,
     #[serde(default)]
     min_frames: Option<u32>,
+    #[serde(default)]
+    max_tokens: Option<u64>,
     #[serde(default)]
     resolution_rule: Option<String>,
     #[serde(default)]
@@ -225,6 +233,7 @@ impl TemplateStore {
                 fps: entry.fps.clone(),
                 max_frames: entry.max_frames,
                 min_frames: entry.min_frames,
+                max_tokens: entry.max_tokens,
                 resolution_rule: entry.resolution_rule.clone(),
                 exact_control: entry.exact_control,
                 frame_grid: entry.frame_grid,
@@ -330,6 +339,14 @@ pub fn check_template_rules(
             ));
         }
     }
+    if let Some(cap) = entry.max_tokens {
+        let tokens = (u64::from(frames) * u64::from(w) * u64::from(h)).div_ceil(1000);
+        if tokens > cap {
+            return Err(format!(
+                "{tokens} tokens ({frames} frames at {w}x{h}) is over the {cap}-token maximum for {id}"
+            ));
+        }
+    }
     match entry.resolution_rule.as_deref() {
         None => {}
         Some("div64-fhd") => {
@@ -340,6 +357,19 @@ pub fn check_template_rules(
             if !fits {
                 return Err(format!(
                     "resolution {w}x{h} is not allowed for {id} (sides divisible by 64, at most 1920x1088)"
+                ));
+            }
+        }
+        // 8.60.4 (CL1): Refine Details at 4K — Lightricks' TiledFusion Upscale recipe to a 3840x2176 canvas (2x of
+        // 1920x1088), on the /64 grid, either orientation. Its length at that size is held by the entry's maxTokens.
+        Some("div64-uhd") => {
+            let fits = w % 64 == 0
+                && h % 64 == 0
+                && u64::from(w) * u64::from(h) <= 3840 * 2176
+                && w.max(h) <= 3840;
+            if !fits {
+                return Err(format!(
+                    "resolution {w}x{h} is not allowed for {id} (sides divisible by 64, at most 3840x2176)"
                 ));
             }
         }

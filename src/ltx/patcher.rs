@@ -119,6 +119,22 @@ pub fn patch(
         }
     }
 
+    // SM1 (8.60.5): Slow Motion's speed onto the template's `Speed` handle (required when a speed is sent — the handler
+    // has already refused the mismatches pre-accept, `speed_handle_problem`, so this is the backstop), and the job's exact
+    // frame count onto an optional `Frames` handle (an image-to-video template sized in frames on LTX's 8k+1 grid).
+    if let Some(msg) = speed_range_problem(job.speed) {
+        return Err(anyhow!(msg)); // backstop: the handler refuses it pre-accept; never write NaN / 5.0 into a graph
+    }
+    if let Some(sp) = job.speed {
+        patch_by_title(obj, SPEED_TITLE, "value", Value::from(sp), true)?;
+    } else if has_title(obj, SPEED_TITLE) {
+        return Err(anyhow!(
+            "template {} needs a speed (its Speed handle has no job value)",
+            job.template_id
+        ));
+    }
+    patch_by_title(obj, "Frames", "value", Value::from(job.frames), false)?;
+
     // CrossView camera (CV1): azimuth/elevation/distance patched by CLASS onto
     // the template's CrossViewWarp node. Same fail-closed contract as strength:
     // a camera sent to a template with no such node must reject, not bill with
@@ -503,6 +519,37 @@ fn prompt_input_key(graph: &Map<String, Value>, node_id: &str) -> Result<&'stati
 /// `required`, error (fail closed); if none match and optional, no-op.
 /// 8.60.2: the title of a template's reference-image guide (`ltx-restore25-ref-hdr` node 55); the job strength is its weight.
 const REFERENCE_GUIDE_TITLE: &str = "Reference guide (frame -1)";
+
+/// SM1 (8.60.5): the title of Slow Motion's speed handle (a PrimitiveFloat feeding `fps / speed` into the conditioning).
+pub const SPEED_TITLE: &str = "Speed";
+
+/// SM1: the speed range Lightricks' card tests (1.0 = real time down to 0.025 = 40x slower).
+pub const SPEED_MIN: f64 = 0.025;
+pub const SPEED_MAX: f64 = 1.0;
+
+/// SM1: None, or why a job's speed is out of range (finite, [0.025, 1.0]); an absent speed is not this check's business.
+pub fn speed_range_problem(speed: Option<f64>) -> Option<String> {
+    match speed {
+        Some(sp) if !sp.is_finite() || !(SPEED_MIN..=SPEED_MAX).contains(&sp) => {
+            Some(format!("speed {sp} is out of range (must be {SPEED_MIN}..={SPEED_MAX})"))
+        }
+        _ => None,
+    }
+}
+
+/// SM1: None, or why `speed` and the pinned graph disagree — a speed for a template with no `Speed` handle, or a
+/// template with one and no speed. The handler calls it pre-accept, so neither case reaches a slot or the deposit.
+pub fn speed_handle_problem(graph: &Graph, template_id: &str, speed: Option<f64>) -> Option<String> {
+    let has = graph
+        .0
+        .as_object()
+        .is_some_and(|obj| has_title(obj, SPEED_TITLE));
+    match (has, speed) {
+        (true, None) => Some(format!("{template_id} needs a speed (0.025 to 1.0)")),
+        (false, Some(_)) => Some(format!("speed is only valid for a template with a speed control, not {template_id}")),
+        _ => None,
+    }
+}
 
 fn has_title(graph: &Map<String, Value>, title: &str) -> bool {
     graph.values().any(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))

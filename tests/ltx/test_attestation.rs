@@ -49,6 +49,7 @@ fn sample_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -380,6 +381,7 @@ fn sample_i2v_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -404,6 +406,7 @@ fn sample_flf2v_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
@@ -581,6 +584,7 @@ fn sample_iclora_job() -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }

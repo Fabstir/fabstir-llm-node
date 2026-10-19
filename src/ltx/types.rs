@@ -101,6 +101,12 @@ pub struct LtxJob {
     pub elevation: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distance: Option<f64>,
+    /// SM1 (v8.60.5): Slow Motion's motion speed, [0.025, 1.0] — the model is conditioned on `fps / speed` while the
+    /// file plays at `fps`. `None` = absent on the wire. Advisory like `strength` (not in the commitment); patched onto
+    /// the template's `Speed` handle. A speed sent to a template WITHOUT that handle, or a template WITH it and no speed
+    /// (an SDK that drops the field), is REJECTED pre-accept — never billed at a default speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f64>,
     /// Deep-conform wire marker (v8.44.0): `videos[0]` is an EXR tar, not an
     /// mp4, and the patcher swaps the video loader for the float sequence
     /// reader. `None` = every deployed client's behaviour, byte-identical.

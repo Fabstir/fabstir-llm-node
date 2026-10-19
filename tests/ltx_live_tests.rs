@@ -261,6 +261,7 @@ fn prepare(
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: run.deep_frames.as_ref().map(|_| InputWire::ExrseqLinear),
     };
     let patched =

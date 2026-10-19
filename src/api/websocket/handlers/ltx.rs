@@ -304,6 +304,41 @@ pub fn build_ltx_error(
     )
 }
 
+/// 8.60.6: the template of the last LTX job this node sent to ComfyUI (one LTX generation at a time).
+static LAST_LTX_TEMPLATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// 8.60.6: whether ComfyUI must be emptied before `next` — the first job after start, or a different template. Pure.
+pub fn needs_ltx_free(last: Option<&str>, next: &str) -> bool {
+    last != Some(next)
+}
+
+/// 8.60.6: empty the LTX ComfyUI (`/free`, unload models + free memory) when the template changes, then remember it. A
+/// failed or slow `/free` is logged and the job proceeds (at worst as before this release); `LTX_FREE_ON_TEMPLATE_CHANGE=0`
+/// turns it off.
+async fn free_ltx_on_template_change(client: &crate::ltx::ComfyClient, template_id: &str) {
+    if std::env::var("LTX_FREE_ON_TEMPLATE_CHANGE").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let last = LAST_LTX_TEMPLATE
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or(None);
+    if needs_ltx_free(last.as_deref(), template_id) {
+        let body = serde_json::json!({"unload_models": true, "free_memory": true});
+        match tokio::time::timeout(std::time::Duration::from_secs(60), client.free(Some(body))).await {
+            Ok(Ok(())) => tracing::info!(
+                "🧹 LTX ComfyUI emptied before {template_id} (last template: {})",
+                last.as_deref().unwrap_or("none")
+            ),
+            Ok(Err(e)) => tracing::warn!("LTX ComfyUI /free before {template_id} failed: {e:?} — proceeding"),
+            Err(_) => tracing::warn!("LTX ComfyUI /free before {template_id} timed out — proceeding"),
+        }
+    }
+    if let Ok(mut g) = LAST_LTX_TEMPLATE.lock() {
+        *g = Some(template_id.to_string());
+    }
+}
+
 /// Validate job params against the advertised allow-list bounds.
 fn validate_bounds(job: &LtxJob, b: &Bounds) -> bool {
     job.frames >= b.frames.min
@@ -472,6 +507,18 @@ pub async fn handle_encrypted_ltx_generate(
                 "VALIDATION_FAILED",
                 &format!("strength {s} is out of range (must be 0 < strength <= 1)"),
             );
+        }
+    }
+    // SM1 (8.60.5): Slow Motion's speed — finite, [0.025, 1.0] (Lightricks' card tests 1.0 down to 0.025), and the job
+    // and the pinned graph must agree on whether there is one (`speed_handle_problem`): BEFORE a slot or the deposit.
+    if let Some(msg) = crate::ltx::patcher::speed_range_problem(job.speed) {
+        return reject("VALIDATION_FAILED", &msg);
+    }
+    if let Some(graph) = store.graph(&job.template_id) {
+        if let Some(msg) =
+            crate::ltx::patcher::speed_handle_problem(&graph, &job.template_id, job.speed)
+        {
+            return reject("VALIDATION_FAILED", &msg);
         }
     }
     // CrossView camera ranges: the trained yellow-zone envelope (Cseti's card;
@@ -1174,6 +1221,12 @@ impl LtxGenerateTask {
                         return;
                     }
                 }
+                // 8.60.6: ComfyUI (`--highvram`) keeps the last job's models resident. A job of ANOTHER template finds them
+                // in the way (2026-10-18: a 4K Refine after Slow Motion ran out of GPU memory at load), so the LTX sidecar
+                // is emptied first when the template changes; same-template jobs (Batch parts) keep their warm models.
+                if !is_relight {
+                    free_ltx_on_template_change(&client, &job.template_id).await;
+                }
                 // D3: whether this job's control clip must carry every billed
                 // frame, from the template's advertised `exactControl`. No store
                 // (`ApiServer::new_for_test()`) → false: never a refusal.
@@ -1777,6 +1830,17 @@ impl LtxGenerateTask {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_ltx_free_only_when_the_template_changes() {
+        // 8.60.6 (mutation: always false -> the 4K-after-Slow-Motion OOM returns -> red; always true -> every Batch part
+        // reloads its models -> red)
+        use super::needs_ltx_free;
+        assert!(needs_ltx_free(None, "ltx-refine-hdr"));
+        assert!(needs_ltx_free(Some("ltx-slowmo-hdr"), "ltx-refine-hdr"));
+        assert!(!needs_ltx_free(Some("ltx-refine-hdr"), "ltx-refine-hdr"));
+    }
+
+
     use super::validate_duration;
     use crate::ltx::types::{LtxJob, OutputKind, Resolution};
 
@@ -1800,6 +1864,7 @@ mod tests {
             // v8.44.x added this field; this helper was not updated with it, so
             // `cargo test --lib` has not compiled since. Duration validation
             // does not read it, so None is the right value here.
+            speed: None,
             input_wire: None,
         }
     }

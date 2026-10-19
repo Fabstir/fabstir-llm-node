@@ -27,6 +27,7 @@ fn relight_job(template_id: &str, frames: u32) -> LtxJob {
         azimuth: None,
         elevation: None,
         distance: None,
+        speed: None,
         input_wire: None,
     }
 }
