@@ -69,6 +69,9 @@ fn test_exact_control_refuses_short_clip() {
     assert!(check_control_video_exact(&clip(120), 121, false).is_ok());
     // Exact and long enough → accepted; longer clips are cropped by the graph.
     assert!(check_control_video_exact(&clip(121), 121, true).is_ok());
+    // K4 (8.60.7): the gate returns the clip's sample count (a chained part's "Previous part" loader is set from it).
+    // mutation: return the billed count instead → a chain reads the wrong frames → red
+    assert_eq!(check_control_video_exact(&clip(300), 121, true), Ok(300));
     assert!(check_control_video_exact(&clip(300), 121, true).is_ok());
     // The two-argument form keeps its behaviour (delegates with exact = false).
     assert!(check_control_video(&clip(120), 121).is_ok());

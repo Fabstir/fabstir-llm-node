@@ -8,6 +8,7 @@ mod test_engine;
 mod test_exact_control;
 mod test_exr;
 mod test_input_image;
+mod test_k4_chain;
 mod test_mp4;
 mod test_patcher;
 mod test_relight_finalise;

@@ -43,6 +43,52 @@ pub fn patch(
     image_names: &[String],
     video_names: &[String],
 ) -> Result<Graph> {
+    patch_with(
+        graph,
+        job,
+        image_names,
+        video_names,
+        &PatchOptions::default(),
+    )
+}
+
+/// K4 (8.60.7): the title of a chained part's second video loader, which reads the PREVIOUS part's delivered output.
+pub const PREVIOUS_PART_TITLE: &str = "Previous part";
+
+/// K4: the frames a chained part keeps from the previous part — its LAST 17 (3 causal latent frames; the add-on's
+/// `CHUNK_OVERLAP`).
+pub const CHAIN_OVERLAP: u64 = 17;
+
+/// K4 (8.60.7): per-call switches for [`patch_with`]. [`patch`] is `patch_with` with the defaults (a `Prompt` handle
+/// required, no previous part), so every caller from before K4 behaves exactly as it did.
+#[derive(Debug, Clone, Copy)]
+pub struct PatchOptions {
+    /// False for a template whose prompt is fixed and stored pre-encoded (`fixedPrompt`): the `Prompt` handle is then
+    /// optional (patched only if present).
+    pub prompt_required: bool,
+    /// The previous part's video sample count. Post-accept only: the bytes exist only once the inputs are staged.
+    pub previous_part_samples: Option<u64>,
+}
+
+impl Default for PatchOptions {
+    fn default() -> Self {
+        Self {
+            prompt_required: true,
+            previous_part_samples: None,
+        }
+    }
+}
+
+/// [`patch`] with [`PatchOptions`]. A chained template's "Previous part" loader (a `VHS_LoadVideo`, at most one) is set,
+/// post-accept, to read only the previous part's last [`CHAIN_OVERLAP`] frames (`skip_first_frames = samples − 17`,
+/// `frame_load_cap = 17`), so the whole previous part is never decoded (about 6 GB of host RAM at 4K).
+pub fn patch_with(
+    graph: &Graph,
+    job: &LtxJob,
+    image_names: &[String],
+    video_names: &[String],
+    opts: &PatchOptions,
+) -> Result<Graph> {
     let mut value = graph.0.clone();
     let obj = value
         .as_object_mut()
@@ -62,8 +108,13 @@ pub fn patch(
     }
     let seed = seed.as_u64();
 
-    // Required.
-    patch_prompt(obj, &job.prompt)?;
+    // Required — unless the template's prompt is fixed and stored pre-encoded (K4), when a `Prompt` handle is patched
+    // only if the graph still has one.
+    if opts.prompt_required || has_title(obj, "Prompt") {
+        patch_prompt(obj, &job.prompt)?;
+    }
+    // K4: at most one "Previous part" loader, and it must be a `VHS_LoadVideo` (its skip/cap inputs are VHS's).
+    let previous = previous_part_ids(obj)?;
     // Seed: stamp every RandomNoise (`noise_seed`) AND every plain KSampler
     // (`seed`) — the same job seed everywhere is the determinism semantics.
     // Exact class_type equality means KSamplerSelect / SamplerCustomAdvanced are
@@ -71,7 +122,13 @@ pub fn patch(
     // Refine Details and Restore 2.5 have no RandomNoise: their tiled-fusion sampler carries the seed itself.
     let seed_nodes = patch_by_class(obj, "RandomNoise", "noise_seed", Value::from(seed), false)?
         + patch_by_class(obj, "KSampler", "seed", Value::from(seed), false)?
-        + patch_by_class(obj, "LTXVTiledFusionSampler", "seed", Value::from(seed), false)?;
+        + patch_by_class(
+            obj,
+            "LTXVTiledFusionSampler",
+            "seed",
+            Value::from(seed),
+            false,
+        )?;
     if seed_nodes == 0 {
         return Err(anyhow!(
             "template is missing the required seed handle (RandomNoise or KSampler)"
@@ -206,6 +263,28 @@ pub fn patch(
         Value::from(job.frames),
         false,
     )?;
+    // K4: a chained part's "Previous part" loader then reads only the previous part's last frames (overriding the cap
+    // above). Post-accept only: the pre-accept dry run has no staged names and no sample count.
+    if let Some(prev) = previous.first() {
+        if !video_names.is_empty() {
+            let samples = opts
+                .previous_part_samples
+                .ok_or_else(|| anyhow!("the previous part's frame count is unknown"))?;
+            if samples < CHAIN_OVERLAP + 1 {
+                return Err(anyhow!(
+                    "the previous part has {samples} frame(s); a chained part needs at least {}",
+                    CHAIN_OVERLAP + 1
+                ));
+            }
+            set_input(
+                obj,
+                prev,
+                "skip_first_frames",
+                Value::from(samples - CHAIN_OVERLAP),
+            )?;
+            set_input(obj, prev, "frame_load_cap", Value::from(CHAIN_OVERLAP))?;
+        }
+    }
 
     // Deep-conform loader swap (v8.44.0, EXECUTION-DEEP-CONFORM.md): a job
     // carrying `inputWire` had its videos[0] staged as an EXR SEQUENCE
@@ -429,6 +508,94 @@ fn swap_deep_loader(
     Ok(())
 }
 
+/// K4: the ids of the nodes titled [`PREVIOUS_PART_TITLE`] — none, or exactly one `VHS_LoadVideo` (fail closed otherwise).
+fn previous_part_ids(obj: &Map<String, Value>) -> Result<Vec<String>> {
+    let ids: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| {
+            n.pointer("/_meta/title").and_then(Value::as_str) == Some(PREVIOUS_PART_TITLE)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    if ids.len() > 1 {
+        return Err(anyhow!(
+            "template has {} \"{PREVIOUS_PART_TITLE}\" loaders; a chained template has exactly one",
+            ids.len()
+        ));
+    }
+    if let Some(id) = ids.first() {
+        if obj[id].get("class_type").and_then(Value::as_str) != Some("VHS_LoadVideo") {
+            return Err(anyhow!(
+                "the \"{PREVIOUS_PART_TITLE}\" node {id} is not a VHS_LoadVideo"
+            ));
+        }
+    }
+    Ok(ids)
+}
+
+/// K4: the `videoSemantics` name of a chained part's previous-part input.
+pub const PREVIOUS_PART_SEMANTIC: &str = "previousPart";
+
+/// K4 (8.60.7): the entry and the graph must agree on the previous part — the slot the entry's `videoSemantics` names
+/// `previousPart` is the slot the graph's "Previous part" loader binds, or neither has one. Otherwise a chain template
+/// whose loader lost its title would decode the whole previous part and keep its FIRST frames, and still bill (fails
+/// open); refused before accept instead. Pure.
+pub fn check_previous_part(
+    video_semantics: &[String],
+    graph: &Graph,
+) -> std::result::Result<(), String> {
+    let declared = video_semantics
+        .iter()
+        .position(|s| s == PREVIOUS_PART_SEMANTIC);
+    let found = previous_part_index(graph);
+    if declared != found {
+        return Err(format!(
+            "the template's \"{PREVIOUS_PART_TITLE}\" loader binds video {found:?} but its entry declares \
+             {PREVIOUS_PART_SEMANTIC} at {declared:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// K4 (8.60.7): which `videos[i]` binds the "Previous part" loader — its rank in the id-sorted video-loader union, the
+/// order [`bind_inputs`] assigns — or `None` for a template without one. The handler reads that video's sample count.
+pub fn previous_part_index(graph: &Graph) -> Option<usize> {
+    let obj = graph.0.as_object()?;
+    let mut loaders: Vec<&String> = obj
+        .iter()
+        .filter(|(_, n)| {
+            let class = n.get("class_type").and_then(Value::as_str);
+            VIDEO_LOADER_CLASSES.iter().any(|(c, _)| Some(*c) == class)
+        })
+        .map(|(id, _)| id)
+        .collect();
+    loaders.sort();
+    loaders.iter().position(|id| {
+        obj[*id].pointer("/_meta/title").and_then(Value::as_str) == Some(PREVIOUS_PART_TITLE)
+    })
+}
+
+/// K4 (8.60.7): the stored prompt-encoding files a template loads (`LTXVLoadConditioning.file_name`), sorted and
+/// de-duplicated; empty for a template that encodes its prompt. The handler checks they exist before accept.
+pub fn stored_conditioning_files(graph: &Graph) -> Vec<String> {
+    let mut files: Vec<String> = graph
+        .0
+        .as_object()
+        .map(|obj| {
+            obj.values()
+                .filter(|n| {
+                    n.get("class_type").and_then(Value::as_str) == Some("LTXVLoadConditioning")
+                })
+                .filter_map(|n| n.pointer("/inputs/file_name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files.dedup();
+    files
+}
+
 /// The video-loader classes and each one's filename input key. Control clips
 /// bind across the UNION of these in node-id order, so a job's `videos[i]`
 /// lands deterministically whichever loader class the pinned graph uses
@@ -530,29 +697,37 @@ pub const SPEED_MAX: f64 = 1.0;
 /// SM1: None, or why a job's speed is out of range (finite, [0.025, 1.0]); an absent speed is not this check's business.
 pub fn speed_range_problem(speed: Option<f64>) -> Option<String> {
     match speed {
-        Some(sp) if !sp.is_finite() || !(SPEED_MIN..=SPEED_MAX).contains(&sp) => {
-            Some(format!("speed {sp} is out of range (must be {SPEED_MIN}..={SPEED_MAX})"))
-        }
+        Some(sp) if !sp.is_finite() || !(SPEED_MIN..=SPEED_MAX).contains(&sp) => Some(format!(
+            "speed {sp} is out of range (must be {SPEED_MIN}..={SPEED_MAX})"
+        )),
         _ => None,
     }
 }
 
 /// SM1: None, or why `speed` and the pinned graph disagree — a speed for a template with no `Speed` handle, or a
 /// template with one and no speed. The handler calls it pre-accept, so neither case reaches a slot or the deposit.
-pub fn speed_handle_problem(graph: &Graph, template_id: &str, speed: Option<f64>) -> Option<String> {
+pub fn speed_handle_problem(
+    graph: &Graph,
+    template_id: &str,
+    speed: Option<f64>,
+) -> Option<String> {
     let has = graph
         .0
         .as_object()
         .is_some_and(|obj| has_title(obj, SPEED_TITLE));
     match (has, speed) {
         (true, None) => Some(format!("{template_id} needs a speed (0.025 to 1.0)")),
-        (false, Some(_)) => Some(format!("speed is only valid for a template with a speed control, not {template_id}")),
+        (false, Some(_)) => Some(format!(
+            "speed is only valid for a template with a speed control, not {template_id}"
+        )),
         _ => None,
     }
 }
 
 fn has_title(graph: &Map<String, Value>, title: &str) -> bool {
-    graph.values().any(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
+    graph
+        .values()
+        .any(|n| n.pointer("/_meta/title").and_then(Value::as_str) == Some(title))
 }
 
 fn patch_by_title(

@@ -320,6 +320,30 @@ impl ComfyClient {
             .map_err(|e| StatsError::Bad(e.to_string()))
     }
 
+    /// K4 (8.60.7): the stored prompt-encoding files ComfyUI can load — `LTXVLoadConditioning`'s `file_name` options from
+    /// GET `/object_info/LTXVLoadConditioning`, which ComfyUI recomputes on every call (a file added to the embeddings
+    /// folder is listed at once, no restart: K4.0d). The handler refuses a job whose template names a missing file. It runs
+    /// before accept, so it gets a short timeout of its own: a stalled ComfyUI refuses the job quickly instead of holding it.
+    pub async fn conditioning_files(&self) -> Result<Vec<String>> {
+        let body: Value = self
+            .client
+            .get(format!(
+                "{}/object_info/LTXVLoadConditioning",
+                self.endpoint
+            ))
+            .timeout(CONDITIONING_LIST_TIMEOUT)
+            .send()
+            .await
+            .context("GET /object_info/LTXVLoadConditioning")?
+            .error_for_status()
+            .context("GET /object_info/LTXVLoadConditioning")?
+            .json()
+            .await
+            .context("parsing /object_info/LTXVLoadConditioning")?;
+        parse_conditioning_files(&body)
+            .ok_or_else(|| anyhow!("/object_info has no LTXVLoadConditioning file_name list"))
+    }
+
     /// VFX Passes D8 (handshake): GET `/queue`; `true` iff nothing is running or pending.
     pub async fn queue_idle(&self) -> std::result::Result<bool, StatsError> {
         let resp = match self
@@ -413,6 +437,28 @@ pub struct SystemStats {
     #[serde(default)]
     pub relight: Option<RelightStats>,
 }
+
+/// K4 (8.60.7): `LTXVLoadConditioning.file_name`'s options in an `/object_info` body, in either COMBO shape ComfyUI
+/// emits: `["COMBO", {"options": [..]}]` (v3 schema, host1's) or a bare `[[..], {..}]` (older nodes). `None` if absent.
+pub fn parse_conditioning_files(body: &Value) -> Option<Vec<String>> {
+    let spec = body
+        .pointer("/LTXVLoadConditioning/input/required/file_name")?
+        .as_array()?;
+    let list = match spec.first()? {
+        Value::Array(options) => options,
+        Value::String(_) => spec.get(1)?.get("options")?.as_array()?,
+        _ => return None,
+    };
+    Some(
+        list.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// K4: the pre-accept stored-file listing's own timeout (the client's default is for uploads and downloads).
+pub const CONDITIONING_LIST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Parse one `/ws` frame into a `Progress` event (pure; unit-tested).
 pub fn parse_progress(frame: &Value) -> Option<Progress> {

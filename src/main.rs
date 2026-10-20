@@ -972,8 +972,42 @@ async fn node_main() -> Result<()> {
         let template_dir = env::var("TEMPLATE_DIR").unwrap_or_else(|_| "./templates".to_string());
         match fabstir_llm_node::ltx::TemplateStore::new(&template_dir) {
             Ok(store) => {
+                // K4 (8.60.7): the stored prompt encodings the templates load, reported once ComfyUI answers (every job
+                // is checked again before accept, and a missing file refuses it with STORED_ENCODING_MISSING).
+                let mut stored: Vec<String> = store
+                    .bundle()
+                    .templates
+                    .iter()
+                    .filter_map(|t| store.graph(&t.template_id))
+                    .flat_map(|g| fabstir_llm_node::ltx::patcher::stored_conditioning_files(&g))
+                    .collect();
+                stored.sort();
+                stored.dedup();
                 api_server.set_ltx_template_store(Arc::new(store)).await;
                 println!("🎬 Template store loaded: templates={}", template_dir);
+                if let (false, Some(client)) =
+                    (stored.is_empty(), api_server.get_ltx_client().await)
+                {
+                    tokio::spawn(async move {
+                        match client.conditioning_files().await {
+                            Ok(have) => {
+                                let missing: Vec<&String> =
+                                    stored.iter().filter(|f| !have.contains(f)).collect();
+                                if missing.is_empty() {
+                                    println!("🎬 Stored prompt encodings present: {}", stored.len());
+                                } else {
+                                    println!(
+                                        "⚠️  Stored prompt encodings MISSING: {:?} — jobs on those templates will be refused",
+                                        missing
+                                    );
+                                }
+                            }
+                            Err(e) => println!(
+                                "⚠️  Stored prompt encodings not checked yet ({e}); each job checks before accept"
+                            ),
+                        }
+                    });
+                }
             }
             Err(e) => {
                 println!(

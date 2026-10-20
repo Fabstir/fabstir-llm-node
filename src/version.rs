@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.6-ltx-free-on-switch-2026-10-18";
+pub const VERSION: &str = "v8.60.7-ltx-stored-prompt-chain-2026-10-20";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.6";
+pub const VERSION_NUMBER: &str = "8.60.7";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,19 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 60;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 6;
+pub const VERSION_PATCH: u32 = 7;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-18";
+pub const BUILD_DATE: &str = "2026-10-20";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.60.7 K4: a template may carry a FIXED prompt stored pre-encoded (`fixedPrompt` in the allow-list; the job must send
+    // exactly that text, no `Prompt` handle needed; the stored files are checked in ComfyUI before accept), and a chained
+    // part's "Previous part" loader reads only the previous part's last 17 frames.
+    "ltx-fixed-prompt",
+    "ltx-stored-encoding-check",
+    "ltx-chained-parts",
     // v8.60.6: the LTX ComfyUI is emptied (/free) before a job whose template differs from the last one, so a resident
     // model of another mode can no longer run the next job out of GPU memory (a 4K Refine after Slow Motion, 2026-10-18).
     "ltx-free-on-template-change",
@@ -652,6 +658,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.60.7 - K4: stored prompt encodings and chained parts (Oct 20, 2026)
+    "FEATURE (LTX allow-list): an entry may carry `fixedPrompt`; a job on it whose prompt differs is refused pre-accept (VALIDATION_FAILED), and its template needs no `Prompt` handle (it loads its prompt pre-encoded with LTXVLoadConditioning). Every stored file a template loads must be listed by ComfyUI's /object_info before accept, else CAPACITY with `STORED_ENCODING_MISSING:` (or `STORED_ENCODING_UNVERIFIED:` when ComfyUI cannot be asked). FEATURE (LTX patcher): a template's VHS_LoadVideo titled \"Previous part\" (at most one) is set post-accept to read only its video's last 17 frames; a previous part under 18 frames fails post-accept. No change for entries and templates without them",
     // v8.60.6 - LTX memory between modes (Oct 18, 2026)
     "BEHAVIOUR (LTX handler): the LTX ComfyUI is sent /free (unload models, free memory) before a job of a different template than the previous one; same-template jobs keep their resident models. LTX_FREE_ON_TEMPLATE_CHANGE=0 turns it off",
     // v8.60.5 - Slow Motion (Oct 18, 2026)
@@ -1176,7 +1184,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 60);
-        assert_eq!(VERSION_PATCH, 6);
+        assert_eq!(VERSION_PATCH, 7);
+        // v8.60.7 K4
+        assert!(FEATURES.contains(&"ltx-fixed-prompt"));
+        assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
+        assert!(FEATURES.contains(&"ltx-chained-parts"));
         // v8.60.6
         assert!(FEATURES.contains(&"ltx-free-on-template-change"));
         // v8.60.5 Slow Motion
@@ -1397,15 +1409,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.6"));
-        assert!(version.contains("2026-10-18"));
+        assert!(version.contains("8.60.7"));
+        assert!(version.contains("2026-10-20"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.6-ltx-free-on-switch-2026-10-18");
-        assert_eq!(VERSION_NUMBER, "8.60.6");
-        assert_eq!(BUILD_DATE, "2026-10-18");
+        assert_eq!(VERSION, "v8.60.7-ltx-stored-prompt-chain-2026-10-20");
+        assert_eq!(VERSION_NUMBER, "8.60.7");
+        assert_eq!(BUILD_DATE, "2026-10-20");
     }
 
     #[test]

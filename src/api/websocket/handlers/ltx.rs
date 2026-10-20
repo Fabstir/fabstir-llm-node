@@ -319,19 +319,22 @@ async fn free_ltx_on_template_change(client: &crate::ltx::ComfyClient, template_
     if std::env::var("LTX_FREE_ON_TEMPLATE_CHANGE").is_ok_and(|v| v == "0") {
         return;
     }
-    let last = LAST_LTX_TEMPLATE
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or(None);
+    let last = LAST_LTX_TEMPLATE.lock().map(|g| g.clone()).unwrap_or(None);
     if needs_ltx_free(last.as_deref(), template_id) {
         let body = serde_json::json!({"unload_models": true, "free_memory": true});
-        match tokio::time::timeout(std::time::Duration::from_secs(60), client.free(Some(body))).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(60), client.free(Some(body)))
+            .await
+        {
             Ok(Ok(())) => tracing::info!(
                 "🧹 LTX ComfyUI emptied before {template_id} (last template: {})",
                 last.as_deref().unwrap_or("none")
             ),
-            Ok(Err(e)) => tracing::warn!("LTX ComfyUI /free before {template_id} failed: {e:?} — proceeding"),
-            Err(_) => tracing::warn!("LTX ComfyUI /free before {template_id} timed out — proceeding"),
+            Ok(Err(e)) => {
+                tracing::warn!("LTX ComfyUI /free before {template_id} failed: {e:?} — proceeding")
+            }
+            Err(_) => {
+                tracing::warn!("LTX ComfyUI /free before {template_id} timed out — proceeding")
+            }
         }
     }
     if let Ok(mut g) = LAST_LTX_TEMPLATE.lock() {
@@ -475,6 +478,20 @@ pub async fn handle_encrypted_ltx_generate(
             return reject("VALIDATION_FAILED", &msg);
         }
     }
+    // K4 (8.60.7): a fixed-prompt template takes exactly its own prompt — its stored encoding is of that text, and the
+    // input commitment carries `job.prompt`.
+    if let Err(msg) = crate::ltx::template::check_fixed_prompt(entry, &job.prompt) {
+        return reject("VALIDATION_FAILED", &msg);
+    }
+    // K4 (8.60.7): a chain template's "Previous part" loader must be the input its entry declares `previousPart`.
+    if let Err(msg) = patcher::check_previous_part(
+        entry
+            .map(|e| e.video_semantics.as_slice())
+            .unwrap_or_default(),
+        &graph,
+    ) {
+        return reject("VALIDATION_FAILED", &msg);
+    }
     // VFX Passes D5 + D3: relight jobs deliver exr-frames only and carry no prompt (both committed on chain), and each
     // family needs its own sidecar — refused here, before any permit, proof-pending mark or deposit is spent.
     let relight = crate::ltx::relight::is_relight(entry);
@@ -583,10 +600,35 @@ pub async fn handle_encrypted_ltx_generate(
     // inputs (LoadImage/LoadVideo) are patched post-accept in the spawn, once the
     // inputs are fetched from S5 and uploaded to ComfyUI (they need the stored
     // filenames).
-    let patched_graph = match patcher::patch(&graph, &job, &[], &[]) {
+    let patch_opts = patcher::PatchOptions {
+        prompt_required: entry.and_then(|e| e.fixed_prompt.as_ref()).is_none(),
+        previous_part_samples: None,
+    };
+    let patched_graph = match patcher::patch_with(&graph, &job, &[], &[], &patch_opts) {
         Ok(g) => g,
         Err(e) => return reject("VALIDATION_FAILED", &format!("patch failed: {e}")),
     };
+
+    // K4 (8.60.7): every stored prompt encoding the template loads must be on this host BEFORE accept — a missing file
+    // would only fail when ComfyUI queues the graph, after the deposit was locked. Unverifiable counts as missing.
+    let stored = patcher::stored_conditioning_files(&graph);
+    if !stored.is_empty() {
+        let have = match server.get_ltx_client().await {
+            Some(c) => c.conditioning_files().await.map_err(|e| e.to_string()),
+            None => Err("LTX sidecar not configured".to_string()),
+        };
+        match have {
+            Ok(have) => {
+                if let Some(missing) = stored.iter().find(|f| !have.contains(f)) {
+                    return reject(
+                        "CAPACITY",
+                        &format!("STORED_ENCODING_MISSING: {missing} is not on this host"),
+                    );
+                }
+            }
+            Err(e) => return reject("CAPACITY", &format!("STORED_ENCODING_UNVERIFIED: {e}")),
+        }
+    }
 
     // VRAM admission — hold the owned permit for the job's lifetime.
     let permit = match server.ltx_semaphore().try_acquire_owned() {
@@ -930,7 +972,7 @@ async fn stage_input(
 /// The clip's fps must still match the job exactly (conditioning + output
 /// timing derive from it); the TS helper enforces that via ffprobe.
 pub fn check_control_video(plaintext: &[u8], billed_frames: u32) -> Result<(), String> {
-    check_control_video_exact(plaintext, billed_frames, false)
+    check_control_video_exact(plaintext, billed_frames, false).map(|_| ())
 }
 
 /// NM1 D3: does the exact control-length rule apply? Only where the template caps
@@ -943,11 +985,12 @@ pub fn exact_applies(exact_control: bool, billed: u32) -> bool {
 /// [`check_control_video`] with the D3 rule: when `exact`, the clip must carry
 /// AT LEAST the billed frame count (a clip one short would deliver one frame
 /// short of what was billed); otherwise today's billed − 1 floor applies.
+/// Returns the clip's sample count (K4: a chained part's "Previous part" loader is set from it).
 pub fn check_control_video_exact(
     plaintext: &[u8],
     billed_frames: u32,
     exact: bool,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     if plaintext.len() < 12 || &plaintext[4..8] != b"ftyp" {
         return Err("input video is not an mp4 (ISO BMFF) container".to_string());
     }
@@ -966,9 +1009,10 @@ pub fn check_control_video_exact(
              the clip must carry at least {need} frame(s) at the job's fps"
         ));
     }
-    Ok(())
+    Ok(samples)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_inputs(
     client: &ComfyClient,
     job: &LtxJob,
@@ -977,6 +1021,7 @@ async fn prepare_inputs(
     video_hashes: &mut Vec<[u8; 32]>,
     deep_total_cap: u64,
     exact: bool,
+    prompt_required: bool,
 ) -> Result<crate::ltx::Graph, String> {
     let images = job.images.as_deref().unwrap_or_default();
     let videos = job.videos.as_deref().unwrap_or_default();
@@ -992,6 +1037,7 @@ async fn prepare_inputs(
         image_hashes.push(hash);
     }
     let mut video_names = Vec::with_capacity(videos.len());
+    let mut video_samples: Vec<u64> = Vec::with_capacity(videos.len());
     let mut silent_videos: Vec<String> = Vec::new();
     if job.input_wire.is_some() {
         // Deep-conform wire, transport v2 (v8.44.2): videos[0] decrypts to a
@@ -1038,9 +1084,10 @@ async fn prepare_inputs(
             // plaintext as the control gate; an unreadable audio walk counts as "cannot" (the
             // pass-through is dropped, never a refusal — Jules: no error in any mode).
             let mut keep_audio = false;
+            let mut samples = 0u64;
             let (name, hash) =
                 stage_input(client, &blob_source, cid, "video", "mp4", |plaintext| {
-                    check_control_video_exact(plaintext, job.frames, exact)?;
+                    samples = check_control_video_exact(plaintext, job.frames, exact)?;
                     keep_audio =
                         crate::ltx::mp4::audio_passthrough_ok(plaintext).unwrap_or_else(|e| {
                             warn!(
@@ -1054,11 +1101,18 @@ async fn prepare_inputs(
             if !keep_audio {
                 silent_videos.push(name.clone());
             }
+            video_samples.push(samples);
             video_names.push(name);
             video_hashes.push(hash);
         }
     }
-    let patched = patcher::patch(&graph, job, &image_names, &video_names)
+    // K4: a chained part's "Previous part" loader reads the last frames of the video it binds.
+    let opts = patcher::PatchOptions {
+        prompt_required,
+        previous_part_samples: patcher::previous_part_index(&graph)
+            .and_then(|i| video_samples.get(i).copied()),
+    };
+    let patched = patcher::patch_with(&graph, job, &image_names, &video_names, &opts)
         .map_err(|e| format!("input patch failed: {e}"))?;
     // D23: AFTER patch (it matches the staged names `patch` wrote into the loaders).
     patcher::drop_silent_audio(&patched, &silent_videos)
@@ -1230,11 +1284,18 @@ impl LtxGenerateTask {
                 // D3: whether this job's control clip must carry every billed
                 // frame, from the template's advertised `exactControl`. No store
                 // (`ApiServer::new_for_test()`) → false: never a refusal.
-                let exact = match server.get_ltx_template_store().await {
-                    Some(store) => store
-                        .entry(&job.template_id)
-                        .is_some_and(|e| exact_applies(e.exact_control == Some(true), job.frames)),
-                    None => false,
+                let (exact, prompt_required) = match server.get_ltx_template_store().await {
+                    Some(store) => {
+                        let e = store.entry(&job.template_id);
+                        (
+                            e.is_some_and(|e| {
+                                exact_applies(e.exact_control == Some(true), job.frames)
+                            }),
+                            // K4: a fixed-prompt template's prompt is stored pre-encoded (no `Prompt` handle needed).
+                            e.and_then(|e| e.fixed_prompt.as_ref()).is_none(),
+                        )
+                    }
+                    None => (false, true),
                 };
                 // Conditioned templates: fetch each input image/video from S5,
                 // upload to ComfyUI, patch the LoadImage/LoadVideo nodes, and
@@ -1250,6 +1311,7 @@ impl LtxGenerateTask {
                     &mut video_hashes,
                     deep_total_cap,
                     exact,
+                    prompt_required,
                 )
                 .await
                 {
@@ -1839,7 +1901,6 @@ mod tests {
         assert!(needs_ltx_free(Some("ltx-slowmo-hdr"), "ltx-refine-hdr"));
         assert!(!needs_ltx_free(Some("ltx-refine-hdr"), "ltx-refine-hdr"));
     }
-
 
     use super::validate_duration;
     use crate::ltx::types::{LtxJob, OutputKind, Resolution};

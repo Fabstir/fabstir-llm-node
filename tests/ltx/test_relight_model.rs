@@ -37,6 +37,7 @@ fn entry(id: &str, sidecar: Option<&str>) -> TemplateEntry {
         exact_control: Some(true),
         frame_grid: Some(true),
         sidecar: sidecar.map(str::to_string),
+        fixed_prompt: None,
     }
 }
 

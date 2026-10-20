@@ -1000,6 +1000,7 @@ fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
         exact_control: None,
         frame_grid: None,
         sidecar: None,
+        fixed_prompt: None,
     }
 }
 

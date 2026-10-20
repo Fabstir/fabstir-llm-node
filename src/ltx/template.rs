@@ -118,6 +118,13 @@ pub struct TemplateEntry {
     /// serialise byte-identically.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidecar: Option<String>,
+    /// K4 (8.60.7): the template's prompt is FIXED and stored pre-encoded in the graph (`LTXVLoadConditioning`). The
+    /// job's `prompt` must equal this text, refused before accept otherwise ([`check_fixed_prompt`]), so the input
+    /// commitment names the text whose stored encoding ran; the patcher then does not require a `Prompt` handle.
+    /// Absent = the job's prompt is patched in, as before. Omitted on the wire when absent, so existing entries
+    /// serialise byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_prompt: Option<String>,
 }
 
 /// Versioned allow-list bundle: advertised in NodeRegistry metadata and echoed
@@ -175,6 +182,8 @@ struct ConfigEntry {
     frame_grid: Option<bool>,
     #[serde(default)]
     sidecar: Option<String>,
+    #[serde(default)]
+    fixed_prompt: Option<String>,
 }
 
 /// Loads and pins the allow-listed templates at startup.
@@ -238,6 +247,7 @@ impl TemplateStore {
                 exact_control: entry.exact_control,
                 frame_grid: entry.frame_grid,
                 sidecar: entry.sidecar.clone(),
+                fixed_prompt: entry.fixed_prompt.clone(),
             });
         }
         // Canonical order so bundleHash is independent of allowlist.json ordering.
@@ -302,6 +312,18 @@ impl TemplateStore {
 
     pub fn bundle(&self) -> &AllowListBundle {
         &self.bundle
+    }
+}
+
+/// K4 (8.60.7): a template with a `fixedPrompt` takes exactly that prompt — pure, so the integration tests reach it;
+/// the handler runs it before accept. `None` entry or no `fixedPrompt`: anything goes (the prompt is patched in).
+pub fn check_fixed_prompt(entry: Option<&TemplateEntry>, prompt: &str) -> Result<(), String> {
+    match entry.and_then(|e| e.fixed_prompt.as_deref()) {
+        Some(fixed) if fixed != prompt => Err(format!(
+            "template {} takes its own fixed prompt; send exactly that prompt",
+            entry.map(|e| e.template_id.as_str()).unwrap_or_default()
+        )),
+        _ => Ok(()),
     }
 }
 
