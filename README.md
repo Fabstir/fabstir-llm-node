@@ -5,7 +5,7 @@ SPDX-License-Identifier: BUSL-1.1
 
 # Fabstir LLM Node
 
-**Version**: v8.60.6-ltx-free-on-switch (October 2026); the `VERSION` file is authoritative
+**Version**: v8.60.7-ltx-stored-prompt-chain (October 2026); the `VERSION` file is authoritative
 
 A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owners to provide compute directly to clients without central coordination. Built in Rust using libp2p for networking, integrated with llama.cpp for LLM inference, and supporting multiple blockchain networks for smart contract interactions.
 
@@ -45,15 +45,16 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
 - **Configurable Penalties**: Repeat, frequency, and presence penalties via env vars (v8.21.3+)
 - **Model-Agnostic Templates**: GLM-4, ChatML, Harmony, Llama2, Vicuna support (v8.15.0+)
 - **Video/Audio Transcoding**: Transcoder sidecar with ffmpeg + NVENC, progress streaming, billing (v8.25.0+)
-- **AI Video Generation (LTX)**: twenty-three modes through a ComfyUI sidecar: thirteen on LTX 2.3
+- **AI Video Generation (LTX)**: twenty-four modes through a ComfyUI sidecar: thirteen on LTX 2.3
   (text-to-video, image-to-video, first-last-frame, ingredients, restyle, outpaint, edit, restore,
-  upscale, water, day-to-night, new camera angle, convert to HDR) and ten on LTX 2.5 (cut-out with
-  an alpha matte, layout to render; v8.59.0+; the six restoration modes below; clean plate and slow motion, v8.60.5+). Pinned, hash-committed ComfyUI templates are published
-  as an allow-list bundle (v27 is the one in this repository; hosts publish later versions as templates are added, v35 on the launch render host) that the client authenticates against the host's on-chain
+  upscale, water, day-to-night, new camera angle, convert to HDR) and eleven on LTX 2.5 (cut-out with
+  an alpha matte, layout to render; v8.59.0+; the six restoration modes below; clean plate and slow motion, v8.60.5+;
+  Upscale ×2, the Pixel Spatial Upscaler, which replaces the LTX 2.3 upscale on the launch render host). Pinned, hash-committed ComfyUI templates are published
+  as an allow-list bundle (v27 is the one in this repository; hosts publish later versions as templates are added, v43 on the launch render host) that the client authenticates against the host's on-chain
   `bundleHash` before paying; inputs are bound byte-exact into the commitment; billing is per
   megapixel-frame; delivery is encrypted to S5, with opt-in 16-bit EXR masters (v8.43.0+). Drivable
   from Blender via the `platformless-blender-addon` and `platformless-helper` repositories, all
-  twenty-four modes including VFX Passes (v8.31.4+)
+  twenty-four modes the extension lists, including VFX Passes (v8.31.4+)
 - **LTX 2.5 Restoration Modes**: Colorize, Deblur, Fix Compression, Refine Details, Restore (LTX 2.5)
   and Restore (LTX 2.5) with reference, each its own template and model id. They are the LTX 2.5
   restoration IC-LoRAs from Lightricks, run tiled (`LTXVTiledFusionSampler`, 960×544 tiles with 0.5
@@ -69,8 +70,8 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
   graphs carry no `RandomNoise` node) and adds the `refine-hd` resolution rule (v8.60.1+). In 8.60.2 a job `strength` on Restore (LTX 2.5) with reference weights the reference
   image's guide only, never the shot's own guide (v8.60.2+). 8.60.3 adds a per-template `minFrames` to the allow-list, so a
   host can let the restoration modes run short clips (from 9 frames) while every other mode keeps its own floor (v8.60.3+). 8.60.4 adds the `div64-uhd` rule (sides divisible by 64 up to
-  3840×2176), so Refine Details ×2 reaches 4K, and a per-template `maxTokens` that caps a 4K job's length (49 frames on the
-  launch render host) (v8.60.4+)
+  3840×2176), so Refine Details ×2 reaches 4K, and a per-template `maxTokens` that caps a 4K job's length (81 frames for Refine
+  Details on the launch render host since bundle v44) (v8.60.4+)
 - **LTX 2.5 Clean Plate and Slow Motion**: Clean Plate removes the people from a shot and keeps the background (the LTX 2.5
   clean-plate IC-LoRA; a one-line description of what to keep). Slow Motion is image to video from one still with a job
   `speed` from 1.0 (real time) to 0.025 (40× slower): the model is conditioned on a motion frame rate of fps ÷ speed while
@@ -80,6 +81,15 @@ A peer-to-peer node software for the Fabstir LLM marketplace, enabling GPU owner
   offered size has sides divisible by 64 (1920×1088 stands for HD, cropped to 1080 by the client), so what is billed is
   what is delivered. When consecutive jobs use different templates, 8.60.6 empties the ComfyUI sidecar's GPU memory first
   (`LTX_FREE_ON_TEMPLATE_CHANGE=0` turns it off), so a 4K job never fails behind the previous job's resident models (v8.60.6+)
+- **Stored prompt encodings, 4K Upscale ×2 and chained parts**: an allow-list entry may carry `fixedPrompt`. A job on it whose
+  prompt differs is refused before accept, and its template loads that prompt pre-encoded (`LTXVLoadConditioning`: the text
+  encoder's output after the video model's own caption connectors) instead of running the 12-billion-parameter text encoder
+  on every job, which frees about 25 GB of GPU memory. Every stored file a template loads must be listed by ComfyUI before a
+  job is accepted, else it is refused `CAPACITY` with `STORED_ENCODING_MISSING:` and no deposit is locked. That memory lets
+  Upscale ×2 (LTX 2.5) reach 4K (49 frames per job on the launch render host, bundle v43). A template may also carry one
+  `VHS_LoadVideo` titled "Previous part": bound to the job's second video, the node sets it to read only that video's last
+  17 frames, which the chain templates (`ltx-refine-chain-hdr`, `ltx-upscale25-chain-hdr`) keep in place, so a long shot
+  that the Blender extension makes in parts carries its invented detail, lettering included, across the joins (v8.60.7+)
 - **VFX Passes (NVIDIA Cosmos)**: the twenty-second mode. Normal, base colour, depth, roughness and
   metallic passes from live-action footage, through a second sidecar (`fabstir-relight`: NVIDIA
   Cosmos DiffusionRenderer's inverse renderer, unquantised in bf16) that the bundle routes to by
@@ -257,7 +267,7 @@ curl -s http://localhost:8080/v1/version
 **Important**: Building requires CUDA libraries. For deployment to environments without build tools, use pre-built tarballs:
 ```bash
 # Extract pre-built binary
-tar -xzf fabstir-llm-node-v8.60.6-ltx-free-on-switch.tar.gz   # binary at the tarball root
+tar -xzf fabstir-llm-node-v8.60.7-ltx-stored-prompt-chain.tar.gz   # binary at the tarball root
 strings fabstir-llm-node | grep -m1 "v8\.[0-9]*\.[0-9]*-"
 ```
 
