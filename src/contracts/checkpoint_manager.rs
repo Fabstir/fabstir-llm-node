@@ -8,10 +8,13 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{OwnedMutexGuard, RwLock};
 use tracing::{debug, error, info, warn};
 
 use super::client::Web3Client;
+use super::completion_guard::{session_status_for_completion, CompletionGuard};
+// The session status enum and decoder live with the training accept gate (D3).
+use crate::training::accept::SessionStatus;
 
 // S5 decentralized storage for off-chain proof storage (Phase 2.1)
 use crate::storage::s5_client::{S5Client, S5Storage};
@@ -190,6 +193,9 @@ pub struct CheckpointManager {
     proof_cache: Arc<ProofSubmissionCache>,
     /// Dispute window duration in seconds (queried from contract or env override)
     dispute_window_secs: u64,
+    /// SCI-B (D1): the per-job held completion latch and the sticky settled set
+    /// every owner of `complete_session_job` goes through.
+    completion_guard: Arc<CompletionGuard>,
 }
 
 impl CheckpointManager {
@@ -252,6 +258,7 @@ impl CheckpointManager {
             checkpoint_publisher,
             proof_cache,
             dispute_window_secs,
+            completion_guard: Arc::new(CompletionGuard::new()),
         })
     }
 
@@ -1568,10 +1575,84 @@ impl CheckpointManager {
             .unwrap_or(0)
     }
 
-    /// Complete a session job and trigger payment settlement
+    /// Complete a session job and trigger payment settlement. Every owner calls
+    /// this; the held latch (SCI-B D1) makes a second owner wait for the first,
+    /// and a job already settled (in this process or on chain) returns `Ok`
+    /// without a second send.
     pub async fn complete_session_job(
         &self,
         job_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let latch = self.completion_guard.acquire(job_id).await;
+        if self.completion_guard.is_settled(job_id).await {
+            info!(
+                "[SCI] job {}: already settled by an earlier owner, skipping completion",
+                job_id
+            );
+            return Ok(());
+        }
+        if self.settled_on_chain(job_id, "before proof").await {
+            self.cleanup_after_settlement(job_id).await;
+            return Ok(());
+        }
+        self.complete_session_job_latched(job_id, latch).await
+    }
+
+    /// D2-D5: read the session's status on chain. `true` = already settled
+    /// (Completed or TimedOut), so the caller skips the send. Unreadable
+    /// proceeds (D5). Only `Completed` is written to the sticky set (D1c).
+    async fn settled_on_chain(&self, job_id: u64, stage: &str) -> bool {
+        let status = match self.query_session_jobs_raw(job_id).await {
+            Ok(raw) => session_status_for_completion(&raw, job_id),
+            Err(e) => Err(e.to_string()),
+        };
+        match status {
+            Ok(SessionStatus::Completed) => {
+                self.completion_guard.mark_settled(job_id).await;
+                info!(
+                    "[SCI] job {}: chain reads Completed {}, skipping completion",
+                    job_id, stage
+                );
+                true
+            }
+            Ok(SessionStatus::TimedOut) => {
+                warn!(
+                    "[SCI] job {}: chain reads TimedOut {} (settled by a timeout), skipping completion",
+                    job_id, stage
+                );
+                true
+            }
+            Ok(SessionStatus::Active) => {
+                info!(
+                    "[SCI] job {}: chain reads Active {}, proceeding",
+                    job_id, stage
+                );
+                false
+            }
+            Err(e) => {
+                warn!(
+                    "[SCI] job {}: chain status unreadable {} ({}), proceeding",
+                    job_id, stage, e
+                );
+                false
+            }
+        }
+    }
+
+    /// The cleanup the completion path has always done on its way out.
+    async fn cleanup_after_settlement(&self, job_id: u64) {
+        let mut trackers = self.job_trackers.write().await;
+        if trackers.remove(&job_id).is_some() {
+            info!("Cleaned up tracker for job {}", job_id);
+        }
+        drop(trackers);
+        self.proof_cache.cleanup_job(job_id).await;
+    }
+
+    async fn complete_session_job_latched(
+        &self,
+        job_id: u64,
+        latch: OwnedMutexGuard<()>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[CHECKPOINT-MGR] 🎯 === STARTING PAYMENT SETTLEMENT PROCESS ===");
         info!("[CHECKPOINT-MGR] Job ID: {}", job_id);
@@ -1739,6 +1820,13 @@ impl CheckpointManager {
             job_id
         );
 
+        // D2: the load-bearing read, inside the latch, immediately before the
+        // send. The first read is minutes stale by now (poll, proof, dispute sleep).
+        if self.settled_on_chain(job_id, "before send").await {
+            self.cleanup_after_settlement(job_id).await;
+            return Ok(());
+        }
+
         // TODO: Get actual conversation CID from S5 storage
         // For now, use a placeholder CID to complete the session
         let conversation_cid = format!("session_job_{}_completed", job_id);
@@ -1764,6 +1852,7 @@ impl CheckpointManager {
 
                 if let Some(receipt) = receipt {
                     if receipt.status == Some(U64::from(1)) {
+                        self.completion_guard.mark_settled(job_id).await;
                         let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE")
                             .unwrap_or_else(|_| "90".to_string());
                         let treasury_pct = std::env::var("TREASURY_FEE_PERCENTAGE")
@@ -1801,8 +1890,12 @@ impl CheckpointManager {
                     let web3_client = self.web3_client.clone();
                     let proof_system_address = self.proof_system_address;
                     let job_trackers = self.job_trackers.clone();
+                    let completion_guard = self.completion_guard.clone();
 
                     tokio::spawn(async move {
+                        // The retry loop is still this completion: it keeps the
+                        // job's latch until it ends, so no other owner sends meanwhile.
+                        let _latch = latch;
                         let mut retry_count = 0u32;
                         let max_retries = 5; // Max 5 retries for shorter windows
 
@@ -1856,6 +1949,7 @@ impl CheckpointManager {
 
                                     if let Some(receipt) = receipt {
                                         if receipt.status == Some(U64::from(1)) {
+                                            completion_guard.mark_settled(job_id).await;
                                             info!(
                                                 "✅ Session completed for job {} after {} retries",
                                                 job_id,
@@ -1946,15 +2040,8 @@ impl CheckpointManager {
             }
         }
 
-        // Clean up tracker (only if not retrying due to dispute window)
-        let mut trackers = self.job_trackers.write().await;
-        if trackers.remove(&job_id).is_some() {
-            info!("Cleaned up tracker for job {}", job_id);
-        }
-        drop(trackers);
-
-        // Clean up proof cache for this job
-        self.proof_cache.cleanup_job(job_id).await;
+        // Clean up tracker and proof cache (only if not retrying due to dispute window)
+        self.cleanup_after_settlement(job_id).await;
 
         Ok(())
     }

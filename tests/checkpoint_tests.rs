@@ -4,6 +4,7 @@
 
 mod checkpoint {
     mod test_checkpoint_lock;
+    mod test_completion_guard;
     mod test_checkpoint_publishing;
     mod test_checkpoint_with_proof;
 }

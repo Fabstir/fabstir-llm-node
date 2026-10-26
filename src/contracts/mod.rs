@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pub mod checkpoint_manager;
 pub mod client;
+pub mod completion_guard;
 pub mod model_registry;
 pub mod monitor;
 pub mod payments;
