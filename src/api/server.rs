@@ -184,6 +184,98 @@ const ADAPTER_STAGE_BUDGET_SECS: u64 = 300;
 /// How long `ApiServer::shutdown` waits for the listener to drain.
 pub const SHUTDOWN_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// SCI-C D15: point this connection's registration at its current job, and
+/// settle the job it stopped carrying if nothing else carries it. Called right
+/// after every `job_id` write and at loop boundaries.
+fn register_connection_job(
+    server: &ApiServer,
+    connection_job: &mut crate::api::job_work::ConnectionJob,
+    job_id: Option<u64>,
+) {
+    if let Some((old_job, left)) = connection_job.set(job_id) {
+        if left.work_in_flight == 0 && left.other_connections == 0 {
+            server.job_work().complete_if_unowned(old_job);
+        }
+    }
+}
+
+/// The D15 completer: settle a job through the checkpoint manager's latched
+/// `complete_session_job`, once one is configured.
+fn job_work_for(
+    checkpoint_manager: &Arc<RwLock<Option<Arc<CheckpointManager>>>>,
+    ltx_tracker: &Arc<crate::ltx::billing::LtxTracker>,
+) -> Arc<crate::api::job_work::JobWork> {
+    let slot = checkpoint_manager.clone();
+    let ltx = ltx_tracker.clone();
+    crate::api::job_work::JobWork::new(
+        Arc::new(move |job_id| {
+            let slot = slot.clone();
+            let ltx = ltx.clone();
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                tracing::warn!("[SCI] job {}: no runtime to run its completion", job_id);
+                return;
+            };
+            runtime.spawn(async move {
+                // An LTX proof in flight owns completion, exactly as on a disconnect.
+                if ltx.defer_completion(job_id).await {
+                    tracing::info!(
+                        "[SCI] job {}: LTX proof in flight; completion deferred to the generation task",
+                        job_id
+                    );
+                    return;
+                }
+                let Some(cm) = slot.read().await.clone() else {
+                    tracing::warn!(
+                        "[SCI] job {}: completion due but no checkpoint manager is configured",
+                        job_id
+                    );
+                    return;
+                };
+                // The same steps as the disconnect path: sit out a recent LTX
+                // proof's dispute window, latch out new clips, retry once.
+                let window = cm.dispute_window_secs()
+                    + crate::contracts::checkpoint_manager::DISPUTE_WINDOW_BUFFER_SECS;
+                let wait = ltx.proof_wait_remaining(job_id, window).await;
+                if !wait.is_zero() {
+                    tokio::time::sleep(wait).await;
+                }
+                if !ltx.mark_completing_if_idle(job_id).await {
+                    tracing::info!(
+                        "[SCI] job {}: a new LTX clip owns completion now; skipping",
+                        job_id
+                    );
+                    return;
+                }
+                if let Err(e) = cm
+                    .complete_session_job(job_id)
+                    .await
+                    .map_err(|e| e.to_string())
+                {
+                    tracing::warn!(
+                        "[SCI] job {}: node-owned completion failed ({}); retrying once after {}s",
+                        job_id, e, window
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(window)).await;
+                    if !ltx.mark_completing_if_idle(job_id).await {
+                        return;
+                    }
+                    if let Err(e) = cm
+                        .complete_session_job(job_id)
+                        .await
+                        .map_err(|e| e.to_string())
+                    {
+                        tracing::error!(
+                            "[SCI] job {}: node-owned completion retry failed: {}",
+                            job_id, e
+                        );
+                    }
+                }
+            });
+        }),
+        crate::api::job_work::JobWork::grace_from_env(),
+    )
+}
+
 pub struct ApiServer {
     config: ApiConfig,
     addr: SocketAddr,
@@ -197,6 +289,8 @@ pub struct ApiServer {
     metrics: Arc<RwLock<Metrics>>,
     token_tracker: Arc<TokenTracker>,
     checkpoint_manager: Arc<RwLock<Option<Arc<CheckpointManager>>>>,
+    /// SCI-C D15: work in flight and live connections per job.
+    job_work: Arc<crate::api::job_work::JobWork>,
     session_key_store: Arc<SessionKeyStore>,
     node_private_key: Option<[u8; 32]>,
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
@@ -312,6 +406,8 @@ impl ApiServer {
             crate::api::websocket::session_store::SessionStore::new(session_store_config),
         ));
 
+        let checkpoint_manager_slot = Arc::new(RwLock::new(None));
+        let ltx_tracker_slot = Arc::new(crate::ltx::billing::LtxTracker::new());
         ApiServer {
             config,
             addr,
@@ -328,7 +424,8 @@ impl ApiServer {
                 request_durations: Vec::new(),
             })),
             token_tracker: Arc::new(TokenTracker::new()),
-            checkpoint_manager: Arc::new(RwLock::new(None)),
+            checkpoint_manager: checkpoint_manager_slot.clone(),
+            job_work: job_work_for(&checkpoint_manager_slot, &ltx_tracker_slot),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key: None,
             embedding_model_manager: Arc::new(RwLock::new(None)),
@@ -371,7 +468,7 @@ impl ApiServer {
             relight_pins: Arc::new(RwLock::new(crate::ltx::relight::RelightPins::from_env())),
             ltx_template_store: Arc::new(RwLock::new(None)),
             training_deps: Arc::new(RwLock::new(None)),
-            ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
+            ltx_tracker: ltx_tracker_slot.clone(),
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::LtxRateLimiter::new(3)),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             auto_image_routing: false,
@@ -470,6 +567,8 @@ impl ApiServer {
                 }
             };
 
+        let checkpoint_manager_slot = Arc::new(RwLock::new(None));
+        let ltx_tracker_slot = Arc::new(crate::ltx::billing::LtxTracker::new());
         let mut server = Self {
             addr: actual_addr,
             node: Arc::new(RwLock::new(None)),
@@ -484,7 +583,8 @@ impl ApiServer {
             active_connections: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             token_tracker: Arc::new(TokenTracker::new()),
-            checkpoint_manager: Arc::new(RwLock::new(None)),
+            checkpoint_manager: checkpoint_manager_slot.clone(),
+            job_work: job_work_for(&checkpoint_manager_slot, &ltx_tracker_slot),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key,
             embedding_model_manager: Arc::new(RwLock::new(None)),
@@ -540,7 +640,7 @@ impl ApiServer {
             relight_pins: Arc::new(RwLock::new(crate::ltx::relight::RelightPins::from_env())),
             ltx_template_store: Arc::new(RwLock::new(None)),
             training_deps: Arc::new(RwLock::new(None)),
-            ltx_tracker: Arc::new(crate::ltx::billing::LtxTracker::new()),
+            ltx_tracker: ltx_tracker_slot.clone(),
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::ltx_rate_limiter()),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(
                 std::env::var("MAX_CONCURRENT_GENERATIONS")
@@ -675,6 +775,7 @@ impl ApiServer {
             metrics: self.metrics.clone(),
             token_tracker: self.token_tracker.clone(),
             checkpoint_manager: self.checkpoint_manager.clone(),
+            job_work: self.job_work.clone(),
             session_key_store: self.session_key_store.clone(),
             node_private_key: self.node_private_key,
             embedding_model_manager: self.embedding_model_manager.clone(),
@@ -923,6 +1024,11 @@ impl ApiServer {
     /// Get the LTX billing tracker.
     pub fn ltx_tracker(&self) -> &crate::ltx::billing::LtxTracker {
         &self.ltx_tracker
+    }
+
+    /// SCI-C D15: per-job work and connections.
+    pub fn job_work(&self) -> &Arc<crate::api::job_work::JobWork> {
+        &self.job_work
     }
 
     /// VRAM admission semaphore (`MAX_CONCURRENT_GENERATIONS`). Acquire an owned
@@ -2630,6 +2736,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
     // Split ws_sender into sender + receiver for concurrent access (stream_cancel support)
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
+    // SCI-C D18: session keys are stored per connection; this guard clears this
+    // connection's keys on every exit.
+    let connection_keys = crate::crypto::session_keys::ConnectionKeys::new(
+        server.session_key_store.clone(),
+        uuid::Uuid::new_v4().to_string(),
+    );
+
     // Track session information for settlement
     let mut session_id: Option<String> = None;
     // Written in exactly ONE place per init arm, AFTER the FC1.6 gate passes
@@ -2690,7 +2803,15 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         return;
     }
 
+    // SCI-C D15: this connection's registration on the job it carries, kept in
+    // step with `job_id` and dropped on every exit.
+    let mut connection_job = crate::api::job_work::ConnectionJob::new(
+        server.job_work().clone(),
+        connection_keys.conn_id().to_string(),
+    );
+
     while let Some(msg) = ws_receiver.next().await {
+        register_connection_job(&server, &mut connection_job, job_id);
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
                 // Parse WebSocket message
@@ -2864,6 +2985,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         // The ONE write (FT1 D7): after the gate. A plaintext init is never
                         // vault-paid past this point, so the vault client is cleared too.
                         job_id = parsed_job_id;
+                        register_connection_job(&server, &mut connection_job, job_id);
                         vault_client = None;
 
                         // FIX: Create session in session_store (was missing - caused "Session not found" errors)
@@ -3234,6 +3356,11 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     }
                                                     // The ONE write (FT1 D7): after the gate, both branches.
                                                     job_id = parsed;
+                                                    register_connection_job(
+                                                        &server,
+                                                        &mut connection_job,
+                                                        job_id,
+                                                    );
                                                     vault_client = vault_client_for_init;
 
                                                     eprintln!("🔐 Encrypted session started: job={:?} session={:?} model={}", job_id, session_id, model_name);
@@ -3242,7 +3369,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     if let Some(sid) = &session_id {
                                                         server
                                                             .session_key_store
-                                                            .store_key(
+                                                            .store_key_for(
+                                                                connection_keys.conn_id(),
                                                                 sid.clone(),
                                                                 extracted_session_key,
                                                             )
@@ -3775,7 +3903,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                         if let Some(sid) = &current_session_id {
                             // Try to retrieve session key from store
-                            let session_key_result = server.session_key_store.get_key(sid).await;
+                            let session_key_result = server
+                                .session_key_store
+                                .get_key_for(connection_keys.conn_id(), sid)
+                                .await;
 
                             if let Some(session_key) = session_key_result {
                                 // Parse encrypted payload
@@ -3850,6 +3981,24 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             // If not JSON, treat as plain prompt
                                                                             json!({"prompt": plaintext_str})
                                                                         });
+
+                                                                // SCI-C D15: anything but a transcode makes this job
+                                                                // ineligible for the transcode grace completion.
+                                                                if let Some(j) = job_id {
+                                                                    let action = decrypted_json
+                                                                        .get("action")
+                                                                        .and_then(|v| v.as_str());
+                                                                    if action != Some("transcode")
+                                                                        && action
+                                                                            != Some(
+                                                                                "transcode_result",
+                                                                            )
+                                                                    {
+                                                                        server
+                                                                            .job_work()
+                                                                            .note_other_work(j);
+                                                                    }
+                                                                }
 
                                                                 // FT1 D7 vault-host billing rule: on a host serving vault
                                                                 // money, a billed or GPU-bearing frame needs a gate-passed
@@ -3986,9 +4135,14 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         // Drain progress messages until task completes
                                                                         loop {
                                                                             tokio::select! {
-                                                                                Some(msg) = progress_rx.recv() => {
-                                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(msg.to_string())).await;
-                                                                                }
+                                                                                msg = progress_rx.recv() => match msg {
+                                                                                    Some(msg) => {
+                                                                                        let _ = ws_sender.send(axum::extract::ws::Message::Text(msg.to_string())).await;
+                                                                                    }
+                                                                                    // The task ended (SCI-C D16(c)): back to the main loop, which
+                                                                                    // handles every other frame again.
+                                                                                    None => break,
+                                                                                },
                                                                                 ws_msg = ws_receiver.next() => {
                                                                                     match ws_msg {
                                                                                         Some(Ok(axum::extract::ws::Message::Text(txt))) => {
@@ -5177,6 +5331,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                     }
 
                     // Handle both "prompt" and "inference" messages
+                    if json_msg["type"] == "prompt"
+                        || json_msg["type"] == "inference"
+                        || json_msg["type"] == "uploadVectors"
+                        || json_msg["type"] == "searchVectors"
+                    {
+                        // SCI-C D15: chat or RAG work on this job.
+                        if let Some(j) = job_id {
+                            server.job_work().note_other_work(j);
+                        }
+                    }
+
                     if json_msg["type"] == "prompt" || json_msg["type"] == "inference" {
                         // FT1 D7 vault-host billing rule (plaintext half): no gate-passed
                         // session on this connection → refused before anything is built.
@@ -5224,11 +5389,14 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                         .and_then(|s| s.parse::<u64>().ok())
                                 });
 
-                            if job_id.is_some() {
+                            register_connection_job(&server, &mut connection_job, job_id);
+                            if let Some(adopted) = job_id {
                                 info!(
                                     "📋 Got job_id from {} message: {:?}",
                                     json_msg["type"], job_id
                                 );
+                                // SCI-C D15: this frame is chat work on the adopted job.
+                                server.job_work().note_other_work(adopted);
                             }
                         }
 
@@ -5370,6 +5538,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             if let Some(req_job_id) = request.job_id {
                                 if job_id.is_none() && !server.serves_vault_money() {
                                     job_id = Some(req_job_id);
+                                    register_connection_job(&server, &mut connection_job, job_id);
+                                    // SCI-C D15: this prompt is chat work on the adopted job.
+                                    server.job_work().note_other_work(req_job_id);
                                 }
                             }
 
@@ -5867,11 +6038,30 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         }
     }
 
+    register_connection_job(&server, &mut connection_job, job_id);
+
     if let Some(jid) = job_id {
         info!("\n🚨 WEBSOCKET DISCONNECTED - STARTING SETTLEMENT PROCESS");
         info!("   Job ID from WebSocket session: {}", jid);
         info!("   Session ID: {:?}", session_id);
         info!("   Chain ID: {:?}", chain_id);
+
+        // SCI-C D15: completion belongs to the job. Leave it to whatever still
+        // carries the job: work in flight completes it when the work ends, and
+        // another live connection completes it when that one closes.
+        let job_state = connection_job.close().map(|(_, state)| state).unwrap_or(
+            crate::api::job_work::JobState {
+                work_in_flight: 0,
+                other_connections: 0,
+            },
+        );
+        if job_state.work_in_flight > 0 || job_state.other_connections > 0 {
+            info!(
+                "[SCI] job {}: {} unit(s) of work in flight, {} other connection(s); completion left to them",
+                jid, job_state.work_in_flight, job_state.other_connections
+            );
+            return;
+        }
 
         // M1 economics: an LTX proof in flight means completing NOW would
         // settle at 0 tokens under a rendering/submitting clip. Defer — the

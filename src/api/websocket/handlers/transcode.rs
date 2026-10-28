@@ -32,11 +32,39 @@ pub fn is_publishable_completion(outputs: &Value) -> bool {
     outputs.as_array().map(|a| !a.is_empty()).unwrap_or(false)
 }
 
+/// The transcode's billing units and tokens for a source of `duration` seconds
+/// rendered to `formats` (`tokens = ceil(units × 1000)`). One formula for the
+/// running estimate and the final bill.
+pub fn transcode_tokens(duration: f64, formats: &[VideoFormat], is_encrypted: bool) -> (f64, u64) {
+    let units: f64 = formats
+        .iter()
+        .map(|fmt| {
+            calculate_transcode_units(
+                duration,
+                resolution_factor_from_vf(fmt.vf.as_deref().unwrap_or("")),
+                codec_factor(fmt.vcodec.as_deref().unwrap_or("")),
+                is_encrypted,
+            )
+        })
+        .sum();
+    (units, (units * 1000.0).ceil() as u64)
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
 /// Background progress polling task spawned after transcode submission.
 pub struct TranscodeProgressTask {
     pub task_id: String,
     pub poll_interval_ms: u64,
     pub timeout_seconds: u64,
+    /// SCI-C D15: this transcode's unit of work on its job, held until the task
+    /// ends on any path. `None` for a job-less request.
+    pub work: Option<crate::api::job_work::WorkGuard>,
 }
 
 impl TranscodeProgressTask {
@@ -56,7 +84,15 @@ impl TranscodeProgressTask {
         let task_id = self.task_id.clone();
         let poll_interval = Duration::from_millis(self.poll_interval_ms);
         let timeout = Duration::from_secs(self.timeout_seconds);
+        let work = self.work;
         tokio::spawn(async move {
+            // SCI-C D20: bill in steps as the sidecar runs, on a job with a chain.
+            let chain = match job_id {
+                Some(_) => server.get_checkpoint_manager().await,
+                None => None,
+            };
+            let mut biller = job_id
+                .map(|jid| crate::transcoder::biller::TranscodeBiller::new(jid, task_id.clone()));
             let start = std::time::Instant::now();
             let mut last_progress = -1i32;
             let mut completion_retries = 0u32;
@@ -79,6 +115,43 @@ impl TranscodeProgressTask {
 
                 match transcoder_client.get_status(&task_id).await {
                     Ok(status) => {
+                        // D20(b)/(d): prove the work so far and watch the session.
+                        if let (Some(b), Some(cm), true) =
+                            (biller.as_mut(), chain.as_ref(), status.progress < 100)
+                        {
+                            let estimate = status
+                                .duration
+                                .map(|d| transcode_tokens(d, &formats, is_encrypted).1);
+                            if let crate::transcoder::biller::PollOutcome::Stop(reason) = b
+                                .on_progress(cm.as_ref(), status.progress, estimate, unix_now())
+                                .await
+                            {
+                                warn!(
+                                    "Transcode {} stopped: {} (billed {} tokens so far)",
+                                    task_id,
+                                    reason,
+                                    b.proven()
+                                );
+                                if let Err(e) = transcoder_client.cancel_transcode(&task_id).await {
+                                    warn!("Sidecar cancel failed for {}: {}", task_id, e);
+                                }
+                                let _ = progress_tx
+                                    .send(build_encrypted_transcode_error(
+                                        "SESSION_NOT_BILLABLE",
+                                        &format!(
+                                            "Transcode stopped: {} ({} tokens billed for the work done)",
+                                            reason,
+                                            b.proven()
+                                        ),
+                                        &session_key,
+                                        &session_id,
+                                        None,
+                                    ))
+                                    .await;
+                                break;
+                            }
+                        }
+
                         // Send progress only when it changes
                         if status.progress != last_progress && status.progress > 0 {
                             last_progress = status.progress;
@@ -205,24 +278,12 @@ impl TranscodeProgressTask {
                                 warn!("⚠️ Moderation enforcement DISABLED (set MODERATION_ENFORCE=true to enable); transcode completing WITHOUT the host-slice moderation gate (§8a)");
                             }
 
-                            // Calculate billing
+                            // Calculate billing (one formula with the running estimate)
                             let duration = status.duration.unwrap_or(0.0);
-                            let mut total_units = 0.0;
+                            let (total_units, tokens) =
+                                transcode_tokens(duration, &formats, is_encrypted);
 
-                            for fmt in &formats {
-                                let res_factor =
-                                    resolution_factor_from_vf(fmt.vf.as_deref().unwrap_or(""));
-                                let c_factor = codec_factor(fmt.vcodec.as_deref().unwrap_or(""));
-                                let units = calculate_transcode_units(
-                                    duration,
-                                    res_factor,
-                                    c_factor,
-                                    is_encrypted,
-                                );
-                                total_units += units;
-                            }
-
-                            // Track billing
+                            // Track billing (in-process record, for reporting)
                             if let Some(jid) = job_id {
                                 server
                                     .transcoding_tracker()
@@ -230,51 +291,67 @@ impl TranscodeProgressTask {
                                     .await;
                             }
 
-                            let tokens = (total_units * 1000.0).ceil() as u64;
-
-                            // Submit the usage ON CHAIN. The tracker above is an
-                            // in-process record used for reporting; the checkpoint
-                            // manager is the ONLY thing that submits proof-of-work and
-                            // therefore the only thing that moves `tokensUsed`. Without
-                            // this call a transcode settled at zero with the deposit
-                            // refunded in full — every transcode, on every host, while
-                            // the completion message cheerfully reported a `billing`
-                            // figure nobody was ever charged. Deliberately placed BELOW
-                            // the zero-output and moderation guards, so a held job still
-                            // bills nothing.
-                            //
-                            // Unlike inference, a transcode's usage is known all at once
-                            // rather than a token at a time, so this is a single call
-                            // carrying the whole amount; the tracker's own threshold then
-                            // triggers the checkpoint submission.
-                            if let Some(jid) = job_id {
+                            // SCI-C D20(c): the final claim ON CHAIN, awaited to a confirmed
+                            // receipt. Placed below the zero-output and moderation guards, so a
+                            // held job claims nothing more (steps already proven stay paid). The
+                            // result is released only once every claimable token is proven; if
+                            // the final claim does not land, the client gets a billing error and
+                            // the outputs are withheld.
+                            if job_id.is_some() && tokens == 0 {
+                                error!(
+                                    "TRANSCODE BILLING FAILED for job {:?}: no source duration reported, nothing to bill; result withheld",
+                                    job_id
+                                );
+                                let _ = progress_tx
+                                    .send(build_encrypted_transcode_error(
+                                        "BILLING_FAILED",
+                                        "Transcode finished but its duration was not reported, so it could not be billed",
+                                        &session_key,
+                                        &session_id,
+                                        None,
+                                    ))
+                                    .await;
+                                break;
+                            }
+                            if let (Some(b), Some(cm)) = (biller.as_mut(), chain.as_ref()) {
                                 if tokens > 0 {
-                                    if let Some(cm) = server.get_checkpoint_manager().await {
-                                        if let Err(e) = cm
-                                            .track_tokens(jid, tokens, Some(session_id.clone()))
-                                            .await
-                                        {
-                                            // Never fail the transcode for a billing error:
-                                            // the work is done and the outputs are published.
-                                            // Loud, because an unbilled job is revenue lost
-                                            // and silence is how this went unnoticed before.
-                                            error!(
-                                                "TRANSCODE BILLING FAILED for job {}: {} tokens were NOT submitted on chain: {}",
-                                                jid, tokens, e
-                                            );
-                                        } else {
+                                    match b.finish(cm.as_ref(), tokens).await {
+                                        crate::transcoder::biller::FinishOutcome::Paid {
+                                            proven,
+                                        } => {
                                             info!(
-                                                "Transcode billing: submitted {} tokens ({:.1} units) for job {}",
-                                                tokens, total_units, jid
+                                                "Transcode billing: {} tokens proven on chain ({:.1} units) for job {}",
+                                                proven, total_units, b.job_id()
                                             );
+                                            if let Some(work) = work.as_ref() {
+                                                work.mark_billed();
+                                            }
                                         }
-                                    } else {
-                                        error!(
-                                            "TRANSCODE BILLING SKIPPED for job {}: no checkpoint manager, {} tokens unbilled",
-                                            jid, tokens
-                                        );
+                                        crate::transcoder::biller::FinishOutcome::Unpaid(
+                                            reason,
+                                        ) => {
+                                            error!(
+                                                "TRANSCODE BILLING FAILED for job {}: {} (proven {} of {} tokens); result withheld",
+                                                b.job_id(), reason, b.proven(), tokens
+                                            );
+                                            let _ = progress_tx
+                                                .send(build_encrypted_transcode_error(
+                                                    "BILLING_FAILED",
+                                                    &format!("Transcode finished but billing did not settle: {}", reason),
+                                                    &session_key,
+                                                    &session_id,
+                                                    None,
+                                                ))
+                                                .await;
+                                            break;
+                                        }
                                     }
                                 }
+                            } else if job_id.is_some() && tokens > 0 {
+                                error!(
+                                    "TRANSCODE BILLING SKIPPED for job {:?}: no checkpoint manager, {} tokens unbilled",
+                                    job_id, tokens
+                                );
                             }
 
                             // (`outputs` is parsed once, hoisted above the zero-output
@@ -403,6 +480,14 @@ impl TranscodeProgressTask {
                         let _ = progress_tx.send(err).await;
                         break;
                     }
+                }
+            }
+            // SCI-C D15/D20: steps already proven are paid on chain, whatever
+            // ended the run (stopped, held, final claim failed), so the job may be
+            // settled by the node like any billed job.
+            if let (Some(b), Some(w)) = (biller.as_ref(), work.as_ref()) {
+                if b.proven() > 0 {
+                    w.mark_billed();
                 }
             }
             // Log billing freeze on any exit path
@@ -547,7 +632,99 @@ pub async fn handle_encrypted_transcode(
         );
     }
 
-    // Step 5: Submit to transcoder
+    // Step 5 (SCI-C D15): hold a unit of work on the job before the sidecar is
+    // called. A job already settled, or whose completion has been decided,
+    // takes no new work.
+    let work = match job_id {
+        Some(jid) => {
+            let settled = match server.get_checkpoint_manager().await {
+                Some(cm) => cm.is_job_settled(jid).await,
+                None => false,
+            };
+            // D20(a): refuse what the session cannot pay for safely. Unreadable
+            // fails closed, like the training accept gate.
+            let Some(cm) = server.get_checkpoint_manager().await else {
+                return (
+                    build_encrypted_transcode_error(
+                        "BILLING_UNAVAILABLE",
+                        "This host cannot bill a session transcode (no chain connection)",
+                        session_key,
+                        session_id,
+                        message_id,
+                    ),
+                    None,
+                );
+            };
+            {
+                use crate::transcoder::biller::TranscodeChain;
+                let gate = || async {
+                    let raw = cm.session_raw(jid).await?;
+                    let view = crate::transcoder::proof_steps::session_view(&raw, jid)
+                        .map_err(anyhow::Error::msg)?;
+                    let now = cm.chain_now().await?;
+                    Ok::<_, anyhow::Error>(crate::transcoder::proof_steps::transcode_accept(
+                        &view,
+                        now,
+                        &crate::transcoder::proof_steps::AcceptLimits::from_env(),
+                    ))
+                };
+                // One retry on a read failure before failing closed.
+                let first = gate().await;
+                let outcome = match first {
+                    Err(_) => gate().await,
+                    decided => decided,
+                };
+                let refusal = match outcome {
+                    Ok(Ok(())) => None,
+                    Ok(Err(refusal)) => Some((refusal.code(), format!("{:?}", refusal))),
+                    Err(e) => Some(("SESSION_UNREADABLE", e.to_string())),
+                };
+                if let Some((code, detail)) = refusal {
+                    warn!("Transcode refused for job {}: {} ({})", jid, code, detail);
+                    return (
+                        build_encrypted_transcode_error(
+                            code,
+                            &format!("Transcode refused: {}", detail),
+                            session_key,
+                            session_id,
+                            message_id,
+                        ),
+                        None,
+                    );
+                }
+            }
+            if settled {
+                return (
+                    build_encrypted_transcode_error(
+                        "SESSION_SETTLED",
+                        "This session has already been settled; open a new session",
+                        session_key,
+                        session_id,
+                        message_id,
+                    ),
+                    None,
+                );
+            }
+            match server.job_work().begin(jid) {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    return (
+                        build_encrypted_transcode_error(
+                            "SESSION_CLOSING",
+                            "This session is being settled; open a new session",
+                            session_key,
+                            session_id,
+                            message_id,
+                        ),
+                        None,
+                    );
+                }
+            }
+        }
+        None => None,
+    };
+
+    // Step 6: Submit to transcoder
     match transcoder_client
         .submit_transcode(&source_cid, &formats, is_encrypted, is_gpu, preview_percent)
         .await
@@ -582,6 +759,7 @@ pub async fn handle_encrypted_transcode(
                 task_id: resp.task_id.clone(),
                 poll_interval_ms,
                 timeout_seconds,
+                work,
             };
 
             let ack = build_encrypted_transcode_response(

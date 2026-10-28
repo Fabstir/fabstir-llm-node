@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 //! Transcoder sidecar integration — client, billing, and rate limiting.
 
+pub mod biller;
 pub mod billing;
 pub mod capacity;
 pub mod checkpoint;
@@ -10,6 +11,7 @@ pub mod gop;
 pub mod job_validation;
 pub mod merkle;
 pub mod proof;
+pub mod proof_steps;
 pub mod quality;
 pub mod rate_limiter;
 pub mod types;

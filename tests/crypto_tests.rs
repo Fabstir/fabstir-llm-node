@@ -4,6 +4,7 @@
 
 mod crypto {
     mod test_aes_gcm;
+    mod test_connection_keys;
     mod test_coverage;
     mod test_ecdh;
     mod test_encryption;

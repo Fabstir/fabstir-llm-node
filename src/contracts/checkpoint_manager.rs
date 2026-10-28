@@ -1598,6 +1598,12 @@ impl CheckpointManager {
         self.complete_session_job_latched(job_id, latch).await
     }
 
+    /// Whether job `job_id` is known settled in this process (a confirmed
+    /// completion receipt or a chain read of Completed).
+    pub async fn is_job_settled(&self, job_id: u64) -> bool {
+        self.completion_guard.is_settled(job_id).await
+    }
+
     /// D2-D5: read the session's status on chain. `true` = already settled
     /// (Completed or TimedOut), so the caller skips the send. Unreadable
     /// proceeds (D5). Only `Completed` is written to the sticky set (D1c).
@@ -1639,14 +1645,71 @@ impl CheckpointManager {
         }
     }
 
-    /// The cleanup the completion path has always done on its way out.
+    /// Cleanup once the session is known settled (a confirmed status-1 receipt
+    /// or a chain read of Completed/TimedOut): nothing more can bill, so
+    /// everything for the job goes.
     async fn cleanup_after_settlement(&self, job_id: u64) {
         let mut trackers = self.job_trackers.write().await;
         if trackers.remove(&job_id).is_some() {
             info!("Cleaned up tracker for job {}", job_id);
         }
         drop(trackers);
+        self.content_hashes.write().await.remove(&job_id);
         self.proof_cache.cleanup_job(job_id).await;
+    }
+
+    /// Cleanup when the session may NOT be settled (a failed or unknown
+    /// completion). D9: never drop a tracker that still holds tokens no proof
+    /// has claimed (`tokens_generated > last_checkpoint`); the owner's retry
+    /// needs it to bill them, and a retry over a fully proven tracker submits a
+    /// zero delta, so retaining can never double-bill.
+    async fn cleanup_unless_unproven(&self, job_id: u64) {
+        let mut trackers = self.job_trackers.write().await;
+        let unproven = trackers
+            .get(&job_id)
+            .map(|t| t.tokens_generated > t.last_checkpoint)
+            .unwrap_or(false);
+        if unproven {
+            warn!(
+                "[SCI] job {}: completion did not settle and the tracker holds unproven tokens; keeping it for the retry",
+                job_id
+            );
+            return;
+        }
+        if trackers.remove(&job_id).is_some() {
+            info!("Cleaned up tracker for job {}", job_id);
+        }
+        drop(trackers);
+        self.content_hashes.write().await.remove(&job_id);
+        self.proof_cache.cleanup_job(job_id).await;
+    }
+
+    /// D6: the completion's receipt. When the queue's confirmation wait ran out
+    /// (`None`, routine on Base Sepolia), re-poll the same tx hash rather than
+    /// guess; `None` here means the outcome is still unknown. Never re-send.
+    async fn resolve_completion_receipt(
+        &self,
+        job_id: u64,
+        tx_hash: H256,
+        receipt: Option<TransactionReceipt>,
+    ) -> Option<TransactionReceipt> {
+        if receipt.is_some() {
+            return receipt;
+        }
+        warn!(
+            "[SCI] job {}: no receipt yet for completion tx {:?}; re-polling",
+            job_id, tx_hash
+        );
+        match self.web3_client.wait_for_confirmation(tx_hash).await {
+            Ok(receipt) => Some(receipt),
+            Err(e) => {
+                error!(
+                    "[SCI] job {}: completion tx {:?} outcome UNKNOWN after re-poll: {}",
+                    job_id, tx_hash, e
+                );
+                None
+            }
+        }
     }
 
     async fn complete_session_job_latched(
@@ -1850,7 +1913,10 @@ impl CheckpointManager {
                     job_id, tx_hash
                 );
 
-                if let Some(receipt) = receipt {
+                if let Some(receipt) = self
+                    .resolve_completion_receipt(job_id, tx_hash, receipt)
+                    .await
+                {
                     if receipt.status == Some(U64::from(1)) {
                         self.completion_guard.mark_settled(job_id).await;
                         let host_pct = std::env::var("HOST_EARNINGS_PERCENTAGE")
@@ -1972,11 +2038,31 @@ impl CheckpointManager {
                                             break; // Transaction failed for non-dispute reasons
                                         }
                                     } else {
+                                        // D6: resolve by re-polling the same tx, never re-send.
                                         warn!(
-                                            "Retry {} sent but no receipt for job {}",
+                                            "Retry {} sent but no receipt for job {}; re-polling",
                                             retry_count + 1,
                                             job_id
                                         );
+                                        match web3_client.wait_for_confirmation(tx_hash).await {
+                                            Ok(receipt) if receipt.status == Some(U64::from(1)) => {
+                                                completion_guard.mark_settled(job_id).await;
+                                                info!(
+                                                    "✅ Session completed for job {} after {} retries",
+                                                    job_id,
+                                                    retry_count + 1
+                                                );
+                                            }
+                                            Ok(_) => error!(
+                                                "❌ Retry {} transaction failed for job {}",
+                                                retry_count + 1,
+                                                job_id
+                                            ),
+                                            Err(e) => error!(
+                                                "[SCI] job {}: retry completion tx {:?} outcome UNKNOWN after re-poll: {}",
+                                                job_id, tx_hash, e
+                                            ),
+                                        }
                                         break;
                                     }
                                 }
@@ -2000,9 +2086,15 @@ impl CheckpointManager {
                                                 max_retries, job_id
                                             );
 
-                                            // Clean up tracker since we're giving up
+                                            // Giving up: drop the tracker only if every
+                                            // token is proven (D9), so the owner's retry
+                                            // can still bill and keeps its dispute timing.
                                             let mut trackers = job_trackers.write().await;
-                                            if trackers.remove(&job_id).is_some() {
+                                            let unproven = trackers
+                                                .get(&job_id)
+                                                .map(|t| t.tokens_generated > t.last_checkpoint)
+                                                .unwrap_or(false);
+                                            if !unproven && trackers.remove(&job_id).is_some() {
                                                 warn!("Cleaned up tracker for job {} after max retries", job_id);
                                             }
                                             break;
@@ -2028,11 +2120,8 @@ impl CheckpointManager {
                         "❌ Failed to send complete session transaction for job {}: {:?}",
                         job_id, e
                     );
-                    // Clean up tracker and return error
-                    let mut trackers = self.job_trackers.write().await;
-                    if trackers.remove(&job_id).is_some() {
-                        info!("Cleaned up tracker for job {} after failure", job_id);
-                    }
+                    // Clean up, keeping a tracker with unproven tokens (D9), and return error
+                    self.cleanup_unless_unproven(job_id).await;
                     return Err(
                         format!("Failed to send complete session transaction: {}", e).into(),
                     );
@@ -2040,8 +2129,13 @@ impl CheckpointManager {
             }
         }
 
-        // Clean up tracker and proof cache (only if not retrying due to dispute window)
-        self.cleanup_after_settlement(job_id).await;
+        // Clean up (only if not retrying due to dispute window). Full cleanup
+        // only when this completion confirmed settlement (D9).
+        if self.completion_guard.is_settled(job_id).await {
+            self.cleanup_after_settlement(job_id).await;
+        } else {
+            self.cleanup_unless_unproven(job_id).await;
+        }
 
         Ok(())
     }
@@ -2212,6 +2306,109 @@ impl crate::ltx::submit::ProofSubmit for CheckpointManager {
     async fn session_proof_interval(&self, job_id: u64) -> u64 {
         // Falls back internally (CHECKPOINT_THRESHOLD = 1000) on query error.
         self.query_session_proof_interval(job_id).await
+    }
+}
+
+/// SCI-C D20: the chain and storage a transcode's step billing uses.
+#[async_trait::async_trait]
+impl crate::transcoder::biller::TranscodeChain for CheckpointManager {
+    async fn session_raw(&self, job_id: u64) -> Result<Vec<u8>> {
+        self.query_session_jobs_raw(job_id).await
+    }
+
+    async fn chain_now(&self) -> Result<u64> {
+        let block = self
+            .web3_client
+            .provider
+            .get_block(BlockNumber::Latest)
+            .await
+            .map_err(|e| anyhow!("latest block read failed: {}", e))?
+            .ok_or_else(|| anyhow!("no latest block"))?;
+        Ok(block.timestamp.low_u64())
+    }
+
+    async fn rate_limit(&self, job_id: u64) -> Result<u64> {
+        use tiny_keccak::{Hasher, Keccak};
+        let selector_of = |signature: &[u8]| {
+            let mut keccak = Keccak::v256();
+            let mut out = [0u8; 32];
+            keccak.update(signature);
+            keccak.finalize(&mut out);
+            out[..4].to_vec()
+        };
+        let model_id = self.query_session_model(job_id).await?;
+        // The registry the contract itself consults: nodeRegistry.modelRegistry().
+        let node_registry: Address = std::env::var("CONTRACT_NODE_REGISTRY")
+            .map_err(|_| anyhow!("CONTRACT_NODE_REGISTRY is not set"))?
+            .parse()
+            .map_err(|e| anyhow!("invalid CONTRACT_NODE_REGISTRY: {}", e))?;
+        let tx = TransactionRequest::new()
+            .to(node_registry)
+            .data(selector_of(b"modelRegistry()"));
+        let result = self
+            .web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("modelRegistry() read failed: {}", e))?;
+        if result.len() < 32 {
+            return Err(anyhow!("modelRegistry() returned {} bytes", result.len()));
+        }
+        let registry = Address::from_slice(&result[12..32]);
+        let mut call_data = selector_of(b"getModelRateLimit(bytes32)");
+        call_data.extend_from_slice(&model_id);
+        let tx = TransactionRequest::new().to(registry).data(call_data);
+        let result = self
+            .web3_client
+            .provider
+            .call(&tx.into(), None)
+            .await
+            .map_err(|e| anyhow!("getModelRateLimit read failed: {}", e))?;
+        if result.len() < 32 {
+            return Err(anyhow!("getModelRateLimit returned {} bytes", result.len()));
+        }
+        let rate = U256::from_big_endian(&result[..32]);
+        Ok(rate.min(U256::from(u64::MAX)).as_u64())
+    }
+
+    async fn put_attestation(&self, path: &str, bytes: Vec<u8>) -> Result<String> {
+        self.s5_storage
+            .put(path, bytes)
+            .await
+            .map_err(|e| anyhow!("s5 attestation upload failed: {}", e))
+    }
+
+    async fn submit_proof(
+        &self,
+        job_id: u64,
+        tokens: u64,
+        proof_hash: [u8; 32],
+        proof_cid: String,
+    ) -> Result<H256> {
+        let (tx_hash, receipt) = crate::ltx::submit::submit_proof(
+            &self.web3_client,
+            self.proof_system_address,
+            job_id,
+            tokens,
+            proof_hash,
+            proof_cid,
+        )
+        .await?;
+        // D6: an absent receipt is re-polled, never re-sent.
+        let receipt = match receipt {
+            Some(receipt) => receipt,
+            None => self.web3_client.wait_for_confirmation(tx_hash).await?,
+        };
+        if receipt.status == Some(U64::from(1)) {
+            Ok(tx_hash)
+        } else {
+            Err(anyhow!(
+                "transcode proof reverted for job {} (status {:?}, tx {:?})",
+                job_id,
+                receipt.status,
+                tx_hash
+            ))
+        }
     }
 }
 

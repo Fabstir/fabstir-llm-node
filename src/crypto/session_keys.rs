@@ -42,6 +42,11 @@ struct KeyEntry {
 #[derive(Clone)]
 pub struct SessionKeyStore {
     keys: Arc<RwLock<HashMap<String, KeyEntry>>>,
+    /// Keys stored per (connection id, session id) — SCI-C D18. Two connections
+    /// on one session each keep the key their own init sent; the session-only
+    /// map above let the latest init overwrite a key another connection was
+    /// still decrypting with.
+    connection_keys: Arc<RwLock<HashMap<(String, String), KeyEntry>>>,
     ttl: Option<Duration>,
 }
 
@@ -50,6 +55,7 @@ impl SessionKeyStore {
     pub fn new() -> Self {
         Self {
             keys: Arc::new(RwLock::new(HashMap::new())),
+            connection_keys: Arc::new(RwLock::new(HashMap::new())),
             ttl: None,
         }
     }
@@ -64,6 +70,7 @@ impl SessionKeyStore {
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             keys: Arc::new(RwLock::new(HashMap::new())),
+            connection_keys: Arc::new(RwLock::new(HashMap::new())),
             ttl: Some(ttl),
         }
     }
@@ -133,9 +140,57 @@ impl SessionKeyStore {
     }
 
     /// Get the number of stored session keys
+    /// Number of stored key entries: legacy session-only keys plus one per
+    /// (connection, session) pair, so two sockets on one session count twice.
     pub async fn count(&self) -> usize {
         let keys = self.keys.read().await;
-        keys.len()
+        keys.len() + self.connection_keys.read().await.len()
+    }
+
+    /// Store the key connection `conn_id`'s init sent for `session_id`.
+    pub async fn store_key_for(&self, conn_id: &str, session_id: String, key: [u8; 32]) {
+        let mut keys = self.connection_keys.write().await;
+        let entry = KeyEntry {
+            key,
+            stored_at: Instant::now(),
+        };
+        keys.insert((conn_id.to_string(), session_id.clone()), entry);
+        tracing::info!(
+            "🔑 Session key stored for session: {} on connection {} (connection keys: {})",
+            session_id,
+            conn_id,
+            keys.len()
+        );
+    }
+
+    /// The key connection `conn_id` stored for `session_id`; never another
+    /// connection's key for the same session.
+    pub async fn get_key_for(&self, conn_id: &str, session_id: &str) -> Option<[u8; 32]> {
+        let keys = self.connection_keys.read().await;
+        let entry = keys.get(&(conn_id.to_string(), session_id.to_string()))?;
+        if let Some(ttl) = self.ttl {
+            if entry.stored_at.elapsed() > ttl {
+                return None; // Expired
+            }
+        }
+        Some(entry.key)
+    }
+
+    /// Drop every key connection `conn_id` stored. Returns how many went.
+    pub async fn remove_connection(&self, conn_id: &str) -> usize {
+        let mut keys = self.connection_keys.write().await;
+        let before = keys.len();
+        keys.retain(|(conn, _), _| conn != conn_id);
+        let removed = before - keys.len();
+        if removed > 0 {
+            tracing::info!(
+                "🗑️  Cleared {} session key(s) for closed connection {} (remaining: {})",
+                removed,
+                conn_id,
+                keys.len()
+            );
+        }
+        removed
     }
 
     /// Clear all session keys
@@ -143,8 +198,10 @@ impl SessionKeyStore {
     /// Used for testing or shutdown scenarios
     pub async fn clear_all(&self) {
         let mut keys = self.keys.write().await;
-        let count = keys.len();
+        let mut connection_keys = self.connection_keys.write().await;
+        let count = keys.len() + connection_keys.len();
         keys.clear();
+        connection_keys.clear();
         tracing::info!("🗑️  Cleared all session keys (count: {})", count);
     }
 
@@ -164,8 +221,12 @@ impl SessionKeyStore {
 
             // Remove expired keys
             keys.retain(|_, entry| now.duration_since(entry.stored_at) <= ttl);
+            let mut connection_keys = self.connection_keys.write().await;
+            let initial_connection_count = connection_keys.len();
+            connection_keys.retain(|_, entry| now.duration_since(entry.stored_at) <= ttl);
 
-            let cleared_count = initial_count - keys.len();
+            let cleared_count =
+                initial_count - keys.len() + initial_connection_count - connection_keys.len();
             if cleared_count > 0 {
                 tracing::info!(
                     "🗑️  Cleared {} expired session keys (remaining: {})",
@@ -183,6 +244,41 @@ impl SessionKeyStore {
 impl Default for SessionKeyStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Clears a connection's keys when its handler exits, on every path including
+/// early returns (SCI-C D18).
+pub struct ConnectionKeys {
+    store: Arc<SessionKeyStore>,
+    conn_id: String,
+}
+
+impl ConnectionKeys {
+    pub fn new(store: Arc<SessionKeyStore>, conn_id: String) -> Self {
+        Self { store, conn_id }
+    }
+
+    pub fn conn_id(&self) -> &str {
+        &self.conn_id
+    }
+}
+
+impl Drop for ConnectionKeys {
+    fn drop(&mut self) {
+        let store = self.store.clone();
+        let conn_id = std::mem::take(&mut self.conn_id);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    store.remove_connection(&conn_id).await;
+                });
+            }
+            Err(_) => tracing::warn!(
+                "Connection {} dropped outside a tokio runtime; its session keys were not cleared",
+                conn_id
+            ),
+        }
     }
 }
 
