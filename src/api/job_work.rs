@@ -118,6 +118,11 @@ impl JobWork {
         self.lock().entry(job_id).or_default().billed = true;
     }
 
+    /// Units of work in flight on job `job_id` (for the expiry sweeper, D17).
+    pub fn in_flight(&self, job_id: u64) -> u32 {
+        self.lock().get(&job_id).map(|e| e.count).unwrap_or(0)
+    }
+
     pub fn is_closing(&self, job_id: u64) -> bool {
         self.lock().get(&job_id).map(|e| e.closing).unwrap_or(false)
     }
@@ -157,14 +162,15 @@ impl JobWork {
         match action {
             Some((FinishAction::CompleteNow, _)) => {
                 tracing::info!(
-                    "[SCI] job {}: last unit of work ended with no live connection; completing",
+                    "[SCI-C] job {}: last unit of work ended with no live connection; completing",
                     job_id
                 );
+                crate::monitoring::session_completion_metrics::SCI_C.completed_last_work();
                 (self.completer)(job_id);
             }
             Some((FinishAction::CompleteAfterGrace, epoch)) => {
                 tracing::info!(
-                    "[SCI] job {}: transcode finished and billed; completing in {}s unless new work arrives",
+                    "[SCI-C] job {}: transcode finished and billed; completing in {}s unless new work arrives",
                     job_id,
                     self.grace.as_secs()
                 );
@@ -175,13 +181,14 @@ impl JobWork {
                         runtime.spawn(async move {
                             tokio::time::sleep(grace).await;
                             if work.close_if_idle(job_id, epoch) {
-                                tracing::info!("[SCI] job {}: grace elapsed, completing", job_id);
+                                tracing::info!("[SCI-C] job {}: grace elapsed, completing", job_id);
+                                crate::monitoring::session_completion_metrics::SCI_C.completed_grace();
                                 (work.completer)(job_id);
                             }
                         });
                     }
                     Err(_) => tracing::warn!(
-                        "[SCI] job {}: no runtime to arm the grace completion; the disconnect path stays the owner",
+                        "[SCI-C] job {}: no runtime to arm the grace completion; the disconnect path stays the owner",
                         job_id
                     ),
                 }
@@ -203,9 +210,10 @@ impl JobWork {
             entry.closing = true;
         }
         tracing::info!(
-            "[SCI] job {}: its connection moved to another job and nothing else carries it; completing",
+            "[SCI-C] job {}: its connection moved to another job and nothing else carries it; completing",
             job_id
         );
+        crate::monitoring::session_completion_metrics::SCI_C.completed_unowned();
         (self.completer)(job_id);
         true
     }

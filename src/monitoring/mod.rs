@@ -7,6 +7,7 @@ pub mod dashboards;
 pub mod health_checks;
 pub mod metrics;
 pub mod moderation_metrics;
+pub mod session_completion_metrics;
 pub mod s5_metrics;
 
 // Re-export main types

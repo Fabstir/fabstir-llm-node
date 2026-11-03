@@ -65,6 +65,44 @@ pub struct TranscodeProgressTask {
     /// SCI-C D15: this transcode's unit of work on its job, held until the task
     /// ends on any path. `None` for a job-less request.
     pub work: Option<crate::api::job_work::WorkGuard>,
+    /// SCI-C D19(d): where this run's outcome is stored for a later fetch.
+    /// `None` for a job-less request.
+    pub result: Option<crate::transcoder::result_store::ResultSlot>,
+    /// SCI-C D19(a): an explicit `transcode_cancel`. A client that merely
+    /// disconnects does not cancel; the run carries on and bills.
+    pub cancel: tokio_util::sync::CancellationToken,
+}
+
+/// How long a terminal frame waits for a listener that has stopped reading.
+/// Progress frames never wait (`try_send`): a stalled socket must not stall
+/// billing (D19(a)).
+const TERMINAL_SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// Consecutive status-poll failures tolerated before the run is failed.
+const MAX_POLL_FAILURES: u32 = 3;
+
+/// Deliver a terminal frame to the listener, if one is left, without waiting
+/// long for one that has stopped reading.
+async fn send_terminal(progress_tx: &mpsc::Sender<Value>, frame: Value) {
+    let _ = tokio::time::timeout(TERMINAL_SEND_TIMEOUT, progress_tx.send(frame)).await;
+}
+
+/// Send a failure to the listener (if any is left) and store it for a fetch.
+async fn emit_failure(
+    progress_tx: &mpsc::Sender<Value>,
+    result: &mut Option<crate::transcoder::result_store::ResultSlot>,
+    code: &str,
+    message: &str,
+    session_key: &[u8; 32],
+    session_id: &str,
+) {
+    if let Some(slot) = result.as_mut() {
+        slot.failed(code, message);
+    }
+    send_terminal(
+        progress_tx,
+        build_encrypted_transcode_error(code, message, session_key, session_id, None),
+    )
+    .await;
 }
 
 impl TranscodeProgressTask {
@@ -85,6 +123,8 @@ impl TranscodeProgressTask {
         let poll_interval = Duration::from_millis(self.poll_interval_ms);
         let timeout = Duration::from_secs(self.timeout_seconds);
         let work = self.work;
+        let mut result = self.result;
+        let cancel = self.cancel;
         tokio::spawn(async move {
             // SCI-C D20: bill in steps as the sidecar runs, on a job with a chain.
             let chain = match job_id {
@@ -97,24 +137,51 @@ impl TranscodeProgressTask {
             let mut last_progress = -1i32;
             let mut completion_retries = 0u32;
             const MAX_COMPLETION_RETRIES: u32 = 5;
+            let mut poll_failures = 0u32;
 
             loop {
                 if start.elapsed() > timeout {
-                    let err = build_encrypted_transcode_error(
+                    if let Err(e) = transcoder_client.cancel_transcode(&task_id).await {
+                        warn!("Sidecar cancel failed for {}: {}", task_id, e);
+                    }
+                    emit_failure(
+                        &progress_tx,
+                        &mut result,
                         "TIMEOUT",
                         "Transcoding timed out",
                         &session_key,
                         &session_id,
-                        None,
-                    );
-                    let _ = progress_tx.send(err).await;
+                    )
+                    .await;
                     break;
                 }
 
-                tokio::time::sleep(poll_interval).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(poll_interval) => {}
+                    _ = cancel.cancelled() => {}
+                }
+                // D19(a)(i): an explicit cancel stops the sidecar and bills
+                // nothing more; steps already proven stay paid.
+                if cancel.is_cancelled() {
+                    info!("[SCI-C] transcode {} cancelled by the client", task_id);
+                    if let Err(e) = transcoder_client.cancel_transcode(&task_id).await {
+                        warn!("Sidecar cancel failed for {}: {}", task_id, e);
+                    }
+                    emit_failure(
+                        &progress_tx,
+                        &mut result,
+                        "CANCELLED",
+                        "Transcode cancelled by the client",
+                        &session_key,
+                        &session_id,
+                    )
+                    .await;
+                    break;
+                }
 
                 match transcoder_client.get_status(&task_id).await {
                     Ok(status) => {
+                        poll_failures = 0;
                         // D20(b)/(d): prove the work so far and watch the session.
                         if let (Some(b), Some(cm), true) =
                             (biller.as_mut(), chain.as_ref(), status.progress < 100)
@@ -122,10 +189,33 @@ impl TranscodeProgressTask {
                             let estimate = status
                                 .duration
                                 .map(|d| transcode_tokens(d, &formats, is_encrypted).1);
-                            if let crate::transcoder::biller::PollOutcome::Stop(reason) = b
+                            let polled = b
                                 .on_progress(cm.as_ref(), status.progress, estimate, unix_now())
-                                .await
-                            {
+                                .await;
+                            if polled == crate::transcoder::biller::PollOutcome::Expired {
+                                warn!(
+                                    "[SCI-C] transcode {} stopped: the session expired mid-run (billed {} tokens before expiry)",
+                                    task_id,
+                                    b.proven()
+                                );
+                                if let Err(e) = transcoder_client.cancel_transcode(&task_id).await {
+                                    warn!("Sidecar cancel failed for {}: {}", task_id, e);
+                                }
+                                emit_failure(
+                                    &progress_tx,
+                                    &mut result,
+                                    "SESSION_EXPIRED",
+                                    &format!(
+                                        "Transcode stopped: the session expired before it finished ({} tokens billed for the work done before expiry)",
+                                        b.proven()
+                                    ),
+                                    &session_key,
+                                    &session_id,
+                                )
+                                .await;
+                                break;
+                            }
+                            if let crate::transcoder::biller::PollOutcome::Stop(reason) = polled {
                                 warn!(
                                     "Transcode {} stopped: {} (billed {} tokens so far)",
                                     task_id,
@@ -135,19 +225,19 @@ impl TranscodeProgressTask {
                                 if let Err(e) = transcoder_client.cancel_transcode(&task_id).await {
                                     warn!("Sidecar cancel failed for {}: {}", task_id, e);
                                 }
-                                let _ = progress_tx
-                                    .send(build_encrypted_transcode_error(
-                                        "SESSION_NOT_BILLABLE",
-                                        &format!(
-                                            "Transcode stopped: {} ({} tokens billed for the work done)",
-                                            reason,
-                                            b.proven()
-                                        ),
-                                        &session_key,
-                                        &session_id,
-                                        None,
-                                    ))
-                                    .await;
+                                emit_failure(
+                                    &progress_tx,
+                                    &mut result,
+                                    "SESSION_NOT_BILLABLE",
+                                    &format!(
+                                        "Transcode stopped: {} ({} tokens billed for the work done)",
+                                        reason,
+                                        b.proven()
+                                    ),
+                                    &session_key,
+                                    &session_id,
+                                )
+                                .await;
                                 break;
                             }
                         }
@@ -175,9 +265,10 @@ impl TranscodeProgressTask {
                                 &session_id,
                                 None,
                             );
-                            if progress_tx.send(progress_msg).await.is_err() {
-                                break; // Client disconnected
-                            }
+                            // D19(a): a listener that left, or stopped reading, does
+                            // not end or stall the run; it finishes, bills and stores
+                            // its result for a fetch. A dropped progress frame is fine.
+                            let _ = progress_tx.try_send(progress_msg);
                         }
 
                         // Check completion (progress 100 only — metadata is unreliable
@@ -226,15 +317,15 @@ impl TranscodeProgressTask {
                                     job_id
                                 );
                                 server.moderation_metrics().record_held(); // §8 #7 (parity with the gate Hold)
-                                let _ = progress_tx
-                                    .send(build_encrypted_transcode_error(
-                                        "MODERATION_UNAVAILABLE",
-                                        "transcode held: no publishable outputs",
-                                        &session_key,
-                                        &session_id,
-                                        None,
-                                    ))
-                                    .await;
+                                emit_failure(
+                                    &progress_tx,
+                                    &mut result,
+                                    "MODERATION_UNAVAILABLE",
+                                    "transcode held: no publishable outputs",
+                                    &session_key,
+                                    &session_id,
+                                )
+                                .await;
                                 break; // skip billing, proof, transcode_complete
                             }
 
@@ -262,15 +353,15 @@ impl TranscodeProgressTask {
                                         message,
                                     } => {
                                         server.moderation_metrics().record_held(); // §8 #7
-                                        let _ = progress_tx
-                                            .send(build_encrypted_transcode_error(
-                                                code,
-                                                &message,
-                                                &session_key,
-                                                &session_id,
-                                                None,
-                                            ))
-                                            .await;
+                                        emit_failure(
+                                            &progress_tx,
+                                            &mut result,
+                                            code,
+                                            &message,
+                                            &session_key,
+                                            &session_id,
+                                        )
+                                        .await;
                                         break; // skip billing, proof, transcode_complete
                                     }
                                 }
@@ -302,15 +393,15 @@ impl TranscodeProgressTask {
                                     "TRANSCODE BILLING FAILED for job {:?}: no source duration reported, nothing to bill; result withheld",
                                     job_id
                                 );
-                                let _ = progress_tx
-                                    .send(build_encrypted_transcode_error(
-                                        "BILLING_FAILED",
-                                        "Transcode finished but its duration was not reported, so it could not be billed",
-                                        &session_key,
-                                        &session_id,
-                                        None,
-                                    ))
-                                    .await;
+                                emit_failure(
+                                    &progress_tx,
+                                    &mut result,
+                                    "BILLING_FAILED",
+                                    "Transcode finished but its duration was not reported, so it could not be billed",
+                                    &session_key,
+                                    &session_id,
+                                )
+                                .await;
                                 break;
                             }
                             if let (Some(b), Some(cm)) = (biller.as_mut(), chain.as_ref()) {
@@ -334,24 +425,53 @@ impl TranscodeProgressTask {
                                                 "TRANSCODE BILLING FAILED for job {}: {} (proven {} of {} tokens); result withheld",
                                                 b.job_id(), reason, b.proven(), tokens
                                             );
-                                            let _ = progress_tx
-                                                .send(build_encrypted_transcode_error(
-                                                    "BILLING_FAILED",
-                                                    &format!("Transcode finished but billing did not settle: {}", reason),
-                                                    &session_key,
-                                                    &session_id,
-                                                    None,
-                                                ))
-                                                .await;
+                                            emit_failure(
+                                                &progress_tx,
+                                                &mut result,
+                                                "BILLING_FAILED",
+                                                &format!("Transcode finished but billing did not settle: {}", reason),
+                                                &session_key,
+                                                &session_id,
+                                            )
+                                            .await;
+                                            break;
+                                        }
+                                        crate::transcoder::biller::FinishOutcome::Expired {
+                                            proven,
+                                        } => {
+                                            warn!(
+                                                "[SCI-C] job {}: transcode finished after the session expired; not billed ({} tokens proven before expiry), result withheld",
+                                                b.job_id(), proven
+                                            );
+                                            emit_failure(
+                                                &progress_tx,
+                                                &mut result,
+                                                "SESSION_EXPIRED",
+                                                &format!("Transcode finished after the session expired, so it was not billed; {} tokens were billed for the work done before expiry", proven),
+                                                &session_key,
+                                                &session_id,
+                                            )
+                                            .await;
                                             break;
                                         }
                                     }
                                 }
-                            } else if job_id.is_some() && tokens > 0 {
+                            } else if job_id.is_some() {
+                                // Unreachable past the accept gate; never release unpaid.
                                 error!(
-                                    "TRANSCODE BILLING SKIPPED for job {:?}: no checkpoint manager, {} tokens unbilled",
+                                    "TRANSCODE BILLING FAILED for job {:?}: no checkpoint manager, {} tokens unbilled; result withheld",
                                     job_id, tokens
                                 );
+                                emit_failure(
+                                    &progress_tx,
+                                    &mut result,
+                                    "BILLING_FAILED",
+                                    "Transcode finished but this host had no chain connection to bill it",
+                                    &session_key,
+                                    &session_id,
+                                )
+                                .await;
+                                break;
                             }
 
                             // (`outputs` is parsed once, hoisted above the zero-output
@@ -446,6 +566,10 @@ impl TranscodeProgressTask {
                                 "billing": {
                                     "units": total_units,
                                     "tokens": tokens,
+                                    // SCI-C: what is proven on chain for this run
+                                    // (the first-proof minimum and a deposit cap
+                                    // make it differ from `tokens`).
+                                    "provenTokens": biller.as_ref().map(|b| b.proven()),
                                 },
                                 "duration": duration,
                                 "qualityMetrics": quality_val,
@@ -458,26 +582,43 @@ impl TranscodeProgressTask {
                                 complete_payload["moderation"] = m;
                             }
 
+                            // D19(d)/D20(c): stored `Done` only now, after the final
+                            // proof is confirmed, so a fetch serves only paid work.
+                            if let Some(slot) = result.as_mut() {
+                                slot.done(complete_payload.clone());
+                            }
                             let complete_msg = build_encrypted_transcode_response(
                                 &complete_payload,
                                 &session_key,
                                 &session_id,
                                 None,
                             );
-                            let _ = progress_tx.send(complete_msg).await;
+                            send_terminal(&progress_tx, complete_msg).await;
                             break;
                         }
                     }
                     Err(e) => {
+                        poll_failures += 1;
+                        if poll_failures < MAX_POLL_FAILURES {
+                            warn!(
+                                "Transcoder status poll failed for {} ({}/{}): {}",
+                                task_id, poll_failures, MAX_POLL_FAILURES, e
+                            );
+                            continue;
+                        }
                         error!("Transcoder status poll failed for {}: {}", task_id, e);
-                        let err = build_encrypted_transcode_error(
+                        if let Err(e) = transcoder_client.cancel_transcode(&task_id).await {
+                            warn!("Sidecar cancel failed for {}: {}", task_id, e);
+                        }
+                        emit_failure(
+                            &progress_tx,
+                            &mut result,
                             "POLL_FAILED",
                             &format!("Failed to poll transcoder status: {}", e),
                             &session_key,
                             &session_id,
-                            None,
-                        );
-                        let _ = progress_tx.send(err).await;
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -494,6 +635,10 @@ impl TranscodeProgressTask {
             if let Some(jid) = job_id {
                 info!("Transcode progress loop ended for job {} — billing frozen at last checkpoint (progress={})", jid, last_progress);
             }
+            // The outcome is stored before the unit of work ends, so D15's
+            // completion never runs ahead of the record a fetch reads.
+            drop(result);
+            drop(work);
         });
     }
 }
@@ -507,6 +652,30 @@ pub async fn handle_encrypted_transcode(
     session_key: &[u8; 32],
     session_id: &str,
     job_id: Option<u64>,
+    message_id: Option<&Value>,
+) -> (Value, Option<TranscodeProgressTask>) {
+    handle_encrypted_transcode_for(
+        server,
+        decrypted_json,
+        session_key,
+        session_id,
+        job_id,
+        None,
+        message_id,
+    )
+    .await
+}
+
+/// [`handle_encrypted_transcode`] with the identity that ordered the work
+/// (SCI-C D19(c)): the signer recovered from the submitting connection's
+/// `encrypted_session_init`. Only that identity may fetch the stored result.
+pub async fn handle_encrypted_transcode_for(
+    server: &ApiServer,
+    decrypted_json: &Value,
+    session_key: &[u8; 32],
+    session_id: &str,
+    job_id: Option<u64>,
+    owner: Option<String>,
     message_id: Option<&Value>,
 ) -> (Value, Option<TranscodeProgressTask>) {
     // Step 1: Parse and validate request
@@ -693,6 +862,34 @@ pub async fn handle_encrypted_transcode(
                     );
                 }
             }
+            // D19(c): a session transcode must have an owner to serve its
+            // result to (an encrypted init on this connection).
+            if owner.is_none() {
+                return (
+                    build_encrypted_transcode_error(
+                        "SESSION_INIT_REQUIRED",
+                        "A session transcode needs an encrypted session_init on this connection",
+                        session_key,
+                        session_id,
+                        message_id,
+                    ),
+                    None,
+                );
+            }
+            // D19(d): a run that cannot keep its result for a fetch is not
+            // started (no in-memory fallback).
+            if server.transcode_result_store().is_none() {
+                return (
+                    build_encrypted_transcode_error(
+                        "RESULT_STORE_UNAVAILABLE",
+                        "This host cannot keep transcode results (result store unavailable)",
+                        session_key,
+                        session_id,
+                        message_id,
+                    ),
+                    None,
+                );
+            }
             if settled {
                 return (
                     build_encrypted_transcode_error(
@@ -755,11 +952,55 @@ pub async fn handle_encrypted_transcode(
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1800);
 
+            // D19(c)/(d): record the run as in flight, owned by whoever ordered
+            // it, before anything can finish. A record that cannot be written
+            // stops the run: its result would be unreachable after a drop.
+            let result = match (job_id, server.transcode_result_store()) {
+                (Some(jid), Some(store)) => {
+                    match store.begin(
+                        jid,
+                        &resp.task_id,
+                        owner.clone(),
+                        crate::transcoder::result_store::unix_now(),
+                    ) {
+                        Ok(()) => Some(crate::transcoder::result_store::ResultSlot::new(
+                            store,
+                            jid,
+                            resp.task_id.clone(),
+                            owner.clone(),
+                        )),
+                        Err(e) => {
+                            error!(
+                                "[SCI-C] job {}: could not record transcode {}: {}; cancelling it",
+                                jid, resp.task_id, e
+                            );
+                            if let Err(e) = transcoder_client.cancel_transcode(&resp.task_id).await
+                            {
+                                warn!("Sidecar cancel failed for {}: {}", resp.task_id, e);
+                            }
+                            return (
+                                build_encrypted_transcode_error(
+                                    "RESULT_STORE_UNAVAILABLE",
+                                    &format!("This host could not record the transcode: {}", e),
+                                    session_key,
+                                    session_id,
+                                    message_id,
+                                ),
+                                None,
+                            );
+                        }
+                    }
+                }
+                _ => None,
+            };
+
             let task = TranscodeProgressTask {
                 task_id: resp.task_id.clone(),
                 poll_interval_ms,
                 timeout_seconds,
                 work,
+                result,
+                cancel: tokio_util::sync::CancellationToken::new(),
             };
 
             let ack = build_encrypted_transcode_response(
@@ -855,7 +1096,7 @@ pub fn moderation_completion_field(
     }))
 }
 
-fn build_encrypted_transcode_error(
+pub fn build_encrypted_transcode_error(
     code: &str,
     message: &str,
     session_key: &[u8; 32],

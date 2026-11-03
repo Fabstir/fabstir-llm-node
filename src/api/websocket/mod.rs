@@ -17,6 +17,7 @@ pub mod health;
 pub mod inference;
 pub mod integration;
 pub mod job_verification;
+pub mod liveness;
 pub mod manager;
 pub mod memory_cache;
 pub mod memory_manager;

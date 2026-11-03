@@ -12,7 +12,8 @@ use ethers::types::H256;
 use sha2::{Digest, Sha256};
 
 use super::proof_steps::{
-    final_step, interim_amount, interim_due, session_view, steps_can_carry, FinalStep, SessionView,
+    final_step, finished_after_expiry, interim_amount, interim_due, session_view, steps_can_carry,
+    FinalStep, SessionView,
 };
 use crate::training::accept::SessionStatus;
 
@@ -52,6 +53,9 @@ pub enum PollOutcome {
     Continue,
     /// The session can no longer be billed: stop the sidecar and bill nothing more.
     Stop(String),
+    /// The session expired mid-run (D19(b)): stop, bill nothing more; steps
+    /// proven before expiry stay paid.
+    Expired,
 }
 
 /// The final claim's result.
@@ -61,6 +65,9 @@ pub enum FinishOutcome {
     Paid { proven: u64 },
     /// The final claim did not land; withhold the result (D20(c)).
     Unpaid(String),
+    /// The work finished after the session expired: not billed (D19(b)), the
+    /// result withheld. Steps proven before expiry stay paid.
+    Expired { proven: u64 },
 }
 
 pub struct TranscodeBiller {
@@ -114,7 +121,7 @@ impl TranscodeBiller {
         let on_chain = view.tokens_used.saturating_sub(base);
         if on_chain > self.proven {
             tracing::info!(
-                "[SCI] job {}: chain shows {} tokens proven for this transcode (recorded {}); adopting the chain's figure",
+                "[SCI-C] job {}: chain shows {} tokens proven for this transcode (recorded {}); adopting the chain's figure",
                 self.job_id,
                 on_chain,
                 self.proven
@@ -156,7 +163,7 @@ impl TranscodeBiller {
         self.last_proved_progress = progress;
         self.last_proof_at = now;
         tracing::info!(
-            "[SCI] job {}: transcode step {} proved {} tokens at {}% ({} total)",
+            "[SCI-C] job {}: transcode step {} proved {} tokens at {}% ({} total)",
             self.job_id,
             self.step,
             tokens,
@@ -197,7 +204,7 @@ impl TranscodeBiller {
             Ok(read) => read,
             Err(e) => {
                 tracing::warn!(
-                    "[SCI] job {}: session read failed mid-transcode: {}",
+                    "[SCI-C] job {}: session read failed mid-transcode: {}",
                     self.job_id,
                     e
                 );
@@ -206,6 +213,11 @@ impl TranscodeBiller {
         };
         if view.status != SessionStatus::Active {
             return PollOutcome::Stop(format!("session is {:?}", view.status));
+        }
+        // D19(b): nothing is proved for work done after expiry, and a run
+        // still going then can never be billed, so it stops.
+        if finished_after_expiry(&view, now) {
+            return PollOutcome::Expired;
         }
         let Some(estimate) = estimate else {
             return PollOutcome::Continue;
@@ -217,7 +229,7 @@ impl TranscodeBiller {
         let rate = match chain.rate_limit(self.job_id).await {
             Ok(rate) => rate,
             Err(e) => {
-                tracing::warn!("[SCI] job {}: rate limit read failed: {}", self.job_id, e);
+                tracing::warn!("[SCI-C] job {}: rate limit read failed: {}", self.job_id, e);
                 return PollOutcome::Continue;
             }
         };
@@ -246,7 +258,7 @@ impl TranscodeBiller {
         if let Some(amount) = interim_amount(&view, self.proven, target, estimate, now, rate) {
             if let Err(e) = self.prove(chain, amount, progress, now).await {
                 tracing::warn!(
-                    "[SCI] job {}: interim proof of {} tokens did not land: {}",
+                    "[SCI-C] job {}: interim proof of {} tokens did not land: {}",
                     self.job_id,
                     amount,
                     e
@@ -266,6 +278,10 @@ impl TranscodeBiller {
         let started = std::time::Instant::now();
         let mut failures = 0u32;
         let mut last_error = String::new();
+        // When the work finished, on chain time: the first successful read.
+        // Later retries never re-judge it, so a claim for work finished in time
+        // still lands after expiry.
+        let mut judged_expiry = false;
         loop {
             if failures >= FINAL_ATTEMPTS {
                 return FinishOutcome::Unpaid(last_error);
@@ -281,6 +297,14 @@ impl TranscodeBiller {
             };
             if view.status != SessionStatus::Active {
                 return FinishOutcome::Unpaid(format!("session is {:?}", view.status));
+            }
+            if !judged_expiry {
+                judged_expiry = true;
+                if finished_after_expiry(&view, now) {
+                    return FinishOutcome::Expired {
+                        proven: self.proven,
+                    };
+                }
             }
             let rate = match chain.rate_limit(self.job_id).await {
                 Ok(rate) => rate,

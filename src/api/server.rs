@@ -199,6 +199,98 @@ fn register_connection_job(
     }
 }
 
+/// SCI-C D17: what the expiry sweeper reads and acts through on this node.
+struct NodeSweepTarget {
+    cm: Arc<CheckpointManager>,
+    job_work: Arc<crate::api::job_work::JobWork>,
+    ltx: Arc<crate::ltx::billing::LtxTracker>,
+    training: Arc<RwLock<Option<Arc<crate::training::core::TrainingDeps>>>>,
+    results: Arc<std::sync::RwLock<Option<Arc<crate::transcoder::result_store::ResultStore>>>>,
+}
+
+impl NodeSweepTarget {
+    fn store(&self) -> Option<Arc<crate::transcoder::result_store::ResultStore>> {
+        self.results
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::contracts::expiry_sweeper::SweepTarget for NodeSweepTarget {
+    async fn registry(&self) -> Vec<u64> {
+        // Trackers retained until settled (D9), plus every job in the result
+        // store, runs a stop interrupted included (D17(a), D19(d)).
+        let mut jobs = self.cm.tracked_job_ids().await;
+        if let Some(store) = self.store() {
+            jobs.extend(store.job_ids());
+            jobs.extend(store.interrupted_jobs());
+        }
+        // LTX clips and training runs bill through their own trackers.
+        jobs.extend(self.ltx.job_ids().await);
+        let deps = self.training.read().await.clone();
+        if let Some(deps) = deps {
+            jobs.extend(deps.tracker.job_ids().await);
+        }
+        jobs
+    }
+    async fn session_raw(&self, job_id: u64) -> anyhow::Result<Vec<u8>> {
+        self.cm.query_session_jobs_raw(job_id).await
+    }
+    async fn chain_now(&self) -> anyhow::Result<u64> {
+        crate::transcoder::biller::TranscodeChain::chain_now(self.cm.as_ref()).await
+    }
+    async fn dispute_window_secs(&self) -> u64 {
+        self.cm.dispute_window_now().await
+    }
+    fn host_address(&self) -> ethers::types::Address {
+        self.cm.host_address()
+    }
+    async fn is_settled(&self, job_id: u64) -> bool {
+        self.cm.is_job_settled(job_id).await
+    }
+    fn work_in_flight(&self, job_id: u64) -> bool {
+        self.job_work.in_flight(job_id) > 0
+    }
+    async fn owned_elsewhere(&self, job_id: u64) -> bool {
+        if self.ltx.has_pending(job_id).await {
+            return true;
+        }
+        let deps = self.training.read().await.clone();
+        match deps {
+            Some(deps) => deps.tracker.has_pending(job_id).await,
+            None => false,
+        }
+    }
+    async fn claim(&self, job_id: u64) -> bool {
+        // The same latches the other owners arm, so no clip or slice is
+        // accepted under this completion.
+        if !self.ltx.mark_completing_if_idle(job_id).await {
+            return false;
+        }
+        let deps = self.training.read().await.clone();
+        match deps {
+            Some(deps) => deps.tracker.mark_completing_if_idle(job_id).await,
+            None => true,
+        }
+    }
+    async fn complete(&self, job_id: u64) -> anyhow::Result<()> {
+        self.cm
+            .complete_session_job(job_id)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+    fn housekeeping(&self) {
+        if let Some(store) = self.store() {
+            let removed = store.sweep(crate::transcoder::result_store::unix_now());
+            if removed > 0 {
+                info!("[SCI-C] result store: {} record(s) past retention deleted", removed);
+            }
+        }
+    }
+}
+
 /// The D15 completer: settle a job through the checkpoint manager's latched
 /// `complete_session_job`, once one is configured.
 fn job_work_for(
@@ -212,21 +304,21 @@ fn job_work_for(
             let slot = slot.clone();
             let ltx = ltx.clone();
             let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-                tracing::warn!("[SCI] job {}: no runtime to run its completion", job_id);
+                tracing::warn!("[SCI-C] job {}: no runtime to run its completion", job_id);
                 return;
             };
             runtime.spawn(async move {
                 // An LTX proof in flight owns completion, exactly as on a disconnect.
                 if ltx.defer_completion(job_id).await {
                     tracing::info!(
-                        "[SCI] job {}: LTX proof in flight; completion deferred to the generation task",
+                        "[SCI-C] job {}: LTX proof in flight; completion deferred to the generation task",
                         job_id
                     );
                     return;
                 }
                 let Some(cm) = slot.read().await.clone() else {
                     tracing::warn!(
-                        "[SCI] job {}: completion due but no checkpoint manager is configured",
+                        "[SCI-C] job {}: completion due but no checkpoint manager is configured",
                         job_id
                     );
                     return;
@@ -241,7 +333,7 @@ fn job_work_for(
                 }
                 if !ltx.mark_completing_if_idle(job_id).await {
                     tracing::info!(
-                        "[SCI] job {}: a new LTX clip owns completion now; skipping",
+                        "[SCI-C] job {}: a new LTX clip owns completion now; skipping",
                         job_id
                     );
                     return;
@@ -252,7 +344,7 @@ fn job_work_for(
                     .map_err(|e| e.to_string())
                 {
                     tracing::warn!(
-                        "[SCI] job {}: node-owned completion failed ({}); retrying once after {}s",
+                        "[SCI-C] job {}: node-owned completion failed ({}); retrying once after {}s",
                         job_id, e, window
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(window)).await;
@@ -265,7 +357,7 @@ fn job_work_for(
                         .map_err(|e| e.to_string())
                     {
                         tracing::error!(
-                            "[SCI] job {}: node-owned completion retry failed: {}",
+                            "[SCI-C] job {}: node-owned completion retry failed: {}",
                             job_id, e
                         );
                     }
@@ -291,6 +383,12 @@ pub struct ApiServer {
     checkpoint_manager: Arc<RwLock<Option<Arc<CheckpointManager>>>>,
     /// SCI-C D15: work in flight and live connections per job.
     job_work: Arc<crate::api::job_work::JobWork>,
+    /// SCI-C D19(d): stored transcode results, for a fetch after a drop. `None`
+    /// when no store could be opened; session transcodes are then refused.
+    transcode_results:
+        Arc<std::sync::RwLock<Option<Arc<crate::transcoder::result_store::ResultStore>>>>,
+    /// SCI-C D17: cancels the running expiry sweeper (one per checkpoint manager).
+    expiry_sweeper: Arc<std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>>,
     session_key_store: Arc<SessionKeyStore>,
     node_private_key: Option<[u8; 32]>,
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
@@ -426,6 +524,8 @@ impl ApiServer {
             token_tracker: Arc::new(TokenTracker::new()),
             checkpoint_manager: checkpoint_manager_slot.clone(),
             job_work: job_work_for(&checkpoint_manager_slot, &ltx_tracker_slot),
+            transcode_results: Arc::new(std::sync::RwLock::new(None)),
+            expiry_sweeper: Arc::new(std::sync::Mutex::new(None)),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key: None,
             embedding_model_manager: Arc::new(RwLock::new(None)),
@@ -525,6 +625,27 @@ impl ApiServer {
             }
         };
 
+        // SCI-C D19(d): the transcode result store, keyed from the host key.
+        // A store that cannot open leaves session transcodes refused.
+        let transcode_results = match node_private_key.as_ref() {
+            Some(key) => match crate::transcoder::result_store::ResultStore::open_from_env(key) {
+                Ok(store) => {
+                    info!(
+                        "[SCI-C] transcode result store open ({} record(s))",
+                        store.len()
+                    );
+                    Some(store)
+                }
+                Err(e) => {
+                    error!(
+                        "[SCI-C] transcode result store unavailable: {e:#}; session transcodes will be refused (set TRANSCODE_RESULT_DIR to a writable directory)"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+
         // Initialize session store for RAG functionality
         let session_store_config = crate::api::websocket::session_store::SessionStoreConfig {
             max_sessions: 1000,
@@ -585,6 +706,8 @@ impl ApiServer {
             token_tracker: Arc::new(TokenTracker::new()),
             checkpoint_manager: checkpoint_manager_slot.clone(),
             job_work: job_work_for(&checkpoint_manager_slot, &ltx_tracker_slot),
+            transcode_results: Arc::new(std::sync::RwLock::new(transcode_results)),
+            expiry_sweeper: Arc::new(std::sync::Mutex::new(None)),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key,
             embedding_model_manager: Arc::new(RwLock::new(None)),
@@ -776,6 +899,8 @@ impl ApiServer {
             token_tracker: self.token_tracker.clone(),
             checkpoint_manager: self.checkpoint_manager.clone(),
             job_work: self.job_work.clone(),
+            transcode_results: self.transcode_results.clone(),
+            expiry_sweeper: self.expiry_sweeper.clone(),
             session_key_store: self.session_key_store.clone(),
             node_private_key: self.node_private_key,
             embedding_model_manager: self.embedding_model_manager.clone(),
@@ -831,7 +956,47 @@ impl ApiServer {
     }
 
     pub async fn set_checkpoint_manager(&self, checkpoint_manager: Arc<CheckpointManager>) {
-        *self.checkpoint_manager.write().await = Some(checkpoint_manager);
+        *self.checkpoint_manager.write().await = Some(checkpoint_manager.clone());
+        self.start_expiry_sweeper(checkpoint_manager);
+    }
+
+    /// SCI-C D17: start (or restart) the expiry sweeper against this checkpoint
+    /// manager. Settlement is single-chain by construction (one `Web3Client`,
+    /// trackers keyed by job id alone), so the sweeper runs against that one
+    /// chain. `SESSION_SWEEP_ENABLED=false` turns it off.
+    fn start_expiry_sweeper(&self, checkpoint_manager: Arc<CheckpointManager>) {
+        let mut slot = self
+            .expiry_sweeper
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(previous) = slot.take() {
+            previous.cancel();
+        }
+        if std::env::var("SESSION_SWEEP_ENABLED")
+            .map(|v| v.eq_ignore_ascii_case("false") || v == "0")
+            .unwrap_or(false)
+        {
+            warn!("[SCI-C] expiry sweeper disabled (SESSION_SWEEP_ENABLED=false)");
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            warn!("[SCI-C] no runtime to run the expiry sweeper");
+            return;
+        };
+        let target: Arc<dyn crate::contracts::expiry_sweeper::SweepTarget> =
+            Arc::new(NodeSweepTarget {
+                cm: checkpoint_manager,
+                job_work: self.job_work.clone(),
+                ltx: self.ltx_tracker.clone(),
+                training: self.training_deps.clone(),
+                results: self.transcode_results.clone(),
+            });
+        let cancel = tokio_util::sync::CancellationToken::new();
+        *slot = Some(cancel.clone());
+        let sweeper = crate::contracts::expiry_sweeper::ExpirySweeper::new(
+            crate::contracts::expiry_sweeper::SweepConfig::from_env(),
+        );
+        runtime.spawn(sweeper.run(target, cancel));
     }
 
     /// FC1.6 accessors (fields are private to this module; the session-auth
@@ -1031,6 +1196,27 @@ impl ApiServer {
         &self.job_work
     }
 
+    /// SCI-C D19(d): the transcode result store, if one is open.
+    pub fn transcode_result_store(
+        &self,
+    ) -> Option<Arc<crate::transcoder::result_store::ResultStore>> {
+        self.transcode_results
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// Install (or remove) the transcode result store.
+    pub fn set_transcode_result_store(
+        &self,
+        store: Option<Arc<crate::transcoder::result_store::ResultStore>>,
+    ) {
+        *self
+            .transcode_results
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = store;
+    }
+
     /// VRAM admission semaphore (`MAX_CONCURRENT_GENERATIONS`). Acquire an owned
     /// permit for the generation's lifetime; `try_acquire_owned().is_err()` ⇒ full.
     pub fn ltx_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
@@ -1214,6 +1400,12 @@ impl ApiServer {
         }
     }
 
+    /// TEST ONLY. Turn the transcode moderation gate on or off.
+    #[doc(hidden)]
+    pub fn set_moderation_enforce_for_test(&mut self, on: bool) {
+        self.moderation_enforce = on;
+    }
+
     /// TEST ONLY. Installs a node key so the encrypted session-init path can
     /// be driven end to end from a test. Production builds this key from the
     /// environment in `ApiServer::new`; this exists because that path is the
@@ -1240,6 +1432,14 @@ impl ApiServer {
     /// listener actually closed within the bound (false = still draining, e.g. a
     /// long response in flight; the caller decides what that means for it).
     pub async fn shutdown(mut self) -> bool {
+        if let Some(sweeper) = self
+            .expiry_sweeper
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            sweeper.cancel();
+        }
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
@@ -2380,6 +2580,11 @@ async fn metrics_handler(State(server): State<Arc<ApiServer>>) -> impl IntoRespo
          moderation_reports_filed_total {}\n",
         m.cleared, m.blocked, m.flagged, m.held, m.matches, m.reports_filed
     );
+    // SCI-C counters (D21).
+    let metrics = metrics
+        + &crate::monitoring::session_completion_metrics::render(
+            &crate::monitoring::session_completion_metrics::SCI_C.snapshot(),
+        );
 
     (
         StatusCode::OK,
@@ -2735,6 +2940,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
     // Split ws_sender into sender + receiver for concurrent access (stream_cancel support)
     let (mut ws_sender, mut ws_receiver) = socket.split();
+    // SCI-C D16: one liveness clock for this connection, shared by the outer
+    // read loop and every nested loop that reads the same socket.
+    let mut liveness = crate::api::websocket::liveness::Liveness::from_env();
 
     // SCI-C D18: session keys are stored per connection; this guard clears this
     // connection's keys on every exit.
@@ -2758,6 +2966,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
     // registry (C.6) on the customer instead of the shared vault address.
     // Written beside `job_id`, in the same one place.
     let mut vault_client: Option<ethers::types::Address> = None;
+    // SCI-C D19(c): the signer recovered from this connection's
+    // `encrypted_session_init` (lowercase hex), written beside `job_id` in the
+    // encrypted arm and cleared by a plaintext init. It is the owner pinned on a
+    // transcode this connection orders, and the identity a fetch is checked
+    // against.
+    let mut init_signer: Option<String> = None;
+    // SCI-C D19(e): this connection has done nothing since its init but fetch
+    // stored results. Such a connection does not carry its job: it is not
+    // registered on it, and its disconnect does not own completion.
+    let mut did_work = false;
+    let mut fetch_only = false;
     let mut chain_id: Option<u64> = None;
     // T5.3 / interface E.2. Two connection-local variables, and the split
     // between them is load bearing (round-1 F1/F2):
@@ -2810,12 +3029,31 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         connection_keys.conn_id().to_string(),
     );
 
-    while let Some(msg) = ws_receiver.next().await {
-        register_connection_job(&server, &mut connection_job, job_id);
+    while let Some(msg) = crate::api::websocket::liveness::next_frame(
+        &mut ws_receiver,
+        &mut ws_sender,
+        &mut liveness,
+    )
+    .await
+    {
+        register_connection_job(
+            &server,
+            &mut connection_job,
+            if fetch_only { None } else { job_id },
+        );
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
                 // Parse WebSocket message
                 if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                    // SCI-C D19(e): any plaintext frame is work (encrypted frames are
+                    // judged after decryption, where a fetch is told apart).
+                    if json_msg["type"] != "encrypted_message" {
+                        did_work = true;
+                        if fetch_only {
+                            fetch_only = false;
+                            register_connection_job(&server, &mut connection_job, job_id);
+                        }
+                    }
                     // Handle stream_cancel (always plaintext, processed before all other types)
                     if json_msg["type"] == "stream_cancel" {
                         let cancel_sid = json_msg["session_id"]
@@ -2987,6 +3225,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         job_id = parsed_job_id;
                         register_connection_job(&server, &mut connection_job, job_id);
                         vault_client = None;
+                        init_signer = None;
+                        did_work = false;
+                        fetch_only = false;
 
                         // FIX: Create session in session_store (was missing - caused "Session not found" errors)
                         if let Some(sid) = &session_id {
@@ -3362,6 +3603,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                         job_id,
                                                     );
                                                     vault_client = vault_client_for_init;
+                                                    init_signer =
+                                                        Some(client_address.to_ascii_lowercase());
+                                                    did_work = false;
+                                                    fetch_only = false;
 
                                                     eprintln!("🔐 Encrypted session started: job={:?} session={:?} model={}", job_id, session_id, model_name);
 
@@ -3984,12 +4229,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                                                                 // SCI-C D15: anything but a transcode makes this job
                                                                 // ineligible for the transcode grace completion.
+                                                                let frame_action = decrypted_json
+                                                                    .get("action")
+                                                                    .and_then(|v| v.as_str());
                                                                 if let Some(j) = job_id {
-                                                                    let action = decrypted_json
-                                                                        .get("action")
-                                                                        .and_then(|v| v.as_str());
-                                                                    if action != Some("transcode")
-                                                                        && action
+                                                                    if frame_action
+                                                                        != Some("transcode")
+                                                                        && frame_action
                                                                             != Some(
                                                                                 "transcode_result",
                                                                             )
@@ -3997,6 +4243,21 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         server
                                                                             .job_work()
                                                                             .note_other_work(j);
+                                                                    }
+                                                                }
+                                                                // SCI-C D19(e): any frame but a fetch is work; a
+                                                                // connection that was fetch-only carries its job again.
+                                                                if frame_action
+                                                                    != Some("transcode_result")
+                                                                {
+                                                                    did_work = true;
+                                                                    if fetch_only {
+                                                                        fetch_only = false;
+                                                                        register_connection_job(
+                                                                            &server,
+                                                                            &mut connection_job,
+                                                                            job_id,
+                                                                        );
                                                                     }
                                                                 }
 
@@ -4056,6 +4317,39 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     }
                                                                 }
 
+                                                                // SCI-C D19(e): fetch a stored transcode result. Before
+                                                                // every accept and billing path: it reads the store only.
+                                                                if frame_action
+                                                                    == Some("transcode_result")
+                                                                {
+                                                                    let response = crate::api::websocket::handlers::transcode_result::handle_transcode_result(
+                                                                        &server,
+                                                                        &decrypted_json,
+                                                                        &session_key,
+                                                                        current_session_id.as_deref().unwrap_or("unknown"),
+                                                                        job_id,
+                                                                        init_signer.as_deref(),
+                                                                        json_msg.get("id"),
+                                                                    );
+                                                                    if job_id.is_some()
+                                                                        && !did_work
+                                                                        && !fetch_only
+                                                                    {
+                                                                        fetch_only = true;
+                                                                        register_connection_job(
+                                                                            &server,
+                                                                            &mut connection_job,
+                                                                            None,
+                                                                        );
+                                                                    }
+                                                                    let _ = ws_sender
+                                                                        .send(axum::extract::ws::Message::Text(
+                                                                            response.to_string(),
+                                                                        ))
+                                                                        .await;
+                                                                    continue;
+                                                                }
+
                                                                 // Image generation routing (v8.16.0+)
                                                                 if decrypted_json
                                                                     .get("action")
@@ -4082,15 +4376,25 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     == Some("transcode")
                                                                 {
                                                                     info!("Routing encrypted message to transcode handler");
-                                                                    let (ack, progress_task) = crate::api::websocket::handlers::transcode::handle_encrypted_transcode(
+                                                                    let (ack, progress_task) = crate::api::websocket::handlers::transcode::handle_encrypted_transcode_for(
                                                                         &server,
                                                                         &decrypted_json,
                                                                         &session_key,
                                                                         current_session_id.as_deref().unwrap_or("unknown"),
                                                                         job_id,
+                                                                        init_signer.clone(),
                                                                         json_msg.get("id"),
                                                                     ).await;
-                                                                    let _ = ws_sender.send(axum::extract::ws::Message::Text(ack.to_string())).await;
+                                                                    // SCI-C D16: bounded, so a client that stops reading cannot hold the
+                                                                    // accepted unit of work before its task is even spawned (D19: the run
+                                                                    // is spawned and carries on regardless).
+                                                                    if crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                        &mut ws_sender,
+                                                                        axum::extract::ws::Message::Text(ack.to_string()),
+                                                                        crate::api::websocket::handlers::ltx::ltx_ws_write_timeout(),
+                                                                    ).await.client_is_gone() {
+                                                                        liveness.mark_dead();
+                                                                    }
 
                                                                     // If a progress task was returned, spawn it and stream progress
                                                                     if let Some(task) =
@@ -4103,7 +4407,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             .unwrap();
                                                                         let cancel_task_id =
                                                                             task.task_id.clone();
-                                                                        let cancel_tc = tc.clone();
+                                                                        // D19(a)(i): the task owns the sidecar cancel.
+                                                                        let cancel_token =
+                                                                            task.cancel.clone();
                                                                         let server_arc =
                                                                             server.clone();
                                                                         // Clone formats from decrypted_json for the background task
@@ -4131,37 +4437,62 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             formats,
                                                                             is_encrypted_flag,
                                                                         );
+                                                                        // A client already gone gets no relay; the run carries on.
+                                                                        if liveness.is_dead() {
+                                                                            continue;
+                                                                        }
 
-                                                                        // Drain progress messages until task completes
+                                                                        // Drain progress messages until task completes. SCI-C D16:
+                                                                        // bounded writes and the connection's liveness rule; a client
+                                                                        // that goes away ends only this relay, never the run (D19).
+                                                                        let relay_write_timeout = crate::api::websocket::handlers::ltx::ltx_ws_write_timeout();
+                                                                        liveness.touch();
                                                                         loop {
                                                                             tokio::select! {
+                                                                                biased;
                                                                                 msg = progress_rx.recv() => match msg {
                                                                                     Some(msg) => {
-                                                                                        let _ = ws_sender.send(axum::extract::ws::Message::Text(msg.to_string())).await;
+                                                                                        let outcome = crate::api::websocket::handlers::ltx::send_ws_frame_bounded(
+                                                                                            &mut ws_sender,
+                                                                                            axum::extract::ws::Message::Text(msg.to_string()),
+                                                                                            relay_write_timeout,
+                                                                                        ).await;
+                                                                                        if outcome.client_is_gone() {
+                                                                                            info!("[SCI-C] transcode {} relay write {:?}; client gone, the run carries on", cancel_task_id, outcome);
+                                                                                            liveness.mark_dead();
+                                                                                            break;
+                                                                                        }
+                                                                                        liveness.note_write();
                                                                                     }
                                                                                     // The task ended (SCI-C D16(c)): back to the main loop, which
                                                                                     // handles every other frame again.
                                                                                     None => break,
                                                                                 },
                                                                                 ws_msg = ws_receiver.next() => {
+                                                                                    if ws_msg.is_some() {
+                                                                                        liveness.touch();
+                                                                                    }
                                                                                     match ws_msg {
                                                                                         Some(Ok(axum::extract::ws::Message::Text(txt))) => {
                                                                                             // Check for cancel
                                                                                             if let Ok(cancel_json) = serde_json::from_str::<serde_json::Value>(&txt) {
                                                                                                 if cancel_json.get("type").and_then(|v| v.as_str()) == Some("transcode_cancel") {
                                                                                                     info!("Transcode cancel received for task {}", cancel_task_id);
-                                                                                                    // Best-effort sidecar cancel
-                                                                                                    match cancel_tc.cancel_transcode(&cancel_task_id).await {
-                                                                                                        Ok(true) => info!("Sidecar cancel acknowledged for {}", cancel_task_id),
-                                                                                                        Ok(false) => debug!("Sidecar cancel endpoint not supported for {}", cancel_task_id),
-                                                                                                        Err(e) => warn!("Sidecar cancel failed for {}: {}", cancel_task_id, e),
-                                                                                                    }
+                                                                                                    cancel_token.cancel();
                                                                                                     break;
                                                                                                 }
                                                                                             }
                                                                                         }
-                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => {
+                                                                                            liveness.mark_dead();
+                                                                                            break;
+                                                                                        }
                                                                                         _ => {}
+                                                                                    }
+                                                                                }
+                                                                                _ = tokio::time::sleep_until(liveness.deadline()) => {
+                                                                                    if !liveness.on_deadline(&mut ws_sender).await {
+                                                                                        break;
                                                                                     }
                                                                                 }
                                                                                 else => break,
@@ -4288,8 +4619,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         // single-exit cleanup never forfeits — stranding the session's
                                                                         // escrow until the USER pays a triggerSessionTimeout reclaim.
                                                                         let ltx_write_timeout = crate::api::websocket::handlers::ltx::ltx_ws_write_timeout();
+                                                                        liveness.touch();
                                                                         loop {
                                                                             tokio::select! {
+                                                                                biased;
                                                                                 msg = progress_rx.recv() => {
                                                                                     match msg {
                                                                                         Some(m) => {
@@ -4304,13 +4637,18 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                     outcome,
                                                                                                     ltx_write_timeout.as_secs()
                                                                                                 );
+                                                                                                liveness.mark_dead();
                                                                                                 break;
                                                                                             }
+                                                                                            liveness.note_write();
                                                                                         }
                                                                                         None => break, // task finished (sender dropped)
                                                                                     }
                                                                                 }
                                                                                 ws_msg = ws_receiver.next() => {
+                                                                                    if ws_msg.is_some() {
+                                                                                        liveness.touch();
+                                                                                    }
                                                                                     match ws_msg {
                                                                                         Some(Ok(axum::extract::ws::Message::Text(txt))) => {
                                                                                             if let Ok(cancel_json) = serde_json::from_str::<serde_json::Value>(&txt) {
@@ -4321,8 +4659,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                 }
                                                                                             }
                                                                                         }
-                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => break,
+                                                                                        Some(Ok(axum::extract::ws::Message::Close(_))) | Some(Err(_)) | None => {
+                                                                                            liveness.mark_dead();
+                                                                                            break;
+                                                                                        }
                                                                                         _ => {}
+                                                                                    }
+                                                                                }
+                                                                                // SCI-C D16: the connection's liveness rule.
+                                                                                _ = tokio::time::sleep_until(liveness.deadline()) => {
+                                                                                    if !liveness.on_deadline(&mut ws_sender).await {
+                                                                                        break;
                                                                                     }
                                                                                 }
                                                                                 else => break,
@@ -4435,8 +4782,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             train_now_secs,
                                                                         ));
                                                                         let mut client_gone = false;
+                                                                        liveness.touch();
                                                                         loop {
                                                                             tokio::select! {
+                                                                                biased;
                                                                                 frame = train_frame_rx.recv() => match frame {
                                                                                     Some(frame) => {
                                                                                         if client_gone {
@@ -4455,12 +4804,16 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             // boundary; execute still settles + completes.
                                                                                             train_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
                                                                                             client_gone = true;
+                                                                                            liveness.mark_dead();
+                                                                                        } else {
+                                                                                            liveness.note_write();
                                                                                         }
                                                                                     }
                                                                                     None => break, // execute finished
                                                                                 },
                                                                                 inbound = ws_receiver.next(), if !client_gone => match inbound {
                                                                                     Some(Ok(axum::extract::ws::Message::Text(text))) => {
+                                                                                        liveness.touch();
                                                                                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
                                                                                             let mut is_cancel = value.get("type").and_then(|t| t.as_str()) == Some("train_cancel")
                                                                                                 || value.get("action").and_then(|a| a.as_str()) == Some("train_cancel");
@@ -4487,8 +4840,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             }
                                                                                         }
                                                                                     }
-                                                                                    Some(Ok(_)) => {}
+                                                                                    Some(Ok(_)) => liveness.touch(),
                                                                                     _ => {
+                                                                                        liveness.mark_dead();
                                                                                         // Disconnect: cancel; keep DRAINING (the run settles its
                                                                                         // completed slices) — but stop polling the dead receiver
                                                                                         // (converge round: the select spun hot to run end).
@@ -4496,6 +4850,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                         client_gone = true;
                                                                                     }
                                                                                 },
+                                                                                // SCI-C D16: a half-open socket is a disconnect.
+                                                                                _ = tokio::time::sleep_until(liveness.deadline()), if !client_gone => {
+                                                                                    if !liveness.on_deadline(&mut ws_sender).await {
+                                                                                        train_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                                                        client_gone = true;
+                                                                                    }
+                                                                                }
                                                                             }
                                                                         }
                                                                         if let Err(join_error) =
@@ -4869,15 +5230,23 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             let mut chunk_index =
                                                                                 0u32;
 
+                                                                            liveness.touch();
                                                                             loop {
                                                                                 let response = tokio::select! {
+                                                                                    biased;
                                                                                     resp = receiver.recv() => {
                                                                                         match resp {
-                                                                                            Some(r) => r,
+                                                                                            Some(r) => {
+                                                                                                liveness.note_write();
+                                                                                                r
+                                                                                            }
                                                                                             None => break, // channel closed
                                                                                         }
                                                                                     }
                                                                                     ws_msg = ws_receiver.next() => {
+                                                                                        if ws_msg.is_some() {
+                                                                                            liveness.touch();
+                                                                                        }
                                                                                         match ws_msg {
                                                                                             Some(Ok(axum::extract::ws::Message::Text(text))) => {
                                                                                                 if let Ok(cj) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -4895,9 +5264,23 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                 }
                                                                                                 continue; // non-cancel message, keep streaming
                                                                                             }
-                                                                                            Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                                                            Some(Ok(axum::extract::ws::Message::Close(_))) | None => {
+                                                                                                liveness.mark_dead();
+                                                                                                break;
+                                                                                            }
                                                                                             _ => continue,
                                                                                         }
+                                                                                    }
+                                                                                    // SCI-C D16: the connection's liveness rule.
+                                                                                    _ = tokio::time::sleep_until(liveness.deadline()) => {
+                                                                                        if !liveness.on_deadline(&mut ws_sender).await {
+                                                                                            // A dead peer stops generation, as stream_cancel does.
+                                                                                            if let Some(ref flag) = cancel_flag {
+                                                                                                flag.store(true, std::sync::atomic::Ordering::Release);
+                                                                                            }
+                                                                                            break;
+                                                                                        }
+                                                                                        continue;
                                                                                     }
                                                                                 };
                                                                                 {
@@ -5541,6 +5924,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                     register_connection_job(&server, &mut connection_job, job_id);
                                     // SCI-C D15: this prompt is chat work on the adopted job.
                                     server.job_work().note_other_work(req_job_id);
+                                    did_work = true;
                                 }
                             }
 
@@ -5572,15 +5956,23 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 Ok((mut receiver, mut result_rx)) => {
                                     let mut total_tokens = 0u64;
 
+                                    liveness.touch();
                                     loop {
                                         let response = tokio::select! {
+                                            biased;
                                             resp = receiver.recv() => {
                                                 match resp {
-                                                    Some(r) => r,
+                                                    Some(r) => {
+                                                        liveness.note_write();
+                                                        r
+                                                    }
                                                     None => break,
                                                 }
                                             }
                                             ws_msg = ws_receiver.next() => {
+                                                if ws_msg.is_some() {
+                                                    liveness.touch();
+                                                }
                                                 match ws_msg {
                                                     Some(Ok(axum::extract::ws::Message::Text(text))) => {
                                                         if let Ok(cj) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -5597,9 +5989,23 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                         }
                                                         continue;
                                                     }
-                                                    Some(Ok(axum::extract::ws::Message::Close(_))) | None => break,
+                                                    Some(Ok(axum::extract::ws::Message::Close(_))) | None => {
+                                                        liveness.mark_dead();
+                                                        break;
+                                                    }
                                                     _ => continue,
                                                 }
+                                            }
+                                            // SCI-C D16: the connection's liveness rule.
+                                            _ = tokio::time::sleep_until(liveness.deadline()) => {
+                                                if !liveness.on_deadline(&mut ws_sender).await {
+                                                    // A dead peer stops generation, as stream_cancel does.
+                                                    if let Some(ref flag) = cancel_flag {
+                                                        flag.store(true, std::sync::atomic::Ordering::Release);
+                                                    }
+                                                    break;
+                                                }
+                                                continue;
                                             }
                                         };
                                         {
@@ -6038,7 +6444,21 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         }
     }
 
-    register_connection_job(&server, &mut connection_job, job_id);
+    register_connection_job(
+        &server,
+        &mut connection_job,
+        if fetch_only { None } else { job_id },
+    );
+
+    // SCI-C D19(e): a connection that only fetched stored results never
+    // carried its job, so its close is not a completion owner.
+    if fetch_only {
+        info!(
+            "[SCI-C] fetch-only connection for job {:?} closed; no completion",
+            job_id
+        );
+        return;
+    }
 
     if let Some(jid) = job_id {
         info!("\n🚨 WEBSOCKET DISCONNECTED - STARTING SETTLEMENT PROCESS");
@@ -6057,7 +6477,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         );
         if job_state.work_in_flight > 0 || job_state.other_connections > 0 {
             info!(
-                "[SCI] job {}: {} unit(s) of work in flight, {} other connection(s); completion left to them",
+                "[SCI-C] job {}: {} unit(s) of work in flight, {} other connection(s); completion left to them",
                 jid, job_state.work_in_flight, job_state.other_connections
             );
             return;

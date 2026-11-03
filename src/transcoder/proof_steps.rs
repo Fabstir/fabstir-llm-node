@@ -256,3 +256,10 @@ pub fn final_step(
     }
     FinalStep::Claim(amount)
 }
+
+/// D19(b): work that finishes after the session's `startTime + maxDuration`
+/// (chain time) is not billed. Node policy: the contract would still accept
+/// the proof on an `Active` session.
+pub fn finished_after_expiry(view: &SessionView, chain_now: u64) -> bool {
+    chain_now > view.start_time.saturating_add(view.max_duration)
+}

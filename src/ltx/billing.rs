@@ -185,6 +185,11 @@ impl LtxTracker {
     /// Read-only: a proof outcome is currently unresolved for this job. Used
     /// by the completion paths to re-check at wake after a dispute-window
     /// sleep — a clip accepted mid-sleep must not get settled under.
+    /// Jobs with an LTX record (for the expiry sweeper's registry, SCI-C D17).
+    pub async fn job_ids(&self) -> Vec<u64> {
+        self.jobs.read().await.keys().copied().collect()
+    }
+
     pub async fn has_pending(&self, job_id: u64) -> bool {
         self.jobs
             .read()

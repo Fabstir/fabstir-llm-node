@@ -1566,6 +1566,25 @@ impl CheckpointManager {
         Ok(())
     }
 
+    /// SCI-C D17: the contract's dispute window read now, never below the
+    /// value resolved at startup (a failed startup read fell back to 30 s).
+    pub async fn dispute_window_now(&self) -> u64 {
+        Self::query_dispute_window(&self.web3_client, self.proof_system_address)
+            .await
+            .max(self.dispute_window_secs)
+    }
+
+    /// SCI-C D17: the host address this node signs as.
+    pub fn host_address(&self) -> Address {
+        self.host_address
+    }
+
+    /// SCI-C D17: the jobs holding a token tracker (retained until settled, D9),
+    /// for the expiry sweeper's registry. A snapshot; no lock is held after.
+    pub async fn tracked_job_ids(&self) -> Vec<u64> {
+        self.job_trackers.read().await.keys().copied().collect()
+    }
+
     /// Get current token count for a job
     pub async fn get_token_count(&self, job_id: u64) -> u64 {
         let trackers = self.job_trackers.read().await;

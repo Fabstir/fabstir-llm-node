@@ -14,6 +14,7 @@ pub mod proof;
 pub mod proof_steps;
 pub mod quality;
 pub mod rate_limiter;
+pub mod result_store;
 pub mod types;
 
 pub use capacity::CachedSidecarStatus;

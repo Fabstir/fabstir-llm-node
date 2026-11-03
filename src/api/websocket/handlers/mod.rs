@@ -11,6 +11,7 @@ pub mod session_init;
 pub mod session_resume;
 pub mod training;
 pub mod transcode;
+pub mod transcode_result;
 
 use super::messages::{ErrorCode, WebSocketMessage};
 use anyhow::Result;

@@ -119,6 +119,11 @@ impl TrainTracker {
         }
     }
 
+    /// Jobs with a training run record (for the expiry sweeper, SCI-C D17).
+    pub async fn job_ids(&self) -> Vec<u64> {
+        self.runs.read().await.keys().copied().collect()
+    }
+
     pub async fn has_pending(&self, job_id: u64) -> bool {
         self.runs
             .read()

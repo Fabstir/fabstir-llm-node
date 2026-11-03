@@ -1848,6 +1848,62 @@ When the sidecar is unreachable or not configured:
 - `400 Bad Request` - Empty `sourceCid` or `mediaFormats`
 - `429 Too Many Requests` - Sidecar capacity full (`TRANSCODE_CAPACITY_FULL`)
 - `502 Bad Gateway` - Transcoder sidecar error
+
+#### Session transcodes: billing in steps, dropped connections and the result fetch (v8.62.0+, feature `session-job-completion`)
+
+These rules apply to an encrypted WebSocket transcode on a session job (a `jobId` from an `encrypted_session_init`). A node that implements them lists `"session-job-completion"` in the `features` array of `GET /v1/version`; key on that string, not on a version comparison.
+
+**Accept gate.** Before the sidecar is called the node reads the session on chain and refuses with a `transcode_error` when it cannot be paid safely:
+
+| Code | Meaning |
+|------|---------|
+| `SESSION_NOT_ACTIVE` | The session is not `Active` on chain |
+| `PROOF_WINDOW_TOO_SHORT` | `proofTimeoutWindow` is under `TRANSCODE_MIN_PROOF_WINDOW_SECS` (300) |
+| `SESSION_LIFETIME_TOO_SHORT` | Less than `TRANSCODE_MIN_LIFETIME_SECS` (600) of the session's lifetime is left |
+| `DEPOSIT_EXHAUSTED` | Nothing left to bill against |
+| `SESSION_UNREADABLE` | The session could not be read (fails closed) |
+| `BILLING_UNAVAILABLE` | The host has no chain connection |
+| `SESSION_INIT_REQUIRED` | No encrypted `session_init` on this connection, so there is no owner for the result |
+| `RESULT_STORE_UNAVAILABLE` | The host cannot keep results (see `TRANSCODE_RESULT_DIR`) |
+| `SESSION_SETTLED` / `SESSION_CLOSING` | The session is settled, or its completion has been decided; open a new session |
+
+**Billing in steps.** The node proves the work as it runs (at each quarter of progress, or when half the session's `proofTimeoutWindow` has passed), every proof awaited to a confirmed receipt, and re-reads the session every 20 s. `transcode_complete` is sent only after the final proof is confirmed. Its `billing` block is `{units, tokens, provenTokens}`: `tokens` is what the run cost, `provenTokens` what is proven on chain for it. They differ when the session's first proof is padded up to the contract minimum (on chain more) or the run is capped by the deposit (on chain less; the result is still released). Progress frames carry no billing.
+
+**Errors during or after a run** (`transcode_error`): `SESSION_NOT_BILLABLE` (the session stopped being payable or was completed by someone else; proven steps stay paid), `SESSION_EXPIRED` (the session expired before the work finished: a run still going is stopped, a run that finished after `startTime + maxDuration` is not billed; outputs withheld either way, steps proven before expiry stay paid), `BILLING_FAILED` (the final proof did not land; outputs withheld), `CANCELLED` (after `transcode_cancel`), `TIMEOUT`, `POLL_FAILED` (three consecutive sidecar status failures), and the moderation hold codes.
+
+**A dropped connection does not stop the run.** Only `transcode_cancel` does. The run finishes, bills and stores its outcome, and the node completes the session itself once the work ends with no live connection (or 60 s after a billed transcode on a connection left open, `TRANSCODE_COMPLETE_GRACE_SECS`).
+
+**Fetching the result.** Open a new connection, send the ordinary signed `encrypted_session_init` for the same job, then an encrypted message whose plaintext is:
+
+```json
+{"action": "transcode_result", "taskId": "<taskId from transcode_accepted>"}
+```
+
+The answer is an `encrypted_response` under the new connection's session key, with your `id` echoed:
+
+| Plaintext `type` | When |
+|------------------|------|
+| `transcode_complete` | Paid: the stored completion, byte for byte as the original connection would have received it |
+| `transcode_result_pending` | `{type, taskId}`: still running; ask again later |
+| `transcode_error` | `{type, taskId, error: {code, message}}` with `RESULT_NOT_FOUND`, `RESULT_EXPIRED`, `NOT_OWNER`, `RESULT_STORE_UNAVAILABLE`, `VALIDATION_FAILED`, or the code the run ended with (including `INTERRUPTED` when the node stopped mid-run, and moderation holds re-checked at fetch time) |
+
+Only the identity that ordered the work may fetch it: the signer the node recovered from the submitting connection's `session_init` (on a vault-paid session, the authorised vault client) must equal the signer recovered from the fetching connection's `session_init`. The fetch never bills, never re-runs the job, works on a session that has already completed, and a connection that only fetches does not complete the session when it closes. Results are kept for `TRANSCODE_RESULT_RETENTION_DAYS` (7); after that the first fetch answers `RESULT_EXPIRED` and the record is deleted, so later ones answer `RESULT_NOT_FOUND`. Save the output CIDs as soon as you have them. The fetch protects the CID list, not the content: anyone holding an output CID can fetch it from S5.
+
+**Host configuration.**
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `TRANSCODE_MIN_PROOF_WINDOW_SECS` | 300 | Shortest `proofTimeoutWindow` a session transcode is accepted on |
+| `TRANSCODE_MIN_LIFETIME_SECS` | 600 | Least remaining session lifetime a session transcode is accepted with |
+| `TRANSCODE_RESULT_DIR` | `./data/transcode-results` | Result store; created 0700. Unwritable means session transcodes are refused |
+| `TRANSCODE_RESULT_RETENTION_DAYS` | 7 | Retention of every record |
+| `TRANSCODE_RESULT_MAX_ENTRIES` | 5000 | Store cap (oldest finished records evicted first) |
+| `TRANSCODE_COMPLETE_GRACE_SECS` | 60 | Wait before a billed transcode's session is completed under a connection left open |
+| `WS_PING_AFTER_SECS` / `WS_PING_UNANSWERED_CLOSE_SECS` | 30 / 60 | Idle socket: one Ping, then close if unanswered (floor 10 s each) |
+| `SESSION_SWEEP_INTERVAL_SECS` / `SESSION_SWEEP_MARGIN_SECS` | 300 / 300 | Expiry sweeper cadence (floor 30 s), and margin past expiry before it completes a stranded session |
+| `SESSION_SWEEP_ENABLED` | true | `false` turns the expiry sweeper off |
+
+Records are encrypted at rest under a key derived from `HOST_PRIVATE_KEY` (never written to disk); rotating that key makes existing records unreadable, and they are deleted at the next start.
 - `503 Service Unavailable` - Transcoder sidecar not configured
 
 #### Performance Notes

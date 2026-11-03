@@ -3,25 +3,31 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.60.7-ltx-stored-prompt-chain-2026-10-20";
+pub const VERSION: &str = "v8.62.0-session-job-completion-2026-11-03";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.60.7";
+pub const VERSION_NUMBER: &str = "8.62.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 60;
+pub const VERSION_MINOR: u32 = 62;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 7;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-10-20";
+pub const BUILD_DATE: &str = "2026-11-03";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.62.0 SCI-C (IMPLEMENTATION-SESSION-COMPLETION-INTEGRITY D15-D21): completion belongs to the
+    // job (D15), per-connection session keys (D18), a liveness rule on every socket loop (D16), an
+    // expiry sweeper (D17), transcodes gated, billed in steps and released only once paid (D20), and
+    // a dropped transcode finishes, bills and keeps its result for a `transcode_result` fetch (D19).
+    // One marker for all of them (D21): the SDK keys on this string.
+    "session-job-completion",
     // v8.60.7 K4: a template may carry a FIXED prompt stored pre-encoded (`fixedPrompt` in the allow-list; the job must send
     // exactly that text, no `Prompt` handle needed; the stored files are checked in ComfyUI before accept), and a chained
     // part's "Previous part" loader reads only the previous part's last 17 frames.
@@ -658,6 +664,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.62.0 - SCI-C session job completion (Nov 3, 2026)
+    "v8.62.0: a dropped connection no longer stops a session transcode; only transcode_cancel does. The run bills and its result is fetched with {action: \"transcode_result\", taskId} on a new connection (feature session-job-completion)",
+    "v8.62.0: session transcodes are refused at accept when the session cannot pay safely (SESSION_NOT_ACTIVE, PROOF_WINDOW_TOO_SHORT, SESSION_LIFETIME_TOO_SHORT, DEPOSIT_EXHAUSTED, SESSION_INIT_REQUIRED, RESULT_STORE_UNAVAILABLE, ...); transcode_complete billing gains provenTokens",
+    "v8.62.0: session keys are per connection; every connection must send its own encrypted_session_init",
+    "v8.62.0: idle sockets are pinged after 30 s and closed when the Ping is unanswered for 60 s",
     // v8.60.7 - K4: stored prompt encodings and chained parts (Oct 20, 2026)
     "FEATURE (LTX allow-list): an entry may carry `fixedPrompt`; a job on it whose prompt differs is refused pre-accept (VALIDATION_FAILED), and its template needs no `Prompt` handle (it loads its prompt pre-encoded with LTXVLoadConditioning). Every stored file a template loads must be listed by ComfyUI's /object_info before accept, else CAPACITY with `STORED_ENCODING_MISSING:` (or `STORED_ENCODING_UNVERIFIED:` when ComfyUI cannot be asked). FEATURE (LTX patcher): a template's VHS_LoadVideo titled \"Previous part\" (at most one) is set post-accept to read only its video's last 17 frames; a previous part under 18 frames fails post-accept. No change for entries and templates without them",
     // v8.60.6 - LTX memory between modes (Oct 18, 2026)
@@ -1183,8 +1194,8 @@ mod tests {
     #[test]
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 60);
-        assert_eq!(VERSION_PATCH, 7);
+        assert_eq!(VERSION_MINOR, 62);
+        assert_eq!(VERSION_PATCH, 0);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1409,15 +1420,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.60.7"));
-        assert!(version.contains("2026-10-20"));
+        assert!(version.contains("8.62.0"));
+        assert!(version.contains("2026-11-03"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.60.7-ltx-stored-prompt-chain-2026-10-20");
-        assert_eq!(VERSION_NUMBER, "8.60.7");
-        assert_eq!(BUILD_DATE, "2026-10-20");
+        assert_eq!(VERSION, "v8.62.0-session-job-completion-2026-11-03");
+        assert_eq!(VERSION_NUMBER, "8.62.0");
+        assert_eq!(BUILD_DATE, "2026-11-03");
     }
 
     #[test]
@@ -1493,5 +1504,18 @@ mod tests {
     fn test_s5_portal_migration_features() {
         assert!(FEATURES.contains(&"platformless-ai-s5-portal"));
         assert!(FEATURES.contains(&"sia-decentralized-storage"));
+    }
+
+    #[test]
+    fn test_session_job_completion_marker() {
+        // SCI-C D21: one marker for D15-D20, the string the SDK keys on.
+        assert!(FEATURES.contains(&"session-job-completion"));
+        assert_eq!(
+            FEATURES
+                .iter()
+                .filter(|f| **f == "session-job-completion")
+                .count(),
+            1
+        );
     }
 }

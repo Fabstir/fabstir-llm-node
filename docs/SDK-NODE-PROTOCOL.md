@@ -242,3 +242,14 @@
   while users maintain full data sovereignty through decentralized storage. The automatic payment mechanism (v5+) ensures hosts
   receive compensation even if connections drop unexpectedly, with 90% going to the host via HostEarnings contract, 10% to
   treasury, and unused deposits refunded to users.
+---
+
+## Session job completion (v8.62.0+, feature `session-job-completion`)
+
+A node listing `"session-job-completion"` in `GET /v1/version` → `features` implements all of the following. Clients key on that string, not on a version comparison; against a node without it, keep the older behaviour (one job per session, a closed socket ends a transcode).
+
+1. **Completion belongs to the job, not the socket.** The node completes a session when the job's last unit of work ends with no live connection, or (for a session that only ever ran transcodes) 60 s after a billed transcode under a connection that stays open. Closing one socket no longer settles a session while work runs on another. A connection that only fetches results never completes its session.
+2. **Session keys are per connection.** Each connection's `encrypted_session_init` stores its key for that connection alone; two sockets on one session each decrypt with their own key, and a key is removed when its connection closes. Re-send `encrypted_session_init` on every new connection (the SDK already does).
+3. **Liveness.** Every loop that reads a socket pings after 30 s idle and closes when that Ping is unanswered for 60 s. Browsers and standard WebSocket libraries answer Pings themselves; a client must keep reading its socket.
+4. **Transcodes are gated at accept, billed in steps and released only once paid**, and a transcode whose client disconnects runs to the end, bills and keeps its result for 7 days. Only `transcode_cancel` stops a run. See [API.md, Session transcodes](./API.md#session-transcodes-billing-in-steps-dropped-connections-and-the-result-fetch-v8620-feature-session-job-completion) for the refusal codes, the `billing.provenTokens` field and the fetch: `{action: "transcode_result", taskId}` on a new connection initialised for the same job by the same signing key.
+5. **Expiry sweeper.** A session the node holds proven work on and that nobody completes is completed by the node itself (`completeSessionJob`, never `triggerSessionTimeout`) once the chain's clock is past its expiry plus 300 s and its dispute window.

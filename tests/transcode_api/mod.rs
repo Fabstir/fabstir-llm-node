@@ -1,5 +1,10 @@
 mod test_biller;
+mod test_biller_expiry;
+mod test_expiry_sweeper;
 mod test_http_handler;
 mod test_job_work;
+mod test_liveness;
 mod test_proof_steps;
+mod test_result_store;
 mod test_ws_handler;
+mod test_ws_liveness;
