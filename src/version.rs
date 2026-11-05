@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.62.1-transcode-outputs-wait-2026-11-04";
+pub const VERSION: &str = "v8.62.2-transcode-final-claim-2026-11-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.62.1";
+pub const VERSION_NUMBER: &str = "8.62.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,18 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 62;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-04";
+pub const BUILD_DATE: &str = "2026-11-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.62.2: the final claim of a session transcode is batched (one proof once the rate covers what is
+    // owed, never more than half a proof window apart) and its wait scales with what is owed; the sidecar's
+    // GetTranscoded status_code ends a failed job at once; SESSION_NOT_BILLABLE at the final claim.
+    "transcode-final-claim-batched",
+    "transcode-sidecar-failed-status",
     // v8.62.1: a session transcode at progress 100 waits for the sidecar to list its outputs
     // (TRANSCODE_OUTPUT_WAIT_SECS, default 120 s, capped inside the proof window) instead of 5 polls,
     // and fails as OUTPUTS_NOT_READY rather than holding as MODERATION_UNAVAILABLE; a sourceCid
@@ -670,6 +675,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.62.2 - transcode final claim (Nov 5, 2026)
+    "v8.62.2: the final claim of a session transcode lands as one proof once the model rate covers what is owed (or every half proof window), and waits up to the time the rate needs plus 120 s; 8.62.1 claimed every second or so and gave up after a flat 120 s, withholding long jobs as BILLING_FAILED",
+    "v8.62.2: a transcoder GetTranscoded status_code other than 200 ends the run at once: transcode_error VALIDATION_FAILED for 400, TRANSCODE_FAILED otherwise (previously ignored until the 30 min TIMEOUT)",
+    "v8.62.2: a session completed by someone else during the final claim now reports SESSION_NOT_BILLABLE (was BILLING_FAILED), as it does mid-run",
     // v8.62.1 - transcode outputs wait (Nov 4, 2026)
     "v8.62.1: a session transcode whose outputs are not listed within TRANSCODE_OUTPUT_WAIT_SECS (default 120 s) of reaching 100% fails with the new transcode_error code OUTPUTS_NOT_READY (not billed); 8.62.0 gave up after 10 s and held such jobs as MODERATION_UNAVAILABLE",
     "v8.62.1: a sourceCid without its storage network (e.g. a bare CID instead of s5://<cid>) is refused before the sidecar: VALIDATION_FAILED on the WebSocket, 400 on POST /v1/transcode (the sidecar dropped such CIDs while reporting in progress until the 30 min TIMEOUT)",
@@ -1204,7 +1213,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 62);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_PATCH, 2);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1429,15 +1438,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.62.1"));
-        assert!(version.contains("2026-11-04"));
+        assert!(version.contains("8.62.2"));
+        assert!(version.contains("2026-11-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.62.1-transcode-outputs-wait-2026-11-04");
-        assert_eq!(VERSION_NUMBER, "8.62.1");
-        assert_eq!(BUILD_DATE, "2026-11-04");
+        assert_eq!(VERSION, "v8.62.2-transcode-final-claim-2026-11-05");
+        assert_eq!(VERSION_NUMBER, "8.62.2");
+        assert_eq!(BUILD_DATE, "2026-11-05");
     }
 
     #[test]
@@ -1513,6 +1522,13 @@ mod tests {
     fn test_s5_portal_migration_features() {
         assert!(FEATURES.contains(&"platformless-ai-s5-portal"));
         assert!(FEATURES.contains(&"sia-decentralized-storage"));
+    }
+
+    #[test]
+    fn test_transcode_final_claim_features() {
+        // v8.62.2: batched final claim and the sidecar failed-status read.
+        assert!(FEATURES.contains(&"transcode-final-claim-batched"));
+        assert!(FEATURES.contains(&"transcode-sidecar-failed-status"));
     }
 
     #[test]

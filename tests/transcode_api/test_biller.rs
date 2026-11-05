@@ -319,5 +319,8 @@ async fn the_final_claim_waits_for_the_rate_cap() {
     let outcome = b.finish(chain.as_ref(), 28_875).await;
     ticker.abort();
     assert_eq!(outcome, FinishOutcome::Paid { proven: 28_875 });
-    chain.with(|c| assert!(c.proofs.len() >= 2, "split by the rate cap: {:?}", c.proofs));
+    // 8.62.2: the claim still waits for the rate cap, but batched: it lands once
+    // the rate covers it (~15 s here, inside half the 300 s window) as ONE proof,
+    // not one per second of accrual (session 1467: 34 proofs). Was `>= 2`.
+    chain.with(|c| assert_eq!(c.proofs.len(), 1, "batched by the rate cap: {:?}", c.proofs));
 }

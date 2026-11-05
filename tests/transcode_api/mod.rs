@@ -9,3 +9,5 @@ mod test_result_store;
 mod test_ws_handler;
 mod test_ws_liveness;
 mod test_outputs_wait;
+mod test_final_claim;
+mod test_sidecar_status;

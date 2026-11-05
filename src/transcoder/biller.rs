@@ -12,15 +12,29 @@ use ethers::types::H256;
 use sha2::{Digest, Sha256};
 
 use super::proof_steps::{
-    final_step, finished_after_expiry, interim_amount, interim_due, session_view, steps_can_carry,
-    FinalStep, SessionView,
+    final_owed, final_step_batched, finished_after_expiry, interim_amount, interim_due,
+    session_view, steps_can_carry, FinalStep, SessionView,
 };
 use crate::training::accept::SessionStatus;
 
 /// How often the loop re-reads the session while the sidecar runs (D20(d)).
 pub const STATUS_CHECK_EVERY_SECS: u64 = 20;
-/// How long, in wall time, the final claim waits for the rate cap to allow it.
+/// Slack, in seconds, the final claim may wait beyond what the rate needs for
+/// what is owed (8.62.2: the wait was this flat 120 s, so a job owing more than
+/// 120 s of rate ended BILLING_FAILED with its result withheld).
 pub const FINAL_RATE_WAIT_CAP_SECS: u64 = 120;
+/// Upper bound on the final claim's whole wait, whatever is owed.
+pub const FINAL_WAIT_CEILING_SECS: u64 = 3_600;
+
+/// 8.62.2: how long the final claim may wait for the rate cap: the time the rate
+/// needs for `owed`, plus `FINAL_RATE_WAIT_CAP_SECS`, never above
+/// `FINAL_WAIT_CEILING_SECS`. A rate of 0 can never pay, so it gets the slack only.
+pub fn final_wait_cap_secs(owed: u64, rate_per_sec: u64) -> u64 {
+    if rate_per_sec == 0 {
+        return FINAL_RATE_WAIT_CAP_SECS;
+    }
+    (owed / rate_per_sec + FINAL_RATE_WAIT_CAP_SECS).min(FINAL_WAIT_CEILING_SECS)
+}
 /// Transient failures the final claim tolerates before giving up.
 pub const FINAL_ATTEMPTS: u32 = 3;
 /// Pause between final-claim retries.
@@ -65,6 +79,11 @@ pub enum FinishOutcome {
     Paid { proven: u64 },
     /// The final claim did not land; withhold the result (D20(c)).
     Unpaid(String),
+    /// 8.62.2: the session stopped being payable before the final claim (its
+    /// depositor or another party completed it, or it timed out). Steps already
+    /// proven stay paid; the client is told SESSION_NOT_BILLABLE, as for the same
+    /// event mid-run, not BILLING_FAILED.
+    NotBillable(String),
     /// The work finished after the session expired: not billed (D19(b)), the
     /// result withheld. Steps proven before expiry stay paid.
     Expired { proven: u64 },
@@ -272,10 +291,13 @@ impl TranscodeBiller {
     /// transient failure (a read, the rate limit, the attestation upload, a
     /// proof that did not land) is retried, re-reading the session each time,
     /// up to [`FINAL_ATTEMPTS`]; a session that is no longer `Active` ends it at
-    /// once. Waiting for the rate cap is bounded by [`FINAL_RATE_WAIT_CAP_SECS`]
-    /// of wall time.
+    /// once as `NotBillable`. The claim is batched (`final_step_batched`) and its
+    /// wait for the rate cap is bounded by [`final_wait_cap_secs`].
     pub async fn finish(&mut self, chain: &dyn TranscodeChain, actual: u64) -> FinishOutcome {
-        let started = std::time::Instant::now();
+        // tokio's clock (8.62.2): identical in production, and paused tests can
+        // reach the cap (with std's clock they never could).
+        let started = tokio::time::Instant::now();
+        let mut wait_cap: Option<Duration> = None;
         let mut failures = 0u32;
         let mut last_error = String::new();
         // When the work finished, on chain time: the first successful read.
@@ -296,7 +318,7 @@ impl TranscodeBiller {
                 }
             };
             if view.status != SessionStatus::Active {
-                return FinishOutcome::Unpaid(format!("session is {:?}", view.status));
+                return FinishOutcome::NotBillable(format!("session is {:?}", view.status));
             }
             if !judged_expiry {
                 judged_expiry = true;
@@ -315,7 +337,13 @@ impl TranscodeBiller {
                     continue;
                 }
             };
-            match final_step(&view, self.proven, actual, now, rate) {
+            let cap = *wait_cap.get_or_insert_with(|| {
+                Duration::from_secs(final_wait_cap_secs(
+                    final_owed(&view, self.proven, actual),
+                    rate,
+                ))
+            });
+            match final_step_batched(&view, self.proven, actual, now, rate) {
                 FinalStep::Done => {
                     return FinishOutcome::Paid {
                         proven: self.proven,
@@ -329,7 +357,7 @@ impl TranscodeBiller {
                     }
                 }
                 FinalStep::Wait => {
-                    if started.elapsed() >= Duration::from_secs(FINAL_RATE_WAIT_CAP_SECS) {
+                    if started.elapsed() >= cap {
                         return FinishOutcome::Unpaid(
                             "the rate cap did not allow the final claim in time".to_string(),
                         );

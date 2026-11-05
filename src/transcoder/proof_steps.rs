@@ -257,6 +257,50 @@ pub fn final_step(
     FinalStep::Claim(amount)
 }
 
+/// 8.62.2: the tokens the final claim still owes, exactly as `final_step`
+/// counts them (the first-proof minimum, capped by the deposit).
+pub fn final_owed(view: &SessionView, proven: u64, actual: u64) -> u64 {
+    let mut owed = actual.saturating_sub(proven);
+    if owed == 0 {
+        return 0;
+    }
+    if view.tokens_used == 0 {
+        owed = owed.max(view.minimum_proof());
+    }
+    owed.min(view.deposit_room())
+}
+
+/// 8.62.2: the longest a batching final claim lets pass since the last proof:
+/// under half the proof window, less 10 s for the claim loop's 5 s polling, so
+/// a third party can never time the session out while the claim waits.
+pub fn final_claim_gap(view: &SessionView) -> u64 {
+    (view.proof_timeout_window / 2).saturating_sub(10).max(1)
+}
+
+/// 8.62.2: `final_step`, batched. The contract allows `rate x (now - lastProof)`
+/// tokens per proof, so claiming the moment anything is claimable only ever
+/// claims the second or so that passed while the previous proof mined (session
+/// 1467: 34 proofs over 84 s for what one proof covers after 34 s). Wait until
+/// the claim covers everything owed, or until `final_claim_gap` has passed since
+/// the last proof, whichever comes first.
+pub fn final_step_batched(
+    view: &SessionView,
+    proven: u64,
+    actual: u64,
+    chain_now: u64,
+    rate_per_sec: u64,
+) -> FinalStep {
+    match final_step(view, proven, actual, chain_now, rate_per_sec) {
+        FinalStep::Claim(amount)
+            if amount < final_owed(view, proven, actual)
+                && chain_now.saturating_sub(view.last_proof_time) < final_claim_gap(view) =>
+        {
+            FinalStep::Wait
+        }
+        other => other,
+    }
+}
+
 /// D19(b): work that finishes after the session's `startTime + maxDuration`
 /// (chain time) is not billed. Node policy: the contract would still accept
 /// the proof on an `Active` session.

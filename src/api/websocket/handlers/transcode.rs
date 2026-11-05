@@ -83,6 +83,19 @@ pub fn source_cid_names_network(cid: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 8.62.2: the sidecar (d645145 and later) reports a job that failed for good in
+/// GetTranscoded's `status_code`, with HTTP 200: 400 is bad input (an invalid
+/// source CID, for example), any other non-200 is any other permanent failure.
+/// `None` for 200. Checked before progress, which means nothing on a failed
+/// job; `metadata` then holds a plain-text reason for logs only, never parsed.
+pub fn sidecar_failure_code(status_code: i32) -> Option<&'static str> {
+    match status_code {
+        200 => None,
+        400 => Some("VALIDATION_FAILED"),
+        _ => Some("TRANSCODE_FAILED"),
+    }
+}
+
 /// The refusal text for a CID without its network, shared by WS and HTTP.
 pub const SOURCE_CID_NETWORK_MESSAGE: &str =
     "sourceCid must name its storage network, e.g. s5://<cid>";
@@ -245,6 +258,31 @@ impl TranscodeProgressTask {
                 match transcoder_client.get_status(&task_id).await {
                     Ok(status) => {
                         poll_failures = 0;
+                        // 8.62.2: a non-200 status_code is a permanent failure,
+                        // checked before progress (meaningless on a failed job).
+                        // Steps already proven stay paid (after the loop).
+                        if let Some(code) = sidecar_failure_code(status.status_code) {
+                            warn!(
+                                "Transcode {} failed in the sidecar (status_code {}, job {:?}): {:?}",
+                                task_id,
+                                status.status_code,
+                                job_id,
+                                &status.metadata[..status.metadata.len().min(200)]
+                            );
+                            emit_failure(
+                                &progress_tx,
+                                &mut result,
+                                code,
+                                &format!(
+                                    "The transcoder reported the job failed (status {}); nothing more is billed",
+                                    status.status_code
+                                ),
+                                &session_key,
+                                &session_id,
+                            )
+                            .await;
+                            break;
+                        }
                         // D20(b)/(d): prove the work so far and watch the session.
                         if let (Some(b), Some(cm), true) =
                             (biller.as_mut(), chain.as_ref(), status.progress < 100)
@@ -517,6 +555,30 @@ impl TranscodeProgressTask {
                                                 &mut result,
                                                 "BILLING_FAILED",
                                                 &format!("Transcode finished but billing did not settle: {}", reason),
+                                                &session_key,
+                                                &session_id,
+                                            )
+                                            .await;
+                                            break;
+                                        }
+                                        crate::transcoder::biller::FinishOutcome::NotBillable(
+                                            reason,
+                                        ) => {
+                                            // 8.62.2 (session 1469): the same code as
+                                            // when this happens mid-run.
+                                            warn!(
+                                                "[SCI-C] job {}: session stopped being payable before the final claim ({}); proven {} of {} tokens stay paid, result withheld",
+                                                b.job_id(), reason, b.proven(), tokens
+                                            );
+                                            emit_failure(
+                                                &progress_tx,
+                                                &mut result,
+                                                "SESSION_NOT_BILLABLE",
+                                                &format!(
+                                                    "The session stopped being payable before the final claim ({}); the {} tokens already proven stay paid",
+                                                    reason,
+                                                    b.proven()
+                                                ),
                                                 &session_key,
                                                 &session_id,
                                             )

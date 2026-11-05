@@ -1431,8 +1431,9 @@ impl CheckpointManager {
             );
         } else {
             warn!(
-                "⚠️ No token tracker for job {} — no LLM tokens were tracked and no LTX or transcode proof was \
-                 submitted, so this session bills nothing",
+                "⚠️ No token tracker for job {}: this node process tracked no LLM tokens and recorded no LTX or \
+                 transcode proof for it (a restart clears that record); completion settles whatever is already \
+                 proven on chain",
                 job_id
             );
             warn!("   If this was an inference session, check job_id/session_id is passed in the request");
