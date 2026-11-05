@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.62.0-session-job-completion-2026-11-03";
+pub const VERSION: &str = "v8.62.1-transcode-outputs-wait-2026-11-04";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.62.0";
+pub const VERSION_NUMBER: &str = "8.62.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,19 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 62;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-03";
+pub const BUILD_DATE: &str = "2026-11-04";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.62.1: a session transcode at progress 100 waits for the sidecar to list its outputs
+    // (TRANSCODE_OUTPUT_WAIT_SECS, default 120 s, capped inside the proof window) instead of 5 polls,
+    // and fails as OUTPUTS_NOT_READY rather than holding as MODERATION_UNAVAILABLE; a sourceCid
+    // without its storage network (s5://...) is refused before the sidecar (host2, sessions 1459-1462).
+    "transcode-outputs-wait",
+    "transcode-source-cid-network-check",
     // v8.62.0 SCI-C (IMPLEMENTATION-SESSION-COMPLETION-INTEGRITY D15-D21): completion belongs to the
     // job (D15), per-connection session keys (D18), a liveness rule on every socket loop (D16), an
     // expiry sweeper (D17), transcodes gated, billed in steps and released only once paid (D20), and
@@ -664,6 +670,9 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.62.1 - transcode outputs wait (Nov 4, 2026)
+    "v8.62.1: a session transcode whose outputs are not listed within TRANSCODE_OUTPUT_WAIT_SECS (default 120 s) of reaching 100% fails with the new transcode_error code OUTPUTS_NOT_READY (not billed); 8.62.0 gave up after 10 s and held such jobs as MODERATION_UNAVAILABLE",
+    "v8.62.1: a sourceCid without its storage network (e.g. a bare CID instead of s5://<cid>) is refused before the sidecar: VALIDATION_FAILED on the WebSocket, 400 on POST /v1/transcode (the sidecar dropped such CIDs while reporting in progress until the 30 min TIMEOUT)",
     // v8.62.0 - SCI-C session job completion (Nov 3, 2026)
     "v8.62.0: a dropped connection no longer stops a session transcode; only transcode_cancel does. The run bills and its result is fetched with {action: \"transcode_result\", taskId} on a new connection (feature session-job-completion)",
     "v8.62.0: session transcodes are refused at accept when the session cannot pay safely (SESSION_NOT_ACTIVE, PROOF_WINDOW_TOO_SHORT, SESSION_LIFETIME_TOO_SHORT, DEPOSIT_EXHAUSTED, SESSION_INIT_REQUIRED, RESULT_STORE_UNAVAILABLE, ...); transcode_complete billing gains provenTokens",
@@ -1195,7 +1204,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 62);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1420,15 +1429,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.62.0"));
-        assert!(version.contains("2026-11-03"));
+        assert!(version.contains("8.62.1"));
+        assert!(version.contains("2026-11-04"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.62.0-session-job-completion-2026-11-03");
-        assert_eq!(VERSION_NUMBER, "8.62.0");
-        assert_eq!(BUILD_DATE, "2026-11-03");
+        assert_eq!(VERSION, "v8.62.1-transcode-outputs-wait-2026-11-04");
+        assert_eq!(VERSION_NUMBER, "8.62.1");
+        assert_eq!(BUILD_DATE, "2026-11-04");
     }
 
     #[test]
@@ -1504,6 +1513,13 @@ mod tests {
     fn test_s5_portal_migration_features() {
         assert!(FEATURES.contains(&"platformless-ai-s5-portal"));
         assert!(FEATURES.contains(&"sia-decentralized-storage"));
+    }
+
+    #[test]
+    fn test_transcode_outputs_wait_features() {
+        // v8.62.1: the outputs wait and the source CID network check.
+        assert!(FEATURES.contains(&"transcode-outputs-wait"));
+        assert!(FEATURES.contains(&"transcode-source-cid-network-check"));
     }
 
     #[test]

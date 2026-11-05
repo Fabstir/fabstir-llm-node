@@ -44,6 +44,18 @@ pub async fn transcode_submit_handler(
         }
     };
 
+    // 8.62.1: the sidecar drops a CID without its storage network while its
+    // status keeps saying "in progress"; refuse it before submitting.
+    if !crate::api::websocket::handlers::transcode::source_cid_names_network(&request.source_cid) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": crate::api::websocket::handlers::transcode::SOURCE_CID_NETWORK_MESSAGE
+            })),
+        )
+            .into_response();
+    }
+
     // Check capacity (read-only — HTTP path does not acquire/release slots)
     if !server.has_sidecar_capacity().await {
         return (

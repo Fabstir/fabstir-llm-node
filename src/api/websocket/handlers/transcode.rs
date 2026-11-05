@@ -32,6 +32,61 @@ pub fn is_publishable_completion(outputs: &Value) -> bool {
     outputs.as_array().map(|a| !a.is_empty()).unwrap_or(false)
 }
 
+/// Default for `TRANSCODE_OUTPUT_WAIT_SECS` (8.62.1): how long a run that has
+/// reached progress 100 waits for the sidecar to list its outputs. The sidecar
+/// reports 100 while it is still uploading to S5 (about 5 MB/s on host2, so a
+/// 121 MB output took ~25 s); 8.62.0 gave up after 5 polls (10 s) and held
+/// finished jobs unbilled. 120 s covers ~600 MB.
+pub const OUTPUT_WAIT_SECS_DEFAULT: u64 = 120;
+
+/// What the poll loop does at progress 100.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionWait {
+    /// The sidecar's metadata is the output list (a JSON array, possibly empty).
+    Ready,
+    /// Not listed yet; poll again.
+    KeepWaiting,
+    /// Not listed within the wait: fail the run as `OUTPUTS_NOT_READY`.
+    GiveUp,
+}
+
+/// `waited` is the time since the run first reported progress 100.
+pub fn completion_wait(metadata: &str, waited: Duration, max_wait: Duration) -> CompletionWait {
+    if metadata.trim_start().starts_with('[') {
+        CompletionWait::Ready
+    } else if waited < max_wait {
+        CompletionWait::KeepWaiting
+    } else {
+        CompletionWait::GiveUp
+    }
+}
+
+/// The output wait actually used: the configured value, capped so it cannot
+/// outlast the session's proof window. No interim proof is made at 100 (the
+/// final claim needs the actual total), and while below 100 the biller proves at
+/// least every half window, so at 100 the last proof may be half a window old.
+/// The accept gate guarantees the window is at least `min_proof_window_secs`;
+/// the wait keeps 20 s of margin inside the other half, and never drops below
+/// 8.62.0's 10 s.
+pub fn output_wait_secs(configured: u64, min_proof_window_secs: u64) -> u64 {
+    configured
+        .min((min_proof_window_secs / 2).saturating_sub(20))
+        .max(10)
+}
+
+/// The sidecar wants `network://cid` (e.g. `s5://u...`) and silently drops any
+/// other form while its status keeps saying "in progress", so the node refuses
+/// it before submitting (sessions 1459 and 1460 waited 30 minutes for nothing).
+pub fn source_cid_names_network(cid: &str) -> bool {
+    cid.split_once("://")
+        .map(|(network, rest)| !network.is_empty() && !rest.is_empty())
+        .unwrap_or(false)
+}
+
+/// The refusal text for a CID without its network, shared by WS and HTTP.
+pub const SOURCE_CID_NETWORK_MESSAGE: &str =
+    "sourceCid must name its storage network, e.g. s5://<cid>";
+
 /// The transcode's billing units and tokens for a source of `duration` seconds
 /// rendered to `formats` (`tokens = ceil(units × 1000)`). One formula for the
 /// running estimate and the final bill.
@@ -135,8 +190,16 @@ impl TranscodeProgressTask {
                 .map(|jid| crate::transcoder::biller::TranscodeBiller::new(jid, task_id.clone()));
             let start = std::time::Instant::now();
             let mut last_progress = -1i32;
-            let mut completion_retries = 0u32;
-            const MAX_COMPLETION_RETRIES: u32 = 5;
+            // 8.62.1: when the run first reported 100, and how long it may then
+            // wait for the sidecar to list its outputs (see `output_wait_secs`).
+            let mut reached_hundred_at: Option<std::time::Instant> = None;
+            let output_wait = Duration::from_secs(output_wait_secs(
+                std::env::var("TRANSCODE_OUTPUT_WAIT_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(OUTPUT_WAIT_SECS_DEFAULT),
+                crate::transcoder::proof_steps::AcceptLimits::from_env().min_proof_window_secs,
+            ));
             let mut poll_failures = 0u32;
 
             loop {
@@ -274,23 +337,47 @@ impl TranscodeProgressTask {
                         // Check completion (progress 100 only — metadata is unreliable
                         // because "Transcoding in progress" is non-empty/non-[])
                         if status.progress >= 100 {
-                            // Sidecar may report progress=100 before uploads finish.
-                            // Retry if metadata isn't a valid JSON array yet.
-                            let meta_looks_ready = status.metadata.starts_with('[');
-                            if !meta_looks_ready && completion_retries < MAX_COMPLETION_RETRIES {
-                                completion_retries += 1;
-                                debug!(
-                                    "Transcode progress=100 but metadata not ready (attempt {}/{}): {:?}",
-                                    completion_retries, MAX_COMPLETION_RETRIES,
-                                    &status.metadata[..status.metadata.len().min(80)]
-                                );
-                                continue; // poll again after sleep
-                            }
-                            if !meta_looks_ready {
-                                warn!(
-                                    "Transcode metadata still not ready after {} retries, completing with available data: {:?}",
-                                    MAX_COMPLETION_RETRIES, &status.metadata[..status.metadata.len().min(80)]
-                                );
+                            // The sidecar reports 100 before its S5 uploads finish;
+                            // the metadata becomes the output list only after them.
+                            // 8.62.1: wait for it (bounded), and never treat "not
+                            // listed yet" as "no outputs" (that held finished jobs
+                            // unbilled as MODERATION_UNAVAILABLE in 8.62.0).
+                            let since =
+                                *reached_hundred_at.get_or_insert_with(std::time::Instant::now);
+                            match completion_wait(&status.metadata, since.elapsed(), output_wait) {
+                                CompletionWait::Ready => {}
+                                CompletionWait::KeepWaiting => {
+                                    debug!(
+                                        "Transcode {} at 100% but outputs not listed yet ({}s of {}s): {:?}",
+                                        task_id,
+                                        since.elapsed().as_secs(),
+                                        output_wait.as_secs(),
+                                        &status.metadata[..status.metadata.len().min(80)]
+                                    );
+                                    continue; // poll again after sleep
+                                }
+                                CompletionWait::GiveUp => {
+                                    warn!(
+                                        "Transcode {} reached 100% but listed no outputs within {}s (job {:?}); not billed: {:?}",
+                                        task_id,
+                                        output_wait.as_secs(),
+                                        job_id,
+                                        &status.metadata[..status.metadata.len().min(80)]
+                                    );
+                                    emit_failure(
+                                        &progress_tx,
+                                        &mut result,
+                                        "OUTPUTS_NOT_READY",
+                                        &format!(
+                                            "The transcode finished but its outputs were not listed within {}s, so it was not billed",
+                                            output_wait.as_secs()
+                                        ),
+                                        &session_key,
+                                        &session_id,
+                                    )
+                                    .await;
+                                    break;
+                                }
                             }
 
                             // F3b: parse `outputs` ONCE here — hoisted above billing so the
@@ -785,6 +872,22 @@ pub async fn handle_encrypted_transcode_for(
             );
         }
     };
+
+    // 8.62.1: a CID without its storage network would be dropped by the
+    // sidecar while its status keeps saying "in progress". Refused here, before
+    // any session gate or unit of work, so nothing waits on it.
+    if !source_cid_names_network(&source_cid) {
+        return (
+            build_encrypted_transcode_error(
+                "VALIDATION_FAILED",
+                SOURCE_CID_NETWORK_MESSAGE,
+                session_key,
+                session_id,
+                message_id,
+            ),
+            None,
+        );
+    }
 
     // Step 4: Capacity check — ask sidecar if it can accept work
     if !server.has_sidecar_capacity().await {

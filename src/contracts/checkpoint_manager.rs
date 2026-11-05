@@ -1425,13 +1425,13 @@ impl CheckpointManager {
             }
         } else if self.ltx_proof_jobs.read().await.contains(&job_id) {
             debug!(
-                "No LLM token tracker for job {} — it settled via an LTX proof, so there is no \
+                "No LLM token tracker for job {} — it settled via an on-chain proof (LTX or transcode), so there is no \
                  final LLM checkpoint to submit (expected)",
                 job_id
             );
         } else {
             warn!(
-                "⚠️ No token tracker for job {} — no LLM tokens were tracked and no LTX proof was \
+                "⚠️ No token tracker for job {} — no LLM tokens were tracked and no LTX or transcode proof was \
                  submitted, so this session bills nothing",
                 job_id
             );
@@ -1765,7 +1765,7 @@ impl CheckpointManager {
                 // Expected: LTX/video sessions claim tokens via submitProofOfWork,
                 // not via LLM token tracking. Payment is unaffected.
                 info!(
-                    "[CHECKPOINT-MGR]   ✓ Job {} settled via an LTX proof (no LLM token tracker — expected)",
+                    "[CHECKPOINT-MGR]   ✓ Job {} settled via an on-chain proof (LTX or transcode) (no LLM token tracker — expected)",
                     job_id
                 );
             } else {
@@ -2404,6 +2404,10 @@ impl crate::transcoder::biller::TranscodeChain for CheckpointManager {
         proof_hash: [u8; 32],
         proof_cid: String,
     ) -> Result<H256> {
+        // Logging only (see `ltx_proof_jobs`), as in `submit_ltx_proof`: a
+        // session transcode settles through this proof, not an LLM tracker, so
+        // its completion must not log "this session bills nothing" (8.62.1).
+        self.ltx_proof_jobs.write().await.insert(job_id);
         let (tx_hash, receipt) = crate::ltx::submit::submit_proof(
             &self.web3_client,
             self.proof_system_address,

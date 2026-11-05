@@ -1867,9 +1867,11 @@ These rules apply to an encrypted WebSocket transcode on a session job (a `jobId
 | `RESULT_STORE_UNAVAILABLE` | The host cannot keep results (see `TRANSCODE_RESULT_DIR`) |
 | `SESSION_SETTLED` / `SESSION_CLOSING` | The session is settled, or its completion has been decided; open a new session |
 
+**Source CID (v8.62.1).** `sourceCid` must name its storage network, as in `s5://<cid>`. A bare CID is refused before the sidecar: `transcode_error` `VALIDATION_FAILED` on the WebSocket, `400` on `POST /v1/transcode`. Earlier nodes passed it on, and the sidecar dropped it while reporting the task in progress until the 30 minute `TIMEOUT`.
+
 **Billing in steps.** The node proves the work as it runs (at each quarter of progress, or when half the session's `proofTimeoutWindow` has passed), every proof awaited to a confirmed receipt, and re-reads the session every 20 s. `transcode_complete` is sent only after the final proof is confirmed. Its `billing` block is `{units, tokens, provenTokens}`: `tokens` is what the run cost, `provenTokens` what is proven on chain for it. They differ when the session's first proof is padded up to the contract minimum (on chain more) or the run is capped by the deposit (on chain less; the result is still released). Progress frames carry no billing.
 
-**Errors during or after a run** (`transcode_error`): `SESSION_NOT_BILLABLE` (the session stopped being payable or was completed by someone else; proven steps stay paid), `SESSION_EXPIRED` (the session expired before the work finished: a run still going is stopped, a run that finished after `startTime + maxDuration` is not billed; outputs withheld either way, steps proven before expiry stay paid), `BILLING_FAILED` (the final proof did not land; outputs withheld), `CANCELLED` (after `transcode_cancel`), `TIMEOUT`, `POLL_FAILED` (three consecutive sidecar status failures), and the moderation hold codes.
+**Errors during or after a run** (`transcode_error`): `SESSION_NOT_BILLABLE` (the session stopped being payable or was completed by someone else; proven steps stay paid), `SESSION_EXPIRED` (the session expired before the work finished: a run still going is stopped, a run that finished after `startTime + maxDuration` is not billed; outputs withheld either way, steps proven before expiry stay paid), `BILLING_FAILED` (the final proof did not land; outputs withheld), `OUTPUTS_NOT_READY` (v8.62.1: the run reached 100% but the sidecar did not list its outputs within `TRANSCODE_OUTPUT_WAIT_SECS`; not billed), `CANCELLED` (after `transcode_cancel`), `TIMEOUT`, `POLL_FAILED` (three consecutive sidecar status failures), and the moderation hold codes.
 
 **A dropped connection does not stop the run.** Only `transcode_cancel` does. The run finishes, bills and stores its outcome, and the node completes the session itself once the work ends with no live connection (or 60 s after a billed transcode on a connection left open, `TRANSCODE_COMPLETE_GRACE_SECS`).
 
@@ -1898,6 +1900,7 @@ Only the identity that ordered the work may fetch it: the signer the node recove
 | `TRANSCODE_RESULT_DIR` | `./data/transcode-results` | Result store; created 0700. Unwritable means session transcodes are refused |
 | `TRANSCODE_RESULT_RETENTION_DAYS` | 7 | Retention of every record |
 | `TRANSCODE_RESULT_MAX_ENTRIES` | 5000 | Store cap (oldest finished records evicted first) |
+| `TRANSCODE_OUTPUT_WAIT_SECS` | 120 | v8.62.1: how long a run at 100% waits for the sidecar to list its outputs (they appear only after the S5 upload). Capped at half of `TRANSCODE_MIN_PROOF_WINDOW_SECS` less 20 s, never below 10 s, so the wait cannot outlast the proof window |
 | `TRANSCODE_COMPLETE_GRACE_SECS` | 60 | Wait before a billed transcode's session is completed under a connection left open |
 | `WS_PING_AFTER_SECS` / `WS_PING_UNANSWERED_CLOSE_SECS` | 30 / 60 | Idle socket: one Ping, then close if unanswered (floor 10 s each) |
 | `SESSION_SWEEP_INTERVAL_SECS` / `SESSION_SWEEP_MARGIN_SECS` | 300 / 300 | Expiry sweeper cadence (floor 30 s), and margin past expiry before it completes a stranded session |
