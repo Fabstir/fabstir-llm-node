@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.62.2-transcode-final-claim-2026-11-05";
+pub const VERSION: &str = "v8.62.3-chat-write-bound-2026-11-05";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.62.2";
+pub const VERSION_NUMBER: &str = "8.62.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,16 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 62;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-11-05";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.62.3: every chat streaming write is bounded (CHAT_WS_WRITE_TIMEOUT_SECS, default 90 s); a client
+    // that stops reading mid-stream stops generation and its connection is closed and settled.
+    "chat-ws-write-bound",
     // v8.62.2: the final claim of a session transcode is batched (one proof once the rate covers what is
     // owed, never more than half a proof window apart) and its wait scales with what is owed; the sidecar's
     // GetTranscoded status_code ends a failed job at once; SESSION_NOT_BILLABLE at the final claim.
@@ -675,6 +678,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.62.3 - bounded chat streaming writes (Nov 5, 2026)
+    "v8.62.3: a chat stream write still parked after CHAT_WS_WRITE_TIMEOUT_SECS (default 90 s), or failed, stops generation and closes the connection, which the normal disconnect path settles; before, a client that held the socket but stopped reading parked the stream, the model and the session until the expiry sweeper",
     // v8.62.2 - transcode final claim (Nov 5, 2026)
     "v8.62.2: the final claim of a session transcode lands as one proof once the model rate covers what is owed (or every half proof window), and waits up to the time the rate needs plus 120 s; 8.62.1 claimed every second or so and gave up after a flat 120 s, withholding long jobs as BILLING_FAILED",
     "v8.62.2: a transcoder GetTranscoded status_code other than 200 ends the run at once: transcode_error VALIDATION_FAILED for 400, TRANSCODE_FAILED otherwise (previously ignored until the 30 min TIMEOUT)",
@@ -1213,7 +1218,7 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 62);
-        assert_eq!(VERSION_PATCH, 2);
+        assert_eq!(VERSION_PATCH, 3);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1438,14 +1443,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.62.2"));
+        assert!(version.contains("8.62.3"));
         assert!(version.contains("2026-11-05"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.62.2-transcode-final-claim-2026-11-05");
-        assert_eq!(VERSION_NUMBER, "8.62.2");
+        assert_eq!(VERSION, "v8.62.3-chat-write-bound-2026-11-05");
+        assert_eq!(VERSION_NUMBER, "8.62.3");
         assert_eq!(BUILD_DATE, "2026-11-05");
     }
 
@@ -1522,6 +1527,12 @@ mod tests {
     fn test_s5_portal_migration_features() {
         assert!(FEATURES.contains(&"platformless-ai-s5-portal"));
         assert!(FEATURES.contains(&"sia-decentralized-storage"));
+    }
+
+    #[test]
+    fn test_chat_ws_write_bound_feature() {
+        // v8.62.3: bounded chat streaming writes.
+        assert!(FEATURES.contains(&"chat-ws-write-bound"));
     }
 
     #[test]

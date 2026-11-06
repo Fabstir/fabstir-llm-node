@@ -1905,6 +1905,7 @@ Only the identity that ordered the work may fetch it: the signer the node recove
 | `TRANSCODE_OUTPUT_WAIT_SECS` | 120 | v8.62.1: how long a run at 100% waits for the sidecar to list its outputs (they appear only after the S5 upload). Capped at half of `TRANSCODE_MIN_PROOF_WINDOW_SECS` less 20 s, never below 10 s, so the wait cannot outlast the proof window |
 | `TRANSCODE_COMPLETE_GRACE_SECS` | 60 | Wait before a billed transcode's session is completed under a connection left open |
 | `WS_PING_AFTER_SECS` / `WS_PING_UNANSWERED_CLOSE_SECS` | 30 / 60 | Idle socket: one Ping, then close if unanswered (floor 10 s each) |
+| `CHAT_WS_WRITE_TIMEOUT_SECS` | 90 | v8.62.3: longest a chat stream write may stay parked (a client that stopped reading). Past it the node stops generation and closes the connection, which settles the session as any disconnect does. LTX (300 s) and training (900 s) writes keep their own bounds |
 | `SESSION_SWEEP_INTERVAL_SECS` / `SESSION_SWEEP_MARGIN_SECS` | 300 / 300 | Expiry sweeper cadence (floor 30 s), and margin past expiry before it completes a stranded session |
 | `SESSION_SWEEP_ENABLED` | true | `false` turns the expiry sweeper off |
 

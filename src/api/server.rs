@@ -5258,7 +5258,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                         let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens, "finish_reason": "cancelled"});
                                                                                                         if let Some(ref msg_id) = message_id { end_msg["id"] = msg_id.clone(); }
                                                                                                         if let Some(ref sid) = current_session_id { end_msg["session_id"] = json!(sid); }
-                                                                                                        let _ = ws_sender.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                                                                                        crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await;
                                                                                                         break;
                                                                                                     }
                                                                                                 }
@@ -5353,19 +5353,9 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                         }
 
                                                                                         // Send encrypted chunk
-                                                                                        match ws_sender
-                                                                                            .send(
-                                                                                                axum::extract::ws::Message::Text(
-                                                                                                    ws_msg.to_string(),
-                                                                                                ),
-                                                                                            )
-                                                                                            .await
-                                                                                        {
-                                                                                            Ok(_) => {}
-                                                                                            Err(e) => {
-                                                                                                error!("Failed to send chunk {}: {}", chunk_index, e);
-                                                                                                break;
-                                                                                            }
+                                                                                        if !crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(ws_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await {
+                                                                                            error!("Failed to send chunk {}: client gone", chunk_index);
+                                                                                            break;
                                                                                         }
 
                                                                                         chunk_index += 1;
@@ -5409,15 +5399,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                     }
 
                                                                                                     // Send final encrypted_response
-                                                                                                    match ws_sender
-                                                                                                        .send(
-                                                                                                            axum::extract::ws::Message::Text(
-                                                                                                                end_msg.to_string(),
-                                                                                                            ),
-                                                                                                        )
-                                                                                                        .await
-                                                                                                    {
-                                                                                                        Ok(_) => {
+                                                                                                    match crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await {
+                                                                                                        true => {
                                                                                                             // Send stream_end for SDK compatibility
                                                                                                             let mut stream_end_msg = json!({"type": "stream_end", "reason": "complete", "tokens_used": total_tokens});
                                                                                                             if let Some(ref msg_id) = message_id {
@@ -5441,10 +5424,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                                                     });
                                                                                                                 }
                                                                                                             }
-                                                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                                                            crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(stream_end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await;
                                                                                                         }
-                                                                                                        Err(e) => {
-                                                                                                            error!("❌ Failed to send final encrypted_response: {}", e);
+                                                                                                        false => {
+                                                                                                            error!("❌ Failed to send final encrypted_response: client gone");
                                                                                                         }
                                                                                                     }
                                                                                                 }
@@ -5468,17 +5451,13 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                             error_msg["id"] = msg_id.clone();
                                                                                         }
 
-                                                                                        let _ = ws_sender
-                                                                                            .send(axum::extract::ws::Message::Text(
-                                                                                                error_msg.to_string(),
-                                                                                            ))
-                                                                                            .await;
+                                                                                        crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(error_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await;
                                                                                         // Send stream_end after error
                                                                                         let mut stream_end_msg = json!({"type": "stream_end", "reason": "error", "tokens_used": total_tokens});
                                                                                         if let Some(ref msg_id) = message_id {
                                                                                             stream_end_msg["id"] = msg_id.clone();
                                                                                         }
-                                                                                        let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                                        crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(stream_end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await;
                                                                                         break;
                                                                                     }
                                                                                 }
@@ -5563,13 +5542,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     msg_id.clone();
                                                                             }
 
-                                                                            let _ = ws_sender
-                                                                                .send(
-                                                                                    axum::extract::ws::Message::Text(
-                                                                                        error_msg.to_string(),
-                                                                                    ),
-                                                                                )
-                                                                                .await;
+                                                                            crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(error_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, None).await;
 
                                                                             // CRITICAL: Send stream_end even on error so SDK knows stream is done
                                                                             let mut stream_end_msg = json!({"type": "stream_end", "reason": "error", "tokens_used": 0});
@@ -5581,7 +5554,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                                     ["id"] =
                                                                                     msg_id.clone();
                                                                             }
-                                                                            let _ = ws_sender.send(axum::extract::ws::Message::Text(stream_end_msg.to_string())).await;
+                                                                            crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(stream_end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, None).await;
                                                                         }
                                                                     }
                                                                 }
@@ -5983,7 +5956,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                 info!("🛑 stream_cancel during plaintext streaming");
                                                                 let mut end_msg = json!({"type": "stream_end", "reason": "cancelled", "tokens_used": total_tokens, "finish_reason": "cancelled"});
                                                                 if let Some(ref sid) = session_id { end_msg["session_id"] = json!(sid); }
-                                                                let _ = ws_sender.send(axum::extract::ws::Message::Text(end_msg.to_string())).await;
+                                                                crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await;
                                                                 break;
                                                             }
                                                         }
@@ -6025,13 +5998,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                 ws_msg["id"] = msg_id.clone();
                                             }
 
-                                            if ws_sender
-                                                .send(axum::extract::ws::Message::Text(
-                                                    ws_msg.to_string(),
-                                                ))
-                                                .await
-                                                .is_err()
-                                            {
+                                            if !crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(ws_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await {
                                                 break;
                                             }
 
@@ -6059,11 +6026,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     }
                                                 }
 
-                                                let _ = ws_sender
-                                                    .send(axum::extract::ws::Message::Text(
-                                                        end_msg.to_string(),
-                                                    ))
-                                                    .await;
+                                                crate::api::websocket::chat_write::send_chat_frame(&mut ws_sender, axum::extract::ws::Message::Text(end_msg.to_string()), crate::api::websocket::chat_write::chat_ws_write_timeout(), &mut liveness, cancel_flag.as_deref()).await;
                                                 break;
                                             }
                                         } // close tokio::select! response block
@@ -6117,22 +6080,30 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                         error_msg["id"] = msg_id.clone();
                                     }
 
-                                    let _ = ws_sender
-                                        .send(axum::extract::ws::Message::Text(
-                                            error_msg.to_string(),
-                                        ))
-                                        .await;
+                                    crate::api::websocket::chat_write::send_chat_frame(
+                                        &mut ws_sender,
+                                        axum::extract::ws::Message::Text(error_msg.to_string()),
+                                        crate::api::websocket::chat_write::chat_ws_write_timeout(),
+                                        &mut liveness,
+                                        None,
+                                    )
+                                    .await;
 
                                     // CRITICAL: Send stream_end even on error so SDK knows stream is done
                                     let mut stream_end_msg = json!({"type": "stream_end", "reason": "error", "tokens_used": 0});
                                     if let Some(ref msg_id) = message_id {
                                         stream_end_msg["id"] = msg_id.clone();
                                     }
-                                    let _ = ws_sender
-                                        .send(axum::extract::ws::Message::Text(
+                                    crate::api::websocket::chat_write::send_chat_frame(
+                                        &mut ws_sender,
+                                        axum::extract::ws::Message::Text(
                                             stream_end_msg.to_string(),
-                                        ))
-                                        .await;
+                                        ),
+                                        crate::api::websocket::chat_write::chat_ws_write_timeout(),
+                                        &mut liveness,
+                                        None,
+                                    )
+                                    .await;
                                 }
                             }
                         }

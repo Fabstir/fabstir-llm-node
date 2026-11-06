@@ -5,6 +5,7 @@ pub mod auth;
 mod auth_test;
 pub mod chain_connection_pool;
 pub mod chain_rate_limiter;
+pub mod chat_write;
 pub mod compression;
 pub mod config;
 pub mod connection;

@@ -11,3 +11,4 @@ mod test_ws_liveness;
 mod test_outputs_wait;
 mod test_final_claim;
 mod test_sidecar_status;
+mod test_chat_write;
