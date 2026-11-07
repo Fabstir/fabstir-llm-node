@@ -318,3 +318,39 @@ async fn a_proof_that_keeps_failing_is_not_retried_on_every_poll() {
     assert!(attempts >= 2, "still retries: {attempts}");
     assert!(attempts <= 8, "{attempts} attempts in 60 polls");
 }
+
+fn preview(vf: &str, percent: u32) -> VideoFormat {
+    serde_json::from_value(serde_json::json!({
+        "id": 2, "ext": "mp4", "vcodec": "h264_nvenc", "vf": vf, "trim_percent": percent
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_preview_counts_only_its_share_in_the_estimate() {
+    use fabstir_llm_node::api::websocket::handlers::transcode::transcode_estimate_tokens;
+    // A preview-only job: 20 % of a 120 s source. From transcoder 6cc694e the
+    // result reports the 24 s really encoded, and the bill is on that.
+    let only = [preview("scale=1920x1080", 20)];
+    let estimate = transcode_estimate_tokens(120.0, &only, true);
+    let final_bill = transcode_tokens(24.0, &only, true).1;
+    assert_eq!(estimate, 26_400);
+    assert!(estimate <= final_bill, "{estimate} > {final_bill}");
+    // A full rendition with a preview: the result reports the full length, so
+    // the estimate stays below the bill.
+    let mixed = [format("scale=1920x1080"), preview("scale=1280x720", 20)];
+    let estimate = transcode_estimate_tokens(120.0, &mixed, true);
+    assert_eq!(estimate, 132_000 + 13_200);
+    assert!(estimate <= transcode_tokens(120.0, &mixed, true).1);
+    // No trim, or a meaningless one, renders the whole source.
+    let full = [format("scale=1920x1080")];
+    assert_eq!(transcode_estimate_tokens(120.0, &full, true), 132_000);
+    assert_eq!(
+        transcode_estimate_tokens(120.0, &[preview("scale=1920x1080", 0)], true),
+        132_000
+    );
+    assert_eq!(
+        transcode_estimate_tokens(120.0, &[preview("scale=1920x1080", 100)], true),
+        132_000
+    );
+}

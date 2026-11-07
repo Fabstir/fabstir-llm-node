@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.62.4-transcode-live-steps-2026-11-07";
+pub const VERSION: &str = "v8.62.5-transcode-preview-estimate-2026-11-07";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.62.4";
+pub const VERSION_NUMBER: &str = "8.62.5";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 62;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 5;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-11-07";
@@ -25,6 +25,8 @@ pub const FEATURES: &[&str] = &[
     // v8.62.4: a transcode proves in steps once the sidecar reports its duration (5783b1a), 0.0 meaning unknown; a proof
     // catches up each half window even while progress holds; a failed poll fails the run after a grace period, not 3 polls.
     "transcode-proof-catch-up",
+    // v8.62.5: a preview format (trim_percent) counts only its share in the running estimate.
+    "transcode-preview-estimate",
     "transcode-poll-grace",
     // v8.62.3: every chat streaming write is bounded (CHAT_WS_WRITE_TIMEOUT_SECS, default 90 s); a client
     // that stops reading mid-stream stops generation and its connection is closed and settled.
@@ -1223,9 +1225,10 @@ mod tests {
         // v8.62.4
         assert!(FEATURES.contains(&"transcode-proof-catch-up"));
         assert!(FEATURES.contains(&"transcode-poll-grace"));
+        assert!(FEATURES.contains(&"transcode-preview-estimate"));
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 62);
-        assert_eq!(VERSION_PATCH, 4);
+        assert_eq!(VERSION_PATCH, 5);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1450,14 +1453,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.62.4"));
+        assert!(version.contains("8.62.5"));
         assert!(version.contains("2026-11-07"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.62.4-transcode-live-steps-2026-11-07");
-        assert_eq!(VERSION_NUMBER, "8.62.4");
+        assert_eq!(VERSION, "v8.62.5-transcode-preview-estimate-2026-11-07");
+        assert_eq!(VERSION_NUMBER, "8.62.5");
         assert_eq!(BUILD_DATE, "2026-11-07");
     }
 

@@ -235,6 +235,19 @@ services:
     #   context: ../fabstir-transcoder
     #   dockerfile: Dockerfile
     container_name: transcoder-sidecar
+    # Locked down (transcoder 6cc694e), so a malicious video exploiting FFmpeg gets as little as
+    # possible. /app/cache must be writable by UID 1000; the server exits at startup naming the path
+    # if it is not.
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      core: 0
     restart: unless-stopped
     runtime: nvidia
     entrypoint: ["/bin/sh", "-c", "mkdir -p /app/cache/sources /app/cache/transcoded && exec ./transcode-server"]
@@ -258,12 +271,18 @@ services:
       MAX_CONCURRENT_TRANSCODES: ${MAX_CONCURRENT_TRANSCODES:-3}
       # Slightly above the node's TRANSCODE_TIMEOUT_SECONDS (1800), so a job the node gave up on frees its slot
       JOB_DEADLINE_SECS: ${JOB_DEADLINE_SECS:-2100}
+      # Results contain keys, and the node reads each one as soon as its job ends.
+      JOB_RECORD_TTL_SECS: ${JOB_RECORD_TTL_SECS:-3600}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "8000:8000"
-      - "50051:50051"
+    # Not published on the host: the node reaches it over the Docker network. REST has no TLS
+    # and its traffic carries CIDs that contain decryption keys. gRPC (50051) is off from 6cc694e.
+    expose:
+      - "8000"
     volumes:
-      - transcoder-cache:/app/cache
+      # Sources (decrypted while in use) and outputs. TRANSCODER_SCRATCH_DIR should be a directory on
+      # a disk encrypted with a fresh random key at each boot (host2: fabstir-transcoder-scratch.service);
+      # unset, it falls back to the transcoder-cache volume.
+      - ${TRANSCODER_SCRATCH_DIR:-transcoder-cache}:/app/cache
       - ./config/video_formats.json:/config/video_formats.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

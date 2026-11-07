@@ -132,8 +132,41 @@ pub fn tokens_for_units(units: f64) -> u64 {
     (((units * 1000.0) * 1e6).round() / 1e6).ceil() as u64
 }
 
-/// The transcode's billing units and tokens for a source of `duration` seconds
-/// rendered to `formats`. One formula for the running estimate and the final bill.
+/// The share of the source a format renders: a preview (`trim_percent`, which
+/// the SDK sets from `previewPercent`) renders only that share.
+fn rendered_fraction(format: &VideoFormat) -> f64 {
+    match format.trim_percent {
+        Some(p) if p > 0 && p < 100 => p as f64 / 100.0,
+        _ => 1.0,
+    }
+}
+
+/// The running estimate's tokens, from the source's probed duration: each
+/// format counts only the share it renders, so a preview's interim proofs never
+/// run ahead of its final bill. From transcoder 6cc694e the final duration is
+/// what was really encoded (the trimmed length for a preview-only job), and the
+/// final bill stays [`transcode_tokens`] on that value, so this never exceeds it.
+pub fn transcode_estimate_tokens(
+    duration: f64,
+    formats: &[VideoFormat],
+    is_encrypted: bool,
+) -> u64 {
+    let units: f64 = formats
+        .iter()
+        .map(|fmt| {
+            calculate_transcode_units(
+                duration * rendered_fraction(fmt),
+                resolution_factor_from_vf(fmt.vf.as_deref().unwrap_or("")),
+                codec_factor(fmt.vcodec.as_deref().unwrap_or("")),
+                is_encrypted,
+            )
+        })
+        .sum();
+    tokens_for_units(units)
+}
+
+/// The transcode's billing units and tokens for `duration` seconds rendered to
+/// `formats`: the final bill, on the duration the sidecar reports in its result.
 pub fn transcode_tokens(duration: f64, formats: &[VideoFormat], is_encrypted: bool) -> (f64, u64) {
     let units: f64 = formats
         .iter()
@@ -323,7 +356,7 @@ impl TranscodeProgressTask {
                             (biller.as_mut(), chain.as_ref(), status.progress < 100)
                         {
                             let estimate = known_duration(status.duration)
-                                .map(|d| transcode_tokens(d, &formats, is_encrypted).1);
+                                .map(|d| transcode_estimate_tokens(d, &formats, is_encrypted));
                             last_estimate = estimate.or(last_estimate);
                             let polled = b
                                 .on_progress(cm.as_ref(), status.progress, estimate, unix_now())
