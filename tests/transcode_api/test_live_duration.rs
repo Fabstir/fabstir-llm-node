@@ -354,3 +354,38 @@ fn a_preview_counts_only_its_share_in_the_estimate() {
         132_000
     );
 }
+
+#[test]
+fn the_final_wait_follows_the_job_with_no_hour_ceiling() {
+    use fabstir_llm_node::transcoder::biller::{final_wait_cap_secs, FINAL_RATE_WAIT_CAP_SECS};
+    // The SDK developer's example: 45 min on the four-rung ladder, 8.1M owed at
+    // the end at 2,000 tokens/s. The 8.62.2 ceiling gave up at 3,600 s.
+    assert_eq!(
+        final_wait_cap_secs(8_100_000, 2_000),
+        4_050 + FINAL_RATE_WAIT_CAP_SECS
+    );
+    assert_eq!(
+        final_wait_cap_secs(132_000, 2_000),
+        66 + FINAL_RATE_WAIT_CAP_SECS
+    );
+    assert_eq!(final_wait_cap_secs(1_000, 0), FINAL_RATE_WAIT_CAP_SECS);
+}
+
+#[test]
+fn software_encoders_bill_at_their_codec_family() {
+    use fabstir_llm_node::transcoder::billing::codec_factor;
+    for (codec, factor) in [
+        ("h264_nvenc", 1.0),
+        ("libx264", 1.0),
+        ("hevc_nvenc", 1.2),
+        ("libx265", 1.2),
+        ("h265", 1.2),
+        ("av1_nvenc", 1.5),
+        ("libsvtav1", 1.5),
+        ("libaom-av1", 1.5),
+        ("librav1e", 1.5),
+        ("", 1.0),
+    ] {
+        assert_eq!(codec_factor(codec), factor, "{codec}");
+    }
+}

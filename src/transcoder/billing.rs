@@ -29,9 +29,12 @@ pub fn resolution_factor_from_vf(vf: &str) -> f64 {
 
 /// Get codec billing factor. AV1 is 1.5x, HEVC/H.265 is 1.2x, others 1.0x.
 pub fn codec_factor(vcodec: &str) -> f64 {
-    if vcodec.starts_with("av1") {
+    // 8.62.6: by family anywhere in the name, so the software encoders bill like
+    // their hardware siblings (libsvtav1, libaom-av1, librav1e; libx265).
+    let v = vcodec.to_ascii_lowercase();
+    if v.contains("av1") {
         1.5
-    } else if vcodec.starts_with("hevc") || vcodec.starts_with("h265") {
+    } else if v.contains("hevc") || v.contains("265") {
         1.2
     } else {
         1.0

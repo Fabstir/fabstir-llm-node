@@ -23,17 +23,18 @@ pub const STATUS_CHECK_EVERY_SECS: u64 = 20;
 /// what is owed (8.62.2: the wait was this flat 120 s, so a job owing more than
 /// 120 s of rate ended BILLING_FAILED with its result withheld).
 pub const FINAL_RATE_WAIT_CAP_SECS: u64 = 120;
-/// Upper bound on the final claim's whole wait, whatever is owed.
-pub const FINAL_WAIT_CEILING_SECS: u64 = 3_600;
-
-/// 8.62.2: how long the final claim may wait for the rate cap: the time the rate
-/// needs for `owed`, plus `FINAL_RATE_WAIT_CAP_SECS`, never above
-/// `FINAL_WAIT_CEILING_SECS`. A rate of 0 can never pay, so it gets the slack only.
+/// How long the final claim may wait for the rate cap: the time the rate needs
+/// for `owed`, plus `FINAL_RATE_WAIT_CAP_SECS`. 8.62.6: no fixed ceiling. A 3,600 s
+/// ceiling (8.62.2) withheld the result of any fully paid job owing more than the
+/// rate could claim in an hour, after most of it had been paid. What bounds it is
+/// the job itself: the accept and estimate checks only take a job the session can
+/// pay before it expires, and a session that stops being Active ends the claim.
+/// A rate of 0 can never pay, so it gets the slack only.
 pub fn final_wait_cap_secs(owed: u64, rate_per_sec: u64) -> u64 {
     if rate_per_sec == 0 {
         return FINAL_RATE_WAIT_CAP_SECS;
     }
-    (owed / rate_per_sec + FINAL_RATE_WAIT_CAP_SECS).min(FINAL_WAIT_CEILING_SECS)
+    owed / rate_per_sec + FINAL_RATE_WAIT_CAP_SECS
 }
 /// Transient failures the final claim tolerates before giving up.
 pub const FINAL_ATTEMPTS: u32 = 3;
