@@ -256,6 +256,8 @@ services:
       NCCL_CUMEM_ENABLE: "0"
       NCCL_DEBUG: "WARN"
       MAX_CONCURRENT_TRANSCODES: ${MAX_CONCURRENT_TRANSCODES:-3}
+      # Slightly above the node's TRANSCODE_TIMEOUT_SECONDS (1800), so a job the node gave up on frees its slot
+      JOB_DEADLINE_SECS: ${JOB_DEADLINE_SECS:-2100}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8000:8000"

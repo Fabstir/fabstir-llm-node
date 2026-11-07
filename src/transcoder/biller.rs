@@ -12,8 +12,8 @@ use ethers::types::H256;
 use sha2::{Digest, Sha256};
 
 use super::proof_steps::{
-    final_owed, final_step_batched, finished_after_expiry, interim_amount, interim_due,
-    session_view, steps_can_carry, FinalStep, SessionView,
+    catch_up_due, final_owed, final_step_batched, finished_after_expiry, interim_amount,
+    interim_due, session_view, steps_can_carry, FinalStep, SessionView,
 };
 use crate::training::accept::SessionStatus;
 
@@ -104,6 +104,8 @@ pub struct TranscodeBiller {
     base_tokens_used: Option<u64>,
     /// The lowest estimate seen, so a changing estimate never over-claims.
     lowest_estimate: Option<u64>,
+    /// No quarter-driven proof attempt before this wall time.
+    retry_proof_after: u64,
 }
 
 impl TranscodeBiller {
@@ -119,6 +121,7 @@ impl TranscodeBiller {
             estimate_checked: false,
             base_tokens_used: None,
             lowest_estimate: None,
+            retry_proof_after: 0,
         }
     }
 
@@ -215,6 +218,9 @@ impl TranscodeBiller {
                 u64::MAX,
             );
         let first_estimate = estimate.is_some() && !self.estimate_checked;
+        // After a proof that could not be made, wait for the status tick rather
+        // than trying again on every poll.
+        let due_proof = due_proof && wall_now >= self.retry_proof_after;
         if !due_status && !due_proof && !first_estimate {
             return PollOutcome::Continue;
         }
@@ -260,29 +266,39 @@ impl TranscodeBiller {
                 ));
             }
         }
+        let last_proof_at = if self.last_proof_at == 0 {
+            view.last_proof_time
+        } else {
+            self.last_proof_at
+        };
+        let target = (estimate as u128 * progress.clamp(0, 100) as u128 / 100) as u64;
         if !interim_due(
             progress,
             self.last_proved_progress,
             now,
-            if self.last_proof_at == 0 {
-                view.last_proof_time
-            } else {
-                self.last_proof_at
-            },
+            last_proof_at,
+            view.proof_timeout_window,
+        ) && !catch_up_due(
+            self.proven,
+            target,
+            now,
+            last_proof_at,
             view.proof_timeout_window,
         ) {
             return PollOutcome::Continue;
         }
-        let target = (estimate as u128 * progress.clamp(0, 100) as u128 / 100) as u64;
-        if let Some(amount) = interim_amount(&view, self.proven, target, estimate, now, rate) {
-            if let Err(e) = self.prove(chain, amount, progress, now).await {
-                tracing::warn!(
-                    "[SCI-C] job {}: interim proof of {} tokens did not land: {}",
-                    self.job_id,
-                    amount,
-                    e
-                );
-            }
+        let Some(amount) = interim_amount(&view, self.proven, target, estimate, now, rate) else {
+            self.retry_proof_after = wall_now + STATUS_CHECK_EVERY_SECS;
+            return PollOutcome::Continue;
+        };
+        if let Err(e) = self.prove(chain, amount, progress, now).await {
+            tracing::warn!(
+                "[SCI-C] job {}: interim proof of {} tokens did not land: {}",
+                self.job_id,
+                amount,
+                e
+            );
+            self.retry_proof_after = wall_now + STATUS_CHECK_EVERY_SECS;
         }
         PollOutcome::Continue
     }
@@ -294,6 +310,14 @@ impl TranscodeBiller {
     /// once as `NotBillable`. The claim is batched (`final_step_batched`) and its
     /// wait for the rate cap is bounded by [`final_wait_cap_secs`].
     pub async fn finish(&mut self, chain: &dyn TranscodeChain, actual: u64) -> FinishOutcome {
+        if self.proven > actual {
+            tracing::error!(
+                "[SCI-C] job {}: {} tokens already proved but the job's final bill is {}: the reported duration fell during the run, and the difference stays paid",
+                self.job_id,
+                self.proven,
+                actual
+            );
+        }
         // tokio's clock (8.62.2): identical in production, and paused tests can
         // reach the cap (with std's clock they never could).
         let started = tokio::time::Instant::now();

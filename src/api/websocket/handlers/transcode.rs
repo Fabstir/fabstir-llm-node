@@ -100,9 +100,40 @@ pub fn sidecar_failure_code(status_code: i32) -> Option<&'static str> {
 pub const SOURCE_CID_NETWORK_MESSAGE: &str =
     "sourceCid must name its storage network, e.g. s5://<cid>";
 
+/// The sidecar reports `duration: 0.0` while a job is queued or downloading (and
+/// for its whole run before 5783b1a). That means "not known yet", never a zero
+/// length job: taken as an estimate it would pin the run's lowest estimate at
+/// zero and no step would ever be proved.
+pub fn known_duration(reported: Option<f64>) -> Option<f64> {
+    reported.filter(|d| *d > 0.0)
+}
+
+/// How long the sidecar may stay unreachable before a run is failed: a crash or
+/// a container recreate takes seconds, so the old "three polls" (about 6 s) would
+/// fail a job that is still running. `TRANSCODE_POLL_GRACE_SECS`, default 120.
+pub const POLL_GRACE_SECS_DEFAULT: u64 = 120;
+
+pub fn poll_grace_secs(configured: Option<&str>) -> u64 {
+    configured
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(POLL_GRACE_SECS_DEFAULT)
+}
+
+/// Has the sidecar been unreachable for too long? `failing_for` is the time
+/// since the first of the current run of failed polls.
+pub fn poll_gives_up(failing_for: Duration, grace: Duration) -> bool {
+    failing_for >= grace
+}
+
+/// `ceil(units × 1000)`, after rounding away floating-point noise: 1,800 s at
+/// factor 1.1 sums to 1980.0000000000002 units, which must bill 1,980,000 tokens,
+/// not 1,980,001. A real fraction of a token still rounds up.
+pub fn tokens_for_units(units: f64) -> u64 {
+    (((units * 1000.0) * 1e6).round() / 1e6).ceil() as u64
+}
+
 /// The transcode's billing units and tokens for a source of `duration` seconds
-/// rendered to `formats` (`tokens = ceil(units × 1000)`). One formula for the
-/// running estimate and the final bill.
+/// rendered to `formats`. One formula for the running estimate and the final bill.
 pub fn transcode_tokens(duration: f64, formats: &[VideoFormat], is_encrypted: bool) -> (f64, u64) {
     let units: f64 = formats
         .iter()
@@ -115,7 +146,7 @@ pub fn transcode_tokens(duration: f64, formats: &[VideoFormat], is_encrypted: bo
             )
         })
         .sum();
-    (units, (units * 1000.0).ceil() as u64)
+    ((units * 1e9).round() / 1e9, tokens_for_units(units))
 }
 
 fn unix_now() -> u64 {
@@ -145,8 +176,6 @@ pub struct TranscodeProgressTask {
 /// Progress frames never wait (`try_send`): a stalled socket must not stall
 /// billing (D19(a)).
 const TERMINAL_SEND_TIMEOUT: Duration = Duration::from_secs(10);
-/// Consecutive status-poll failures tolerated before the run is failed.
-const MAX_POLL_FAILURES: u32 = 3;
 
 /// Deliver a terminal frame to the listener, if one is left, without waiting
 /// long for one that has stopped reading.
@@ -213,7 +242,12 @@ impl TranscodeProgressTask {
                     .unwrap_or(OUTPUT_WAIT_SECS_DEFAULT),
                 crate::transcoder::proof_steps::AcceptLimits::from_env().min_proof_window_secs,
             ));
-            let mut poll_failures = 0u32;
+            let mut poll_failing_since: Option<std::time::Instant> = None;
+            let mut last_estimate: Option<u64> = None;
+            let mut last_seen_progress = 0i32;
+            let poll_grace = Duration::from_secs(poll_grace_secs(
+                std::env::var("TRANSCODE_POLL_GRACE_SECS").ok().as_deref(),
+            ));
 
             loop {
                 if start.elapsed() > timeout {
@@ -257,7 +291,8 @@ impl TranscodeProgressTask {
 
                 match transcoder_client.get_status(&task_id).await {
                     Ok(status) => {
-                        poll_failures = 0;
+                        poll_failing_since = None;
+                        last_seen_progress = status.progress;
                         // 8.62.2: a non-200 status_code is a permanent failure,
                         // checked before progress (meaningless on a failed job).
                         // Steps already proven stay paid (after the loop).
@@ -287,9 +322,9 @@ impl TranscodeProgressTask {
                         if let (Some(b), Some(cm), true) =
                             (biller.as_mut(), chain.as_ref(), status.progress < 100)
                         {
-                            let estimate = status
-                                .duration
+                            let estimate = known_duration(status.duration)
                                 .map(|d| transcode_tokens(d, &formats, is_encrypted).1);
+                            last_estimate = estimate.or(last_estimate);
                             let polled = b
                                 .on_progress(cm.as_ref(), status.progress, estimate, unix_now())
                                 .await;
@@ -747,11 +782,29 @@ impl TranscodeProgressTask {
                         }
                     }
                     Err(e) => {
-                        poll_failures += 1;
-                        if poll_failures < MAX_POLL_FAILURES {
+                        let failing_for = poll_failing_since
+                            .get_or_insert_with(std::time::Instant::now)
+                            .elapsed();
+                        if !poll_gives_up(failing_for, poll_grace) {
+                            // The sidecar being away must not let the session's
+                            // proof window lapse: keep proving the work seen so
+                            // far. A session that has ended is acted on once
+                            // polls recover.
+                            if let (Some(b), Some(cm)) = (biller.as_mut(), chain.as_ref()) {
+                                b.on_progress(
+                                    cm.as_ref(),
+                                    last_seen_progress,
+                                    last_estimate,
+                                    unix_now(),
+                                )
+                                .await;
+                            }
                             warn!(
-                                "Transcoder status poll failed for {} ({}/{}): {}",
-                                task_id, poll_failures, MAX_POLL_FAILURES, e
+                                "Transcoder status poll failed for {} ({}s of {}s): {}",
+                                task_id,
+                                failing_for.as_secs(),
+                                poll_grace.as_secs(),
+                                e
                             );
                             continue;
                         }

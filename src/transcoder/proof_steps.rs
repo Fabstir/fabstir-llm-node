@@ -196,6 +196,21 @@ pub fn interim_due(
         || now.saturating_sub(last_proof_at) >= proof_timeout_window / 2
 }
 
+/// The rate cap keeps proofs behind the work done, and progress can stop moving
+/// (it holds at 99 during upload and moderation) or fall (a restarted job). While
+/// work done is still unproven, half the session's proof window since the last
+/// proof makes a proof due whatever progress is doing: otherwise the session could
+/// be timed out mid-run with most of its work unpaid.
+pub fn catch_up_due(
+    proven: u64,
+    target: u64,
+    chain_now: u64,
+    last_proof_at: u64,
+    proof_timeout_window: u64,
+) -> bool {
+    target > proven && chain_now.saturating_sub(last_proof_at) >= proof_timeout_window / 2
+}
+
 /// D20(b): how much the next interim proof claims. `target` is the work done so
 /// far (the estimate scaled by progress), `estimate` the whole job. Never more
 /// than the contract allows now, never below its minimum, and never so much

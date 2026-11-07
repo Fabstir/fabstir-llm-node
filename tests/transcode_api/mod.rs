@@ -3,6 +3,7 @@ mod test_biller_expiry;
 mod test_expiry_sweeper;
 mod test_http_handler;
 mod test_job_work;
+mod test_live_duration;
 mod test_liveness;
 mod test_proof_steps;
 mod test_result_store;
