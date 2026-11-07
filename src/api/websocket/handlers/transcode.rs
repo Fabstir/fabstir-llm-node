@@ -165,8 +165,66 @@ pub fn transcode_estimate_tokens(
     tokens_for_units(units)
 }
 
+/// The final bill (8.62.7). From transcoder e0c789d each published output carries
+/// `encodedDuration`, its own measured length, so each format is billed by what
+/// it really rendered: a preview at its trimmed length, a format that produced no
+/// output at nothing. When no output carries it (older transcoders), every
+/// format is billed at the job's `duration`, as before.
+pub fn final_transcode_tokens(
+    duration: f64,
+    formats: &[VideoFormat],
+    outputs: &Value,
+    is_encrypted: bool,
+) -> (f64, u64) {
+    let measured: Vec<(Option<u64>, f64, &Value)> = outputs
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|o| {
+                    let secs = o.get("encodedDuration")?.as_f64()?;
+                    (secs.is_finite() && secs >= 0.0).then_some((
+                        o.get("id").and_then(|v| v.as_u64()),
+                        secs,
+                        o,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if measured.is_empty() {
+        return transcode_tokens(duration, formats, is_encrypted);
+    }
+    let units: f64 = measured
+        .iter()
+        .map(|(id, secs, output)| {
+            // The client's own format decides the factors; the output echoes it.
+            let format = id.and_then(|id| formats.iter().find(|f| f.id as u64 == id));
+            let vf = format
+                .and_then(|f| f.vf.clone())
+                .or_else(|| output.get("vf").and_then(|v| v.as_str()).map(String::from))
+                .unwrap_or_default();
+            let vcodec = format
+                .and_then(|f| f.vcodec.clone())
+                .or_else(|| {
+                    output
+                        .get("vcodec")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_default();
+            calculate_transcode_units(
+                *secs,
+                resolution_factor_from_vf(&vf),
+                codec_factor(&vcodec),
+                is_encrypted,
+            )
+        })
+        .sum();
+    ((units * 1e9).round() / 1e9, tokens_for_units(units))
+}
+
 /// The transcode's billing units and tokens for `duration` seconds rendered to
-/// `formats`: the final bill, on the duration the sidecar reports in its result.
+/// `formats`: the bill when the outputs carry no measured lengths.
 pub fn transcode_tokens(duration: f64, formats: &[VideoFormat], is_encrypted: bool) -> (f64, u64) {
     let units: f64 = formats
         .iter()
@@ -565,7 +623,7 @@ impl TranscodeProgressTask {
                             // Calculate billing (one formula with the running estimate)
                             let duration = status.duration.unwrap_or(0.0);
                             let (total_units, tokens) =
-                                transcode_tokens(duration, &formats, is_encrypted);
+                                final_transcode_tokens(duration, &formats, &outputs, is_encrypted);
 
                             // Track billing (in-process record, for reporting)
                             if let Some(jid) = job_id {

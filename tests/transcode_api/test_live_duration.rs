@@ -389,3 +389,42 @@ fn software_encoders_bill_at_their_codec_family() {
         assert_eq!(codec_factor(codec), factor, "{codec}");
     }
 }
+
+#[test]
+fn each_format_bills_by_its_own_measured_length() {
+    use fabstir_llm_node::api::websocket::handlers::transcode::final_transcode_tokens;
+    let fmts = [format("scale=1920x1080"), preview("scale=1280x720", 20)];
+    let full = |id: u64, secs: f64| serde_json::json!({"id": id, "cid": "s5://x", "encodedDuration": secs});
+    // A full 1080p rendition and a 20 % 720p preview of a 120 s source.
+    let outputs = serde_json::json!([full(1, 120.0), full(2, 24.0)]);
+    let (units, tokens) = final_transcode_tokens(120.0, &fmts, &outputs, true);
+    assert_eq!(
+        tokens,
+        132_000 + 13_200,
+        "the preview bills at 24 s, not 120 s"
+    );
+    assert_eq!(units, 145.2);
+    // Before e0c789d, both bill at the job's 120 s.
+    assert_eq!(
+        final_transcode_tokens(
+            120.0,
+            &fmts,
+            &serde_json::json!([{"id": 1}, {"id": 2}]),
+            true
+        )
+        .1,
+        132_000 + 66_000
+    );
+    // A format with no output bills nothing.
+    assert_eq!(
+        final_transcode_tokens(120.0, &fmts, &serde_json::json!([full(1, 120.0)]), true).1,
+        132_000
+    );
+    // The final bill never falls below the running estimate here, so interim
+    // proofs cannot run ahead of it.
+    use fabstir_llm_node::api::websocket::handlers::transcode::transcode_estimate_tokens;
+    assert!(transcode_estimate_tokens(120.0, &fmts, true) <= tokens);
+    // A negative or missing measurement is ignored.
+    let bad = serde_json::json!([{"id": 1, "encodedDuration": -1.0}]);
+    assert_eq!(final_transcode_tokens(120.0, &fmts, &bad, true).1, 198_000);
+}

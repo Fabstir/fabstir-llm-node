@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.62.6-transcode-final-wait-2026-11-07";
+pub const VERSION: &str = "v8.62.7-transcode-per-output-bill-2026-11-07";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.62.6";
+pub const VERSION_NUMBER: &str = "8.62.7";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,7 +15,7 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 62;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 6;
+pub const VERSION_PATCH: u32 = 7;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-11-07";
@@ -30,6 +30,8 @@ pub const FEATURES: &[&str] = &[
     // v8.62.6: the final claim waits as long as the rate needs, with no 3,600 s ceiling (sdk-core 1.39.17 lifts
     // SOURCE_TOO_LONG on this marker); software AV1 and H.265 encoders bill at their codec factor.
     "transcode-final-wait-uncapped",
+    // v8.62.7: each format is billed by its output's own measured length (encodedDuration, transcoder e0c789d).
+    "transcode-per-output-bill",
     "transcode-poll-grace",
     // v8.62.3: every chat streaming write is bounded (CHAT_WS_WRITE_TIMEOUT_SECS, default 90 s); a client
     // that stops reading mid-stream stops generation and its connection is closed and settled.
@@ -1230,9 +1232,10 @@ mod tests {
         assert!(FEATURES.contains(&"transcode-poll-grace"));
         assert!(FEATURES.contains(&"transcode-preview-estimate"));
         assert!(FEATURES.contains(&"transcode-final-wait-uncapped"));
+        assert!(FEATURES.contains(&"transcode-per-output-bill"));
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 62);
-        assert_eq!(VERSION_PATCH, 6);
+        assert_eq!(VERSION_PATCH, 7);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1457,14 +1460,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.62.6"));
+        assert!(version.contains("8.62.7"));
         assert!(version.contains("2026-11-07"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.62.6-transcode-final-wait-2026-11-07");
-        assert_eq!(VERSION_NUMBER, "8.62.6");
+        assert_eq!(VERSION, "v8.62.7-transcode-per-output-bill-2026-11-07");
+        assert_eq!(VERSION_NUMBER, "8.62.7");
         assert_eq!(BUILD_DATE, "2026-11-07");
     }
 
