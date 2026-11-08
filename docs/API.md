@@ -1871,7 +1871,7 @@ These rules apply to an encrypted WebSocket transcode on a session job (a `jobId
 
 **Billing in steps.** Once the sidecar reports the source duration, the node proves the work as it runs (at each quarter of progress, or when half the session's `proofTimeoutWindow` has passed and work done is still unproven, including while progress holds at 99), every proof awaited to a confirmed receipt, and re-reads the session every 20 s. `transcode_complete` is sent only after the final proof is confirmed. Its `billing` block is `{units, tokens, provenTokens}`: `tokens` is what the run cost, `provenTokens` what is proven on chain for it. They differ when the session's first proof is padded up to the contract minimum (on chain more) or the run is capped by the deposit (on chain less; the result is still released). Progress frames carry no billing.
 
-**The final claim (v8.62.2).** The contract lets one proof claim at most the model's rate limit times the seconds since the last proof. The final claim therefore waits until it can claim everything owed in one proof, or until half the proof window (less 10 s) has passed since the last proof, whichever comes first, so the session can never be timed out while it waits. The wait is bounded by the time the rate needs for what is owed plus 120 s (at most an hour). Earlier nodes claimed every second or so (a 2 minute 1080p job took 34 proofs) and gave up after a flat 120 s, which withheld the result of longer jobs as `BILLING_FAILED`.
+**The final claim (v8.62.2).** The contract lets one proof claim at most the model's rate limit times the seconds since the last proof. The final claim therefore waits until it can claim everything owed in one proof, or until half the proof window (less 10 s) has passed since the last proof, whichever comes first, so the session can never be timed out while it waits. The wait is bounded by the time the rate needs for what is owed plus 120 s, with no fixed limit since v8.62.6 (8.62.2 to 8.62.5 capped it at an hour). Earlier nodes claimed every second or so (a 2 minute 1080p job took 34 proofs) and gave up after a flat 120 s, which withheld the result of longer jobs as `BILLING_FAILED`.
 
 **Errors during or after a run** (`transcode_error`): `SESSION_NOT_BILLABLE` (the session stopped being payable or was completed by someone else, during the run or, since v8.62.2, during the final claim; proven steps stay paid), `VALIDATION_FAILED` / `TRANSCODE_FAILED` (v8.62.2: the transcoder reported the job failed for good, 400 for bad input such as an invalid source CID, anything else for any other failure; the run ends at once and nothing more is billed), `SESSION_EXPIRED` (the session expired before the work finished: a run still going is stopped, a run that finished after `startTime + maxDuration` is not billed; outputs withheld either way, steps proven before expiry stay paid), `BILLING_FAILED` (the final proof did not land; outputs withheld), `OUTPUTS_NOT_READY` (v8.62.1: the run reached 100% but the sidecar did not list its outputs within `TRANSCODE_OUTPUT_WAIT_SECS`; not billed), `CANCELLED` (after `transcode_cancel`), `TIMEOUT`, `POLL_FAILED` (the sidecar unreachable for `TRANSCODE_POLL_GRACE_SECS`, 120 by default), and the moderation hold codes.
 
@@ -1912,6 +1912,30 @@ Only the identity that ordered the work may fetch it: the signer the node recove
 
 Records are encrypted at rest under a key derived from `HOST_PRIVATE_KEY` (never written to disk); rotating that key makes existing records unreadable, and they are deleted at the next start.
 - `503 Service Unavailable` - Transcoder sidecar not configured
+
+#### Settled sessions: the notice and the refusal (v8.63.0+, feature `session-settled-notice`)
+
+The node settles a session on its own: when its last connection closes, 60 s after a billed transcode under a connection left open, at the end of an LTX clip or a training run, on the expiry sweep, or when a chain read finds it already ended. From v8.63.0 every connection carrying that session is told, the moment the node decides, with one plaintext frame (it carries no secret):
+
+```json
+{"type": "session_settled", "session_id": "<session id>", "job_id": "1482", "reason": "work_finished"}
+```
+
+`job_id` is a decimal string. `reason` is one of `last_connection_closed`, `work_finished` (the transcode grace), `ltx_finished`, `training_finished`, `expired` (the sweeper), `settled_on_chain` (a chain read found it Completed or TimedOut) or `completion` (any other node path). It is sent once per connection and job, including straight after an init on a session the node has already settled. A connection busy relaying an LTX clip or a training run gets it when that relay ends. The decision is final: if the completion transaction fails, the node retries it (in the end through the expiry sweeper) and the session stays refused meanwhile. The node keeps this record in memory only: after a node restart, rely on your own chain read.
+
+After that, new work on the session gets a plaintext error, with your `id` echoed, and is not answered:
+
+```json
+{"type": "error", "code": "SESSION_SETTLED", "session_id": "<session id>", "message": "session 1482 has been settled; open a new session for new work", "id": "<your id>"}
+```
+
+The session checked is the one the work would bill: the connection's job, else the request's own `job_id`, else its `session_id` (a trailing `n` stripped), the same rule the inference core uses. This covers plaintext `prompt`, `inference`, `uploadVectors`, `searchVectors` and `searchRequest`, and every `encrypted_message` (prompts, image generation, LTX, training, relight, vectors). A prompt also gets `{"type": "stream_end", "reason": "error", "tokens_used": 0}` with its `id`. Since v8.63.1 a refusal also echoes the frame's `requestId` when it has one (vector requests correlate by it). A transcode keeps the encrypted `transcode_error` `SESSION_SETTLED` it already had. Not refused: `session_init` and `encrypted_session_init` (a result fetch inits on a completed session; the init succeeds and the notice follows it), `{"action": "transcode_result"}`, and `transcode_cancel`, `ltx_cancel`, `train_cancel` (named by `action` or by `type`).
+
+**REST (v8.63.1, feature `session-settled-rest`).** `POST /v1/inference` naming a settled session (by `job_id`, or by `session_id`) answers HTTP 409 with `{"error": "SESSION_SETTLED", "code": "SESSION_SETTLED", "job_id": "1482", "message": ...}`. On a host serving vault-paid sessions the route is refused for every call anyway (HTTP 403 `SESSION_AUTH_DENIED`). No other REST route bills a session.
+
+The notice can arrive immediately after the init's acknowledgement, before any other frame, so have the connection's frame handler in place before sending the init.
+
+The node cannot see a session settled on chain by someone else (the depositor calling `completeSessionJob`, or anyone calling `triggerSessionTimeout`) until it next reads it, so keep a chain read for those, for example after an error or a long idle.
 
 #### Performance Notes
 

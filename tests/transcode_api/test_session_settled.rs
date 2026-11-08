@@ -443,3 +443,78 @@ async fn other_sessions_settling_do_not_keep_a_dead_peer_alive() {
         "the half-open socket is closed despite other settlements"
     );
 }
+
+// ---- 8.63.1 ----
+
+#[test]
+fn the_billed_job_follows_the_cores_rule_and_web_search_is_work() {
+    use fabstir_llm_node::api::session_settled::request_job;
+    assert_eq!(request_job(Some(5), Some("9")), Some(5));
+    assert_eq!(request_job(None, Some("139n")), Some(139));
+    assert_eq!(request_job(None, Some("not-a-job")), None);
+    assert_eq!(request_job(None, None), None);
+    assert!(refused_when_settled("searchRequest", None));
+}
+
+#[tokio::test]
+async fn rest_inference_on_a_settled_session_is_refused_with_409() {
+    let (server, port) = serve(None).await;
+    server.settled_sessions().announce(7011, reason::EXPIRED);
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/v1/inference");
+    for body in [
+        json!({"model": "m", "prompt": "hello", "max_tokens": 4, "job_id": 7011}),
+        json!({"model": "m", "prompt": "hello", "max_tokens": 4, "session_id": "7011n"}),
+    ] {
+        let resp = client.post(&url).json(&body).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 409, "{body}");
+        let got: Value = resp.json().await.unwrap();
+        assert_eq!(got["code"], "SESSION_SETTLED");
+        assert_eq!(got["job_id"], "7011");
+    }
+    // An unsettled session is not refused this way.
+    let resp = client
+        .post(&url)
+        .json(&json!({"model": "m", "prompt": "hello", "max_tokens": 4, "job_id": 7012}))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status().as_u16(), 409);
+}
+
+#[tokio::test]
+async fn a_prompt_naming_a_settled_session_only_by_session_id_is_refused() {
+    let (server, port) = serve(None).await;
+    server.settled_sessions().announce(7013, reason::EXPIRED);
+    let mut ws = connect(port).await;
+    ws.send(Message::Text(
+        json!({"type": "inference", "id": "i-13", "request": {"model": "m", "prompt": "hello", "session_id": "7013n", "max_tokens": 4}})
+            .to_string(),
+    ))
+    .await
+    .unwrap();
+    let refused = wait_for(&mut ws, 5, |v| v["type"] == "error")
+        .await
+        .expect("a refusal");
+    assert!(is_settled_refusal(&refused), "got {refused}");
+    assert_eq!(refused["id"], "i-13");
+}
+
+#[tokio::test]
+async fn a_vector_refusal_echoes_its_request_id() {
+    let (server, port) = serve(None).await;
+    let mut ws = connect(port).await;
+    plaintext_init(&mut ws, 7014).await;
+    server
+        .settled_sessions()
+        .announce(7014, reason::WORK_FINISHED);
+    assert!(wait_for(&mut ws, 5, is_notice).await.is_some());
+    ws.send(Message::Text(
+        json!({"type": "searchVectors", "requestId": "r-14", "session_id": "s-7014", "queryVector": [], "k": 3}).to_string(),
+    ))
+    .await
+    .unwrap();
+    let refused = next_json(&mut ws, 5).await.expect("a reply");
+    assert!(is_settled_refusal(&refused), "got {refused}");
+    assert_eq!(refused["requestId"], "r-14");
+}

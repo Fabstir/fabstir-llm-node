@@ -1608,12 +1608,8 @@ impl ApiServer {
         }
 
         // Parse job_id early (needed for prompt hash storage)
-        let job_id = request.job_id.or_else(|| {
-            request
-                .session_id
-                .as_ref()
-                .and_then(|sid| sid.trim_end_matches('n').parse::<u64>().ok())
-        });
+        let job_id =
+            crate::api::session_settled::request_job(request.job_id, request.session_id.as_deref());
 
         // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
         let prompt_hash = {
@@ -1925,12 +1921,8 @@ impl ApiServer {
 
         // Parse job_id early (needed for prompt hash storage)
         // SDK sends "139n" format, so we strip trailing 'n'
-        let job_id = request.job_id.or_else(|| {
-            request
-                .session_id
-                .as_ref()
-                .and_then(|sid| sid.trim_end_matches('n').parse::<u64>().ok())
-        });
+        let job_id =
+            crate::api::session_settled::request_job(request.job_id, request.session_id.as_deref());
 
         // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
         let prompt_hash = {
@@ -2563,6 +2555,23 @@ async fn simple_inference_handler(
         )
             .into_response();
     }
+    // 8.63.1: a session the node has settled is refused, as on the WebSocket;
+    // a REST caller has no connection to be told on.
+    if let Some(jid) =
+        crate::api::session_settled::request_job(request.job_id, request.session_id.as_deref())
+    {
+        if server.settled_sessions().reason_for(jid).is_some() {
+            warn!(
+                "[SCI-C] job {}: SESSION_SETTLED, POST /v1/inference refused on a settled session",
+                jid
+            );
+            return (
+                StatusCode::CONFLICT,
+                axum::response::Json(crate::api::session_settled::refused_body(jid)),
+            )
+                .into_response();
+        }
+    }
     let client_ip = "127.0.0.1".to_string();
 
     match server.handle_inference_request(request, client_ip).await {
@@ -2960,6 +2969,7 @@ async fn send_session_settled_refusal<S>(
     ws_sender: &mut S,
     session_id: Option<&str>,
     msg_id: Option<&serde_json::Value>,
+    request_id: Option<&serde_json::Value>,
     job_id: u64,
     settle_stream: bool,
 ) where
@@ -2970,7 +2980,11 @@ async fn send_session_settled_refusal<S>(
         "[SCI-C] job {}: SESSION_SETTLED, new work refused on a settled session",
         job_id
     );
-    let refused = crate::api::session_settled::refused_frame(session_id, msg_id, job_id);
+    let mut refused = crate::api::session_settled::refused_frame(session_id, msg_id, job_id);
+    // 8.63.1: vector requests correlate by `requestId`, not `id`.
+    if let Some(rid) = request_id {
+        refused["requestId"] = rid.clone();
+    }
     let _ = ws_sender
         .send(axum::extract::ws::Message::Text(refused.to_string()))
         .await;
@@ -4358,7 +4372,14 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     .and_then(|v| v.as_str());
                                                                 // 8.63.0: new work on a session the node has
                                                                 // settled. The result fetch and cancels pass.
-                                                                if let Some(jid) = job_id {
+                                                                // The job is the core's (`request_job`): the
+                                                                // connection's, else the frame's session id.
+                                                                if let Some(jid) =
+                                                                    crate::api::session_settled::request_job(
+                                                                        job_id,
+                                                                        current_session_id.as_deref(),
+                                                                    )
+                                                                {
                                                                     // Cancels may name themselves by `type`.
                                                                     let named = frame_action
                                                                         .or_else(|| {
@@ -4377,6 +4398,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             &mut ws_sender,
                                                                             current_session_id.as_deref(),
                                                                             json_msg.get("id"),
+                                                                            decrypted_json.get("requestId").or_else(|| json_msg.get("requestId")),
                                                                             jid,
                                                                             frame_action.is_none(),
                                                                         )
@@ -5849,6 +5871,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 &mut ws_sender,
                                 session_id.as_deref(),
                                 json_msg.get("id"),
+                                json_msg.get("requestId"),
                                 jid,
                                 frame_type == "prompt" || frame_type == "inference",
                             )
@@ -5972,19 +5995,22 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         // 8.63.0: the job this request bills, once settled, as the
                         // gate above for the connection's job (a job adopted from
                         // this frame, or an `inference` request's own job_id).
-                        let billed_job = request_value
-                            .get("job_id")
-                            .and_then(|v| {
+                        // The core's own rule (`request_job`), job_id then session id.
+                        let billed_job = crate::api::session_settled::request_job(
+                            request_value.get("job_id").and_then(|v| {
                                 v.as_u64()
                                     .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })
-                            .or(job_id);
+                            }),
+                            request_value.get("session_id").and_then(|v| v.as_str()),
+                        )
+                        .or(job_id);
                         if let Some(jid) = billed_job {
                             if settled.reason_for(jid).is_some() {
                                 send_session_settled_refusal(
                                     &mut ws_sender,
                                     session_id.as_deref(),
                                     json_msg.get("id"),
+                                    json_msg.get("requestId"),
                                     jid,
                                     true,
                                 )

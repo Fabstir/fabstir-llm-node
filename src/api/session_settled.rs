@@ -96,6 +96,23 @@ impl SettledSessions {
     }
 }
 
+/// The job a request bills: its own `job_id`, else its session id (the SDK
+/// sends `"139n"`, so a trailing `n` is stripped). The inference cores derive
+/// it with this rule, and the settled gates check the same job (8.63.1).
+pub fn request_job(job_id: Option<u64>, session_id: Option<&str>) -> Option<u64> {
+    job_id.or_else(|| session_id.and_then(|sid| sid.trim_end_matches('n').parse::<u64>().ok()))
+}
+
+/// The refusal body of `POST /v1/inference`, sent with HTTP 409 (8.63.1).
+pub fn refused_body(job_id: u64) -> Value {
+    json!({
+        "error": "SESSION_SETTLED",
+        "code": "SESSION_SETTLED",
+        "job_id": job_id.to_string(),
+        "message": format!("session {job_id} has been settled; open a new session for new work"),
+    })
+}
+
 /// The plaintext notice. It carries no secret.
 pub fn settled_frame(session_id: Option<&str>, job_id: u64, why: &str) -> Value {
     json!({
@@ -127,7 +144,7 @@ pub fn refused_frame(session_id: Option<&str>, msg_id: Option<&Value>, job_id: u
 /// accept gate instead.
 pub fn refused_when_settled(frame_type: &str, action: Option<&str>) -> bool {
     match frame_type {
-        "prompt" | "inference" | "uploadVectors" | "searchVectors" => true,
+        "prompt" | "inference" | "uploadVectors" | "searchVectors" | "searchRequest" => true,
         // A transcode keeps the encrypted SESSION_SETTLED it has had since
         // 8.62.0, sent by its own accept gate.
         "encrypted_message" => !matches!(

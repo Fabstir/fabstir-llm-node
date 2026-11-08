@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.63.0-session-settled-notice-2026-11-08";
+pub const VERSION: &str = "v8.63.1-session-settled-rest-2026-11-08";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.63.0";
+pub const VERSION_NUMBER: &str = "8.63.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,16 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 63;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-11-08";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.63.1: POST /v1/inference on a settled session answers HTTP 409 {code: SESSION_SETTLED}; the settled gates check
+    // the job the inference core bills (job_id, else session id); vector refusals echo requestId; searchRequest refused.
+    "session-settled-rest",
     // v8.63.0: when the node decides to settle a session (any path), every open connection on it gets one plaintext
     // {type: "session_settled", session_id, job_id, reason}; new work on it is refused with SESSION_SETTLED. An init is
     // not refused (the notice follows it), nor are transcode_result and the cancels.
@@ -693,6 +696,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.63.1 - settled sessions over REST (Nov 8, 2026)
+    "v8.63.1: POST /v1/inference naming a session the node has settled (job_id, or session_id) answers HTTP 409 {error: SESSION_SETTLED, code: SESSION_SETTLED, job_id, message} instead of an unbilled answer",
     // v8.63.0 - settled-session notice (Nov 8, 2026)
     "v8.63.0: once the node has decided to settle a session, prompts, vector upload and search, image generation, LTX and training on it get a plaintext error SESSION_SETTLED (prompts also get stream_end) instead of being answered unbilled; a transcode keeps its encrypted SESSION_SETTLED. Inits, transcode_result and the cancels are not refused",
     // v8.62.3 - bounded chat streaming writes (Nov 5, 2026)
@@ -1241,9 +1246,11 @@ mod tests {
         assert!(FEATURES.contains(&"transcode-per-output-bill"));
         // v8.63.0
         assert!(FEATURES.contains(&"session-settled-notice"));
+        // v8.63.1
+        assert!(FEATURES.contains(&"session-settled-rest"));
         assert_eq!(VERSION_MAJOR, 8);
         assert_eq!(VERSION_MINOR, 63);
-        assert_eq!(VERSION_PATCH, 0);
+        assert_eq!(VERSION_PATCH, 1);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1468,14 +1475,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.63.0"));
+        assert!(version.contains("8.63.1"));
         assert!(version.contains("2026-11-08"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.63.0-session-settled-notice-2026-11-08");
-        assert_eq!(VERSION_NUMBER, "8.63.0");
+        assert_eq!(VERSION, "v8.63.1-session-settled-rest-2026-11-08");
+        assert_eq!(VERSION_NUMBER, "8.63.1");
         assert_eq!(BUILD_DATE, "2026-11-08");
     }
 
