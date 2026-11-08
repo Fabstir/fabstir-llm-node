@@ -1116,7 +1116,11 @@ pub async fn handle_encrypted_transcode_for(
     let work = match job_id {
         Some(jid) => {
             let settled = match server.get_checkpoint_manager().await {
-                Some(cm) => cm.is_job_settled(jid).await,
+                // 8.63.0: also once the node has decided to settle it.
+                Some(cm) => {
+                    cm.is_job_settled(jid).await
+                        || server.settled_sessions().reason_for(jid).is_some()
+                }
                 None => false,
             };
             // D20(a): refuse what the session cannot pay for safely. Unreadable

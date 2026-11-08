@@ -813,7 +813,7 @@ pub async fn finish_ltx_task(
     // complete_session_job's error is a non-Send Box<dyn Error>: stringify
     // before holding it across an await.
     let first = cm
-        .complete_session_job(jid)
+        .complete_session_job_because(jid, crate::api::session_settled::reason::LTX_FINISHED)
         .await
         .map_err(|e| e.to_string());
     if let Err(e) = first {
@@ -829,7 +829,7 @@ pub async fn finish_ltx_task(
             return;
         }
         let retry = cm
-            .complete_session_job(jid)
+            .complete_session_job_because(jid, crate::api::session_settled::reason::LTX_FINISHED)
             .await
             .map_err(|e| e.to_string());
         if let Err(e2) = retry {

@@ -3,25 +3,29 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.62.7-transcode-per-output-bill-2026-11-07";
+pub const VERSION: &str = "v8.63.0-session-settled-notice-2026-11-08";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.62.7";
+pub const VERSION_NUMBER: &str = "8.63.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 62;
+pub const VERSION_MINOR: u32 = 63;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 7;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-07";
+pub const BUILD_DATE: &str = "2026-11-08";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.63.0: when the node decides to settle a session (any path), every open connection on it gets one plaintext
+    // {type: "session_settled", session_id, job_id, reason}; new work on it is refused with SESSION_SETTLED. An init is
+    // not refused (the notice follows it), nor are transcode_result and the cancels.
+    "session-settled-notice",
     // v8.62.4: a transcode proves in steps once the sidecar reports its duration (5783b1a), 0.0 meaning unknown; a proof
     // catches up each half window even while progress holds; a failed poll fails the run after a grace period, not 3 polls.
     "transcode-proof-catch-up",
@@ -689,6 +693,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.63.0 - settled-session notice (Nov 8, 2026)
+    "v8.63.0: once the node has decided to settle a session, prompts, vector upload and search, image generation, LTX and training on it get a plaintext error SESSION_SETTLED (prompts also get stream_end) instead of being answered unbilled; a transcode keeps its encrypted SESSION_SETTLED. Inits, transcode_result and the cancels are not refused",
     // v8.62.3 - bounded chat streaming writes (Nov 5, 2026)
     "v8.62.3: a chat stream write still parked after CHAT_WS_WRITE_TIMEOUT_SECS (default 90 s), or failed, stops generation and closes the connection, which the normal disconnect path settles; before, a client that held the socket but stopped reading parked the stream, the model and the session until the expiry sweeper",
     // v8.62.2 - transcode final claim (Nov 5, 2026)
@@ -1233,9 +1239,11 @@ mod tests {
         assert!(FEATURES.contains(&"transcode-preview-estimate"));
         assert!(FEATURES.contains(&"transcode-final-wait-uncapped"));
         assert!(FEATURES.contains(&"transcode-per-output-bill"));
+        // v8.63.0
+        assert!(FEATURES.contains(&"session-settled-notice"));
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 62);
-        assert_eq!(VERSION_PATCH, 7);
+        assert_eq!(VERSION_MINOR, 63);
+        assert_eq!(VERSION_PATCH, 0);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1460,15 +1468,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.62.7"));
-        assert!(version.contains("2026-11-07"));
+        assert!(version.contains("8.63.0"));
+        assert!(version.contains("2026-11-08"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.62.7-transcode-per-output-bill-2026-11-07");
-        assert_eq!(VERSION_NUMBER, "8.62.7");
-        assert_eq!(BUILD_DATE, "2026-11-07");
+        assert_eq!(VERSION, "v8.63.0-session-settled-notice-2026-11-08");
+        assert_eq!(VERSION_NUMBER, "8.63.0");
+        assert_eq!(BUILD_DATE, "2026-11-08");
     }
 
     #[test]

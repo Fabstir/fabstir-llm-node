@@ -196,6 +196,8 @@ pub struct CheckpointManager {
     /// SCI-B (D1): the per-job held completion latch and the sticky settled set
     /// every owner of `complete_session_job` goes through.
     completion_guard: Arc<CompletionGuard>,
+    /// 8.63.0: sessions this node has decided to settle, for the notices.
+    settled_sessions: Arc<crate::api::session_settled::SettledSessions>,
 }
 
 impl CheckpointManager {
@@ -259,6 +261,7 @@ impl CheckpointManager {
             proof_cache,
             dispute_window_secs,
             completion_guard: Arc::new(CompletionGuard::new()),
+            settled_sessions: Arc::new(crate::api::session_settled::SettledSessions::new()),
         })
     }
 
@@ -1599,10 +1602,38 @@ impl CheckpointManager {
     /// this; the held latch (SCI-B D1) makes a second owner wait for the first,
     /// and a job already settled (in this process or on chain) returns `Ok`
     /// without a second send.
+    /// 8.63.0: the sessions this node has decided to settle.
+    pub fn settled_sessions(&self) -> &Arc<crate::api::session_settled::SettledSessions> {
+        &self.settled_sessions
+    }
+
+    /// Share the API server's settled-session registry, so its connections hear
+    /// every completion this manager decides (8.63.0).
+    pub fn with_settled_sessions(
+        mut self,
+        registry: Arc<crate::api::session_settled::SettledSessions>,
+    ) -> Self {
+        self.settled_sessions = registry;
+        self
+    }
+
     pub async fn complete_session_job(
         &self,
         job_id: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.complete_session_job_because(job_id, crate::api::session_settled::reason::COMPLETION)
+            .await
+    }
+
+    /// [`complete_session_job`], naming why: the decision is recorded (and every
+    /// connection on the session told) before anything else, so no new work is
+    /// accepted under it (8.63.0).
+    pub async fn complete_session_job_because(
+        &self,
+        job_id: u64,
+        why: &'static str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.settled_sessions.announce(job_id, why);
         let latch = self.completion_guard.acquire(job_id).await;
         if self.completion_guard.is_settled(job_id).await {
             info!(
@@ -1635,6 +1666,10 @@ impl CheckpointManager {
         match status {
             Ok(SessionStatus::Completed) => {
                 self.completion_guard.mark_settled(job_id).await;
+                self.settled_sessions.announce(
+                    job_id,
+                    crate::api::session_settled::reason::SETTLED_ON_CHAIN,
+                );
                 info!(
                     "[SCI] job {}: chain reads Completed {}, skipping completion",
                     job_id, stage
@@ -1642,6 +1677,10 @@ impl CheckpointManager {
                 true
             }
             Ok(SessionStatus::TimedOut) => {
+                self.settled_sessions.announce(
+                    job_id,
+                    crate::api::session_settled::reason::SETTLED_ON_CHAIN,
+                );
                 warn!(
                     "[SCI] job {}: chain reads TimedOut {} (settled by a timeout), skipping completion",
                     job_id, stage

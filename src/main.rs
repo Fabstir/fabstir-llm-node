@@ -1086,6 +1086,8 @@ async fn node_main() -> Result<()> {
                 let web3_client = Arc::new(web3_client);
                 match CheckpointManager::new(web3_client).await {
                     Ok(checkpoint_manager) => {
+                        let checkpoint_manager = checkpoint_manager
+                            .with_settled_sessions(api_server.settled_sessions().clone());
                         api_server
                             .set_checkpoint_manager(Arc::new(checkpoint_manager))
                             .await;

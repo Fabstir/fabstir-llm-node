@@ -277,7 +277,7 @@ impl crate::contracts::expiry_sweeper::SweepTarget for NodeSweepTarget {
     }
     async fn complete(&self, job_id: u64) -> anyhow::Result<()> {
         self.cm
-            .complete_session_job(job_id)
+            .complete_session_job_because(job_id, crate::api::session_settled::reason::EXPIRED)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
@@ -285,7 +285,10 @@ impl crate::contracts::expiry_sweeper::SweepTarget for NodeSweepTarget {
         if let Some(store) = self.store() {
             let removed = store.sweep(crate::transcoder::result_store::unix_now());
             if removed > 0 {
-                info!("[SCI-C] result store: {} record(s) past retention deleted", removed);
+                info!(
+                    "[SCI-C] result store: {} record(s) past retention deleted",
+                    removed
+                );
             }
         }
     }
@@ -339,7 +342,7 @@ fn job_work_for(
                     return;
                 }
                 if let Err(e) = cm
-                    .complete_session_job(job_id)
+                    .complete_session_job_because(job_id, crate::api::session_settled::reason::WORK_FINISHED)
                     .await
                     .map_err(|e| e.to_string())
                 {
@@ -352,7 +355,7 @@ fn job_work_for(
                         return;
                     }
                     if let Err(e) = cm
-                        .complete_session_job(job_id)
+                        .complete_session_job_because(job_id, crate::api::session_settled::reason::WORK_FINISHED)
                         .await
                         .map_err(|e| e.to_string())
                     {
@@ -389,6 +392,9 @@ pub struct ApiServer {
         Arc<std::sync::RwLock<Option<Arc<crate::transcoder::result_store::ResultStore>>>>,
     /// SCI-C D17: cancels the running expiry sweeper (one per checkpoint manager).
     expiry_sweeper: Arc<std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>>,
+    /// 8.63.0: sessions the node has decided to settle. Shared with the
+    /// checkpoint manager (`CheckpointManager::with_settled_sessions`).
+    settled_sessions: Arc<crate::api::session_settled::SettledSessions>,
     session_key_store: Arc<SessionKeyStore>,
     node_private_key: Option<[u8; 32]>,
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
@@ -526,6 +532,7 @@ impl ApiServer {
             job_work: job_work_for(&checkpoint_manager_slot, &ltx_tracker_slot),
             transcode_results: Arc::new(std::sync::RwLock::new(None)),
             expiry_sweeper: Arc::new(std::sync::Mutex::new(None)),
+            settled_sessions: Arc::new(crate::api::session_settled::SettledSessions::new()),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key: None,
             embedding_model_manager: Arc::new(RwLock::new(None)),
@@ -708,6 +715,7 @@ impl ApiServer {
             job_work: job_work_for(&checkpoint_manager_slot, &ltx_tracker_slot),
             transcode_results: Arc::new(std::sync::RwLock::new(transcode_results)),
             expiry_sweeper: Arc::new(std::sync::Mutex::new(None)),
+            settled_sessions: Arc::new(crate::api::session_settled::SettledSessions::new()),
             session_key_store: Arc::new(SessionKeyStore::new()),
             node_private_key,
             embedding_model_manager: Arc::new(RwLock::new(None)),
@@ -901,6 +909,7 @@ impl ApiServer {
             job_work: self.job_work.clone(),
             transcode_results: self.transcode_results.clone(),
             expiry_sweeper: self.expiry_sweeper.clone(),
+            settled_sessions: self.settled_sessions.clone(),
             session_key_store: self.session_key_store.clone(),
             node_private_key: self.node_private_key,
             embedding_model_manager: self.embedding_model_manager.clone(),
@@ -956,6 +965,12 @@ impl ApiServer {
     }
 
     pub async fn set_checkpoint_manager(&self, checkpoint_manager: Arc<CheckpointManager>) {
+        if !Arc::ptr_eq(
+            checkpoint_manager.settled_sessions(),
+            &self.settled_sessions,
+        ) {
+            error!("[SCI-C] checkpoint manager does not share this server's settled-session registry: build it with with_settled_sessions(server.settled_sessions().clone()); settled sessions will not be announced");
+        }
         *self.checkpoint_manager.write().await = Some(checkpoint_manager.clone());
         self.start_expiry_sweeper(checkpoint_manager);
     }
@@ -1007,6 +1022,11 @@ impl ApiServer {
 
     pub fn session_auth_store(&self) -> &Arc<crate::api::session_auth::SessionAuthStore> {
         &self.session_auth_store
+    }
+
+    /// 8.63.0: the sessions the node has decided to settle.
+    pub fn settled_sessions(&self) -> &Arc<crate::api::session_settled::SettledSessions> {
+        &self.settled_sessions
     }
 
     pub async fn get_checkpoint_manager(&self) -> Option<Arc<CheckpointManager>> {
@@ -2934,6 +2954,41 @@ async fn send_session_auth_denied<S>(
     }
 }
 
+/// `SESSION_SETTLED` for new work on a session the node has settled (8.63.0).
+/// A prompt-shaped frame also gets the `stream_end` its caller waits for.
+async fn send_session_settled_refusal<S>(
+    ws_sender: &mut S,
+    session_id: Option<&str>,
+    msg_id: Option<&serde_json::Value>,
+    job_id: u64,
+    settle_stream: bool,
+) where
+    S: futures::Sink<axum::extract::ws::Message> + Unpin,
+{
+    use futures::SinkExt;
+    warn!(
+        "[SCI-C] job {}: SESSION_SETTLED, new work refused on a settled session",
+        job_id
+    );
+    let refused = crate::api::session_settled::refused_frame(session_id, msg_id, job_id);
+    let _ = ws_sender
+        .send(axum::extract::ws::Message::Text(refused.to_string()))
+        .await;
+    if settle_stream {
+        let mut ended = serde_json::json!({
+            "type": "stream_end",
+            "reason": "error",
+            "tokens_used": 0
+        });
+        if let Some(id) = msg_id {
+            ended["id"] = id.clone();
+        }
+        let _ = ws_sender
+            .send(axum::extract::ws::Message::Text(ended.to_string()))
+            .await;
+    }
+}
+
 async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
     use futures::{SinkExt, StreamExt};
     use serde_json::json;
@@ -3029,13 +3084,82 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
         connection_keys.conn_id().to_string(),
     );
 
-    while let Some(msg) = crate::api::websocket::liveness::next_frame(
-        &mut ws_receiver,
-        &mut ws_sender,
-        &mut liveness,
-    )
-    .await
-    {
+    // 8.63.0 `session-settled-notice`: the registry of sessions the node has
+    // settled is the record; its broadcast only wakes this loop when idle.
+    let settled = server.settled_sessions().clone();
+    let mut settled_rx = Some(settled.subscribe());
+    let mut settled_notified: Option<u64> = None;
+    enum NextFrame<M> {
+        Frame(Option<M>),
+        Woken(bool),
+    }
+    loop {
+        // Once per job, the moment this connection's job is settled: right
+        // after an init on an already-settled job, or when woken below.
+        if let Some(jid) = job_id {
+            if settled_notified != Some(jid) {
+                if let Some(why) = settled.reason_for(jid) {
+                    settled_notified = Some(jid);
+                    let notice =
+                        crate::api::session_settled::settled_frame(session_id.as_deref(), jid, why);
+                    if ws_sender
+                        .send(axum::extract::ws::Message::Text(notice.to_string()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    info!("[SCI-C] job {}: session_settled sent ({})", jid, why);
+                }
+            }
+        }
+        let next = match settled_rx.as_mut() {
+            // One frame wait across every wake: a settlement of some OTHER job
+            // must not restart this socket's liveness clock (next_frame touches
+            // it on entry), or busy settling would keep dead peers alive.
+            Some(rx) => {
+                let frame = crate::api::websocket::liveness::next_frame(
+                    &mut ws_receiver,
+                    &mut ws_sender,
+                    &mut liveness,
+                );
+                tokio::pin!(frame);
+                loop {
+                    tokio::select! {
+                        biased;
+                        got = &mut frame => break NextFrame::Frame(got),
+                        woken = rx.recv() => match woken {
+                            Ok((jid, _)) if job_id != Some(jid) || settled_notified == Some(jid) => {}
+                            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                break NextFrame::Woken(true)
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                break NextFrame::Woken(false)
+                            }
+                        },
+                    }
+                }
+            }
+            None => NextFrame::Frame(
+                crate::api::websocket::liveness::next_frame(
+                    &mut ws_receiver,
+                    &mut ws_sender,
+                    &mut liveness,
+                )
+                .await,
+            ),
+        };
+        let msg = match next {
+            NextFrame::Frame(Some(msg)) => msg,
+            NextFrame::Frame(None) => break,
+            // A notice for any job (or a lag) re-runs the check above.
+            NextFrame::Woken(open) => {
+                if !open {
+                    settled_rx = None;
+                }
+                continue;
+            }
+        };
         register_connection_job(
             &server,
             &mut connection_job,
@@ -4232,6 +4356,34 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                 let frame_action = decrypted_json
                                                                     .get("action")
                                                                     .and_then(|v| v.as_str());
+                                                                // 8.63.0: new work on a session the node has
+                                                                // settled. The result fetch and cancels pass.
+                                                                if let Some(jid) = job_id {
+                                                                    // Cancels may name themselves by `type`.
+                                                                    let named = frame_action
+                                                                        .or_else(|| {
+                                                                            decrypted_json
+                                                                                .get("type")
+                                                                                .and_then(|v| {
+                                                                                    v.as_str()
+                                                                                })
+                                                                        });
+                                                                    if crate::api::session_settled::refused_when_settled(
+                                                                        "encrypted_message",
+                                                                        named,
+                                                                    ) && settled.reason_for(jid).is_some()
+                                                                    {
+                                                                        send_session_settled_refusal(
+                                                                            &mut ws_sender,
+                                                                            current_session_id.as_deref(),
+                                                                            json_msg.get("id"),
+                                                                            jid,
+                                                                            frame_action.is_none(),
+                                                                        )
+                                                                        .await;
+                                                                        continue;
+                                                                    }
+                                                                }
                                                                 if let Some(j) = job_id {
                                                                     if frame_action
                                                                         != Some("transcode")
@@ -5686,6 +5838,25 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                         }
                     }
 
+                    // 8.63.0: new work on a session the node has settled.
+                    if let Some(jid) = job_id {
+                        let frame_type = json_msg["type"].as_str().unwrap_or("");
+                        if frame_type != "encrypted_message"
+                            && crate::api::session_settled::refused_when_settled(frame_type, None)
+                            && settled.reason_for(jid).is_some()
+                        {
+                            send_session_settled_refusal(
+                                &mut ws_sender,
+                                session_id.as_deref(),
+                                json_msg.get("id"),
+                                jid,
+                                frame_type == "prompt" || frame_type == "inference",
+                            )
+                            .await;
+                            continue;
+                        }
+                    }
+
                     // Handle both "prompt" and "inference" messages
                     if json_msg["type"] == "prompt"
                         || json_msg["type"] == "inference"
@@ -5796,6 +5967,29 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             if let Some(obj) = request_value.as_object_mut() {
                                 obj.insert("job_id".to_string(), json!(job_id));
                                 obj.insert("session_id".to_string(), json!(session_id));
+                            }
+                        }
+                        // 8.63.0: the job this request bills, once settled, as the
+                        // gate above for the connection's job (a job adopted from
+                        // this frame, or an `inference` request's own job_id).
+                        let billed_job = request_value
+                            .get("job_id")
+                            .and_then(|v| {
+                                v.as_u64()
+                                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                            })
+                            .or(job_id);
+                        if let Some(jid) = billed_job {
+                            if settled.reason_for(jid).is_some() {
+                                send_session_settled_refusal(
+                                    &mut ws_sender,
+                                    session_id.as_deref(),
+                                    json_msg.get("id"),
+                                    jid,
+                                    true,
+                                )
+                                .await;
+                                continue;
                             }
                         }
 
@@ -6524,7 +6718,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                 // Stringify errors: complete_session_job's Box<dyn Error> is
                 // not Send across the retry-sleep await.
                 match checkpoint_manager
-                    .complete_session_job(jid)
+                    .complete_session_job_because(
+                        jid,
+                        crate::api::session_settled::reason::LAST_CONNECTION_CLOSED,
+                    )
                     .await
                     .map_err(|e| e.to_string())
                 {
@@ -6554,7 +6751,10 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                             return;
                         }
                         if let Err(e2) = checkpoint_manager
-                            .complete_session_job(jid)
+                            .complete_session_job_because(
+                                jid,
+                                crate::api::session_settled::reason::LAST_CONNECTION_CLOSED,
+                            )
                             .await
                             .map_err(|e| e.to_string())
                         {

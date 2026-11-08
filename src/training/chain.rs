@@ -51,7 +51,10 @@ pub struct ChainSessionComplete {
 impl SessionComplete for ChainSessionComplete {
     async fn complete_session(&self, job_id: u64) -> Result<(), String> {
         self.manager
-            .complete_session_job(job_id)
+            .complete_session_job_because(
+                job_id,
+                crate::api::session_settled::reason::TRAINING_FINISHED,
+            )
             .await
             .map_err(|e| e.to_string())
     }
