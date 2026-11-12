@@ -31,11 +31,12 @@ export async function POST(req: Request): Promise<Response> {
   }
   const { host, modelId, depositMicro, clientAddress, kind } = body ?? {};
   // `kind` selects the SERVICE-OWNED on-chain session shape and the per-kind
-  // caps (a training run lives hours: 14400 / 1000 / 3600). Only the literal
-  // 'training' is accepted; absent = standard, today's chat/render shape. A
-  // browser never sends raw numbers: the vault is the one fronting the money.
-  if (kind !== undefined && kind !== null && kind !== 'training') {
-    return Response.json({ error: "kind must be 'training' when present" }, { status: 400 });
+  // caps (a training run or a Long VFX Passes render lives hours: 14400 / 1000
+  // / 3600). Only the literals 'training' and 'passes' (D21) are accepted;
+  // absent = standard, today's chat/render shape. A browser never sends raw
+  // numbers: the vault is the one fronting the money.
+  if (kind !== undefined && kind !== null && kind !== 'training' && kind !== 'passes') {
+    return Response.json({ error: "kind must be 'training' or 'passes' when present" }, { status: 400 });
   }
   // FC2.8: the retry key travels as a header (Stripe's convention) or in the
   // body, whichever suits the caller. Bounded so a key cannot be used as a
@@ -84,7 +85,7 @@ export async function POST(req: Request): Promise<Response> {
       depositMicro: BigInt(depositMicro),
       clientAddress,
       ...(idempotencyKey ? { idempotencyKey } : {}),
-      ...(kind === 'training' ? { kind: 'training' as const } : {}),
+      ...(kind === 'training' || kind === 'passes' ? { kind } : {}),
     });
     switch (outcome.status) {
       case 'ok':
@@ -119,7 +120,17 @@ export async function POST(req: Request): Promise<Response> {
       case 'refused':
         return Response.json({ error: 'refused', reason: outcome.reason }, { status: 403 });
       case 'chain_error':
+        // Nothing was broadcast: the hold is released and the key freed.
         return Response.json({ error: 'chain_error', message: outcome.message }, { status: 502 });
+      case 'chain_pending':
+        // D20: the create is in the vault outbox and may mine. The key stays
+        // pending (a same-key retry answers in_flight, never a second session)
+        // and the reconciler resolves it; the helper reads GET session-key.
+        return Response.json({ error: 'chain_pending', message: outcome.message }, { status: 502 });
+      case 'vault_stuck':
+        // D20: the vault outbox is stuck (or the boot nonce wait is running).
+        // The helper waits (FIAT_UNAVAILABLE); no money moves meanwhile.
+        return Response.json({ error: 'vault_stuck' }, { status: 503, headers: { 'retry-after': '60' } });
     }
   } catch (e) {
     // A create that succeeded but could not be recorded lands here — loud, not silent.

@@ -23,10 +23,17 @@ import {
 import { CreditsLedger, LIVE_HOLD_MS, MemoryLedgerStore } from '../src/lib/ledger';
 import { FiatCredentials } from '../src/lib/fiat-credentials';
 import { IdempotencyStore, requestFingerprint } from '../src/lib/idempotency';
-import { makeGatekeeper, type GatekeeperConfig } from '../src/lib/gatekeeper';
-import { makeVaultChain, type SessionAuthorisation } from '../src/lib/fiat-vault';
 import {
-  ESCROW_INTERFACE,
+  capsFor,
+  gatekeeperConfigFromEnv,
+  isKindEnabled,
+  largestSessionCapMicro,
+  makeGatekeeper,
+  type GatekeeperConfig,
+} from '../src/lib/gatekeeper';
+import { type SessionAuthorisation } from '../src/lib/fiat-vault';
+import { scriptedVaultChain } from './helpers/vault-harness';
+import {
   SESSION_MAX_DURATION,
   SESSION_PROOF_INTERVAL,
   SESSION_PROOF_TIMEOUT_WINDOW,
@@ -40,6 +47,7 @@ import {
   msEnv,
   productionMinSpendableMicro,
   productionReclaimDelays,
+  productionReclaimOptions,
   RECLAIM_SKEW_MS,
   startProductionSettlementListener,
   startSettlementListener,
@@ -51,8 +59,6 @@ const MODEL = `0x${'ab'.repeat(32)}`; // a chat/serving model
 const TRAINING_ID = `0x${'a4'.repeat(32)}`; // a registered TRAINING model id
 const CLIENT = '0x1234567890abcdef1234567890abcdef12345678';
 const VAULT = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
-const USDC = '0x00000000000000000000000000000000000000cc';
-const MARKETPLACE = '0x00000000000000000000000000000000000000dd';
 
 const CONFIG: GatekeeperConfig = {
   allowedHosts: [HOST],
@@ -169,51 +175,32 @@ describe('session shape per kind (escrow.ts, D1/D6)', () => {
 });
 
 describe('the vault create uses the kind shape (D1)', () => {
-  function fakeVault() {
-    const calls: bigint[][] = [];
-    const chain = makeVaultChain({
-      vaultAddress: VAULT,
-      marketplaceAddress: MARKETPLACE,
-      usdcAddress: USDC,
-      usdc: { allowance: async () => 100_000_000n, approve: async () => ({ wait: async () => undefined }) },
-      marketplace: {
-        createSessionJobForModelWithToken: async (_h, _m, _t, deposit, price, maxDuration, proofInterval, proofTimeoutWindow) => {
-          calls.push([deposit, price, maxDuration, proofInterval, proofTimeoutWindow]);
-          return {
-            hash: '0xtx',
-            wait: async () => ({
-              logs: [
-                {
-                  topics: [
-                    ESCROW_INTERFACE.getEvent('SessionJobCreatedForModel')!.topicHash,
-                    '0x' + (901n).toString(16).padStart(64, '0'),
-                    '0x' + VAULT.slice(2).toLowerCase().padStart(64, '0'),
-                    '0x' + 'ee'.repeat(32),
-                  ],
-                  data: '0x',
-                },
-              ],
-            }),
-          };
-        },
-      },
-      modelPrice: async () => 10_000n,
-    });
-    return { chain, calls };
+  // D20: the vault chain sends only through the outbox; the scripted chain
+  // records (and decodes) every create it was asked to broadcast.
+  async function fakeVault() {
+    const v = await scriptedVaultChain({ modelPrice: async () => 10_000n });
+    v.chain.allowance = 100_000_000n;
+    const calls = () => v.creates().map((args) => args.slice(3) as bigint[]);
+    return { chain: v.vaultChain, calls };
   }
 
   it('passes 14400 / 1000 / 3600 for a training session and 3600 / 1000 / 300 otherwise', async () => {
-    const { chain, calls } = fakeVault();
-    await chain.createSession({ host: HOST, modelId: TRAINING_ID, depositMicro: 8_600_000n, kind: 'training' });
-    await chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n });
-    expect(calls).toEqual([
-      [8_600_000n, 10_000n, 14400n, 1000n, 3600n],
-      [500_000n, 10_000n, 3600n, 1000n, 300n],
-    ]);
+    process.env.FIAT_VAULT_ALLOWANCE_FLOAT_MICRO = '10000000';
+    try {
+      const { chain, calls } = await fakeVault();
+      await chain.createSession({ host: HOST, modelId: TRAINING_ID, depositMicro: 8_600_000n, kind: 'training' });
+      await chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n });
+      expect(calls()).toEqual([
+        [8_600_000n, 10_000n, 14400n, 1000n, 3600n],
+        [500_000n, 10_000n, 3600n, 1000n, 300n],
+      ]);
+    } finally {
+      delete process.env.FIAT_VAULT_ALLOWANCE_FLOAT_MICRO;
+    }
   });
 
   it('exposes the registry price read the service gates on', async () => {
-    const { chain } = fakeVault();
+    const { chain } = await fakeVault();
     expect(await chain.modelPrice(HOST, MODEL)).toBe(10_000n);
   });
 });
@@ -591,6 +578,8 @@ describe('the production wrapper (D3, D5)', () => {
     'FIAT_VAULT_PRIVATE_KEY',
     'FIAT_TRAINING_MODEL_IDS',
     'FIAT_VAULT_ALLOWANCE_FLOAT_MICRO',
+    'FIAT_PASSES_RECLAIM_AFTER_MS',
+    'FIAT_PASSES_MODEL_IDS',
   ];
   afterEach(() => {
     for (const k of ENV) delete process.env[k];
@@ -604,7 +593,8 @@ describe('the production wrapper (D3, D5)', () => {
     process.env.FIAT_RECLAIM_AFTER_MS = '   ';
     expect(msEnv('FIAT_RECLAIM_AFTER_MS', 7_200_000)).toBe(7_200_000);
     process.env.FIAT_TRAINING_RECLAIM_AFTER_MS = '';
-    expect(productionReclaimDelays()).toEqual({ standard: 7_200_000, training: 21_600_000 });
+    process.env.FIAT_PASSES_RECLAIM_AFTER_MS = '';
+    expect(productionReclaimDelays()).toEqual({ standard: 7_200_000, training: 21_600_000, passes: 21_600_000 });
     process.env.FIAT_RECLAIM_AFTER_MS = '10800000';
     expect(productionReclaimDelays().standard).toBe(10_800_000);
   });
@@ -723,7 +713,7 @@ describe('POST /v1/fiat/session with kind', () => {
     for (const kind of ['video', 'chat', 'standard', 14400, { maxDuration: 14400 }]) {
       const res = await post({ ...GOOD, kind });
       expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: "kind must be 'training' when present" });
+      expect(await res.json()).toEqual({ error: "kind must be 'training' or 'passes' when present" });
     }
     expect(seen).toEqual([]);
   });
@@ -735,5 +725,226 @@ describe('POST /v1/fiat/session with kind', () => {
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: 'refused', reason });
     }
+  });
+});
+
+// BM1.7 / D21 — the `passes` kind: Long VFX Passes (up to 361 frames) run on a
+// 4-hour session kept alive by proofs. The service owns the shape, binds the
+// kind ONE WAY to the relight model ids, caps each session at 4 USDC (a Full
+// 361 deposit is ~2.93) while its spend counts in the STANDARD daily window,
+// and the sweeper waits out the passes lifetime, not the standard 2 h.
+describe('the passes kind (D21)', () => {
+  const RELIGHT_ID = `0x${'d2'.repeat(32)}`; // a relight (VFX Passes) model id
+  const FULL_361 = 2_930_000n; // 754,115 tokens × 3.7 µUSDC + 5 %
+  const PASSES: GatekeeperConfig = {
+    ...CONFIG,
+    perKind: {
+      ...CONFIG.perKind,
+      passes: { maxDepositPerSessionMicro: 4_000_000n, maxDailySpendMicro: 10_000_000n },
+    },
+    passesModelIds: [RELIGHT_ID],
+  };
+  const passes = (token: string, overrides: Partial<FiatSessionRequest> = {}) =>
+    request(token, { kind: 'passes', modelId: RELIGHT_ID, depositMicro: FULL_361, ...overrides });
+  const ENV = [
+    'FIAT_PASSES_MODEL_IDS',
+    'FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO',
+    'FIAT_PASSES_RECLAIM_AFTER_MS',
+    'FIAT_MAX_DAILY_SPEND_MICRO',
+    'FIAT_TRAINING_MODEL_IDS',
+    'FIAT_VAULT_ALLOWANCE_FLOAT_MICRO',
+    'FIAT_RECLAIM_AFTER_MS',
+    'FIAT_TRAINING_RECLAIM_AFTER_MS',
+  ];
+  afterEach(() => {
+    for (const k of ENV) delete process.env[k];
+    resetFiatBackendForTest();
+  });
+
+  it('a passes session gets 14400 / 1000 / 3600, end to end into the vault create', async () => {
+    expect(sessionShapeFor('passes')).toEqual({ maxDuration: 14400n, proofInterval: 1000n, proofTimeoutWindow: 3600n });
+    const { deps, token, creates } = await makeDeps({ config: PASSES });
+    expect((await openFiatSession(deps, passes(token))).status).toBe('ok');
+    expect(creates).toEqual([expect.objectContaining({ modelId: RELIGHT_ID, depositMicro: FULL_361, kind: 'passes' })]);
+    process.env.FIAT_VAULT_ALLOWANCE_FLOAT_MICRO = '4000000';
+    const v = await scriptedVaultChain({ modelPrice: async () => 3_885n });
+    v.chain.allowance = 100_000_000n;
+    await v.vaultChain.createSession({ host: HOST, modelId: RELIGHT_ID, depositMicro: FULL_361, kind: 'passes' });
+    expect(v.creates().map((args) => args.slice(3))).toEqual([[FULL_361, 3_885n, 14400n, 1000n, 3600n]]);
+  });
+
+  it("kind: 'passes' on a model outside FIAT_PASSES_MODEL_IDS is MODEL_KIND_MISMATCH, before any chain read", async () => {
+    const { deps, token, creates, readCount } = await makeDeps({ config: PASSES });
+    for (const modelId of [MODEL, TRAINING_ID]) {
+      expect(await openFiatSession(deps, passes(token, { modelId }))).toEqual({ status: 'refused', reason: 'MODEL_KIND_MISMATCH' });
+    }
+    expect(creates).toEqual([]);
+    expect(readCount()).toBe(0);
+  });
+
+  it('a kind-less open on a passes model stays standard (one-way binding: helper 0.19.1 keeps working)', async () => {
+    const { deps, token, creates } = await makeDeps({ config: PASSES });
+    expect((await openFiatSession(deps, request(token, { modelId: RELIGHT_ID }))).status).toBe('ok');
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).not.toHaveProperty('kind');
+  });
+
+  it("with FIAT_PASSES_MODEL_IDS unset, kind: 'passes' is refused KIND_DISABLED", async () => {
+    const { deps, token, creates } = await makeDeps({ config: { ...PASSES, passesModelIds: [] } });
+    expect(isKindEnabled({ ...PASSES, passesModelIds: [] }, 'passes')).toBe(false);
+    expect(isKindEnabled(PASSES, 'passes')).toBe(true);
+    expect(await openFiatSession(deps, passes(token))).toEqual({ status: 'refused', reason: 'KIND_DISABLED' });
+    expect(creates).toEqual([]);
+  });
+
+  it('passes holds count in the STANDARD daily window, both ways (not a second daily budget)', async () => {
+    const a = await makeDeps({ config: PASSES });
+    for (const _ of [1, 2, 3]) expect((await openFiatSession(a.deps, passes(a.token))).status).toBe('ok'); // 8.79
+    expect(await openFiatSession(a.deps, request(a.token, { depositMicro: 2_000_000n }))).toEqual({
+      status: 'refused',
+      reason: 'DAILY_CAP_EXCEEDED',
+    });
+    const b = await makeDeps({ config: PASSES });
+    for (const _ of [1, 2, 3, 4]) {
+      expect((await openFiatSession(b.deps, request(b.token, { depositMicro: 2_000_000n }))).status).toBe('ok'); // 8
+    }
+    expect(await openFiatSession(b.deps, passes(b.token))).toEqual({ status: 'refused', reason: 'DAILY_CAP_EXCEEDED' });
+  });
+
+  it('a 2.93 USDC passes deposit is accepted under the 4 USDC passes cap; the same standard deposit is DEPOSIT_OVER_CAP', async () => {
+    const { deps, token, creates } = await makeDeps({ config: PASSES });
+    expect((await openFiatSession(deps, passes(token))).status).toBe('ok');
+    expect(await openFiatSession(deps, request(token, { depositMicro: FULL_361 }))).toEqual({
+      status: 'refused',
+      reason: 'DEPOSIT_OVER_CAP',
+    });
+    expect(await openFiatSession(deps, passes(token, { depositMicro: 4_000_001n }))).toEqual({
+      status: 'refused',
+      reason: 'DEPOSIT_OVER_CAP',
+    });
+    expect(creates).toHaveLength(1);
+  });
+
+  it('a live passes hold does not count toward the training concurrency cap', async () => {
+    const { deps, token } = await makeDeps({ config: PASSES });
+    expect((await openFiatSession(deps, passes(token))).status).toBe('ok');
+    expect((await openFiatSession(deps, training(token))).status).toBe('ok');
+  });
+
+  it('with passes enabled, boot refuses a 2 USDC float and names the passes cap; disabled, it boots', () => {
+    const passesOnly = { ...PASSES, trainingModelIds: [] };
+    expect(largestSessionCapMicro(passesOnly)).toBe(4_000_000n);
+    expect(() => assertBootInvariants(passesOnly, 2_000_000n)).toThrow(
+      /FIAT_VAULT_ALLOWANCE_FLOAT_MICRO \(2000000\).*\(4000000, from FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO \(enabled by FIAT_PASSES_MODEL_IDS\)\)/
+    );
+    expect(() => assertBootInvariants(passesOnly, 4_000_000n)).not.toThrow();
+    expect(() => assertBootInvariants({ ...passesOnly, passesModelIds: [] }, 2_000_000n)).not.toThrow();
+  });
+
+  it('buildBackend refuses a 2 USDC float once FIAT_PASSES_MODEL_IDS is set', async () => {
+    process.env.FIAT_PASSES_MODEL_IDS = RELIGHT_ID;
+    process.env.FIAT_VAULT_ALLOWANCE_FLOAT_MICRO = '2000000';
+    resetFiatBackendForTest();
+    await expect(getFiatDeps()).rejects.toThrow(/FIAT_VAULT_ALLOWANCE_FLOAT_MICRO.*FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO/);
+  });
+
+  it('env: passes ids lowercased, per-session 4 USDC, and the daily cap IS the standard one (non-default)', () => {
+    process.env.FIAT_MAX_DAILY_SPEND_MICRO = '7000000';
+    process.env.FIAT_PASSES_MODEL_IDS = ` ${RELIGHT_ID.toUpperCase().replace('0X', '0x')} , 0x${'11'.repeat(32)}`;
+    const config = gatekeeperConfigFromEnv();
+    expect(config.passesModelIds).toEqual([RELIGHT_ID, `0x${'11'.repeat(32)}`]);
+    expect(capsFor(config, 'passes')).toEqual({ maxDepositPerSessionMicro: 4_000_000n, maxDailySpendMicro: 7_000_000n });
+    expect(capsFor(config, 'standard').maxDailySpendMicro).toBe(7_000_000n);
+    process.env.FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO = '5000000';
+    expect(capsFor(gatekeeperConfigFromEnv(), 'passes').maxDepositPerSessionMicro).toBe(5_000_000n);
+  });
+
+  it('the passes reclaim delay: default 6 h, below the 18,600,000 ms floor refused at boot', () => {
+    expect(productionReclaimDelays().passes).toBe(21_600_000);
+    const floor = (14400 + 3600) * 1000 + RECLAIM_SKEW_MS;
+    expect(floor).toBe(18_600_000);
+    expect(() => validateReclaimDelays({ standard: 7_200_000, byKind: { passes: floor - 1 } })).toThrow(
+      /FIAT_PASSES_RECLAIM_AFTER_MS.*18600000/
+    );
+    expect(() => validateReclaimDelays({ standard: 7_200_000, byKind: { passes: floor } })).not.toThrow();
+    process.env.FIAT_PASSES_RECLAIM_AFTER_MS = String(floor - 1);
+    expect(() => productionReclaimDelays()).toThrow(/FIAT_PASSES_RECLAIM_AFTER_MS/);
+    expect(() => productionReclaimOptions()).toThrow(/FIAT_PASSES_RECLAIM_AFTER_MS/);
+  });
+
+  it('a passes hold is swept at its OWN delay under the production options, not the standard 2 h', async () => {
+    const HOUR = 60 * 60 * 1000;
+    const options = productionReclaimOptions();
+    expect(options.reclaimAfterMs).toBe(2 * HOUR);
+    async function sweep(ageMs: number, jobId: bigint) {
+      const ledger = await CreditsLedger.open(new MemoryLedgerStore(), { now: () => Date.now() - ageMs });
+      await ledger.purchase('user-1', 50_000_000n, 'evt_1');
+      const open = await ledger.openHold(
+        { userId: 'user-1', host: HOST, depositMicro: FULL_361, kind: 'passes', modelId: RELIGHT_ID },
+        makeGatekeeper(PASSES)
+      );
+      if (!open.ok) throw new Error(open.reason);
+      await ledger.bindSession(open.holdId, jobId);
+      const reclaimed: bigint[] = [];
+      const alarms: string[] = [];
+      const listener = startSettlementListener({
+        ledger,
+        source: { latestBlock: async () => 10, query: async () => [] },
+        cursor: { load: async () => 5, save: async () => {} },
+        fromBlock: 0,
+        onAlarm: (m) => alarms.push(m),
+        reclaim: { trigger: async (id) => void reclaimed.push(id) },
+        ...options,
+        manual: true,
+      });
+      await listener.tick();
+      await listener.stop();
+      return { reclaimed, alarms };
+    }
+    expect((await sweep(3 * HOUR, 1301n)).reclaimed).toEqual([]);
+    const late = await sweep(7 * HOUR, 1302n);
+    expect(late.reclaimed).toEqual([1302n]);
+    expect(late.alarms.some((a) => a.includes('reclaimed stranded session 1302 (passes): unsettled'))).toBe(true);
+  });
+});
+
+describe('POST /v1/fiat/session with kind: passes (D21)', () => {
+  afterEach(() => setFiatSessionServiceForTest(undefined));
+
+  it("accepts and forwards kind: 'passes'", async () => {
+    const seen: FiatSessionRequest[] = [];
+    setFiatSessionServiceForTest({
+      open: async (req) => {
+        seen.push(req);
+        return {
+          status: 'ok',
+          sessionId: 843n,
+          jobId: 843n,
+          authorisation: { scheme: 'fc1-session-auth-v1', signature: '0xsig', clientAddress: CLIENT },
+        };
+      },
+    });
+    const res = await POST(
+      new Request('http://site/v1/fiat/session', {
+        method: 'POST',
+        headers: { authorization: 'Bearer fc1_token' },
+        body: JSON.stringify({ host: HOST, modelId: `0x${'d2'.repeat(32)}`, depositMicro: '2930000', clientAddress: CLIENT, kind: 'passes' }),
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([expect.objectContaining({ kind: 'passes', depositMicro: 2_930_000n })]);
+  });
+
+  it('KIND_DISABLED comes back as 403 refused with its reason', async () => {
+    setFiatSessionServiceForTest({ open: async () => ({ status: 'refused', reason: 'KIND_DISABLED' }) });
+    const res = await POST(
+      new Request('http://site/v1/fiat/session', {
+        method: 'POST',
+        headers: { authorization: 'Bearer fc1_token' },
+        body: JSON.stringify({ host: HOST, modelId: `0x${'d2'.repeat(32)}`, depositMicro: '2930000', clientAddress: CLIENT, kind: 'passes' }),
+      })
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'refused', reason: 'KIND_DISABLED' });
   });
 });

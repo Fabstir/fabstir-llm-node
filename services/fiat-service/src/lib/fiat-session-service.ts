@@ -7,23 +7,31 @@ import { join } from 'node:path';
 import { sessionShapeFor } from './escrow';
 import { FiatCredentials } from './fiat-credentials';
 import {
+  CREATE_APPEND_BY_MS,
+  CREATE_DEADLINE_MS,
   allowanceFloatMicro,
   makeVaultChain,
+  productionVault,
   signSessionAuthorisation,
+  type ProductionVault,
   type SessionAuthorisation,
 } from './fiat-vault';
 import {
+  capsFor,
   describeGatekeeperConfig,
   gatekeeperConfigFromEnv,
+  isKindEnabled,
   largestSessionCapMicro,
+  SESSION_KINDS,
   makeGatekeeper,
   type GatekeeperConfig,
   type GateRefusal,
   type Gatekeeper,
   type SessionKind,
 } from './gatekeeper';
-import { IdempotencyStore, requestFingerprint } from './idempotency';
+import { IdempotencyStore, requestFingerprint, type IdempotencyRecord } from './idempotency';
 import { CreditsLedger, JsonlLedgerStore } from './ledger';
+import { VaultOutbox } from './vault-outbox';
 
 export interface FiatSessionRequest {
   credential: string;
@@ -51,11 +59,19 @@ export type FiatSessionOutcome =
   | { status: 'key_conflict' }
   | { status: 'unauthorised' }
   | { status: 'refused'; reason: GateRefusal }
-  | { status: 'chain_error'; message: string };
+  /** Nothing was broadcast: the hold is released and the key freed. */
+  | { status: 'chain_error'; message: string }
+  /** D20: the create's outbox entry exists (it may mine): the hold stays
+   *  `held`, the key `pending`, and R5 resolves both from the outbox. */
+  | { status: 'chain_pending'; message: string }
+  /** D20: the vault outbox is stuck, or the boot nonce wait is running. */
+  | { status: 'vault_stuck' };
 
 /** The chain surface the service needs (structural subset of VaultChain). */
 export interface FiatChain {
-  ensureAllowance(depositMicro: bigint): Promise<void>;
+  /** Legacy chain fakes only. The production chain checks the allowance INSIDE
+   *  the create's vault lock (D20), so it has no separate method. */
+  ensureAllowance?(depositMicro: bigint): Promise<void>;
   createSession(params: {
     host: string;
     modelId: string;
@@ -64,8 +80,14 @@ export interface FiatChain {
     /** The price this service already read from the registry for this open,
      *  pinned so the create does not read it a second time. */
     pricePerToken?: bigint;
-    /** Fired with the tx hash on submit, before confirmation (M2 orphan marker). */
+    /** Fired with the tx hash once the create's outbox entry exists (D20):
+     *  from then on a failure keeps the hold and the key. */
     onSubmitted?: (txHash: string) => Promise<void>;
+    /** D20: the outbox `link`, the under-lock hold check and the bounds. */
+    link?: string;
+    assertHeld?: () => boolean;
+    appendByMs?: number;
+    deadlineAtMs?: number;
   }): Promise<{ jobId: bigint; depositor: string; txHash: string }>;
   /** Registry price for (host, model); 0n = not advertised, throw = unreadable.
    *  Optional so a chain fake without it behaves exactly as before. */
@@ -84,6 +106,14 @@ export interface FiatSessionDeps {
    *  read and before the idempotency reserve. Optional so existing tests and
    *  callers are unaffected (no bucket = no attempts limit, as before). */
   attempts?: AttemptsBucket;
+  /** D20: the ONE vault outbox (its lock and in-flight sets). Optional so
+   *  chain-fake tests are unaffected; production always has it. */
+  outbox?: VaultOutbox;
+  /** D20: the effective caps, for the headroom route. */
+  config?: GatekeeperConfig;
+  /** D20: where the sweeper sends `triggerSessionTimeout`. */
+  marketplaceAddress?: string;
+  now?: () => number;
 }
 
 /**
@@ -114,6 +144,13 @@ export class AttemptsBucket {
   }
 }
 
+/** The env knob behind each kind's per-session cap, for the boot error. */
+const CAP_ENV_NAME: Record<SessionKind, string> = {
+  standard: 'FIAT_MAX_SESSION_DEPOSIT_MICRO',
+  training: 'FIAT_TRAINING_MAX_SESSION_DEPOSIT_MICRO (enabled by FIAT_TRAINING_MODEL_IDS)',
+  passes: 'FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO (enabled by FIAT_PASSES_MODEL_IDS)',
+};
+
 /**
  * FT1 D5 — the boot invariant: no ENABLED kind may have a per-session cap
  * above the approve float, because `ensureAllowance` refuses a deposit above
@@ -128,11 +165,11 @@ export function assertBootInvariants(config: GatekeeperConfig, floatMicro: bigin
   if (largest > floatMicro) {
     // Name the offender: the standard cap seeds the maximum, so a standard cap
     // above the float refuses to boot too (at HEAD it merely chain_error'd
-    // every open above the float).
-    const offender =
-      config.maxDepositPerSessionMicro >= largest
-        ? 'FIAT_MAX_SESSION_DEPOSIT_MICRO'
-        : 'FIAT_TRAINING_MAX_SESSION_DEPOSIT_MICRO (enabled by FIAT_TRAINING_MODEL_IDS)';
+    // every open above the float). The first ENABLED kind at the maximum.
+    const offenderKind =
+      SESSION_KINDS.find((k) => isKindEnabled(config, k) && capsFor(config, k).maxDepositPerSessionMicro === largest) ??
+      'standard';
+    const offender = CAP_ENV_NAME[offenderKind];
     throw new Error(
       `FIAT_VAULT_ALLOWANCE_FLOAT_MICRO (${floatMicro}) is below the largest ENABLED per-kind session cap (${largest}, from ${offender}) — raise the float deliberately, in the same edit`
     );
@@ -145,6 +182,9 @@ export async function openFiatSession(
   deps: FiatSessionDeps,
   request: FiatSessionRequest
 ): Promise<FiatSessionOutcome> {
+  const now = deps.now ?? Date.now;
+  // D20: the create's bounds run from ARRIVAL, so a lock wait counts.
+  const arrival = now();
   const userId = deps.credentials.authenticate(request.credential);
   if (!userId) return { status: 'unauthorised' };
 
@@ -161,140 +201,190 @@ export async function openFiatSession(
         ...(request.kind ? { kind: request.kind } : {}),
       })
     : undefined;
+  // The answer to a key someone already used: a conflict, a wait, or a replay.
+  const answerPrior = (prior: IdempotencyRecord): FiatSessionOutcome => {
+    if (prior.fingerprint !== fingerprint) return { status: 'key_conflict' };
+    if (prior.state === 'pending') return { status: 'in_flight' };
+    // The authorisation is re-derived, not stored: the signature over
+    // (sessionId, clientAddress) is deterministic, so the replay is
+    // byte-identical to the original reply without keeping a secret at rest.
+    return {
+      status: 'ok',
+      sessionId: prior.jobId,
+      jobId: prior.jobId,
+      authorisation: deps.signAuth(prior.jobId, prior.clientAddress),
+      replayed: true,
+    };
+  };
   if (key && deps.idempotency) {
     const prior = await deps.idempotency.lookup(userId, key);
-    if (prior) {
-      if (prior.fingerprint !== fingerprint) return { status: 'key_conflict' };
-      if (prior.state === 'pending') return { status: 'in_flight' };
-      // The authorisation is re-derived, not stored: the signature over
-      // (sessionId, clientAddress) is deterministic, so the replay is
-      // byte-identical to the original reply without keeping a secret at rest.
-      return {
-        status: 'ok',
-        sessionId: prior.jobId,
-        jobId: prior.jobId,
-        authorisation: deps.signAuth(prior.jobId, prior.clientAddress),
-        replayed: true,
-      };
-    }
+    if (prior) return answerPrior(prior);
   }
+
+  // D20 — a stuck outbox (or the every-boot nonce wait) refuses NEW opens
+  // with a wait the helper understands; no money moves while a person looks.
+  if (deps.outbox && (await deps.outbox.openRefusal())) return { status: 'vault_stuck' };
 
   // FT1 D4 — the attempts budget, BEFORE the reserve (a rate-limited attempt
   // writes nothing) and before anything that could reach the chain.
   if (deps.attempts && !deps.attempts.tryTake(userId)) {
     return { status: 'refused', reason: 'RATE_LIMITED' };
   }
+  const inFlight = deps.outbox?.inFlight;
+  const keyId = key ? `${userId.toLowerCase()} ${key}` : undefined;
   if (key && deps.idempotency) {
     // Claim the key BEFORE anything can spend, so a crash mid-create leaves it
-    // pending and the retry is refused rather than charging twice.
-    await deps.idempotency.reserve(userId, key, fingerprint!);
-  }
-  // Every outcome below that journals NO hold frees the key: a reserved key
-  // would otherwise answer `in_flight` for 24 h to exactly the retry that
-  // INSUFFICIENT_BALANCE-then-purchase or a chain_error invites.
-  const freeKey = async () => {
-    if (key && deps.idempotency) await deps.idempotency.release(userId, key);
-  };
-
-  const holdRequest = {
-    userId,
-    host: request.host,
-    depositMicro: request.depositMicro,
-    modelId: request.modelId,
-    ...(request.kind ? { kind: request.kind } : {}),
-  };
-
-  // FT1 D4 — the gatekeeper PREVIEW: every policy refusal (allow-list, kind↔model
-  // binding, caps, balance, daily window, concurrency, rate) precedes any chain
-  // read, so an off-list host still reads HOST_NOT_ALLOWED and learns nothing,
-  // and a refusal costs the user nothing. Advice only: `openHold` re-decides
-  // under the ledger mutex below and is the authority.
-  const preview = await deps.ledger.previewOpen(holdRequest, deps.gatekeeper);
-  if (!preview.allow) {
-    await freeKey();
-    return { status: 'refused', reason: preview.reason };
-  }
-
-  // The unpriced-model check, BEFORE the hold and before any chain write. A
-  // host that has not advertised this model can never open a session for it,
-  // so the honest answer is a policy refusal the client must not retry — not
-  // the chain_error the create would have thrown, which it would. A failed
-  // READ stays chain_error: that one may well succeed on retry. Neither
-  // journals a hold. The answer is pinned into the create (one read per open).
-  let pricePerToken: bigint | undefined;
-  if (deps.chain.modelPrice) {
+    // pending and the retry is refused rather than charging twice. It is in
+    // flight from here: R5 never touches it while this request is live.
+    //
+    // D20 — RE-CHECKED here, after the last await above (`openRefusal` reads
+    // the RPC while the boot nonce wait runs): a same-key request that passed
+    // the first lookup meanwhile must not reserve too. Both checks and both
+    // claims are synchronous (no await between the in-flight check, its add
+    // and the store's in-memory reserve), so exactly one request wins.
+    if (inFlight?.keys.has(keyId!)) return { status: 'in_flight' };
+    inFlight?.keys.add(keyId!);
+    let prior: IdempotencyRecord | null;
     try {
-      pricePerToken = await deps.chain.modelPrice(request.host, request.modelId);
+      prior = await deps.idempotency.claim(userId, key, fingerprint!, request.clientAddress);
     } catch (e) {
-      await freeKey();
-      return { status: 'chain_error', message: e instanceof Error ? e.message : String(e) };
+      // The claim's journal write failed: nothing was claimed, so the key
+      // leaves the in-flight set (else every retry is in_flight until restart).
+      inFlight?.keys.delete(keyId!);
+      throw e;
     }
-    if (pricePerToken <= 0n) {
-      await freeKey();
-      return { status: 'refused', reason: 'MODEL_NOT_PRICED' };
+    if (prior) {
+      inFlight?.keys.delete(keyId!);
+      return answerPrior(prior);
     }
   }
-
-  const open = await deps.ledger.openHold(holdRequest, deps.gatekeeper);
-  if (!open.ok) {
-    // Refused by policy under the mutex (the preview was advice): nothing was
-    // escrowed, so the key must not stay claimed.
-    await freeKey();
-    return { status: 'refused', reason: open.reason };
-  }
-
-  let created: { jobId: bigint; depositor: string; txHash: string };
+  let holdId: string | undefined;
   try {
-    await deps.chain.ensureAllowance(request.depositMicro);
-    created = await deps.chain.createSession({
+    // Every outcome below that journals NO hold frees the key: a reserved key
+    // would otherwise answer `in_flight` for 24 h to exactly the retry that
+    // INSUFFICIENT_BALANCE-then-purchase or a chain_error invites.
+    const freeKey = async () => {
+      if (key && deps.idempotency) await deps.idempotency.release(userId, key);
+    };
+
+    const holdRequest = {
+      userId,
       host: request.host,
-      modelId: request.modelId,
       depositMicro: request.depositMicro,
+      modelId: request.modelId,
       ...(request.kind ? { kind: request.kind } : {}),
-      ...(pricePerToken !== undefined ? { pricePerToken } : {}),
-      // Durably mark the pending create the instant it is submitted, so a crash
-      // during confirmation leaves a recoverable orphan the R5 job can bind (M2).
-      onSubmitted: (txHash) => deps.ledger.recordCreatePending(open.holdId, txHash),
-    });
-  } catch (e) {
-    await deps.ledger.releaseHold(open.holdId);
-    // The create threw, so the hold is released and no session exists; free the
-    // key too, or an honest retry would be refused by our own bookkeeping. The
-    // ambiguous case (create submitted, confirmation lost) does NOT land here:
-    // it leaves the key pending and is reconciled as an orphan (M2/R5).
-    await freeKey();
-    return { status: 'chain_error', message: e instanceof Error ? e.message : String(e) };
-  }
+    };
 
-  // A crash between the create tx confirming (above) and this bind leaves the
-  // hold `held` but unbound — a recoverable orphan (M2). The R5 reconciliation
-  // job matches ledger.unboundHolds() to on-chain vault-depositor creation
-  // events by host+deposit and binds them; no refund is lost, only deferred.
-  //
-  // That recovery is also a competitor. The reconcile sweep runs on the
-  // settlement listener's tick, so when a tick lands inside our confirmation
-  // wait it resolves the same receipt and binds first — and bindSession is
-  // deliberately strict about rebinding (see the adversarial guard), so this
-  // call then threw and the route 500'd on a session that had been created and
-  // paid for. Live on 2026-07-26 as job 987: the customer saw a failure, the
-  // deposit was spent, and the session was stranded. Losing this race is a
-  // success, not an error — the bind we wanted is exactly the one that already
-  // happened. Anything else still propagates.
-  try {
-    await deps.ledger.bindSession(open.holdId, created.jobId);
-  } catch (e) {
-    if (deps.ledger.holdForJob(created.jobId) !== open.holdId) throw e;
+    // FT1 D4 — the gatekeeper PREVIEW: every policy refusal (allow-list, kind↔model
+    // binding, caps, balance, daily window, concurrency, rate) precedes any chain
+    // read, so an off-list host still reads HOST_NOT_ALLOWED and learns nothing,
+    // and a refusal costs the user nothing. Advice only: `openHold` re-decides
+    // under the ledger mutex below and is the authority.
+    const preview = await deps.ledger.previewOpen(holdRequest, deps.gatekeeper);
+    if (!preview.allow) {
+      await freeKey();
+      return { status: 'refused', reason: preview.reason };
+    }
+
+    // The unpriced-model check, BEFORE the hold and before any chain write. A
+    // host that has not advertised this model can never open a session for it,
+    // so the honest answer is a policy refusal the client must not retry — not
+    // the chain_error the create would have thrown, which it would. A failed
+    // READ stays chain_error: that one may well succeed on retry. Neither
+    // journals a hold. The answer is pinned into the create (one read per open).
+    let pricePerToken: bigint | undefined;
+    if (deps.chain.modelPrice) {
+      try {
+        // Bounded (D20): ethers' default is 300 s, past the helper's 180 s.
+        // An unanswered read ends as chain_error inside the append window.
+        const read = deps.chain.modelPrice(request.host, request.modelId);
+        pricePerToken = deps.outbox
+          ? await deps.outbox.timed(read, 'price read', arrival + CREATE_APPEND_BY_MS)
+          : await read;
+      } catch (e) {
+        await freeKey();
+        return { status: 'chain_error', message: e instanceof Error ? e.message : String(e) };
+      }
+      if (pricePerToken <= 0n) {
+        await freeKey();
+        return { status: 'refused', reason: 'MODEL_NOT_PRICED' };
+      }
+    }
+
+    // The hold journals the key (D20 item 2: the hold↔key link R5 follows).
+    const open = await deps.ledger.openHold({ ...holdRequest, ...(key ? { key } : {}) }, deps.gatekeeper);
+    if (!open.ok) {
+      // Refused by policy under the mutex (the preview was advice): nothing was
+      // escrowed, so the key must not stay claimed.
+      await freeKey();
+      return { status: 'refused', reason: open.reason };
+    }
+    holdId = open.holdId;
+    inFlight?.holds.add(holdId);
+
+    // D20 — `appended` flips the moment the create's outbox entry exists. A
+    // throw before it: nothing was broadcast, so release and free. A throw
+    // after it (a broadcast error, an RPC error in the wait, a missing event, a
+    // depositor mismatch, the 170 s deadline): the transaction may mine, so
+    // the hold stays `held`, the key `pending`, and R5 resolves both.
+    let appended = false;
+    let created: { jobId: bigint; depositor: string; txHash: string };
+    try {
+      if (deps.chain.ensureAllowance) await deps.chain.ensureAllowance(request.depositMicro);
+      created = await deps.chain.createSession({
+        host: request.host,
+        modelId: request.modelId,
+        depositMicro: request.depositMicro,
+        ...(request.kind ? { kind: request.kind } : {}),
+        ...(pricePerToken !== undefined ? { pricePerToken } : {}),
+        link: open.holdId,
+        assertHeld: () => deps.ledger.hold(open.holdId)?.state === 'held',
+        appendByMs: arrival + CREATE_APPEND_BY_MS,
+        deadlineAtMs: arrival + CREATE_DEADLINE_MS,
+        // The ledger's `create-pending` line is a MIRROR only (D20): every
+        // recovery rule reads the outbox, never this hash.
+        onSubmitted: async (txHash) => {
+          appended = true;
+          await deps.ledger.recordCreatePending(open.holdId, txHash);
+        },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (appended) return { status: 'chain_pending', message };
+      await deps.ledger.releaseHold(open.holdId);
+      // Nothing was broadcast, so no session exists; free the key too, or an
+      // honest retry would be refused by our own bookkeeping.
+      await freeKey();
+      return { status: 'chain_error', message };
+    }
+
+    // A crash between the create tx confirming (above) and this bind leaves the
+    // hold `held` but unbound — R5 binds it from the outbox entry's receipt.
+    //
+    // A competing bind is still tolerated (job 987, 2026-07-26: a reconcile
+    // tick bound first and this call threw on a paid session). Losing that race
+    // is a success: the bind we wanted is exactly the one that happened.
+    try {
+      await deps.ledger.bindSession(open.holdId, created.jobId);
+    } catch (e) {
+      if (deps.ledger.holdForJob(created.jobId) !== open.holdId) throw e;
+    }
+    // Bind the key to the session that exists, so any retry replays THIS one.
+    if (key && deps.idempotency) {
+      await deps.idempotency.complete(userId, key, created.jobId, request.clientAddress);
+    }
+    return {
+      status: 'ok',
+      sessionId: created.jobId,
+      jobId: created.jobId,
+      authorisation: deps.signAuth(created.jobId, request.clientAddress),
+    };
+  } finally {
+    // The request is over (answered, or at its 170 s deadline): R5 owns
+    // whatever is left.
+    if (keyId) inFlight?.keys.delete(keyId);
+    if (holdId) inFlight?.holds.delete(holdId);
   }
-  // Bind the key to the session that exists, so any retry replays THIS one.
-  if (key && deps.idempotency) {
-    await deps.idempotency.complete(userId, key, created.jobId, request.clientAddress);
-  }
-  return {
-    status: 'ok',
-    sessionId: created.jobId,
-    jobId: created.jobId,
-    authorisation: deps.signAuth(created.jobId, request.clientAddress),
-  };
 }
 
 export interface FiatSessionService {
@@ -331,13 +421,36 @@ export function resetFiatBackendForTest(): void {
   g.__fiatBackend = undefined;
 }
 
+/** The four journals under the data dir. Every one is a JsonlLedgerStore,
+ *  fsynced on every append (D20 item 1): the outbox entry, and the hold and
+ *  key it links to, are on disk before the transaction can be broadcast. */
+export function fiatJournalStores(dataDir: string): {
+  ledger: JsonlLedgerStore;
+  idempotency: JsonlLedgerStore;
+  outbox: JsonlLedgerStore;
+  credentials: JsonlLedgerStore;
+} {
+  return {
+    ledger: new JsonlLedgerStore(join(dataDir, 'ledger.jsonl')),
+    idempotency: new JsonlLedgerStore(join(dataDir, 'idempotency.jsonl')),
+    outbox: new JsonlLedgerStore(join(dataDir, 'vault-outbox.jsonl')),
+    credentials: new JsonlLedgerStore(join(dataDir, 'credentials.jsonl')),
+  };
+}
+
+/** Tests only (D20, BM1.2c): a scripted chain that `buildBackend` uses in
+ *  place of the env-built vault. On globalThis so BOTH bundle copies of this
+ *  module see it (never `setFiatDepsForTest`, which one copy alone would see). */
+type VaultHook = ProductionVault & { onAlarm?: (message: string) => void; pollMs?: number };
+const vaultHook = globalThis as typeof globalThis & { __fiatVaultForTest?: VaultHook };
+
 function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionService }> {
   // A PROMISE on globalThis (not the built value): if two bundles boot
   // concurrently, both await the same construction — one ledger, ever.
   g.__fiatBackend ??= (async () => {
     // The journals ARE the users' money (R5): git-ignored data dir, back it up.
-    // (makeVaultChain() below throws the "not configured" error when the vault
-    // key is unset — one authority for that message.)
+    // (productionVault() below throws the "not configured" error when the
+    // vault key is unset — one authority for that message.)
     const dataDir = process.env.FIAT_DATA_DIR ?? './data/fiat';
     // FT1 D5 — the boot invariants, BEFORE any journal is opened or the vault
     // is built: a cap above the float, or a bad proof-window knob, refuses to
@@ -345,14 +458,40 @@ function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionSe
     const config = gatekeeperConfigFromEnv();
     assertBootInvariants(config, allowanceFloatMicro());
     console.log(`[fiat] ${describeGatekeeperConfig(config)}`);
+    const vault = vaultHook.__fiatVaultForTest ?? productionVault();
+    const journals = fiatJournalStores(dataDir);
+    const ledger = await CreditsLedger.open(journals.ledger);
+    // D20 item 3 — the first boot of the outbox code marks where its rules
+    // begin; everything journaled before it is handled conservatively.
+    await ledger.writeMigrationMarker();
+    // D20 item 1 — the ONE outbox, built once, beside the ledger, on the shared
+    // deps: the reclaimer (instrumentation bundle) takes it from here too.
+    const outbox = await VaultOutbox.open(journals.outbox, {
+      rpc: vault.rpc,
+      signer: vault.signer,
+      chainId: vault.chainId,
+      ...(vaultHook.__fiatVaultForTest?.onAlarm ? { onAlarm: vaultHook.__fiatVaultForTest.onAlarm } : {}),
+      ...(vaultHook.__fiatVaultForTest?.pollMs ? { pollMs: vaultHook.__fiatVaultForTest.pollMs } : {}),
+    });
     const deps: FiatSessionDeps = {
-      ledger: await CreditsLedger.open(new JsonlLedgerStore(join(dataDir, 'ledger.jsonl'))),
-      credentials: await FiatCredentials.open(new JsonlLedgerStore(join(dataDir, 'credentials.jsonl'))),
-      idempotency: await IdempotencyStore.open(new JsonlLedgerStore(join(dataDir, 'idempotency.jsonl'))),
+      ledger,
+      credentials: await FiatCredentials.open(journals.credentials),
+      // Its alarms (a corrupt non-final line) go to the backend's one sink.
+      idempotency: await IdempotencyStore.open(journals.idempotency, { onAlarm: (m) => outbox.alarm(m) }),
       gatekeeper: makeGatekeeper(config),
-      chain: makeVaultChain(),
+      chain: makeVaultChain({
+        outbox,
+        vaultAddress: vault.vaultAddress,
+        marketplaceAddress: vault.marketplaceAddress,
+        usdcAddress: vault.usdcAddress,
+        readAllowance: vault.readAllowance,
+        modelPrice: vault.modelPrice,
+      }),
       signAuth: signSessionAuthorisation,
       attempts: new AttemptsBucket(config.maxOpensPerMinute),
+      outbox,
+      config,
+      marketplaceAddress: vault.marketplaceAddress,
     };
     return { deps, service: { open: (request) => openFiatSession(deps, request) } };
   })();

@@ -10,7 +10,7 @@
 //
 // The journal is the user's money — R5: it must be backed up and reconciled
 // against chain events in production.
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { mkdir, open as openFile, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type {
   GateDecision,
@@ -27,6 +27,8 @@ import type {
  *  it, so the advice can never drift from the authority. */
 export interface GateRequest extends OpenRequest {
   userId: string;
+  /** D20 item 2 — the idempotency key, journaled on the hold (never gated). */
+  key?: string;
 }
 
 export interface LedgerStore {
@@ -47,19 +49,103 @@ export class MemoryLedgerStore implements LedgerStore {
 }
 
 export class JsonlLedgerStore implements LedgerStore {
-  constructor(private readonly path: string) {}
-  async load(): Promise<string[]> {
+  /** Whether this process has checked (and, if torn, repaired) the file's
+   *  tail since it last could have been left torn. */
+  private tailChecked = false;
+  /** EVERY file operation on this store (load's repair, and each append's
+   *  tail check + repair + write + fsync) runs one at a time through this
+   *  queue. The outbox and idempotency journals have no queue of their own
+   *  (resolve lines are written outside the vault lock; claims, completes and
+   *  R5 releases race), and two unserialised appends could glue a line onto
+   *  one still being written, or a stale repair could truncate a line another
+   *  append had already synced. Stays alive after a rejection. */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** `fsync` defaults ON (D20 item 1): every append is synced to disk before
+   *  it returns, so a hold or key a vault outbox entry links to can never be
+   *  lost to a power cut while the entry (and its mined transaction) survive.
+   *  The flag exists only so a test can name which journal it turns off. */
+  constructor(
+    private readonly path: string,
+    private readonly opts: { fsync?: boolean } = {}
+  ) {}
+
+  /** The journal's lines. A torn tail (a partial last line with no newline:
+   *  a power cut mid-append) is cut off the FILE here, durably, before anything
+   *  is appended after it — otherwise the next fsynced line would be glued
+   *  onto the fragment and dropped as "torn" at the following boot (D20). */
+  load(): Promise<string[]> {
+    return this.serial(() => this.loadNow());
+  }
+
+  private async loadNow(): Promise<string[]> {
+    let text: string;
     try {
-      const text = await readFile(this.path, 'utf8');
-      return text.split('\n').filter((l) => l.length > 0);
+      text = await readFile(this.path, 'utf8');
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.tailChecked = true;
+        return [];
+      }
       throw e;
     }
+    text = await this.repairTail(text);
+    this.tailChecked = true;
+    return text.split('\n').filter((l) => l.length > 0);
   }
-  async append(line: string): Promise<void> {
+
+  /** Truncate a torn tail back to the last newline and fsync the cut. The
+   *  torn fragment was never acknowledged (its fsync never returned), so
+   *  nothing that was promised durable is lost. Answers the repaired text. */
+  private async repairTail(text: string): Promise<string> {
+    if (text.length === 0 || text.endsWith('\n')) return text;
+    const keep = text.lastIndexOf('\n') + 1;
+    const keepBytes = Buffer.byteLength(text.slice(0, keep), 'utf8');
+    const handle = await openFile(this.path, 'r+');
+    try {
+      await handle.truncate(keepBytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    console.error(
+      `[fiat-journal] ${this.path}: cut a torn tail of ${Buffer.byteLength(text, 'utf8') - keepBytes} bytes (a crash mid-append; never acknowledged)`
+    );
+    return text.slice(0, keep);
+  }
+
+  append(line: string): Promise<void> {
+    return this.serial(() => this.appendNow(line));
+  }
+
+  private async appendNow(line: string): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, `${line}\n`, 'utf8');
+    if (!this.tailChecked) {
+      // Never loaded in this process, or an earlier append failed part-way:
+      // repair before appending, so this line starts on a line of its own.
+      try {
+        await this.repairTail(await readFile(this.path, 'utf8'));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
+      this.tailChecked = true;
+    }
+    const handle = await openFile(this.path, 'a');
+    try {
+      await handle.appendFile(`${line}\n`, 'utf8');
+      if (this.opts.fsync !== false) await handle.sync();
+    } catch (e) {
+      this.tailChecked = false; // a partial write may have left a torn tail
+      throw e;
+    } finally {
+      await handle.close();
+    }
   }
 }
 
@@ -67,13 +153,24 @@ export class JsonlLedgerStore implements LedgerStore {
 // bigint); `at` is epoch ms from the injected clock.
 type Entry =
   | { t: 'purchase'; userId: string; amount: string; eventId: string; pi?: string; at: number }
-  | { t: 'hold'; holdId: string; userId: string; amount: string; host: string; at: number; kind?: SessionKind }
+  | { t: 'hold'; holdId: string; userId: string; amount: string; host: string; at: number; kind?: SessionKind; key?: string }
   | { t: 'create-pending'; holdId: string; txHash: string; at: number }
   | { t: 'bind'; holdId: string; jobId: string; at: number }
   | { t: 'release'; holdId: string; at: number }
   | { t: 'settle'; jobId: string; refund: string; at: number }
   | { t: 'cashout'; userId: string; amount: string; pi?: string; at: number }
-  | { t: 'cashout-reversal'; userId: string; amount: string; pi: string; at: number };
+  | { t: 'cashout-reversal'; userId: string; amount: string; pi: string; at: number }
+  /** D20 item 3 — the one-off marker the first boot of the outbox code
+   *  journals. Every hold (and its `create-pending` mirror) written BEFORE it
+   *  is handled conservatively: a receipt still binds or releases; otherwise
+   *  an alarm, never an automatic release. */
+  | { t: 'migration'; at: number }
+  /** D20 item 3 — a vault-funded session nobody is credited for (a late
+   *  receipt for a released hold, or an outbox create linked to no hold).
+   *  Idempotent by `holdId`; swept after the per-kind delay; closed once a
+   *  state read shows the session not Active. Counted in the escrow term. */
+  | { t: 'vault-orphan'; jobId: string; holdId: string; kind: SessionKind; amount: string; at: number }
+  | { t: 'orphan-closed'; holdId: string; at: number };
 
 interface Hold {
   holdId: string;
@@ -85,6 +182,11 @@ interface Hold {
   /** Absent on every hold journaled before kinds existed = `standard`. */
   kind?: SessionKind;
   jobId?: bigint;
+  /** D20 item 2 — the idempotency key this hold was opened under (the hold↔key
+   *  link R5 follows). Absent for an unkeyed open and for every pre-deploy hold. */
+  key?: string;
+  /** Journaled before the `migration` marker (D20 item 3). Derived on replay. */
+  preMigration: boolean;
   /** The create tx hash, recorded the instant it is submitted (before the
    *  confirmation wait). A `held` hold carrying this is a crash-recoverable
    *  orphan: reconciliation reads the receipt and binds deterministically (M2). */
@@ -102,6 +204,29 @@ const MINUTE_MS = 60 * 1000;
  *  (`nowMs − atMs < NaN` is false and would count nothing). */
 export const LIVE_HOLD_MS = 2 * 60 * 60 * 1000;
 
+/** A read-only view of one hold, for R5 and the routes. */
+export interface HoldSnapshot {
+  holdId: string;
+  userId: string;
+  amountMicro: bigint;
+  host: string;
+  atMs: number;
+  state: 'held' | 'bound' | 'settled' | 'released';
+  kind: SessionKind;
+  jobId?: bigint;
+  key?: string;
+  preMigration: boolean;
+  pendingTxHash?: string;
+}
+
+export interface VaultOrphan {
+  holdId: string;
+  jobId: bigint;
+  kind: SessionKind;
+  amountMicro: bigint;
+  atMs: number;
+}
+
 export type OpenHoldResult = { ok: true; holdId: string } | { ok: false; reason: GateRefusal };
 export type CashoutReason = 'INSUFFICIENT_BALANCE' | 'INVALID_AMOUNT' | 'EXCEEDS_REFUNDABLE';
 export type CashoutResult = { ok: true } | { ok: false; reason: CashoutReason };
@@ -118,6 +243,10 @@ export class CreditsLedger {
   private purchasesByUser = new Map<string, Array<{ pi?: string; amountMicro: bigint; atMs: number }>>();
   private refundedByPi = new Map<string, bigint>();
   private holdCounter = 0;
+  /** `${userId lowercased} ${key}` -> holdId (D20 item 2). */
+  private keyToHold = new Map<string, string>();
+  private migrated = false;
+  private orphans = new Map<string, VaultOrphan & { closed: boolean }>();
   private queue: Promise<unknown> = Promise.resolve();
 
   private constructor(
@@ -185,7 +314,12 @@ export class CreditsLedger {
           atMs: entry.at,
           state: 'held',
           ...(entry.kind ? { kind: entry.kind } : {}),
+          ...(entry.key !== undefined ? { key: entry.key } : {}),
+          preMigration: !this.migrated,
         });
+        if (entry.key !== undefined) {
+          this.keyToHold.set(`${entry.userId.toLowerCase()} ${entry.key}`, entry.holdId);
+        }
         break;
       }
       case 'create-pending': {
@@ -234,6 +368,28 @@ export class CreditsLedger {
         this.refundedByPi.set(entry.pi, (this.refundedByPi.get(entry.pi) ?? 0n) - BigInt(entry.amount));
         break;
       }
+      case 'migration': {
+        this.migrated = true;
+        break;
+      }
+      case 'vault-orphan': {
+        if (!this.orphans.has(entry.holdId)) {
+          this.orphans.set(entry.holdId, {
+            holdId: entry.holdId,
+            jobId: BigInt(entry.jobId),
+            kind: entry.kind,
+            amountMicro: BigInt(entry.amount),
+            atMs: entry.at,
+            closed: false,
+          });
+        }
+        break;
+      }
+      case 'orphan-closed': {
+        const orphan = this.orphans.get(entry.holdId);
+        if (orphan) orphan.closed = true;
+        break;
+      }
     }
   }
 
@@ -266,7 +422,119 @@ export class CreditsLedger {
     for (const hold of this.holds.values()) {
       if (hold.state === 'bound') total += hold.amountMicro;
     }
+    // D20 item 3 — an open vault orphan's deposit is vault money in escrow
+    // too (nobody is credited for it), so it backs the vault like a bound hold.
+    for (const orphan of this.orphans.values()) {
+      if (!orphan.closed) total += orphan.amountMicro;
+    }
     return total;
+  }
+
+  // ---- D20: the migration marker, the hold↔key link, vault orphans ----
+
+  hasMigrationMarker(): boolean {
+    return this.migrated;
+  }
+
+  /** The first boot of the outbox code journals this once (buildBackend). */
+  writeMigrationMarker(): Promise<void> {
+    return this.run(async () => {
+      if (this.migrated) return;
+      await this.commit({ t: 'migration', at: this.now() });
+    });
+  }
+
+  private snapshot(hold: Hold): HoldSnapshot {
+    return {
+      holdId: hold.holdId,
+      userId: hold.userId,
+      amountMicro: hold.amountMicro,
+      host: hold.host,
+      atMs: hold.atMs,
+      state: hold.state,
+      kind: hold.kind ?? 'standard',
+      ...(hold.jobId !== undefined ? { jobId: hold.jobId } : {}),
+      ...(hold.key !== undefined ? { key: hold.key } : {}),
+      preMigration: hold.preMigration,
+      ...(hold.pendingTxHash ? { pendingTxHash: hold.pendingTxHash } : {}),
+    };
+  }
+
+  hold(holdId: string): HoldSnapshot | undefined {
+    const hold = this.holds.get(holdId);
+    return hold ? this.snapshot(hold) : undefined;
+  }
+
+  allHolds(): HoldSnapshot[] {
+    return [...this.holds.values()].map((h) => this.snapshot(h));
+  }
+
+  /** The hold opened under (user, key), if any (D20 item 2). */
+  holdForKey(userId: string, key: string): HoldSnapshot | undefined {
+    const holdId = this.keyToHold.get(`${userId.toLowerCase()} ${key}`);
+    return holdId ? this.hold(holdId) : undefined;
+  }
+
+  /** Bind only if still `held` — R5's idempotent verdict (overlapping ticks). */
+  bindIfHeld(holdId: string, jobId: bigint): Promise<boolean> {
+    return this.run(async () => {
+      const hold = this.holds.get(holdId);
+      if (!hold || hold.state !== 'held') return false;
+      const existing = this.jobToHold.get(jobId.toString());
+      if (existing !== undefined && existing !== holdId) {
+        throw new Error(`jobId ${jobId} is already bound to hold ${existing}`);
+      }
+      await this.commit({ t: 'bind', holdId, jobId: jobId.toString(), at: this.now() });
+      return true;
+    });
+  }
+
+  /** Release only if still `held` — R5's idempotent verdict. */
+  releaseIfHeld(holdId: string): Promise<boolean> {
+    return this.run(async () => {
+      const hold = this.holds.get(holdId);
+      if (!hold || hold.state !== 'held') return false;
+      await this.commit({ t: 'release', holdId, at: this.now() });
+      return true;
+    });
+  }
+
+  /** Journal a vault orphan, idempotently by `holdId` (overlapping ticks never
+   *  count one deposit twice in the escrow term). True when newly recorded. */
+  recordVaultOrphan(orphan: { holdId: string; jobId: bigint; kind: SessionKind; amountMicro: bigint }): Promise<boolean> {
+    return this.run(async () => {
+      if (this.orphans.has(orphan.holdId)) return false;
+      await this.commit({
+        t: 'vault-orphan',
+        jobId: orphan.jobId.toString(),
+        holdId: orphan.holdId,
+        kind: orphan.kind,
+        amount: orphan.amountMicro.toString(),
+        at: this.now(),
+      });
+      return true;
+    });
+  }
+
+  /** Close an orphan once its session is seen not Active (never swept twice). */
+  closeVaultOrphan(holdId: string): Promise<boolean> {
+    return this.run(async () => {
+      const orphan = this.orphans.get(holdId);
+      if (!orphan || orphan.closed) return false;
+      await this.commit({ t: 'orphan-closed', holdId, at: this.now() });
+      return true;
+    });
+  }
+
+  openVaultOrphans(): VaultOrphan[] {
+    return [...this.orphans.values()]
+      .filter((o) => !o.closed)
+      .map(({ closed: _closed, ...o }) => o);
+  }
+
+  /** The gatekeeper's view of one user (the headroom route's figures). */
+  headroomView(userId: string, kind: SessionKind = 'standard'): LedgerView {
+    return this.viewFor(userId, kind, this.now());
   }
 
   userForJob(jobId: bigint): string | undefined {
@@ -389,7 +657,8 @@ export class CreditsLedger {
     return remaining < 0n ? 0n : remaining;
   }
 
-  /** The gatekeeper's view of one user, for a request of `kind`, at `nowMs`. */
+  /** The gatekeeper's view of one user, for a request of `kind`, at `nowMs`.
+   *  D21: passes holds do not count toward training's concurrency. */
   private viewFor(userId: string, kind: SessionKind, nowMs: number): LedgerView {
     let spentInWindowMicro = 0n;
     let opensInWindow = 0;
@@ -397,10 +666,11 @@ export class CreditsLedger {
     for (const hold of this.holds.values()) {
       if (hold.userId !== userId) continue;
       const holdKind: SessionKind = hold.kind ?? 'standard';
-      // Each kind's daily cap is its own budget (one training deposit is
-      // the size of a day of chat), so only holds of the request's kind
-      // count toward it. The per-minute open rate stays per user, all kinds.
-      if (nowMs - hold.atMs < DAY_MS && holdKind === kind) {
+      // Training's daily cap is its own budget (one training deposit is the
+      // size of a day of chat); `passes` shares the STANDARD window (D21), so
+      // only holds in the request's window count toward it. The per-minute
+      // open rate stays per user, all kinds.
+      if (nowMs - hold.atMs < DAY_MS && windowKind(holdKind) === windowKind(kind)) {
         spentInWindowMicro += hold.amountMicro;
       }
       if (nowMs - hold.atMs < MINUTE_MS) opensInWindow += 1;
@@ -468,6 +738,8 @@ export class CreditsLedger {
         // Journaled only for a non-standard kind: standard lines stay byte-
         // identical to every line written before kinds existed.
         ...(kind !== 'standard' ? { kind } : {}),
+        // D20 item 2 — the hold↔key link, so R5 can complete or free the key.
+        ...(request.key !== undefined ? { key: request.key } : {}),
       });
       return { ok: true, holdId };
     });
@@ -497,7 +769,9 @@ export class CreditsLedger {
   }> {
     const out: Array<{ holdId: string; userId: string; host: string; amountMicro: bigint; txHash: string; atMs: number }> = [];
     for (const hold of this.holds.values()) {
-      if (hold.state === 'held' && hold.pendingTxHash) {
+      // D20: after the migration marker the outbox is the record of a create;
+      // a hold's own mirrored hash drives recovery only for pre-deploy holds.
+      if (hold.state === 'held' && hold.pendingTxHash && hold.preMigration) {
         out.push({
           holdId: hold.holdId,
           userId: hold.userId,
@@ -600,4 +874,11 @@ export class CreditsLedger {
       });
     });
   }
+}
+
+/** D21 — the daily window a kind's spend counts in: `passes` shares the
+ *  standard one (it is not a second daily budget); every other kind has its
+ *  own. */
+function windowKind(kind: SessionKind): SessionKind {
+  return kind === 'passes' ? 'standard' : kind;
 }
