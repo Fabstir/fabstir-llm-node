@@ -30,6 +30,19 @@ pub struct SlotUse {
     pub manifest_uuid: String,
 }
 
+/// Row counts per request-log table (what a prune removed, or what is there).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pruned {
+    pub audit: u64,
+    pub reservations: u64,
+    pub slots: u64,
+}
+
+/// The oldest moment the request log keeps, `days` before `now`.
+pub fn request_log_cutoff(now: u64, days: u64) -> u64 {
+    now.saturating_sub(days.saturating_mul(86_400))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NonceOutcome {
     Fresh,
@@ -210,6 +223,52 @@ impl Store {
         ) {
             tracing::error!("audit write failed: {e}");
         }
+    }
+
+    /// Retention: forget the LOG OF REQUESTS older than `cutoff` (Unix seconds). That is three tables, the only
+    /// places that tie a host to a signature: `audit` (one row per request), `reservations` that expired before
+    /// the cutoff, and the `slots` rows of those reservations (which reservation produced which manifest). Rows
+    /// are overwritten, not just unlinked. NOT touched: the repository of records (manifests, fingerprints and
+    /// frame indexes, which detection and `/verify` need for as long as the outputs exist) and `nonces` (which
+    /// forgets by itself within minutes).
+    pub fn prune_request_log(&self, cutoff: u64) -> anyhow::Result<Pruned> {
+        let mut c = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        c.execute_batch("PRAGMA secure_delete=ON;")?;
+        let tx = c.transaction()?;
+        let cutoff = cutoff.min(i64::MAX as u64) as i64;
+        let audit = tx.execute("DELETE FROM audit WHERE ts < ?1", params![cutoff])?;
+        // a slot goes only with its reservation, and only when it is itself older than the cutoff
+        let slots = tx.execute(
+            "DELETE FROM slots WHERE signed_at < ?1 AND reservation_id IN
+               (SELECT id FROM reservations WHERE expires_at < ?1)",
+            params![cutoff],
+        )?;
+        let reservations = tx.execute(
+            "DELETE FROM reservations WHERE expires_at < ?1
+               AND id NOT IN (SELECT reservation_id FROM slots)",
+            params![cutoff],
+        )?;
+        tx.commit()?;
+        Ok(Pruned {
+            audit: audit as u64,
+            reservations: reservations as u64,
+            slots: slots as u64,
+        })
+    }
+
+    /// Rows in one of the request-log tables (tests and the prune log line).
+    pub fn request_log_rows(&self) -> anyhow::Result<Pruned> {
+        let c = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let n = |t: &str| -> anyhow::Result<u64> {
+            Ok(c.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| {
+                r.get::<_, i64>(0)
+            })? as u64)
+        };
+        Ok(Pruned {
+            audit: n("audit")?,
+            reservations: n("reservations")?,
+            slots: n("slots")?,
+        })
     }
 
     /// mp4 signatures per host in [from, to) (daily reconciliation, D11).

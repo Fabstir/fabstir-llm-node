@@ -21,3 +21,12 @@ Every step that touches the box needs Jules's go. Staging uses the staging chain
    8603 from the detector's tunnel address only. Nothing else listens.
 7. `systemctl enable --now provenance-signer provenance-signer-canary.timer provenance-signer-reconcile.timer`.
 8. Check: `curl https://provenance.fabstir.net/v1/limits`; run `provenance-signer canary --config ...` once.
+
+## Retention
+
+`request_log_retention_days` (default 365, minimum 7) is how long the signer keeps its log of requests in
+`signer.sqlite`: the `audit` table (one row per request: time, host address, route, outcome), expired `reservations`
+and their `slots` rows. Older rows are deleted, and overwritten, when the service starts and once a day after that.
+The `repository/` folder (each output's manifest, fingerprint and frame index) is never pruned: `/verify` and
+detection need it for as long as the outputs exist, and it holds no host address. Takes effect at the next deploy
+of the signer.

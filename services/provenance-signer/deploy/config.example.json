@@ -18,6 +18,7 @@
   "min_bundle_version": 49,
   "reservations_per_minute": 120,
   "requests_per_minute": 1200,
+  "request_log_retention_days": 365,
   "index_allowed_ips": ["10.8.0.2"],
   "ntfy_url": "https://ntfy.sh/<private alarm topic>",
   "reconcile": {

@@ -111,6 +111,34 @@ async fn serve(cfg: Config) -> anyhow::Result<()> {
         cfg.listen_public,
         cfg.listen_index
     );
+    // Retention: the log of requests is cut to `request_log_retention_days` now and once a day.
+    let (pruner, days) = (svc.clone(), cfg.request_log_retention_days);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(86_400));
+        loop {
+            tick.tick().await;
+            let p = pruner.clone();
+            let done = tokio::task::spawn_blocking(move || {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                p.store
+                    .prune_request_log(provenance_signer::store::request_log_cutoff(now, days))
+            })
+            .await;
+            match done {
+                Ok(Ok(n)) => tracing::info!(
+                    "request log pruned to {days} days: audit={} reservations={} slots={}",
+                    n.audit,
+                    n.reservations,
+                    n.slots
+                ),
+                Ok(Err(e)) => tracing::error!("request log prune failed: {e}"),
+                Err(e) => tracing::error!("request log prune task failed: {e}"),
+            }
+        }
+    });
     let a = axum::serve(api, app::api_router(svc.clone()).into_make_service());
     let p = axum::serve(public, app::public_router(svc.clone()).into_make_service());
     let i = axum::serve(

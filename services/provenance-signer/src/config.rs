@@ -47,6 +47,11 @@ pub struct Config {
     /// Reservations per host per minute (T9: host concurrency x the largest Batch burst).
     #[serde(default = "default_rate")]
     pub reservations_per_minute: u64,
+    /// Days the log of requests is kept (the `audit`, `reservations` and `slots` tables: which host asked for
+    /// which signature). Older rows are deleted at start-up and once a day. The repository of records is never
+    /// pruned. Default 365.
+    #[serde(default = "default_request_log_retention_days")]
+    pub request_log_retention_days: u64,
     /// Detector source IPs allowed on the index listener.
     pub index_allowed_ips: Vec<String>,
     /// File holding the index secret (default: `$CREDENTIALS_DIRECTORY/index-secret`).
@@ -87,6 +92,11 @@ fn default_reserve_recommended() -> usize {
 fn default_min_bundle() -> u32 {
     49
 }
+fn default_request_log_retention_days() -> u64 {
+    365
+}
+/// Shorter than this would cut into live reservations and the daily reconciliation's window.
+pub const MIN_REQUEST_LOG_RETENTION_DAYS: u64 = 7;
 fn default_rate() -> u64 {
     120
 }
@@ -132,6 +142,10 @@ impl Config {
             "informational_url must be https"
         );
         anyhow::ensure!(!self.node_versions.is_empty(), "node_versions is empty");
+        anyhow::ensure!(
+            self.request_log_retention_days >= MIN_REQUEST_LOG_RETENTION_DAYS,
+            "request_log_retention_days must be at least {MIN_REQUEST_LOG_RETENTION_DAYS}"
+        );
         anyhow::ensure!(
             !self.index_allowed_ips.is_empty(),
             "index_allowed_ips is empty (the detector could never query)"
