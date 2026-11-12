@@ -20,13 +20,14 @@ Mounted under `/v1/fiat/*`. Browser clients point `NEXT_PUBLIC_FIAT_SERVICE_URL`
 | Method | Path | Caller | CORS |
 |---|---|---|---|
 | POST | `/v1/fiat/purchase` | browser | ✅ |
-| GET  | `/v1/fiat/balance?address=` | browser | ✅ |
+| GET  | `/v1/fiat/balance` (bearer credential) | browser | ✅ |
 | POST | `/v1/fiat/session` | browser | ✅ |
 | POST | `/v1/fiat/cashout` | browser | ✅ |
 | GET  | `/v1/fiat/credential/challenge` | browser | ✅ |
 | POST | `/v1/fiat/credential/self-serve` | browser | ✅ |
 | POST | `/v1/fiat/credential` | operator (server) | ❌ |
 | POST | `/v1/fiat/stripe/webhook` | Stripe (server) | ❌ |
+| POST | `/v1/fiat/stripe/reconcile` | cron, daily (`FIAT_ADMIN_TOKEN`) | ❌ |
 
 The four client files the UI drops in (`fiat-fetch`, `fiat-purchase-client`,
 `fiat-credential-client`, `fiat-credits`) already call these paths with a configurable
@@ -109,7 +110,8 @@ to come back as `chain_error` is now a refusal, because retrying it can never wo
 | `MODEL_KIND_MISMATCH` | `kind` and `modelId` disagree (either direction), or the training list is unset |
 | `DEPOSIT_OVER_CAP`, `DAILY_CAP_EXCEEDED` | the per-kind caps above |
 | `CONCURRENT_CAP_EXCEEDED` | the user already has a live training hold |
-| `INSUFFICIENT_BALANCE`, `RATE_LIMITED`, `INVALID_DEPOSIT` | as named |
+| `INSUFFICIENT_BALANCE`, `RATE_LIMITED`, `INVALID_DEPOSIT` | as named (a balance below zero after a refund or chargeback reads as `INSUFFICIENT_BALANCE`) |
+| `ACCOUNT_FROZEN` | the user has an open chargeback: no session and no refund until it closes |
 
 None of the refusals journals a hold: the gatekeeper is previewed before the model-price
 read, the read comes before the hold, and every no-hold outcome frees the idempotency key
@@ -119,6 +121,89 @@ toward the gross day.
 Rule of thumb: if your code can name two different addresses when asked "who is the
 client", you have this bug latent. Pick the one whose private key signs the session
 init.
+
+## Checkout, VAT, refunds and chargebacks (TX1)
+
+Plan: `docs/development/IMPLEMENTATION-TX1-STRIPE-TAX.md`. What a client needs to know:
+
+**`POST /v1/fiat/purchase`** body: `{ clientAddress, credits, consent: { termsVersion, over18: true, useNow: true }, email? }`.
+`credits` is the price BEFORE tax in US cents; Stripe Tax adds VAT on top at Checkout
+(`tax_behavior: exclusive`), so the buyer gets exactly the credits chosen. `consent` is
+required (`400 consent_required` without it), and ALL THREE statements must be true: the
+version of the Terms accepted, the statement of being 18 or over, and `useNow`, the "I
+want to use my credits straight away" box (it starts unticked on the page and must be
+ticked to buy). It rides in the session metadata and is journaled with the purchase.
+`FIAT_CONSENT_REQUIRED=off` exists only for the web app's transition. Checkout starts are
+rationed: 5 an hour per account and 10 an hour per client address (`429 rate_limited`,
+`retry-after`); a start is given back when Stripe fails. `FIAT_STRIPE_TOS_CONSENT=on` adds
+Stripe's own required checkbox (needs a Terms URL in the Stripe dashboard).
+
+**The per-address limit assumes exactly ONE trusted proxy.** The service must listen on
+loopback only, behind the nginx on the same box, whose site config
+(`services/nginx-edge/host1/fiat.fabstir.net.conf`) sets `X-Forwarded-For
+$proxy_add_x_forwarded_for`: nginx APPENDS the address it saw, so the rightmost entry is
+the client and anything to its left was sent by the client and is ignored. If a second
+proxy or a CDN is ever put in front of nginx, the rightmost entry becomes THAT proxy's
+address and every buyer shares one 10-an-hour budget: change `clientIp` in
+`src/lib/purchase-rate-limit.ts` (and nginx's `real_ip` settings) in the same change. If
+the service is ever exposed without nginx, the header is the caller's to forge and only
+the per-account limit holds.
+
+**Stripe API version.** Every request sends `Stripe-Version: 2026-08-26.dahlia`
+(`STRIPE_API_VERSION` in `src/lib/stripe.ts`), and the webhook endpoint must be created
+with the same version.
+
+**The webhook** credits `amount_total − amount_tax` only when `automatic_tax.status` is
+`complete` and the billing address is in a country we sell to (`GB`; plus the 27 EU
+states when `SALES_EU=on`). Otherwise nothing is credited and the charge is refunded in
+full (`Idempotency-Key: gate:<session id>`, `metadata[fc1Origin]=gate`). It journals
+gross, tax, net, billing country, card country, whether a tax id was given, and the
+consent. A paid session of ours that cannot be credited at all (a currency other than US
+dollars, an unusable tax figure, no user id) is refunded the same way, with an alarm.
+Endpoint events to subscribe (ten): `checkout.session.completed`,
+`checkout.session.async_payment_succeeded`, `charge.refunded`, `charge.refund.updated`,
+`refund.updated`, `refund.failed`, `charge.dispute.created`, `charge.dispute.closed`,
+`charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated`.
+
+An event about a charge of OURS that the ledger does not know yet (its purchase event is
+late) is answered **503** for up to six hours so that Stripe redelivers it; other
+products' charges on the shared account are answered 200. One Checkout Session (or
+PaymentIntent) is one purchase, whatever the event ids.
+
+**`POST /v1/fiat/cashout`** `{ amountMicro }` refunds that many credits AND the VAT paid
+on them, newest card charge first, inside the refund window, never from a disputed
+charge. Answer: `{ refunds: [{ refundId, paymentIntentId, amountMicro, grossCents }],
+grossCents, failed: [...], refundId, amountMicro }` (`refundId`/`amountMicro` are kept for
+clients written before TX1). `{ amountMicro, preview: true }` moves nothing and answers
+`{ preview: true, grossCents, legs }`: show it before the customer confirms. New refusal
+reasons: `ACCOUNT_FROZEN`.
+
+**`GET /v1/fiat/balance`** needs the account's credential (`Authorization: Bearer …`) and
+answers `{ availableMicro, owedMicro, refundableMicro, frozen }` for that account. A lookup
+by `?address=` alone is refused (`401 credential_required`) unless `FIAT_BALANCE_OPEN=on`.
+
+**Refunds made in the Stripe dashboard and chargebacks** are journaled from
+`charge.refunded` / `charge.dispute.*` and may take a balance below zero; such a user opens
+no session. Alarms go to the service journal as `[fiat-stripe] ALARM:` lines.
+
+**Daily reconciliation**: `POST /v1/fiat/stripe/reconcile` with `Authorization: Bearer
+$FIAT_ADMIN_TOKEN`, from cron once a day. Findings are `[fiat-reconcile] ALARM:` lines and
+come back in the answer.
+
+**Refund legs left pending** (the process died between the debit and Stripe's answer, or
+Stripe could not be asked) are settled at every boot and at the start of every
+reconciliation: the refund is looked up by its key and the leg confirmed; if there is none
+it is made under the same Idempotency-Key (inside 23 hours), or the leg is reversed. The
+look-up reads every page of the charge's refunds. The rule that keeps "credits debited ==
+cash actually refunded" through failures, stale `charge.refunded` snapshots and the sweep
+is written above `reverseCashoutLeg` in `src/lib/ledger.ts` and walked for every ordering
+in `test/tx1-refund-invariant.test.ts`.
+
+**The purchase confirmation email** (terms and cancellation form in its text) is built in
+`src/lib/purchase-confirmation.ts`; no delivery provider is wired in yet, so it is not sent.
+
+**Journal format 2.** The ledger now refuses to start on a journal entry it does not
+understand. The pre-TX1 binary has no such guard: see "Rolling back" under Deploy.
 
 ## CORS
 
@@ -199,10 +284,14 @@ Bind `-H 0.0.0.0` (the scripts do) so a Docker port map can forward to the conta
    Mount a persistent, backed-up volume at `FIAT_DATA_DIR`.
 4. Give the UI the host for `NEXT_PUBLIC_FIAT_SERVICE_URL = https://<host>/v1/fiat`.
 5. Point the Stripe webhook endpoint at `https://<host>/v1/fiat/stripe/webhook` and set
-   `FIAT_STRIPE_WEBHOOK_SECRET` to its signing secret.
+   `FIAT_STRIPE_WEBHOOK_SECRET` to its signing secret. Subscribe it to the ten events
+   listed under "Checkout, VAT, refunds and chargebacks", with API version
+   `2026-08-26.dahlia`. Stripe Tax must be ON in the same
+   mode (origin address, GB registration, tax behaviour exclusive) BEFORE this build takes
+   purchases: every Checkout Session asks for automatic tax.
 
 6. **Post-deploy gate, both halves, scoped to THIS boot:** `/v1/fiat/balance?address=…`
-   answers 200 AND the journal shows `[fiat] gatekeeper:`, `reclaim delays:` and
+   answers 401 `credential_required` (200 before TX1, or with `FIAT_BALANCE_OPEN=on`) AND the journal shows `[fiat] gatekeeper:`, `reclaim delays:` and
    `[fiat-settlement] listener started` for the current invocation
    (`journalctl -u fiat-service _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value fiat-service)`).
    `systemctl is-active` proves nothing: a failed boot check (an enabled kind's cap above
@@ -211,7 +300,15 @@ Bind `-H 0.0.0.0` (the scripts do) so a Docker port map can forward to the conta
    settlement is enabled) leaves the unit active with EVERY route at 500 until restart, and an
    unscoped grep matches yesterday's line. Prove a bad-env boot once on a scratch instance (`npx next start -H 127.0.0.1
    -p 3021` with a scratch `FIAT_DATA_DIR`), never on the live unit.
-7. With `FIAT_RECLAIM_STRANDED` OFF, a stranded card-paid session (node restart mid-run)
+7. **Rolling back past this release means restoring the journal backup taken at the
+   switch.** Take that backup of `FIAT_DATA_DIR` with the service stopped, immediately
+   before starting the new build. The older binary has no guard against journal entries it
+   does not know: started on a journal this release has written to, it silently SKIPS the
+   new entry types (tax details, refund legs, dashboard refunds, disputes) and serves wrong
+   balances without any error. So a rollback is: stop, put the pre-switch journals back,
+   start the old build; anything journaled after the switch is then re-entered by hand from
+   Stripe. Never start the old binary on the new journal.
+8. With `FIAT_RECLAIM_STRANDED` OFF, a stranded card-paid session (node restart mid-run)
    keeps its deposit debited AND keeps the user's one training slot occupied until someone
    sends `triggerSessionTimeout(jobId)` by hand; that manual step is the only path back.
 

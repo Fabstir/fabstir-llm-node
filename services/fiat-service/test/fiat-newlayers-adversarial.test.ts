@@ -28,6 +28,19 @@ import { CreditsLedger, MemoryLedgerStore } from '../src/lib/ledger';
 import { FiatCredentials } from '../src/lib/fiat-credentials';
 import { makeGatekeeper, type Gatekeeper } from '../src/lib/gatekeeper';
 import type { SessionAuthorisation } from '../src/lib/fiat-vault';
+import { fakeStripeApi } from './helpers/fake-stripe';
+import { setStripeWebhookForTest } from '../src/lib/stripe-webhook';
+
+/** A Stripe fake that records each refund as { pi, cents } (TX1: the client
+ *  now takes a request object carrying the idempotency key and metadata). */
+function recordingStripe(refunds: Array<{ pi: string; cents: number }>) {
+  return fakeStripeApi({
+    onRefund: (request) => {
+      refunds.push({ pi: request.paymentIntentId, cents: request.amountCents! });
+      return undefined;
+    },
+  }).api;
+}
 
 const HOST = '0xabcd000000000000000000000000000000000001';
 const OFFLIST = '0x9999999999999999999999999999999999999999';
@@ -414,10 +427,12 @@ describe('webhook: duplicate event id cannot inflate, hostile userId is isolated
     process.env.FIAT_STRIPE_WEBHOOK_SECRET = SECRET;
     ledger = await CreditsLedger.open(new MemoryLedgerStore());
     setFiatDepsForTest({ ledger });
+    setStripeWebhookForTest({ stripe: fakeStripeApi().api, onAlarm: () => {} });
   });
   afterEach(() => {
     delete process.env.FIAT_STRIPE_WEBHOOK_SECRET;
     setFiatDepsForTest(undefined);
+    setStripeWebhookForTest(undefined);
   });
 
   const signNow = (payload: string) =>
@@ -436,7 +451,21 @@ describe('webhook: duplicate event id cannot inflate, hostile userId is isolated
     JSON.stringify({
       id,
       type: 'checkout.session.completed',
-      data: { object: { metadata: { fc1UserId: userId }, amount_total: cents, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_1' } },
+      data: {
+        object: {
+          id: `cs_${id}`,
+          metadata: { fc1UserId: userId },
+          amount_total: cents,
+          currency: 'usd',
+          payment_status: 'paid',
+          payment_intent: 'pi_1',
+          // TX1.2: credited only when Stripe Tax completed and the billing
+          // address is in a country we sell to.
+          automatic_tax: { enabled: true, status: 'complete' },
+          customer_details: { address: { country: 'GB' }, tax_ids: [] },
+          total_details: { amount_tax: 0 },
+        },
+      },
     });
 
   it('replaying event id evt_X with a 100x amount is a no-op (first amount stands)', async () => {
@@ -481,12 +510,7 @@ describe('F1 [FIXED]: concurrent cash-outs cannot exceed the original card charg
     const deps: CashoutDeps = {
       ledger,
       credentials,
-      stripe: {
-        createRefund: async (pi, cents) => {
-          refunds.push({ pi, cents });
-          return { id: `re_${refunds.length}` };
-        },
-      },
+      stripe: recordingStripe(refunds),
       refundWindowDays: 90,
     };
     return { ledger, token, deps, refunds };
@@ -499,11 +523,13 @@ describe('F1 [FIXED]: concurrent cash-outs cannot exceed the original card charg
       requestCashout(deps, { credential: token, amountMicro: 5_000_000n }),
     ]);
 
-    // Exactly one wins; the other is refused for exceeding the charge remaining.
+    // Exactly one wins; the other finds the charge already emptied. (Since
+    // TX1.4 the charge is picked INSIDE the ledger's queue too, so the loser
+    // gets the same answer a later request would: nothing left to refund.)
     const outcomes = [a.status, b.status].sort();
     expect(outcomes).toEqual(['ok', 'refused']);
     const refused = [a, b].find((o) => o.status === 'refused');
-    expect(refused).toMatchObject({ status: 'refused', reason: 'EXCEEDS_REFUNDABLE' });
+    expect(refused).toMatchObject({ status: 'refused', reason: 'NO_REFUNDABLE_PURCHASE' });
 
     // Only 500 cents refunded against the 500-cent charge — the invariant holds
     // at the LEDGER level, not just at Stripe.
@@ -524,7 +550,7 @@ describe('F1 [FIXED]: concurrent cash-outs cannot exceed the original card charg
     const deps: CashoutDeps = {
       ledger,
       credentials,
-      stripe: { createRefund: async (pi, cents) => { refunds.push({ pi, cents }); return { id: `re_${refunds.length}` }; } },
+      stripe: recordingStripe(refunds),
       refundWindowDays: 90,
     };
     const [a, b] = await Promise.all([
@@ -556,7 +582,7 @@ describe('cash-out: refund-window boundary is exclusive on ">"', () => {
     const deps: CashoutDeps = {
       ledger,
       credentials,
-      stripe: { createRefund: async (pi, cents) => { refunds.push({ pi, cents }); return { id: 're_1' }; } },
+      stripe: recordingStripe(refunds),
       refundWindowDays: 90,
       now: () => nowMs,
     };
@@ -578,7 +604,7 @@ describe('cash-out: refund-window boundary is exclusive on ">"', () => {
     const deps: CashoutDeps = {
       ledger,
       credentials,
-      stripe: { createRefund: async () => ({ id: 're_1' }) },
+      stripe: fakeStripeApi().api,
       refundWindowDays: 90,
       now: () => nowMs,
     };

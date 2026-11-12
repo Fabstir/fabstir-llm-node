@@ -23,7 +23,9 @@ export async function GET(req: Request): Promise<Response> {
   try {
     deps = await getFiatDeps();
   } catch (e) {
-    return Response.json({ error: e instanceof Error ? e.message : 'fiat backend unavailable' }, { status: 503 });
+    // The caller is not known yet: say nothing of the cause, and log it.
+    console.error(`[fiat/headroom] backend unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    return Response.json({ error: 'service_unavailable' }, { status: 503 });
   }
   const userId = deps.credentials.authenticate(header.slice('Bearer '.length));
   if (!userId) return Response.json({ error: 'unauthorised' }, { status: 401 });
@@ -34,7 +36,9 @@ export async function GET(req: Request): Promise<Response> {
   return Response.json({
     payerId: fiatPayerId(userId),
     kind,
-    availableMicro: view.availableMicro.toString(),
+    // TX1: a balance below zero (a refund or chargeback after the credits
+    // were spent) reads as nothing to spend; never a negative on the wire.
+    availableMicro: (view.availableMicro > 0n ? view.availableMicro : 0n).toString(),
     spentInWindowMicro: view.spentInWindowMicro.toString(),
     dailyCapMicro: caps.maxDailySpendMicro.toString(),
     sessionCapMicro: caps.maxDepositPerSessionMicro.toString(),

@@ -132,7 +132,10 @@ export type GateRefusal =
   | 'CONCURRENT_CAP_EXCEEDED'
   /** D21: the kind is not enabled on this deployment (`passes` with no
    *  FIAT_PASSES_MODEL_IDS). */
-  | 'KIND_DISABLED';
+  | 'KIND_DISABLED'
+  /** TX1 §3: decided by the ledger, not here — the user has an open
+   *  chargeback, so no new session opens until it closes. */
+  | 'ACCOUNT_FROZEN';
 
 export type Gatekeeper = (view: LedgerView, request: OpenRequest) => GateDecision;
 

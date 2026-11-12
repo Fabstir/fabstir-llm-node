@@ -9,6 +9,7 @@ import { CreditsLedger, MemoryLedgerStore } from '../src/lib/ledger';
 import { FiatCredentials } from '../src/lib/fiat-credentials';
 import { startSettlementListener } from '../src/lib/settlement-listener';
 import { makeGatekeeper } from '../src/lib/gatekeeper';
+import { fakeStripeApi, stripeRefused } from './helpers/fake-stripe';
 
 const DAY_MS = 86_400_000;
 
@@ -62,16 +63,14 @@ describe('ledger purchase provenance (paymentIntentId)', () => {
 
 function fakeStripe(opts?: { fail?: boolean }) {
   const refunds: Array<{ paymentIntentId: string; amountCents: number }> = [];
-  return {
-    refunds,
-    stripe: {
-      createRefund: async (paymentIntentId: string, amountCents: number) => {
-        if (opts?.fail) throw new Error('stripe down');
-        refunds.push({ paymentIntentId, amountCents });
-        return { id: `re_${refunds.length}` };
-      },
+  const { api } = fakeStripeApi({
+    onRefund: (request) => {
+      if (opts?.fail) return { error: stripeRefused('stripe refused') };
+      refunds.push({ paymentIntentId: request.paymentIntentId, amountCents: request.amountCents! });
+      return undefined;
     },
-  };
+  });
+  return { refunds, stripe: api };
 }
 
 async function cashoutDeps(opts?: {
@@ -102,7 +101,14 @@ describe('requestCashout', () => {
   it('debits the ledger and issues the Stripe refund in cents against the original card', async () => {
     const { deps, ledger, token, refunds } = await cashoutDeps();
     const outcome = await requestCashout(deps, { credential: token, amountMicro: 2_000_000n });
-    expect(outcome).toEqual({ status: 'ok', refundId: 're_1', amountMicro: 2_000_000n });
+    // TX1.4: the outcome lists each card charge refunded, with the gross returned.
+    expect(outcome).toEqual({
+      status: 'ok',
+      refunds: [{ paymentIntentId: 'pi_1', refundId: 're_1', amountMicro: 2_000_000n, grossCents: 200 }],
+      failed: [],
+      grossCents: 200,
+      amountMicro: 2_000_000n,
+    });
     expect(refunds).toEqual([{ paymentIntentId: 'pi_1', amountCents: 200 }]);
     expect(ledger.availableMicro('user-1')).toBe(3_000_000n);
   });
@@ -182,14 +188,29 @@ describe('POST /api/fiat/cashout', () => {
   }
 
   it('maps outcomes to stable statuses', async () => {
+    const preview = async () => ({ status: 'unauthorised' as const });
     setCashoutServiceForTest({
-      request: async () => ({ status: 'ok', refundId: 're_9', amountMicro: 1_000_000n }),
+      request: async () => ({
+        status: 'ok',
+        refunds: [{ paymentIntentId: 'pi_9', refundId: 're_9', amountMicro: 1_000_000n, grossCents: 120 }],
+        failed: [],
+        grossCents: 120,
+        amountMicro: 1_000_000n,
+      }),
+      preview,
     });
     const ok = await post({ amountMicro: '1000000' }, 'fc1_t');
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ refundId: 're_9', amountMicro: '1000000' });
+    expect(await ok.json()).toEqual({
+      refunds: [{ refundId: 're_9', paymentIntentId: 'pi_9', amountMicro: '1000000', grossCents: 120 }],
+      grossCents: 120,
+      failed: [],
+      // The two fields clients written before TX1 read.
+      refundId: 're_9',
+      amountMicro: '1000000',
+    });
 
-    setCashoutServiceForTest({ request: async () => ({ status: 'refused', reason: 'REFUND_WINDOW_EXPIRED' }) });
+    setCashoutServiceForTest({ request: async () => ({ status: 'refused', reason: 'REFUND_WINDOW_EXPIRED' }), preview });
     const refused = await post({ amountMicro: '1000000' }, 'fc1_t');
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: 'refused', reason: 'REFUND_WINDOW_EXPIRED' });
@@ -202,6 +223,7 @@ describe('POST /api/fiat/cashout', () => {
         called += 1;
         return { status: 'unauthorised' };
       },
+      preview: async () => ({ status: 'unauthorised' }),
     });
     expect((await post({ amountMicro: '1000000' })).status).toBe(401);
     expect((await post({ amountMicro: 'x' }, 'fc1_t')).status).toBe(400);

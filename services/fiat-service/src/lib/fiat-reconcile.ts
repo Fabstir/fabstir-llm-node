@@ -13,6 +13,7 @@ import { createEntryDeposit } from './fiat-vault';
 import type { IdempotencyStore } from './idempotency';
 import type { SessionKind } from './gatekeeper';
 import { LATE_RECEIPT_WINDOW_MS, type VaultOutbox } from './vault-outbox';
+import { disputeLedgerState, lazyStripeApi, makeStripeReconcileSource } from './stripe';
 
 export type CreateTxOutcome =
   | { status: 'pending' } // not mined yet — try again next run
@@ -341,4 +342,264 @@ async function reconcilePreMigrationHold(
       `hold ${holdId}'s pre-deploy create ${txHash} has no receipt — never released automatically; read the chain and append the matching line by hand`
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// TX1 §8 — Stripe against the journal, daily. Stripe is the record of what
+// cards paid and got back; the journal is the record of what users were
+// credited and debited. They are compared per payment intent:
+//   - every paid Checkout Session of ours is in the journal with the same
+//     gross, tax and net (or was refused and refunded in full);
+//   - what Stripe has refunded on a charge equals what the journal says was
+//     refunded, in BOTH directions (a refund whose webhook never arrived; a
+//     debit whose refund never happened);
+//   - a refund leg still `pending` (the process died between the debit and
+//     Stripe's answer) is surfaced with what Stripe shows for its key;
+//   - every dispute Stripe has on a charge of ours is in the journal, in the
+//     same state;
+//   - the total of balances below zero.
+// Every finding is an alarm; nothing is changed (a person decides). The Stripe
+// account is shared with Fabstir v2, so anything not tied to this ledger or to
+// a session carrying fc1UserId is left alone.
+// ---------------------------------------------------------------------------
+
+export interface StripeSessionRow {
+  sessionId: string;
+  paymentIntentId?: string;
+  /** `metadata.fc1UserId`; absent = not a session of this product. */
+  userId?: string;
+  grossCents: number;
+  taxCents: number;
+  currency: string;
+  /** Unix seconds. */
+  createdS: number;
+}
+
+export interface StripeRefundRow {
+  refundId: string;
+  paymentIntentId?: string;
+  amountCents: number;
+  status: string;
+  /** `metadata.fc1Key` / `metadata.fc1Origin`, when this service issued it. */
+  key?: string;
+  origin?: string;
+}
+
+export interface StripeDisputeRow {
+  disputeId: string;
+  paymentIntentId?: string;
+  amountCents: number;
+  status: string;
+}
+
+export interface StripeReconcileSource {
+  /** Checkout Sessions with payment_status `paid`, created at or after `sinceS`. */
+  listPaidSessions(sinceS: number): Promise<StripeSessionRow[]>;
+  listRefunds(sinceS: number): Promise<StripeRefundRow[]>;
+  listDisputes(sinceS: number): Promise<StripeDisputeRow[]>;
+}
+
+export interface StripeReconcileDeps {
+  ledger: CreditsLedger;
+  source: StripeReconcileSource;
+  onAlarm: (message: string) => void;
+  now?: () => number;
+  /** How far back to compare. Must cover the refund window: a refund can only
+   *  follow its purchase, so every refund of a charge inside the look-back is
+   *  inside it too. */
+  lookbackMs: number;
+  /** A session, or a pending refund leg, younger than this is still in
+   *  flight (its webhook or Stripe's answer may not have arrived). */
+  graceMs?: number;
+}
+
+export interface StripeReconcileReport {
+  sessions: number;
+  refunds: number;
+  disputes: number;
+  receivableMicro: bigint;
+  findings: string[];
+}
+
+const RECONCILE_GRACE_MS = 15 * 60 * 1000;
+const CENT_MICRO = 10_000n;
+
+export async function reconcileStripe(d: StripeReconcileDeps): Promise<StripeReconcileReport> {
+  const now = (d.now ?? Date.now)();
+  const sinceMs = now - d.lookbackMs;
+  const sinceS = Math.floor(sinceMs / 1000);
+  const grace = d.graceMs ?? RECONCILE_GRACE_MS;
+  const findings: string[] = [];
+  const find = (message: string) => {
+    findings.push(message);
+    d.onAlarm(`stripe reconcile: ${message}`);
+  };
+
+  const [sessions, refunds, disputes] = await Promise.all([
+    d.source.listPaidSessions(sinceS),
+    d.source.listRefunds(sinceS),
+    d.source.listDisputes(sinceS),
+  ]);
+
+  const charges = new Map(d.ledger.allCharges().map((c) => [c.paymentIntentId, c]));
+  const refused = new Map(
+    d.ledger
+      .refusedPurchases()
+      .filter((r) => r.paymentIntentId !== undefined)
+      .map((r) => [r.paymentIntentId!, r])
+  );
+
+  // Charges: gross, tax and net per payment intent.
+  for (const s of sessions) {
+    if (!s.userId || !s.paymentIntentId) continue; // not ours
+    if (now - s.createdS * 1000 < grace) continue; // its webhook may be on the way
+    const charge = charges.get(s.paymentIntentId);
+    if (!charge) {
+      if (!refused.has(s.paymentIntentId)) {
+        find(
+          `paid session ${s.sessionId} (${s.paymentIntentId}, ${s.grossCents} cents, user ${s.userId}) is not in the ledger: ` +
+            `never credited and never refused — its webhook was lost; redeliver the event from the Stripe dashboard`
+        );
+      }
+      continue;
+    }
+    const net = BigInt(s.grossCents - s.taxCents) * CENT_MICRO;
+    if (charge.grossCents !== BigInt(s.grossCents) || charge.taxCents !== BigInt(s.taxCents) || charge.netMicro !== net) {
+      find(
+        `${s.paymentIntentId}: Stripe has gross ${s.grossCents}, tax ${s.taxCents}, net ${net} micro; ` +
+          `the ledger has gross ${charge.grossCents}, tax ${charge.taxCents}, net ${charge.netMicro} micro`
+      );
+    }
+  }
+
+  // Refunds, summed per payment intent (a failed or cancelled one returned nothing).
+  const refundedAtStripe = new Map<string, bigint>();
+  const refundByKey = new Map<string, StripeRefundRow>();
+  for (const r of refunds) {
+    if (r.key) refundByKey.set(r.key, r);
+    if (!r.paymentIntentId || r.status === 'failed' || r.status === 'canceled') continue;
+    refundedAtStripe.set(r.paymentIntentId, (refundedAtStripe.get(r.paymentIntentId) ?? 0n) + BigInt(r.amountCents));
+  }
+
+  // Refund legs still pending past the grace period, and the charges they
+  // make uncertain (their figures are reported once, here, not twice).
+  const uncertain = new Set<string>();
+  for (const leg of d.ledger.allCashoutLegs()) {
+    if (leg.state !== 'pending') continue;
+    uncertain.add(leg.paymentIntentId);
+    if (now - leg.atMs < grace) continue;
+    const atStripe = refundByKey.get(leg.key);
+    find(
+      `refund leg ${leg.key} (${leg.grossCents} cents, ${leg.amountMicro} micro, user ${leg.userId}) has been pending for ` +
+        `${Math.round((now - leg.atMs) / 60_000)} min: ` +
+        (atStripe
+          ? `Stripe HAS refund ${atStripe.refundId} (${atStripe.status}) under its key — confirm the leg`
+          : `Stripe has no refund under its key — the credits are debited and nothing was returned; reverse the leg`)
+    );
+  }
+
+  for (const charge of charges.values()) {
+    if (charge.atMs < sinceMs || uncertain.has(charge.paymentIntentId)) continue;
+    const atStripe = refundedAtStripe.get(charge.paymentIntentId) ?? 0n;
+    if (atStripe !== charge.refundedGrossCents) {
+      find(
+        `${charge.paymentIntentId}: refunded at Stripe ${atStripe} cents, in the ledger ${charge.refundedGrossCents} cents — ` +
+          (atStripe > charge.refundedGrossCents
+            ? `a refund reached the card that the ledger never debited (user ${charge.userId})`
+            : `the ledger debited a refund that Stripe does not show (user ${charge.userId})`)
+      );
+    }
+  }
+  for (const r of refused.values()) {
+    if (r.atMs < sinceMs) continue;
+    const atStripe = refundedAtStripe.get(r.paymentIntentId!) ?? 0n;
+    if (atStripe !== r.grossCents) {
+      find(
+        `${r.paymentIntentId}: a refused purchase (${r.reason}) of ${r.grossCents} cents shows ${atStripe} cents refunded at Stripe — ` +
+          `user ${r.userId} has no credits and must have the whole amount back`
+      );
+    }
+  }
+
+  // Disputes.
+  const seenDisputes = new Set<string>();
+  for (const dispute of disputes) {
+    if (!dispute.paymentIntentId || !charges.has(dispute.paymentIntentId)) continue; // not ours
+    seenDisputes.add(dispute.disputeId);
+    const inLedger = d.ledger.dispute(dispute.disputeId);
+    if (!inLedger) {
+      find(
+        `dispute ${dispute.disputeId} on ${dispute.paymentIntentId} (${dispute.amountCents} cents, ${dispute.status}) is not in the ledger — ` +
+          `the disputed credits were never debited; redeliver its events`
+      );
+      continue;
+    }
+    // The webhook's own rule (stripe.ts), so the two cannot disagree.
+    const expected = disputeLedgerState(dispute.status);
+    if (inLedger.state !== expected) {
+      find(
+        `dispute ${dispute.disputeId} on ${dispute.paymentIntentId}: Stripe says ${dispute.status} (${expected}), the ledger has it ${inLedger.state}`
+      );
+    }
+  }
+  for (const dispute of d.ledger.allDisputes()) {
+    if (dispute.atMs < sinceMs || seenDisputes.has(dispute.disputeId)) continue;
+    find(`dispute ${dispute.disputeId} on ${dispute.paymentIntentId} is in the ledger (${dispute.state}) but Stripe does not list it`);
+  }
+
+  // The receivable.
+  const receivableMicro = d.ledger.receivableMicro();
+  if (receivableMicro > 0n) {
+    const debtors = d.ledger.negativeBalances();
+    find(
+      `balances below zero: ${receivableMicro} micro owed by ${debtors.length} user(s): ` +
+        debtors.map((x) => `${x.userId} ${x.owedMicro}`).join(', ')
+    );
+  }
+
+  return { sessions: sessions.length, refunds: refunds.length, disputes: disputes.length, receivableMicro, findings };
+}
+
+type ReconcileOverride = {
+  source: StripeReconcileSource;
+  onAlarm?: (message: string) => void;
+  /** The client the pending-leg recovery uses (the route runs it first). */
+  stripe?: import('./stripe').StripeApi;
+};
+
+/** What the reconcile route's pending-leg recovery runs with. */
+export function productionLegRecovery(ledger: CreditsLedger): {
+  ledger: CreditsLedger;
+  stripe: import('./stripe').StripeApi;
+  onAlarm: (message: string) => void;
+  graceMs: number;
+} {
+  return {
+    ledger,
+    stripe: reconcileOverride?.stripe ?? lazyStripeApi(),
+    onAlarm: reconcileOverride?.onAlarm ?? ((message) => console.error(`[fiat-reconcile] ALARM: ${message}`)),
+    graceMs: RECONCILE_GRACE_MS,
+  };
+}
+let reconcileOverride: ReconcileOverride | undefined;
+
+/** Tests inject the Stripe side and the alarm sink the route uses. */
+export function setStripeReconcileForTest(o: ReconcileOverride | undefined): void {
+  reconcileOverride = o;
+}
+
+/** The route's deps: the look-back is FIAT_STRIPE_RECONCILE_DAYS (default 100
+ *  days: the 90-day refund window and a margin). */
+export function productionStripeReconcile(ledger: CreditsLedger): StripeReconcileDeps {
+  const raw = process.env.FIAT_STRIPE_RECONCILE_DAYS;
+  const days = raw === undefined || raw === '' ? 100 : Number(raw);
+  if (!Number.isInteger(days) || days <= 0) {
+    throw new Error(`FIAT_STRIPE_RECONCILE_DAYS must be a positive integer, got "${raw}"`);
+  }
+  return {
+    ledger,
+    source: reconcileOverride?.source ?? makeStripeReconcileSource(),
+    onAlarm: reconcileOverride?.onAlarm ?? ((message) => console.error(`[fiat-reconcile] ALARM: ${message}`)),
+    lookbackMs: days * 24 * 60 * 60 * 1000,
+  };
 }

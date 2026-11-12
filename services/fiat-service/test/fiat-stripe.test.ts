@@ -11,6 +11,8 @@ import {
 } from '../src/lib/stripe';
 import { POST as webhook } from '../app/v1/fiat/stripe/webhook/route';
 import { setFiatDepsForTest } from '../src/lib/fiat-session-service';
+import { setStripeWebhookForTest } from '../src/lib/stripe-webhook';
+import { fakeStripeApi } from './helpers/fake-stripe';
 import { CreditsLedger, MemoryLedgerStore } from '../src/lib/ledger';
 
 const SECRET = 'whsec_test_secret';
@@ -160,10 +162,13 @@ describe('POST /api/fiat/stripe/webhook', () => {
     process.env.FIAT_STRIPE_WEBHOOK_SECRET = SECRET;
     ledger = await CreditsLedger.open(new MemoryLedgerStore());
     setFiatDepsForTest({ ledger });
+    // No network: the card-country read answers GB; alarms are not under test here.
+    setStripeWebhookForTest({ stripe: fakeStripeApi().api, onAlarm: () => {} });
   });
   afterEach(() => {
     delete process.env.FIAT_STRIPE_WEBHOOK_SECRET;
     setFiatDepsForTest(undefined);
+    setStripeWebhookForTest(undefined);
   });
 
   const checkout = (eventId: string, amountCents: number) =>
@@ -172,11 +177,17 @@ describe('POST /api/fiat/stripe/webhook', () => {
       type: 'checkout.session.completed',
       data: {
         object: {
+          id: `cs_${eventId}`,
           metadata: { fc1UserId: 'user-1' },
           amount_total: amountCents,
           payment_status: 'paid',
           currency: 'usd',
           payment_intent: 'pi_1',
+          // TX1.2: a purchase is credited only when Stripe Tax completed and
+          // the billing address is in a country we sell to.
+          automatic_tax: { enabled: true, status: 'complete' },
+          customer_details: { address: { country: 'GB' }, tax_ids: [] },
+          total_details: { amount_tax: 0 },
         },
       },
     });

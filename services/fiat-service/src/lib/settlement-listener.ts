@@ -231,6 +231,7 @@ export function startSettlementListener(opts: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void> = Promise.resolve();
   let tickCount = 0;
+  let lastReceivable = 0n;
 
   async function tickOnce(): Promise<void> {
     try {
@@ -285,6 +286,22 @@ export function startSettlementListener(opts: {
             );
           }
         }
+      }
+      // TX1 §3 — the receivable: users whose balance is below zero (a refund
+      // or chargeback landed after the credits were spent). Its own alarm,
+      // because `outstandingMicro` deliberately leaves it out. Raised when the
+      // total changes, not on every tick; the daily reconciliation repeats it.
+      const receivable = opts.ledger.receivableMicro();
+      if (receivable !== lastReceivable) {
+        if (receivable > 0n) {
+          const debtors = opts.ledger.negativeBalances();
+          opts.onAlarm(
+            `balances below zero: ${receivable} micro owed by ${debtors.length} user(s) ` +
+              `(${debtors.slice(0, 5).map((d) => `${d.userId} ${d.owedMicro}`).join(', ')}${debtors.length > 5 ? ', …' : ''}) — ` +
+              `not counted in outstanding; they can open no session until made good`
+          );
+        }
+        lastReceivable = receivable;
       }
       const from = (await opts.cursor.load()) ?? opts.fromBlock;
       const latest = await opts.source.latestBlock();

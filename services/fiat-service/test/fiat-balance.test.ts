@@ -1,5 +1,5 @@
 // FC1 — GET /api/fiat/balance: the account page's balance read.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GET } from '../app/v1/fiat/balance/route';
 import { setFiatDepsForTest } from '../src/lib/fiat-session-service';
 import { CreditsLedger, MemoryLedgerStore } from '../src/lib/ledger';
@@ -7,7 +7,15 @@ import { CreditsLedger, MemoryLedgerStore } from '../src/lib/ledger';
 const ADDR = '0x1234567890abcDEF1234567890abcdef12345678';
 const ADDR_LC = ADDR.toLowerCase();
 
-afterEach(() => setFiatDepsForTest(undefined));
+// Legal list 2.13 closed this lookup by default (see tx1-balance.test.ts);
+// these tests pin the transition switch that keeps the old shape alive.
+beforeEach(() => {
+  process.env.FIAT_BALANCE_OPEN = 'on';
+});
+afterEach(() => {
+  setFiatDepsForTest(undefined);
+  delete process.env.FIAT_BALANCE_OPEN;
+});
 
 function get(query: string) {
   return GET(new Request(`http://site/api/fiat/balance${query}`));

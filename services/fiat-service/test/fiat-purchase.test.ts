@@ -4,9 +4,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '../app/v1/fiat/purchase/route';
 import { fiatUserId } from '../src/lib/fiat-identity';
+import { resetCheckoutRateLimitForTest } from '../src/lib/purchase-rate-limit';
 
 const ADDR = '0x1234567890abcDEF1234567890abcdef12345678';
 const ADDR_LC = ADDR.toLowerCase();
+// TX1.1: every purchase carries the buyer's recorded consent.
+const CONSENT = { termsVersion: '2026-10-23.1', over18: true, useNow: true };
 
 describe('fiatUserId (the identity scheme)', () => {
   it('lowercases a valid address', () => {
@@ -28,6 +31,7 @@ function post(body: unknown, url = 'http://site.example/api/fiat/purchase') {
 describe('POST /api/fiat/purchase', () => {
   beforeEach(() => {
     process.env.FIAT_STRIPE_SECRET_KEY = 'sk_test_x';
+    resetCheckoutRateLimitForTest();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -49,7 +53,7 @@ describe('POST /api/fiat/purchase', () => {
 
   it('creates a Checkout Session tagged with the buyer address and returns its URL', async () => {
     const fetchMock = stubCheckout();
-    const res = await post({ clientAddress: ADDR, credits: 500 });
+    const res = await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: 'https://checkout.stripe.com/c/cs_1' });
 
@@ -77,14 +81,14 @@ describe('POST /api/fiat/purchase', () => {
   it('enforces the max purchase cap', async () => {
     process.env.FIAT_MAX_PURCHASE_CREDITS = '10000';
     const fetchMock = stubCheckout();
-    expect((await post({ clientAddress: ADDR, credits: 10001 })).status).toBe(400);
-    expect((await post({ clientAddress: ADDR, credits: 10000 })).status).toBe(200);
+    expect((await post({ clientAddress: ADDR, credits: 10001, consent: CONSENT })).status).toBe(400);
+    expect((await post({ clientAddress: ADDR, credits: 10000, consent: CONSENT })).status).toBe(200);
     void fetchMock;
   });
 
   it('503s when Stripe is not configured', async () => {
     delete process.env.FIAT_STRIPE_SECRET_KEY;
-    const res = await post({ clientAddress: ADDR, credits: 500 });
+    const res = await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
     expect(res.status).toBe(503);
   });
 
@@ -93,7 +97,7 @@ describe('POST /api/fiat/purchase', () => {
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ error: { message: 'nope' } }), { status: 400 }))
     );
-    const res = await post({ clientAddress: ADDR, credits: 500 });
+    const res = await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
     expect(res.status).toBe(502);
   });
 });

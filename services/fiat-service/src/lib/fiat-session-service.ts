@@ -464,6 +464,11 @@ function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionSe
     // D20 item 3 — the first boot of the outbox code marks where its rules
     // begin; everything journaled before it is handled conservatively.
     await ledger.writeMigrationMarker();
+    // TX1 §7 — the journal format marker. Opening already failed closed on any
+    // entry this binary does not understand; from here a NEWER journal meeting
+    // an older TX1-aware binary stops too. (The pre-TX1 binary has no such
+    // guard: rolling back past TX1 needs the TX1 binary.)
+    await ledger.writeFormatMarker();
     // D20 item 1 — the ONE outbox, built once, beside the ledger, on the shared
     // deps: the reclaimer (instrumentation bundle) takes it from here too.
     const outbox = await VaultOutbox.open(journals.outbox, {
@@ -493,6 +498,11 @@ function buildBackend(): Promise<{ deps: FiatSessionDeps; service: FiatSessionSe
       config,
       marketplaceAddress: vault.marketplaceAddress,
     };
+    // TX1 — refund legs a previous process left `pending` (it died between the
+    // debit and Stripe's answer): look each up and confirm, complete or reverse
+    // it. In the background: the boot never waits on Stripe. (A dynamic import:
+    // the cashout service imports this module.)
+    void import('./fiat-cashout-service').then((m) => m.recoverPendingCashoutLegsAtBoot(ledger));
     return { deps, service: { open: (request) => openFiatSession(deps, request) } };
   })();
   return g.__fiatBackend;

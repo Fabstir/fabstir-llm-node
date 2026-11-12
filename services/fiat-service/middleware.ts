@@ -19,6 +19,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 const BROWSER_ROUTES = new Set<string>([
   '/v1/fiat/purchase',
   '/v1/fiat/balance',
+  '/v1/fiat/purchases',
   '/v1/fiat/session',
   '/v1/fiat/cashout',
   '/v1/fiat/credential/challenge',
