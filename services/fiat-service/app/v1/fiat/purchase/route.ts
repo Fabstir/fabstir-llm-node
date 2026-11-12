@@ -29,6 +29,33 @@ function maxCredits(): number {
 const TERMS_VERSION_RE = /^[A-Za-z0-9._:-]{1,40}$/;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}$/;
 
+/** FIAT_PURCHASE_RETURN_BY_ORIGIN: a JSON object mapping a calling site's exact origin to its two return URLs,
+ *  `{"https://site.example": ["<success url>", "<cancel url>"]}`. An entry is used only when the request's Origin
+ *  header equals its key exactly and both URLs are https (or http on localhost). Anything malformed is ignored. */
+function returnUrlsFor(origin: string | null): [string, string] | undefined {
+  const raw = process.env.FIAT_PURCHASE_RETURN_BY_ORIGIN;
+  if (!origin || !raw) return undefined;
+  let map: unknown;
+  try {
+    map = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof map !== 'object' || map === null || !Object.prototype.hasOwnProperty.call(map, origin)) return undefined;
+  const pair = (map as Record<string, unknown>)[origin];
+  if (!Array.isArray(pair) || pair.length !== 2) return undefined;
+  const ok = (u: unknown): u is string => {
+    if (typeof u !== 'string') return false;
+    try {
+      const url = new URL(u);
+      return url.protocol === 'https:' || (url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1'));
+    } catch {
+      return false;
+    }
+  };
+  return ok(pair[0]) && ok(pair[1]) ? [pair[0], pair[1]] : undefined;
+}
+
 /** Consent is required unless FIAT_CONSENT_REQUIRED=off (a transition switch
  *  for a client that does not send it yet; such purchases record no consent). */
 function consentRequired(): boolean {
@@ -90,8 +117,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const origin = new URL(req.url).origin;
-  const successUrl = process.env.FIAT_PURCHASE_SUCCESS_URL ?? `${origin}/account?purchase=success`;
-  const cancelUrl = process.env.FIAT_PURCHASE_CANCEL_URL ?? `${origin}/account?purchase=cancelled`;
+  // The service is shared by more than one site: a caller whose Origin has an entry in
+  // FIAT_PURCHASE_RETURN_BY_ORIGIN returns to its own pages; everyone else keeps the global pair.
+  const own = returnUrlsFor(req.headers.get('origin'));
+  const successUrl = own?.[0] ?? process.env.FIAT_PURCHASE_SUCCESS_URL ?? `${origin}/account?purchase=success`;
+  const cancelUrl = own?.[1] ?? process.env.FIAT_PURCHASE_CANCEL_URL ?? `${origin}/account?purchase=cancelled`;
 
   let checkout;
   try {
