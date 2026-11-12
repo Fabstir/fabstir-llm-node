@@ -124,7 +124,7 @@ test('old job results are deleted and every blob is released on the portal first
     };
     const counts = await pruneOlderThan(s5, ARGS, { nowSecs: NOW, lock, advanced });
     assert.deepEqual(counts, {
-      scanned: 8, deleted: 2, files: 3, released: 3, failed: 0, skipped: 3, more: false,
+      scanned: 8, deleted: 2, files: 3, released: 3, failed: 0, skipped: 3, more: false, why: {},
     });
     const ltx = fs.tree.home.entries.ltx.entries;
     assert.deepEqual(Object.keys(ltx).sort(), [
@@ -157,6 +157,10 @@ test('an entry whose blob the portal will not release is kept, hash and all, for
     const counts = await pruneOlderThan(s5, ARGS, { nowSecs: NOW, advanced });
     assert.equal(counts.failed, 1);
     assert.equal(counts.deleted, 1, 'the attestation file');
+    // the reason is tallied by kind only: the portal's status, never a path or a hash
+    assert.equal(Object.keys(counts.why).length, 1);
+    assert.match(Object.keys(counts.why)[0], /^release-http-\d{3}(:[a-z-]+)?$/);
+    assert.equal(Object.values(counts.why)[0], 1);
     const job = fs.tree.home.entries.ltx.entries.job_old;
     assert.deepEqual(Object.keys(job.entries), ['manifest.json'], 'the unreleased file and its folder stay');
     assert.deepEqual(job.entries['manifest.json'].data.hash, hashOf(2));
@@ -171,6 +175,7 @@ test('with no portal account nothing is deleted at all', async () => {
   const counts = await pruneOlderThan(s5, ARGS, { nowSecs: NOW, advanced });
   assert.equal(counts.deleted, 0);
   assert.equal(counts.failed, 2);
+  assert.ok(counts.why['no-portal-account'] >= 2, 'says why nothing was deleted');
   assert.deepEqual(fs.deletes, []);
   assert.equal(await releaseBlob(s5.apiWithIdentity, hashOf(1), 5), false);
 });

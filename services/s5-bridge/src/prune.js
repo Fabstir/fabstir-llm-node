@@ -58,8 +58,10 @@ export async function releaseBlob(api, hash, size, opts = {}) {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const portals = Object.values(api?.accountConfigs ?? {});
   if (portals.length === 0) {
+    if (typeof opts.onFail === 'function') opts.onFail('no-portal-account');
     return false;
   }
+  const why = typeof opts.onFail === 'function' ? opts.onFail : () => {};
   const cid = portalCid(hash, size);
   for (const portal of portals) {
     const auth = portal.headers?.['Authorization'] || portal.headers?.['authorization'] || '';
@@ -70,9 +72,18 @@ export async function releaseBlob(api, hash, size, opts = {}) {
         signal: AbortSignal.timeout(opts.timeoutMs ?? PORTAL_TIMEOUT_MS),
       });
       if (!(res.ok || res.status === 404)) {
+        // the portal's own error words (never a path or a hash), reduced to a short slug
+        let said = '';
+        try {
+          said = (await res.text()).slice(0, 200).replace(/[^A-Za-z ]+/g, ' ').trim().split(/\s+/).slice(0, 6).join('-').toLowerCase();
+        } catch {
+          said = '';
+        }
+        why(`release-http-${res.status}${said ? `:${said}` : ''}`);
         return false;
       }
-    } catch {
+    } catch (e) {
+      why(`release-${e?.name === 'TimeoutError' ? 'timeout' : 'error'}`);
       return false;
     }
   }
@@ -134,7 +145,13 @@ export async function pruneOlderThan(s5, params, opts = {}) {
   if (!advanced?.pathToCID) {
     throw new Error('advanced client not available');
   }
-  const counts = { scanned: 0, deleted: 0, files: 0, released: 0, failed: 0, skipped: 0, more: false };
+  // `why` tallies the reason of each failed step by kind (never a path, a hash or any content), so a run that
+  // deletes nothing can be diagnosed from the log line alone.
+  const counts = { scanned: 0, deleted: 0, files: 0, released: 0, failed: 0, skipped: 0, more: false, why: {} };
+  const note = (kind) => {
+    counts.why[kind] = (counts.why[kind] ?? 0) + 1;
+  };
+  const releaseOpts = { ...opts, onFail: note };
 
   const removeEntry = async (path) => {
     const parent = path.slice(0, path.lastIndexOf('/'));
@@ -149,13 +166,15 @@ export async function pruneOlderThan(s5, params, opts = {}) {
   const removeFile = async (path, size) => {
     const hash = await advanced.pathToCID(path);
     if (!(hash instanceof Uint8Array) || !Number.isFinite(Number(size))) {
+      note(hash instanceof Uint8Array ? 'no-size' : 'no-hash');
       return false;
     }
-    if (!(await releaseBlob(api, hash, Number(size), opts))) {
+    if (!(await releaseBlob(api, hash, Number(size), releaseOpts))) {
       return false;
     }
     counts.released += 1;
     if (!(await removeEntry(path))) {
+      note('entry-not-removed');
       return false;
     }
     counts.files += 1;
@@ -221,7 +240,8 @@ export async function pruneOlderThan(s5, params, opts = {}) {
       } else {
         counts.failed += 1;
       }
-    } catch {
+    } catch (e) {
+      note(`threw-${String(e?.name ?? 'Error').slice(0, 40)}`);
       counts.failed += 1;
     }
   }
