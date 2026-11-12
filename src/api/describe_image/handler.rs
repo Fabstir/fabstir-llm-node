@@ -134,9 +134,9 @@ pub async fn describe_image_handler(
 
     // 5. Run Florence description
     info!(
-        "Running Florence describe: detail={}, prompt={:?}",
+        "Running Florence describe: detail={}, prompt_chars={}",
         request.detail,
-        request.prompt.as_deref()
+        request.prompt.as_deref().map_or(0, |p| p.chars().count())
     );
 
     let description_result = florence_model

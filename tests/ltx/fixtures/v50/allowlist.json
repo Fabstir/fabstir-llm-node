@@ -1,0 +1,776 @@
+{
+ "allowListVersion": 50,
+ "templates": [
+  {
+   "templateId": "ltx-t2v-hdr",
+   "version": "v1",
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-i2v-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "firstFrame"
+   ],
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-flf2v-hdr",
+   "version": "v1",
+   "imageInputs": 2,
+   "imageSemantics": [
+    "firstFrame",
+    "lastFrame"
+   ],
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-iclora-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "reference"
+   ],
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-outpaint-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-edit-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-restore-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    30,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-ingredients-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "referenceSheet"
+   ],
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-water-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-daynight-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-crossview-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-sdr2hdr-hdr",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-alpha-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "minFrames": 25
+  },
+  {
+   "templateId": "ltx-layout-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "reference"
+   ],
+   "videoInputs": 1,
+   "videoSemantics": [
+    "controlVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 361,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "minFrames": 121
+  },
+  {
+   "templateId": "ltx-colorize-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-deblur-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-decompress-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-refine-hdr",
+   "version": "v3",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-uhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "maxTokens": 676824,
+   "fixedPrompt": "sharp photographic detail, crisp natural texture, fine surface detail, clean edges, natural film grain, high resolution footage",
+   "frameTiers": [
+    {
+     "abovePixels": 2088960,
+     "maxFrames": 49
+    }
+   ]
+  },
+  {
+   "templateId": "ltx-restore25-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-restore25-ref-hdr",
+   "version": "v2",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "reference"
+   ],
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-cleanplate-hdr",
+   "version": "v2",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "maxTokens": 102360
+  },
+  {
+   "templateId": "ltx-slowmo-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "firstFrame"
+   ],
+   "videoInputs": 0,
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "minFrames": 49,
+   "resolutionRule": "div64-fhd",
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-upscale25-hdr",
+   "version": "v3",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-uhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "fixedPrompt": "sharp photographic detail, crisp natural texture, fine surface detail, clean edges, natural film grain, high resolution footage",
+   "maxTokens": 409437,
+   "frameTiers": [
+    {
+     "abovePixels": 2088960,
+     "maxFrames": 49
+    }
+   ]
+  },
+  {
+   "templateId": "ltx-refine-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "sourceVideo",
+    "previousPart"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-uhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "maxTokens": 676824,
+   "fixedPrompt": "sharp photographic detail, crisp natural texture, fine surface detail, clean edges, natural film grain, high resolution footage",
+   "frameTiers": [
+    {
+     "abovePixels": 2088960,
+     "maxFrames": 49
+    }
+   ]
+  },
+  {
+   "templateId": "ltx-upscale25-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "sourceVideo",
+    "previousPart"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-uhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "fixedPrompt": "sharp photographic detail, crisp natural texture, fine surface detail, clean edges, natural film grain, high resolution footage",
+   "maxTokens": 409437,
+   "frameTiers": [
+    {
+     "abovePixels": 2088960,
+     "maxFrames": 49
+    }
+   ]
+  },
+  {
+   "templateId": "cosmos-passes-key",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "relight-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "sidecar": "relight"
+  },
+  {
+   "templateId": "cosmos-passes-std",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "relight-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "sidecar": "relight"
+  },
+  {
+   "templateId": "cosmos-passes-full",
+   "version": "v1",
+   "videoInputs": 1,
+   "videoSemantics": [
+    "sourceVideo"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "relight-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "sidecar": "relight"
+  },
+  {
+   "templateId": "ltx-colorize-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "sourceVideo",
+    "previousPart"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true
+  },
+  {
+   "templateId": "ltx-cleanplate-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "sourceVideo",
+    "previousPart"
+   ],
+   "fps": [
+    24,
+    25,
+    30
+   ],
+   "maxFrames": 121,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "maxTokens": 102360
+  },
+  {
+   "templateId": "ltx-alpha-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "sourceVideo",
+    "previousPart"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 145,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "minFrames": 25
+  },
+  {
+   "templateId": "ltx-water-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "controlVideo",
+    "previousPart"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-daynight-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "controlVideo",
+    "previousPart"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-edit-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "controlVideo",
+    "previousPart"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-outpaint-chain-hdr",
+   "version": "v2",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "controlVideo",
+    "previousPart"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-iclora-chain-hdr",
+   "version": "v1",
+   "videoInputs": 2,
+   "videoSemantics": [
+    "controlVideo",
+    "previousPart"
+   ],
+   "exactControl": true,
+   "fps": [
+    24,
+    25,
+    48,
+    50
+   ]
+  },
+  {
+   "templateId": "ltx-layout-chain-hdr",
+   "version": "v1",
+   "imageInputs": 1,
+   "imageSemantics": [
+    "reference"
+   ],
+   "videoInputs": 2,
+   "videoSemantics": [
+    "controlVideo",
+    "previousPart"
+   ],
+   "fps": [
+    24,
+    25
+   ],
+   "maxFrames": 361,
+   "resolutionRule": "div64-fhd",
+   "exactControl": true,
+   "frameGrid": true,
+   "minFrames": 121
+  }
+ ],
+ "loras": [
+  "ltx-iclora-hdr@v1",
+  "ltx-outpaint-hdr@v1",
+  "ltx-edit-hdr@v1",
+  "ltx-restore-hdr@v1",
+  "ltx-ingredients-hdr@v1",
+  "ltx-water-hdr@v1",
+  "ltx-daynight-hdr@v1",
+  "ltx-sdr2hdr-hdr@v1",
+  "ltx-crossview-hdr@v1",
+  "ltx-alpha-hdr@v1",
+  "ltx-layout-hdr@v1",
+  "ltx-colorize-hdr@v1",
+  "ltx-deblur-hdr@v1",
+  "ltx-decompress-hdr@v1",
+  "ltx-refine-hdr@v1",
+  "ltx-restore25-hdr@v1",
+  "ltx-restore25-ref-hdr@v1",
+  "ltx-cleanplate-hdr@v1",
+  "ltx-slowmo-hdr@v1",
+  "ltx-upscale25-hdr@v1",
+  "ltx-refine-chain-hdr@v1",
+  "ltx-upscale25-chain-hdr@v1",
+  "cosmos-passes-key@v1",
+  "cosmos-passes-std@v1",
+  "cosmos-passes-full@v1",
+  "ltx-colorize-chain-hdr@v1",
+  "ltx-cleanplate-chain-hdr@v1",
+  "ltx-alpha-chain-hdr@v1",
+  "ltx-water-chain-hdr@v1",
+  "ltx-daynight-chain-hdr@v1",
+  "ltx-edit-chain-hdr@v1",
+  "ltx-outpaint-chain-hdr@v1",
+  "ltx-iclora-chain-hdr@v1",
+  "ltx-layout-chain-hdr@v1"
+ ],
+ "bounds": {
+  "frames": {
+   "min": 9,
+   "max": 751
+  },
+  "fps": [
+   24,
+   25,
+   30,
+   48,
+   50
+  ],
+  "resolutions": [
+   {
+    "w": 768,
+    "h": 512
+   },
+   {
+    "w": 512,
+    "h": 768
+   },
+   {
+    "w": 1024,
+    "h": 1024
+   },
+   {
+    "w": 1920,
+    "h": 1088
+   },
+   {
+    "w": 1088,
+    "h": 1920
+   },
+   {
+    "w": 2560,
+    "h": 1408
+   },
+   {
+    "w": 1408,
+    "h": 2560
+   },
+   {
+    "w": 1536,
+    "h": 1024
+   },
+   {
+    "w": 1024,
+    "h": 1536
+   },
+   {
+    "w": 3840,
+    "h": 2176
+   },
+   {
+    "w": 2176,
+    "h": 3840
+   },
+   {
+    "w": 1280,
+    "h": 704
+   },
+   {
+    "w": 704,
+    "h": 1280
+   },
+   {
+    "w": 3840,
+    "h": 2048
+   },
+   {
+    "w": 2048,
+    "h": 3840
+   }
+  ],
+  "imageMaxBytes": 33554432,
+  "imageFormats": [
+   "png",
+   "jpeg",
+   "webp"
+  ],
+  "videoMaxBytes": 134217728,
+  "videoFormats": [
+   "mp4"
+  ],
+  "deepVideoMaxBytes": 4294967296
+ }
+}

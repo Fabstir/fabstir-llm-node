@@ -376,9 +376,47 @@ async fn refuses_mp4_with_escaped_comfy_graph() {
     assert_eq!(s.signs.load(Ordering::SeqCst), 0);
 }
 
+/// The READABLE parts of a manifest box: its runs of at least eight printable characters (labels, names, URLs,
+/// JSON), one per line. The signature, the digests and the certificates' key material are random bytes; searching
+/// them for a short word finds one by chance sooner or later, and says nothing about what the node wrote.
+fn readable_runs(raw: &[u8]) -> String {
+    let mut out = String::new();
+    for run in raw.split(|b| !(0x20..0x7f).contains(b)) {
+        if run.len() >= 8 {
+            out.push_str(&String::from_utf8_lossy(run));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// What of a job's identity `text` shows, if anything: the prompt, the reservation, the host's address, any
+/// 20-byte address written as `0x` and 40 hex digits, or a field named for the seed, the job or the session.
+fn identity_in(text: &str, rid: &str, host_hex: &str) -> Option<String> {
+    let lower = text.to_lowercase();
+    for needle in [
+        PROMPT,
+        rid,
+        host_hex,
+        "lighthouse",
+        "seed",
+        "job",
+        "session",
+    ] {
+        if lower.contains(&needle.to_lowercase()) {
+            return Some(needle.to_string());
+        }
+    }
+    let b = lower.as_bytes();
+    (0..b.len().saturating_sub(41))
+        .find(|&i| &b[i..i + 2] == b"0x" && b[i + 2..i + 42].iter().all(u8::is_ascii_hexdigit))
+        .map(|i| lower[i..i + 42].to_string())
+}
+
 #[tokio::test]
 async fn delivered_file_has_no_prompt_or_identity() {
-    // what the node ADDS to a delivered file (the manifest) carries none of the job's identity
+    // what the node ADDS to a delivered file (the manifest) carries none of the job's identity. Checked in the
+    // manifest as a reader decodes it and in the readable runs of the raw box.
     let s = in_proc();
     let f = ffmpeg().await;
     let r = reserve(&s, "ltx-i2v-hdr", false).await;
@@ -391,18 +429,46 @@ async fn delivered_file_has_no_prompt_or_identity() {
     .await
     .unwrap();
     let (off, sz) = flow::find_c2pa_box(&out).unwrap();
-    let added = String::from_utf8_lossy(&out[off..off + sz]).to_string();
-    for needle in [
-        PROMPT,
-        &rid,
-        &hex::encode(host_addr()),
-        "seed",
-        "job",
-        "session",
-        "0x",
-    ] {
-        assert!(!added.contains(needle), "manifest contains {needle:?}");
+    let raw = &out[off..off + sz];
+    let (_, _, _, decoded) = read(&out, &s.ts.anchors_pem);
+    let decoded = decoded.to_string();
+    let runs = readable_runs(raw);
+    assert!(
+        runs.contains("c2pa.actions") && decoded.contains("c2pa.actions"),
+        "both views really show the manifest"
+    );
+    for (view, text) in [("decoded manifest", &decoded), ("raw box", &runs)] {
+        assert_eq!(identity_in(text, &rid, &s.host), None, "{view}");
     }
+    // the search can fail: the same box with one identity written into it is caught, whichever it is
+    let address = format!("0x{}", hex::encode([0xabu8; 20]));
+    for (planted, found) in [
+        (format!("\"prompt\":\"{PROMPT}\""), PROMPT),
+        (format!("reservation {rid}"), rid.as_str()),
+        (format!("host {}", s.host.to_uppercase()), s.host.as_str()),
+        (format!("payer {address}"), address.as_str()),
+        ("\"seed\":1234567".to_string(), "seed"),
+        ("\"jobId\":812".to_string(), "job"),
+        ("\"sessionId\":\"a\"".to_string(), "session"),
+    ] {
+        let mut leaky = raw.to_vec();
+        let at = leaky.len() / 2;
+        leaky.splice(
+            at..at,
+            [&[0u8][..], planted.as_bytes(), &[0u8][..]].concat(),
+        );
+        assert_eq!(
+            identity_in(&readable_runs(&leaky), &rid, &s.host).as_deref(),
+            Some(found),
+            "{planted}"
+        );
+    }
+    // and bytes that only LOOK like a hex prefix, as a signature may hold by chance, are not an identity
+    assert_eq!(
+        identity_in(&readable_runs(b"\x01\x020x\xff\x9a"), &rid, &s.host),
+        None
+    );
+    assert_eq!(identity_in("offset 0x1f in the box", &rid, &s.host), None);
 }
 
 #[tokio::test]
@@ -627,10 +693,16 @@ async fn outputs_are_routed_by_type_and_fail_closed() {
     let f = ffmpeg().await;
     let r = reserve(&s, "ltx-sdr2hdr-hdr", true).await;
     let mut c = ctx(&s, &f, r, "ltx-sdr2hdr-hdr", vec!["video/mp4"]);
-    finalise_output(&mut c, "LTX_00001.mp4", fixture("tiny.mp4"))
+    // 8.65.0: marking needs the result check's token; with checks `off` it is minted without any check running
+    let off = fabstir_llm_node::ltx::checks::ContentChecks::off();
+    let ok = off
+        .check_result(&mut off.job("test", None, None), "LTX_00001.mp4", &[])
         .await
         .unwrap();
-    let second = finalise_output(&mut c, "LTX_00002.mp4", fixture("tiny.mp4"))
+    finalise_output(&mut c, "LTX_00001.mp4", fixture("tiny.mp4"), &ok)
+        .await
+        .unwrap();
+    let second = finalise_output(&mut c, "LTX_00002.mp4", fixture("tiny.mp4"), &ok)
         .await
         .unwrap_err()
         .to_string();
@@ -638,12 +710,12 @@ async fn outputs_are_routed_by_type_and_fail_closed() {
         second.contains("no reserved manifest slot"),
         "the node refuses before the signer: {second}"
     );
-    finalise_output(&mut c, "frame_00001.exr", exr_frame(3))
+    finalise_output(&mut c, "frame_00001.exr", exr_frame(3), &ok)
         .await
         .unwrap();
     assert_eq!(c.exr_hashes.len(), 1);
     assert!(
-        finalise_output(&mut c, "preview.webm", vec![1, 2, 3])
+        finalise_output(&mut c, "preview.webm", vec![1, 2, 3], &ok)
             .await
             .is_err(),
         "unmarkable type"

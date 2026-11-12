@@ -68,11 +68,14 @@ pub fn check_complete(ctx: &ProvenanceCtx<'_>) -> Result<()> {
 }
 
 /// Route one delivered output by its file name: the mp4 (one per job), EXR frames, and nothing else (an output
-/// this node cannot mark is never delivered).
+/// this node cannot mark is never delivered). Content checks (D12): takes the job's
+/// [`ResultChecked`](crate::ltx::checks::ResultChecked), which only the result check can mint, so an output of a
+/// job whose result was not checked cannot be marked (and so cannot be uploaded or billed).
 pub async fn finalise_output(
     ctx: &mut ProvenanceCtx<'_>,
     filename: &str,
     bytes: Vec<u8>,
+    _checked: &crate::ltx::checks::ResultChecked,
 ) -> Result<Vec<u8>> {
     let lower = filename.to_ascii_lowercase();
     if lower.ends_with(".mp4") {

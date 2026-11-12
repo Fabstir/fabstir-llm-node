@@ -910,6 +910,49 @@ async fn node_main() -> Result<()> {
         .unwrap_or(1);
     fabstir_llm_node::ltx::relight::check_relight_start(relight_url.as_deref(), max_generations)
         .map_err(|e| anyhow::anyhow!(e))?;
+    // Content checks (IMPLEMENTATION-CONTENT-CHECKS-LTX.md D12): whenever video generation is configured the mode
+    // must be stated, and a mode that cannot do its work stops the node here: there is no silent default.
+    {
+        use fabstir_llm_node::ltx::checks;
+        // an empty COMFY_URL is the documented way to switch video generation off
+        let video_configured =
+            comfy_url.as_deref().is_some_and(|u| !u.trim().is_empty()) || relight_url.is_some();
+        let cfg = checks::config::ChecksConfig::from_env(video_configured, relight_url.is_some())
+            .map_err(|e| anyhow::anyhow!("content checks: {e}"))?;
+        cfg.verify_access()
+            .map_err(|e| anyhow::anyhow!("content checks: {e}"))?;
+        if video_configured {
+            println!(
+                "🛡️  Content checks: mode={} bundle={} renderer folders: comfy={} relight={}",
+                cfg.mode.as_str(),
+                cfg.bundle_hash.as_deref().unwrap_or("unpinned"),
+                cfg.comfy_dirs.is_some(),
+                cfg.relight_dirs.is_some()
+            );
+            if cfg.mode != checks::config::Mode::Off && cfg.alert_url.is_none() {
+                println!("⚠️  Content checks: LTX_CHECKS_ALERT_URL is not set; alerts go to the log only");
+            }
+        }
+        let alerts =
+            checks::alerts_from(&cfg).map_err(|e| anyhow::anyhow!("content checks: {e}"))?;
+        let content_checks = checks::ContentChecks::new(cfg, alerts);
+        // sweep the staging area and probe until the service is ready; in `enforce` no video job is accepted
+        // before the first probe passes (the breaker starts open)
+        content_checks.start();
+        api_server.set_content_checks(content_checks);
+        // Retention of delivered results on the storage portal (default 30 days; 0 disables).
+        let days = fabstir_llm_node::ltx::retention::days_from_lookup(|k| std::env::var(k).ok())
+            .map_err(|e| anyhow::anyhow!("result retention: {e}"))?;
+        if video_configured {
+            match days {
+                Some(d) => println!("🧹 LTX result retention: {d} days"),
+                None => println!("⚠️  LTX result retention is disabled (LTX_RESULT_RETENTION_DAYS=0): results are never deleted"),
+            }
+            let bridge = std::env::var("ENHANCED_S5_URL")
+                .unwrap_or_else(|_| "http://localhost:5522".to_string());
+            fabstir_llm_node::ltx::retention::spawn(bridge, days);
+        }
+    }
     // AP2 (D18): LTX is enabled ONLY with provenance ready (signer reachable on our contract, HOST_PRIVATE_KEY,
     // the pinned ffmpeg with the signature filter). Otherwise LTX stays off: rollback is "LTX off", never
     // "unmarked output".
@@ -988,9 +1031,13 @@ async fn node_main() -> Result<()> {
     // The template store loads when EITHER sidecar is configured.
     if comfy_url.is_some() || relight_url.is_some() {
         let template_dir = env::var("TEMPLATE_DIR").unwrap_or_else(|_| "./templates".to_string());
-        match fabstir_llm_node::ltx::TemplateStore::new(&template_dir).and_then(|st| {
-            fabstir_llm_node::ltx::provenance::check_templates_classed(&st).map(|_| st)
-        }) {
+        match fabstir_llm_node::ltx::TemplateStore::new(&template_dir)
+            .and_then(|st| {
+                fabstir_llm_node::ltx::provenance::check_templates_classed(&st).map(|_| st)
+            })
+            // D16 (8.65.0): no bundle below 50 (the first without the Gemma adapter)
+            .and_then(|st| fabstir_llm_node::ltx::template::check_bundle_floor(&st).map(|_| st))
+        {
             Ok(store) => {
                 // K4 (8.60.7): the stored prompt encodings the templates load, reported once ComfyUI answers (every job
                 // is checked again before accept, and a missing file refuses it with STORED_ENCODING_MISSING).

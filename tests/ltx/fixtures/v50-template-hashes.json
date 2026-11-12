@@ -1,0 +1,154 @@
+{
+ "v49TreeHash": "0x5bbf38b45ca4cf5aec4ec105b6b2382012bdb1e9db6ed1f1b6911e98ace4a351",
+ "v50TreeHash": "0x5f9cac2701159d788f48d16eaf23f685e6eb6a0020ba20bac0e856f26a027b13",
+ "templates": {
+  "cosmos-passes-full": {
+   "v49": "0x20f7eedf2ecdb638cf9a2fb3854a10c91caa859505aa64e4b27702e7560654ac",
+   "v50": "0x20f7eedf2ecdb638cf9a2fb3854a10c91caa859505aa64e4b27702e7560654ac"
+  },
+  "cosmos-passes-key": {
+   "v49": "0xfadcb1b1e26452782fc899128e25db940db255753d32c39694b30d163967e571",
+   "v50": "0xfadcb1b1e26452782fc899128e25db940db255753d32c39694b30d163967e571"
+  },
+  "cosmos-passes-std": {
+   "v49": "0x74f5f528bbd7d246be41daaedb89de0fcdc06e84e2c4d9fff550560842f53b96",
+   "v50": "0x74f5f528bbd7d246be41daaedb89de0fcdc06e84e2c4d9fff550560842f53b96"
+  },
+  "ltx-alpha-chain-hdr": {
+   "v49": "0x1c944b7fbe4d8a7b6337e643846313ba87e29f958285d192b65196418481c847",
+   "v50": "0x1c944b7fbe4d8a7b6337e643846313ba87e29f958285d192b65196418481c847"
+  },
+  "ltx-alpha-hdr": {
+   "v49": "0x115774f1a425ef73a0435dd150e3dd84c627d4ec46672f40bab5955719ef05ec",
+   "v50": "0x115774f1a425ef73a0435dd150e3dd84c627d4ec46672f40bab5955719ef05ec"
+  },
+  "ltx-cleanplate-chain-hdr": {
+   "v49": "0xa931f1ad78b22661c6d28ac7fb8a76301c1ed8ed0cf1c6f5f641ac90d8cf6249",
+   "v50": "0xa931f1ad78b22661c6d28ac7fb8a76301c1ed8ed0cf1c6f5f641ac90d8cf6249"
+  },
+  "ltx-cleanplate-hdr": {
+   "v49": "0x44bc8c45c2dcfc38fa73b00a2d38c55f03b8dc5c7adc9c73d7b342f0bc251e0a",
+   "v50": "0x44bc8c45c2dcfc38fa73b00a2d38c55f03b8dc5c7adc9c73d7b342f0bc251e0a"
+  },
+  "ltx-colorize-chain-hdr": {
+   "v49": "0x85ed1e0b048b71fcb6d247c8afd849b2999d07a01b5d964dd02ff8f7fdb82958",
+   "v50": "0x85ed1e0b048b71fcb6d247c8afd849b2999d07a01b5d964dd02ff8f7fdb82958"
+  },
+  "ltx-colorize-hdr": {
+   "v49": "0xfb982e77b69afe8b35730106ae4e962369fb9c6d749bfd41eb0480079eabc627",
+   "v50": "0xfb982e77b69afe8b35730106ae4e962369fb9c6d749bfd41eb0480079eabc627"
+  },
+  "ltx-crossview-hdr": {
+   "v49": "0x4df01a1876e9784e3ff6def0af853fbdfb7c8d3e50285c8dcb0067ec1cfa55d1",
+   "v50": "0x4df01a1876e9784e3ff6def0af853fbdfb7c8d3e50285c8dcb0067ec1cfa55d1"
+  },
+  "ltx-daynight-chain-hdr": {
+   "v49": "0x4aab28c4347ea5795c5ef75d33d17f02b23ad361c95891e7708e58e694ab8a00",
+   "v50": "0x4aab28c4347ea5795c5ef75d33d17f02b23ad361c95891e7708e58e694ab8a00"
+  },
+  "ltx-daynight-hdr": {
+   "v49": "0xb66fdd6258e3520e152c098afb8589acd44610255d7e3d79a95c88966ebe5a19",
+   "v50": "0xb66fdd6258e3520e152c098afb8589acd44610255d7e3d79a95c88966ebe5a19"
+  },
+  "ltx-deblur-hdr": {
+   "v49": "0x168e2bf7f7e1449ca0b4d2fd32c6d01366b7fc703e6c34b6c2cff6bec166a2bf",
+   "v50": "0x168e2bf7f7e1449ca0b4d2fd32c6d01366b7fc703e6c34b6c2cff6bec166a2bf"
+  },
+  "ltx-decompress-hdr": {
+   "v49": "0x9fcb5cd0d139de684a6e0826017215b271151016d21cd7220b625ea17f2e1948",
+   "v50": "0x9fcb5cd0d139de684a6e0826017215b271151016d21cd7220b625ea17f2e1948"
+  },
+  "ltx-edit-chain-hdr": {
+   "v49": "0xeced00b337902cd26366f533bb0a9b29de1118c8a1df0ad42c92bb60f03693f0",
+   "v50": "0xeced00b337902cd26366f533bb0a9b29de1118c8a1df0ad42c92bb60f03693f0"
+  },
+  "ltx-edit-hdr": {
+   "v49": "0x33c7b39e5bd4205efb38aeb94cd73a8a67da8f37bd8d441d8e5507be08cded29",
+   "v50": "0x33c7b39e5bd4205efb38aeb94cd73a8a67da8f37bd8d441d8e5507be08cded29"
+  },
+  "ltx-flf2v-hdr": {
+   "v49": "0xd09fd1325947906d2de26666e45cebd19256e1b6a4730ff3e621fb4137a3b6bf",
+   "v50": "0xd09fd1325947906d2de26666e45cebd19256e1b6a4730ff3e621fb4137a3b6bf"
+  },
+  "ltx-i2v-hdr": {
+   "v49": "0xbb8c30fcd45f372ce4ed75428fb97fb09c9a3a479215cd7b03af99fddc04d1bb",
+   "v50": "0x6b6d7638990af219c3701fe3bcb843e801613a086ece1a12cfa9306b902024b0"
+  },
+  "ltx-iclora-chain-hdr": {
+   "v49": "0x93a2134e77bc68469f4676dabb8d3236f86940df1e52cb653e676bd0709df77d",
+   "v50": "0x0501a8374ab96f8c3ee76dde1167af702028f705790518799721aabc00106859"
+  },
+  "ltx-iclora-hdr": {
+   "v49": "0x130a582034c920f6580d337a72775e8c8a6d8c940e7fe21e618615b14457afe1",
+   "v50": "0xddce1fc515f5508f1c8e48efef5d16a477b6c7b27bf84c25e39fee38203b577b"
+  },
+  "ltx-ingredients-hdr": {
+   "v49": "0x9c1a9a0cc84bfd3e79c325cec593e8f838fca4a3eb0f7079b9529f6c53a7c9dc",
+   "v50": "0x9c1a9a0cc84bfd3e79c325cec593e8f838fca4a3eb0f7079b9529f6c53a7c9dc"
+  },
+  "ltx-layout-chain-hdr": {
+   "v49": "0x1249a46db7b824aebe516f915bcc9b859725b38f7e2f4f1f1318f78d72ae88a6",
+   "v50": "0x1249a46db7b824aebe516f915bcc9b859725b38f7e2f4f1f1318f78d72ae88a6"
+  },
+  "ltx-layout-hdr": {
+   "v49": "0xc0e51bfae19a5ca9f967263b932e25df78df3fa7d3aa68b5d0fbb4e133e5c3f1",
+   "v50": "0xc0e51bfae19a5ca9f967263b932e25df78df3fa7d3aa68b5d0fbb4e133e5c3f1"
+  },
+  "ltx-outpaint-chain-hdr": {
+   "v49": "0x167c2bdfbb9e28f24da70d04eadac882165b0613c75d4f36d45345721c882a28",
+   "v50": "0x167c2bdfbb9e28f24da70d04eadac882165b0613c75d4f36d45345721c882a28"
+  },
+  "ltx-outpaint-hdr": {
+   "v49": "0xea7a27899bc65f43bfb89252a5760834c5f742fe15c6d198cfd99a55cb097bb4",
+   "v50": "0xea7a27899bc65f43bfb89252a5760834c5f742fe15c6d198cfd99a55cb097bb4"
+  },
+  "ltx-refine-chain-hdr": {
+   "v49": "0x105fa1db60dc69693ada690e44244f944e89eaade5c8672743588cc06135e5f0",
+   "v50": "0x105fa1db60dc69693ada690e44244f944e89eaade5c8672743588cc06135e5f0"
+  },
+  "ltx-refine-hdr": {
+   "v49": "0xc31a87dd21b5ef1bff9ddcdff4b83c3bd16c6779bcb0984625c1970806935f49",
+   "v50": "0xc31a87dd21b5ef1bff9ddcdff4b83c3bd16c6779bcb0984625c1970806935f49"
+  },
+  "ltx-restore-hdr": {
+   "v49": "0x756f532e366645ff9f6777976a0a8d00315d7ed7b1a067f489c8880db0eecc04",
+   "v50": "0x756f532e366645ff9f6777976a0a8d00315d7ed7b1a067f489c8880db0eecc04"
+  },
+  "ltx-restore25-hdr": {
+   "v49": "0x9c1f457102554bf0d57580c629bea022742e47257b40ae07add7910a7fc03503",
+   "v50": "0x9c1f457102554bf0d57580c629bea022742e47257b40ae07add7910a7fc03503"
+  },
+  "ltx-restore25-ref-hdr": {
+   "v49": "0xa3c5a9da193c2c90acd61396cd4e3b4d985316a69061448babc1107a65fee160",
+   "v50": "0xa3c5a9da193c2c90acd61396cd4e3b4d985316a69061448babc1107a65fee160"
+  },
+  "ltx-sdr2hdr-hdr": {
+   "v49": "0xe6a553ba351b670e8afe98b930e9c14f11a0880cff78b831e0538843ac6a5b38",
+   "v50": "0xe6a553ba351b670e8afe98b930e9c14f11a0880cff78b831e0538843ac6a5b38"
+  },
+  "ltx-slowmo-hdr": {
+   "v49": "0x510ffd956413f80abb4e990f038cdb92c8eb032280b6f08bdd77bf38d6d68172",
+   "v50": "0x510ffd956413f80abb4e990f038cdb92c8eb032280b6f08bdd77bf38d6d68172"
+  },
+  "ltx-t2v-hdr": {
+   "v49": "0x74ccf9abe4423f908357cb8da2f3a0f6475ec33b129032795d01efbbc79a9f94",
+   "v50": "0x046750a7229be1661bbb9d47cde32203f668e6d0bb72d5a1d2370d93cc503ee8"
+  },
+  "ltx-upscale25-chain-hdr": {
+   "v49": "0xe9c830e767e56050a01a57a4317cf32ca8fd3725e2ed491cbb83daafe50d5f6e",
+   "v50": "0xe9c830e767e56050a01a57a4317cf32ca8fd3725e2ed491cbb83daafe50d5f6e"
+  },
+  "ltx-upscale25-hdr": {
+   "v49": "0x5ec58011ed5e5261996ccc33d8cd1216da0d2e26a0dd40882797de2727e26428",
+   "v50": "0x5ec58011ed5e5261996ccc33d8cd1216da0d2e26a0dd40882797de2727e26428"
+  },
+  "ltx-water-chain-hdr": {
+   "v49": "0xfd52f5b1730e05514c53e568d86b0bee8e71d5d06580bacab36a9d2c16c58030",
+   "v50": "0xfd52f5b1730e05514c53e568d86b0bee8e71d5d06580bacab36a9d2c16c58030"
+  },
+  "ltx-water-hdr": {
+   "v49": "0x0404c3294132bd8bbf235288e125d70c8a85977644916814daf5df8e7e2c5045",
+   "v50": "0x0404c3294132bd8bbf235288e125d70c8a85977644916814daf5df8e7e2c5045"
+  }
+ }
+}

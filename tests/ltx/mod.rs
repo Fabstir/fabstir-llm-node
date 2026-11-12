@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 mod test_attestation;
 mod test_billing;
+mod test_checks_config;
+mod test_checks_parts;
+mod test_checks_rules;
 mod test_client;
 mod test_deep_input;
 mod test_engine;
@@ -17,9 +20,12 @@ mod test_relight_fixture;
 mod test_relight_model;
 mod test_relight_source;
 mod test_session_model;
+mod test_retention;
 mod test_silent_audio;
 mod test_submit;
 mod test_template;
 mod test_types;
 mod test_v49_templates;
+mod test_v50_rules;
+mod test_v50_templates;
 mod test_weights;

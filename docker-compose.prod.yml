@@ -11,9 +11,19 @@
 #   - HOST_PRIVATE_KEY: Host wallet private key for settlements
 #
 
+# Container logs (legal 2.4): Docker's json-file driver keeps a log for ever unless told otherwise. Every service
+# below is capped at 5 files of 50 MB (250 MB each). Limits apply when a container is CREATED: after pulling this
+# change, recreate the containers (`up -d --force-recreate`); a restart is not enough.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   # S5 Bridge - Must start first for storage uploads
   s5-bridge:
+    logging: *default-logging
     build:
       context: ./services/s5-bridge
       dockerfile: Dockerfile
@@ -40,6 +50,7 @@ services:
 
   # Fabstir LLM Node - Main inference service
   llm-node:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile.production
@@ -157,6 +168,7 @@ services:
   # To disable: set VLM_ENDPOINT= (empty) in .env or stop this service
   # First build: docker-compose -f docker-compose.prod.yml build qwen3-vl
   qwen3-vl:
+    logging: *default-logging
     build:
       context: .
       dockerfile: docker/Dockerfile.vlm-sidecar
@@ -192,6 +204,7 @@ services:
   # To disable: set DIFFUSION_ENDPOINT= (empty) in .env or stop this service
   # First build: docker-compose -f docker-compose.prod.yml build diffusion-sidecar
   diffusion-sidecar:
+    logging: *default-logging
     build:
       context: .
       dockerfile: docker/Dockerfile.diffusion-sidecar
@@ -231,6 +244,7 @@ services:
   # NVENC encoder uses separate silicon from CUDA compute cores.
   # To disable: set TRANSCODER_ENDPOINT= (empty) in .env or stop this service
   transcoder-sidecar:
+    logging: *default-logging
     image: ewr.vultrcr.com/fabstir/transcoder:${TRANSCODER_TAG:-latest}
     # For local dev, uncomment and comment out image above:
     # build:
@@ -305,6 +319,7 @@ services:
   # today's image, retagged ltx-sidecar:v25, so a bare `up -d` can only run the old image; the
   # deliberate swap sets LTX_SIDECAR_IMAGE=ltx-sidecar:nm1 in .env.
   ltx-sidecar:
+    logging: *default-logging
     image: ${LTX_SIDECAR_IMAGE:-ltx-sidecar:v25}
     container_name: ltx-sidecar
     restart: unless-stopped

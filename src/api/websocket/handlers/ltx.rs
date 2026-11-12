@@ -13,6 +13,8 @@
 
 use crate::api::server::ApiServer;
 use crate::ltx::attestation::EnvMeta;
+use crate::ltx::checks::files::JobFiles;
+use crate::ltx::checks::{ContentChecks, JobChecks, Refusal};
 use crate::ltx::client::Progress;
 use crate::ltx::template::{check_template_rules, Bounds, TemplateEntry};
 use crate::ltx::types::{FrameManifest, LtxJob, OutputKind};
@@ -414,13 +416,17 @@ pub fn check_length(entry: Option<&TemplateEntry>, job: &LtxJob) -> Result<(), S
 /// Handle an encrypted `ltx_generate` request. Returns `(immediate_ack, optional
 /// background task)`. Seam codes: VALIDATION_FAILED, SIDECAR_UNAVAILABLE, CAPACITY,
 /// GENERATION_FAILED, TIMEOUT (rate-limit maps to CAPACITY — there is no RATE_LIMIT).
-pub async fn handle_encrypted_ltx_generate(
+///
+/// `client_address` is the connection's authenticated client address (`init_signer`): the key of the content-check
+/// cool-down (D13) and the address a refusal is recorded against.
+pub async fn handle_encrypted_ltx_generate_from(
     server: &ApiServer,
     decrypted_json: &Value,
     session_key: &[u8; 32],
     session_id: &str,
     job_id: Option<u64>,
     message_id: Option<&Value>,
+    client_address: Option<&str>,
 ) -> (Value, Option<LtxGenerateTask>) {
     let request_id = decrypted_json
         .get("requestId")
@@ -658,6 +664,16 @@ pub async fn handle_encrypted_ltx_generate(
             .unwrap_or(1800)
     };
 
+    // Content checks (D2): the instant gates, immediately before the slot is taken and so before the signer
+    // reservation. In-memory only (the breaker and the cool-down): this handler is awaited inline in the WebSocket
+    // loop, so nothing here may wait.
+    if let Err(Refusal { code, message }) = server
+        .content_checks()
+        .pre_accept(client_address, session_id)
+    {
+        return reject(code, &message);
+    }
+
     // VRAM admission — hold the owned permit for the job's lifetime.
     let permit = match server.ltx_semaphore().try_acquire_owned() {
         Ok(p) => p,
@@ -690,10 +706,12 @@ pub async fn handle_encrypted_ltx_generate(
                 mp4: 1,
                 sequence: crate::ltx::provenance::wants_sequence(row, &job, relight) as u8,
             },
-            // the job deadline plus the upload and signing tail (D10's retry window)
-            deadline_secs: timeout_secs
-                .saturating_add(900)
-                .min(fabstir_provenance::contract::MAX_DEADLINE_SECS),
+            // the job deadline plus the upload and signing tail (D10's retry window), plus the longest this
+            // job's content checks can take: time spent checking must not eat the signing tail
+            deadline_secs: reservation_deadline_secs(
+                timeout_secs,
+                server.content_checks().max_check_secs(),
+            ),
         };
         match rt.signer.reserve(&req).await {
             Ok(reservation) => crate::ltx::provenance::Grant {
@@ -757,8 +775,30 @@ pub async fn handle_encrypted_ltx_generate(
         panic_seam: None,
         sidecar,
         provenance: Some(provenance),
+        client_address: client_address.map(str::to_string),
     };
     (ack, Some(task))
+}
+
+/// [`handle_encrypted_ltx_generate_from`] without a client address (the cool-down then keys on the session).
+pub async fn handle_encrypted_ltx_generate(
+    server: &ApiServer,
+    decrypted_json: &Value,
+    session_key: &[u8; 32],
+    session_id: &str,
+    job_id: Option<u64>,
+    message_id: Option<&Value>,
+) -> (Value, Option<LtxGenerateTask>) {
+    handle_encrypted_ltx_generate_from(
+        server,
+        decrypted_json,
+        session_key,
+        session_id,
+        job_id,
+        message_id,
+        None,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -797,6 +837,9 @@ pub struct LtxGenerateTask {
     /// AP2: the job's reservation + runtime. `None` only in tests that build a task by hand: `run` then
     /// fails closed before uploading anything.
     pub provenance: Option<crate::ltx::provenance::Grant>,
+    /// Content checks (D13): the connection's authenticated client address (`None` in tests and for callers
+    /// without one; the cool-down then keys on the session).
+    pub client_address: Option<String>,
 }
 
 /// Which panic [`LtxGenerateTask::run`]'s core injects at entry. Test-only;
@@ -989,10 +1032,31 @@ fn validate_input_cids(
     Ok(())
 }
 
+/// The signer reservation's lifetime: the job deadline, the 900 s upload and signing tail, and the longest the
+/// job's content checks can take (0 with checks `off`), capped at the signer contract's maximum.
+pub fn reservation_deadline_secs(timeout_secs: u64, max_check_secs: u64) -> u64 {
+    timeout_secs
+        .saturating_add(900)
+        .saturating_add(max_check_secs)
+        .min(fabstir_provenance::contract::MAX_DEADLINE_SECS)
+}
+
+/// How long a job has been WORKING: wall time less the time it spent in content checks. The relight whole-job
+/// deadline (2700 s) is a measure of rendering and delivery, so check time is not held against it.
+pub fn work_elapsed(
+    elapsed: std::time::Duration,
+    check_time: std::time::Duration,
+) -> std::time::Duration {
+    elapsed.saturating_sub(check_time)
+}
+
 /// One staged input: fetch + integrity-check + decrypt the capability CID from
 /// the S5 portal, run the kind-specific plaintext check, upload to ComfyUI under
 /// the content-addressed name (`keccak256(plaintext)` ⇒ stable under
 /// `overwrite`). Returns (stored name, plaintext keccak) — the commitment input.
+///
+/// Content checks (D6): the awaited check runs between the fetch and the upload, after the cheap checks; the
+/// upload takes the token it mints, so a refused or unchecked input never reaches the renderer.
 async fn stage_input(
     client: &ComfyClient,
     blob_source: &str,
@@ -1000,16 +1064,61 @@ async fn stage_input(
     kind: &str,
     ext: &str,
     mut check: impl FnMut(&[u8]) -> Result<(), String>,
-) -> Result<(String, [u8; 32]), String> {
+    cc: &mut CheckCtx<'_>,
+) -> Result<(String, [u8; 32]), InputFail> {
     let (hash, plaintext) = crate::ltx::input_image::fetch_image_hash(blob_source, cid)
         .await
         .map_err(|e| format!("input {kind} fetch failed: {e}"))?;
     check(&plaintext)?;
+    let checked = if kind == "image" {
+        cc.checks.check_still(cc.job, &plaintext).await?
+    } else {
+        cc.checks.check_clip(cc.job, &plaintext).await?
+    };
+    // recorded (and held) BEFORE the upload: a job ending on another slot must not delete this file in between
+    let wanted = format!("{}.{ext}", hex::encode(hash));
+    cc.checks.note_input(cc.files, cc.relight, &wanted);
     let name = client
-        .upload_input(&format!("{}.{ext}", hex::encode(hash)), plaintext)
+        .upload_input(&wanted, plaintext, checked)
         .await
         .map_err(|e| format!("input {kind} upload failed: {e}"))?;
+    // the renderer is authoritative on the stored name
+    cc.checks.note_input(cc.files, cc.relight, &name);
     Ok((name, hash))
+}
+
+/// The content-check side of input staging: the checker, the job's check budget, and the record of what the job
+/// puts on the renderer's disk (deleted at job end, D9).
+struct CheckCtx<'a> {
+    checks: &'a ContentChecks,
+    job: &'a mut JobChecks,
+    files: &'a mut JobFiles,
+    relight: bool,
+}
+
+/// Why staging the inputs ended the job: the wire code and its message. Every pre-existing failure is a plain
+/// message and keeps `GENERATION_FAILED`; a content-check refusal carries its own code (D10).
+struct InputFail {
+    code: &'static str,
+    message: String,
+}
+
+impl From<String> for InputFail {
+    fn from(message: String) -> Self {
+        InputFail {
+            code: "GENERATION_FAILED",
+            message,
+        }
+    }
+}
+
+impl From<Refusal> for InputFail {
+    fn from(r: Refusal) -> Self {
+        InputFail {
+            code: r.code,
+            message: r.message,
+        }
+    }
 }
 
 /// Resolve a conditioned job's inputs (M1a images + BL3 videos). For each
@@ -1087,7 +1196,8 @@ async fn prepare_inputs(
     deep_total_cap: u64,
     exact: bool,
     prompt_required: bool,
-) -> Result<crate::ltx::Graph, String> {
+    cc: &mut CheckCtx<'_>,
+) -> Result<crate::ltx::Graph, InputFail> {
     let images = job.images.as_deref().unwrap_or_default();
     let videos = job.videos.as_deref().unwrap_or_default();
     if images.is_empty() && videos.is_empty() {
@@ -1097,7 +1207,7 @@ async fn prepare_inputs(
     let mut image_names = Vec::with_capacity(images.len());
     for cid in images {
         let (name, hash) =
-            stage_input(client, &blob_source, cid, "image", "png", |_| Ok(())).await?;
+            stage_input(client, &blob_source, cid, "image", "png", |_| Ok(()), cc).await?;
         image_names.push(name);
         image_hashes.push(hash);
     }
@@ -1124,6 +1234,10 @@ async fn prepare_inputs(
         let frame_cids = crate::ltx::deep_input::parse_deep_manifest(&manifest, job.frames)
             .map_err(|e| format!("deep input rejected: {e}"))?;
         let sub = hex::encode(&hash[..16]);
+        // recorded BEFORE the first frame is uploaded: if a later frame is refused, the frames already uploaded
+        // are deleted with the folder at job end (D6)
+        cc.checks.note_input_dir(cc.files, cc.relight, &sub);
+        let scene_linear = job.input_wire == Some(crate::ltx::types::InputWire::ExrseqLinear);
         let mut total: u64 = 0;
         for (i, frame_cid) in frame_cids.iter().enumerate() {
             let (_, plaintext) = crate::ltx::input_image::fetch_image_hash(&blob_source, frame_cid)
@@ -1134,10 +1248,28 @@ async fn prepare_inputs(
             if total > deep_total_cap {
                 return Err(format!(
                     "deep conform exceeds deepVideoMaxBytes ({deep_total_cap}) at frame {i} — refusing"
-                ));
+                )
+                .into());
             }
+            // D6: sampled frames are judged as stills before THIS frame is uploaded
+            let checked = cc
+                .checks
+                .check_deep_frame(
+                    cc.job,
+                    i,
+                    frame_cids.len(),
+                    job.fps,
+                    scene_linear,
+                    &plaintext,
+                )
+                .await?;
             client
-                .upload_input_in(Some(&sub), &format!("frame_{:05}.exr", i + 1), plaintext)
+                .upload_input_in(
+                    Some(&sub),
+                    &format!("frame_{:05}.exr", i + 1),
+                    plaintext,
+                    checked,
+                )
                 .await
                 .map_err(|e| format!("deep frame {i} upload failed: {e}"))?;
         }
@@ -1150,8 +1282,13 @@ async fn prepare_inputs(
             // pass-through is dropped, never a refusal — Jules: no error in any mode).
             let mut keep_audio = false;
             let mut samples = 0u64;
-            let (name, hash) =
-                stage_input(client, &blob_source, cid, "video", "mp4", |plaintext| {
+            let (name, hash) = stage_input(
+                client,
+                &blob_source,
+                cid,
+                "video",
+                "mp4",
+                |plaintext| {
                     samples = check_control_video_exact(plaintext, job.frames, exact)?;
                     keep_audio =
                         crate::ltx::mp4::audio_passthrough_ok(plaintext).unwrap_or_else(|e| {
@@ -1161,8 +1298,10 @@ async fn prepare_inputs(
                             false
                         });
                     Ok(())
-                })
-                .await?;
+                },
+                cc,
+            )
+            .await?;
             if !keep_audio {
                 silent_videos.push(name.clone());
             }
@@ -1180,8 +1319,8 @@ async fn prepare_inputs(
     let patched = patcher::patch_with(&graph, job, &image_names, &video_names, &opts)
         .map_err(|e| format!("input patch failed: {e}"))?;
     // D23: AFTER patch (it matches the staged names `patch` wrote into the loaders).
-    patcher::drop_silent_audio(&patched, &silent_videos)
-        .map_err(|e| format!("input patch failed: {e}"))
+    Ok(patcher::drop_silent_audio(&patched, &silent_videos)
+        .map_err(|e| format!("input patch failed: {e}"))?)
 }
 
 impl LtxGenerateTask {
@@ -1231,6 +1370,7 @@ impl LtxGenerateTask {
             panic_seam,
             sidecar,
             provenance,
+            client_address,
         } = self;
         // VFX Passes: the whole-job deadline runs from here (D3); relight jobs take the relight-only paths below.
         let started = std::time::Instant::now();
@@ -1250,6 +1390,13 @@ impl LtxGenerateTask {
             let mut pending_resolved = false;
             // D8: set once the sidecar accepted a prompt; a relight job then always ends with `/interrupt`.
             let mut submitted_prompt = false;
+            // Content checks: the checker (a no-op that only mints tokens when `off`), and what this job puts on
+            // the renderer's disk — deleted at job end on every exit (D9, question 3).
+            let checks = server.content_checks();
+            let checks_on = checks.mode() != crate::ltx::checks::config::Mode::Off;
+            let mut job_files = JobFiles::default();
+            let mut listed_prompt: Option<String> = None;
+            let mut outputs_listed = false;
 
             // The core runs as an inner future so that EVERY exit (there are
             // ~10 early returns) funnels through the ONE cleanup below —
@@ -1308,6 +1455,29 @@ impl LtxGenerateTask {
                     .await
                     {
                         send_err(&progress_tx, "VALIDATION_FAILED", &e, key, sid, rid).await;
+                        return;
+                    }
+                }
+                // Content checks (D7): the prompt, first step after the session gate — before admission, staging
+                // or GPU time. The send doubles as a disconnect gate. Nothing here runs when checks are `off`.
+                let mut cjob = checks.job(sid, job_id, client_address.as_deref());
+                if checks_on {
+                    if !send_stage(&progress_tx, "checking", 0, key, sid, rid).await {
+                        warn!("LTX job abandoned before its checks: client disconnected");
+                        return;
+                    }
+                    let fixed_prompt = match server.get_ltx_template_store().await {
+                        Some(store) => store
+                            .entry(&job.template_id)
+                            .and_then(|e| e.fixed_prompt.as_ref())
+                            .is_some(),
+                        None => false,
+                    };
+                    if let Err(refusal) = checks
+                        .check_prompt(&mut cjob, &job.prompt, fixed_prompt)
+                        .await
+                    {
+                        send_err(&progress_tx, refusal.code, &refusal.message, key, sid, rid).await;
                         return;
                     }
                 }
@@ -1378,12 +1548,18 @@ impl LtxGenerateTask {
                     deep_total_cap,
                     exact,
                     prompt_required,
+                    &mut CheckCtx {
+                        checks: &checks,
+                        job: &mut cjob,
+                        files: &mut job_files,
+                        relight: is_relight,
+                    },
                 )
                 .await
                 {
                     Ok(g) => g,
                     Err(e) => {
-                        send_err(&progress_tx, "GENERATION_FAILED", &e, key, sid, rid).await;
+                        send_err(&progress_tx, e.code, &e.message, key, sid, rid).await;
                         return;
                     }
                 };
@@ -1401,6 +1577,7 @@ impl LtxGenerateTask {
                 let prompt_id = match client.submit(&patched_graph).await {
                     Ok(p) => {
                         submitted_prompt = true;
+                        listed_prompt = Some(p.clone());
                         p
                     }
                     Err(e) => {
@@ -1487,7 +1664,7 @@ impl LtxGenerateTask {
                 if is_relight {
                     if let crate::ltx::relight::FinaliseDecision::Abandon(m) =
                         crate::ltx::relight::relight_finalise_decision(
-                            started.elapsed(),
+                            work_elapsed(started.elapsed(), cjob.total),
                             std::time::Duration::from_secs(admit_cfg.deadline_secs),
                             Ok(()),
                         )
@@ -1500,7 +1677,18 @@ impl LtxGenerateTask {
                 // NOT a glob of the shared output dir, which would leak other concurrent
                 // jobs' frames into this manifest/capability set.
                 let output_refs = match client.outputs(&prompt_id).await {
-                    Ok(r) => r,
+                    Ok(r) => {
+                        outputs_listed = true;
+                        for o in &r {
+                            checks.note_output(
+                                &mut job_files,
+                                is_relight,
+                                &o.subfolder,
+                                &o.filename,
+                            );
+                        }
+                        r
+                    }
                     Err(e) => {
                         send_err(
                             &progress_tx,
@@ -1585,6 +1773,8 @@ impl LtxGenerateTask {
                         .unwrap_or_else(|| "unknown".to_string()),
                     prompt_id
                 );
+                // retention never touches a job that is being worked on (held until this task ends)
+                let _in_flight = crate::ltx::retention::hold(&job_tag);
 
                 // Stage-transition sends double as DISCONNECT GATES: a failed
                 // send means the client is gone, and every capability CID
@@ -1616,8 +1806,15 @@ impl LtxGenerateTask {
                 };
                 let signing_deadline = crate::ltx::provenance::finalise::signing_deadline(
                     grant.reservation.expires_at,
-                    is_relight
-                        .then(|| started + std::time::Duration::from_secs(admit_cfg.deadline_secs)),
+                    // the relight whole-job deadline, extended by the longest the checks can take
+                    is_relight.then(|| {
+                        started
+                            + std::time::Duration::from_secs(
+                                admit_cfg
+                                    .deadline_secs
+                                    .saturating_add(checks.max_check_secs()),
+                            )
+                    }),
                 );
                 let mut prov = crate::ltx::provenance::finalise::ProvenanceCtx {
                     reservation: grant.reservation,
@@ -1636,6 +1833,9 @@ impl LtxGenerateTask {
                 let total = output_refs.len();
                 let mut caps = Vec::with_capacity(total);
                 let mut hashes = Vec::with_capacity(total);
+                // Content checks (D5): set by the result check on the job's FIRST artefact; every output's marking
+                // needs it, so nothing is marked, uploaded or billed for a job whose result was not checked.
+                let mut result_checked: Option<crate::ltx::checks::ResultChecked> = None;
                 for (i, r) in output_refs.iter().enumerate() {
                     let dest = format!("home/ltx/job_{job_tag}/frame_{i:05}.bin");
                     // Pull the rendered file over ComfyUI's /view (no shared volume), then
@@ -1655,10 +1855,46 @@ impl LtxGenerateTask {
                             return;
                         }
                     };
+                    if result_checked.is_none() {
+                        if checks_on
+                            && !send_stage(&progress_tx, "checking", 0, key, sid, rid).await
+                        {
+                            warn!("LTX job abandoned before its result check: client disconnected");
+                            return;
+                        }
+                        match checks.check_result(&mut cjob, &r.filename, &bytes).await {
+                            Ok(token) => result_checked = Some(token),
+                            Err(refusal) => {
+                                send_err(
+                                    &progress_tx,
+                                    refusal.code,
+                                    &refusal.message,
+                                    key,
+                                    sid,
+                                    rid,
+                                )
+                                .await;
+                                return;
+                            }
+                        }
+                    }
+                    let Some(checked) = result_checked.as_ref() else {
+                        send_err(
+                            &progress_tx,
+                            crate::ltx::checks::CHECK_UNAVAILABLE,
+                            crate::ltx::checks::MSG_UNAVAILABLE,
+                            key,
+                            sid,
+                            rid,
+                        )
+                        .await;
+                        return;
+                    };
                     let bytes = match crate::ltx::provenance::finalise::finalise_output(
                         &mut prov,
                         &r.filename,
                         bytes,
+                        checked,
                     )
                     .await
                     {
@@ -1814,7 +2050,7 @@ impl LtxGenerateTask {
                         crate::ltx::template::check_session_terms(s, host, tokens, tracked)
                     });
                     match crate::ltx::relight::relight_finalise_decision(
-                        started.elapsed(),
+                        work_elapsed(started.elapsed(), cjob.total),
                         std::time::Duration::from_secs(admit_cfg.deadline_secs),
                         terms,
                     ) {
@@ -1984,6 +2220,36 @@ impl LtxGenerateTask {
                 let _ =
                     tokio::time::timeout(std::time::Duration::from_secs(10), client.interrupt())
                         .await;
+            }
+            // Content checks (D9, question 3): delete what this job left in the renderer's folders — on every
+            // exit, a refusal included — while the slot is still held, so the next job can never be handed a
+            // file this one is deleting. Every await here is bounded; nothing runs when the folders are not set.
+            if checks.tracks_files(is_relight) {
+                if let (Some(pid), false) = (listed_prompt.as_deref(), outputs_listed) {
+                    // the job ended before it listed its outputs (a failed or interrupted render)
+                    let listing = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        client.outputs(pid),
+                    )
+                    .await;
+                    if let Ok(Ok(refs)) = listing {
+                        for o in &refs {
+                            checks.note_output(
+                                &mut job_files,
+                                is_relight,
+                                &o.subfolder,
+                                &o.filename,
+                            );
+                        }
+                    }
+                }
+                let ids = format!(
+                    "session={} job={job_id:?}",
+                    crate::ltx::checks::safe_id(sid)
+                );
+                checks
+                    .delete_job_files(is_relight, std::mem::take(&mut job_files), &ids)
+                    .await;
             }
             // Render is over on every core exit — release the VRAM slot before
             // any settlement sleeps (the deferred path can wait 35s+).

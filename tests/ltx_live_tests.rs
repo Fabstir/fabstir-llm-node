@@ -142,9 +142,15 @@ async fn upload_deep(client: &ComfyClient, dir: &str) -> Result<String, String> 
         "deep-{}",
         &hex::encode(ethers::utils::keccak256(&digest))[..16]
     );
+    // 8.65.0: an upload needs the check step's token; this live harness runs with checks `off`
+    let off = fabstir_llm_node::ltx::checks::ContentChecks::off();
     for (i, (f, bytes)) in frames.iter().zip(all).enumerate() {
+        let token = off
+            .check_clip(&mut off.job("live", None, None), &bytes)
+            .await
+            .map_err(|r| r.message)?;
         client
-            .upload_input_in(Some(&sub), &format!("frame_{:05}.exr", i + 1), bytes)
+            .upload_input_in(Some(&sub), &format!("frame_{:05}.exr", i + 1), bytes, token)
             .await
             .map_err(|e| format!("uploading {}: {e}", f.display()))?;
     }
@@ -195,8 +201,14 @@ async fn upload_all(client: &ComfyClient, paths: &[String]) -> Result<Vec<String
     let mut names = Vec::with_capacity(paths.len());
     for p in paths {
         let bytes = std::fs::read(p).map_err(|e| format!("reading input {p}: {e}"))?;
+        // 8.65.0: an upload needs the check step's token; this live harness runs with checks `off`
+        let off = fabstir_llm_node::ltx::checks::ContentChecks::off();
+        let token = off
+            .check_clip(&mut off.job("live", None, None), &bytes)
+            .await
+            .map_err(|r| r.message)?;
         let name = client
-            .upload_input(&content_name(&bytes, p), bytes)
+            .upload_input(&content_name(&bytes, p), bytes, token)
             .await
             .map_err(|e| format!("uploading {p}: {e}"))?;
         names.push(name);

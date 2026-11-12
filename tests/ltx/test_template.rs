@@ -997,6 +997,7 @@ fn bare_entry(id: &str) -> fabstir_llm_node::ltx::template::TemplateEntry {
         max_frames: None,
         min_frames: None,
         max_tokens: None,
+        frame_tiers: None,
         resolution_rule: None,
         exact_control: None,
         frame_grid: None,

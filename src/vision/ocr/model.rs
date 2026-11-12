@@ -279,8 +279,8 @@ impl PaddleOcrModel {
                     }
 
                     debug!(
-                        "Recognized: '{}' (confidence: {:.2}%)",
-                        recognized.text,
+                        "Recognized {} chars (confidence: {:.2}%)",
+                        recognized.text.chars().count(),
                         recognized.confidence * 100.0
                     );
 

@@ -212,7 +212,7 @@ async fn handle_connection(
     while let Some(msg) = rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                debug!("Received text from {}: {}", conn_id, text);
+                debug!("Received text from {}: {} bytes", conn_id, text.len());
 
                 // Parse and handle message
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {

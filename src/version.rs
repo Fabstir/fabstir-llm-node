@@ -3,25 +3,41 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.64.0-ai-provenance-2026-11-09";
+pub const VERSION: &str = "v8.65.0-content-checks-2026-11-12";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.64.0";
+pub const VERSION_NUMBER: &str = "8.65.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 64;
+pub const VERSION_MINOR: u32 = 65;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-09";
+pub const BUILD_DATE: &str = "2026-11-12";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.65.0 content checks on the video path (IMPLEMENTATION-CONTENT-CHECKS-LTX.md): the prompt, every input and
+    // the result are checked by the host's moderation service before anything is marked, uploaded or billed; a
+    // refused job bills nothing (CONTENT_REFUSED), a check that cannot run refuses too (CHECK_UNAVAILABLE). Mode
+    // LTX_CONTENT_CHECKS=off|shadow|enforce, reported on /v1/version. Each job's renderer files are deleted at
+    // job end where the renderer's folders are mounted. Bundle 50 required (no Gemma adapter in the prompt step).
+    "ltx-content-checks",
+    "ltx-content-refused-code",
+    "ltx-check-unavailable-code",
+    "ltx-job-files-deleted",
+    "ltx-bundle-50",
+    // v8.65.0: an allow-list entry may carry `frameTiers` (at most N frames above a pixel count), enforced before
+    // accept; the node deletes encrypted results from the storage portal after LTX_RESULT_RETENTION_DAYS (default 30);
+    // no log line carries prompt, search or image text.
+    "ltx-frame-tiers",
+    "ltx-result-retention",
+    "content-free-logs",
     // v8.64.0 AI provenance (IMPLEMENTATION-AI-PROVENANCE.md AP2): every LTX output is marked before upload: a signed
     // C2PA manifest from the provenance signer (the node never holds the key), the MPEG-7 fingerprint of every
     // picture output registered with it (pinned ffmpeg), EXR frames with a header record + a signed sequence
@@ -702,6 +718,11 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.65.0 - content checks on the video path (Nov 12, 2026)
+    "BREAKING (LTX/relight hosts): LTX_CONTENT_CHECKS=off|shadow|enforce is REQUIRED whenever COMFY_URL or RELIGHT_URL is set; missing or unknown stops the node. shadow also needs LTX_CONTENT_CHECKS_SHADOW_UNTIL (YYYY-MM-DD), LTX_CHECKS_SOCKET, LTX_CHECKS_STAGING_DIR and LTX_CHECKS_STAGING_DIR_SERVICE. enforce also needs COMFY_INPUT_DIR and COMFY_OUTPUT_DIR (writable; RELIGHT_INPUT_DIR and RELIGHT_OUTPUT_DIR too when RELIGHT_URL is set), LTX_EVIDENCE_PUBKEY, LTX_EVIDENCE_DIR and LTX_CHECKS_BUNDLE_HASH",
+    "BREAKING (LTX/relight hosts): the template bundle must be allowListVersion 50 or later (the four prompt-improvement graphs no longer load gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors; their template hashes moved). An older bundle is not loaded and every video job is refused. The provenance signer must allow node 8.65.0 and bundle 50",
+    "BREAKING (LTX wire, enforce and shadow hosts only): two new ltx_error codes after accept, CONTENT_REFUSED (final) and CHECK_UNAVAILABLE (try later; also sent before accept while the check service is not ready or an address is paused after repeated refusals); neither bills anything. A new ltx_progress stage \"checking\". An input or prompt the check cannot read is refused with VALIDATION_FAILED after accept. With LTX_CONTENT_CHECKS=off the wire is unchanged",
+    "v8.65.0: where COMFY_INPUT_DIR and COMFY_OUTPUT_DIR are set (any mode), each job's uploaded inputs and its outputs are deleted from the renderer's folders when the job ends",
     // v8.64.0 - AI provenance (Nov 9, 2026)
     "BREAKING (LTX/relight hosts): generation now REQUIRES provenance: PROVENANCE_SIGNER_URL (the provenance signer; this host's address on its allow-list and this node version in its node_versions), HOST_PRIVATE_KEY, PROVENANCE_FFMPEG (the pinned static ffmpeg 7.0.2, sha256 e7e7fb30..., shipped in Dockerfile.production at /opt/provenance/ffmpeg) and a template bundle whose every template has a provenance class (bundle v49). Without them LTX and relight are disabled at startup (jobs answer 503); a bundle with an unclassed template is not loaded",
     "BREAKING (LTX wire): every job reserves a manifest slot at accept; a signer outage refuses the job with CAPACITY PROVENANCE_UNAVAILABLE before any GPU time. A marking failure after generation ends the job with PROVENANCE_FAILED: nothing uploaded, no proof, not billed. Delivered mp4s carry a C2PA manifest (bytes added: the reserve + about 2 KB); EXR frames carry the platformlessai:provenance header attribute",
@@ -1262,7 +1283,16 @@ mod tests {
         assert!(FEATURES.contains(&"ai-provenance-c2pa"));
         assert!(FEATURES.contains(&"ai-provenance-fingerprint"));
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 64);
+        // v8.65.0
+        assert!(FEATURES.contains(&"ltx-content-checks"));
+        assert!(FEATURES.contains(&"ltx-frame-tiers"));
+        assert!(FEATURES.contains(&"ltx-result-retention"));
+        assert!(FEATURES.contains(&"content-free-logs"));
+        assert!(FEATURES.contains(&"ltx-content-refused-code"));
+        assert!(FEATURES.contains(&"ltx-check-unavailable-code"));
+        assert!(FEATURES.contains(&"ltx-job-files-deleted"));
+        assert!(FEATURES.contains(&"ltx-bundle-50"));
+        assert_eq!(VERSION_MINOR, 65);
         assert_eq!(VERSION_PATCH, 0);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
@@ -1488,15 +1518,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.64.0"));
-        assert!(version.contains("2026-11-09"));
+        assert!(version.contains("8.65.0"));
+        assert!(version.contains("2026-11-12"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.64.0-ai-provenance-2026-11-09");
-        assert_eq!(VERSION_NUMBER, "8.64.0");
-        assert_eq!(BUILD_DATE, "2026-11-09");
+        assert_eq!(VERSION, "v8.65.0-content-checks-2026-11-12");
+        assert_eq!(VERSION_NUMBER, "8.65.0");
+        assert_eq!(BUILD_DATE, "2026-11-12");
     }
 
     #[test]

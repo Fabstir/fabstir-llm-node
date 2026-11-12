@@ -10,6 +10,7 @@ import { getS5Client, getS5Status, getAdvancedClient } from './s5_client.js';
 import { acquireDirectoryLock, parentDir, activeLockCount } from './dir_mutex.js';
 import { BlobIdentifier } from '@julesl23/s5js/dist/src/identifier/blob.js';
 import { MULTIHASH_BLAKE3 } from '@julesl23/s5js/dist/src/constants.js';
+import { pruneOlderThan } from './prune.js';
 
 /**
  * Register all routes with Fastify server
@@ -287,6 +288,29 @@ export async function registerRoutes(fastify) {
         path,
         message: error.message,
       });
+    }
+  });
+
+  // POST /s5/prune - Retention: delete old job results under a prunable tree and release their blobs on the
+  // portal (see prune.js). Body: { prefix, olderThanSecs, maxEntries?, exclude?: [names] }. Answers counts only.
+  fastify.post('/s5/prune', async (request, reply) => {
+    const s5 = getS5Client();
+    if (!s5) {
+      return reply.code(503).send({ error: 'S5 client not initialized' });
+    }
+    try {
+      const counts = await pruneOlderThan(s5, request.body ?? {}, {
+        lock: acquireDirectoryLock,
+        advanced: getAdvancedClient(),
+      });
+      fastify.log.info(counts, 'Retention prune finished');
+      reply.code(200).send(counts);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        return reply.code(400).send({ error: error.message });
+      }
+      fastify.log.error({ error: error.message }, 'Retention prune failed');
+      reply.code(500).send({ error: 'Prune failed', message: error.message });
     }
   });
 

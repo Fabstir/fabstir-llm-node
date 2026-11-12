@@ -137,6 +137,7 @@ base64 = "0.22"
 k256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
+exr = "1.74"                    # content checks (D6): deep EXR input frames are converted to 8-bit PNG for the still check
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 # Production hardening dependencies  
@@ -172,7 +173,6 @@ data-encoding = "2.10.0"
 [dev-dependencies]
 # AP2: the real signer in-process (testkit: staging chain + local TSA) and EXR test frames
 provenance-signer = { path = "services/provenance-signer", features = ["testkit"] }
-exr = "1.74"
 tokio-test = "0.4"
 tokio = { version = "1.35", features = ["test-util"] }
 mockall = "0.12"

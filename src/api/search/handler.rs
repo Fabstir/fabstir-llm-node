@@ -36,7 +36,10 @@ pub async fn search_handler(
     State(state): State<AppState>,
     Json(request): Json<SearchApiRequest>,
 ) -> Result<Json<SearchApiResponse>, (StatusCode, String)> {
-    debug!("Search request: {:?}", request.query);
+    debug!(
+        "Search request: query of {} chars",
+        request.query.chars().count()
+    );
 
     // Validate request
     if let Err(e) = request.validate() {
@@ -72,8 +75,11 @@ pub async fn search_handler(
         })?;
 
     info!(
-        "Search complete: {} results for '{}' in {}ms (cached: {})",
-        result.result_count, request.query, result.search_time_ms, result.cached
+        "Search complete: {} results for a query of {} chars in {}ms (cached: {})",
+        result.result_count,
+        request.query.chars().count(),
+        result.search_time_ms,
+        result.cached
     );
 
     Ok(Json(SearchApiResponse::new(

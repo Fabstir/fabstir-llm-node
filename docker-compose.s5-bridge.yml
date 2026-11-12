@@ -1,8 +1,18 @@
 # S5 Bridge Service - Run alongside your existing LLM node setup
 # Usage: docker-compose -f docker-compose.s5-bridge.yml up -d
 
+# Container logs (legal 2.4): Docker's json-file driver keeps a log for ever unless told otherwise. Every service
+# below is capped at 5 files of 50 MB (250 MB each). Limits apply when a container is CREATED: after pulling this
+# change, recreate the containers (`up -d --force-recreate`); a restart is not enough.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   s5-bridge:
+    logging: *default-logging
     build:
       context: ./services/s5-bridge
       dockerfile: Dockerfile

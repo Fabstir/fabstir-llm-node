@@ -228,10 +228,9 @@ impl FlorenceDecoder {
                 .collect();
 
             info!(
-                "Prompt '{}' tokenized to {} tokens: {:?}",
-                prompt_text,
-                prompt_tokens.len(),
-                prompt_tokens
+                "Prompt of {} chars tokenized to {} tokens",
+                prompt_text.chars().count(),
+                prompt_tokens.len()
             );
             tokens.extend(prompt_tokens);
         } else {

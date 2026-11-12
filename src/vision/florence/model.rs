@@ -288,7 +288,10 @@ impl FlorenceModel {
 
         // 3. Determine prompt
         let generation_prompt = prompt.unwrap_or_else(|| detail_level.prompt_prefix());
-        info!("Step 3: Using prompt: '{}'", generation_prompt);
+        info!(
+            "Step 3: Using a prompt of {} chars",
+            generation_prompt.chars().count()
+        );
 
         // 4. Generate description
         info!("Step 4: Generating text from embeddings...");
@@ -296,15 +299,7 @@ impl FlorenceModel {
             .decoder
             .generate(&embeddings, Some(generation_prompt))
             .context("Failed to generate description")?;
-        info!(
-            "Generated text: '{}' ({} chars)",
-            if description.len() > 50 {
-                &description[..50]
-            } else {
-                &description
-            },
-            description.len()
-        );
+        info!("Generated text: {} chars", description.chars().count());
 
         let processing_time_ms = start.elapsed().as_millis() as u64;
 

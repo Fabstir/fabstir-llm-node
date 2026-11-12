@@ -5,6 +5,7 @@
 pub mod attestation;
 pub mod billing;
 pub mod capacity;
+pub mod checks;
 pub mod client;
 pub mod deep_input;
 pub mod engine;
@@ -15,6 +16,7 @@ pub mod patcher;
 pub mod provenance;
 pub mod rate_limiter;
 pub mod relight;
+pub mod retention;
 pub mod submit;
 pub mod template;
 pub mod types;

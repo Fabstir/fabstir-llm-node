@@ -743,6 +743,122 @@ The node's scan endpoint now returns `blocked` for the listed file and
 transcoder-side moderation tap and the enforcement flags must also be
 configured — see the transcoder deployment guide.
 
+### 7. Content Checks on Video Generation (node 8.65.0 and later)
+
+A node that offers video generation (`COMFY_URL` or `RELIGHT_URL` is set) must state how it checks content.
+There is no default: the node refuses to start when `LTX_CONTENT_CHECKS` is missing or misspelt.
+
+| Mode | What the node does |
+|---|---|
+| `off` | No check runs. For hosts outside the checked service. |
+| `shadow` | Every check runs and is logged; nothing is refused. Needs an end date, after which video jobs are rejected. |
+| `enforce` | The prompt, every input and the result are checked. A refused job bills nothing. A check that cannot run refuses the job too. |
+
+The checks are made by the moderation service (`fabstir-moderation`, bundle v2, profile `generation`) on the same
+host, reached over a Unix socket. Items are handed over through a small memory-backed staging directory that the
+node writes and the service reads.
+
+**Settings**
+
+| Setting | Needed in | Meaning |
+|---|---|---|
+| `LTX_CONTENT_CHECKS` | always (with video generation) | `off`, `shadow` or `enforce` |
+| `LTX_CONTENT_CHECKS_SHADOW_UNTIL` | `shadow` | Last day of the shadow period, `YYYY-MM-DD` (UTC) |
+| `LTX_CHECKS_SOCKET` | `shadow`, `enforce` | Path of the moderation service's Unix socket |
+| `LTX_CHECKS_STAGING_DIR` | `shadow`, `enforce` | The staging directory as the node sees it (absolute, writable) |
+| `LTX_CHECKS_STAGING_DIR_SERVICE` | `shadow`, `enforce` | The same directory as the service sees it |
+| `LTX_CHECKS_BUNDLE_HASH` | `enforce` | The service's bundle hash (`sha256:<64 hex>`), as reported by its `GET /v1/bundle`. The node runs no check against any other bundle |
+| `COMFY_INPUT_DIR`, `COMFY_OUTPUT_DIR` | `enforce` | ComfyUI's `input` and `output` folders, mounted writable into the node |
+| `RELIGHT_INPUT_DIR`, `RELIGHT_OUTPUT_DIR` | `enforce`, when `RELIGHT_URL` is set | The relight sidecar's input and output folders, mounted writable |
+| `LTX_EVIDENCE_PUBKEY` | `enforce` | secp256k1 public key (hex) that the strongest-signal items are sealed to. The private key is never placed on a host |
+| `LTX_EVIDENCE_DIR` | `enforce` | Directory for sealed items (created owner-only). Keep it on persistent disk and out of any clean-up job |
+| `LTX_REFUSALS_FILE` | optional | One JSON line per refusal (figures and identifiers only). Must be an absolute path. Default: `refusals.jsonl` inside `LTX_EVIDENCE_DIR` |
+| `LTX_CHECKS_ALERT_URL` | optional, recommended | Alerts are POSTed here as one plain-text line (an ntfy topic works). Without it alerts go to the log only |
+| `LTX_CHECKS_STAGING_MAX_BYTES` | optional | Size of the staging area in bytes (default 536870912, that is 512 MiB) |
+
+**Staging directory.** Create a memory-backed directory of 512 MiB, mode 0770, owned by the user the node and the
+service both run as, and mount it into the node read-write and into the service read-only:
+
+```bash
+sudo mkdir -p /run/fabstir-checks-staging
+sudo mount -t tmpfs -o size=512m,mode=0770,uid=<uid>,gid=<gid> tmpfs /run/fabstir-checks-staging
+```
+
+The node writes each item as `.part`, renames it, asks the service, and deletes it after the answer. It clears
+leftovers when it starts. A full staging directory refuses the job (`CHECK_UNAVAILABLE`); it never skips a check.
+
+**What a client sees.** Two error codes, neither of which bills anything: `CONTENT_REFUSED` (final) and
+`CHECK_UNAVAILABLE` (try again later). The node does not say which check or rule refused a job. While the
+moderation service is down, slow or on the wrong bundle the node rejects video jobs before accepting them, and
+resumes by itself once the service is healthy and a built-in test clip passes. After a third refusal in 24 hours
+an address is paused for ten minutes after each further refusal.
+
+**Three failures in a row.** If three checks in a row, across jobs, end without a verdict (a timeout, an answer
+the node does not recognise, a staging failure), the node stops accepting video jobs even though its built-in test
+clip still passes, and keeps them stopped for at least five minutes. This catches a service that works on the
+small test clip and fails on real material. Any real verdict in between starts the count again; a file that
+cannot be checked because of the file itself is never counted.
+
+**Files named `kept-…` in the staging directory need a person.** If an item that had to be sealed could be written
+neither sealed nor to `unsealed/` in `LTX_EVIDENCE_DIR`, the node keeps the staged copy under the name
+`kept-<name>` and sends a `seal-failed` alert saying `kept=staging`. The node never deletes such a file, and it
+counts against the staging size limit until it is moved. The staging directory is memory-backed, so move the file
+to the evidence disk before the host is rebooted.
+
+**Files.** When `COMFY_INPUT_DIR` and `COMFY_OUTPUT_DIR` are set (in any mode), the node deletes each job's
+uploaded inputs and its outputs from those folders when the job ends. It never deletes anything else there and
+never touches `LTX_EVIDENCE_DIR`. `COMFY_OUTPUT_DIR` on its own (as `docker-compose.prod.yml` has always set it)
+changes nothing: deletion needs both folders. ComfyUI's `temp` folder is not mounted and is not cleaned by the node.
+
+**Upgrading a host that does not generate video.** `docker-compose.prod.yml` sets `COMFY_URL` by default, so the
+node counts as offering video generation. Before upgrading to 8.65.0 either set `LTX_CONTENT_CHECKS=off` or set
+`COMFY_URL=` (empty) in `.env`; otherwise the node stops at start-up with a message naming the missing setting.
+
+**Status.** `GET /v1/version` reports `contentChecks`: the mode, the pinned bundle hash and whether the breaker is
+`open` (video jobs rejected) or `closed`.
+
+**Sealed items.** Only the strongest signal is sealed. A sealed file can be opened only with the private key, on
+an offline machine, using the `open-evidence` tool that ships with the node:
+
+```bash
+open-evidence keygen --out-key evidence.key      # once; prints LTX_EVIDENCE_PUBKEY for the host
+open-evidence seal-test --pubkey <hex> --out test.sealed
+open-evidence open --key-file evidence.key test.sealed --out-dir opened/
+```
+
+**Template bundle.** Node 8.65.0 loads only template bundle 50 or later. Bundle 50 no longer uses
+`gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors`; a host may delete that file. The provenance signer
+must allow node version 8.65.0 and bundle 50.
+
+**Retention of delivered results (`LTX_RESULT_RETENTION_DAYS`, default 30; `0` never deletes).** A video job's
+encrypted frames and manifest are written through the S5 bridge to `home/ltx/job_<id>/` on the storage portal, where
+the customer's software collects them. When the node starts, and once a day after that, it asks the bridge
+(`POST /s5/prune`) to delete the job entries whose newest file is older than the period and to release their data
+on the portal (the bridge drops this host's pin on each blob, then removes the entry; an entry whose blob the portal
+will not release is kept and tried again next day). At most 500 jobs go per run; a backlog is worked off hourly. A
+job the node is working on is never touched. The node logs counts only. The bridge image must be rebuilt for the
+route to exist (`docker compose up -d --build s5-bridge`); with an older bridge the node logs one failed run a day
+and deletes nothing. A value that is not a whole number of days from 0 to 3650 stops the node at start-up.
+
+### 8. Container Log Rotation
+
+Docker's default `json-file` log driver keeps each container's log for ever. `docker-compose.prod.yml` and
+`docker-compose.s5-bridge.yml` therefore give every service the same limit: 5 files of 50 MB, so at most 250 MB of
+log per container, the oldest file being deleted as a new one starts.
+
+The limit is fixed when a container is **created**. Existing containers keep their unlimited log until they are
+recreated; a restart is not enough:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --force-recreate
+docker inspect --format '{{.HostConfig.LogConfig}}' llm-node-prod    # shows max-size:50m max-file:5
+```
+
+Recreating a container discards its old, unlimited log file. Containers started outside these two compose files
+(the moderation service, anything run by hand) need the same `logging` block in their own compose file, or a
+host-wide default in `/etc/docker/daemon.json` (`"log-opts": {"max-size": "50m", "max-file": "5"}`), which also
+applies only to containers created afterwards.
+
 ## Monitoring Setup
 
 ### 1. Prometheus Configuration

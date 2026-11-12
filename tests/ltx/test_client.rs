@@ -38,8 +38,14 @@ async fn test_upload_input_returns_stored_name() {
     let url = spawn_upload_server().await;
     let client = ComfyClient::new(&url).unwrap();
     // ComfyUI is authoritative on the stored name; the client returns whatever it assigns.
+    // 8.65.0: an upload needs the check step's token; with checks `off` it is minted without any check running
+    let off = fabstir_llm_node::ltx::checks::ContentChecks::off();
+    let token = off
+        .check_still(&mut off.job("test", None, None), b"\x89PNG\r\n\x1a\n")
+        .await
+        .unwrap();
     let name = client
-        .upload_input("egyptian_queen.png", b"\x89PNG\r\n\x1a\n".to_vec())
+        .upload_input("egyptian_queen.png", b"\x89PNG\r\n\x1a\n".to_vec(), token)
         .await
         .unwrap();
     assert_eq!(name, "img_abc.png");

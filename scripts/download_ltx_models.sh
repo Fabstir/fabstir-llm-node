@@ -8,6 +8,8 @@
 # enumerated 2026-07-23): 15 files, ~85.5 GB, in ComfyUI category subdirs. Sizes
 # are exact bytes from that host — a size mismatch means a wrong/partial file.
 # The Foley LoRA is deliberately EXCLUDED (licence-parked; not in allowlist v16).
+# The abliterated Gemma adapter (gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors) is EXCLUDED from bundle
+# v50 on (node 8.65.0): no template loads it, so a host need not hold it and may delete its copy.
 #
 # Layout produced (mounted at /opt/ComfyUI/models by docker-compose.prod.yml):
 #   $MODELS_DIR/checkpoints/            two 22B fp8 checkpoints
@@ -38,7 +40,6 @@ checkpoints|ltx-2.3-22b-distilled-fp8.safetensors|29531884062|https://huggingfac
 latent_upscale_models|ltx-2.3-spatial-upscaler-x2-1.1.safetensors|995743560|https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
 loras|ltx-2.3-22b-distilled-lora-384.safetensors|7605507256|https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors
 text_encoders|gemma_3_12B_it_fp4_mixed.safetensors|9447702218|https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors
-loras|gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors|628203616|https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors
 loras|ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors|2741024390|https://huggingface.co/Comfy-Org/ltx-2.3/resolve/main/split_files/loras/ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors
 loras|ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors|654465352|https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control/resolve/main/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
 loras|ltx-2.3-22b-ic-lora-water-simulation-0.9.safetensors|906071437|https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Water-Simulation/resolve/main/ltx-2.3-22b-ic-lora-water-simulation-0.9.safetensors

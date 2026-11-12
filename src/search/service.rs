@@ -104,7 +104,7 @@ impl SearchService {
 
         // Check cache first
         if let Some((results, provider)) = self.cache.get(query) {
-            debug!("Cache hit for query: {}", query);
+            debug!("Cache hit for a query of {} chars", query.chars().count());
             return Ok(SearchResponse {
                 query: query.to_string(),
                 results: results.clone(),

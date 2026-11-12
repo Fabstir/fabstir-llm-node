@@ -103,6 +103,13 @@ pub struct TemplateEntry {
     /// (8.60.4 CL1: the same field and check as feat/batch-mode's, so its merge is keep-one.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
+    /// T2.1 (8.65.0): frame caps that depend on the picture size. For a job whose `width x height` is GREATER than a
+    /// tier's `abovePixels`, at most that tier's `maxFrames` frames; where several tiers apply the smallest cap
+    /// wins. Memory use does not follow the token product (2560x1408 at 113 frames ran out of GPU memory under a
+    /// token cap that 3840x2176 at 49 frames passes), so `maxTokens` alone cannot hold it. Absent = no change, and
+    /// omitted on the wire, so entries without it serialise byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_tiers: Option<Vec<FrameTier>>,
     /// A named resolution rule: `"div64-fhd"`, `"div64-uhd"`, `"relight-fhd"`, `"refine-hd"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_rule: Option<String>,
@@ -125,6 +132,25 @@ pub struct TemplateEntry {
     /// serialise byte-identically.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_prompt: Option<String>,
+}
+
+/// T2.1: one size-dependent frame cap of a [`TemplateEntry`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FrameTier {
+    /// The tier applies to jobs with MORE pixels per frame than this.
+    pub above_pixels: u64,
+    pub max_frames: u32,
+}
+
+/// T2.1: the frame cap `tiers` put on a `w x h` job (the smallest applicable), with the tier's threshold.
+pub fn frame_tier_cap(tiers: &[FrameTier], w: u32, h: u32) -> Option<(u32, u64)> {
+    let pixels = u64::from(w) * u64::from(h);
+    tiers
+        .iter()
+        .filter(|t| pixels > t.above_pixels)
+        .map(|t| (t.max_frames, t.above_pixels))
+        .min()
 }
 
 /// Versioned allow-list bundle: advertised in NodeRegistry metadata and echoed
@@ -174,6 +200,8 @@ struct ConfigEntry {
     min_frames: Option<u32>,
     #[serde(default)]
     max_tokens: Option<u64>,
+    #[serde(default)]
+    frame_tiers: Option<Vec<FrameTier>>,
     #[serde(default)]
     resolution_rule: Option<String>,
     #[serde(default)]
@@ -243,6 +271,7 @@ impl TemplateStore {
                 max_frames: entry.max_frames,
                 min_frames: entry.min_frames,
                 max_tokens: entry.max_tokens,
+                frame_tiers: entry.frame_tiers.clone(),
                 resolution_rule: entry.resolution_rule.clone(),
                 exact_control: entry.exact_control,
                 frame_grid: entry.frame_grid,
@@ -315,6 +344,22 @@ impl TemplateStore {
     }
 }
 
+/// D16 (8.65.0): the oldest allow-list bundle this node loads. Bundle 50 is the first without the
+/// refusal-removing Gemma adapter in the prompt improvement step; an older bundle would bring it back.
+pub const MIN_BUNDLE_VERSION: u32 = 50;
+
+/// D16: refuse a bundle below [`MIN_BUNDLE_VERSION`]. Called by main before the store is installed (a store that
+/// is not installed means every video job is refused), and separate from loading so tests can load older fixtures.
+pub fn check_bundle_floor(store: &TemplateStore) -> Result<()> {
+    let have = store.bundle().allow_list_version;
+    if have < MIN_BUNDLE_VERSION {
+        return Err(anyhow!(
+            "template bundle {have} is too old: this node requires bundle {MIN_BUNDLE_VERSION} or later"
+        ));
+    }
+    Ok(())
+}
+
 /// K4 (8.60.7): a template with a `fixedPrompt` takes exactly that prompt — pure, so the integration tests reach it;
 /// the handler runs it before accept. `None` entry or no `fixedPrompt`: anything goes (the prompt is patched in).
 pub fn check_fixed_prompt(entry: Option<&TemplateEntry>, prompt: &str) -> Result<(), String> {
@@ -358,6 +403,18 @@ pub fn check_template_rules(
         if frames < min {
             return Err(format!(
                 "{frames} frames is under the {min}-frame minimum for {id}"
+            ));
+        }
+    }
+    // T2.1: before the token cap, so a job both rules refuse is told the frame limit it can act on
+    if let Some((cap, above)) = entry
+        .frame_tiers
+        .as_deref()
+        .and_then(|tiers| frame_tier_cap(tiers, w, h))
+    {
+        if frames > cap {
+            return Err(format!(
+                "{frames} frames at {w}x{h} is over the {cap}-frame maximum for {id} at sizes above {above} pixels per frame"
             ));
         }
     }

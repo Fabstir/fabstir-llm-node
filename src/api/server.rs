@@ -452,6 +452,9 @@ pub struct ApiServer {
     /// VRAM admission: `MAX_CONCURRENT_GENERATIONS` slots. ComfyUI has no status
     /// endpoint, so LTX gates locally rather than via the transcoder capacity cache.
     ltx_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Content checks on the video path (IMPLEMENTATION-CONTENT-CHECKS-LTX.md). `off` until main installs the
+    /// configured one. A std lock: the pre-accept gates read it without awaiting (D2).
+    content_checks: Arc<std::sync::RwLock<crate::ltx::checks::ContentChecks>>,
     auto_image_routing: bool,
     /// FC1.6: platform vault depositor addresses (lowercase). EMPTY (the
     /// default) ⇒ the vault-session auth gate is skipped entirely — every
@@ -581,6 +584,9 @@ impl ApiServer {
             ltx_tracker: ltx_tracker_slot.clone(),
             ltx_rate_limiter: Arc::new(crate::ltx::rate_limiter::LtxRateLimiter::new(3)),
             ltx_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+            content_checks: Arc::new(std::sync::RwLock::new(
+                crate::ltx::checks::ContentChecks::off(),
+            )),
             auto_image_routing: false,
             fiat_vault_addresses: Vec::new(),
             fiat_backend_auth_addresses: Vec::new(),
@@ -783,6 +789,9 @@ impl ApiServer {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(1),
             )),
+            content_checks: Arc::new(std::sync::RwLock::new(
+                crate::ltx::checks::ContentChecks::off(),
+            )),
             auto_image_routing: match std::env::var("AUTO_IMAGE_ROUTING") {
                 Ok(v) => v == "true",
                 Err(_) => std::env::var("DIFFUSION_ENDPOINT")
@@ -945,6 +954,7 @@ impl ApiServer {
             ltx_tracker: self.ltx_tracker.clone(),
             ltx_rate_limiter: self.ltx_rate_limiter.clone(),
             ltx_semaphore: self.ltx_semaphore.clone(),
+            content_checks: self.content_checks.clone(),
             auto_image_routing: self.auto_image_routing,
             fiat_vault_addresses: self.fiat_vault_addresses.clone(),
             fiat_backend_auth_addresses: self.fiat_backend_auth_addresses.clone(),
@@ -1256,6 +1266,22 @@ impl ApiServer {
     /// permit for the generation's lifetime; `try_acquire_owned().is_err()` ⇒ full.
     pub fn ltx_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
         self.ltx_semaphore.clone()
+    }
+
+    /// Content checks: install the configured checker (main, after the D12 start-up rules; tests: a stub service).
+    pub fn set_content_checks(&self, checks: crate::ltx::checks::ContentChecks) {
+        match self.content_checks.write() {
+            Ok(mut g) => *g = checks,
+            Err(poisoned) => *poisoned.into_inner() = checks,
+        }
+    }
+
+    /// Content checks: the node's checker (`off` unless main installed another). Never awaits.
+    pub fn content_checks(&self) -> crate::ltx::checks::ContentChecks {
+        match self.content_checks.read() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// Host-reachable seam-#2 moderation verdict store (job_id → result). An absent
@@ -1571,7 +1597,11 @@ impl ApiServer {
                                 all_results.extend(result.results);
                             }
                             Err(e) => {
-                                warn!("Search failed for query '{}': {}", query, e);
+                                warn!(
+                                    "Search failed for a query of {} chars: {}",
+                                    query.chars().count(),
+                                    e
+                                );
                             }
                         }
                     }
@@ -1887,7 +1917,11 @@ impl ApiServer {
                                 all_results.extend(result.results);
                             }
                             Err(e) => {
-                                warn!("Search failed for streaming query '{}': {}", query, e);
+                                warn!(
+                                    "Search failed for a streaming query of {} chars: {}",
+                                    query.chars().count(),
+                                    e
+                                );
                             }
                         }
                     }
@@ -2458,8 +2492,15 @@ async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoRespon
     }
 }
 
-async fn version_handler() -> impl IntoResponse {
-    axum::response::Json(crate::version::get_version_info())
+async fn version_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
+    axum::response::Json(version_body(&server))
+}
+
+/// `/v1/version`: the version info plus the content checks' mode, pinned bundle hash and breaker state (D12).
+pub fn version_body(server: &ApiServer) -> serde_json::Value {
+    let mut v = crate::version::get_version_info();
+    v["contentChecks"] = server.content_checks().status_json();
+    v
 }
 
 /// GET /v1/checkpoints/:session_id - Returns checkpoint index for SDK conversation recovery
@@ -2872,12 +2913,11 @@ async fn process_vision_images(
                     Ok(result) => {
                         let text = result.text.trim().to_string();
                         info!(
-                            "VLM OCR image {} in {}ms ({} chars, {} tokens): {:?}",
+                            "VLM OCR image {} in {}ms ({} chars, {} tokens)",
                             i + 1,
                             result.processing_time_ms,
                             text.len(),
-                            result.tokens_used,
-                            &text[..text.len().min(200)]
+                            result.tokens_used
                         );
                         vlm_tokens += result.tokens_used as u64;
                         if !text.is_empty() {
@@ -2892,11 +2932,11 @@ async fn process_vision_images(
                     Ok(result) => {
                         let desc = result.description.trim().to_string();
                         info!(
-                            "VLM described image {} in {}ms ({} tokens): {:?}",
+                            "VLM described image {} in {}ms ({} chars, {} tokens)",
                             i + 1,
                             result.processing_time_ms,
-                            result.tokens_used,
-                            &desc[..desc.len().min(200)]
+                            desc.len(),
+                            result.tokens_used
                         );
                         vlm_tokens += result.tokens_used as u64;
                         if !desc.is_empty() {
@@ -2915,10 +2955,6 @@ async fn process_vision_images(
             let clean_prompt = strip_ui_markers(user_prompt);
             let augmented = crate::vision::augment_prompt_with_vision(&descriptions, &clean_prompt);
             info!("VLM vision processing used {} tokens total", vlm_tokens);
-            info!(
-                "Vision-augmented prompt preview (first 500 chars): {:?}",
-                &augmented[..augmented.len().min(500)]
-            );
             return (augmented, vlm_tokens);
         }
     }
@@ -4698,13 +4734,14 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                     == Some("ltx_generate")
                                                                 {
                                                                     info!("Routing encrypted message to ltx_generate handler");
-                                                                    let (ack, gen_task) = crate::api::websocket::handlers::ltx::handle_encrypted_ltx_generate(
+                                                                    let (ack, gen_task) = crate::api::websocket::handlers::ltx::handle_encrypted_ltx_generate_from(
                                                                         &server,
                                                                         &decrypted_json,
                                                                         &session_key,
                                                                         current_session_id.as_deref().unwrap_or("unknown"),
                                                                         job_id,
                                                                         json_msg.get("id"),
+                                                                        init_signer.as_deref(),
                                                                     ).await;
                                                                     // OQ-L24 (accept path). This write happens AFTER the handler
                                                                     // has taken the VRAM permit and marked the proof pending, but
