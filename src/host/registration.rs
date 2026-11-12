@@ -521,7 +521,8 @@ impl NodeRegistration {
             })
         };
 
-        metadata_obj.to_string()
+        // keys sorted: byte-identical to builds before serde_json `preserve_order` (now on node-wide via c2pa)
+        crate::checkpoint::delta::sort_json_keys(&metadata_obj).to_string()
     }
 
     pub fn is_registered(&self) -> bool {

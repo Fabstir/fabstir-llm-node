@@ -125,6 +125,7 @@ async fn task_with(job_id: Option<u64>, seam: Option<LtxPanicSeam>) -> LtxGenera
         pending_marked: true,
         panic_seam: seam,
         sidecar: None,
+        provenance: None,
     }
 }
 

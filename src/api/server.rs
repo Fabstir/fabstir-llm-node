@@ -438,6 +438,8 @@ pub struct ApiServer {
     sidecar_capacity_cache: Arc<crate::transcoder::capacity::CachedSidecarStatus>,
     // LTX 2.3 generation sidecar (mirror of the transcoder fields).
     ltx_client: Arc<RwLock<Option<Arc<crate::ltx::ComfyClient>>>>,
+    /// AI provenance (AP2, D10/D18): the signer client + pinned ffmpeg; None ⇒ LTX jobs are refused at accept.
+    provenance: Arc<RwLock<Option<Arc<crate::ltx::provenance::Runtime>>>>,
     /// VFX Passes D3: the relight sidecar client (same ComfyUI-shaped transport), its admission config and pins.
     relight_client: Arc<RwLock<Option<Arc<crate::ltx::ComfyClient>>>>,
     admit_cfg: Arc<RwLock<crate::ltx::relight::AdmitCfg>>,
@@ -570,6 +572,7 @@ impl ApiServer {
                 crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
             ),
             ltx_client: Arc::new(RwLock::new(None)),
+            provenance: Arc::new(RwLock::new(None)),
             relight_client: Arc::new(RwLock::new(None)),
             admit_cfg: Arc::new(RwLock::new(crate::ltx::relight::AdmitCfg::from_env())),
             relight_pins: Arc::new(RwLock::new(crate::ltx::relight::RelightPins::from_env())),
@@ -766,6 +769,7 @@ impl ApiServer {
                 crate::transcoder::capacity::CachedSidecarStatus::new(Duration::from_secs(2)),
             ),
             ltx_client: Arc::new(RwLock::new(None)),
+            provenance: Arc::new(RwLock::new(None)),
             relight_client: Arc::new(RwLock::new(None)),
             admit_cfg: Arc::new(RwLock::new(crate::ltx::relight::AdmitCfg::from_env())),
             relight_pins: Arc::new(RwLock::new(crate::ltx::relight::RelightPins::from_env())),
@@ -932,6 +936,7 @@ impl ApiServer {
             transcoding_rate_limiter: self.transcoding_rate_limiter.clone(),
             sidecar_capacity_cache: self.sidecar_capacity_cache.clone(),
             ltx_client: self.ltx_client.clone(),
+            provenance: self.provenance.clone(),
             relight_client: self.relight_client.clone(),
             admit_cfg: self.admit_cfg.clone(),
             relight_pins: self.relight_pins.clone(),
@@ -1109,6 +1114,16 @@ impl ApiServer {
     /// Set the LTX (ComfyUI) generation client.
     pub async fn set_ltx_client(&self, client: Arc<crate::ltx::ComfyClient>) {
         *self.ltx_client.write().await = Some(client);
+    }
+
+    /// AP2: install the provenance runtime (main, after the D18 startup checks; tests: the in-process signer).
+    pub async fn set_provenance(&self, rt: Arc<crate::ltx::provenance::Runtime>) {
+        *self.provenance.write().await = Some(rt);
+    }
+
+    /// AP2: the provenance runtime (None ⇒ every LTX job is refused before any GPU time, D10).
+    pub async fn provenance(&self) -> Option<Arc<crate::ltx::provenance::Runtime>> {
+        self.provenance.read().await.clone()
     }
 
     /// Get the LTX generation client (None ⇒ sidecar unconfigured ⇒ 503).

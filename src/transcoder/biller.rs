@@ -172,7 +172,8 @@ impl TranscodeBiller {
             "cumulative": self.proven + tokens,
             "chainTime": now,
         });
-        let bytes = serde_json::to_vec(&attestation)?;
+        // keys sorted: byte-identical to builds before serde_json `preserve_order` (now on node-wide via c2pa)
+        let bytes = serde_json::to_vec(&crate::checkpoint::delta::sort_json_keys(&attestation))?;
         let proof_hash: [u8; 32] = Sha256::digest(&bytes).into();
         let path = format!(
             "home/transcode/attest/job_{}_{}_{}.json",

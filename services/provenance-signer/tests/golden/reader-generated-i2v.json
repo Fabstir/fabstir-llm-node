@@ -1,0 +1,175 @@
+{
+  "active_manifest": "urn:c2pa:<uuid>",
+  "manifests": {
+    "urn:c2pa:<uuid>": {
+      "assertions": [
+        {
+          "created": true,
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+                "parameters": {
+                  "ingredients": [
+                    {
+                      "hash": "<masked>",
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3"
+                    }
+                  ]
+                }
+              }
+            ],
+            "allActionsIncluded": true
+          },
+          "label": "c2pa.actions.v2"
+        },
+        {
+          "created": true,
+          "data": {
+            "contentProfile": {
+              "humanOversightLevel": "prompt_guided"
+            },
+            "modelIdentifier": "pkg:huggingface/Lightricks/LTX-2.3",
+            "modelName": "LTX-2.3",
+            "modelType": "c2pa.types.model.pytorch"
+          },
+          "label": "c2pa.ai-disclosure"
+        },
+        {
+          "created": true,
+          "data": {
+            "alg": "org.platformlessai.mpeg7vs.1",
+            "bindingMetadata": {
+              "informationalUrl": "https://platformlessai.org/verify"
+            },
+            "blocks": [
+              {
+                "scope": {},
+                "value": "3/sFdbuTbMgdUGUKSonqCnghtTAdw35Zz4SPCTG++gw="
+              }
+            ]
+          },
+          "label": "c2pa.soft-binding"
+        },
+        {
+          "created": true,
+          "data": {
+            "alg": "sha256",
+            "exclusions": [
+              {
+                "data": [
+                  {
+                    "offset": 8,
+                    "value": "2P7D1hsOSDySl1goh37EgQ=="
+                  }
+                ],
+                "xpath": "/uuid"
+              },
+              {
+                "xpath": "/ftyp"
+              },
+              {
+                "xpath": "/mfra"
+              }
+            ],
+            "hash": "<masked>",
+            "name": "jumbf manifest"
+          },
+          "label": "c2pa.hash.bmff.v3"
+        }
+      ],
+      "claim_generator_info": [
+        {
+          "name": "Platformless AI",
+          "org.contentauth.c2pa_rs": "0.90.22",
+          "specVersion": "2.5",
+          "version": "8.64.0"
+        }
+      ],
+      "claim_version": 2,
+      "ingredients": [
+        {
+          "format": "image/png",
+          "instance_id": "xmp:iid:<uuid>",
+          "label": "c2pa.ingredient.v3",
+          "relationship": "inputTo"
+        }
+      ],
+      "instance_id": "xmp:iid:<uuid>",
+      "label": "urn:c2pa:<uuid>",
+      "signature_info": {
+        "alg": "Es256",
+        "cert_serial_number": "<masked>",
+        "common_name": "Platformless AI Staging Signer",
+        "issuer": "Fabstir Services Limited (STAGING)",
+        "time": "<masked>"
+      }
+    }
+  },
+  "validation_results": {
+    "activeManifest": {
+      "failure": [],
+      "informational": [
+        {
+          "code": "timeStamp.untrusted",
+          "explanation": "timestamp cert untrusted: Local Test TSA",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.signature"
+        }
+      ],
+      "success": [
+        {
+          "code": "timeStamp.validated",
+          "explanation": "timestamp message digest matched: Local Test TSA",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.signature"
+        },
+        {
+          "code": "signingCredential.trusted",
+          "explanation": "signing certificate trusted, found in System trust anchors",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.signature"
+        },
+        {
+          "code": "claimSignature.insideValidity",
+          "explanation": "claim signature valid",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.signature"
+        },
+        {
+          "code": "claimSignature.validated",
+          "explanation": "claim signature valid",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.signature"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.assertions/c2pa.actions.v2"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.ai-disclosure",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.assertions/c2pa.ai-disclosure"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.soft-binding",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.assertions/c2pa.soft-binding"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.bmff.v3",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.assertions/c2pa.hash.bmff.v3"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.ingredient.v3",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.assertions/c2pa.ingredient.v3"
+        },
+        {
+          "code": "assertion.bmffHash.match",
+          "explanation": "BMFF hash valid",
+          "url": "self#jumbf=/c2pa/urn:c2pa:<uuid>/c2pa.assertions/c2pa.hash.bmff.v3"
+        }
+      ]
+    }
+  },
+  "validation_state": "Trusted"
+}

@@ -1,0 +1,29 @@
+[package]
+name = "fabstir-provenance"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "BUSL-1.1"
+description = "Shared AI-provenance definitions for the Fabstir node and provenance-signer: class table, C2PA definition builders, fingerprint value format, signer contract types"
+
+# No [workspace]: this crate is a path dependency of the node and of services/provenance-signer.
+# It must stay free of CUDA, llama.cpp and anything else the key box should not carry.
+
+[dependencies]
+# Pinned: node and signer MUST resolve the same c2pa (it injects its version into claim_generator_info).
+# Minimal features: no vendored OpenSSL (G15). The signer adds the TSA HTTP feature on its side.
+c2pa = { version = "=0.90.22", default-features = false, features = ["rust_native_crypto"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+hex = "0.4"
+base64 = "0.22"
+thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# writes and reads back test frames (single-part, multi-part) for the EXR surgery tests
+exr = "1.74"
+smallvec = "1"

@@ -288,7 +288,8 @@ fn emit_capability_fixture() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/ltx/capability-fixture.json"
     );
-    std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
+    // sorted: the committed fixture is key-sorted, and c2pa turns on serde_json preserve_order node-wide
+    std::fs::write(path, serde_json::to_vec_pretty(&fabstir_llm_node::checkpoint::delta::sort_json_keys(&serde_json::to_value(&fixture).unwrap())).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
 

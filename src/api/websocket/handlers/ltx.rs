@@ -609,6 +609,24 @@ pub async fn handle_encrypted_ltx_generate(
         Err(e) => return reject("VALIDATION_FAILED", &format!("patch failed: {e}")),
     };
 
+    // AP2 (D8b): core `SaveVideo` writes the prompt and graph into the mp4 unless ComfyUI runs with
+    // `--disable-metadata`; the node's leak guard would then refuse the clip AFTER the GPU run. Check first.
+    if crate::ltx::provenance::graph_uses_save_video(&graph) && !relight {
+        let probe = match server.get_ltx_client().await {
+            Some(c) => c.metadata_disabled().await,
+            None => Err("LTX sidecar not configured".to_string()),
+        };
+        match probe {
+            Ok(true) => {}
+            Ok(false) => {
+                return reject(
+                    "CAPACITY",
+                    "COMFY_METADATA_ON: ComfyUI must run with --disable-metadata for this template",
+                )
+            }
+            Err(e) => return reject("CAPACITY", &format!("COMFY_METADATA_UNVERIFIED: {e}")),
+        }
+    }
     // K4 (8.60.7): every stored prompt encoding the template loads must be on this host BEFORE accept — a missing file
     // would only fail when ComfyUI queues the graph, after the deposit was locked. Unverifiable counts as missing.
     let stored = patcher::stored_conditioning_files(&graph);
@@ -630,10 +648,62 @@ pub async fn handle_encrypted_ltx_generate(
         }
     }
 
+    // VFX Passes D3: relight jobs use RELIGHT_JOB_TIMEOUT_SECS (via AdmitCfg) for `watch`.
+    let timeout_secs = if relight {
+        server.admit_cfg().await.watch_timeout_secs
+    } else {
+        std::env::var("LTX_JOB_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1800)
+    };
+
     // VRAM admission — hold the owned permit for the job's lifetime.
     let permit = match server.ltx_semaphore().try_acquire_owned() {
         Ok(p) => p,
         Err(_) => return reject("CAPACITY", "all generation slots are in use"),
+    };
+
+    // AP2 (D10): reserve the manifest slot(s) BEFORE any GPU time — the pre-flight — but only once a slot is
+    // free (a busy-GPU retry loop must not burn the signer's reservation budget); before the pending mark, so a
+    // failed reserve needs no unmark (the permit drops with the reject). No signer, no class, or a
+    // refusal means no job: an output this node cannot mark is never generated.
+    let provenance = {
+        let Some(rt) = server.provenance().await else {
+            return reject(
+                "CAPACITY",
+                "PROVENANCE_UNAVAILABLE: this node cannot mark outputs",
+            );
+        };
+        let Some(row) = fabstir_provenance::class::lookup(&job.template_id) else {
+            return reject("VALIDATION_FAILED", "template has no provenance class");
+        };
+        let formats = match crate::ltx::provenance::ingredient_formats(row, &job) {
+            Ok(f) => f,
+            Err(e) => return reject("VALIDATION_FAILED", &e.to_string()),
+        };
+        let req = fabstir_provenance::contract::ReserveRequest {
+            template_id: job.template_id.clone(),
+            bundle_version: store.bundle().allow_list_version,
+            node_version: crate::version::VERSION.to_string(),
+            slots: fabstir_provenance::contract::Slots {
+                mp4: 1,
+                sequence: crate::ltx::provenance::wants_sequence(row, &job, relight) as u8,
+            },
+            // the job deadline plus the upload and signing tail (D10's retry window)
+            deadline_secs: timeout_secs
+                .saturating_add(900)
+                .min(fabstir_provenance::contract::MAX_DEADLINE_SECS),
+        };
+        match rt.signer.reserve(&req).await {
+            Ok(reservation) => crate::ltx::provenance::Grant {
+                reservation,
+                formats,
+                row,
+                runtime: rt,
+            },
+            Err(e) => return reject("CAPACITY", &format!("PROVENANCE_UNAVAILABLE: {e}")),
+        }
     };
 
     // M1 economics: mark the clip's proof PENDING at accept — HERE in the
@@ -660,15 +730,6 @@ pub async fn handle_encrypted_ltx_generate(
     // Accept.
     server.ltx_rate_limiter().record_request(session_id);
     let allow_list_version = store.bundle().allow_list_version;
-    // VFX Passes D3: relight jobs use RELIGHT_JOB_TIMEOUT_SECS (via AdmitCfg) for `watch`.
-    let timeout_secs = if relight {
-        server.admit_cfg().await.watch_timeout_secs
-    } else {
-        std::env::var("LTX_JOB_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1800)
-    };
     let sidecar = entry.and_then(|e| e.sidecar.clone());
 
     let mut ack_inner = json!({
@@ -695,6 +756,7 @@ pub async fn handle_encrypted_ltx_generate(
         pending_marked,
         panic_seam: None,
         sidecar,
+        provenance: Some(provenance),
     };
     (ack, Some(task))
 }
@@ -732,6 +794,9 @@ pub struct LtxGenerateTask {
     pub panic_seam: Option<LtxPanicSeam>,
     /// VFX Passes D3: the verified template's sidecar family (`Some("relight")` routes to the relight client).
     pub sidecar: Option<String>,
+    /// AP2: the job's reservation + runtime. `None` only in tests that build a task by hand: `run` then
+    /// fails closed before uploading anything.
+    pub provenance: Option<crate::ltx::provenance::Grant>,
 }
 
 /// Which panic [`LtxGenerateTask::run`]'s core injects at entry. Test-only;
@@ -1165,6 +1230,7 @@ impl LtxGenerateTask {
             pending_marked,
             panic_seam,
             sidecar,
+            provenance,
         } = self;
         // VFX Passes: the whole-job deadline runs from here (D3); relight jobs take the relight-only paths below.
         let started = std::time::Instant::now();
@@ -1534,6 +1600,39 @@ impl LtxGenerateTask {
                     warn!("LTX job abandoned post-render: client disconnected before delivery");
                     return;
                 }
+                // AP2 (D2): every output is marked between the fetch and the upload, so outputCID, the Merkle
+                // root and proofHash bind the MARKED bytes; any marking failure ends the job before an upload.
+                let Some(grant) = provenance else {
+                    send_err(
+                        &progress_tx,
+                        "PROVENANCE_FAILED",
+                        "no provenance reservation",
+                        key,
+                        sid,
+                        rid,
+                    )
+                    .await;
+                    return;
+                };
+                let signing_deadline = crate::ltx::provenance::finalise::signing_deadline(
+                    grant.reservation.expires_at,
+                    is_relight
+                        .then(|| started + std::time::Duration::from_secs(admit_cfg.deadline_secs)),
+                );
+                let mut prov = crate::ltx::provenance::finalise::ProvenanceCtx {
+                    reservation: grant.reservation,
+                    ingredient_formats: grant.formats,
+                    row: grant.row,
+                    signer: grant.runtime.signer.as_ref(),
+                    ffmpeg: &grant.runtime.ffmpeg,
+                    reserve: grant.runtime.reserve,
+                    deadline: signing_deadline,
+                    time: crate::ltx::provenance::utc_now_rfc3339(),
+                    resolver_url: crate::ltx::provenance::RESOLVER_URL.to_string(),
+                    exr_hashes: vec![],
+                    mp4_done: false,
+                    sequence_signed: false,
+                };
                 let total = output_refs.len();
                 let mut caps = Vec::with_capacity(total);
                 let mut hashes = Vec::with_capacity(total);
@@ -1548,6 +1647,27 @@ impl LtxGenerateTask {
                                 &progress_tx,
                                 "GENERATION_FAILED",
                                 &format!("fetch {} from comfyui failed: {e}", r.filename),
+                                key,
+                                sid,
+                                rid,
+                            )
+                            .await;
+                            return;
+                        }
+                    };
+                    let bytes = match crate::ltx::provenance::finalise::finalise_output(
+                        &mut prov,
+                        &r.filename,
+                        bytes,
+                    )
+                    .await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            send_err(
+                                &progress_tx,
+                                "PROVENANCE_FAILED",
+                                &format!("marking {} failed: {e}", r.filename),
                                 key,
                                 sid,
                                 rid,
@@ -1584,6 +1704,32 @@ impl LtxGenerateTask {
                     let _ = send_stage(&progress_tx, "encrypting", pct, key, sid, rid).await;
                 }
 
+                // D9: the sequence manifest over the marked EXR frames, signed before the proof is built.
+                if let Err(e) = crate::ltx::provenance::finalise::finalise_sequence(&mut prov).await
+                {
+                    send_err(
+                        &progress_tx,
+                        "PROVENANCE_FAILED",
+                        &e.to_string(),
+                        key,
+                        sid,
+                        rid,
+                    )
+                    .await;
+                    return;
+                }
+                if let Err(e) = crate::ltx::provenance::finalise::check_complete(&prov) {
+                    send_err(
+                        &progress_tx,
+                        "PROVENANCE_FAILED",
+                        &e.to_string(),
+                        key,
+                        sid,
+                        rid,
+                    )
+                    .await;
+                    return;
+                }
                 if !send_stage(&progress_tx, "uploading", 0, key, sid, rid).await {
                     warn!("LTX job abandoned post-encrypt: client disconnected before delivery");
                     return;

@@ -1,0 +1,40 @@
+{
+  "assertions": [
+    {
+      "created": true,
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.created",
+            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+          }
+        ],
+        "allActionsIncluded": true
+      },
+      "label": "c2pa.actions.v2"
+    },
+    {
+      "created": true,
+      "data": {
+        "contentProfile": {
+          "humanOversightLevel": "prompt_guided"
+        },
+        "modelIdentifier": "pkg:huggingface/Lightricks/LTX-2.3",
+        "modelName": "LTX-2.3",
+        "modelType": "c2pa.types.model.pytorch"
+      },
+      "label": "c2pa.ai-disclosure"
+    }
+  ],
+  "claim_generator_info": [
+    {
+      "name": "Platformless AI",
+      "specVersion": "2.5",
+      "version": "8.64.0"
+    }
+  ],
+  "claim_version": 2,
+  "format": "application/json",
+  "instance_id": "xmp:iid:0d6f2a71-9b3e-4c58-8e1f-3a2b4c5d6e7f",
+  "label": "urn:c2pa:0d6f2a71-9b3e-4c58-8e1f-3a2b4c5d6e7f"
+}

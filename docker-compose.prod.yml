@@ -126,6 +126,8 @@ services:
       LTX_JOB_TIMEOUT_SECS: ${LTX_JOB_TIMEOUT_SECS:-1800}
       LTX_MODEL_NAME: ${LTX_MODEL_NAME:-ltx-2.3-22b-hdr}
       LTX_RATE_LIMIT: ${LTX_RATE_LIMIT:-3}
+      # AI provenance (8.64.0+): LTX/relight need the signer and the image's pinned ffmpeg, else LTX stays off
+      PROVENANCE_SIGNER_URL: ${PROVENANCE_SIGNER_URL:-}
 
       # Session transcode results (8.62.0+): a dropped client's finished result is kept,
       # encrypted, for TRANSCODE_RESULT_RETENTION_DAYS (default 7) so it can be fetched

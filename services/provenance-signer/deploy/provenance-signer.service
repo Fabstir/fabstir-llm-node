@@ -1,0 +1,49 @@
+# provenance-signer (IMPLEMENTATION-AI-PROVENANCE.md D5, D12). Install: deploy/README.md. Deploys need Jules's go.
+[Unit]
+Description=Platformless AI C2PA claim signer and repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=provsigner
+Group=provsigner
+ExecStart=/opt/provenance-signer/provenance-signer serve --config /etc/provenance-signer/config.json
+Restart=on-failure
+RestartSec=5
+# Secrets: systemd-creds encrypted at rest (host key / TPM), decrypted into a private ramfs for this unit only.
+LoadCredentialEncrypted=signing-key-passphrase:/etc/credstore.encrypted/signing-key-passphrase
+LoadCredentialEncrypted=index-secret:/etc/credstore.encrypted/index-secret
+Environment=RUST_LOG=info
+# C2PA Level 1 O.2 defence in depth: no core dumps, no /proc peeking
+LimitCORE=0
+ProtectProc=invisible
+ProcSubset=pid
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/provenance-signer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# (not ~@resources: serve calls setrlimit(RLIMIT_CORE, 0) itself)
+SystemCallFilter=~@privileged
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

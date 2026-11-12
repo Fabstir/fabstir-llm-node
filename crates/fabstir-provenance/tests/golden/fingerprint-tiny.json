@@ -1,0 +1,7 @@
+{
+  "alg": "org.platformlessai.mpeg7vs.1",
+  "filter": "scale='min(1280,iw)':-2,signature=format=xml:filename={out}",
+  "packed_head_hex": "504149465001000030000000003000000000000000002d3cac21286390ebe345c91db55471935b40cfdfeca56391d07baf3d366d36e4e637ce0400d28c2ca629bd3d33ca9a3dedc5b843272821b33c1569196a8e903ea101061fb3702bc1df01580125",
+  "packed_len": 4094,
+  "sha256": "dffb0575bb936cc81d50650a4a89ea0a7821b5301dc37e59cf848f0931befa0c"
+}

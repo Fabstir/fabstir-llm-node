@@ -1,0 +1,34 @@
+# detect.fabstir.net (Caddy 2.7+). Caddy REPLACES any X-Forwarded-For a client sends (no trusted_proxies
+# configured), so the right-most entry the app reads is always the real client address.
+{
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 130s
+			idle 30s
+		}
+	}
+}
+
+detect.fabstir.net {
+	request_body {
+		max_size 500MB
+	}
+	@api path /v1/detect /v1/public-key /v1/health
+	handle @api {
+		reverse_proxy 127.0.0.1:8701 {
+			header_up X-Forwarded-For {remote_host}
+			transport http {
+				read_timeout 600s
+				write_timeout 600s
+			}
+		}
+	}
+	handle {
+		respond 404
+	}
+	log {
+		output discard
+	}
+}
+

@@ -38,10 +38,15 @@ pub struct ExrRef {
 }
 
 /// HTTP+WS client for one headless ComfyUI instance.
+/// AP2 (D8b): how long a positive `--disable-metadata` probe is trusted.
+pub const METADATA_PROBE_TTL_SECS: u64 = 60;
+
 pub struct ComfyClient {
     client: reqwest::Client,
     endpoint: String,
     client_id: String,
+    /// AP2 (D8b): unix seconds of the last probe that saw `--disable-metadata` (0 = never).
+    metadata_off_at: std::sync::atomic::AtomicU64,
 }
 
 impl ComfyClient {
@@ -55,6 +60,7 @@ impl ComfyClient {
             client,
             endpoint: endpoint.trim_end_matches('/').to_string(),
             client_id: uuid::Uuid::new_v4().to_string(),
+            metadata_off_at: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -293,6 +299,29 @@ impl ComfyClient {
         }
     }
 
+    /// AP2 (D8b): whether this ComfyUI runs with `--disable-metadata`. A positive answer is trusted for
+    /// [`METADATA_PROBE_TTL_SECS`] (ComfyUI can restart on its own, without the flag); 10 s timeout like the K4
+    /// conditioning check. `Err` = unreachable or unreadable.
+    pub async fn metadata_disabled(&self) -> std::result::Result<bool, String> {
+        use std::sync::atomic::Ordering;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let seen = self.metadata_off_at.load(Ordering::Relaxed);
+        if seen != 0 && now.saturating_sub(seen) < METADATA_PROBE_TTL_SECS {
+            return Ok(true);
+        }
+        let st = tokio::time::timeout(std::time::Duration::from_secs(10), self.stats())
+            .await
+            .map_err(|_| "/system_stats timed out".to_string())?
+            .map_err(|e| format!("{e:?}"))?;
+        let off = st.metadata_disabled();
+        self.metadata_off_at
+            .store(if off { now } else { 0 }, Ordering::Relaxed);
+        Ok(off)
+    }
+
     /// VFX Passes D8: GET `/system_stats`, parsed. The `relight` block is optional, so ComfyUI's stats parse too; the
     /// relight sidecar answers 503 until its weight hashing finishes ([`StatsError::NotReady`]).
     pub async fn stats(&self) -> std::result::Result<SystemStats, StatsError> {
@@ -430,8 +459,27 @@ pub struct RelightStats {
     pub cuda: String,
 }
 
+/// AP2 (D8b): the `system` block of ComfyUI's `/system_stats`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SystemInfo {
+    #[serde(default)]
+    pub argv: Vec<String>,
+}
+
+impl SystemStats {
+    /// AP2 (D8b): whether ComfyUI runs with `--disable-metadata` (core `SaveVideo` then writes no prompt/graph).
+    pub fn metadata_disabled(&self) -> bool {
+        self.system
+            .as_ref()
+            .is_some_and(|s| s.argv.iter().any(|a| a == "--disable-metadata"))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemStats {
+    /// ComfyUI's `system` block (`argv` carries the server's command line).
+    #[serde(default)]
+    pub system: Option<SystemInfo>,
     #[serde(default)]
     pub devices: Vec<DeviceStats>,
     #[serde(default)]

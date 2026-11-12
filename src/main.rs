@@ -910,6 +910,24 @@ async fn node_main() -> Result<()> {
         .unwrap_or(1);
     fabstir_llm_node::ltx::relight::check_relight_start(relight_url.as_deref(), max_generations)
         .map_err(|e| anyhow::anyhow!(e))?;
+    // AP2 (D18): LTX is enabled ONLY with provenance ready (signer reachable on our contract, HOST_PRIVATE_KEY,
+    // the pinned ffmpeg with the signature filter). Otherwise LTX stays off: rollback is "LTX off", never
+    // "unmarked output".
+    let (comfy_url, relight_url) = if comfy_url.is_some() || relight_url.is_some() {
+        match fabstir_llm_node::ltx::provenance::Runtime::from_env().await {
+            Ok(rt) => {
+                api_server.set_provenance(Arc::new(rt)).await;
+                println!("🔏 Provenance ready: signer and pinned ffmpeg checked");
+                (comfy_url, relight_url)
+            }
+            Err(e) => {
+                println!("⛔ LTX DISABLED: provenance not ready ({e:#}); generation jobs will return 503");
+                (None, None)
+            }
+        }
+    } else {
+        (comfy_url, relight_url)
+    };
     if let Some(ref url) = comfy_url {
         match fabstir_llm_node::ltx::ComfyClient::new(url) {
             Ok(client) => {
@@ -922,7 +940,7 @@ async fn node_main() -> Result<()> {
             }
         }
     } else {
-        println!("   No COMFY_URL set — LTX templates will return 503");
+        println!("   No COMFY_URL set (or LTX disabled by the provenance check above) — LTX templates will return 503");
     }
     if let Some(ref url) = relight_url {
         match fabstir_llm_node::ltx::ComfyClient::new(url) {
@@ -970,7 +988,9 @@ async fn node_main() -> Result<()> {
     // The template store loads when EITHER sidecar is configured.
     if comfy_url.is_some() || relight_url.is_some() {
         let template_dir = env::var("TEMPLATE_DIR").unwrap_or_else(|_| "./templates".to_string());
-        match fabstir_llm_node::ltx::TemplateStore::new(&template_dir) {
+        match fabstir_llm_node::ltx::TemplateStore::new(&template_dir).and_then(|st| {
+            fabstir_llm_node::ltx::provenance::check_templates_classed(&st).map(|_| st)
+        }) {
             Ok(store) => {
                 // K4 (8.60.7): the stored prompt encodings the templates load, reported once ComfyUI answers (every job
                 // is checked again before accept, and a missing file refuses it with STORED_ENCODING_MISSING).

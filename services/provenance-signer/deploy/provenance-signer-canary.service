@@ -1,0 +1,17 @@
+[Unit]
+Description=Provenance canary: sign + validate a test manifest against the live trust lists (T12)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=provsigner
+Group=provsigner
+ExecStart=/opt/provenance-signer/provenance-signer canary --config /etc/provenance-signer/config.json
+LoadCredentialEncrypted=signing-key-passphrase:/etc/credstore.encrypted/signing-key-passphrase
+LimitCORE=0
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/provenance-signer

@@ -319,7 +319,8 @@ fn emit_vectors_json() {
         );
     }
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors.json");
-    std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
+    // sorted: the committed fixture is key-sorted, and c2pa turns on serde_json preserve_order node-wide
+    std::fs::write(path, serde_json::to_vec_pretty(&fabstir_llm_node::checkpoint::delta::sort_json_keys(&serde_json::to_value(&vectors).unwrap())).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
 
@@ -527,7 +528,8 @@ fn emit_i2v_vectors_json() {
     });
 
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors-i2v.json");
-    std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
+    // sorted: the committed fixture is key-sorted, and c2pa turns on serde_json preserve_order node-wide
+    std::fs::write(path, serde_json::to_vec_pretty(&fabstir_llm_node::checkpoint::delta::sort_json_keys(&serde_json::to_value(&vectors).unwrap())).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
 
@@ -710,6 +712,7 @@ fn emit_iclora_vectors_json() {
     });
 
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ltx/vectors-iclora.json");
-    std::fs::write(path, serde_json::to_vec_pretty(&vectors).unwrap()).unwrap();
+    // sorted: the committed fixture is key-sorted, and c2pa turns on serde_json preserve_order node-wide
+    std::fs::write(path, serde_json::to_vec_pretty(&fabstir_llm_node::checkpoint::delta::sort_json_keys(&serde_json::to_value(&vectors).unwrap())).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }

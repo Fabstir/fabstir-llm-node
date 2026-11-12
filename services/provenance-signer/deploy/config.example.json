@@ -1,0 +1,30 @@
+{
+  "listen_api": "127.0.0.1:8601",
+  "listen_public": "127.0.0.1:8602",
+  "listen_index": "10.8.0.1:8603",
+  "data_dir": "/var/lib/provenance-signer",
+  "key_path": "/etc/provenance-signer/ee.key.enc.pem",
+  "chain_path": "/etc/provenance-signer/chain.pem",
+  "chain_epoch": 1,
+  "trust_anchors_path": "/etc/provenance-signer/anchors.pem",
+  "tsa_urls": ["http://timestamp.digicert.com", "http://ts.ssl.com"],
+  "tsa_timeout_secs": 10,
+  "allowlist": ["0x<host1 node address>"],
+  "node_versions": ["<crate::version::VERSION of the node release>"],
+  "informational_url": "https://platformlessai.org/verify",
+  "reserve_min": 9216,
+  "reserve_max": 16384,
+  "reserve_recommended": 12000,
+  "min_bundle_version": 49,
+  "reservations_per_minute": 120,
+  "requests_per_minute": 1200,
+  "index_allowed_ips": ["10.8.0.2"],
+  "ntfy_url": "https://ntfy.sh/<private alarm topic>",
+  "reconcile": {
+    "rpc_url": "https://base-sepolia-rpc.publicnode.com",
+    "job_marketplace": "0xD067719Ee4c514B5735d1aC0FfB46FECf2A9adA4",
+    "window_blocks": 43200,
+    "chunk_blocks": 5000,
+    "tolerance": 2
+  }
+}

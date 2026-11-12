@@ -1,0 +1,298 @@
+[
+  {
+    "class": "Generated",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-t2v-hdr",
+    "visual_input": false
+  },
+  {
+    "class": "Generated",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-i2v-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Generated",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-flf2v-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Generated",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-ingredients-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Generated",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-slowmo-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Generated",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-layout-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Generated",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-layout-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-iclora-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-iclora-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-crossview-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-edit-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-edit-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-outpaint-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-outpaint-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-water-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-water-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-daynight-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-daynight-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-restore-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Picture",
+    "model": "Ltx23",
+    "mp4_role": "Picture",
+    "template_id": "ltx-sdr2hdr-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-restore25-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-restore25-ref-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-cleanplate-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-cleanplate-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-colorize-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-colorize-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-deblur-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-decompress-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-refine-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-refine-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-upscale25-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": null,
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-upscale25-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Data",
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-alpha-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "exr_role": "Data",
+    "model": "Ltx25",
+    "mp4_role": "Picture",
+    "template_id": "ltx-alpha-chain-hdr",
+    "visual_input": true
+  },
+  {
+    "class": "Data",
+    "exr_role": "Data",
+    "model": "CosmosDiffusionRenderer",
+    "mp4_role": "Data",
+    "template_id": "cosmos-passes-key",
+    "visual_input": false
+  },
+  {
+    "class": "Data",
+    "exr_role": "Data",
+    "model": "CosmosDiffusionRenderer",
+    "mp4_role": "Data",
+    "template_id": "cosmos-passes-std",
+    "visual_input": false
+  },
+  {
+    "class": "Data",
+    "exr_role": "Data",
+    "model": "CosmosDiffusionRenderer",
+    "mp4_role": "Data",
+    "template_id": "cosmos-passes-full",
+    "visual_input": false
+  }
+]

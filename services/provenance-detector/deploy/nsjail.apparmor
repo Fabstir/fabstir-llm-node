@@ -1,0 +1,8 @@
+# /etc/apparmor.d/nsjail  (Ubuntu 24.04: kernel.apparmor_restrict_unprivileged_userns=1 blocks the user
+# namespaces nsjail needs unless its binary has a profile granting `userns`). Load: apparmor_parser -r this file.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile nsjail /usr/bin/nsjail flags=(unconfined) {
+  userns,
+}

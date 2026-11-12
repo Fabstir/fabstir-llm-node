@@ -159,6 +159,7 @@ async fn test_handler_drops_audio_only_for_clips_whose_audio_cannot_pass() {
     let hash = store.template_hash("ltx-edit-hdr").unwrap().to_string();
     server.set_ltx_client(stub.clone()).await;
     server.set_ltx_template_store(Arc::new(store)).await;
+    super::provenance_support::install_provenance(&server).await;
 
     for ((name, _, want_audio), (cid, _, _)) in cases.iter().zip(&blobs) {
         let before = prompts.lock().unwrap().len();

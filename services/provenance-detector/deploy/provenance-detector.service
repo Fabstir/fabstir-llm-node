@@ -1,0 +1,63 @@
+# provenance-detector (IMPLEMENTATION-AI-PROVENANCE.md D14) on 104.238.170.24 (detect.fabstir.net). Deploys need Jules's go.
+[Unit]
+Description=Platformless AI provenance detector (free public detection)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=provdetect
+Group=provdetect
+WorkingDirectory=/opt/provenance-detector
+# ONE process: the per-address quota is in memory and must be global. Detections run on worker threads,
+# bounded by DETECTOR_CONCURRENCY. Client addresses come from Caddy's X-Forwarded-For, parsed by the app
+# (uvicorn's own proxy-header handling off so there is exactly one, tested, implementation). No access log.
+ExecStart=/opt/provenance-detector/.venv/bin/uvicorn --factory provdetect.app:from_env --host 127.0.0.1 --port 8701 --workers 1 --no-server-header --no-access-log --no-proxy-headers --timeout-keep-alive 5
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DETECTOR_FFMPEG=/opt/provenance/ffmpeg
+Environment=DETECTOR_TRUST_ANCHORS=/etc/provenance-detector/anchors.pem
+# the pinned leaf: organisation always; common name once the production leaf is issued
+Environment="DETECTOR_SIGNER_ORG=Fabstir Services Limited (STAGING)"
+Environment="DETECTOR_SIGNER_CN=Platformless AI Staging Signer"
+Environment=DETECTOR_INDEX_URL=http://10.8.0.1:8603
+Environment=DETECTOR_PUBLIC_URL=https://provenance.fabstir.net
+Environment=DETECTOR_URL=https://detect.fabstir.net/v1/detect
+Environment=DETECTOR_SPOOL=/run/provenance-detector/spool
+Environment=DETECTOR_PER_HOUR=60
+Environment=DETECTOR_CONCURRENCY=2
+Environment=DETECTOR_TRUSTED_PROXIES=127.0.0.1
+# the Blender site (timeline.platformlessai.org serves /verify; platformlessai.org/verify redirects there)
+Environment=DETECTOR_CORS_ORIGINS=https://timeline.platformlessai.org,https://platformlessai.org,https://www.platformlessai.org
+# Decoding runs in nsjail: no network, no /proc, read-only /opt/provenance, and ONLY the request's own
+# directory ({work}, substituted per call) writable. nsjail's defaults would kill real clips (rlimit_fsize
+# 1 MB stops the signature XML of a long clip; nofile 32), so every limit is explicit. ffmpeg runs with
+# -threads 2 and a 300 s media cap, so 600 CPU-seconds and 330 s wall time are never reached by a legal clip.
+# Ubuntu 24.04 restricts unprivileged user namespaces: deploy/nsjail.apparmor must be loaded (README step 1),
+# otherwise the startup self-test fails and the service does not start (fail closed, never a "no mark").
+Environment="DETECTOR_SANDBOX=nsjail --quiet --mode o --disable_proc --iface_no_lo --max_cpus 2 --rlimit_as 4096 --rlimit_cpu 600 --rlimit_fsize 512 --rlimit_nofile 64 --rlimit_nproc soft --rlimit_core 0 --time_limit 330 --bindmount_ro /opt/provenance --bindmount {work} --cwd {work} --"
+LoadCredentialEncrypted=index-secret:/etc/credstore.encrypted/index-secret
+LoadCredentialEncrypted=result-key.pem:/etc/credstore.encrypted/result-key.pem
+LoadCredential=exempt-keys:/etc/provenance-detector/exempt-keys
+# zero retention: the spool lives under /run (memory-backed), owned by provdetect, removed when the service
+# stops; every request's directory is removed before its response. At most CONCURRENCY x 500 MB is in use.
+RuntimeDirectory=provenance-detector provenance-detector/spool
+RuntimeDirectoryMode=0700
+# memory: uploads never sit in RAM (they stream to the spool), and nothing may page out to disk
+MemoryMax=6G
+MemorySwapMax=0
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0077
+LimitCORE=0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

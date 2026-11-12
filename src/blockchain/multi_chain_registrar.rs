@@ -296,8 +296,9 @@ impl MultiChainRegistrar {
             "location": "us-west",
             "performance_tier": self.node_metadata.performance_tier,
             "maxConcurrentJobs": 5
-        })
-        .to_string();
+        });
+        // keys sorted: byte-identical to builds before serde_json `preserve_order` (now on node-wide via c2pa)
+        let metadata_json = crate::checkpoint::delta::sort_json_keys(&metadata_json).to_string();
 
         // Get approved model IDs
         // For MVP, using the two approved models from HOST_REGISTRATION_GUIDE.md

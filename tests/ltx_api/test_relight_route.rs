@@ -16,6 +16,7 @@ async fn relight_only() -> Arc<ApiServer> {
     let s = Arc::new(ApiServer::new_for_test());
     s.set_relight_client(dead_client()).await;
     s.set_ltx_template_store(store()).await;
+    super::provenance_support::install_provenance(&s).await;
     s.set_relight_pins(Some(pins())).await;
     s
 }
@@ -116,6 +117,7 @@ async fn relight_job_needs_the_relight_client_even_with_ltx_present() {
     let server = Arc::new(ApiServer::new_for_test());
     server.set_ltx_client(dead_client()).await;
     server.set_ltx_template_store(store()).await;
+    super::provenance_support::install_provenance(&server).await;
     let _held = server.ltx_semaphore().try_acquire_owned().unwrap();
     let inner = refused(&server, &relight_job(&store(), 145, &clip_cid())).await;
     assert_eq!(inner["error"]["code"], "SIDECAR_UNAVAILABLE", "{inner:?}");
@@ -148,10 +150,12 @@ async fn relight_only_node_refuses_ltx_jobs_and_keeps_its_permit() {
 async fn client_for_routes_by_family() {
     // always the LTX client -> ptr_eq fails -> red
     let server = Arc::new(ApiServer::new_for_test());
-    let (rc, lc) = (dead_client(), dead_client());
+    // the LTX side answers /system_stats with --disable-metadata (AP2 D8b)
+    let (rc, lc) = (dead_client(), super::provenance_support::comfy_stub(true));
     server.set_relight_client(rc.clone()).await;
     server.set_ltx_client(lc.clone()).await;
     server.set_ltx_template_store(store()).await;
+    super::provenance_support::install_provenance(&server).await;
     server.set_relight_pins(Some(pins())).await;
     let (_r, rt) = handle_encrypted_ltx_generate(
         &server,
@@ -181,8 +185,9 @@ async fn each_family_keeps_its_own_watch_timeout() {
     // one timeout for all -> the relight task carries 1800 -> red
     let server = Arc::new(ApiServer::new_for_test());
     server.set_relight_client(dead_client()).await;
-    server.set_ltx_client(dead_client()).await;
+    server.set_ltx_client(super::provenance_support::comfy_stub(true)).await;
     server.set_ltx_template_store(store()).await;
+    super::provenance_support::install_provenance(&server).await;
     server.set_relight_pins(Some(pins())).await;
     server
         .set_admit_cfg(AdmitCfg {

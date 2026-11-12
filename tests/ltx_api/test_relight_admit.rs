@@ -28,6 +28,7 @@ async fn server(
         s.set_ltx_client(c).await;
     }
     s.set_ltx_template_store(store()).await;
+    super::provenance_support::install_provenance(&s).await;
     s.set_admit_cfg(cfg).await;
     s.set_relight_pins(pins).await;
     s

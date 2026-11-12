@@ -97,7 +97,8 @@ async fn stats(State(s): State<Arc<Stub>>) -> impl IntoResponse {
     } else {
         s.vram_free.load(Ordering::SeqCst)
     };
-    let mut body = json!({"system": {"os": "posix"}, "devices": [{"name": "stub", "vram_total": 96 * GIB, "vram_free": free}]});
+    // AP2 D8b: the stub ComfyUI runs with --disable-metadata, as host1 must
+    let mut body = json!({"system": {"os": "posix", "argv": ["main.py", "--disable-metadata"]}, "devices": [{"name": "stub", "vram_total": 96 * GIB, "vram_free": free}]});
     if s.name == "relight" {
         body["relight"] = json!({"busy": s.busy.load(Ordering::SeqCst), "loaded": false,
                                  "pins": s.pins.lock().unwrap().clone(), "gpu": "RTX PRO 6000", "cuda": "12.8"});

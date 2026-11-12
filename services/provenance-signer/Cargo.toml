@@ -1,0 +1,65 @@
+[package]
+name = "provenance-signer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "BUSL-1.1"
+description = "Platformless AI C2PA claim signer + manifest/fingerprint repository (plan D5, D10-D12). Runs on its own box; no CUDA, no node code."
+
+# Own package (no [workspace]): it must not pull the node's GPU stack onto the key box.
+
+[[bin]]
+name = "provenance-signer"
+path = "src/main.rs"
+
+[dependencies]
+fabstir-provenance = { path = "../../crates/fabstir-provenance" }
+# Same pin and features as the node side (fabstir-provenance); the signer does its own TSA HTTP.
+c2pa = { version = "=0.90.22", default-features = false, features = ["rust_native_crypto"] }
+axum = { version = "0.7", features = ["json", "tokio", "http1"], default-features = false }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
+pkcs8 = { version = "0.10", features = ["encryption", "pem", "std"] }
+chacha20poly1305 = "0.10"
+zeroize = "1"
+rand = "0.8"
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+ureq = { version = "2", default-features = false, features = ["tls"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+pem = "3"
+time = "0.3"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tower = { version = "0.5", features = ["limit"] }
+tempfile = { version = "3", optional = true }
+libc = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+# in-process signer for other crates' tests (never in a release build)
+testkit = ["dep:tempfile"]
+
+[dev-dependencies]
+k256 = { version = "0.13", features = ["ecdsa"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"
+
+# scrypt (PBES2 key encryption) is unusably slow unoptimised; keep debug builds and tests fast.
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3

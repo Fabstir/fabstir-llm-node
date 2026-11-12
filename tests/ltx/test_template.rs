@@ -701,7 +701,8 @@ fn emit_bundle_fixture_v2() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/ltx/bundle-fixture-v2.json"
     );
-    std::fs::write(path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+    // sorted: the committed fixture is key-sorted, and c2pa turns on serde_json preserve_order node-wide
+    std::fs::write(path, serde_json::to_vec_pretty(&fabstir_llm_node::checkpoint::delta::sort_json_keys(&serde_json::to_value(&bundle).unwrap())).unwrap()).unwrap();
     assert!(std::path::Path::new(path).exists());
 }
 

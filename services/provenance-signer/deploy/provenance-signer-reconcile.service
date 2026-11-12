@@ -1,0 +1,15 @@
+[Unit]
+Description=Provenance count reconciliation: on-chain proofs vs signatures per host (D11)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=provsigner
+Group=provsigner
+ExecStart=/opt/provenance-signer/provenance-signer reconcile --config /etc/provenance-signer/config.json
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/provenance-signer

@@ -1,0 +1,12 @@
+{
+  "class": "modified",
+  "manifest": "urn:c2pa:6b1f3c9e-2a4d-4f0b-9c1e-5a7d8e9f0a1b",
+  "provider": "Fabstir Services Limited",
+  "resolver": "https://platformlessai.org/verify",
+  "schema": "platformlessai.exr-provenance.v1",
+  "sequenceId": "4e2b9c10-7d3a-4f61-a0b2-c3d4e5f60718",
+  "sequenceManifest": "urn:c2pa:0d6f2a71-9b3e-4c58-8e1f-3a2b4c5d6e7f",
+  "system": "Platformless AI",
+  "time": "2026-11-09T12:00:00Z",
+  "version": "8.64.0"
+}

@@ -3,25 +3,31 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.63.1-session-settled-rest-2026-11-08";
+pub const VERSION: &str = "v8.64.0-ai-provenance-2026-11-09";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.63.1";
+pub const VERSION_NUMBER: &str = "8.64.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 63;
+pub const VERSION_MINOR: u32 = 64;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-08";
+pub const BUILD_DATE: &str = "2026-11-09";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.64.0 AI provenance (IMPLEMENTATION-AI-PROVENANCE.md AP2): every LTX output is marked before upload: a signed
+    // C2PA manifest from the provenance signer (the node never holds the key), the MPEG-7 fingerprint of every
+    // picture output registered with it (pinned ffmpeg), EXR frames with a header record + a signed sequence
+    // manifest; ComfyUI graph leak guard; fail closed before billing; LTX disabled unless provenance is ready.
+    "ai-provenance-c2pa",
+    "ai-provenance-fingerprint",
     // v8.63.1: POST /v1/inference on a settled session answers HTTP 409 {code: SESSION_SETTLED}; the settled gates check
     // the job the inference core bills (job_id, else session id); vector refusals echo requestId; searchRequest refused.
     "session-settled-rest",
@@ -696,6 +702,10 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.64.0 - AI provenance (Nov 9, 2026)
+    "BREAKING (LTX/relight hosts): generation now REQUIRES provenance: PROVENANCE_SIGNER_URL (the provenance signer; this host's address on its allow-list and this node version in its node_versions), HOST_PRIVATE_KEY, PROVENANCE_FFMPEG (the pinned static ffmpeg 7.0.2, sha256 e7e7fb30..., shipped in Dockerfile.production at /opt/provenance/ffmpeg) and a template bundle whose every template has a provenance class (bundle v49). Without them LTX and relight are disabled at startup (jobs answer 503); a bundle with an unclassed template is not loaded",
+    "BREAKING (LTX wire): every job reserves a manifest slot at accept; a signer outage refuses the job with CAPACITY PROVENANCE_UNAVAILABLE before any GPU time. A marking failure after generation ends the job with PROVENANCE_FAILED: nothing uploaded, no proof, not billed. Delivered mp4s carry a C2PA manifest (bytes added: the reserve + about 2 KB); EXR frames carry the platformlessai:provenance header attribute",
+    "v8.64.0: serde_json preserve_order is now on node-wide (pulled in by c2pa); hashed/signed JSON already sorts its keys, and the transcode step attestation and registration metadata are sorted explicitly so their bytes are unchanged",
     // v8.63.1 - settled sessions over REST (Nov 8, 2026)
     "v8.63.1: POST /v1/inference naming a session the node has settled (job_id, or session_id) answers HTTP 409 {error: SESSION_SETTLED, code: SESSION_SETTLED, job_id, message} instead of an unbilled answer",
     // v8.63.0 - settled-session notice (Nov 8, 2026)
@@ -1248,9 +1258,12 @@ mod tests {
         assert!(FEATURES.contains(&"session-settled-notice"));
         // v8.63.1
         assert!(FEATURES.contains(&"session-settled-rest"));
+        // v8.64.0
+        assert!(FEATURES.contains(&"ai-provenance-c2pa"));
+        assert!(FEATURES.contains(&"ai-provenance-fingerprint"));
         assert_eq!(VERSION_MAJOR, 8);
-        assert_eq!(VERSION_MINOR, 63);
-        assert_eq!(VERSION_PATCH, 1);
+        assert_eq!(VERSION_MINOR, 64);
+        assert_eq!(VERSION_PATCH, 0);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1475,15 +1488,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.63.1"));
-        assert!(version.contains("2026-11-08"));
+        assert!(version.contains("8.64.0"));
+        assert!(version.contains("2026-11-09"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.63.1-session-settled-rest-2026-11-08");
-        assert_eq!(VERSION_NUMBER, "8.63.1");
-        assert_eq!(BUILD_DATE, "2026-11-08");
+        assert_eq!(VERSION, "v8.64.0-ai-provenance-2026-11-09");
+        assert_eq!(VERSION_NUMBER, "8.64.0");
+        assert_eq!(BUILD_DATE, "2026-11-09");
     }
 
     #[test]

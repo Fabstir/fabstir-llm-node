@@ -12,6 +12,7 @@ pub mod exr;
 pub mod input_image;
 pub mod mp4;
 pub mod patcher;
+pub mod provenance;
 pub mod rate_limiter;
 pub mod relight;
 pub mod submit;

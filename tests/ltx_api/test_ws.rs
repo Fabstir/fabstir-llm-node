@@ -10,11 +10,14 @@ use fabstir_llm_node::ltx::{ComfyClient, FrameManifest, Resolution, TemplateStor
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use super::provenance_support::{comfy_stub, install_failing_provenance, install_provenance};
+
 fn key() -> [u8; 32] {
     [0x11; 32]
 }
 fn comfy() -> Arc<ComfyClient> {
-    Arc::new(ComfyClient::new("http://127.0.0.1:8188").unwrap())
+    // answers /system_stats with --disable-metadata (AP2 D8b); nothing else is reached by these tests
+    super::provenance_support::comfy_stub(true)
 }
 fn store_hash() -> (Arc<TemplateStore>, String) {
     let store = TemplateStore::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates")).unwrap();
@@ -115,6 +118,7 @@ async fn test_i2v_accepted_ack() {
     let (store, hash) = store_i2v();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store.clone()).await;
+    install_provenance(&server).await;
     let job = i2v_job(&hash, json!([fixture_capability_cid()]));
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v", Some(9), None).await;
@@ -135,6 +139,7 @@ async fn test_i2v_wrong_image_count() {
     let (store, hash) = store_i2v();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     // i2v expects 1 image; supply 0 -> fail closed BEFORE a slot is taken.
     let job = i2v_job(&hash, json!([]));
     let (resp, task) =
@@ -151,6 +156,7 @@ async fn test_i2v_oversize_image_rejected() {
     let (store, hash) = store_i2v();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let job = i2v_job(&hash, json!([oversize_capability_cid(34_000_000)]));
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-i2v-o", Some(9), None).await;
@@ -166,6 +172,7 @@ async fn test_validation_unknown_template() {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let mut job = valid_job(&hash);
     job["templateId"] = json!("nope");
     let (resp, task) =
@@ -195,6 +202,7 @@ async fn test_accepted_ack() {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let job = valid_job(&hash);
     let (resp, task) =
         handle_encrypted_ltx_generate(&server, &job, &k, "sess-3", Some(7), None).await;
@@ -204,6 +212,52 @@ async fn test_accepted_ack() {
     assert_eq!(inner["status"], "processing");
     assert!(inner.get("allowListVersion").is_some());
     assert_eq!(inner["requestId"], "r1");
+}
+
+#[tokio::test]
+async fn accept_refuses_when_signer_down() {
+    // AP2 (D10): no reservation, no job: nothing is generated that this node could not mark
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_hash();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    let job = valid_job(&hash);
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-3", Some(7), None).await;
+    assert!(task.is_none(), "no task without a runtime");
+    assert!(decrypt_envelope(&resp, &k).to_string().contains("PROVENANCE_UNAVAILABLE"));
+    // and with a runtime whose signer went down after startup
+    install_failing_provenance(&server).await;
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-3", Some(7), None).await;
+    assert!(task.is_none(), "no task without a reservation");
+    let inner = decrypt_envelope(&resp, &k);
+    assert_eq!(inner["type"], "ltx_error");
+    assert!(
+        inner.to_string().contains("PROVENANCE_UNAVAILABLE"),
+        "{inner}"
+    );
+}
+
+#[tokio::test]
+async fn accept_reserves_a_manifest_slot() {
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_hash();
+    server.set_ltx_client(comfy()).await;
+    server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
+    let (_, task) =
+        handle_encrypted_ltx_generate(&server, &valid_job(&hash), &k, "sess-3", Some(7), None)
+            .await;
+    let g = task
+        .unwrap()
+        .provenance
+        .expect("the task carries its grant");
+    assert_eq!(
+        g.reservation.params.class,
+        fabstir_provenance::Class::Generated
+    );
+    assert!(g.reservation.params.soft_binding_alg.is_some());
 }
 
 #[test]
@@ -272,6 +326,7 @@ async fn test_out_of_bounds_rejected() {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let mut job = valid_job(&hash);
     job["frames"] = json!(99_999); // > the allow-list bounds max (751)
     let (resp, task) =
@@ -290,6 +345,7 @@ async fn submit_frames_fps(frames: u32, fps: u32) -> (bool, Value) {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let mut job = valid_job(&hash);
     job["frames"] = json!(frames);
     job["fps"] = json!(fps);
@@ -354,6 +410,7 @@ async fn test_capacity_when_full() {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let job = valid_job(&hash);
     // First job acquires the single permit (held inside the returned task).
     let (_ack1, task1) =
@@ -405,6 +462,7 @@ async fn test_iclora_accepted_ack() {
     let (store, hash) = store_iclora();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store.clone()).await;
+    install_provenance(&server).await;
     // 1 reference image + 1 control video (the capability envelope is
     // media-agnostic; format is enforced on the decrypted bytes post-accept).
     let job = iclora_job(
@@ -434,6 +492,7 @@ async fn test_iclora_wrong_video_count() {
     let (store, hash) = store_iclora();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     // iclora expects 1 video; supply 0 -> fail closed BEFORE a slot is taken.
     let job = iclora_job(&hash, json!([fixture_capability_cid()]), json!([]));
     let (resp, task) =
@@ -458,6 +517,7 @@ async fn test_iclora_oversize_video_rejected() {
     let (store, hash) = store_iclora();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     // 34 MB claims fit under videoMaxBytes (128 MiB) — so claim 200 MB.
     let big = oversize_capability_cid(200_000_000);
     let job = iclora_job(&hash, json!([fixture_capability_cid()]), json!([big]));
@@ -478,6 +538,7 @@ async fn test_strength_rejects_out_of_range_and_unguided_templates() {
         let (store, hash) = store_hash();
         server.set_ltx_client(comfy()).await;
         server.set_ltx_template_store(store).await;
+        install_provenance(&server).await;
         let mut job = valid_job(&hash);
         job["strength"] = json!(bad);
         let (resp, task) =
@@ -501,6 +562,7 @@ async fn test_strength_rejects_out_of_range_and_unguided_templates() {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let mut job = valid_job(&hash);
     job["strength"] = json!(0.5);
     let (resp, task) =
@@ -534,6 +596,7 @@ async fn test_camera_rejects_out_of_range_and_cameraless_templates() {
         let (store, hash) = store_hash();
         server.set_ltx_client(comfy()).await;
         server.set_ltx_template_store(store).await;
+        install_provenance(&server).await;
         let mut job = valid_job(&hash);
         job[field] = json!(bad);
         let (resp, task) =
@@ -552,6 +615,7 @@ async fn test_camera_rejects_out_of_range_and_cameraless_templates() {
     let (store, hash) = store_hash();
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
     let mut job = valid_job(&hash);
     job["azimuth"] = json!(20.0);
     let (resp, task) =
@@ -597,7 +661,9 @@ async fn test_alpha_off_list_fps_refused_before_accept() {
     let job = alpha_job(&store, 121, 48);
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(Arc::new(store)).await;
-    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-a48", Some(3), None).await;
+    install_provenance(&server).await;
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-a48", Some(3), None).await;
     let inner = decrypt_envelope(&resp, &k);
     assert!(task.is_none(), "refused before accept: {inner:?}");
     assert_eq!(inner["error"]["code"], "VALIDATION_FAILED");
@@ -615,7 +681,9 @@ async fn test_alpha_25fps_121_frames_accepted() {
     let job = alpha_job(&store, 121, 25);
     server.set_ltx_client(comfy()).await;
     server.set_ltx_template_store(Arc::new(store)).await;
-    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-a25", Some(4), None).await;
+    install_provenance(&server).await;
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-a25", Some(4), None).await;
     let inner = decrypt_envelope(&resp, &k);
     assert!(task.is_some(), "accepted: {inner:?}");
     assert_eq!(inner["type"], "ltx_accepted");
@@ -651,7 +719,10 @@ fn cap_cid(plaintext: &[u8]) -> (String, Vec<u8>, String) {
     let key = [0x24u8; 32];
     let ct = encrypt_frame(plaintext, &key).unwrap();
     let cid = capability_cid(plaintext, &ct, &key, padding_for(plaintext.len()) as u32);
-    let path = format!("/s5/blob/{}", blob_download_cid(&parse_capability_cid(&cid).unwrap().ct_hash));
+    let path = format!(
+        "/s5/blob/{}",
+        blob_download_cid(&parse_capability_cid(&cid).unwrap().ct_hash)
+    );
     (cid, ct, path)
 }
 
@@ -688,7 +759,9 @@ async fn test_exact_control_refuses_short_clip_before_prompt() {
     let comfy_app = Router::new()
         .route(
             "/upload/image",
-            axum::routing::post(|| async { axum::Json(json!({"name": "staged", "subfolder": "", "type": "input"})) }),
+            axum::routing::post(|| async {
+                axum::Json(json!({"name": "staged", "subfolder": "", "type": "input"}))
+            }),
         )
         .route(
             "/prompt",
@@ -696,6 +769,11 @@ async fn test_exact_control_refuses_short_clip_before_prompt() {
                 seen.fetch_add(1, Ordering::SeqCst);
                 async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "stub") }
             }),
+        )
+        // AP2 D8b: iclora saves through SaveVideo; the stub runs with --disable-metadata
+        .route(
+            "/system_stats",
+            axum::routing::get(|| async { axum::Json(json!({"system": {"argv": ["main.py", "--disable-metadata"]}, "devices": []})) }),
         );
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let comfy_addr = l.local_addr().unwrap();
@@ -723,11 +801,20 @@ async fn test_exact_control_refuses_short_clip_before_prompt() {
     });
     server.set_ltx_client(stub.clone()).await;
     server.set_ltx_template_store(Arc::new(store)).await;
-    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-exact", None, None).await;
+    install_provenance(&server).await;
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-exact", None, None).await;
     let task = task.unwrap_or_else(|| panic!("accepted: {:?}", decrypt_envelope(&resp, &k)));
 
     let (tx, mut rx) = mpsc::channel::<Value>(16);
-    task.run(stub.clone(), k, "sess-exact".to_string(), server.clone(), tx).await;
+    task.run(
+        stub.clone(),
+        k,
+        "sess-exact".to_string(),
+        server.clone(),
+        tx,
+    )
+    .await;
     let raw = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
         .await
         .expect("a terminal frame")
@@ -735,7 +822,11 @@ async fn test_exact_control_refuses_short_clip_before_prompt() {
     let inner = decrypt_envelope(&raw, &k);
     let msg = inner["error"]["message"].as_str().unwrap_or_default();
     assert!(msg.contains("control video has 120 frame(s)"), "{inner:?}");
-    assert_eq!(prompts.load(Ordering::SeqCst), 0, "refused before any /prompt (GPU) call");
+    assert_eq!(
+        prompts.load(Ordering::SeqCst),
+        0,
+        "refused before any /prompt (GPU) call"
+    );
 
     // The negative side, through the same call site: crossview takes a clip but carries NO
     // `exactControl`, so the same 120-frame clip for 121 billed frames passes the old floor and
@@ -757,17 +848,40 @@ async fn test_exact_control_refuses_short_clip_before_prompt() {
         "videos": [clip_cid]
     });
     server.set_ltx_template_store(Arc::new(store)).await;
-    let (resp, task) = handle_encrypted_ltx_generate(&server, &job, &k, "sess-exact-off", None, None).await;
+    install_provenance(&server).await;
+    let (resp, task) =
+        handle_encrypted_ltx_generate(&server, &job, &k, "sess-exact-off", None, None).await;
     let task = task.unwrap_or_else(|| panic!("accepted: {:?}", decrypt_envelope(&resp, &k)));
     let (tx, mut rx) = mpsc::channel::<Value>(16);
-    task.run(stub, k, "sess-exact-off".to_string(), server.clone(), tx).await;
+    task.run(stub, k, "sess-exact-off".to_string(), server.clone(), tx)
+        .await;
     let mut frames = Vec::new();
-    while let Ok(Some(raw)) = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await {
+    while let Ok(Some(raw)) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await
+    {
         frames.push(decrypt_envelope(&raw, &k));
     }
-    assert_eq!(prompts.load(Ordering::SeqCst), 1, "reached /prompt once: {frames:?}");
+    assert_eq!(
+        prompts.load(Ordering::SeqCst),
+        1,
+        "reached /prompt once: {frames:?}"
+    );
     assert!(
         !format!("{frames:?}").contains("control video has"),
         "the exact rule must not fire without exactControl: {frames:?}"
     );
+}
+
+#[tokio::test]
+async fn accept_refuses_save_video_templates_when_comfy_writes_metadata() {
+    // AP2 D8b: t2v saves through core SaveVideo; without --disable-metadata the prompt would land in the mp4
+    let server = ApiServer::new_for_test();
+    let k = key();
+    let (store, hash) = store_hash();
+    server.set_ltx_client(comfy_stub(false)).await;
+    server.set_ltx_template_store(store).await;
+    install_provenance(&server).await;
+    let (resp, task) = handle_encrypted_ltx_generate(&server, &valid_job(&hash), &k, "sess-3", Some(7), None).await;
+    assert!(task.is_none());
+    assert!(decrypt_envelope(&resp, &k).to_string().contains("COMFY_METADATA_ON"));
 }

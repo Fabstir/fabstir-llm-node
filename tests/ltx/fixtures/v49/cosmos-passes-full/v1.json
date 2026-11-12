@@ -1,0 +1,119 @@
+{
+ "1": {
+  "class_type": "LoadVideo",
+  "inputs": {
+   "file": "input.mp4"
+  }
+ },
+ "2": {
+  "class_type": "PrimitiveString",
+  "inputs": {
+   "value": ""
+  },
+  "_meta": {
+   "title": "Prompt"
+  }
+ },
+ "3": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 0
+  }
+ },
+ "4": {
+  "class_type": "PrimitiveInt",
+  "inputs": {
+   "value": 1920
+  },
+  "_meta": {
+   "title": "Width"
+  }
+ },
+ "5": {
+  "class_type": "PrimitiveInt",
+  "inputs": {
+   "value": 1088
+  },
+  "_meta": {
+   "title": "Height"
+  }
+ },
+ "6": {
+  "class_type": "PrimitiveInt",
+  "inputs": {
+   "value": 25
+  },
+  "_meta": {
+   "title": "Frame Rate"
+  }
+ },
+ "7": {
+  "class_type": "PrimitiveInt",
+  "inputs": {
+   "value": 121
+  },
+  "_meta": {
+   "title": "Frame Count"
+  }
+ },
+ "8": {
+  "class_type": "CosmosInversePasses",
+  "inputs": {
+   "video": [
+    "1",
+    0
+   ],
+   "noise": [
+    "3",
+    0
+   ],
+   "width": [
+    "4",
+    0
+   ],
+   "height": [
+    "5",
+    0
+   ],
+   "frames": [
+    "7",
+    0
+   ],
+   "passes": "normal,basecolor,depth,roughness,metallic",
+   "steps": 15,
+   "model_w": 1280,
+   "model_h": 704,
+   "window": 57,
+   "min_overlap": 16,
+   "align": "basecolor,depth",
+   "seed_rule": "mod2^32"
+  }
+ },
+ "9": {
+  "class_type": "RelightPreview",
+  "inputs": {
+   "passes": [
+    "8",
+    0
+   ],
+   "fps": [
+    "6",
+    0
+   ]
+  }
+ },
+ "10": {
+  "class_type": "RelightEXRWrite",
+  "inputs": {
+   "passes": [
+    "8",
+    0
+   ],
+   "compression": "zip",
+   "half": true
+  },
+  "_meta": {
+   "title": "exr_output"
+  }
+ }
+}

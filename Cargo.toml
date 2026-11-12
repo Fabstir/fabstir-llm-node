@@ -13,6 +13,8 @@ methods = ["methods/guest"]  # Will create this directory in Phase 1.2
 
 
 [dependencies]
+# AI provenance (IMPLEMENTATION-AI-PROVENANCE.md AP2): shared with services/provenance-signer; pins c2pa =0.90.22
+fabstir-provenance = { path = "crates/fabstir-provenance" }
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 libp2p = { version = "0.54", features = ["kad", "mdns", "noise", "tcp", "yamux", "websocket", "quic", "identify", "rendezvous", "macros", "serde", "tokio", "dns", "request-response"] }
@@ -168,6 +170,9 @@ data-encoding = "2.10.0"
 # ark-serialize = { version = "0.4", optional = true }
 
 [dev-dependencies]
+# AP2: the real signer in-process (testkit: staging chain + local TSA) and EXR test frames
+provenance-signer = { path = "services/provenance-signer", features = ["testkit"] }
+exr = "1.74"
 tokio-test = "0.4"
 tokio = { version = "1.35", features = ["test-util"] }
 mockall = "0.12"
@@ -231,3 +236,11 @@ required-features = ["kbs"]
 [[bench]]
 name = "embed_benchmark"
 harness = false
+
+# AP2 tests run the signer in-process: its PBES2 key decryption (scrypt) is unusably slow unoptimised.
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3

@@ -1,0 +1,62 @@
+[
+  {
+    "class": "Generated",
+    "format": "video/mp4",
+    "informational_url": "https://platformlessai.org/verify",
+    "manifest_uuid": "6b1f3c9e-2a4d-4f0b-9c1e-5a7d8e9f0a1b",
+    "model_identifier": "pkg:huggingface/Lightricks/LTX-2.3",
+    "model_name": "LTX-2.3",
+    "node_version": "8.64.0",
+    "sequence": null,
+    "soft_binding_alg": "org.platformlessai.mpeg7vs.1",
+    "visual_input": false
+  },
+  {
+    "class": "Generated",
+    "format": "video/mp4",
+    "informational_url": "https://platformlessai.org/verify",
+    "manifest_uuid": "6b1f3c9e-2a4d-4f0b-9c1e-5a7d8e9f0a1b",
+    "model_identifier": "pkg:huggingface/Lightricks/LTX-2.3",
+    "model_name": "LTX-2.3",
+    "node_version": "8.64.0",
+    "sequence": null,
+    "soft_binding_alg": "org.platformlessai.mpeg7vs.1",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "format": "video/mp4",
+    "informational_url": "https://platformlessai.org/verify",
+    "manifest_uuid": "6b1f3c9e-2a4d-4f0b-9c1e-5a7d8e9f0a1b",
+    "model_identifier": "pkg:huggingface/Lightricks/LTX-2.3",
+    "model_name": "LTX-2.3",
+    "node_version": "8.64.0",
+    "sequence": null,
+    "soft_binding_alg": "org.platformlessai.mpeg7vs.1",
+    "visual_input": true
+  },
+  {
+    "class": "Modified",
+    "format": "video/mp4",
+    "informational_url": "https://platformlessai.org/verify",
+    "manifest_uuid": "6b1f3c9e-2a4d-4f0b-9c1e-5a7d8e9f0a1b",
+    "model_identifier": "pkg:huggingface/Lightricks/LTX-2.5",
+    "model_name": "LTX-2.5",
+    "node_version": "8.64.0",
+    "sequence": null,
+    "soft_binding_alg": "org.platformlessai.mpeg7vs.1",
+    "visual_input": true
+  },
+  {
+    "class": "Data",
+    "format": "video/mp4",
+    "informational_url": "https://platformlessai.org/verify",
+    "manifest_uuid": "6b1f3c9e-2a4d-4f0b-9c1e-5a7d8e9f0a1b",
+    "model_identifier": "pkg:huggingface/nvidia/Diffusion_Renderer_Inverse_Cosmos_7B",
+    "model_name": "Cosmos-DiffusionRenderer",
+    "node_version": "8.64.0",
+    "sequence": null,
+    "soft_binding_alg": null,
+    "visual_input": false
+  }
+]
