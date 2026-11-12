@@ -151,6 +151,10 @@ export function makeStripeCheckoutClient(): StripeCheckout {
           // it on the PaymentIntent too keeps provenance if the flow is inspected.
           'metadata[fc1UserId]': params.fc1UserId,
           'payment_intent_data[metadata][fc1UserId]': params.fc1UserId,
+          // The Stripe account is shared with Fabstir v2 and Radar rules key on
+          // ::app:: (TX1 plan §6a). It must ride on the PaymentIntent: Radar
+          // reads the payment's metadata, not the Checkout Session's.
+          'payment_intent_data[metadata][app]': 'platformless-ai',
           success_url: params.successUrl,
           cancel_url: params.cancelUrl,
         }),

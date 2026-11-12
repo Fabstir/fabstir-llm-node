@@ -7,18 +7,16 @@ import { Wallet, recoverAddress } from 'ethers';
 import {
   SESSION_AUTH_SCHEME,
   backendAuthAddress,
-  makeVaultChain,
   sessionAuthDigest,
   signSessionAuthorisation,
 } from '../src/lib/fiat-vault';
-import { ESCROW_INTERFACE } from '../src/lib/escrow';
+import { Transaction } from 'ethers';
+import { HOST as SCRIPTED_HOST, MARKETPLACE as SCRIPTED_MARKETPLACE, USDC as SCRIPTED_USDC } from './helpers/scripted-chain';
+import { scriptedVaultChain } from './helpers/vault-harness';
 
 const AUTH_KEY = `0x${'11'.repeat(32)}`;
 const VAULT = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
-const MARKETPLACE = '0x00000000000000000000000000000000000000aa';
-const HOST = '0xabcd000000000000000000000000000000000001';
 const MODEL = `0x${'ab'.repeat(32)}`;
-const USDC = '0x00000000000000000000000000000000000000cc';
 
 describe('session authorisation signature (FC1.6 contract)', () => {
   beforeEach(() => {
@@ -57,55 +55,11 @@ describe('session authorisation signature (FC1.6 contract)', () => {
   });
 });
 
-type ApproveCall = { spender: string; amount: bigint };
-
-/** Every case below pins an explicit price, so the registry must never be read.
- *  Throwing (not stubbing) means a regression that drops the explicit price
- *  fails loudly here instead of silently taking some other rate. */
-const unusedPriceReader = async (): Promise<bigint> => {
-  throw new Error('registry price read not expected: this test pins pricePerToken');
-};
-
-function fakeUsdc(initialAllowance: bigint) {
-  const approvals: ApproveCall[] = [];
-  let allowance = initialAllowance;
-  return {
-    approvals,
-    setAllowance: (a: bigint) => {
-      allowance = a;
-    },
-    contract: {
-      allowance: async () => allowance,
-      approve: async (spender: string, amount: bigint) => {
-        approvals.push({ spender, amount });
-        allowance = amount;
-        return { wait: async () => ({}) };
-      },
-    },
-  };
-}
-
-function sessionCreatedLog(jobId: bigint, depositor: string, host: string, deposit: bigint) {
-  return ESCROW_INTERFACE.encodeEventLog('SessionJobCreatedForModel', [jobId, depositor, host, MODEL, deposit]);
-}
-
-function fakeMarketplace(jobId: bigint, depositor: string) {
-  const calls: unknown[][] = [];
-  return {
-    calls,
-    contract: {
-      createSessionJobForModelWithToken: async (...args: unknown[]) => {
-        calls.push(args);
-        return {
-          hash: '0xtx',
-          wait: async () => ({ logs: [sessionCreatedLog(jobId, depositor, args[0] as string, 500_000n)] }),
-        };
-      },
-    },
-  };
-}
-
-describe('makeVaultChain (fake contracts, no RPC)', () => {
+// D20: makeVaultChain now sends ONLY through the vault outbox, so these run
+// over the scripted chain (test/helpers/scripted-chain.ts) instead of raw
+// contract fakes. The rules they pin are unchanged: the float, the proven
+// create shape, the event decode, the depositor check, the allowance retry.
+describe('makeVaultChain (through the outbox, scripted chain, no RPC)', () => {
   beforeEach(() => {
     process.env.FIAT_VAULT_ALLOWANCE_FLOAT_MICRO = '2000000';
   });
@@ -113,133 +67,91 @@ describe('makeVaultChain (fake contracts, no RPC)', () => {
     delete process.env.FIAT_VAULT_ALLOWANCE_FLOAT_MICRO;
   });
 
-  function chainWith(usdc: ReturnType<typeof fakeUsdc>, marketplace: ReturnType<typeof fakeMarketplace>) {
-    return makeVaultChain({
-      vaultAddress: VAULT,
-      marketplaceAddress: MARKETPLACE,
-      usdcAddress: USDC,
-      usdc: usdc.contract,
-      marketplace: marketplace.contract,
-      modelPrice: unusedPriceReader,
-    });
-  }
+  const create = { host: SCRIPTED_HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n };
 
   it('skips approve when the allowance already covers the deposit', async () => {
-    const usdc = fakeUsdc(600_000n);
-    const chain = chainWith(usdc, fakeMarketplace(1n, VAULT));
-    await chain.ensureAllowance(500_000n);
-    expect(usdc.approvals).toHaveLength(0);
+    const v = await scriptedVaultChain();
+    v.chain.allowance = 600_000n;
+    await v.vaultChain.createSession(create);
+    expect(v.approvals()).toHaveLength(0);
   });
 
   it('tops the allowance up to exactly the configured float, never more', async () => {
-    const usdc = fakeUsdc(100_000n);
-    const chain = chainWith(usdc, fakeMarketplace(1n, VAULT));
-    await chain.ensureAllowance(500_000n);
-    expect(usdc.approvals).toEqual([{ spender: MARKETPLACE, amount: 2_000_000n }]);
+    const v = await scriptedVaultChain();
+    v.chain.allowance = 100_000n;
+    await v.vaultChain.createSession(create);
+    // mutation: approve any other spender (e.g. the USDC token itself) → red
+    // here, and the scripted chain raises no allowance for it either.
+    expect(v.approvals()).toEqual([2_000_000n]);
+    expect(v.chain.broadcastsOf('approve')[0]!.decoded).toEqual({
+      kind: 'approve',
+      spender: SCRIPTED_MARKETPLACE,
+      amount: 2_000_000n,
+    });
   });
 
   it('refuses a deposit above the float (config error, not a bigger approve)', async () => {
-    const usdc = fakeUsdc(0n);
-    const chain = chainWith(usdc, fakeMarketplace(1n, VAULT));
-    await expect(chain.ensureAllowance(2_000_001n)).rejects.toThrow(/float/i);
-    expect(usdc.approvals).toHaveLength(0);
+    const v = await scriptedVaultChain();
+    v.chain.allowance = 0n;
+    await expect(v.vaultChain.createSession({ ...create, depositMicro: 2_000_001n })).rejects.toThrow(/float/i);
+    expect(v.chain.broadcasts).toHaveLength(0);
   });
 
   it('creates the session with the proven parameter shape and decodes jobId + depositor', async () => {
-    const marketplace = fakeMarketplace(842n, VAULT);
-    const chain = chainWith(fakeUsdc(2_000_000n), marketplace);
-    const result = await chain.createSession({
-      host: HOST,
-      modelId: MODEL,
-      depositMicro: 500_000n,
-      pricePerToken: 904n,
-    });
-    expect(result).toEqual({ jobId: 842n, depositor: VAULT, txHash: '0xtx' });
+    const v = await scriptedVaultChain();
+    const result = await v.vaultChain.createSession(create);
+    expect(result.jobId).toBe(1001n);
+    expect(result.depositor).toBe(v.chain.vaultAddress);
+    expect(result.txHash).toBe(v.chain.broadcastsOf('create')[0]!.hash);
     // host, modelId, token, deposit, price, maxDuration, proofInterval, proofTimeoutWindow
-    expect(marketplace.calls[0]).toEqual([HOST, MODEL, USDC, 500_000n, 904n, 3600n, 1000n, 300n]);
+    expect(v.creates()[0]).toEqual([SCRIPTED_HOST, MODEL, SCRIPTED_USDC, 500_000n, 904n, 3600n, 1000n, 300n]);
   });
 
   it('fails loudly when the receipt carries no SessionJobCreatedForModel event', async () => {
-    const marketplace = {
-      contract: {
-        createSessionJobForModelWithToken: async () => ({ hash: '0xtx', wait: async () => ({ logs: [] }) }),
-      },
+    const v = await scriptedVaultChain();
+    v.chain.onBroadcast = (raw) => {
+      v.chain.mineAll();
+      const hash = Transaction.from(raw).hash!;
+      v.chain.mined.set(hash, { status: 1, blockNumber: v.chain.block, logs: [] });
     };
-    const chain = makeVaultChain({
-      vaultAddress: VAULT,
-      marketplaceAddress: MARKETPLACE,
-      usdcAddress: USDC,
-      usdc: fakeUsdc(0n).contract,
-      marketplace: marketplace.contract,
-      modelPrice: unusedPriceReader,
-    });
-    await expect(
-      chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n })
-    ).rejects.toThrow(/SessionJobCreatedForModel/);
+    v.chain.autoMine = false;
+    await expect(v.vaultChain.createSession(create)).rejects.toThrow(/SessionJobCreatedForModel/);
   });
 
   it('rejects a receipt whose depositor is not the vault (mis-wired signer must not pass silently)', async () => {
-    const marketplace = fakeMarketplace(842n, HOST); // depositor != vault
-    const chain = chainWith(fakeUsdc(2_000_000n), marketplace);
-    await expect(
-      chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n })
-    ).rejects.toThrow(/depositor/);
+    const v = await scriptedVaultChain();
+    v.chain.onBroadcast = (raw) => {
+      v.chain.mineAll();
+      const hash = Transaction.from(raw).hash!;
+      const receipt = v.chain.mined.get(hash)!;
+      const log = receipt.logs[0]!;
+      const topics = [...log.topics];
+      topics[2] = `0x${SCRIPTED_HOST.slice(2).padStart(64, '0')}`; // depositor != vault
+      v.chain.mined.set(hash, { ...receipt, logs: [{ topics, data: log.data }] });
+    };
+    v.chain.autoMine = false;
+    await expect(v.vaultChain.createSession(create)).rejects.toThrow(/depositor/);
   });
 
-  it('force-approves and retries ONCE when the create reverts on a stale/insufficient allowance', async () => {
-    // The stale-read case: allowance reads as covering the deposit (so
-    // ensureAllowance skipped the top-up), but the create reverts "exceeds
-    // allowance". createSession must approve the float and retry, then succeed.
-    const usdc = fakeUsdc(0n);
-    let firstCreate = true;
-    const marketplace = {
-      contract: {
-        createSessionJobForModelWithToken: async (...args: unknown[]) => {
-          if (firstCreate) {
-            firstCreate = false;
-            throw new Error('execution reverted: "ERC20: transfer amount exceeds allowance"');
-          }
-          return {
-            hash: '0xretry',
-            wait: async () => ({ logs: [sessionCreatedLog(843n, VAULT, args[0] as string, 500_000n)] }),
-          };
-        },
-      },
-    };
-    const chain = makeVaultChain({
-      vaultAddress: VAULT,
-      marketplaceAddress: MARKETPLACE,
-      usdcAddress: USDC,
-      usdc: usdc.contract,
-      marketplace: marketplace.contract,
-      modelPrice: unusedPriceReader,
-    });
-    const result = await chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n });
-    expect(result.jobId).toBe(843n);
-    // exactly one recovery approve, to the float
-    expect(usdc.approvals).toEqual([{ spender: MARKETPLACE, amount: 2_000_000n }]);
+  it('force-approves and retries ONCE when the create estimate reverts on a stale/insufficient allowance', async () => {
+    // The stale-read case: allowance reads as covering the deposit (so the
+    // pre-check skipped the top-up), but the create's estimate reverts
+    // "insufficient allowance". Approve the float, then populate once more.
+    const v = await scriptedVaultChain();
+    v.chain.allowance = 0n;
+    v.chain.staleAllowanceRead = 2_000_000n;
+    const result = await v.vaultChain.createSession(create);
+    expect(result.jobId).toBe(1001n);
+    expect(v.approvals()).toEqual([2_000_000n]); // exactly one recovery approve, to the float
   });
 
   it('does NOT retry on a non-allowance revert (surfaces the real error)', async () => {
-    const usdc = fakeUsdc(2_000_000n);
-    const marketplace = {
-      contract: {
-        createSessionJobForModelWithToken: async () => {
-          throw new Error('execution reverted: host not registered');
-        },
-      },
+    const v = await scriptedVaultChain();
+    v.chain.onEstimate = (d) => {
+      if (d.kind === 'create') throw new Error('execution reverted: host not registered');
     };
-    const chain = makeVaultChain({
-      vaultAddress: VAULT,
-      marketplaceAddress: MARKETPLACE,
-      usdcAddress: USDC,
-      usdc: usdc.contract,
-      marketplace: marketplace.contract,
-      modelPrice: unusedPriceReader,
-    });
-    await expect(
-      chain.createSession({ host: HOST, modelId: MODEL, depositMicro: 500_000n, pricePerToken: 904n })
-    ).rejects.toThrow(/host not registered/);
-    expect(usdc.approvals).toHaveLength(0); // no recovery approve for a non-allowance error
+    await expect(v.vaultChain.createSession(create)).rejects.toThrow(/host not registered/);
+    expect(v.approvals()).toHaveLength(0); // no recovery approve for a non-allowance error
+    expect(v.outbox.all()).toHaveLength(0); // the estimate aborts before any append
   });
 });

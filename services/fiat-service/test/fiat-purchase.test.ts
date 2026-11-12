@@ -57,6 +57,8 @@ describe('POST /api/fiat/purchase', () => {
     expect(url).toBe('https://api.stripe.com/v1/checkout/sessions');
     const form = new URLSearchParams(init.body as string);
     expect(form.get('metadata[fc1UserId]')).toBe(ADDR_LC); // lowercased address
+    // Radar rules on the Stripe account shared with Fabstir v2 key on this tag (TX1 plan §6a).
+    expect(form.get('payment_intent_data[metadata][app]')).toBe('platformless-ai');
     expect(form.get('line_items[0][price_data][unit_amount]')).toBe('500'); // 500 credits = 500 cents
     expect(form.get('mode')).toBe('payment');
     expect(form.get('success_url')).toBe('http://site.example/account?purchase=success');

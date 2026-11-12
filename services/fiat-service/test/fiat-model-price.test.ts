@@ -7,49 +7,14 @@
 // unopenable. Proven against the live contract by read-only simulation before
 // this was written. No chain in CI: the registry read is an injected fake.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeVaultChain } from '../src/lib/fiat-vault';
-import { ESCROW_INTERFACE } from '../src/lib/escrow';
+import { scriptedVaultChain } from './helpers/vault-harness';
 
-const VAULT = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
-const MARKETPLACE = '0x00000000000000000000000000000000000000aa';
+// The scripted chain's USDC (the token the registry is asked about).
 const USDC = '0x00000000000000000000000000000000000000cc';
 const HOST_LTX = '0xabcd000000000000000000000000000000000001';
 const HOST_CHAT = '0xabcd000000000000000000000000000000000002';
 const MODEL_LTX = `0x${'ab'.repeat(32)}`;
 const MODEL_CHAT = `0x${'cd'.repeat(32)}`;
-
-function fakeUsdc() {
-  return {
-    allowance: async () => 2_000_000n,
-    approve: async () => ({ wait: async () => ({}) }),
-  };
-}
-
-function fakeMarketplace() {
-  const calls: unknown[][] = [];
-  return {
-    calls,
-    contract: {
-      createSessionJobForModelWithToken: async (...args: unknown[]) => {
-        calls.push(args);
-        return {
-          hash: '0xtx',
-          wait: async () => ({
-            logs: [
-              ESCROW_INTERFACE.encodeEventLog('SessionJobCreatedForModel', [
-                7n,
-                VAULT,
-                args[0] as string,
-                args[1] as string,
-                500_000n,
-              ]),
-            ],
-          }),
-        };
-      },
-    },
-  };
-}
 
 /** The registry as the chain holds it today: LTX 904, chat 10000. */
 function fakeRegistry(prices: Record<string, bigint>) {
@@ -65,15 +30,11 @@ function fakeRegistry(prices: Record<string, bigint>) {
   };
 }
 
-function chainWith(marketplace: ReturnType<typeof fakeMarketplace>, registry: ReturnType<typeof fakeRegistry>) {
-  return makeVaultChain({
-    vaultAddress: VAULT,
-    marketplaceAddress: MARKETPLACE,
-    usdcAddress: USDC,
-    usdc: fakeUsdc(),
-    marketplace: marketplace.contract,
-    modelPrice: registry.modelPrice,
-  });
+// D20: the vault chain sends only through the outbox; the scripted chain
+// records every create it was asked to broadcast (decoded).
+async function chainWith(registry: ReturnType<typeof fakeRegistry>) {
+  const v = await scriptedVaultChain({ modelPrice: registry.modelPrice });
+  return { ...v, createSession: v.vaultChain.createSession.bind(v.vaultChain) };
 }
 
 const PRICES = {
@@ -93,20 +54,20 @@ describe('per-model price resolution', () => {
   });
 
   it('submits the CHAT model price, not the service constant (the bug this fixes)', async () => {
-    const marketplace = fakeMarketplace();
     const registry = fakeRegistry(PRICES);
-    await chainWith(marketplace, registry).createSession({
+    const marketplace = await chainWith(registry);
+    await marketplace.createSession({
       host: HOST_CHAT,
       modelId: MODEL_CHAT,
       depositMicro: 500_000n,
     });
     // args: host, modelId, token, deposit, PRICE, maxDuration, proofInterval, proofTimeoutWindow
-    expect(marketplace.calls[0]![4]).toBe(10_000n);
+    expect(marketplace.creates()[0]![4]).toBe(10_000n);
   });
 
   it('reads the price per (host, model, token) — the exact triple, not a node default', async () => {
     const registry = fakeRegistry(PRICES);
-    await chainWith(fakeMarketplace(), registry).createSession({
+    await (await chainWith(registry)).createSession({
       host: HOST_CHAT,
       modelId: MODEL_CHAT,
       depositMicro: 500_000n,
@@ -115,68 +76,68 @@ describe('per-model price resolution', () => {
   });
 
   it('still submits 904 for the LTX model — the video path is unchanged', async () => {
-    const marketplace = fakeMarketplace();
-    await chainWith(marketplace, fakeRegistry(PRICES)).createSession({
+    const marketplace = await chainWith(fakeRegistry(PRICES));
+    await marketplace.createSession({
       host: HOST_LTX,
       modelId: MODEL_LTX,
       depositMicro: 500_000n,
     });
-    expect(marketplace.calls[0]![4]).toBe(904n);
+    expect(marketplace.creates()[0]![4]).toBe(904n);
   });
 
   it('an explicit pricePerToken still wins and skips the read (caller override)', async () => {
-    const marketplace = fakeMarketplace();
     const registry = fakeRegistry(PRICES);
-    await chainWith(marketplace, registry).createSession({
+    const marketplace = await chainWith(registry);
+    await marketplace.createSession({
       host: HOST_CHAT,
       modelId: MODEL_CHAT,
       depositMicro: 500_000n,
       pricePerToken: 12_345n,
     });
-    expect(marketplace.calls[0]![4]).toBe(12_345n);
+    expect(marketplace.creates()[0]![4]).toBe(12_345n);
     expect(registry.reads).toHaveLength(0);
   });
 
   it('propagates a registry refusal for a model the host does not serve (never guesses)', async () => {
-    const marketplace = fakeMarketplace();
+    const marketplace = await chainWith(fakeRegistry(PRICES));
     await expect(
-      chainWith(marketplace, fakeRegistry(PRICES)).createSession({
+      marketplace.createSession({
         host: HOST_CHAT,
         modelId: MODEL_LTX, // not registered on the chat host
         depositMicro: 500_000n,
       })
     ).rejects.toThrow(/not registered/i);
-    expect(marketplace.calls).toHaveLength(0); // nothing submitted, no money moved
+    expect(marketplace.creates()).toHaveLength(0); // nothing submitted, no money moved
   });
 
   it('refuses a zero price rather than submitting a free session', async () => {
-    const marketplace = fakeMarketplace();
     const zero = fakeRegistry({ [`${HOST_CHAT.toLowerCase()}:${MODEL_CHAT.toLowerCase()}`]: 0n });
+    const marketplace = await chainWith(zero);
     await expect(
-      chainWith(marketplace, zero).createSession({
+      marketplace.createSession({
         host: HOST_CHAT,
         modelId: MODEL_CHAT,
         depositMicro: 500_000n,
       })
     ).rejects.toThrow(/price/i);
-    expect(marketplace.calls).toHaveLength(0);
+    expect(marketplace.creates()).toHaveLength(0);
   });
 
   it('never falls back to the constant when the registry read fails', async () => {
-    const marketplace = fakeMarketplace();
     const broken = {
       reads: [],
       modelPrice: async () => {
         throw new Error('rpc down');
       },
     };
+    const marketplace = await chainWith(broken as unknown as ReturnType<typeof fakeRegistry>);
     await expect(
-      chainWith(marketplace, broken as unknown as ReturnType<typeof fakeRegistry>).createSession({
+      marketplace.createSession({
         host: HOST_CHAT,
         modelId: MODEL_CHAT,
         depositMicro: 500_000n,
       })
     ).rejects.toThrow(/rpc down|price/i);
-    expect(marketplace.calls).toHaveLength(0);
+    expect(marketplace.creates()).toHaveLength(0);
   });
 });

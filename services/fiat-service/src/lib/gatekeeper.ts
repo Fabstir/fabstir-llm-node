@@ -7,11 +7,13 @@
 
 /** The job kinds a vault session can be opened for. `standard` is today's
  *  chat + render shape (an absent `kind` on the wire); `training` is a
- *  fine-tuning run, which lives hours and posts a proof per slice. The SERVICE
- *  owns the on-chain shape per kind (escrow.ts) and the caps per kind (here):
- *  the vault fronts the money, so a browser chooses neither. */
-export type SessionKind = 'standard' | 'training';
-export const SESSION_KINDS: readonly SessionKind[] = ['standard', 'training'];
+ *  fine-tuning run, which lives hours and posts a proof per slice; `passes` is
+ *  a Long VFX Passes render (D21: up to 361 frames on a 4-hour session kept
+ *  alive by proofs). The SERVICE owns the on-chain shape per kind (escrow.ts)
+ *  and the caps per kind (here): the vault fronts the money, so a browser
+ *  chooses neither. */
+export type SessionKind = 'standard' | 'training' | 'passes';
+export const SESSION_KINDS: readonly SessionKind[] = ['standard', 'training', 'passes'];
 
 export interface KindCaps {
   maxDepositPerSessionMicro: bigint;
@@ -30,8 +32,9 @@ export interface GatekeeperConfig {
   /** Per-kind caps (Decision 8: a per-model or per-kind cap, never a raised
    *  global). `standard` always uses the two global fields above; a kind
    *  absent here falls back to them, so an unconfigured kind is never LOOSER
-   *  than standard. Each kind's daily window is its own budget: the ledger
-   *  sums only holds of the request's kind into `spentInWindowMicro`. */
+   *  than standard. Training's daily window is its own budget; `passes`
+   *  spend counts in the STANDARD window (the ledger's `windowKind`), so its
+   *  daily figure is the standard one (D21). */
   perKind?: Partial<Record<Exclude<SessionKind, 'standard'>, KindCaps>>;
   /** FT1 D10 — the registered TRAINING model ids, compared lowercased. The
    *  binding is symmetric: `kind: "training"` needs one of these, and one of
@@ -42,6 +45,12 @@ export interface GatekeeperConfig {
   /** FT1 D11 — live training holds a user may have at once (bound, or held
    *  younger than the ledger's live window). Default 1. */
   maxConcurrentTraining?: number;
+  /** D21 — the relight (VFX Passes) model ids, compared lowercased. The
+   *  binding is ONE-WAY: `kind: "passes"` needs one of these (no other model
+   *  gets a 4-hour session), while a kind-less open on one stays standard
+   *  (helper 0.19.1's card opens). EMPTY by default = the passes kind is
+   *  disabled and refused `KIND_DISABLED`. */
+  passesModelIds?: string[];
 }
 
 /** The caps that govern a request of `kind` under `config`. */
@@ -56,12 +65,14 @@ export function capsFor(config: GatekeeperConfig, kind: SessionKind | undefined)
 }
 
 /** A kind is ENABLED when something can actually open it: `standard` always;
- *  `training` only once a training model id is configured (D10). Everything
- *  sized against "the largest cap" ranges over enabled kinds only, so a
- *  training-disabled deployment keeps today's float and alarm floor (D5). */
+ *  `training` only once a training model id is configured (D10); `passes`
+ *  only once a passes model id is (D21). Everything sized against "the
+ *  largest cap" ranges over enabled kinds only, so a deployment with a kind
+ *  disabled keeps today's float and alarm floor (D5). */
 export function isKindEnabled(config: GatekeeperConfig, kind: SessionKind): boolean {
-  if (kind !== 'training') return true;
-  return (config.trainingModelIds?.length ?? 0) > 0;
+  if (kind === 'training') return (config.trainingModelIds?.length ?? 0) > 0;
+  if (kind === 'passes') return (config.passesModelIds?.length ?? 0) > 0;
+  return true;
 }
 
 /** The largest single deposit any ENABLED kind may open — what the vault's
@@ -118,18 +129,32 @@ export type GateRefusal =
   /** FT1 D10: the kind and the model id disagree (either direction). */
   | 'MODEL_KIND_MISMATCH'
   /** FT1 D11: the user already has the allowed number of live training holds. */
-  | 'CONCURRENT_CAP_EXCEEDED';
+  | 'CONCURRENT_CAP_EXCEEDED'
+  /** D21: the kind is not enabled on this deployment (`passes` with no
+   *  FIAT_PASSES_MODEL_IDS). */
+  | 'KIND_DISABLED';
 
 export type Gatekeeper = (view: LedgerView, request: OpenRequest) => GateDecision;
 
 export function makeGatekeeper(config: GatekeeperConfig): Gatekeeper {
   const allowed = new Set(config.allowedHosts.map((h) => h.toLowerCase()));
   const trainingIds = new Set((config.trainingModelIds ?? []).map((m) => m.toLowerCase()));
+  const passesIds = new Set((config.passesModelIds ?? []).map((m) => m.toLowerCase()));
   const maxConcurrentTraining = config.maxConcurrentTraining ?? 1;
   return (view, request) => {
     // Allow-list first: an off-list request learns nothing about balances.
     if (!allowed.has(request.host.toLowerCase())) return refuse('HOST_NOT_ALLOWED');
     if (request.depositMicro <= 0n) return refuse('INVALID_DEPOSIT');
+    // D21: a disabled kind is refused as such, before the binding (an empty
+    // id set would otherwise read as a model mismatch).
+    if (request.kind === 'passes') {
+      if (!isKindEnabled(config, 'passes')) return refuse('KIND_DISABLED');
+      // ONE-WAY binding: passes needs a passes model; a kind-less open on a
+      // passes model stays standard (checked below as any other model).
+      if (request.modelId === undefined || !passesIds.has(request.modelId.toLowerCase())) {
+        return refuse('MODEL_KIND_MISMATCH');
+      }
+    }
     // D10: the kind↔model binding, both directions, before any money check.
     const isTraining = request.kind === 'training';
     if (request.modelId !== undefined) {
@@ -198,25 +223,38 @@ function listEnv(name: string): string[] {
  *                                             feasibility example's size deposits ~8.6)
  *   FIAT_TRAINING_MAX_DAILY_SPEND_MICRO      (training kind; default 20 USDC = two such runs)
  *   FIAT_TRAINING_MAX_CONCURRENT             (live training holds per user; default 1)
+ *   FIAT_PASSES_MODEL_IDS=0x...,0x...         (D21: the relight model ids; unset = the passes
+ *                                             kind is disabled, refused KIND_DISABLED)
+ *   FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO    (passes kind, per session; default 4 USDC — a Full
+ *                                             361 deposit is ~2.93). Its DAILY figure is the
+ *                                             standard one: passes spend counts in that window.
  * The training caps are a separate budget, set here rather than by raising the
  * globals (the design doc rejects that). Both count GROSS holds for 24h. Env
  * typos are silent defaults, so the effective values are logged once at boot
  * (`describeGatekeeperConfig`).
  */
 export function gatekeeperConfigFromEnv(): GatekeeperConfig {
+  const maxDailySpendMicro = bigintEnv('FIAT_MAX_DAILY_SPEND_MICRO', 10_000_000n);
   return {
     allowedHosts: listEnv('FIAT_ALLOWED_HOSTS'),
     maxDepositPerSessionMicro: bigintEnv('FIAT_MAX_SESSION_DEPOSIT_MICRO', 2_000_000n),
-    maxDailySpendMicro: bigintEnv('FIAT_MAX_DAILY_SPEND_MICRO', 10_000_000n),
+    maxDailySpendMicro,
     maxOpensPerMinute: intEnv('FIAT_MAX_OPENS_PER_MINUTE', 3),
     perKind: {
       training: {
         maxDepositPerSessionMicro: bigintEnv('FIAT_TRAINING_MAX_SESSION_DEPOSIT_MICRO', 10_000_000n),
         maxDailySpendMicro: bigintEnv('FIAT_TRAINING_MAX_DAILY_SPEND_MICRO', 20_000_000n),
       },
+      passes: {
+        maxDepositPerSessionMicro: bigintEnv('FIAT_PASSES_MAX_SESSION_DEPOSIT_MICRO', 4_000_000n),
+        // The standard figure BY RULE: passes holds count in the standard
+        // window, so a separate figure would be a second daily budget.
+        maxDailySpendMicro,
+      },
     },
     trainingModelIds: listEnv('FIAT_TRAINING_MODEL_IDS').map((m) => m.toLowerCase()),
     maxConcurrentTraining: intEnv('FIAT_TRAINING_MAX_CONCURRENT', 1),
+    passesModelIds: listEnv('FIAT_PASSES_MODEL_IDS').map((m) => m.toLowerCase()),
   };
 }
 
@@ -224,12 +262,16 @@ export function gatekeeperConfigFromEnv(): GatekeeperConfig {
  *  value (an env typo is a silent default) is distinguishable from a set one. */
 export function describeGatekeeperConfig(config: GatekeeperConfig): string {
   const t = capsFor(config, 'training');
+  const p = capsFor(config, 'passes');
   return (
     `gatekeeper: hosts=${config.allowedHosts.length} ` +
     `standard session=${config.maxDepositPerSessionMicro} day=${config.maxDailySpendMicro} ` +
     `opens/min=${config.maxOpensPerMinute} ` +
     `training ${isKindEnabled(config, 'training') ? 'ENABLED' : 'disabled (no FIAT_TRAINING_MODEL_IDS)'} ` +
     `session=${t.maxDepositPerSessionMicro} day=${t.maxDailySpendMicro} ` +
-    `concurrent=${config.maxConcurrentTraining ?? 1} ids=[${(config.trainingModelIds ?? []).join(',')}]`
+    `concurrent=${config.maxConcurrentTraining ?? 1} ids=[${(config.trainingModelIds ?? []).join(',')}] ` +
+    `passes ${isKindEnabled(config, 'passes') ? 'ENABLED' : 'disabled (no FIAT_PASSES_MODEL_IDS)'} ` +
+    `session=${p.maxDepositPerSessionMicro} day=${p.maxDailySpendMicro} (standard window) ` +
+    `ids=[${(config.passesModelIds ?? []).join(',')}]`
   );
 }

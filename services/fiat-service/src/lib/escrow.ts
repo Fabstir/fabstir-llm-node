@@ -43,6 +43,13 @@ export const MAX_PROOF_TIMEOUT_WINDOW = 3600n;
  *  it rather than silently funding a session that fails A.3 after escrow. */
 export const TRAINING_SESSION_PROOF_TIMEOUT_WINDOW = MAX_PROOF_TIMEOUT_WINDOW;
 
+// D21 — a Long VFX Passes render (up to 361 frames) outlives the standard
+// hour, so it takes the same 4-hour shape, kept alive by interim proofs; the
+// window is the contract maximum so a proof gap never opens the timeout.
+export const PASSES_SESSION_MAX_DURATION = 14400n;
+export const PASSES_SESSION_PROOF_INTERVAL = 1000n;
+export const PASSES_SESSION_PROOF_TIMEOUT_WINDOW = MAX_PROOF_TIMEOUT_WINDOW;
+
 export interface SessionShape {
   maxDuration: bigint;
   proofInterval: bigint;
@@ -82,6 +89,13 @@ export function sessionShapeFor(kind: SessionKind = 'standard'): SessionShape {
       maxDuration: TRAINING_SESSION_MAX_DURATION,
       proofInterval: TRAINING_SESSION_PROOF_INTERVAL,
       proofTimeoutWindow: TRAINING_SESSION_PROOF_TIMEOUT_WINDOW,
+    };
+  }
+  if (kind === 'passes') {
+    return {
+      maxDuration: PASSES_SESSION_MAX_DURATION,
+      proofInterval: PASSES_SESSION_PROOF_INTERVAL,
+      proofTimeoutWindow: PASSES_SESSION_PROOF_TIMEOUT_WINDOW,
     };
   }
   return {

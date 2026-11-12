@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 // The FC1 identity scheme, locked in ONE place.
 //
 // `fc1UserId` is the user's SMART-ACCOUNT ADDRESS (their passkey-derived Base
@@ -24,4 +26,13 @@ export function fiatUserId(address: string): string {
     throw new Error(`fc1UserId must be a valid address, got "${address}"`);
   }
   return address.toLowerCase();
+}
+
+/** D20 item 2 — a STABLE, opaque payer id for a credential's user: the helper
+ *  records it per batch so a re-pair under a different account is caught
+ *  (`PAYMENT_MODE_CHANGED`) without the helper ever handling the address.
+ *  Domain-separated SHA-256 of the user id: the same user always maps to the
+ *  same id, across credentials and restarts. */
+export function fiatPayerId(userId: string): string {
+  return `payer_${createHash('sha256').update(`fabstir-fiat-payer-v1:${userId.toLowerCase()}`).digest('hex').slice(0, 32)}`;
 }
