@@ -1374,7 +1374,8 @@ impl LtxGenerateTask {
         } = self;
         // VFX Passes: the whole-job deadline runs from here (D3); relight jobs take the relight-only paths below.
         let started = std::time::Instant::now();
-        let is_relight = sidecar.as_deref() == Some("relight");
+        let relight_route = crate::ltx::relight::RelightRoute::of(sidecar.as_deref());
+        let is_relight = relight_route.is_some();
         let admit_cfg = server.admit_cfg().await;
         // This block is a no-op scope kept deliberately: it was the body of the
         // old `tokio::spawn(async move { … })`, and preserving it keeps A.0's
@@ -1856,13 +1857,24 @@ impl LtxGenerateTask {
                         }
                     };
                     if result_checked.is_none() {
-                        if checks_on
-                            && !send_stage(&progress_tx, "checking", 0, key, sid, rid).await
-                        {
-                            warn!("LTX job abandoned before its result check: client disconnected");
-                            return;
-                        }
-                        match checks.check_result(&mut cjob, &r.filename, &bytes).await {
+                        let outcome = match relight_route.as_ref() {
+                            // 8.65.1 (D5): VFX Passes outputs are technical passes computed from the input clip,
+                            // which this job has already had checked; their result is not judged. In `enforce`
+                            // a job with no checked input gets no token (CHECK_UNAVAILABLE).
+                            Some(route) => {
+                                checks.result_of_technical_passes(&mut cjob, route).await
+                            }
+                            None => {
+                                if checks_on
+                                    && !send_stage(&progress_tx, "checking", 0, key, sid, rid).await
+                                {
+                                    warn!("LTX job abandoned before its result check: client disconnected");
+                                    return;
+                                }
+                                checks.check_result(&mut cjob, &r.filename, &bytes).await
+                            }
+                        };
+                        match outcome {
                             Ok(token) => result_checked = Some(token),
                             Err(refusal) => {
                                 send_err(

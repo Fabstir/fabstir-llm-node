@@ -20,7 +20,21 @@ pub fn relight_model_id(template_id: &str) -> [u8; 32] {
 }
 
 pub fn is_relight(entry: Option<&TemplateEntry>) -> bool {
-    entry.and_then(|e| e.sidecar.as_deref()) == Some("relight")
+    RelightRoute::of(entry.and_then(|e| e.sidecar.as_deref())).is_some()
+}
+
+/// Proof that a job runs on the relight route (VFX Passes: the verified template's `sidecar` is `relight`). Only
+/// [`RelightRoute::of`] builds one, from the same value that picks the job's sidecar client, so whatever asks for
+/// it (the content checks' result step for technical passes) cannot be reached by a job on the ComfyUI route.
+#[derive(Debug, Clone, Copy)]
+pub struct RelightRoute {
+    _route: (),
+}
+
+impl RelightRoute {
+    pub fn of(sidecar: Option<&str>) -> Option<Self> {
+        (sidecar == Some("relight")).then_some(RelightRoute { _route: () })
+    }
 }
 
 /// D8 / D3: admission and timing for relight jobs (filled from env at startup; tests set it directly).

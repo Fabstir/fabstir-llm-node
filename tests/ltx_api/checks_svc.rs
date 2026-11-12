@@ -64,6 +64,9 @@ pub struct CheckSvc {
     pub spare_probe: AtomicBool,
     /// With this set EVERY `/v1/moderate` call gets it: the service itself is broken.
     pub fail_all: Mutex<Option<Reply>>,
+    /// With this set every media file gets the reply EXCEPT the probe clip and the files whose sha256 is listed
+    /// (a job's inputs): a service that would refuse any result it was ever shown.
+    pub block_all_but: Mutex<Option<(Vec<String>, Reply)>>,
     pub text_reply: Mutex<Reply>,
     /// A pause before each moderate or text answer (a slow but healthy service).
     pub delay_ms: AtomicU64,
@@ -162,11 +165,14 @@ impl CheckSvc {
         let ext = src.rsplit('.').next().unwrap_or("").to_string();
         let probe = bytes == SELF_TEST_MP4;
         note(&format!("moderate {ext}"));
+        let sha256 = hex::encode(Sha256::digest(&bytes));
+        let blocked = self.block_all_but.lock().unwrap().clone();
+        let blocked = blocked.filter(|(spared, _)| !probe && !spared.contains(&sha256));
         self.files.lock().unwrap().push(Seen {
             path: src.to_string(),
             ext: ext.clone(),
             len: bytes.len(),
-            sha256: hex::encode(Sha256::digest(&bytes)),
+            sha256,
             head: bytes.iter().take(12).copied().collect(),
             probe,
         });
@@ -179,6 +185,9 @@ impl CheckSvc {
         // cloned out first: a lock guard must not be held across the await
         let broken = self.fail_all.lock().unwrap().clone();
         if let Some(reply) = broken {
+            return self.render(reply, false).await;
+        }
+        if let Some((_, reply)) = blocked {
             return self.render(reply, false).await;
         }
         let rule = self.media_rule.lock().unwrap().clone();
@@ -260,6 +269,7 @@ pub fn spawn_service(socket: PathBuf, root: PathBuf) -> Arc<CheckSvc> {
         media_rule: Mutex::new(None),
         spare_probe: AtomicBool::new(false),
         fail_all: Mutex::new(None),
+        block_all_but: Mutex::new(None),
         text_reply: Mutex::new(Reply::Pass),
         delay_ms: AtomicU64::new(0),
         profile: Mutex::new("generation".into()),

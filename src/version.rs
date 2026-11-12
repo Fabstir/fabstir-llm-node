@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.65.0-content-checks-2026-11-12";
+pub const VERSION: &str = "v8.65.1-content-checks-2026-11-12";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.65.0";
+pub const VERSION_NUMBER: &str = "8.65.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,17 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 65;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
 pub const BUILD_DATE: &str = "2026-11-12";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.65.1: a VFX Passes job (the relight route) has no result check: its outputs are technical passes computed
+    // from the input clip, which the same job's input check has already passed (D5). One log line per job:
+    // `ltx-check ... stage=c5 verdict=SKIPPED_TECHNICAL`. Every other route keeps its result check.
+    "ltx-passes-result-check-skipped",
     // v8.65.0 content checks on the video path (IMPLEMENTATION-CONTENT-CHECKS-LTX.md): the prompt, every input and
     // the result are checked by the host's moderation service before anything is marked, uploaded or billed; a
     // refused job bills nothing (CONTENT_REFUSED), a check that cannot run refuses too (CHECK_UNAVAILABLE). Mode
@@ -1293,7 +1297,9 @@ mod tests {
         assert!(FEATURES.contains(&"ltx-job-files-deleted"));
         assert!(FEATURES.contains(&"ltx-bundle-50"));
         assert_eq!(VERSION_MINOR, 65);
-        assert_eq!(VERSION_PATCH, 0);
+        // v8.65.1
+        assert!(FEATURES.contains(&"ltx-passes-result-check-skipped"));
+        assert_eq!(VERSION_PATCH, 1);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1518,14 +1524,14 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.65.0"));
+        assert!(version.contains("8.65.1"));
         assert!(version.contains("2026-11-12"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.65.0-content-checks-2026-11-12");
-        assert_eq!(VERSION_NUMBER, "8.65.0");
+        assert_eq!(VERSION, "v8.65.1-content-checks-2026-11-12");
+        assert_eq!(VERSION_NUMBER, "8.65.1");
         assert_eq!(BUILD_DATE, "2026-11-12");
     }
 

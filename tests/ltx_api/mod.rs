@@ -10,6 +10,7 @@ mod relight_stub;
 mod test_checks_breaker;
 mod test_checks_evidence;
 mod test_checks_gate;
+mod test_checks_passes;
 mod test_checks_refusals;
 mod test_checks_result;
 mod test_checks_seal;

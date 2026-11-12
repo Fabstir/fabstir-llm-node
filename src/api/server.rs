@@ -1156,7 +1156,7 @@ impl ApiServer {
         &self,
         task: &crate::api::websocket::handlers::ltx::LtxGenerateTask,
     ) -> Option<Arc<crate::ltx::ComfyClient>> {
-        if task.sidecar.as_deref() == Some("relight") {
+        if crate::ltx::relight::RelightRoute::of(task.sidecar.as_deref()).is_some() {
             self.get_relight_client().await
         } else {
             self.get_ltx_client().await

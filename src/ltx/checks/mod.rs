@@ -6,6 +6,9 @@
 //! The two token types are the compile-time half of D12: `ComfyClient::upload_input*` takes a [`CheckedInput`] and
 //! `finalise_output` takes a [`ResultChecked`]. Their fields are private to this module, so only the check step
 //! mints them; with `LTX_CONTENT_CHECKS=off` the same methods mint them without running any check code.
+//! One route has a result token that says something else (8.65.1): a VFX Passes job's outputs are technical passes
+//! computed from an input this job has had checked, so [`ContentChecks::result_of_technical_passes`] mints its
+//! token from the relight route's witness and the job's count of checked inputs, without judging the result.
 //!
 //! Nothing here logs prompt text, picture data or a staged path (D14): log lines, alerts and the refusals file
 //! carry derived figures and identifiers only. What the CLIENT is told is one fixed sentence per code: which check
@@ -84,6 +87,19 @@ pub struct ResultChecked {
     _minted: (),
 }
 
+impl ResultChecked {
+    /// The token of a job whose RESULT was not judged, and why: it is on the relight route (VFX Passes), whose
+    /// outputs are technical passes (normals, base colour, depth and the like) computed from the input clip, and
+    /// at least one input of this job went through its input check and was not refused (D5: for technical outputs
+    /// the input check is the real check). Both facts are arguments, so there is no other way to this token.
+    fn technical_passes_input_checked(
+        _route: &crate::ltx::relight::RelightRoute,
+        _inputs_checked: std::num::NonZeroU32,
+    ) -> Self {
+        ResultChecked { _minted: () }
+    }
+}
+
 /// Which check. The tag appears in log lines, alerts and the refusals record, never in what the client is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -118,6 +134,8 @@ pub enum Cause {
     StagingFailed,
     BudgetUsed,
     NotVideo,
+    /// A technical-passes job reached delivery with no input that had been checked (8.65.1).
+    NoCheckedInput,
 }
 
 /// Identifiers that reach log lines, alerts, records and map keys are cut to `[A-Za-z0-9_-]`, 64 characters (fix
@@ -150,6 +168,9 @@ pub struct JobChecks {
     pub total: Duration,
     /// The deep-input frames this job judges, drawn once per job (fix F6).
     deep_sample: Option<(usize, u32, BTreeSet<usize>)>,
+    /// Inputs of this job that went through an input check and were not refused (8.65.1). Private: only the
+    /// input checks count here.
+    inputs_checked: u32,
 }
 
 impl JobChecks {
@@ -334,6 +355,7 @@ impl ContentChecks {
             spent: Duration::ZERO,
             total: Duration::ZERO,
             deep_sample: None,
+            inputs_checked: 0,
         }
     }
 
@@ -435,7 +457,13 @@ impl ContentChecks {
             }
         };
         job.total += began.elapsed();
-        result.map(|()| CheckedInput { _minted: () })
+        result.map(|()| Self::input_checked(job))
+    }
+
+    /// An input went through its check and was not refused: counted on the job, and the upload token minted.
+    fn input_checked(job: &mut JobChecks) -> CheckedInput {
+        job.inputs_checked = job.inputs_checked.saturating_add(1);
+        CheckedInput { _minted: () }
     }
 
     /// D6: a clip (a chained part's previous-part clip included), judged whole before it is uploaded.
@@ -452,7 +480,7 @@ impl ContentChecks {
             .judge(job, Stage::Clip, Item::File { bytes, ext: "mp4" })
             .await;
         job.total += began.elapsed();
-        result.map(|()| CheckedInput { _minted: () })
+        result.map(|()| Self::input_checked(job))
     }
 
     /// D6: one frame of a deep EXR input. The job's sampled frames (the first, the last, and random ones in
@@ -473,7 +501,7 @@ impl ContentChecks {
         let began = Instant::now();
         let result = self.judge_deep_frame(job, scene_linear, bytes).await;
         job.total += began.elapsed();
-        result.map(|()| CheckedInput { _minted: () })
+        result.map(|()| Self::input_checked(job))
     }
 
     async fn judge_deep_frame(
@@ -538,6 +566,38 @@ impl ContentChecks {
         };
         job.total += began.elapsed();
         result.map(|()| ResultChecked { _minted: () })
+    }
+
+    /// D5 as amended in 8.65.1: the result step of a VFX Passes job (the relight route, proved by `route`). Its
+    /// outputs are technical passes computed from the input clip, which image models misread (shadow mode,
+    /// 2026-11-12: a normal and base-colour preview judged BLOCK_ILLEGAL), so the result is NOT sent to the
+    /// service: the input check of the same job is the check. One log line of figures says so. A job with no
+    /// checked input has nothing standing in for the result check: no verdict, so `enforce` fails it closed with
+    /// `CHECK_UNAVAILABLE` (`shadow` only logs, as for every other missing verdict).
+    pub async fn result_of_technical_passes(
+        &self,
+        job: &mut JobChecks,
+        route: &crate::ltx::relight::RelightRoute,
+    ) -> Result<ResultChecked, Refusal> {
+        if self.mode() == Mode::Off {
+            return Ok(ResultChecked { _minted: () });
+        }
+        match std::num::NonZeroU32::new(job.inputs_checked) {
+            Some(inputs) => {
+                tracing::info!(
+                    "ltx-check {} stage={} verdict=SKIPPED_TECHNICAL inputs={} bundle={}",
+                    job.ids(),
+                    Stage::Result.tag(),
+                    inputs,
+                    self.inner.cfg.bundle_hash.as_deref().unwrap_or("unpinned"),
+                );
+                Ok(ResultChecked::technical_passes_input_checked(route, inputs))
+            }
+            None => self
+                .no_verdict(job, Stage::Result, Cause::NoCheckedInput)
+                .await
+                .map(|()| ResultChecked { _minted: () }),
+        }
     }
 
     // ------------------------------------------------------------------ the engine
@@ -820,7 +880,8 @@ impl ContentChecks {
     /// No verdict. The job fails with `CHECK_UNAVAILABLE` (in `enforce`); whether the breaker opens is decided by
     /// the service, not by this one job (fix F2/F3): an unreachable socket opens it at once; a timeout, an
     /// unrecognised answer or a staging fault is followed by the benign probe, and only a failed probe opens it.
-    /// A used-up budget or an artefact that is not a video is this job's own affair.
+    /// A used-up budget, an artefact that is not a video or a technical-passes job with no checked input is this
+    /// job's own affair.
     async fn no_verdict(&self, job: &JobChecks, stage: Stage, cause: Cause) -> Result<(), Refusal> {
         let enforce = self.inner.cfg.mode == Mode::Enforce;
         tracing::warn!(

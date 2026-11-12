@@ -758,6 +758,10 @@ The checks are made by the moderation service (`fabstir-moderation`, bundle v2, 
 host, reached over a Unix socket. Items are handed over through a small memory-backed staging directory that the
 node writes and the service reads.
 
+From node 8.65.1 a VFX Passes job (the relight sidecar) has no result check: its outputs are technical passes
+computed from the input clip, which the same job's input check has already passed, and the node logs one line per
+such job (`ltx-check ... stage=c5 verdict=SKIPPED_TECHNICAL`); the provenance signer must allow node version 8.65.1.
+
 **Settings**
 
 | Setting | Needed in | Meaning |
