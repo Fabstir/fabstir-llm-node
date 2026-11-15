@@ -19,7 +19,9 @@ import { resetCheckoutRateLimitForTest } from '../src/lib/purchase-rate-limit';
 import { POST as purchaseRoute } from '../app/v1/fiat/purchase/route';
 import { POST as reconcileRoute } from '../app/v1/fiat/stripe/reconcile/route';
 import { fakeStripeApi, stripeNoAnswer, stripeRefused, type FakeStripeOptions } from './helpers/fake-stripe';
-import { USER, chargeRefunded, checkoutCompleted, disputeEvent, refundUpdated } from './fixtures/stripe-events';
+import { USER, chargeRefunded, checkoutCompleted, checkoutCompletedUsd, disputeEvent, refundUpdated } from './fixtures/stripe-events';
+import { ALWAYS_133, servedFx, testFeed } from './helpers/fx-feed';
+import { setCardFxForTest } from '../src/lib/card-fx';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -40,6 +42,7 @@ async function world(stripeOpts: FakeStripeOptions = {}) {
     stripe: stripe.api,
     onAlarm: (m) => alarms.push(m),
     allowedCountries: allowedBillingCountries({}),
+    fx: servedFx(ALWAYS_133),
     log: () => {},
     now: () => clock.nowMs,
   };
@@ -199,7 +202,8 @@ describe('M2 an event that overtakes its purchase is redelivered, not dropped', 
   it('a dashboard refund BEFORE the delayed purchase event: 503 until the purchase is journaled, then debited', async () => {
     const w = await world();
     w.clock.nowMs = T0 + 10 * MIN_MS;
-    const refund = chargeRefunded({ eventId: 'evt_r', paymentIntent: 'pi_late', amountCents: 1200, amountRefundedCents: 600, metadata: OURS });
+    // GP: the 2,500 pack at 1.33 is £24.08; half of it back is half the credits.
+    const refund = chargeRefunded({ eventId: 'evt_r', paymentIntent: 'pi_late', amountCents: 2408, amountRefundedCents: 1204, metadata: OURS });
     const early = await handleStripeEvent(w.webhook, refund);
     expect(early.status).toBe(503);
     expect(early.body).toMatchObject({ retry: true });
@@ -207,24 +211,24 @@ describe('M2 an event that overtakes its purchase is redelivered, not dropped', 
     expect(w.alarms).toEqual([]);
 
     // The purchase event arrives late and credits in full.
-    await handleStripeEvent(w.webhook, checkoutCompleted({ paymentIntent: 'pi_late', credits: 1000, taxCents: 200 }));
-    expect(w.ledger.availableMicro(USER)).toBe(credits(1000));
+    await handleStripeEvent(w.webhook, checkoutCompleted({ paymentIntent: 'pi_late', credits: 2500 }));
+    expect(w.ledger.availableMicro(USER)).toBe(credits(2500));
 
     // Stripe redelivers the refund event: now it is applied.
     const again = await handleStripeEvent(w.webhook, refund);
     expect(again.status).toBe(200);
-    expect(w.ledger.availableMicro(USER)).toBe(credits(500));
+    expect(w.ledger.availableMicro(USER)).toBe(credits(1250));
   });
 
   it('the usual order (purchase, then refund) is unchanged', async () => {
     const w = await world();
-    await handleStripeEvent(w.webhook, checkoutCompleted({ paymentIntent: 'pi_n', credits: 1000, taxCents: 200 }));
+    await handleStripeEvent(w.webhook, checkoutCompleted({ paymentIntent: 'pi_n', credits: 2500 }));
     const res = await handleStripeEvent(
       w.webhook,
-      chargeRefunded({ paymentIntent: 'pi_n', amountCents: 1200, amountRefundedCents: 600, metadata: OURS })
+      chargeRefunded({ paymentIntent: 'pi_n', amountCents: 2408, amountRefundedCents: 1204, metadata: OURS })
     );
     expect(res.status).toBe(200);
-    expect(w.ledger.availableMicro(USER)).toBe(credits(500));
+    expect(w.ledger.availableMicro(USER)).toBe(credits(1250));
   });
 
   it('after six hours an unknown charge of ours is alarmed and let go; another product\'s is ignored at once', async () => {
@@ -263,7 +267,7 @@ describe('M2 an event that overtakes its purchase is redelivered, not dropped', 
     expect((await handleStripeEvent(w.webhook, disputeEvent('charge.dispute.created', { disputeId: 'dp_3', paymentIntent: 'pi_down', amountCents: 900 }))).status).toBe(503);
     expect(await w.journal()).toEqual([]);
 
-    await handleStripeEvent(w.webhook, checkoutCompleted({ paymentIntent: 'pi_late', credits: 1000, taxCents: 200 }));
+    await handleStripeEvent(w.webhook, checkoutCompleted({ paymentIntent: 'pi_late', credits: 1000 }));
     expect((await handleStripeEvent(w.webhook, dispute)).status).toBe(200);
     expect(w.ledger.availableMicro(USER)).toBe(0n);
     expect(w.ledger.isFrozen(USER)).toBe(true);
@@ -279,9 +283,9 @@ describe('M2 an event that overtakes its purchase is redelivered, not dropped', 
 
 // ---------------------------------------------------------------------------
 describe('M3 a paid session that cannot be credited is refunded, never dropped', () => {
-  it('paid in a currency other than US dollars: refunded in full under the gate key, reason currency, with an alarm', async () => {
+  it('GP3: a US-dollar session paid after the switch: refunded in full under the gate key, reason currency, with an alarm', async () => {
     const w = await world();
-    const res = await handleStripeEvent(w.webhook, checkoutCompleted({ currency: 'gbp', sessionId: 'cs_gbp', paymentIntent: 'pi_gbp', credits: 1000, taxCents: 200 }));
+    const res = await handleStripeEvent(w.webhook, checkoutCompletedUsd({ sessionId: 'cs_gbp', paymentIntent: 'pi_gbp', credits: 1000, taxCents: 200 }));
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ refused: 'currency', refunded: true });
     expect(w.ledger.availableMicro(USER)).toBe(0n);
@@ -289,10 +293,10 @@ describe('M3 a paid session that cannot be credited is refunded, never dropped',
     expect(w.stripe.calls[0]).toMatchObject({ paymentIntentId: 'pi_gbp', idempotencyKey: 'gate:cs_gbp' });
     expect(w.stripe.calls[0]!.amountCents).toBeUndefined();
     expect(w.stripe.calls[0]!.metadata).toMatchObject({ fc1Origin: 'gate', fc1Reason: 'currency' });
-    expect((await w.journal())[0]).toMatchObject({ t: 'purchase-refused', reason: 'currency', pi: 'pi_gbp', grossCents: '1200' });
+    expect((await w.journal())[0]).toMatchObject({ t: 'purchase-refused', reason: 'currency', pi: 'pi_gbp', grossCents: '1200', currency: 'usd' });
     expect(w.alarms.join('\n')).toMatch(/cannot be credited/);
     // Redelivered: refunded once.
-    const event = checkoutCompleted({ eventId: 'evt_gbp2', currency: 'gbp', sessionId: 'cs_gbp', paymentIntent: 'pi_gbp' });
+    const event = checkoutCompletedUsd({ eventId: 'evt_gbp2', sessionId: 'cs_gbp', paymentIntent: 'pi_gbp' });
     await handleStripeEvent(w.webhook, event);
     expect(w.stripe.calls).toHaveLength(1);
   });
@@ -328,7 +332,7 @@ describe('M3 a paid session that cannot be credited is refunded, never dropped',
 
   it('a session that is not paid is still just ignored', async () => {
     const w = await world();
-    const res = await handleStripeEvent(w.webhook, checkoutCompleted({ currency: 'gbp', paymentStatus: 'unpaid' }));
+    const res = await handleStripeEvent(w.webhook, checkoutCompleted({ currency: 'usd', paymentStatus: 'unpaid' }));
     expect(res.body).toMatchObject({ ignored: expect.any(String) });
     expect(w.stripe.calls).toEqual([]);
     expect(await w.journal()).toEqual([]);
@@ -493,7 +497,7 @@ describe('M7 one Checkout Session is one purchase, whatever the event ids', () =
     ]);
     expect(results.map((r) => r.body.applied).sort()).toEqual([false, true]);
     expect(w.ledger.availableMicro(USER)).toBe(credits(1000));
-    expect(w.ledger.charge('pi_same')).toMatchObject({ netMicro: credits(1000), grossCents: 1200n });
+    expect(w.ledger.charge('pi_same')).toMatchObject({ netMicro: credits(1000), grossCents: 985n, currency: 'gbp' });
   });
 
   it('two refused event objects for one session, concurrently: journaled once, one idempotency key', async () => {
@@ -558,12 +562,14 @@ describe('S1 every Stripe request is pinned to one API version', () => {
     await api.paymentState('pi_1');
     await api.findRefund('pi_1', 'k');
     resetCheckoutRateLimitForTest();
+    setCardFxForTest((await testFeed()).feed);
     await purchaseRoute(
       new Request('http://fiat/v1/fiat/purchase', {
         method: 'POST',
         body: JSON.stringify({
           clientAddress: '0x1234567890abcdef1234567890abcdef12345678',
           credits: 500,
+          priceMinor: 510,
           consent: { termsVersion: '2026-10-23.1', over18: true, useNow: true },
         }),
       })
@@ -618,9 +624,10 @@ describe('M6 and S6: the purchase route', () => {
   let stripeFails = false;
   let fetchMock: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.FIAT_STRIPE_SECRET_KEY = 'sk_test_x';
     resetCheckoutRateLimitForTest();
+    setCardFxForTest((await testFeed()).feed);
     stripeFails = false;
     fetchMock = vi.fn(async () =>
       stripeFails
@@ -641,7 +648,7 @@ describe('M6 and S6: the purchase route', () => {
       new Request('http://fiat/v1/fiat/purchase', {
         method: 'POST',
         headers: forwardedFor ? { 'x-forwarded-for': forwardedFor } : {},
-        body: JSON.stringify({ clientAddress, credits: 500, consent: CONSENT }),
+        body: JSON.stringify({ clientAddress, credits: 500, priceMinor: 510, consent: CONSENT }),
       })
     );
   }

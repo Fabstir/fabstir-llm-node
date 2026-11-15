@@ -63,32 +63,32 @@ describe('GET /v1/fiat/purchases', () => {
     expect(JSON.stringify(await byAddress.json())).not.toMatch(/pi_|600/);
   });
 
-  it("lists the account's card payments, newest first, in dollars and cents with the VAT shown separately", async () => {
+  it("lists the account's card payments, newest first, with the VAT shown separately (old charges: US dollars)", async () => {
     const res = await get(token);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
     const body = await res.json();
     expect(body.purchases).toEqual([
-      { reference: 'pi_2', at: T0 + 60_000, creditsMicro: '10000000', netCents: 1000, taxCents: 200, grossCents: 1200, refundedGrossCents: 240, disputed: false },
-      { reference: 'pi_1', at: T0, creditsMicro: '5000000', netCents: 500, taxCents: 100, grossCents: 600, refundedGrossCents: 0, disputed: false },
+      { reference: 'pi_2', at: T0 + 60_000, creditsMicro: '10000000', netCents: 1000, taxCents: 200, grossCents: 1200, refundedGrossCents: 240, disputed: false, currency: 'usd' },
+      { reference: 'pi_1', at: T0, creditsMicro: '5000000', netCents: 500, taxCents: 100, grossCents: 600, refundedGrossCents: 0, disputed: false, currency: 'usd' },
     ]);
   });
 
   it('lists refunds with what went back to the card, VAT included, and their state', async () => {
     const { refunds } = await (await get(token)).json();
-    expect(refunds).toEqual([{ reference: 'pi_2', at: T0 + 120_000, creditsMicro: '2000000', netCents: 200, taxCents: 40, grossCents: 240, state: 'confirmed' }]);
+    expect(refunds).toEqual([{ reference: 'pi_2', at: T0 + 120_000, creditsMicro: '2000000', netCents: 200, taxCents: 40, grossCents: 240, state: 'confirmed', currency: 'usd' }]);
   });
 
   it('lists payments that could not be credited and were refunded automatically', async () => {
     const { automaticRefunds } = await (await get(token)).json();
-    expect(automaticRefunds).toEqual([{ reference: 'pi_r', at: T0 + 180_000, grossCents: 500, taxCents: 0, reason: 'country', refunded: true }]);
+    expect(automaticRefunds).toEqual([{ reference: 'pi_r', at: T0 + 180_000, grossCents: 500, taxCents: 0, reason: 'country', refunded: true, currency: 'usd' }]);
   });
 
   it('S5: a refusal that was only alarmed (no payment intent, so no refund was made) is NOT shown as refunded', async () => {
     now = T0 + 240_000;
     await ledger.recordRefusedPurchase({ userId: ADDR, eventId: 'evt_alarm', grossCents: 700, taxCents: 0, reason: 'country', refunded: false });
     const { automaticRefunds } = await (await get(token)).json();
-    expect(automaticRefunds[0]).toEqual({ at: T0 + 240_000, grossCents: 700, taxCents: 0, reason: 'country', refunded: false });
+    expect(automaticRefunds[0]).toEqual({ at: T0 + 240_000, grossCents: 700, taxCents: 0, reason: 'country', refunded: false, currency: 'usd' });
     expect(automaticRefunds[1].refunded).toBe(true);
     expect(ledger.refusedPurchases().find((r) => r.eventId === 'evt_alarm')!.refunded).toBe(false);
   });

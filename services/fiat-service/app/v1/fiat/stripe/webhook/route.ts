@@ -14,7 +14,7 @@
 // in the ENDPOINT's version, and that is the one this service reads.
 import { verifyStripeSignature } from '../../../../../src/lib/stripe';
 import { getFiatDeps } from '../../../../../src/lib/fiat-session-service';
-import { handleStripeEvent, productionWebhookDeps } from '../../../../../src/lib/stripe-webhook';
+import { handleStripeEvent, productionWebhookDeps, webhookFx } from '../../../../../src/lib/stripe-webhook';
 
 export async function POST(req: Request): Promise<Response> {
   const secret = process.env.FIAT_STRIPE_WEBHOOK_SECRET;
@@ -39,7 +39,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const { ledger } = await getFiatDeps();
-  const result = await handleStripeEvent(productionWebhookDeps(ledger), event);
+  // GP3: R14(b) reads what the card fx feed served. A feed that cannot be
+  // built is passed as absent: a pack session is then answered 503 (Stripe
+  // redelivers), every other event is handled as before.
+  const fx = await webhookFx();
+  const result = await handleStripeEvent(productionWebhookDeps(ledger, fx), event);
   if (typeof result.body.ignored === 'string') {
     console.log(`[fiat-stripe] ignored webhook: ${result.body.ignored}`);
   }

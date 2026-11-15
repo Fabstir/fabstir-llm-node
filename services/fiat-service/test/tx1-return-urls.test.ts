@@ -4,6 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '../app/v1/fiat/purchase/route';
 import { resetCheckoutRateLimitForTest } from '../src/lib/purchase-rate-limit';
+import { setCardFxForTest } from '../src/lib/card-fx';
+import { testFeed } from './helpers/fx-feed';
 
 const ADDR = '0x1234567890abcDEF1234567890abcdef12345678';
 const CONSENT = { termsVersion: '2026-11-12.2', over18: true, useNow: true };
@@ -15,7 +17,7 @@ function post(origin?: string) {
     new Request('http://127.0.0.1:3020/v1/fiat/purchase', {
       method: 'POST',
       headers: origin ? { origin } : {},
-      body: JSON.stringify({ clientAddress: ADDR, credits: 500, consent: CONSENT }),
+      body: JSON.stringify({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT }),
     })
   );
 }
@@ -30,11 +32,12 @@ function stub() {
 const form = (f: ReturnType<typeof stub>) => new URLSearchParams((f.mock.calls[0]! as unknown as [string, RequestInit])[1].body as string);
 
 describe('return URLs per calling site', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.FIAT_STRIPE_SECRET_KEY = 'sk_test_x';
     process.env.FIAT_PURCHASE_SUCCESS_URL = 'http://localhost:3022/settings?purchase=success';
     process.env.FIAT_PURCHASE_CANCEL_URL = 'http://localhost:3022/settings?purchase=cancel';
     resetCheckoutRateLimitForTest();
+    setCardFxForTest((await testFeed()).feed);
   });
   afterEach(() => {
     vi.unstubAllGlobals();

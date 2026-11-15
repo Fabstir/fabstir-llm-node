@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Goal (EXECUTION-FIAT-SERVICE-EXTRACTION.md #2): the buy / balance / session /
 // cashout / credential-challenge / credential-self-serve routes are called from
 // a browser on another origin (the Platformless AI UI, the Blender website) and
-// need CORS. They are self-authenticating (a backend-key signature or a spending
+// need CORS, as does (GP2) the public pack-price list /v1/fiat/packs. They are self-authenticating (a backend-key signature or a spending
 // credential in the body) and use NO cookies, so we allow the configured origins
 // with credentials OFF. The Stripe webhook and the operator credential route are
 // server-to-server; they get NO browser CORS and are matched out below.
@@ -18,6 +18,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // (/v1/fiat/credential) OUT while letting its browser children in.
 const BROWSER_ROUTES = new Set<string>([
   '/v1/fiat/purchase',
+  '/v1/fiat/packs',
   '/v1/fiat/balance',
   '/v1/fiat/purchases',
   '/v1/fiat/session',

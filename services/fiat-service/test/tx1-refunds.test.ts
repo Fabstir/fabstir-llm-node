@@ -14,6 +14,7 @@ import { POST as cashoutRoute } from '../app/v1/fiat/cashout/route';
 import { setCashoutServiceForTest } from '../src/lib/fiat-cashout-service';
 import { fakeStripeApi, stripeNoAnswer, stripeRefused, type FakeStripeOptions } from './helpers/fake-stripe';
 import { chargeRefunded, disputeEvent, refundUpdated } from './fixtures/stripe-events';
+import { ALWAYS_133, servedFx } from './helpers/fx-feed';
 
 const DAY_MS = 86_400_000;
 const NOW = 1_794_000_000_000;
@@ -60,6 +61,7 @@ async function setup(purchases: Bought[], stripeOpts: FakeStripeOptions = {}) {
     stripe: stripe.api,
     onAlarm: (m) => alarms.push(m),
     allowedCountries: allowedBillingCountries({}),
+    fx: servedFx(ALWAYS_133),
   };
   const journal = async () => (await store.load()).map((l) => JSON.parse(l) as Record<string, unknown>);
   const refund = (credits: number) => requestCashout(deps, { credential: token, amountMicro: BigInt(credits) * 10_000n });
@@ -74,10 +76,12 @@ describe('TX1.4 refunds return the VAT paid on the credits', () => {
     const outcome = await h.refund(400);
     expect(outcome).toEqual({
       status: 'ok',
-      refunds: [{ paymentIntentId: 'pi_1', refundId: 're_1', amountMicro: credits(400), grossCents: 480 }],
+      refunds: [{ paymentIntentId: 'pi_1', refundId: 're_1', amountMicro: credits(400), grossCents: 480, currency: 'usd' }],
       failed: [],
       grossCents: 480,
       amountMicro: credits(400),
+      // GP: a charge journaled without a currency is an old US-dollar one.
+      byCurrency: [{ currency: 'usd', grossMinor: 480 }],
     });
     expect(h.stripe.calls).toEqual([
       {
@@ -166,9 +170,10 @@ describe('TX1.4 refunds return the VAT paid on the credits', () => {
       status: 'ok',
       grossCents: 480,
       amountMicro: credits(400),
+      byCurrency: [{ currency: 'usd', grossMinor: 480 }],
       legs: [
-        { paymentIntentId: 'pi_new', amountMicro: credits(300), grossCents: 360 },
-        { paymentIntentId: 'pi_old', amountMicro: credits(100), grossCents: 120 },
+        { paymentIntentId: 'pi_new', amountMicro: credits(300), grossCents: 360, currency: 'usd' },
+        { paymentIntentId: 'pi_old', amountMicro: credits(100), grossCents: 120, currency: 'usd' },
       ],
     });
     expect(h.ledger.availableMicro(USER)).toBe(credits(800));
@@ -383,9 +388,10 @@ describe('TX1.4 the cashout route', () => {
         preview: true,
         amountMicro: '4000000',
         grossCents: 480,
+        byCurrency: [{ currency: 'usd', grossMinor: 480 }],
         legs: [
-          { paymentIntentId: 'pi_new', amountMicro: '3000000', grossCents: 360 },
-          { paymentIntentId: 'pi_old', amountMicro: '1000000', grossCents: 120 },
+          { paymentIntentId: 'pi_new', amountMicro: '3000000', grossCents: 360, currency: 'usd' },
+          { paymentIntentId: 'pi_old', amountMicro: '1000000', grossCents: 120, currency: 'usd' },
         ],
       });
       expect(h.ledger.availableMicro(USER)).toBe(credits(800));
@@ -394,10 +400,11 @@ describe('TX1.4 the cashout route', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         refunds: [
-          { refundId: 're_1', paymentIntentId: 'pi_new', amountMicro: '3000000', grossCents: 360 },
-          { refundId: 're_2', paymentIntentId: 'pi_old', amountMicro: '1000000', grossCents: 120 },
+          { refundId: 're_1', paymentIntentId: 'pi_new', amountMicro: '3000000', grossCents: 360, currency: 'usd' },
+          { refundId: 're_2', paymentIntentId: 'pi_old', amountMicro: '1000000', grossCents: 120, currency: 'usd' },
         ],
         grossCents: 480,
+        byCurrency: [{ currency: 'usd', grossMinor: 480 }],
         failed: [],
         refundId: 're_1',
         amountMicro: '4000000',

@@ -10,21 +10,22 @@
 // smart-account address (see fiat-identity.ts) so this tops up exactly the
 // balance the helper later spends.
 //
-// TX1.1: Stripe Tax adds VAT on top of the credits' price; the buyer's consent
-// (Terms version, 18 or over, "use my credits straight away": all three
-// required) rides in the session metadata so the webhook journals it with the
-// purchase; and checkout starts are rationed per account and per client address.
+// TX1.1: the buyer's consent (Terms version, 18 or over, "use my credits
+// straight away": all three required) rides in the session metadata so the
+// webhook journals it with the purchase; and checkout starts are rationed per
+// account and per client address.
+//
+// GP2: packs only, priced in pounds, VAT included. The body carries
+// `priceMinor`, the pence the buyer was shown; the route works the price out
+// at the rate served NOW (card-fx.ts) and, if it differs, answers
+// `409 price_changed` with the current packs and creates no session (SPEC
+// R12). No rate served: `503 card_unavailable`.
 import { makeStripeCheckoutClient, type PurchaseConsent } from '../../../../src/lib/stripe';
 import { fiatUserId } from '../../../../src/lib/fiat-identity';
 import { clientIp, takeCheckoutStart } from '../../../../src/lib/purchase-rate-limit';
-
-const MIN_CREDITS = 50; // Stripe's $0.50 minimum charge (1 credit = 1 cent)
-
-function maxCredits(): number {
-  const raw = process.env.FIAT_MAX_PURCHASE_CREDITS;
-  const n = raw ? Number(raw) : 100_000; // default $1,000
-  return Number.isInteger(n) && n > 0 ? n : 100_000;
-}
+import { CARD_CURRENCY, PACK_CREDITS, PRICING_TAG, isPack, packPriceAt, packsAt } from '../../../../src/lib/card-pricing';
+import { getCardFx } from '../../../../src/lib/card-fx';
+import { SESSION_S } from '../../../../src/lib/fx-rule';
 
 const TERMS_VERSION_RE = /^[A-Za-z0-9._:-]{1,40}$/;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}$/;
@@ -84,21 +85,27 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'body must be JSON' }, { status: 400 });
   }
 
-  const { clientAddress, credits, email } = body ?? {};
+  const { clientAddress, credits, email, priceMinor } = body ?? {};
   let userId: string;
   try {
     userId = fiatUserId(clientAddress as string);
   } catch {
     return Response.json({ error: 'clientAddress must be a valid address' }, { status: 400 });
   }
-  if (typeof credits !== 'number' || !Number.isInteger(credits)) {
-    return Response.json({ error: 'credits must be an integer' }, { status: 400 });
-  }
-  if (credits < MIN_CREDITS || credits > maxCredits()) {
+  if (!isPack(credits)) {
     return Response.json(
-      { error: `credits must be between ${MIN_CREDITS} and ${maxCredits()}` },
+      { error: 'not_a_pack', message: `credits must be one of the packs: ${PACK_CREDITS.join(', ')}` },
       { status: 400 }
     );
+  }
+  if (priceMinor === undefined || priceMinor === null) {
+    return Response.json(
+      { error: 'price_required', message: 'priceMinor must carry the price shown for the pack, in pence' },
+      { status: 400 }
+    );
+  }
+  if (typeof priceMinor !== 'number' || !Number.isSafeInteger(priceMinor) || priceMinor <= 0) {
+    return Response.json({ error: 'price_required', message: 'priceMinor must be a positive whole number of pence' }, { status: 400 });
   }
 
   const consent = parseConsent((body ?? {}).consent);
@@ -133,6 +140,27 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  // The rate served now: recorded in served.jsonl before any price leaves.
+  let fxMicro: number;
+  try {
+    const answer = await (await getCardFx()).servedNow();
+    if (answer.kind !== 'rate') throw new Error(answer.reason);
+    fxMicro = answer.fxMicro;
+  } catch {
+    return Response.json(
+      { error: 'card_unavailable', message: 'card top-ups are briefly unavailable; try again later' },
+      { status: 503 }
+    );
+  }
+  const price = packPriceAt(credits, fxMicro);
+  if (price !== priceMinor) {
+    // R12: the buyer sees the new price and confirms again; no session.
+    return Response.json(
+      { error: 'price_changed', currency: CARD_CURRENCY, pricing: PRICING_TAG, packs: packsAt(fxMicro) },
+      { status: 409 }
+    );
+  }
+
   // Counted last, so a request refused above never uses the budget.
   const slot = takeCheckoutStart(userId, clientIp(req));
   if (!slot.ok) {
@@ -143,10 +171,13 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    // credits == cents before tax (1 credit = 1 US cent before VAT).
     const session = await checkout.createCheckoutSession({
       fc1UserId: userId,
-      amountCents: credits,
+      credits,
+      priceMinor: price,
+      fxMicro,
+      // R15: 31 minutes from the request, never Stripe's 24-hour default.
+      expiresAtS: Math.floor(Date.now() / 1000) + SESSION_S,
       successUrl,
       cancelUrl,
       ...(consent ? { consent } : {}),

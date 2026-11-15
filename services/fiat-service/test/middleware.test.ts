@@ -89,6 +89,7 @@ describe('actual requests on browser routes', () => {
   it('every browser route is covered', () => {
     for (const p of [
       '/v1/fiat/purchase',
+      '/v1/fiat/packs',
       '/v1/fiat/balance',
       '/v1/fiat/session',
       '/v1/fiat/cashout',
@@ -99,6 +100,17 @@ describe('actual requests on browser routes', () => {
       expect(res.headers.get('access-control-allow-origin'), p).toBe(UI);
       expect(res.headers.get('cache-control'), p).toBe('no-store');
     }
+  });
+});
+
+describe('GP2: the public pack prices (A11)', () => {
+  it('GET /v1/fiat/packs gets CORS and no-store; its preflight is answered', () => {
+    const get = middleware(req('/v1/fiat/packs', { origin: UI }));
+    expect(get.headers.get('access-control-allow-origin')).toBe(UI);
+    expect(get.headers.get('cache-control')).toBe('no-store');
+    const pre = middleware(req('/v1/fiat/packs', { method: 'OPTIONS', origin: UI }));
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-methods')).toContain('GET');
   });
 });
 

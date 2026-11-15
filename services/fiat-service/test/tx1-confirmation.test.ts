@@ -19,6 +19,7 @@ import { handleStripeEvent, type StripeWebhookDeps } from '../src/lib/stripe-web
 import { allowedBillingCountries } from '../src/lib/sales-countries';
 import { fakeStripeApi } from './helpers/fake-stripe';
 import { USER, checkoutCompleted } from './fixtures/stripe-events';
+import { ALWAYS_133, servedFx } from './helpers/fx-feed';
 
 const TERMS = [
   'TERMS OF SERVICE (test text)',
@@ -27,13 +28,15 @@ const TERMS = [
   'I hereby give notice that I cancel my contract for the supply of the following service: Platformless AI credits.',
 ].join('\n');
 
+// GP: the 1,000 pack at 1.33, £9.85 with £1.64 VAT in it.
 const PURCHASE = {
   to: 'buyer@example.com',
   accountId: USER,
-  netCents: 1000,
-  taxCents: 200,
-  grossCents: 1200,
-  currency: 'usd',
+  credits: 1000,
+  netCents: 821,
+  taxCents: 164,
+  grossCents: 985,
+  currency: 'gbp',
   purchasedAtMs: Date.UTC(2026, 10, 12, 9, 30),
   paymentIntentId: 'pi_1',
   termsVersion: '2026-10-23.1',
@@ -49,15 +52,27 @@ describe('buildConfirmationEmail', () => {
     expect(mail.text).toContain('company number 17451342');
     expect(mail.text).toContain('VAT number GB530097903');
     expect(mail.text).toContain('Credits bought: 1,000');
-    expect(mail.text).toContain('Price before VAT: $10.00');
-    expect(mail.text).toContain('VAT: $2.00');
-    expect(mail.text).toContain('Total paid: $12.00 (US dollars)');
+    expect(mail.text).toContain('Price before VAT: £8.21');
+    expect(mail.text).toContain('VAT: £1.64');
+    expect(mail.text).toContain('Total paid: £9.85\n');
+    expect(mail.text).not.toMatch(/\$|dollar/i);
     expect(mail.text).toContain('Date: 12 November 2026');
     expect(mail.text).toContain('version 2026-10-23.1');
     // The terms themselves, not a link to them.
     expect(mail.text).toContain(TERMS);
     expect(mail.text).toContain('MODEL CANCELLATION FORM');
     expect(mail.text).not.toMatch(/https?:\/\//);
+  });
+
+  it('GP (A2): the credits are the ledger amount, never the price in minor units', () => {
+    const mail = buildConfirmationEmail({ ...PURCHASE, credits: 10_000, netCents: 7938, taxCents: 1588, grossCents: 9526 }, TERMS);
+    expect(mail.text).toContain('Credits bought: 10,000');
+    expect(mail.text).toContain('Total paid: £95.26');
+  });
+
+  it('an old US-dollar purchase keeps its dollars and the (US dollars) note', () => {
+    const mail = buildConfirmationEmail({ ...PURCHASE, netCents: 1000, taxCents: 200, grossCents: 1200, currency: 'usd' }, TERMS);
+    expect(mail.text).toContain('Total paid: $12.00 (US dollars)');
   });
 
   it('records the request to use the credits straight away only when it was made', () => {
@@ -126,6 +141,7 @@ describe('the webhook sends the confirmation once per credited purchase', () => 
       stripe: fakeStripeApi().api,
       onAlarm: () => {},
       allowedCountries: allowedBillingCountries({}),
+      fx: servedFx(ALWAYS_133),
       email: {
         sender: { send: async (m) => void sent.push(m) },
         terms: { text: async () => TERMS },
@@ -137,13 +153,14 @@ describe('the webhook sends the confirmation once per credited purchase', () => 
 
   it('to the email Stripe collected, with the amounts of that purchase; not again on a replay', async () => {
     const h = await harness();
-    const event = checkoutCompleted({ credits: 2500, taxCents: 500, email: 'film@example.com', consent: { useNow: '0' } });
+    const event = checkoutCompleted({ credits: 2500, email: 'film@example.com', consent: { useNow: '0' } });
     await handleStripeEvent(h.deps, event);
     await handleStripeEvent(h.deps, event);
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]!.to).toBe('film@example.com');
     expect(h.sent[0]!.text).toContain('Credits bought: 2,500');
-    expect(h.sent[0]!.text).toContain('Total paid: $30.00');
+    expect(h.sent[0]!.text).toContain('VAT: £4.01');
+    expect(h.sent[0]!.text).toContain('Total paid: £24.08');
     expect(h.sent[0]!.text).not.toContain('straight away');
   });
 
@@ -154,7 +171,7 @@ describe('the webhook sends the confirmation once per credited purchase', () => 
     const [mail] = h.sent;
     expect(mail!.to).toBe('abroad@example.com');
     expect(mail!.subject).toBe('Your Platformless AI payment has been refunded');
-    expect(mail!.text).toContain('no credits were added and your payment of $10.00 has been refunded in full');
+    expect(mail!.text).toContain('no credits were added and your payment of £9.85 has been refunded in full');
     expect(mail!.text).toContain('billing address is in the United Kingdom.');
     expect(mail!.text).not.toContain('confirms your contract');
     expect(mail!.text).not.toMatch(/[—–]| - /);

@@ -179,6 +179,10 @@ type Entry =
       terms?: string;
       over18?: boolean;
       useNow?: boolean;
+      /** GP — the charge's currency, lower case ('gbp' for packs in pounds).
+       *  Absent on every line written before GP: US dollars. `grossCents` and
+       *  `taxCents` are then in that currency's minor units. */
+      currency?: string;
     }
   | { t: 'hold'; holdId: string; userId: string; amount: string; host: string; at: number; kind?: SessionKind; key?: string }
   | { t: 'create-pending'; holdId: string; txHash: string; at: number }
@@ -209,6 +213,8 @@ type Entry =
        *  only be alarmed (no payment intent to refund). Absent on lines from
        *  before this flag: read then as "a refund id was kept". */
       refunded?: boolean;
+      /** GP (A3) — the currency charged; absent = US dollars. */
+      currency?: string;
       at: number;
     }
   /** TX1 §5 — one refund request: the debit of every leg, ONE line, so the
@@ -328,6 +334,8 @@ interface Charge {
   country?: string;
   cardCountry?: string;
   taxIdPresent?: boolean;
+  /** GP — absent = 'usd' (every charge journaled before GP). */
+  currency?: string;
 }
 
 interface Leg {
@@ -364,6 +372,7 @@ interface RefusedPurchase {
   reason: string;
   refundId?: string;
   refunded: boolean;
+  currency?: string;
   atMs: number;
 }
 
@@ -407,7 +416,13 @@ export interface PurchaseDetails {
   cardCountry?: string;
   taxIdPresent?: boolean;
   consent?: { termsVersion: string; over18: boolean; useNow: boolean };
+  /** GP — the currency charged, lower case. Omitted: nothing is journaled
+   *  (the line reads as US dollars, as before GP). */
+  currency?: string;
 }
+
+/** The currency of a charge or refusal journaled without one (before GP). */
+export const LEGACY_CURRENCY = 'usd';
 
 export interface ChargeSnapshot {
   paymentIntentId: string;
@@ -426,6 +441,8 @@ export interface ChargeSnapshot {
   sessionId?: string;
   country?: string;
   cardCountry?: string;
+  /** GP — lower case; 'usd' for a charge journaled before GP. */
+  currency: string;
 }
 
 export interface CashoutLegSnapshot {
@@ -437,6 +454,8 @@ export interface CashoutLegSnapshot {
   atMs: number;
   state: 'pending' | 'confirmed' | 'reversed';
   refundId?: string;
+  /** GP (A6) — the currency of the leg's charge. */
+  currency: string;
 }
 
 export interface DisputeSnapshot {
@@ -463,6 +482,8 @@ export interface RefusedPurchaseSnapshot {
   refundId?: string;
   /** Whether the charge was refunded (false: alarmed only, nothing went back). */
   refunded: boolean;
+  /** GP (A3) — 'usd' for a refusal journaled before GP. */
+  currency: string;
   atMs: number;
 }
 
@@ -470,10 +491,16 @@ export interface PlannedLeg {
   key: string;
   paymentIntentId: string;
   amountMicro: bigint;
+  /** In the minor units of `currency`. 0 is allowed (A1): a leg of a pound
+   *  charge too small to return a penny moves the credits and makes no Stripe
+   *  refund; the cumulative maths returns that penny on a later leg. */
   grossCents: bigint;
+  currency: string;
 }
 export type PlanCashoutReason =
   | CashoutReason
+  /** GP (A1): every leg of the request returns 0p. */
+  | 'REFUND_TOO_SMALL'
   | 'NO_REFUNDABLE_PURCHASE'
   | 'REFUND_WINDOW_EXPIRED'
   | 'ACCOUNT_FROZEN';
@@ -629,6 +656,7 @@ export class CreditsLedger {
               ...(entry.country ? { country: entry.country } : {}),
               ...(entry.cardCountry ? { cardCountry: entry.cardCountry } : {}),
               ...(entry.taxId !== undefined ? { taxIdPresent: entry.taxId } : {}),
+              ...(entry.currency ? { currency: entry.currency } : {}),
             });
           }
         }
@@ -739,6 +767,7 @@ export class CreditsLedger {
           reason: entry.reason,
           ...(entry.refundId ? { refundId: entry.refundId } : {}),
           refunded: entry.refunded ?? Boolean(entry.refundId),
+          ...(entry.currency ? { currency: entry.currency } : {}),
           atMs: entry.at,
         });
         break;
@@ -1183,6 +1212,7 @@ export class CreditsLedger {
         ...(opts?.consent
           ? { terms: opts.consent.termsVersion, over18: opts.consent.over18, useNow: opts.consent.useNow }
           : {}),
+        ...(opts?.currency ? { currency: opts.currency } : {}),
       });
       return { applied: true };
     });
@@ -1217,6 +1247,8 @@ export class CreditsLedger {
     refundId?: string;
     /** Whether the charge was refunded. Omitted: true exactly when a refund id is given. */
     refunded?: boolean;
+    /** GP (A3): the currency charged. */
+    currency?: string;
   }): Promise<{ applied: boolean }> {
     return this.run(async () => {
       assertCents('refused purchase grossCents', refusal.grossCents);
@@ -1237,6 +1269,7 @@ export class CreditsLedger {
         reason: refusal.reason,
         ...(refusal.refundId ? { refundId: refusal.refundId } : {}),
         refunded: refusal.refunded ?? Boolean(refusal.refundId),
+        ...(refusal.currency ? { currency: refusal.currency } : {}),
         at: this.now(),
       });
       return { applied: true };
@@ -1310,6 +1343,7 @@ export class CreditsLedger {
       ...(charge.sessionId ? { sessionId: charge.sessionId } : {}),
       ...(charge.country ? { country: charge.country } : {}),
       ...(charge.cardCountry ? { cardCountry: charge.cardCountry } : {}),
+      currency: charge.currency ?? LEGACY_CURRENCY,
     };
   }
 
@@ -1335,6 +1369,7 @@ export class CreditsLedger {
       reason: r.reason,
       ...(r.refundId ? { refundId: r.refundId } : {}),
       refunded: r.refunded,
+      currency: r.currency ?? LEGACY_CURRENCY,
       atMs: r.atMs,
     }));
   }
@@ -1349,6 +1384,7 @@ export class CreditsLedger {
       atMs: leg.atMs,
       state: leg.state,
       ...(leg.refundId ? { refundId: leg.refundId } : {}),
+      currency: this.charges.get(leg.pi)?.currency ?? LEGACY_CURRENCY,
     };
   }
 
@@ -1635,12 +1671,21 @@ export class CreditsLedger {
       }
       const take = remaining < need ? remaining : need;
       const gross = grossAtCumNet(charge, charge.refundedNetMicro + take) - charge.refundedGrossCents;
-      if (gross <= 0n) {
-        // Cannot happen while gross >= net (tax is never negative); a refund
-        // of nothing must never be journaled as a debit.
-        throw new Error(`refund leg on ${pi} computes to ${gross} cents for ${take} micro — refusing`);
+      // GP (A1): in pounds a charge's gross in pence is below its credits
+      // (10,000 credits for 9,526p), so a small leg can be 0p. It is allowed:
+      // the credits move, no Stripe refund is made, and the cumulative maths
+      // returns the penny on a later leg (the whole gross when the charge
+      // empties). Below zero cannot happen (the cumulative figure never falls).
+      if (gross < 0n) {
+        throw new Error(`refund leg on ${pi} computes to ${gross} minor units for ${take} micro — refusing`);
       }
-      legs.push({ key: cashoutLegKey(requestId, pi), paymentIntentId: pi, amountMicro: take, grossCents: gross });
+      legs.push({
+        key: cashoutLegKey(requestId, pi),
+        paymentIntentId: pi,
+        amountMicro: take,
+        grossCents: gross,
+        currency: charge.currency ?? LEGACY_CURRENCY,
+      });
       grossCents += gross;
       need -= take;
     }
@@ -1649,6 +1694,8 @@ export class CreditsLedger {
       return { ok: false, reason: 'EXCEEDS_REFUNDABLE' };
     }
     if (this.availableMicro(userId) < amountMicro) return { ok: false, reason: 'INSUFFICIENT_BALANCE' };
+    // A1: a request that would return nothing at all is refused.
+    if (grossCents === 0n) return { ok: false, reason: 'REFUND_TOO_SMALL' };
     return { ok: true, legs, grossCents };
   }
 

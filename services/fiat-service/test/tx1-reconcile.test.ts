@@ -73,7 +73,8 @@ describe('TX1 §8 reconcileStripe', () => {
     const { alarms } = await run(ledger, { sessions: [session('pi_1', 1200, 200), session('pi_missing', 600, 100)] });
     expect(alarms).toHaveLength(1);
     expect(alarms[0]).toMatch(/pi_missing/);
-    expect(alarms[0]).toMatch(/not in the ledger/);
+    // GP4: a dollar session can only be one paid after the switch: a refund owed.
+    expect(alarms[0]).toMatch(/refund owed .*never refunded/);
   });
 
   it("another product's session (no fc1UserId) and a session a few minutes old are left alone", async () => {

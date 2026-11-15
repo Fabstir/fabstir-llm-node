@@ -20,6 +20,7 @@ Mounted under `/v1/fiat/*`. Browser clients point `NEXT_PUBLIC_FIAT_SERVICE_URL`
 | Method | Path | Caller | CORS |
 |---|---|---|---|
 | POST | `/v1/fiat/purchase` | browser | ✅ |
+| GET  | `/v1/fiat/packs` (public) | browser | ✅ |
 | GET  | `/v1/fiat/balance` (bearer credential) | browser | ✅ |
 | POST | `/v1/fiat/session` | browser | ✅ |
 | POST | `/v1/fiat/cashout` | browser | ✅ |
@@ -122,13 +123,99 @@ Rule of thumb: if your code can name two different addresses when asked "who is 
 client", you have this bug latent. Pick the one whose private key signs the session
 init.
 
+## Card packs in pounds (GP)
+
+Plan: `docs/development/IMPLEMENTATION-GBP-CARD-PRICING.md` v0.6; the exchange rule:
+`docs/fabstir-v2-reference/platformless-ai-card-fx-handoff/SPEC-CARD-FX-RULE.md` v1.3, shared
+with Fabstir v2. A credit keeps its face value (one US cent); cards are charged in **pounds,
+VAT included**, for **packs only**: 500, 1,000, 2,500 and 10,000 credits.
+
+- `src/lib/credit-price.ts` and `src/lib/fx-rule.ts` are v2's modules, copied **unchanged**
+  and pinned by SHA-256 in `test/gp-pricing.test.ts`. An update is a fresh copy from v2 plus
+  the new hash, never a local edit.
+- `src/lib/card-pricing.ts`: the settings (VAT 2,000 bps; card costs 330 bps + 28p; USDC
+  refill 100 bps; treasury 0) and the pack prices at a given rate.
+- `src/lib/card-fx-sources.ts`, `card-fx-store.ts`, `card-fx.ts`: the feed. Kraken's
+  15-minute USDC/GBP candles at :03, :18, :33, :48 (up to 10 retries a minute apart when the
+  candle that closed 3 minutes earlier is not final yet) and the ECB 90-day file at boot and
+  at :01 past every hour. `servedNow()` is the one source of the rate: `/packs`, `/purchase`
+  and a 60-second tick call it, and a change is fsynced to `served.jsonl` BEFORE the answer
+  leaves. It starts at boot from `instrumentation.ts` **always** (not behind
+  `FIAT_SETTLEMENT_ENABLED`); routes start it lazily too.
+
+**`GET /v1/fiat/packs`** answers `{ currency: 'gbp', pricing: 'gbp1', packs: [{ credits,
+priceMinor, vatMinor }] }` with `Cache-Control: no-store`, or `503 card_unavailable` when no
+rate is served. The rate itself is not in the answer.
+
+**`POST /v1/fiat/purchase`** body: `{ clientAddress, credits, priceMinor, consent, email? }`.
+`credits` must be a pack (`400 not_a_pack`); `priceMinor` is the pence the buyer was shown
+(`400 price_required` without it). If the price at the served rate differs, the answer is
+`409 price_changed` with `{ currency, pricing, packs }` and no session is created (R12). No
+rate served: `503 card_unavailable`. The Checkout Session is `currency=gbp`,
+`tax_behavior=inclusive`, `expires_at` = request time + 1,860 s (R15), Adaptive Pricing off,
+and carries `fc1Credits`, `fc1FxMicro`, `fc1PriceMinor`, `fc1Pricing=gbp1` on the session and
+the PaymentIntent.
+
+**The webhook** credits a session only when it is `gbp`, stamped `gbp1` with a pack and
+whole-number stamps, the billing address is **GB** (a `gbp1` price carries UK VAT only,
+whatever `SALES_EU` says), and **R14** holds on Stripe's signed `created`/`expires_at`:
+(a) stamped rate ≤ 1.40, (b) ≤ the highest rate served from `created − 300` to
+`created + 60`, (c) `expires_at − created` ≤ 1,920 s. It credits the pack when Stripe charged
+the stamped price with its VAT (within a penny), otherwise what was paid, **never more than
+the pack**, with an alarm. Anything else is refunded in full by the gate path and raises an
+URGENT fx alert (reasons `currency`, `pricing`, `rate_ceiling`, `rate_window`,
+`session_lifetime`). If the feed cannot be built the webhook answers 503 for a pack session
+(Stripe redelivers) and handles every other event as before.
+
+**Refunds** return the share of what was paid, card-cost share and VAT included, per charge
+in that charge's currency. A leg of a pound charge can be 0p (10,000 credits for 9,526p): it
+moves the credits, makes no Stripe refund (refund id `none:0p`) and the penny returns on a
+later leg; a request that would return 0p in all is `400 refund_too_small`. Every leg, row
+and preview carries `currency`; previews and outcomes carry `byCurrency: [{ currency,
+grossMinor }]` (a refund can span an old dollar charge and a pound charge). A refund row's
+VAT is the charge's own share, the emptying leg taking the remainder.
+
+**Settings.** `FIAT_CARD_FX_MAX_USD_PER_GBP` must read exactly `1.40` (the rule's ceiling,
+only read and checked). `FIAT_CARD_FX_PIN_USD_PER_GBP` (optional; two decimals, 1.00 to
+1.40) replaces the rule while set, with an alert once a day. `FIAT_FX_URGENT_NTFY_URL`
+(optional) receives a push for every urgent fx alert. A bad ceiling or a malformed pin
+puts the feed in a **misconfigured** state: no rate is served (card top-ups `503`), an
+urgent alert names the setting, every other route works. **Retired:**
+`FIAT_STRIPE_CURRENCY` and `FIAT_MAX_PURCHASE_CREDITS` (ignored if left set).
+
+**Alerts.** `[fiat-fx] ALERT:` lines (stale over 1 h; a candle refused by, or used without,
+the ECB check; no ECB fetch since 00:00 UTC by 02:00 UTC, when the rate holds and cannot fall
+and a pin is the remedy; a ceiling cut; a pin set) and `[fiat-fx] URGENT:` lines (no rate:
+dead, floor, none or misconfigured; an uncreditable payment). Each is raised when its
+condition starts, cleared with a log line when it ends, and raised again if it recurs. Every
+change of the served rate is a `[fiat-fx] served rate … -> …` log line. The host clock must
+be NTP-synchronised (R14): check `timedatectl` at deploy.
+
+**The fx store**, `FIAT_DATA_DIR/fx/` (on the same backed-up volume as the ledger):
+`candles.jsonl` (every final candle fetched; a later line for a candle replaces it),
+`ecb.jsonl` (every ECB entry, and `{fetchedAt}` for every successful fetch) and
+`served.jsonl` (`{at, fxMicro|null}` on every change of what is served). All append-only and
+fsynced; a torn last line is skipped on load. A restart re-reads them and reaches the same
+rate. The first line of `served.jsonl` with a rate is the instant this service first served
+under the rule; it is logged at boot. **A lost or older `served.jsonl` fails closed:**
+payments whose window it no longer covers are refunded with an urgent alert, never credited
+at a rate not on record.
+
+**Reconciliation** judges each pound session by the same rules (R14 against
+`served.jsonl`, the cap): one that should have been refunded is expected among the refused
+purchases, not the charges. An old dollar charge is compared the old way.
+
+**Rolling back** to the binary before GP after a pound purchase: there is no journal format
+bump (only optional `currency` fields were added), so the old binary opens the journal and
+balances are right, but it lists a pound purchase in dollars and its webhook would refund
+every new pound session (it expects `usd`). Roll the site back with it.
+
 ## Checkout, VAT, refunds and chargebacks (TX1)
 
 Plan: `docs/development/IMPLEMENTATION-TX1-STRIPE-TAX.md`. What a client needs to know:
 
-**`POST /v1/fiat/purchase`** body: `{ clientAddress, credits, consent: { termsVersion, over18: true, useNow: true }, email? }`.
-`credits` is the price BEFORE tax in US cents; Stripe Tax adds VAT on top at Checkout
-(`tax_behavior: exclusive`), so the buyer gets exactly the credits chosen. `consent` is
+**`POST /v1/fiat/purchase`** body: `{ clientAddress, credits, priceMinor, consent: { termsVersion, over18: true, useNow: true }, email? }`
+(GP: packs in pounds, VAT included; see above). `consent` is
 required (`400 consent_required` without it), and ALL THREE statements must be true: the
 version of the Terms accepted, the statement of being 18 or over, and `useNow`, the "I
 want to use my credits straight away" box (it starts unticked on the page and must be
@@ -153,13 +240,14 @@ the per-account limit holds.
 (`STRIPE_API_VERSION` in `src/lib/stripe.ts`), and the webhook endpoint must be created
 with the same version.
 
-**The webhook** credits `amount_total − amount_tax` only when `automatic_tax.status` is
-`complete` and the billing address is in a country we sell to (`GB`; plus the 27 EU
-states when `SALES_EU=on`). Otherwise nothing is credited and the charge is refunded in
+**The webhook** credits (GP: the pack, see above) only when `automatic_tax.status` is
+`complete` and the billing address is in a country we sell to (`GB`; a `gbp1` session is
+credited for GB only, whatever `SALES_EU` says). Otherwise nothing is credited and the charge is refunded in
 full (`Idempotency-Key: gate:<session id>`, `metadata[fc1Origin]=gate`). It journals
 gross, tax, net, billing country, card country, whether a tax id was given, and the
-consent. A paid session of ours that cannot be credited at all (a currency other than US
-dollars, an unusable tax figure, no user id) is refunded the same way, with an alarm.
+consent and (GP) the currency. A paid session of ours that cannot be credited at all (a
+currency other than pounds, a missing or malformed `gbp1` stamp, R14, an unusable tax
+figure, no user id) is refunded the same way, with an alarm and an urgent fx alert.
 Endpoint events to subscribe (ten): `checkout.session.completed`,
 `checkout.session.async_payment_succeeded`, `charge.refunded`, `charge.refund.updated`,
 `refund.updated`, `refund.failed`, `charge.dispute.created`, `charge.dispute.closed`,
@@ -172,11 +260,12 @@ PaymentIntent) is one purchase, whatever the event ids.
 
 **`POST /v1/fiat/cashout`** `{ amountMicro }` refunds that many credits AND the VAT paid
 on them, newest card charge first, inside the refund window, never from a disputed
-charge. Answer: `{ refunds: [{ refundId, paymentIntentId, amountMicro, grossCents }],
-grossCents, failed: [...], refundId, amountMicro }` (`refundId`/`amountMicro` are kept for
-clients written before TX1). `{ amountMicro, preview: true }` moves nothing and answers
-`{ preview: true, grossCents, legs }`: show it before the customer confirms. New refusal
-reasons: `ACCOUNT_FROZEN`.
+charge. Answer: `{ refunds: [{ refundId, paymentIntentId, amountMicro, grossCents, currency }],
+grossCents, byCurrency, failed: [...], refundId, amountMicro }` (`refundId`/`amountMicro` are kept for
+clients written before TX1; `grossCents` is in minor units and is a meaningful total only in
+one currency, use `byCurrency`). `{ amountMicro, preview: true }` moves nothing and answers
+`{ preview: true, grossCents, byCurrency, legs }`: show it before the customer confirms. New refusal
+reasons: `ACCOUNT_FROZEN`; (GP) `400 refund_too_small`.
 
 **`GET /v1/fiat/balance`** needs the account's credential (`Authorization: Bearer …`) and
 answers `{ availableMicro, owedMicro, refundableMicro, frozen }` for that account. A lookup
@@ -239,7 +328,8 @@ Copy `.env.example` → `.env` and fill it in. Two classes:
   the website; here they are just server-side config.)
 
 `FIAT_DATA_DIR` is the single ledger + credential journal directory. **It is the users'
-money — back it up out of band.** It is gitignored.
+money — back it up out of band.** It is gitignored. (GP) The card rate's records live in
+`FIAT_DATA_DIR/fx/` and are backed up with it: R14 is judged against `served.jsonl`.
 
 ## Run
 
@@ -270,10 +360,9 @@ Bind `-H 0.0.0.0` (the scripts do) so a Docker port map can forward to the conta
 - **`clientAddress` is the SIGNING identity, not the paying one** (see the routes
   section). Cost us two denied renders and a stranded escrow on 2026-08-20 before the
   node's denial line named both addresses and made it obvious.
-- **Currency:** credits are USD-pegged (1 credit = 1 cent = 10,000 micro-USDC). Model A
-  (charge USD, the card network converts) is the default and needs no code. Model B
-  (charge local currency) needs an FX lookup **and** a webhook change (credit from
-  `metadata.credits`, not `amount_total`). See the contract's Currency & FX section.
+- **Currency:** credits are USD-pegged (1 credit = 1 cent = 10,000 micro-USDC). Cards are
+  charged in pounds for packs (GP, "Card packs in pounds" above); the rate comes from the
+  shared rule, never a hand-set figure.
 
 ## Deploy (Jules)
 
@@ -287,8 +376,10 @@ Bind `-H 0.0.0.0` (the scripts do) so a Docker port map can forward to the conta
    `FIAT_STRIPE_WEBHOOK_SECRET` to its signing secret. Subscribe it to the ten events
    listed under "Checkout, VAT, refunds and chargebacks", with API version
    `2026-08-26.dahlia`. Stripe Tax must be ON in the same
-   mode (origin address, GB registration, tax behaviour exclusive) BEFORE this build takes
-   purchases: every Checkout Session asks for automatic tax.
+   mode (origin address, GB registration) BEFORE this build takes purchases: every Checkout
+   Session asks for automatic tax (GP: inclusive in the pack price). GP: set
+   `FIAT_CARD_FX_MAX_USD_PER_GBP=1.40`, remove `FIAT_STRIPE_CURRENCY` and
+   `FIAT_MAX_PURCHASE_CREDITS`, and check the host clock is NTP-synchronised (`timedatectl`).
 
 6. **Post-deploy gate, both halves, scoped to THIS boot:** `/v1/fiat/balance?address=…`
    answers 401 `credential_required` (200 before TX1, or with `FIAT_BALANCE_OPEN=on`) AND the journal shows `[fiat] gatekeeper:`, `reclaim delays:` and

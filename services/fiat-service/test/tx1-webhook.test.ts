@@ -12,6 +12,7 @@ import { setFiatDepsForTest } from '../src/lib/fiat-session-service';
 import { makeGatekeeper } from '../src/lib/gatekeeper';
 import { POST as webhookRoute } from '../app/v1/fiat/stripe/webhook/route';
 import { USER, chargeRefunded, checkoutCompleted, disputeEvent, refundUpdated } from './fixtures/stripe-events';
+import { ALWAYS_133, servedFx } from './helpers/fx-feed';
 
 const HOST = '0x00000000000000000000000000000000000000aa';
 
@@ -73,6 +74,7 @@ async function harness(opts: StripeOpts & { salesEu?: boolean; nowMs?: number } 
     stripe: api,
     onAlarm: (m) => alarms.push(m),
     allowedCountries: allowedBillingCountries({ SALES_EU: opts.salesEu ? 'on' : 'off' }),
+    fx: servedFx(ALWAYS_133),
     log: () => {},
     now: () => clock.nowMs,
   };
@@ -80,14 +82,14 @@ async function harness(opts: StripeOpts & { salesEu?: boolean; nowMs?: number } 
   return { deps, ledger, refunds, alarms, journal, store, countryLookups, stateReads, clock };
 }
 
-describe('TX1.2 purchase: credited on the amount before tax', () => {
-  it('a UK consumer is credited the net and the journal carries gross, tax, both countries and the consent', async () => {
+describe('TX1.2 purchase: credited the pack (GP3: pounds, VAT inside the price)', () => {
+  it('a UK consumer is credited the pack and the journal carries gross, tax, both countries, the consent and the currency', async () => {
     const h = await harness();
-    const event = checkoutCompleted({ credits: 1000, taxCents: 200, sessionId: 'cs_uk', paymentIntent: 'pi_uk' });
+    // The 1,000 pack at 1.33: £9.85 with £1.64 VAT in it.
+    const event = checkoutCompleted({ credits: 1000, sessionId: 'cs_uk', paymentIntent: 'pi_uk' });
     const res = await handleStripeEvent(h.deps, event);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true, applied: true });
-    // 1,000 credits, not 1,200: the VAT is not spendable.
     expect(h.ledger.availableMicro(USER)).toBe(10_000_000n);
     expect(h.refunds).toEqual([]);
     expect(h.alarms).toEqual([]);
@@ -98,8 +100,9 @@ describe('TX1.2 purchase: credited on the amount before tax', () => {
       amount: '10000000',
       pi: 'pi_uk',
       cs: 'cs_uk',
-      grossCents: '1200',
-      taxCents: '200',
+      grossCents: '985',
+      taxCents: '164',
+      currency: 'gbp',
       country: 'GB',
       cardCountry: 'GB',
       taxId: false,
@@ -107,7 +110,7 @@ describe('TX1.2 purchase: credited on the amount before tax', () => {
       over18: true,
       useNow: true,
     });
-    expect(h.ledger.charge('pi_uk')).toMatchObject({ netMicro: 10_000_000n, grossCents: 1200n, taxCents: 200n });
+    expect(h.ledger.charge('pi_uk')).toMatchObject({ netMicro: 10_000_000n, grossCents: 985n, taxCents: 164n, currency: 'gbp' });
   });
 
   it('records the "use straight away" statement exactly as the session carries it (a session made before it became required)', async () => {
@@ -116,17 +119,16 @@ describe('TX1.2 purchase: credited on the amount before tax', () => {
     expect((await h.journal())[0]).toMatchObject({ t: 'purchase', useNow: false, over18: true });
   });
 
-  it('a UK business with a GB VAT number is still charged VAT and credited the net (no reverse charge at home)', async () => {
+  it('a UK business with a GB VAT number is still charged VAT and credited the pack (no reverse charge at home)', async () => {
     const h = await harness();
     const event = checkoutCompleted({
       credits: 2500,
-      taxCents: 500,
       paymentIntent: 'pi_b2b',
       taxIds: [{ type: 'gb_vat', value: 'GB123456789' }],
     });
     await handleStripeEvent(h.deps, event);
     expect(h.ledger.availableMicro(USER)).toBe(25_000_000n);
-    expect((await h.journal())[0]).toMatchObject({ taxId: true, taxCents: '500', grossCents: '3000' });
+    expect((await h.journal())[0]).toMatchObject({ taxId: true, taxCents: '401', grossCents: '2408' });
     expect(h.alarms).toEqual([]);
   });
 
@@ -164,21 +166,22 @@ describe('TX1.2 the country gate (billing address)', () => {
     expect(h.refunds[0]!.amountCents).toBeUndefined();
     expect(h.refunds[0]!.metadata).toMatchObject({ fc1Origin: 'gate' });
     const [line] = await h.journal();
-    expect(line).toMatchObject({ t: 'purchase-refused', pi: 'pi_us', cs: 'cs_us', country: 'US', reason: 'country', grossCents: '1000' });
+    expect(line).toMatchObject({ t: 'purchase-refused', pi: 'pi_us', cs: 'cs_us', country: 'US', reason: 'country', grossCents: '985', currency: 'gbp' });
     expect(h.ledger.charge('pi_us')).toBeUndefined();
   });
 
-  it('an EU billing address is refused while SALES_EU is off and credited when it is on', async () => {
+  it('GP3 (A12): an EU billing address is refused whether SALES_EU is off or on (a gbp1 price carries UK VAT only)', async () => {
     const off = await harness({ salesEu: false });
     await handleStripeEvent(off.deps, checkoutCompleted({ country: 'IE', taxCents: 230, paymentIntent: 'pi_ie' }));
     expect(off.ledger.availableMicro(USER)).toBe(0n);
     expect(off.refunds).toHaveLength(1);
 
     const on = await harness({ salesEu: true, cardCountry: 'IE' });
-    await handleStripeEvent(on.deps, checkoutCompleted({ country: 'IE', taxCents: 230, paymentIntent: 'pi_ie' }));
-    expect(on.ledger.availableMicro(USER)).toBe(10_000_000n);
-    expect(on.refunds).toEqual([]);
-    expect((await on.journal())[0]).toMatchObject({ country: 'IE', taxCents: '230', grossCents: '1230' });
+    const res = await handleStripeEvent(on.deps, checkoutCompleted({ country: 'IE', taxCents: 230, paymentIntent: 'pi_ie' }));
+    expect(res.body).toMatchObject({ refused: 'country', refunded: true });
+    expect(on.ledger.availableMicro(USER)).toBe(0n);
+    expect(on.refunds).toHaveLength(1);
+    expect((await on.journal())[0]).toMatchObject({ t: 'purchase-refused', country: 'IE', reason: 'country' });
   });
 
   it('a US address stays refused with SALES_EU on, and a missing address is refused too', async () => {
@@ -242,12 +245,14 @@ describe('TX1.2 tax status and alarms', () => {
     }
   });
 
-  it('alarms when a GB purchase carries zero VAT (registration or tax code missing), and still credits', async () => {
+  it('alarms when a GB purchase carries zero VAT (registration or tax code missing), and still credits the pack, never the VAT', async () => {
     const h = await harness();
     await handleStripeEvent(h.deps, checkoutCompleted({ credits: 500, taxCents: 0 }));
+    // Capped at the pack: the missing VAT is not handed out as credits.
     expect(h.ledger.availableMicro(USER)).toBe(5_000_000n);
-    expect(h.alarms).toHaveLength(1);
-    expect(h.alarms[0]).toMatch(/zero VAT/i);
+    expect(h.alarms).toHaveLength(2);
+    expect(h.alarms.join('\n')).toMatch(/zero VAT/i);
+    expect(h.alarms.join('\n')).toMatch(/credited 500 credits/);
   });
 
   it('alarms when the card country and the billing country disagree, credits by the billing address and journals both', async () => {
@@ -269,21 +274,30 @@ describe('TX1.2 tax status and alarms', () => {
     expect(line).not.toHaveProperty('cardCountry');
   });
 
-  it('alarms when the subtotal Stripe charged is not the credits that were bought', async () => {
+  it('GP3 (A4): alarms unless amount_subtotal, amount_total and the stamped price are one figure', async () => {
     const h = await harness();
-    await handleStripeEvent(h.deps, checkoutCompleted({ credits: 1000, subtotalCents: 900, taxCents: 180 }));
-    // Credited what was actually paid before tax.
-    expect(h.ledger.availableMicro(USER)).toBe(9_000_000n);
-    expect(h.alarms.join('\n')).toMatch(/subtotal/i);
+    await handleStripeEvent(h.deps, checkoutCompleted({ credits: 1000, subtotalCents: 900 }));
+    // Paid the stamped price with its VAT: the pack, and an alarm for the subtotal.
+    expect(h.ledger.availableMicro(USER)).toBe(10_000_000n);
+    expect(h.alarms.join('\n')).toMatch(/amount_subtotal 900/);
+    expect(h.alarms).toHaveLength(1);
   });
 });
 
+/** An OLD US-dollar charge, as journaled before GP (credits = cents before
+ *  VAT, VAT on top): the refund and dispute paths must keep working on them. */
 async function withPurchase(opts: { credits?: number; taxCents?: number; pi?: string } = {}) {
   const h = await harness();
-  await handleStripeEvent(
-    h.deps,
-    checkoutCompleted({ credits: opts.credits ?? 1000, taxCents: opts.taxCents ?? 200, paymentIntent: opts.pi ?? 'pi_1' })
-  );
+  const n = opts.credits ?? 1000;
+  const tax = opts.taxCents ?? 200;
+  const pi = opts.pi ?? 'pi_1';
+  await h.ledger.purchase(USER, BigInt(n) * 10_000n, `evt_buy_${pi}`, {
+    paymentIntentId: pi,
+    grossCents: n + tax,
+    taxCents: tax,
+    sessionId: `cs_${pi}`,
+    billingCountry: 'GB',
+  });
   h.alarms.length = 0;
   return h;
 }
@@ -579,7 +593,7 @@ describe('TX1.2 the webhook route (signature, then the handler)', () => {
     process.env.FIAT_STRIPE_WEBHOOK_SECRET = SECRET;
     h = await harness();
     setFiatDepsForTest({ ledger: h.ledger });
-    setStripeWebhookForTest({ stripe: h.deps.stripe, onAlarm: h.deps.onAlarm });
+    setStripeWebhookForTest({ stripe: h.deps.stripe, onAlarm: h.deps.onAlarm, fx: h.deps.fx });
   });
   afterEach(() => {
     delete process.env.FIAT_STRIPE_WEBHOOK_SECRET;
@@ -599,20 +613,21 @@ describe('TX1.2 the webhook route (signature, then the handler)', () => {
     );
   }
 
-  it('credits a UK purchase net of VAT through the signed route', async () => {
-    const res = await post(checkoutCompleted({ credits: 500, taxCents: 100 }));
+  it('credits a UK purchase through the signed route', async () => {
+    const res = await post(checkoutCompleted({ credits: 500 }));
     expect(res.status).toBe(200);
     expect(h.ledger.availableMicro(USER)).toBe(5_000_000n);
   });
 
-  it('reads SALES_EU from the environment: an Irish buyer is refunded while it is off', async () => {
+  it('an Irish buyer is refunded, SALES_EU off or on (A12)', async () => {
     const res = await post(checkoutCompleted({ country: 'IE', taxCents: 230, sessionId: 'cs_ie' }));
     expect(res.status).toBe(200);
     expect(h.ledger.availableMicro(USER)).toBe(0n);
     expect(h.refunds.map((r) => r.idempotencyKey)).toEqual(['gate:cs_ie']);
 
     process.env.SALES_EU = 'on';
-    await post(checkoutCompleted({ country: 'IE', taxCents: 230 }));
-    expect(h.ledger.availableMicro(USER)).toBe(10_000_000n);
+    await post(checkoutCompleted({ country: 'IE', taxCents: 230, sessionId: 'cs_ie2' }));
+    expect(h.ledger.availableMicro(USER)).toBe(0n);
+    expect(h.refunds.map((r) => r.idempotencyKey)).toEqual(['gate:cs_ie', 'gate:cs_ie2']);
   });
 });

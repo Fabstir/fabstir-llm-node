@@ -19,7 +19,9 @@ export interface PurchaseConfirmation {
   to: string;
   /** The account the credits were added to. */
   accountId: string;
-  /** Price before VAT, the VAT, and the total, in cents. */
+  /** GP (A2): the credits added to the account (the ledger amount). */
+  credits: number;
+  /** Price before VAT, the VAT, and the total, in the currency's minor units. */
   netCents: number;
   taxCents: number;
   grossCents: number;
@@ -52,9 +54,11 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-function money(cents: number, currency: string): string {
-  const whole = Math.floor(cents / 100).toLocaleString('en-GB');
-  const pence = String(cents % 100).padStart(2, '0');
+/** `£5.08` for pounds, `$5.08` for an old US-dollar purchase, `5.08 EUR` otherwise. */
+export function money(minor: number, currency: string): string {
+  const whole = Math.floor(minor / 100).toLocaleString('en-GB');
+  const pence = String(minor % 100).padStart(2, '0');
+  if (currency === 'gbp') return `£${whole}.${pence}`;
   return currency === 'usd' ? `$${whole}.${pence}` : `${whole}.${pence} ${currency.toUpperCase()}`;
 }
 
@@ -65,7 +69,7 @@ function longDate(ms: number): string {
 
 /** The confirmation, as plain text. Pure, so the wording is tested. */
 export function buildConfirmationEmail(p: PurchaseConfirmation, termsText: string): EmailMessage {
-  const credits = p.netCents.toLocaleString('en-GB');
+  const credits = p.credits.toLocaleString('en-GB');
   const lines = [
     'Thank you for your purchase.',
     '',

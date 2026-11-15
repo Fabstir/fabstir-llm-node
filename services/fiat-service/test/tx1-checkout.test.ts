@@ -5,6 +5,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '../app/v1/fiat/purchase/route';
 import { resetCheckoutRateLimitForTest } from '../src/lib/purchase-rate-limit';
+import { setCardFxForTest } from '../src/lib/card-fx';
+import { testFeed } from './helpers/fx-feed';
 
 const ADDR = '0x1234567890abcDEF1234567890abcdef12345678';
 const OTHER = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
@@ -33,9 +35,10 @@ function formOf(fetchMock: ReturnType<typeof stubCheckout>, call = 0): URLSearch
 }
 
 describe('TX1.1 Checkout Session body', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.FIAT_STRIPE_SECRET_KEY = 'sk_test_x';
     resetCheckoutRateLimitForTest();
+    setCardFxForTest((await testFeed()).feed);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -45,21 +48,21 @@ describe('TX1.1 Checkout Session body', () => {
     delete process.env.FIAT_MAX_CHECKOUTS_PER_HOUR;
   });
 
-  it('turns on automatic tax, exclusive of the price, with the digital services tax code', async () => {
+  it('GP2: turns on automatic tax, INCLUSIVE in the pack price, with the digital services tax code', async () => {
     const fetchMock = stubCheckout();
-    expect((await post({ clientAddress: ADDR, credits: 1000, consent: CONSENT })).status).toBe(200);
+    expect((await post({ clientAddress: ADDR, credits: 1000, priceMinor: 985, consent: CONSENT })).status).toBe(200);
     const form = formOf(fetchMock);
     expect(form.get('automatic_tax[enabled]')).toBe('true');
-    expect(form.get('line_items[0][price_data][tax_behavior]')).toBe('exclusive');
+    expect(form.get('line_items[0][price_data][tax_behavior]')).toBe('inclusive');
     expect(form.get('line_items[0][price_data][product_data][tax_code]')).toBe('txcd_10000000');
-    // The price is the credits' price BEFORE tax: 1,000 credits = 1,000 cents.
-    expect(form.get('line_items[0][price_data][unit_amount]')).toBe('1000');
-    expect(form.get('line_items[0][price_data][currency]')).toBe('usd');
+    // The 1,000 pack at 1.33: £9.85, VAT included.
+    expect(form.get('line_items[0][price_data][unit_amount]')).toBe('985');
+    expect(form.get('line_items[0][price_data][currency]')).toBe('gbp');
   });
 
   it('collects the billing address and a tax id, and creates a customer and an invoice', async () => {
     const fetchMock = stubCheckout();
-    await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
+    await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT });
     const form = formOf(fetchMock);
     expect(form.get('billing_address_collection')).toBe('required');
     expect(form.get('customer_creation')).toBe('always');
@@ -67,13 +70,13 @@ describe('TX1.1 Checkout Session body', () => {
     expect(form.get('invoice_creation[enabled]')).toBe('true');
   });
 
-  it('allows no promotion codes, pins US dollars and records the credits bought', async () => {
+  it('allows no promotion codes, keeps Adaptive Pricing off and records the pack bought', async () => {
     const fetchMock = stubCheckout();
-    await post({ clientAddress: ADDR, credits: 2500, consent: CONSENT });
+    await post({ clientAddress: ADDR, credits: 2500, priceMinor: 2408, consent: CONSENT });
     const form = formOf(fetchMock);
     expect(form.get('allow_promotion_codes')).toBe('false');
-    // Adaptive Pricing would let a buyer pay in pounds; the webhook credits US
-    // dollars only, so it is switched off per session, whatever the account says.
+    // Adaptive Pricing would let a buyer pay in another currency; the webhook
+    // credits pounds only, so it is switched off per session.
     expect(form.get('adaptive_pricing[enabled]')).toBe('false');
     expect(form.get('metadata[fc1Credits]')).toBe('2500');
     expect(form.get('metadata[fc1UserId]')).toBe(ADDR.toLowerCase());
@@ -81,31 +84,32 @@ describe('TX1.1 Checkout Session body', () => {
 
   it('carries payment_intent_data[metadata][app]=platformless-ai (the Radar rules key on it)', async () => {
     const fetchMock = stubCheckout();
-    await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
+    await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT });
     expect(formOf(fetchMock).get('payment_intent_data[metadata][app]')).toBe('platformless-ai');
   });
 
   it('passes the customer email only when one is given', async () => {
     const fetchMock = stubCheckout();
-    await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
+    await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT });
     expect(formOf(fetchMock, 0).has('customer_email')).toBe(false);
-    await post({ clientAddress: ADDR, credits: 500, consent: CONSENT, email: 'buyer@example.com' });
+    await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT, email: 'buyer@example.com' });
     expect(formOf(fetchMock, 1).get('customer_email')).toBe('buyer@example.com');
-    expect((await post({ clientAddress: ADDR, credits: 500, consent: CONSENT, email: 'not an email' })).status).toBe(400);
+    expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT, email: 'not an email' })).status).toBe(400);
   });
 
   it('takes the tax code from FIAT_STRIPE_TAX_CODE when the accountant changes it', async () => {
     process.env.FIAT_STRIPE_TAX_CODE = 'txcd_10103001';
     const fetchMock = stubCheckout();
-    await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
+    await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT });
     expect(formOf(fetchMock).get('line_items[0][price_data][product_data][tax_code]')).toBe('txcd_10103001');
   });
 });
 
 describe('TX1.1 consent recorded with the purchase', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.FIAT_STRIPE_SECRET_KEY = 'sk_test_x';
     resetCheckoutRateLimitForTest();
+    setCardFxForTest((await testFeed()).feed);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -115,23 +119,23 @@ describe('TX1.1 consent recorded with the purchase', () => {
 
   it('refuses a purchase without the Terms version or the 18 or over statement, before Stripe', async () => {
     const fetchMock = stubCheckout();
-    const noConsent = await post({ clientAddress: ADDR, credits: 500 });
+    const noConsent = await post({ clientAddress: ADDR, credits: 500, priceMinor: 510 });
     expect(noConsent.status).toBe(400);
     expect(await noConsent.json()).toMatchObject({ error: 'consent_required' });
-    expect((await post({ clientAddress: ADDR, credits: 500, consent: { termsVersion: '2026-10-23.1' } })).status).toBe(400);
+    expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: { termsVersion: '2026-10-23.1' } })).status).toBe(400);
     expect(
-      (await post({ clientAddress: ADDR, credits: 500, consent: { termsVersion: '2026-10-23.1', over18: false } })).status
+      (await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: { termsVersion: '2026-10-23.1', over18: false } })).status
     ).toBe(400);
-    expect((await post({ clientAddress: ADDR, credits: 500, consent: { over18: true } })).status).toBe(400);
+    expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: { over18: true } })).status).toBe(400);
     expect(
-      (await post({ clientAddress: ADDR, credits: 500, consent: { termsVersion: 'bad version!', over18: true } })).status
+      (await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: { termsVersion: 'bad version!', over18: true } })).status
     ).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('carries the Terms version, the age statement and the use straight away statement in the session metadata', async () => {
     const fetchMock = stubCheckout();
-    await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
+    await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT });
     const form = formOf(fetchMock, 0);
     expect(form.get('metadata[fc1Terms]')).toBe('2026-10-23.1');
     expect(form.get('metadata[fc1Over18]')).toBe('1');
@@ -141,7 +145,7 @@ describe('TX1.1 consent recorded with the purchase', () => {
   it('the "use my credits straight away" box MUST be ticked to buy, like the other two', async () => {
     const fetchMock = stubCheckout();
     for (const useNow of [false, undefined, 'yes', 1]) {
-      const res = await post({ clientAddress: ADDR, credits: 500, consent: { termsVersion: '2026-10-23.1', over18: true, useNow } });
+      const res = await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: { termsVersion: '2026-10-23.1', over18: true, useNow } });
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ error: 'consent_required' });
     }
@@ -151,7 +155,7 @@ describe('TX1.1 consent recorded with the purchase', () => {
   it('FIAT_CONSENT_REQUIRED=off lets a client that does not send consent yet through, recording nothing', async () => {
     process.env.FIAT_CONSENT_REQUIRED = 'off';
     const fetchMock = stubCheckout();
-    expect((await post({ clientAddress: ADDR, credits: 500 })).status).toBe(200);
+    expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510 })).status).toBe(200);
     const form = formOf(fetchMock);
     expect(form.has('metadata[fc1Terms]')).toBe(false);
     expect(form.has('metadata[fc1Over18]')).toBe(false);
@@ -159,9 +163,10 @@ describe('TX1.1 consent recorded with the purchase', () => {
 });
 
 describe('TX1.1 rate limit: 5 Checkout sessions per user per hour', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.FIAT_STRIPE_SECRET_KEY = 'sk_test_x';
     resetCheckoutRateLimitForTest();
+    setCardFxForTest((await testFeed()).feed);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -175,26 +180,26 @@ describe('TX1.1 rate limit: 5 Checkout sessions per user per hour', () => {
     vi.setSystemTime(new Date('2026-11-12T10:00:00Z'));
     const fetchMock = stubCheckout();
     for (let i = 0; i < 5; i++) {
-      expect((await post({ clientAddress: ADDR, credits: 500, consent: CONSENT })).status).toBe(200);
+      expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT })).status).toBe(200);
     }
-    const sixth = await post({ clientAddress: ADDR, credits: 500, consent: CONSENT });
+    const sixth = await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT });
     expect(sixth.status).toBe(429);
     expect(sixth.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(fetchMock).toHaveBeenCalledTimes(5); // the refused one never reached Stripe
 
     // Another user is not affected.
-    expect((await post({ clientAddress: OTHER, credits: 500, consent: CONSENT })).status).toBe(200);
+    expect((await post({ clientAddress: OTHER, credits: 500, priceMinor: 510, consent: CONSENT })).status).toBe(200);
 
     vi.setSystemTime(new Date('2026-11-12T11:00:01Z'));
-    expect((await post({ clientAddress: ADDR, credits: 500, consent: CONSENT })).status).toBe(200);
+    expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT })).status).toBe(200);
   });
 
   it('a request refused before Stripe (bad amount, no consent) does not use the budget', async () => {
     stubCheckout();
     for (let i = 0; i < 8; i++) {
-      expect((await post({ clientAddress: ADDR, credits: 1, consent: CONSENT })).status).toBe(400);
-      expect((await post({ clientAddress: ADDR, credits: 500 })).status).toBe(400);
+      expect((await post({ clientAddress: ADDR, credits: 1, priceMinor: 510, consent: CONSENT })).status).toBe(400);
+      expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510 })).status).toBe(400);
     }
-    expect((await post({ clientAddress: ADDR, credits: 500, consent: CONSENT })).status).toBe(200);
+    expect((await post({ clientAddress: ADDR, credits: 500, priceMinor: 510, consent: CONSENT })).status).toBe(200);
   });
 });

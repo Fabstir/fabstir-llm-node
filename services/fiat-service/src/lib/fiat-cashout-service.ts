@@ -35,19 +35,35 @@ export interface CashoutDeps {
 
 export type CashoutRefusal = PlanCashoutReason | 'NOT_CENT_ALIGNED';
 
+/** GP (A6): what goes back to the card, per currency (a refund can span an
+ *  old US-dollar charge and a pound charge; `grossCents` sums both and means
+ *  something only when there is one currency). */
+export type ByCurrency = Array<{ currency: string; grossMinor: number }>;
+
+/** The refund id a 0p leg is confirmed with (A1): no Stripe refund exists. */
+export const ZERO_LEG_REFUND_ID = 'none:0p';
+
+function byCurrencyOf(legs: ReadonlyArray<{ currency: string; grossCents: number }>): ByCurrency {
+  const sums = new Map<string, number>();
+  for (const l of legs) sums.set(l.currency, (sums.get(l.currency) ?? 0) + l.grossCents);
+  return [...sums].map(([currency, grossMinor]) => ({ currency, grossMinor }));
+}
+
 export interface RefundedLeg {
   paymentIntentId: string;
   refundId: string;
   /** Credits (net, micro-units) this leg took. */
   amountMicro: bigint;
-  /** What went back to the card for it, VAT included, in cents. */
+  /** What went back to the card for it, VAT included, in the minor units of `currency`. */
   grossCents: number;
+  currency: string;
 }
 
 export interface FailedLeg {
   paymentIntentId: string;
   amountMicro: bigint;
   grossCents: number;
+  currency: string;
   /** `reversed`: no refund was made and the credits are back. `unknown`: it
    *  could not be established whether Stripe made the refund, so the credits
    *  stay debited until a person or the next webhook settles it. */
@@ -66,13 +82,20 @@ export type CashoutOutcome =
       grossCents: number;
       /** Total credits refunded (net, micro-units). */
       amountMicro: bigint;
+      byCurrency: ByCurrency;
     }
   | { status: 'unauthorised' }
   | { status: 'refused'; reason: CashoutRefusal }
   | { status: 'stripe_error'; message: string; failed: FailedLeg[] };
 
 export type CashoutPreview =
-  | { status: 'ok'; grossCents: number; amountMicro: bigint; legs: Array<{ paymentIntentId: string; amountMicro: bigint; grossCents: number }> }
+  | {
+      status: 'ok';
+      grossCents: number;
+      amountMicro: bigint;
+      byCurrency: ByCurrency;
+      legs: Array<{ paymentIntentId: string; amountMicro: bigint; grossCents: number; currency: string }>;
+    }
   | { status: 'unauthorised' }
   | { status: 'refused'; reason: CashoutRefusal };
 
@@ -97,7 +120,7 @@ async function resyncAfterFailure(
     const sync = await ledger.chargeRefunded(paymentIntentId, refundedNow, `resync:${tag}`);
     if (sync.known && !sync.refusedPurchase && sync.applied) {
       onAlarm(
-        `after a failed refund on ${paymentIntentId}, Stripe shows ${sync.unexplainedCents} cents refunded that the ledger had not debited: ` +
+        `after a failed refund on ${paymentIntentId}, Stripe shows ${sync.unexplainedCents} minor units refunded that the ledger had not debited: ` +
           `${sync.debitedMicro} micro debited from ${sync.userId}`
       );
     }
@@ -130,15 +153,18 @@ export async function previewCashout(
     nowMs: (deps.now ?? Date.now)(),
   });
   if (!plan.ok) return { status: 'refused', reason: plan.reason };
+  const legs = plan.legs.map((l) => ({
+    paymentIntentId: l.paymentIntentId,
+    amountMicro: l.amountMicro,
+    grossCents: Number(l.grossCents),
+    currency: l.currency,
+  }));
   return {
     status: 'ok',
     grossCents: Number(plan.grossCents),
     amountMicro: request.amountMicro,
-    legs: plan.legs.map((l) => ({
-      paymentIntentId: l.paymentIntentId,
-      amountMicro: l.amountMicro,
-      grossCents: Number(l.grossCents),
-    })),
+    byCurrency: byCurrencyOf(legs),
+    legs,
   };
 }
 
@@ -165,10 +191,12 @@ export async function requestCashout(
   const refunds: RefundedLeg[] = [];
   const failed: FailedLeg[] = [];
   for (const leg of plan.legs) {
+    if (leg.grossCents === 0n) continue; // A1: handled after the legs that move money
     const summary = {
       paymentIntentId: leg.paymentIntentId,
       amountMicro: leg.amountMicro,
       grossCents: Number(leg.grossCents),
+      currency: leg.currency,
     };
     let refundId: string | undefined;
     /** A refund that WAS made and came back failed or cancelled. */
@@ -204,7 +232,7 @@ export async function requestCashout(
         // out; the next `charge.refunded` or a person settles it.
         const message = `${failure}; and the look-up failed: ${lookup instanceof Error ? lookup.message : String(lookup)}`;
         alarm(
-          `refund leg ${leg.key} (${summary.grossCents} cents) is in an UNKNOWN state — ${message}. ` +
+          `refund leg ${leg.key} (${summary.grossCents} minor units ${summary.currency}) is in an UNKNOWN state — ${message}. ` +
             `The credits stay debited; find the refund in Stripe by its key and confirm or reverse the leg`
         );
         failed.push({ ...summary, state: 'unknown', message });
@@ -228,7 +256,23 @@ export async function requestCashout(
     }
   }
 
-  if (refunds.length === 0) {
+  // A1: a 0p leg makes no Stripe refund. It stands with the request (confirmed)
+  // when some money went back, and is reversed with it when none did, so a
+  // request that failed at Stripe never keeps credits for nothing.
+  const anyRefunded = refunds.length > 0;
+  for (const leg of plan.legs) {
+    if (leg.grossCents !== 0n) continue;
+    const summary = { paymentIntentId: leg.paymentIntentId, amountMicro: leg.amountMicro, grossCents: 0, currency: leg.currency };
+    if (anyRefunded) {
+      await deps.ledger.confirmCashoutLeg(leg.key, ZERO_LEG_REFUND_ID);
+      refunds.push({ ...summary, refundId: ZERO_LEG_REFUND_ID });
+    } else {
+      await deps.ledger.reverseCashoutLeg(leg.key, 'no_money_leg_refunded');
+      failed.push({ ...summary, state: 'reversed', message: 'nothing else in the request was refunded' });
+    }
+  }
+
+  if (!anyRefunded) {
     return { status: 'stripe_error', message: failed.map((f) => f.message).join('; '), failed };
   }
   return {
@@ -237,6 +281,7 @@ export async function requestCashout(
     failed,
     grossCents: refunds.reduce((sum, r) => sum + r.grossCents, 0),
     amountMicro: refunds.reduce((sum, r) => sum + r.amountMicro, 0n),
+    byCurrency: byCurrencyOf(refunds),
   };
 }
 
@@ -290,7 +335,8 @@ export async function recoverPendingCashoutLegs(d: LegRecoveryDeps): Promise<Leg
       report.stillPending += 1;
       continue;
     }
-    const what = `refund leg ${leg.key} (${leg.grossCents} cents, user ${leg.userId})`;
+    const what = `refund leg ${leg.key} (${leg.grossCents} minor units ${leg.currency}, user ${leg.userId})`;
+    if (leg.grossCents === 0n) continue; // A1: settled below, with its request's money legs
     try {
       const found = await d.stripe.findRefund(leg.paymentIntentId, leg.key);
       if (found && found.status !== 'failed' && found.status !== 'canceled') {
@@ -344,6 +390,25 @@ export async function recoverPendingCashoutLegs(d: LegRecoveryDeps): Promise<Leg
       d.onAlarm(
         `${what} is still pending: recovery could not finish (${e instanceof Error ? e.message : String(e)}); it is tried again at the next sweep`
       );
+    }
+  }
+  // A1: a 0p leg has no Stripe refund. It stands when a money leg of the same
+  // request was refunded, is reversed when every money leg was reversed, and
+  // waits while any is still pending (as the live path decides).
+  const requestOf = (key: string): string => key.slice(0, key.lastIndexOf(':'));
+  const legs = d.ledger.allCashoutLegs();
+  for (const leg of legs) {
+    if (leg.state !== 'pending' || leg.grossCents !== 0n) continue;
+    if (now - leg.atMs < d.graceMs) continue; // counted as stillPending above
+    const money = legs.filter((l) => l.grossCents !== 0n && requestOf(l.key) === requestOf(leg.key));
+    if (money.some((l) => l.state === 'confirmed')) {
+      await d.ledger.confirmCashoutLeg(leg.key, ZERO_LEG_REFUND_ID);
+      report.confirmed += 1;
+    } else if (money.every((l) => l.state === 'reversed')) {
+      await d.ledger.reverseCashoutLeg(leg.key, 'no_money_leg_refunded');
+      report.reversed += 1;
+    } else {
+      report.stillPending += 1;
     }
   }
   return report;

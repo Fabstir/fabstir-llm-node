@@ -30,6 +30,9 @@ import { makeGatekeeper, type Gatekeeper } from '../src/lib/gatekeeper';
 import type { SessionAuthorisation } from '../src/lib/fiat-vault';
 import { fakeStripeApi } from './helpers/fake-stripe';
 import { setStripeWebhookForTest } from '../src/lib/stripe-webhook';
+import { ALWAYS_133, servedFx } from './helpers/fx-feed';
+
+const GBP1 = { fc1Credits: '500', fc1FxMicro: '1330000', fc1PriceMinor: '510', fc1Pricing: 'gbp1' };
 
 /** A Stripe fake that records each refund as { pi, cents } (TX1: the client
  *  now takes a request object carrying the idempotency key and metadata). */
@@ -375,7 +378,19 @@ describe('extractPurchase: hostile Stripe event fields', () => {
   const base = (obj: Record<string, unknown>) => ({
     id: 'evt_1',
     type: 'checkout.session.completed',
-    data: { object: { metadata: { fc1UserId: 'user-1' }, amount_total: 500, currency: 'usd', payment_status: 'paid', payment_intent: 'pi_1', ...obj } },
+    data: {
+      object: {
+        metadata: { fc1UserId: 'user-1', ...GBP1 },
+        amount_total: 510,
+        total_details: { amount_tax: 85 },
+        currency: 'gbp',
+        created: 1_794_000_000,
+        expires_at: 1_794_001_860,
+        payment_status: 'paid',
+        payment_intent: 'pi_1',
+        ...obj,
+      },
+    },
   });
 
   it('amount_total as a float, string, negative, or zero is ignored (no BigInt injection, no negative mint)', () => {
@@ -394,10 +409,11 @@ describe('extractPurchase: hostile Stripe event fields', () => {
     expect(extractPurchase(base({ metadata: null }))).toMatchObject({ kind: 'ignored' });
   });
 
-  it('currency is matched case-sensitively: "USD" is ignored, only "usd" credits', () => {
-    expect(extractPurchase(base({ currency: 'USD' }))).toMatchObject({ kind: 'ignored' });
+  it('currency is matched case-sensitively: "GBP" is ignored, only "gbp" credits (GP3)', () => {
+    expect(extractPurchase(base({ currency: 'GBP' }))).toMatchObject({ kind: 'ignored' });
+    expect(extractPurchase(base({ currency: 'usd' }))).toMatchObject({ kind: 'ignored', uncreditable: 'currency' });
     expect(extractPurchase(base({ currency: undefined }))).toMatchObject({ kind: 'ignored' });
-    expect(extractPurchase(base({}))).toMatchObject({ kind: 'purchase' }); // usd -> ok
+    expect(extractPurchase(base({}))).toMatchObject({ kind: 'purchase' }); // gbp -> ok
   });
 
   it('a missing id, missing type, or missing data.object is ignored, never a throw', () => {
@@ -410,7 +426,7 @@ describe('extractPurchase: hostile Stripe event fields', () => {
 
   it('a non-string payment_intent yields a purchase with NO refundable paymentIntentId (cannot be cashed to a card)', () => {
     const out = extractPurchase(base({ payment_intent: { id: 'pi_evil' } }));
-    expect(out).toMatchObject({ kind: 'purchase', userId: 'user-1', amountMicro: 5_000_000n });
+    expect(out).toMatchObject({ kind: 'purchase', userId: 'user-1', amountTotal: 510 });
     expect((out as { paymentIntentId?: string }).paymentIntentId).toBeUndefined();
   });
 });
@@ -427,7 +443,7 @@ describe('webhook: duplicate event id cannot inflate, hostile userId is isolated
     process.env.FIAT_STRIPE_WEBHOOK_SECRET = SECRET;
     ledger = await CreditsLedger.open(new MemoryLedgerStore());
     setFiatDepsForTest({ ledger });
-    setStripeWebhookForTest({ stripe: fakeStripeApi().api, onAlarm: () => {} });
+    setStripeWebhookForTest({ stripe: fakeStripeApi().api, onAlarm: () => {}, fx: servedFx(ALWAYS_133) });
   });
   afterEach(() => {
     delete process.env.FIAT_STRIPE_WEBHOOK_SECRET;
@@ -447,33 +463,38 @@ describe('webhook: duplicate event id cannot inflate, hostile userId is isolated
       })
     );
   }
-  const checkout = (id: string, cents: number, userId = 'user-1') =>
+  /** A gbp1 session for `pack`, its price at 1.33 and that price's VAT. */
+  const PRICE: Record<number, [number, number]> = { 500: [510, 85], 10000: [9526, 1588] };
+  const checkout = (id: string, pack: number, userId = 'user-1') =>
     JSON.stringify({
       id,
       type: 'checkout.session.completed',
       data: {
         object: {
           id: `cs_${id}`,
-          metadata: { fc1UserId: userId },
-          amount_total: cents,
-          currency: 'usd',
+          metadata: { fc1UserId: userId, ...GBP1, fc1Credits: String(pack), fc1PriceMinor: String(PRICE[pack]![0]) },
+          amount_total: PRICE[pack]![0],
+          amount_subtotal: PRICE[pack]![0],
+          currency: 'gbp',
+          created: 1_794_000_000,
+          expires_at: 1_794_001_860,
           payment_status: 'paid',
           payment_intent: 'pi_1',
           // TX1.2: credited only when Stripe Tax completed and the billing
           // address is in a country we sell to.
           automatic_tax: { enabled: true, status: 'complete' },
           customer_details: { address: { country: 'GB' }, tax_ids: [] },
-          total_details: { amount_tax: 0 },
+          total_details: { amount_tax: PRICE[pack]![1] },
         },
       },
     });
 
   it('replaying event id evt_X with a 100x amount is a no-op (first amount stands)', async () => {
-    const first = await post(checkout('evt_X', 500)); // $5
+    const first = await post(checkout('evt_X', 500)); // 500 credits
     expect((await first.json())).toEqual({ received: true, applied: true });
     expect(ledger.availableMicro('user-1')).toBe(5_000_000n);
 
-    const bumped = await post(checkout('evt_X', 50_000)); // same id, $500 — the attack
+    const bumped = await post(checkout('evt_X', 10_000)); // same id, 20x the pack — the attack
     expect(bumped.status).toBe(200);
     expect((await bumped.json())).toEqual({ received: true, applied: false });
     expect(ledger.availableMicro('user-1')).toBe(5_000_000n); // NOT inflated

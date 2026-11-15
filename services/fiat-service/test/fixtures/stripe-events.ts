@@ -6,6 +6,9 @@
 // builders produce, then replace them. Only the fields the service reads are
 // asserted on; the rest are there so the objects look like Stripe's.
 
+import { packPriceAt, PRICING_TAG } from '../../src/lib/card-pricing';
+import { vatInMinor } from '../../src/lib/credit-price';
+
 export const USER = '0x1234567890abcdef1234567890abcdef12345678';
 
 let seq = 0;
@@ -26,33 +29,55 @@ function envelope(type: string, object: Record<string, unknown>, id?: string) {
   };
 }
 
+
+/** The fixtures' rate: 1.33 US dollars per pound (served since `at: 0` in the
+ *  tests' fx seam, helpers/fx-feed.ts ALWAYS_133). */
+export const FX_133 = 1_330_000;
+/** The envelope's and the session's `created`. */
+export const CREATED_S = 1_794_000_000;
+
 export interface CheckoutOptions {
   eventId?: string;
   type?: string;
   sessionId?: string;
   paymentIntent?: string;
   userId?: string;
-  /** Credits bought = the price before tax, in cents. */
+  /** The pack bought (GP: 500, 1000, 2500 or 10000). */
   credits?: number;
-  /** VAT charged on top, in cents. */
+  /** The VAT inside the price, in pence (default: vatInMinor of the price). */
   taxCents?: number;
   country?: string;
   taxIds?: Array<{ type: string; value: string }>;
   taxStatus?: string | null;
   email?: string | null;
-  /** Override amount_subtotal (to make it disagree with the credits). */
+  /** Override amount_subtotal (to make it disagree with the price). */
   subtotalCents?: number;
+  /** Override amount_total (default: the stamped price). */
+  totalCents?: number;
   consent?: { terms?: string; over18?: string; useNow?: string } | null;
   paymentStatus?: string;
   currency?: string;
+  /** The stamps (GP2). `null` drops one; a string is written as is. */
+  fxMicro?: number | string | null;
+  priceMinor?: number | string | null;
+  pricing?: string | null;
+  created?: number | null;
+  expiresAt?: number | null;
 }
 
 /** `checkout.session.completed` for a card payment (mode=payment), as created
- *  by this service: automatic tax on, billing address collected. */
+ *  by this service (GP2): a `gbp1` pack session, VAT inside the price,
+ *  automatic tax on, billing address collected, expiring after 1,860 s. */
 export function checkoutCompleted(o: CheckoutOptions = {}) {
   const credits = o.credits ?? 1000;
-  const tax = o.taxCents ?? 200;
-  const subtotal = o.subtotalCents ?? credits;
+  const fx = o.fxMicro === undefined ? FX_133 : o.fxMicro;
+  const shownPrice = typeof fx === 'number' ? packPriceAt(credits, fx) : packPriceAt(credits, FX_133);
+  const price = o.priceMinor === undefined ? shownPrice : o.priceMinor;
+  const total = o.totalCents ?? (typeof price === 'number' ? price : shownPrice);
+  const tax = o.taxCents ?? vatInMinor(total, 2000);
+  const subtotal = o.subtotalCents ?? total;
+  const created = o.created === undefined ? CREATED_S : o.created;
+  const expires = o.expiresAt === undefined ? (created ?? CREATED_S) + 1860 : o.expiresAt;
   const consent =
     o.consent === null
       ? {}
@@ -61,6 +86,10 @@ export function checkoutCompleted(o: CheckoutOptions = {}) {
           fc1Over18: o.consent?.over18 ?? '1',
           fc1UseNow: o.consent?.useNow ?? '1',
         };
+  const stamps: Record<string, string> = {};
+  if (fx !== null) stamps.fc1FxMicro = String(fx);
+  if (price !== null) stamps.fc1PriceMinor = String(price);
+  if (o.pricing !== null) stamps.fc1Pricing = o.pricing ?? PRICING_TAG;
   return envelope(
     o.type ?? 'checkout.session.completed',
     {
@@ -68,10 +97,11 @@ export function checkoutCompleted(o: CheckoutOptions = {}) {
       object: 'checkout.session',
       adaptive_pricing: { enabled: false },
       amount_subtotal: subtotal,
-      amount_total: subtotal + tax,
+      amount_total: total,
       automatic_tax: { enabled: true, liability: { type: 'self' }, status: o.taxStatus === undefined ? 'complete' : o.taxStatus },
       billing_address_collection: 'required',
-      currency: o.currency ?? 'usd',
+      ...(created !== null ? { created } : {}),
+      currency: o.currency ?? 'gbp',
       customer: 'cus_constructed',
       customer_creation: 'always',
       customer_details: {
@@ -89,9 +119,10 @@ export function checkoutCompleted(o: CheckoutOptions = {}) {
         tax_exempt: 'none',
         tax_ids: o.taxIds ?? [],
       },
+      ...(expires !== null ? { expires_at: expires } : {}),
       invoice: 'in_constructed',
       livemode: false,
-      metadata: { fc1UserId: o.userId ?? USER, fc1Credits: String(credits), ...consent },
+      metadata: { fc1UserId: o.userId ?? USER, fc1Credits: String(credits), ...stamps, ...consent },
       mode: 'payment',
       payment_intent: o.paymentIntent ?? next('pi'),
       payment_status: o.paymentStatus ?? 'paid',
@@ -100,6 +131,28 @@ export function checkoutCompleted(o: CheckoutOptions = {}) {
     },
     o.eventId
   );
+}
+
+/** A US-dollar session as this service created before GP (VAT on top, no
+ *  stamps): paid after the switch, it is refunded in full. */
+export function checkoutCompletedUsd(o: { credits?: number; taxCents?: number; paymentIntent?: string; sessionId?: string; eventId?: string } = {}) {
+  const credits = o.credits ?? 1000;
+  const tax = o.taxCents ?? 200;
+  const e = checkoutCompleted({
+    credits: 1000,
+    currency: 'usd',
+    totalCents: credits + tax,
+    subtotalCents: credits,
+    taxCents: tax,
+    fxMicro: null,
+    priceMinor: null,
+    pricing: null,
+    ...(o.paymentIntent ? { paymentIntent: o.paymentIntent } : {}),
+    ...(o.sessionId ? { sessionId: o.sessionId } : {}),
+    ...(o.eventId ? { eventId: o.eventId } : {}),
+  });
+  (e.data.object.metadata as Record<string, string>).fc1Credits = String(credits);
+  return e;
 }
 
 /** `charge.refunded`: the Charge, with Stripe's CUMULATIVE amount_refunded. */

@@ -2,6 +2,7 @@
 // halves: webhook signature verification (Stripe's v1 scheme: HMAC-SHA256 over
 // "<t>.<raw body>") and a minimal refunds client for cash-out. Server-only.
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { CARD_CURRENCY, PRICING_TAG, parseCardStamp, type CardStamp } from './card-pricing';
 
 const DEFAULT_TOLERANCE_SEC = 300;
 
@@ -45,10 +46,33 @@ export function stripeSignatureHeader(payload: string, secret: string, timestamp
 
 /** Why a PAID session cannot be credited. The buyer was charged, so the
  *  webhook refunds them (it must never just drop the event). */
-export type Uncreditable = 'currency' | 'tax_amount' | 'no_user';
+export type Uncreditable =
+  | 'currency'
+  | 'tax_amount'
+  | 'no_user'
+  /** GP3 (A5): no or wrong `fc1Pricing`, not a pack, or a malformed stamp. */
+  | 'pricing'
+  /** R14(a): the stamped rate is above the 1.40 ceiling. */
+  | 'rate_ceiling'
+  /** R14(b): above the highest rate served in [created − 300, created + 60]. */
+  | 'rate_window'
+  /** R14(c): `expires_at − created` is not in (0, 1920]. */
+  | 'session_lifetime';
+
+export type { CardStamp } from './card-pricing';
 
 export type ExtractedPurchase =
-  | { kind: 'purchase'; eventId: string; userId: string; amountMicro: bigint; paymentIntentId?: string }
+  | {
+      kind: 'purchase';
+      eventId: string;
+      userId: string;
+      /** What was paid, in the currency's minor units, and the VAT in it. */
+      amountTotal: number;
+      amountTax: number;
+      currency: string;
+      stamp: CardStamp;
+      paymentIntentId?: string;
+    }
   | { kind: 'ignored'; reason: string; uncreditable?: Uncreditable };
 
 /**
@@ -90,34 +114,38 @@ export function extractPurchase(event: unknown): ExtractedPurchase {
     // webhook decides): then it is a paid session nobody can be credited for.
     return { kind: 'ignored', reason: `event ${e.id} has no metadata.fc1UserId`, uncreditable: 'no_user' };
   }
-  const expectedCurrency = process.env.FIAT_STRIPE_CURRENCY ?? 'usd';
-  if (obj?.currency !== expectedCurrency) {
+  // GP3: only a `gbp1` session is credited. A session in any other currency
+  // (a US-dollar session paid after the switch included) is refunded in full.
+  if (obj?.currency !== CARD_CURRENCY) {
     return {
       kind: 'ignored',
-      reason: `event ${e.id} currency ${String(obj?.currency)} != ${expectedCurrency}`,
+      reason: `event ${e.id} currency ${String(obj?.currency)} != ${CARD_CURRENCY}`,
       uncreditable: 'currency',
     };
   }
-  const cents = obj?.amount_total;
-  if (typeof cents !== 'number' || !Number.isInteger(cents) || cents <= 0) {
+  const total = obj?.amount_total;
+  if (typeof total !== 'number' || !Number.isSafeInteger(total) || total <= 0) {
     return { kind: 'ignored', reason: `event ${e.id} has no positive integer amount_total` };
   }
-  // Credit NET of tax. `amount_total` includes VAT, and crediting it would hand
-  // the customer the tax as spendable balance while HMRC takes the cash — the
-  // backing invariant (every credit backed by USDC actually received) forces
-  // net, regardless of whether prices are displayed inclusive or exclusive;
-  // display only changes the purchase-page copy. NOT `amount_subtotal`, which
-  // is before discounts too and would over-credit under a promo code. When no
-  // tax is configured `total_details.amount_tax` is 0 or absent and this is a
-  // no-op, so the fix is safe under every VAT-policy outcome.
+  // The VAT inside the price (inclusive). A malformed or implausible figure
+  // must never fall back to crediting from the gross.
   const tax = (obj?.total_details as { amount_tax?: unknown } | undefined)?.amount_tax ?? 0;
-  if (typeof tax !== 'number' || !Number.isInteger(tax) || tax < 0 || tax >= cents) {
-    // A malformed or implausible tax figure must not fall back to crediting the
-    // gross — that silently reintroduces the bug it guards against.
+  if (typeof tax !== 'number' || !Number.isSafeInteger(tax) || tax < 0 || tax >= total) {
     return {
       kind: 'ignored',
       reason: `event ${e.id} has unusable total_details.amount_tax ${String(tax)}`,
       uncreditable: 'tax_amount',
+    };
+  }
+  const stamp = parseCardStamp(obj?.metadata, obj?.created, obj?.expires_at);
+  if (!stamp) {
+    const metadata = (obj?.metadata ?? {}) as Record<string, unknown>;
+    return {
+      kind: 'ignored',
+      reason:
+        `event ${e.id} is not a ${PRICING_TAG} pack session (fc1Pricing ${String(metadata.fc1Pricing)}, fc1Credits ${String(metadata.fc1Credits)}, ` +
+        `fc1FxMicro ${String(metadata.fc1FxMicro)}, fc1PriceMinor ${String(metadata.fc1PriceMinor)}, created ${String(obj?.created)}, expires_at ${String(obj?.expires_at)})`,
+      uncreditable: 'pricing',
     };
   }
   const paymentIntent = obj?.payment_intent;
@@ -125,7 +153,10 @@ export function extractPurchase(event: unknown): ExtractedPurchase {
     kind: 'purchase',
     eventId: e.id,
     userId,
-    amountMicro: BigInt(cents - tax) * 10_000n,
+    amountTotal: total,
+    amountTax: tax,
+    currency: CARD_CURRENCY,
+    stamp,
     ...(typeof paymentIntent === 'string' && paymentIntent ? { paymentIntentId: paymentIntent } : {}),
   };
 }
@@ -159,13 +190,17 @@ export const STRIPE_TOS_MESSAGE =
   'I understand that once a clip has been delivered I cannot cancel the payment for that clip. Unused credits stay refundable.';
 
 export interface StripeCheckout {
-  /** Create a hosted Checkout Session to buy credits. `fc1UserId` rides in the
+  /** Create a hosted Checkout Session to buy a pack. `fc1UserId` rides in the
    *  session metadata so the webhook (checkout.session.completed) credits the
-   *  right ledger balance; the amount is in cents BEFORE tax (1 cent = 1
-   *  credit). Stripe Tax adds VAT on top for the buyer's country (TX1 §2). */
+   *  right ledger balance. GP2: the pack's price in pence, VAT INCLUDED
+   *  (Stripe Tax finds the VAT inside it), stamped with the rate it was worked
+   *  out at; the session expires at `expiresAtS` (R15). */
   createCheckoutSession(params: {
     fc1UserId: string;
-    amountCents: number;
+    credits: number;
+    priceMinor: number;
+    fxMicro: number;
+    expiresAtS: number;
     successUrl: string;
     cancelUrl: string;
     consent?: PurchaseConsent;
@@ -186,7 +221,6 @@ export function makeStripeCheckoutClient(): StripeCheckout {
   if (!key) {
     throw new Error('FIAT_STRIPE_SECRET_KEY is not set — the fiat backend is not configured');
   }
-  const currency = process.env.FIAT_STRIPE_CURRENCY ?? 'usd';
   return {
     async createCheckoutSession(params): Promise<{ id: string; url: string }> {
       const form = new URLSearchParams({
@@ -194,15 +228,16 @@ export function makeStripeCheckoutClient(): StripeCheckout {
         // Valid in the pinned version; the next one (2026-10-28.endive) lists
         // `allowed_payment_method_types` in its place: switch when the pin moves.
         'payment_method_types[]': 'card',
-        'line_items[0][price_data][currency]': currency,
+        'line_items[0][price_data][currency]': CARD_CURRENCY,
         'line_items[0][price_data][product_data][name]': 'Platformless AI credits',
-        'line_items[0][price_data][unit_amount]': String(params.amountCents),
+        'line_items[0][price_data][unit_amount]': String(params.priceMinor),
         'line_items[0][quantity]': '1',
-        // TX1 §2 — VAT through Stripe Tax, calculated ON TOP of the credits'
-        // price (OQ-1 a): the buyer gets exactly the credits they chose and
-        // "one credit is one US cent before VAT" stays true in every country.
+        // GP2 — VAT through Stripe Tax, INSIDE the pack's price: the price
+        // shown is the price charged (R12).
         'automatic_tax[enabled]': 'true',
-        'line_items[0][price_data][tax_behavior]': 'exclusive',
+        'line_items[0][price_data][tax_behavior]': 'inclusive',
+        // R15: 31 minutes, never Stripe's 24-hour default.
+        expires_at: String(params.expiresAtS),
         'line_items[0][price_data][product_data][tax_code]': stripeTaxCode(),
         // The billing address is the place-of-supply evidence the webhook's
         // country gate reads. A customer per purchase is what lets Checkout
@@ -216,8 +251,8 @@ export function makeStripeCheckoutClient(): StripeCheckout {
         // A promotion code would make the amount paid differ from the credits.
         allow_promotion_codes: 'false',
         // Adaptive Pricing is on at account level (shared with Fabstir v2). A
-        // buyer paying in pounds would be charged and never credited, because
-        // the webhook credits `currency` only; so it is off for every session.
+        // buyer paying in another currency would be charged and never credited
+        // (the webhook credits pounds only), so it is off for every session.
         'adaptive_pricing[enabled]': 'false',
         // Both places carry it: the webhook reads the SESSION metadata; setting
         // it on the PaymentIntent too keeps provenance if the flow is inspected.
@@ -226,9 +261,17 @@ export function makeStripeCheckoutClient(): StripeCheckout {
         // Our tag on the SESSION too, so a paid session that lost its user id
         // is still recognised as ours and refunded, never silently dropped.
         'metadata[app]': 'platformless-ai',
-        // What was bought, so the webhook can alarm when Stripe's subtotal
-        // differs from it.
-        'metadata[fc1Credits]': String(params.amountCents),
+        // GP2 — the stamps the webhook credits by (R14): the pack, the rate,
+        // the price shown. On the session (the webhook reads them) and on the
+        // PaymentIntent (provenance).
+        'metadata[fc1Credits]': String(params.credits),
+        'metadata[fc1FxMicro]': String(params.fxMicro),
+        'metadata[fc1PriceMinor]': String(params.priceMinor),
+        'metadata[fc1Pricing]': PRICING_TAG,
+        'payment_intent_data[metadata][fc1Credits]': String(params.credits),
+        'payment_intent_data[metadata][fc1FxMicro]': String(params.fxMicro),
+        'payment_intent_data[metadata][fc1PriceMinor]': String(params.priceMinor),
+        'payment_intent_data[metadata][fc1Pricing]': PRICING_TAG,
         // The Stripe account is shared with Fabstir v2 and Radar rules key on
         // ::app:: (TX1 plan §6a). It must ride on the PaymentIntent: Radar
         // reads the payment's metadata, not the Checkout Session's.
@@ -515,6 +558,14 @@ export function makeStripeReconcileSource() {
             taxCents: ((s.total_details as { amount_tax?: number } | undefined)?.amount_tax ?? 0) as number,
             currency: String(s.currency ?? ''),
             createdS: typeof s.created === 'number' ? s.created : 0,
+            // GP4: the stamps the webhook credited (or refused) by.
+            ...(() => {
+              const stamp = parseCardStamp(s.metadata, s.created, s.expires_at);
+              return stamp ? { stamp } : {};
+            })(),
+            ...(typeof (s.metadata as Record<string, unknown> | undefined)?.fc1Pricing === 'string'
+              ? { pricing: (s.metadata as Record<string, string>).fc1Pricing }
+              : {}),
           };
         });
     },

@@ -25,6 +25,7 @@ import { allowedBillingCountries } from '../src/lib/sales-countries';
 import { StripeApiError, type StripeApi } from '../src/lib/stripe';
 import { FiatCredentials } from '../src/lib/fiat-credentials';
 import { chargeRefunded, refundUpdated } from './fixtures/stripe-events';
+import { ALWAYS_133, servedFx } from './helpers/fx-feed';
 
 const USER = 'user-1';
 const PI = 'pi_1';
@@ -128,6 +129,7 @@ async function world() {
     stripe: sim.api(),
     onAlarm: () => {},
     allowedCountries: allowedBillingCountries({}),
+    fx: servedFx(ALWAYS_133),
     log: () => {},
     now: () => clock.nowMs,
   };

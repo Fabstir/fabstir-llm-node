@@ -3,9 +3,12 @@
 // injected deps, so it is tested without a network.
 //
 //   checkout.session.completed / async_payment_succeeded
-//       tax status -> country gate -> location evidence -> credit the amount
-//       BEFORE tax -> confirmation email. A refused purchase credits nothing
-//       and is refunded in full under Idempotency-Key `gate:<session id>`.
+//       `gbp1` pack session (GP3) -> tax status -> country gate (GB only for
+//       `gbp1`) -> R14 against what the card fx feed served -> location
+//       evidence -> credit the pack (cardCreditsFor) -> confirmation email. A
+//       refused purchase credits nothing and is refunded in full under
+//       Idempotency-Key `gate:<session id>`; an uncreditable one also raises
+//       an URGENT fx alert (SPEC R14: "a refund owed").
 //   charge.refunded            a refund made outside this service is debited
 //                              as its net share (cumulative, never twice)
 //   charge.refund.updated      status `failed`: what it debited comes back
@@ -35,6 +38,9 @@ import {
   type Uncreditable,
 } from './stripe';
 import { allowedBillingCountries } from './sales-countries';
+import { PRICING_TAG, UK_VAT_BPS, cardCreditsFor, r14Verdict } from './card-pricing';
+import { getCardFx } from './card-fx';
+import { vatInMinor } from './credit-price';
 import {
   emailSenderFromEnv,
   sendPurchaseConfirmation,
@@ -61,8 +67,25 @@ export interface StripeWebhookDeps {
   allowedCountries: Set<string>;
   /** The confirmation email seam; absent = no provider configured. */
   email?: { sender?: EmailSender; terms?: TermsSource };
+  /** GP3 (A5): what the card fx feed served, for R14(b), and its urgent
+   *  channel. Absent (the feed could not be built): a `gbp1` session is
+   *  answered 503 so Stripe redelivers it, never refunded for our fault. */
+  fx?: CardFxSeam;
   log?: (message: string) => void;
   now?: () => number;
+}
+
+/** The part of the card fx feed the webhook uses (card-fx.ts `CardFxFeed`). */
+export interface CardFxSeam {
+  /** R14(b): the highest rate served from `created − 300` to `created + 60`. */
+  windowMax(createdS: number): number | undefined;
+  /** An URGENT fx alert (`[fiat-fx] URGENT:`, and the push when configured). */
+  urgent(message: string): void;
+}
+
+function urgentFx(deps: StripeWebhookDeps, message: string): void {
+  if (deps.fx) deps.fx.urgent(message);
+  else console.error(`[fiat-fx] URGENT: ${message}`);
 }
 
 export interface WebhookResult {
@@ -113,6 +136,11 @@ function isOurs(metadata: unknown): boolean {
 function isAnotherProducts(metadata: unknown): boolean {
   const app = ((metadata ?? {}) as Record<string, unknown>).app;
   return typeof app === 'string' && app !== APP_TAG;
+}
+
+/** "N minor units gbp" for a charge's amount in its own currency (GP4). */
+function minor(deps: StripeWebhookDeps, pi: string, amount: number | bigint): string {
+  return `${amount} minor units ${deps.ledger.charge(pi)?.currency ?? 'usd'}`;
 }
 
 const safeCents = (v: unknown): number => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : 0);
@@ -224,6 +252,7 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
     const pi = typeof event.object.payment_intent === 'string' ? event.object.payment_intent : undefined;
     if (deps.ledger.purchaseKnown({ sessionId: lenient.sessionId, paymentIntentId: pi })) return ok({ applied: false });
     deps.onAlarm(`paid checkout cannot be credited (${purchase.reason}) — refunding it in full`);
+    urgentFx(deps, `uncreditable payment (${purchase.uncreditable}): ${purchase.reason} — refunded in full`);
     return refusePurchase(
       deps,
       {
@@ -248,6 +277,10 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
   if (known) return ok({ applied: false, duplicate: known });
   const where = `session ${facts.sessionId ?? '(no id)'} (${purchase.paymentIntentId ?? 'no payment intent'})`;
 
+  const currency = purchase.currency;
+  const stamp = purchase.stamp;
+  const refuse = (reason: Parameters<typeof refusePurchase>[3]) => refusePurchase(deps, { ...purchase, currency }, facts, reason);
+
   // Tax status: Stripe Tax must have calculated. Otherwise the amount charged
   // carries the wrong VAT (usually none), so nothing is credited.
   if (facts.taxStatus !== 'complete') {
@@ -255,15 +288,30 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
       `${where}: automatic_tax.status is ${String(facts.taxStatus ?? 'absent')}, not complete — purchase refused and refunded; ` +
         `check that Stripe Tax is on and the registration is active`
     );
-    return refusePurchase(deps, { ...purchase, currency: String(event.object.currency ?? 'usd') }, facts, 'tax_status');
+    return refuse('tax_status');
   }
   // The country gate. Checkout cannot restrict billing countries, so this is
-  // the enforcement; the account page's selector is presentation only.
-  if (!facts.billingCountry || !deps.allowedCountries.has(facts.billingCountry)) {
+  // the enforcement; the account page's selector is presentation only. GP3
+  // (A12): a `gbp1` price carries UK VAT only, so whatever SALES_EU says, only
+  // a GB billing address is credited.
+  if (!facts.billingCountry || facts.billingCountry !== 'GB' || !deps.allowedCountries.has(facts.billingCountry)) {
     (deps.log ?? console.log)(
-      `[fiat-stripe] ${where}: billing country ${facts.billingCountry ?? '(none)'} is outside the area we sell to — refused and refunded`
+      `[fiat-stripe] ${where}: billing country ${facts.billingCountry ?? '(none)'} is outside the area a ${PRICING_TAG} price is sold to — refused and refunded`
     );
-    return refusePurchase(deps, { ...purchase, currency: String(event.object.currency ?? 'usd') }, facts, 'country');
+    return refuse('country');
+  }
+
+  // R14, on the Stripe-signed session of this event. The feed is needed for
+  // (b): without it the event is asked for again rather than refunded.
+  if (!deps.fx) {
+    deps.onAlarm(`${where}: the card fx feed is not available, so R14 cannot be judged — asking Stripe to redeliver`);
+    return { status: 503, body: { error: 'fx_unavailable', retry: true } };
+  }
+  const r14 = r14Verdict(stamp, (c) => deps.fx!.windowMax(c));
+  if (r14) {
+    deps.onAlarm(`${where}: paid checkout cannot be credited (${r14.why}) — refunding it in full`);
+    urgentFx(deps, `uncreditable payment (${r14.reason}) ${where}: ${r14.why} — refunded in full`);
+    return refuse(r14.reason);
   }
 
   // Location evidence: two pieces for a digital service's place of supply.
@@ -287,9 +335,11 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
       `${where}: location evidence disagrees — card issued in ${cardCountry}, billing address in ${facts.billingCountry}; credited by the billing address, review the place of supply`
     );
   }
-  if (facts.creditsBought !== undefined && facts.subtotalCents !== undefined && facts.subtotalCents !== facts.creditsBought) {
+  // A4: with VAT inside the price, subtotal, total and the stamped price are one figure.
+  if (!(facts.subtotalCents === facts.grossCents && facts.grossCents === stamp.priceMinor)) {
     deps.onAlarm(
-      `${where}: amount_subtotal ${facts.subtotalCents} is not the ${facts.creditsBought} credits bought — credited what was paid before tax`
+      `${where}: amount_subtotal ${String(facts.subtotalCents)} / amount_total ${facts.grossCents} minor units ${currency} ` +
+        `are not the ${stamp.priceMinor} shown for the ${stamp.pack} pack — credited by what was paid`
     );
   }
   if (facts.billingCountry === 'GB' && facts.taxCents === 0) {
@@ -299,7 +349,26 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
     );
   }
 
-  const { applied, duplicate } = await deps.ledger.purchase(purchase.userId, purchase.amountMicro, purchase.eventId, {
+  // 2.4 with A7: the pack, or what was actually paid, never more than the pack.
+  const { credits, exact } = cardCreditsFor({
+    pack: stamp.pack,
+    fxMicro: stamp.fxMicro,
+    priceMinor: stamp.priceMinor,
+    amountTotal: purchase.amountTotal,
+    amountTax: purchase.amountTax,
+  });
+  if (!exact) {
+    deps.onAlarm(
+      `${where}: paid ${purchase.amountTotal} with VAT ${purchase.amountTax} minor units ${currency} for the ${stamp.pack} pack priced ` +
+        `${stamp.priceMinor} (VAT ${vatInMinor(stamp.priceMinor, UK_VAT_BPS)}) at fxMicro ${stamp.fxMicro} — credited ${credits} credits`
+    );
+  }
+  if (credits <= 0) {
+    urgentFx(deps, `uncreditable payment (pricing) ${where}: ${purchase.amountTotal} minor units ${currency} buys no credits — refunded in full`);
+    return refuse('pricing');
+  }
+
+  const { applied, duplicate } = await deps.ledger.purchase(purchase.userId, BigInt(credits) * MICRO_PER_CENT, purchase.eventId, {
     ...(purchase.paymentIntentId ? { paymentIntentId: purchase.paymentIntentId } : {}),
     grossCents: facts.grossCents,
     taxCents: facts.taxCents,
@@ -308,6 +377,7 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
     ...(cardCountry ? { cardCountry } : {}),
     taxIdPresent: facts.taxIdPresent,
     ...(facts.consent ? { consent: facts.consent } : {}),
+    currency,
   });
 
   if (applied) {
@@ -316,10 +386,11 @@ async function handleCheckout(deps: StripeWebhookDeps, rawEvent: unknown, event:
       {
         ...(facts.email ? { to: facts.email } : {}),
         accountId: purchase.userId,
+        credits,
         netCents: facts.grossCents - facts.taxCents,
         taxCents: facts.taxCents,
         grossCents: facts.grossCents,
-        currency: String(event.object.currency ?? 'usd'),
+        currency,
         purchasedAtMs: Date.now(),
         ...(purchase.paymentIntentId ? { paymentIntentId: purchase.paymentIntentId } : {}),
         ...(facts.consent ? { termsVersion: facts.consent.termsVersion, useNow: facts.consent.useNow } : {}),
@@ -384,6 +455,7 @@ async function refusePurchase(
     reason,
     ...(refundId ? { refundId } : {}),
     refunded,
+    ...(purchase.currency ? { currency: purchase.currency } : {}),
   });
   if (applied && refunded) {
     // Tell the buyer (the page they return to cannot know): by the same send
@@ -412,7 +484,7 @@ async function handleChargeRefunded(deps: StripeWebhookDeps, event: StripeEvent)
   if (typeof cumulative !== 'number') return ignored('charge has no amount_refunded');
   const known = deps.ledger.charge(pi);
   if (!known && !deps.ledger.purchaseKnown({ paymentIntentId: pi })) {
-    return unknownCharge(deps, event, pi, `charge.refunded (${cumulative} cents refunded)`, {
+    return unknownCharge(deps, event, pi, `charge.refunded (${cumulative} minor units refunded)`, {
       metadata: event.object.metadata,
       createdS: event.object.created,
     });
@@ -442,7 +514,7 @@ async function handleChargeRefunded(deps: StripeWebhookDeps, event: StripeEvent)
   if (r.refusedPurchase) return ok({ applied: false, refusedPurchase: true });
   if (r.applied) {
     deps.onAlarm(
-      `a refund of ${r.unexplainedCents} cents on ${pi} was made outside this service (the Stripe dashboard): ` +
+      `a refund of ${minor(deps, pi, r.unexplainedCents)} on ${pi} was made outside this service (the Stripe dashboard): ` +
         `${credits(r.debitedMicro)} debited from ${r.userId}`
     );
     if (r.balanceMicro < 0n) {
@@ -494,7 +566,7 @@ async function handleRefundUpdated(deps: StripeWebhookDeps, event: StripeEvent):
   }
   if (r.applied) {
     deps.onAlarm(
-      `refund ${refundId} (${amount} cents) on ${pi} never reached the card: ${credits(r.creditedMicro)} credited back to ${r.userId} — ` +
+      `refund ${refundId} (${minor(deps, pi, amount)}) on ${pi} never reached the card: ${credits(r.creditedMicro)} credited back to ${r.userId} — ` +
         `the customer is owed that refund another way if they still want it`
     );
   }
@@ -525,7 +597,7 @@ async function resyncCharge(deps: StripeWebhookDeps, event: StripeEvent, pi: str
   const sync = await deps.ledger.chargeRefunded(pi, refundedNow, `resync:${event.id}`);
   if (sync.known && !sync.refusedPurchase && sync.applied) {
     deps.onAlarm(
-      `after a refund failure on ${pi}, Stripe shows ${sync.unexplainedCents} cents refunded that the ledger had not debited ` +
+      `after a refund failure on ${pi}, Stripe shows ${minor(deps, pi, sync.unexplainedCents)} refunded that the ledger had not debited ` +
         `(a refund made outside this service): ${credits(sync.debitedMicro)} debited from ${sync.userId}`
     );
   }
@@ -553,7 +625,7 @@ async function handleDisputeCreated(deps: StripeWebhookDeps, event: StripeEvent)
   if (!r.known) return unknownCharge(deps, event, d.pi, `dispute ${d.disputeId}`);
   if (r.applied) {
     deps.onAlarm(
-      `dispute ${d.disputeId} opened on ${d.pi} for ${d.amount} cents: ${credits(r.debitedMicro)} debited from ${r.userId}, ` +
+      `dispute ${d.disputeId} opened on ${d.pi} for ${minor(deps, d.pi, d.amount)}: ${credits(r.debitedMicro)} debited from ${r.userId}, ` +
         `who is frozen until it closes (balance now ${credits(r.balanceMicro)}) — answer it in the Stripe dashboard before its deadline`
     );
   }
@@ -633,12 +705,19 @@ async function handleDisputeFunds(deps: StripeWebhookDeps, event: StripeEvent): 
 
 // ---- wiring -----------------------------------------------------------------
 
-type WebhookOverride = Partial<Pick<StripeWebhookDeps, 'stripe' | 'onAlarm' | 'email'>>;
+type WebhookOverride = Partial<Pick<StripeWebhookDeps, 'stripe' | 'onAlarm' | 'email' | 'fx'>>;
 let override: WebhookOverride | undefined;
 
 /** Tests inject the Stripe client and the alarm sink the route uses. */
 export function setStripeWebhookForTest(o: WebhookOverride | undefined): void {
   override = o;
+}
+
+/** The card fx seam for the route: the test override when one is set (its
+ *  `fx`, possibly none), else the process's feed, absent if it cannot start. */
+export async function webhookFx(): Promise<CardFxSeam | undefined> {
+  if (override) return override.fx;
+  return getCardFx().catch(() => undefined);
 }
 
 export function stripeAlarm(message: string): void {
@@ -648,14 +727,16 @@ export function stripeAlarm(message: string): void {
 /** The route's deps: this ledger, the env-built Stripe client, the alarm sink
  *  the other checks use (the service journal), and the countries from
  *  SALES_EU, read per event. */
-export function productionWebhookDeps(ledger: CreditsLedger): StripeWebhookDeps {
+export function productionWebhookDeps(ledger: CreditsLedger, fx?: CardFxSeam): StripeWebhookDeps {
   const sender = emailSenderFromEnv();
   const terms = termsSourceFromEnv();
+  const seam = override ? override.fx : fx;
   return {
     ledger,
     stripe: override?.stripe ?? lazyStripeApi(),
     onAlarm: override?.onAlarm ?? stripeAlarm,
     allowedCountries: allowedBillingCountries(),
     email: override?.email ?? { ...(sender ? { sender } : {}), ...(terms ? { terms } : {}) },
+    ...(seam ? { fx: seam } : {}),
   };
 }

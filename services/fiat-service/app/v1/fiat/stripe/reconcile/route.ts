@@ -5,7 +5,7 @@
 // Server-to-server only: guarded by FIAT_ADMIN_TOKEN, deliberately NOT in the
 // middleware's browser-CORS route set.
 import { getFiatDeps } from '../../../../../src/lib/fiat-session-service';
-import { productionLegRecovery, productionStripeReconcile, reconcileStripe } from '../../../../../src/lib/fiat-reconcile';
+import { productionLegRecovery, productionStripeReconcile, reconcileFx, reconcileStripe } from '../../../../../src/lib/fiat-reconcile';
 import { recoverPendingCashoutLegs } from '../../../../../src/lib/fiat-cashout-service';
 
 export async function POST(req: Request): Promise<Response> {
@@ -24,7 +24,9 @@ export async function POST(req: Request): Promise<Response> {
     // Stripe's answer): confirm, complete or reverse each. What is still
     // pending afterwards is reported by the comparison below.
     recovery = await recoverPendingCashoutLegs(productionLegRecovery(ledger));
-    report = await reconcileStripe(productionStripeReconcile(ledger));
+    // GP4: pound sessions are judged by R14 against what the feed served.
+    const fx = await reconcileFx();
+    report = await reconcileStripe(productionStripeReconcile(ledger, fx));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error(`[fiat-reconcile] ALARM: stripe reconciliation did not run: ${message}`);

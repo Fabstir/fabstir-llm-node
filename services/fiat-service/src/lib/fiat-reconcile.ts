@@ -14,6 +14,7 @@ import type { IdempotencyStore } from './idempotency';
 import type { SessionKind } from './gatekeeper';
 import { LATE_RECEIPT_WINDOW_MS, type VaultOutbox } from './vault-outbox';
 import { disputeLedgerState, lazyStripeApi, makeStripeReconcileSource } from './stripe';
+import { CARD_CURRENCY, cardCreditsFor, r14Verdict, type CardStamp } from './card-pricing';
 
 export type CreateTxOutcome =
   | { status: 'pending' } // not mined yet — try again next run
@@ -373,6 +374,10 @@ export interface StripeSessionRow {
   currency: string;
   /** Unix seconds. */
   createdS: number;
+  /** GP4: the `gbp1` stamps, when the session carries all of them well formed. */
+  stamp?: CardStamp;
+  /** GP4: `metadata.fc1Pricing` as it is (present without `stamp` = malformed). */
+  pricing?: string;
 }
 
 export interface StripeRefundRow {
@@ -411,6 +416,9 @@ export interface StripeReconcileDeps {
   /** A session, or a pending refund leg, younger than this is still in
    *  flight (its webhook or Stripe's answer may not have arrived). */
   graceMs?: number;
+  /** GP4: R14(b) over what the card fx feed served (the webhook's own
+   *  judgement). Absent: a pound session is reported as not judged. */
+  fx?: { windowMax(createdS: number): number | undefined };
 }
 
 export interface StripeReconcileReport {
@@ -454,20 +462,68 @@ export async function reconcileStripe(d: StripeReconcileDeps): Promise<StripeRec
     if (!s.userId || !s.paymentIntentId) continue; // not ours
     if (now - s.createdS * 1000 < grace) continue; // its webhook may be on the way
     const charge = charges.get(s.paymentIntentId);
+    // GP4: what the webhook should have done with this session, by its own
+    // rules: a pound session that is not a well-formed gbp1 pack, or fails
+    // R14, is a refund owed, never a credit; any other currency is refunded
+    // too (it can only be an old dollar session paid after the switch). An
+    // old dollar CHARGE already in the journal is compared the old way.
+    let expectedNet: bigint | undefined;
+    let owedRefund: string | undefined;
+    if (s.currency === CARD_CURRENCY) {
+      if (!s.stamp) owedRefund = 'not a well-formed gbp1 pack session';
+      else if (!d.fx) {
+        find(`${s.paymentIntentId}: a pound session, but no card fx feed to judge R14 against — not compared`);
+        continue;
+      } else {
+        const verdict = r14Verdict(s.stamp, (c) => d.fx!.windowMax(c));
+        if (verdict) owedRefund = verdict.why;
+        else {
+          const { credits } = cardCreditsFor({
+            pack: s.stamp.pack,
+            fxMicro: s.stamp.fxMicro,
+            priceMinor: s.stamp.priceMinor,
+            amountTotal: s.grossCents,
+            amountTax: s.taxCents,
+          });
+          expectedNet = BigInt(credits) * CENT_MICRO;
+        }
+      }
+    } else if (!charge || charge.currency === CARD_CURRENCY) {
+      owedRefund = `currency ${s.currency} is not ${CARD_CURRENCY}`;
+    }
+    if (owedRefund !== undefined) {
+      if (charge) {
+        find(
+          `${s.paymentIntentId}: CREDITED (${charge.netMicro} micro to ${charge.userId}) though it is a refund owed: ${owedRefund}`
+        );
+      } else if (!refused.has(s.paymentIntentId)) {
+        find(
+          `paid session ${s.sessionId} (${s.paymentIntentId}, ${s.grossCents} minor units ${s.currency}, user ${s.userId}) is a refund owed (${owedRefund}) ` +
+            `and was never refunded by the webhook — redeliver the event from the Stripe dashboard`
+        );
+      }
+      continue;
+    }
     if (!charge) {
       if (!refused.has(s.paymentIntentId)) {
         find(
-          `paid session ${s.sessionId} (${s.paymentIntentId}, ${s.grossCents} cents, user ${s.userId}) is not in the ledger: ` +
+          `paid session ${s.sessionId} (${s.paymentIntentId}, ${s.grossCents} minor units ${s.currency}, user ${s.userId}) is not in the ledger: ` +
             `never credited and never refused — its webhook was lost; redeliver the event from the Stripe dashboard`
         );
       }
       continue;
     }
-    const net = BigInt(s.grossCents - s.taxCents) * CENT_MICRO;
-    if (charge.grossCents !== BigInt(s.grossCents) || charge.taxCents !== BigInt(s.taxCents) || charge.netMicro !== net) {
+    // An old dollar charge: credits were the cents before VAT.
+    const net = expectedNet ?? BigInt(s.grossCents - s.taxCents) * CENT_MICRO;
+    if (
+      charge.grossCents !== BigInt(s.grossCents) ||
+      charge.taxCents !== BigInt(s.taxCents) ||
+      charge.netMicro !== net ||
+      charge.currency !== s.currency
+    ) {
       find(
-        `${s.paymentIntentId}: Stripe has gross ${s.grossCents}, tax ${s.taxCents}, net ${net} micro; ` +
-          `the ledger has gross ${charge.grossCents}, tax ${charge.taxCents}, net ${charge.netMicro} micro`
+        `${s.paymentIntentId}: Stripe has gross ${s.grossCents}, tax ${s.taxCents} minor units ${s.currency}, expected credit ${net} micro; ` +
+          `the ledger has gross ${charge.grossCents}, tax ${charge.taxCents} ${charge.currency}, net ${charge.netMicro} micro`
       );
     }
   }
@@ -490,7 +546,7 @@ export async function reconcileStripe(d: StripeReconcileDeps): Promise<StripeRec
     if (now - leg.atMs < grace) continue;
     const atStripe = refundByKey.get(leg.key);
     find(
-      `refund leg ${leg.key} (${leg.grossCents} cents, ${leg.amountMicro} micro, user ${leg.userId}) has been pending for ` +
+      `refund leg ${leg.key} (${leg.grossCents} minor units ${leg.currency}, ${leg.amountMicro} micro, user ${leg.userId}) has been pending for ` +
         `${Math.round((now - leg.atMs) / 60_000)} min: ` +
         (atStripe
           ? `Stripe HAS refund ${atStripe.refundId} (${atStripe.status}) under its key — confirm the leg`
@@ -503,7 +559,7 @@ export async function reconcileStripe(d: StripeReconcileDeps): Promise<StripeRec
     const atStripe = refundedAtStripe.get(charge.paymentIntentId) ?? 0n;
     if (atStripe !== charge.refundedGrossCents) {
       find(
-        `${charge.paymentIntentId}: refunded at Stripe ${atStripe} cents, in the ledger ${charge.refundedGrossCents} cents — ` +
+        `${charge.paymentIntentId}: refunded at Stripe ${atStripe}, in the ledger ${charge.refundedGrossCents} minor units ${charge.currency} — ` +
           (atStripe > charge.refundedGrossCents
             ? `a refund reached the card that the ledger never debited (user ${charge.userId})`
             : `the ledger debited a refund that Stripe does not show (user ${charge.userId})`)
@@ -515,7 +571,7 @@ export async function reconcileStripe(d: StripeReconcileDeps): Promise<StripeRec
     const atStripe = refundedAtStripe.get(r.paymentIntentId!) ?? 0n;
     if (atStripe !== r.grossCents) {
       find(
-        `${r.paymentIntentId}: a refused purchase (${r.reason}) of ${r.grossCents} cents shows ${atStripe} cents refunded at Stripe — ` +
+        `${r.paymentIntentId}: a refused purchase (${r.reason}) of ${r.grossCents} minor units ${r.currency} shows ${atStripe} refunded at Stripe — ` +
           `user ${r.userId} has no credits and must have the whole amount back`
       );
     }
@@ -562,6 +618,7 @@ export async function reconcileStripe(d: StripeReconcileDeps): Promise<StripeRec
 
 type ReconcileOverride = {
   source: StripeReconcileSource;
+  fx?: { windowMax(createdS: number): number | undefined };
   onAlarm?: (message: string) => void;
   /** The client the pending-leg recovery uses (the route runs it first). */
   stripe?: import('./stripe').StripeApi;
@@ -588,9 +645,20 @@ export function setStripeReconcileForTest(o: ReconcileOverride | undefined): voi
   reconcileOverride = o;
 }
 
+/** The R14 seam for the route: the test override's `fx` when an override is
+ *  set, else the process's card fx feed (absent if it cannot start). */
+export async function reconcileFx(): Promise<{ windowMax(createdS: number): number | undefined } | undefined> {
+  if (reconcileOverride) return reconcileOverride.fx;
+  const { getCardFx } = await import('./card-fx');
+  return getCardFx().catch(() => undefined);
+}
+
 /** The route's deps: the look-back is FIAT_STRIPE_RECONCILE_DAYS (default 100
  *  days: the 90-day refund window and a margin). */
-export function productionStripeReconcile(ledger: CreditsLedger): StripeReconcileDeps {
+export function productionStripeReconcile(
+  ledger: CreditsLedger,
+  fx?: { windowMax(createdS: number): number | undefined }
+): StripeReconcileDeps {
   const raw = process.env.FIAT_STRIPE_RECONCILE_DAYS;
   const days = raw === undefined || raw === '' ? 100 : Number(raw);
   if (!Number.isInteger(days) || days <= 0) {
@@ -601,5 +669,6 @@ export function productionStripeReconcile(ledger: CreditsLedger): StripeReconcil
     source: reconcileOverride?.source ?? makeStripeReconcileSource(),
     onAlarm: reconcileOverride?.onAlarm ?? ((message) => console.error(`[fiat-reconcile] ALARM: ${message}`)),
     lookbackMs: days * 24 * 60 * 60 * 1000,
+    ...(fx ? { fx } : {}),
   };
 }

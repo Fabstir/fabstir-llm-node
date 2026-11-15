@@ -4,9 +4,23 @@
 // TX1: the refund returns the VAT paid on the credits too and may span several
 // card charges; the answer is { refunds[], grossCents, failed[] }. With
 // `preview: true` in the body nothing moves: the answer is what WOULD return.
+//
+// GP (A6): every leg names its `currency` and the answer carries `byCurrency`
+// (a refund can span an old US-dollar charge and a pound charge). A request
+// whose legs would return nothing at all is `400 refund_too_small` (A1).
 import { getCashoutService, type FailedLeg } from '../../../../src/lib/fiat-cashout-service';
 
 const DIGITS_RE = /^\d+$/;
+
+function refusedResponse(reason: string): Response {
+  if (reason === 'REFUND_TOO_SMALL') {
+    return Response.json(
+      { error: 'refund_too_small', reason, message: 'refund more credits: this amount would return less than a penny' },
+      { status: 400 }
+    );
+  }
+  return Response.json({ error: 'refused', reason }, { status: 403 });
+}
 
 export async function POST(req: Request): Promise<Response> {
   const header = req.headers.get('authorization');
@@ -51,16 +65,18 @@ export async function POST(req: Request): Promise<Response> {
           preview: true,
           amountMicro: quote.amountMicro.toString(),
           grossCents: quote.grossCents,
+          byCurrency: quote.byCurrency,
           legs: quote.legs.map((l) => ({
             paymentIntentId: l.paymentIntentId,
             amountMicro: l.amountMicro.toString(),
             grossCents: l.grossCents,
+            currency: l.currency,
           })),
         });
       case 'unauthorised':
         return Response.json({ error: 'unauthorised' }, { status: 401 });
       case 'refused':
-        return Response.json({ error: 'refused', reason: quote.reason }, { status: 403 });
+        return refusedResponse(quote.reason);
     }
   }
 
@@ -70,6 +86,7 @@ export async function POST(req: Request): Promise<Response> {
       paymentIntentId: f.paymentIntentId,
       amountMicro: f.amountMicro.toString(),
       grossCents: f.grossCents,
+      currency: f.currency,
       state: f.state,
       message: f.message,
     }));
@@ -83,8 +100,10 @@ export async function POST(req: Request): Promise<Response> {
           paymentIntentId: r.paymentIntentId,
           amountMicro: r.amountMicro.toString(),
           grossCents: r.grossCents,
+          currency: r.currency,
         })),
         grossCents: outcome.grossCents,
+        byCurrency: outcome.byCurrency,
         failed: failedLegs(outcome.failed),
         // Kept for clients written before TX1: the first refund and the total
         // credits refunded.
@@ -94,7 +113,7 @@ export async function POST(req: Request): Promise<Response> {
     case 'unauthorised':
       return Response.json({ error: 'unauthorised' }, { status: 401 });
     case 'refused':
-      return Response.json({ error: 'refused', reason: outcome.reason }, { status: 403 });
+      return refusedResponse(outcome.reason);
     case 'stripe_error':
       return Response.json(
         { error: 'stripe_error', message: outcome.message, failed: failedLegs(outcome.failed) },

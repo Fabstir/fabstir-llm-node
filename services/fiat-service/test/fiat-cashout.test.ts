@@ -104,10 +104,11 @@ describe('requestCashout', () => {
     // TX1.4: the outcome lists each card charge refunded, with the gross returned.
     expect(outcome).toEqual({
       status: 'ok',
-      refunds: [{ paymentIntentId: 'pi_1', refundId: 're_1', amountMicro: 2_000_000n, grossCents: 200 }],
+      refunds: [{ paymentIntentId: 'pi_1', refundId: 're_1', amountMicro: 2_000_000n, grossCents: 200, currency: 'usd' }],
       failed: [],
       grossCents: 200,
       amountMicro: 2_000_000n,
+      byCurrency: [{ currency: 'usd', grossMinor: 200 }],
     });
     expect(refunds).toEqual([{ paymentIntentId: 'pi_1', amountCents: 200 }]);
     expect(ledger.availableMicro('user-1')).toBe(3_000_000n);
@@ -192,18 +193,20 @@ describe('POST /api/fiat/cashout', () => {
     setCashoutServiceForTest({
       request: async () => ({
         status: 'ok',
-        refunds: [{ paymentIntentId: 'pi_9', refundId: 're_9', amountMicro: 1_000_000n, grossCents: 120 }],
+        refunds: [{ paymentIntentId: 'pi_9', refundId: 're_9', amountMicro: 1_000_000n, grossCents: 120, currency: 'gbp' }],
         failed: [],
         grossCents: 120,
         amountMicro: 1_000_000n,
+        byCurrency: [{ currency: 'gbp', grossMinor: 120 }],
       }),
       preview,
     });
     const ok = await post({ amountMicro: '1000000' }, 'fc1_t');
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({
-      refunds: [{ refundId: 're_9', paymentIntentId: 'pi_9', amountMicro: '1000000', grossCents: 120 }],
+      refunds: [{ refundId: 're_9', paymentIntentId: 'pi_9', amountMicro: '1000000', grossCents: 120, currency: 'gbp' }],
       grossCents: 120,
+      byCurrency: [{ currency: 'gbp', grossMinor: 120 }],
       failed: [],
       // The two fields clients written before TX1 read.
       refundId: 're_9',
@@ -214,6 +217,12 @@ describe('POST /api/fiat/cashout', () => {
     const refused = await post({ amountMicro: '1000000' }, 'fc1_t');
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: 'refused', reason: 'REFUND_WINDOW_EXPIRED' });
+
+    // GP (A1): a refund that would return nothing is a 400 the page can explain.
+    setCashoutServiceForTest({ request: async () => ({ status: 'refused', reason: 'REFUND_TOO_SMALL' }), preview });
+    const small = await post({ amountMicro: '10000' }, 'fc1_t');
+    expect(small.status).toBe(400);
+    expect(await small.json()).toMatchObject({ error: 'refund_too_small' });
   });
 
   it('401s without a credential and 400s on bad amounts, before the service', async () => {

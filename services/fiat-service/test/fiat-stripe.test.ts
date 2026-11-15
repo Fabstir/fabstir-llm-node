@@ -1,7 +1,7 @@
 // FC1.4 — Stripe purchase: the ledger credits on the WEBHOOK only (Decision
 // 6), verified with Stripe's v1 HMAC scheme using node:crypto (no stripe
-// package), idempotent per event id. Cents map to micro-USDC at 1 cent = 1
-// credit = 10,000 micro (TODO(Jules): pricing margin is a product decision).
+// package), idempotent per event id. GP3: only a `gbp1` pack session is a
+// purchase; extractPurchase reads its stamps, the webhook decides the credits.
 import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -14,6 +14,9 @@ import { setFiatDepsForTest } from '../src/lib/fiat-session-service';
 import { setStripeWebhookForTest } from '../src/lib/stripe-webhook';
 import { fakeStripeApi } from './helpers/fake-stripe';
 import { CreditsLedger, MemoryLedgerStore } from '../src/lib/ledger';
+import { ALWAYS_133, servedFx } from './helpers/fx-feed';
+
+const GBP1 = { fc1Credits: '500', fc1FxMicro: '1330000', fc1PriceMinor: '510', fc1Pricing: 'gbp1' };
 
 const SECRET = 'whsec_test_secret';
 const NOW_S = 1_700_000_000;
@@ -61,9 +64,12 @@ describe('extractPurchase', () => {
     type: 'checkout.session.completed',
     data: {
       object: {
-        metadata: { fc1UserId: 'user-1' },
-        amount_total: 500, // $5.00 in cents
-        currency: 'usd',
+        metadata: { fc1UserId: 'user-1', ...GBP1 },
+        amount_total: 510, // the 500 pack at 1.33: £5.10, VAT included
+        total_details: { amount_tax: 85 },
+        currency: 'gbp',
+        created: 1_794_000_000,
+        expires_at: 1_794_001_860,
         payment_status: 'paid', // real Stripe events always carry this
         payment_intent: 'pi_1',
         ...obj,
@@ -89,7 +95,7 @@ describe('extractPurchase', () => {
 
   it('credits async_payment_succeeded — the settle event for bank-debit methods', () => {
     const out = extractPurchase(event({ type: 'checkout.session.async_payment_succeeded' }));
-    expect(out).toMatchObject({ kind: 'purchase', amountMicro: 5_000_000n });
+    expect(out).toMatchObject({ kind: 'purchase', amountTotal: 510, amountTax: 85 });
   });
 
   it('still ignores async_payment_failed (no credit path for failure)', () => {
@@ -101,18 +107,35 @@ describe('extractPurchase', () => {
   // The VAT bug (26 July, fixed 27 July after the v2-guide review). amount_total
   // includes tax; crediting it gave the customer the VAT as spendable balance.
   // The backing invariant forces crediting NET, whatever the display policy.
-  it('credits net of tax when Stripe charges VAT', () => {
-    const out = extractPurchase(event({}, { amount_total: 1200, total_details: { amount_tax: 200 } }));
-    expect(out).toMatchObject({ kind: 'purchase', amountMicro: 10_000_000n }); // 1000 cents, not 1200
+  it('reads the VAT inside the price (the webhook credits from what was paid, never the gross as credits)', () => {
+    const out = extractPurchase(event({}, { amount_total: 985, total_details: { amount_tax: 164 } }));
+    expect(out).toMatchObject({ kind: 'purchase', amountTotal: 985, amountTax: 164 });
   });
 
-  it('a zero or absent tax leaves the credit unchanged (the no-VAT branches)', () => {
-    expect(extractPurchase(event({}, { total_details: { amount_tax: 0 } }))).toMatchObject({
-      amountMicro: 5_000_000n,
-    });
-    expect(extractPurchase(event({}, { total_details: undefined }))).toMatchObject({
-      amountMicro: 5_000_000n,
-    });
+  it('a zero or absent tax reads as 0 (the GB zero-VAT alarm and the cap handle it)', () => {
+    expect(extractPurchase(event({}, { total_details: { amount_tax: 0 } }))).toMatchObject({ amountTax: 0 });
+    expect(extractPurchase(event({}, { total_details: undefined }))).toMatchObject({ amountTax: 0 });
+  });
+
+  it('GP3: a session without the gbp1 stamps, or not a pack, is uncreditable (pricing)', () => {
+    const bad: Array<Record<string, unknown>> = [
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1Pricing: undefined } },
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1Pricing: 'gbp2' } },
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1Credits: '600' } },
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1FxMicro: '1.33' } },
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1FxMicro: '-1330000' } },
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1FxMicro: '01330000' } },
+      { metadata: { fc1UserId: 'user-1', ...GBP1, fc1PriceMinor: undefined } },
+      { created: undefined },
+      { expires_at: '1794001860' },
+    ];
+    for (const obj of bad) {
+      expect(extractPurchase(event({}, obj)), JSON.stringify(obj)).toMatchObject({ kind: 'ignored', uncreditable: 'pricing' });
+    }
+  });
+
+  it('GP3: a US-dollar session is uncreditable (currency), so it is refunded', () => {
+    expect(extractPurchase(event({}, { currency: 'usd' }))).toMatchObject({ kind: 'ignored', uncreditable: 'currency' });
   });
 
   it('a malformed or implausible tax figure is ignored, never credited gross', () => {
@@ -124,12 +147,15 @@ describe('extractPurchase', () => {
     }
   });
 
-  it('maps a completed checkout to a purchase: cents x 10,000 = micro-USDC', () => {
+  it('maps a completed gbp1 checkout to a purchase with its stamps', () => {
     expect(extractPurchase(event())).toEqual({
       kind: 'purchase',
       eventId: 'evt_1',
       userId: 'user-1',
-      amountMicro: 5_000_000n,
+      amountTotal: 510,
+      amountTax: 85,
+      currency: 'gbp',
+      stamp: { pack: 500, fxMicro: 1_330_000, priceMinor: 510, createdS: 1_794_000_000, expiresAtS: 1_794_001_860 },
       paymentIntentId: 'pi_1',
     });
   });
@@ -163,7 +189,7 @@ describe('POST /api/fiat/stripe/webhook', () => {
     ledger = await CreditsLedger.open(new MemoryLedgerStore());
     setFiatDepsForTest({ ledger });
     // No network: the card-country read answers GB; alarms are not under test here.
-    setStripeWebhookForTest({ stripe: fakeStripeApi().api, onAlarm: () => {} });
+    setStripeWebhookForTest({ stripe: fakeStripeApi().api, onAlarm: () => {}, fx: servedFx(ALWAYS_133) });
   });
   afterEach(() => {
     delete process.env.FIAT_STRIPE_WEBHOOK_SECRET;
@@ -171,23 +197,26 @@ describe('POST /api/fiat/stripe/webhook', () => {
     setStripeWebhookForTest(undefined);
   });
 
-  const checkout = (eventId: string, amountCents: number) =>
+  const checkout = (eventId: string, _pack: 500) =>
     JSON.stringify({
       id: eventId,
       type: 'checkout.session.completed',
       data: {
         object: {
           id: `cs_${eventId}`,
-          metadata: { fc1UserId: 'user-1' },
-          amount_total: amountCents,
+          metadata: { fc1UserId: 'user-1', ...GBP1 },
+          amount_total: 510,
+          amount_subtotal: 510,
           payment_status: 'paid',
-          currency: 'usd',
+          currency: 'gbp',
+          created: 1_794_000_000,
+          expires_at: 1_794_001_860,
           payment_intent: 'pi_1',
           // TX1.2: a purchase is credited only when Stripe Tax completed and
           // the billing address is in a country we sell to.
           automatic_tax: { enabled: true, status: 'complete' },
           customer_details: { address: { country: 'GB' }, tax_ids: [] },
-          total_details: { amount_tax: 0 },
+          total_details: { amount_tax: 85 },
         },
       },
     });
