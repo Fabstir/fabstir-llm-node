@@ -42,7 +42,7 @@
 //! ## P2P Network
 //!
 //! The bridge connects to the decentralized S5 network via:
-//! - **WebSocket P2P Peers**: Direct peer-to-peer connections (e.g., `wss://node.sfive.net/s5/p2p`)
+//! - **WebSocket P2P Peers**: Direct peer-to-peer connections (our own node: `wss://...@s5.platformlessai.ai/s5/p2p`)
 //! - **S5 Portal**: Identity registry and gateway (e.g., `https://s5.platformlessai.ai`)
 //! - **Seed Phrase**: User identity recovery (12-word mnemonic)
 //!

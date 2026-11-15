@@ -137,7 +137,7 @@ Environment variables (see `.env.example`):
 | `BRIDGE_HOST` | `localhost` | Bind address (localhost for security) |
 | `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase |
 | `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL (Sia storage) |
-| `S5_INITIAL_PEERS` | `wss://...node.sfive.net/s5/p2p,...` | WebSocket P2P peers (comma-separated) |
+| `S5_INITIAL_PEERS` | `wss://...@s5.platformlessai.ai/s5/p2p` | WebSocket P2P peers (comma-separated). Our own node only; never the public S5 nodes |
 | `LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `PRETTY_LOGS` | `true` | Enable pretty-printed logs |
 | `REQUEST_TIMEOUT_MS` | `30000` | Request timeout (30 seconds) |
@@ -184,9 +184,9 @@ npm run test:watch
 
 ### P2P Peers Not Connecting
 
-1. Check network connectivity: `ping node.sfive.net`
-2. Verify WebSocket access (port 443): `curl -I https://node.sfive.net`
-3. Try alternative peers in `S5_INITIAL_PEERS`
+1. Check the bridge log for the peer it connected to (it should be `s5.platformlessai.ai`)
+2. Verify WebSocket access (port 443): `curl -I https://s5.platformlessai.ai`
+3. Check `S5_INITIAL_PEERS` is set to our own node, not a public S5 node
 
 ### Portal Registration Failing
 
