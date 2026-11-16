@@ -136,7 +136,7 @@ Environment variables (see `.env.example`):
 | `BRIDGE_PORT` | `5522` | HTTP server port |
 | `BRIDGE_HOST` | `localhost` | Bind address (localhost for security) |
 | `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase |
-| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL (Sia storage) |
+| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL (Sia storage). Uploads are pinned to this portal's host: at boot the bridge drops every other portal account from its live list (`src/upload_pin.js`; `accounts.json` is untouched), and logs `Upload portal pinned to <host>` |
 | `S5_INITIAL_PEERS` | `wss://...@s5.platformlessai.ai/s5/p2p` | WebSocket P2P peers (comma-separated). Our own node only; never the public S5 nodes |
 | `LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `PRETTY_LOGS` | `true` | Enable pretty-printed logs |
@@ -187,6 +187,10 @@ npm run test:watch
 1. Check the bridge log for the peer it connected to (it should be `s5.platformlessai.ai`)
 2. Verify WebSocket access (port 443): `curl -I https://s5.platformlessai.ai`
 3. Check `S5_INITIAL_PEERS` is set to our own node, not a public S5 node
+
+### Uploads Landing on a Public Portal
+
+Every `UPLOAD COMPLETE` log line names its `portalAccount`; it must be on `S5_PORTAL_URL`'s host. If the boot log says `upload portal NOT pinned`, the identity has no account on our portal: fix the registration, never add a public portal back.
 
 ### Portal Registration Failing
 

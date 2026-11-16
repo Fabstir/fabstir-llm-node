@@ -24,6 +24,7 @@ import { base64UrlNoPaddingEncode, base64UrlNoPaddingDecode } from '@julesl23/s5
 import { FS5Advanced } from '@julesl23/s5js/advanced';
 import { ethers } from 'ethers';
 import { installTusLargeUpload } from './tus_upload.js';
+import { pinUploadPortal } from './upload_pin.js';
 import { bridgeConfig } from './config.js';
 
 let s5Instance = null;
@@ -544,6 +545,18 @@ export async function initializeS5Client() {
       } else {
         console.log('📥 Skipping filesystem initialization (read-only mode)');
         console.log('✅ Bridge ready for downloading existing S5 content');
+      }
+
+      // Uploads go to OUR portal only: drop any public-portal account from the
+      // live list (accounts.json untouched). See upload_pin.js.
+      if (bridgeConfig.portalUrl) {
+        const pin = pinUploadPortal(s5.apiWithIdentity?.accountConfigs, bridgeConfig.portalUrl);
+        if (pin.pinned) {
+          console.log(`📌 Upload portal pinned to ${pin.host} (${pin.before} -> ${pin.after} accounts)`);
+          pin.dropped.forEach((id) => console.log(`   - dropped ${id}`));
+        } else {
+          console.warn(`⚠️  No ${pin.host} account among ${pin.before} portal accounts: upload portal NOT pinned`);
+        }
       }
 
       // CRITICAL: Verify portal accounts are configured for uploads
