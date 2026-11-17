@@ -59,8 +59,12 @@ function fakeFs(tree) {
   };
 }
 
-/** Mock portal: records every DELETE /s5/delete/<cid> with its token; `refuse` cids answer 500. */
-async function mockPortal({ refuse = new Set() } = {}) {
+/** The stock S5 node's reply when the object is already missing from its store (seen live, s5-node 0.14.1). */
+const GONE_BODY = 'MinioError: object not found: key: /1/H2LrsV2a6xARK2pSJj8M4cjn3UDT_Ay5tyuq2QntrI_W';
+
+/** Mock portal: records every DELETE /s5/delete/<cid> with its token; `refuse` cids answer 500; `bodies` maps a cid
+ *  to the body of its 500. */
+async function mockPortal({ refuse = new Set(), bodies = new Map() } = {}) {
   const calls = [];
   const server = createServer((req, res) => {
     const m = /^\/s5\/delete\/(.+)$/.exec(req.url);
@@ -69,7 +73,11 @@ async function mockPortal({ refuse = new Set() } = {}) {
       return;
     }
     calls.push({ cid: m[1], auth: req.headers['authorization'] });
-    res.writeHead(refuse.has(m[1]) ? 500 : 200).end();
+    if (refuse.has(m[1])) {
+      res.writeHead(500).end(bodies.get(m[1]) ?? '');
+      return;
+    }
+    res.writeHead(200).end();
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const host = `127.0.0.1:${server.address().port}`;
@@ -166,6 +174,36 @@ test('an entry whose blob the portal will not release is kept, hash and all, for
     assert.deepEqual(job.entries['manifest.json'].data.hash, hashOf(2));
   } finally {
     await p.close();
+  }
+});
+
+test("the portal's 500 \"object not found\" counts as already gone: the entry is deleted, nothing is tallied", async () => {
+  const cid = portalCid(hashOf(2), 1002);
+  const p = await mockPortal({ refuse: new Set([cid]), bodies: new Map([[cid, GONE_BODY]]) });
+  try {
+    const { fs, s5, advanced } = world(p.portal);
+    const counts = await pruneOlderThan(s5, ARGS, { nowSecs: NOW, advanced });
+    assert.equal(counts.failed, 0);
+    assert.deepEqual(counts.why, {});
+    assert.equal(fs.tree.home.entries.ltx.entries.job_old, undefined, 'the job folder went too');
+    assert.ok(p.calls.some((c) => c.cid === cid), 'the release was still asked for');
+  } finally {
+    await p.close();
+  }
+});
+
+test('any other 500 still keeps the entry, whatever its words', async () => {
+  const cid = portalCid(hashOf(2), 1002);
+  for (const body of ['MinioError: connection refused', 'object found', 'Internal Server Error', '']) {
+    const p = await mockPortal({ refuse: new Set([cid]), bodies: new Map([[cid, body]]) });
+    try {
+      const { fs, s5, advanced } = world(p.portal);
+      const counts = await pruneOlderThan(s5, ARGS, { nowSecs: NOW, advanced });
+      assert.equal(counts.failed, 1, `body ${JSON.stringify(body)}`);
+      assert.ok(fs.tree.home.entries.ltx.entries.job_old.entries['manifest.json'], `body ${JSON.stringify(body)}`);
+    } finally {
+      await p.close();
+    }
   }
 });
 

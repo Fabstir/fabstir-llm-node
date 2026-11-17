@@ -52,7 +52,8 @@ export function portalCid(hash, size) {
 
 /**
  * Drop this account's pin on one blob, on every configured portal. Resolves true when every portal answered
- * 2xx or 404 (already gone); false otherwise (or when no portal is configured: nothing was released).
+ * 2xx, 404 or the stock node's 500 "object not found" (already gone); false otherwise (or when no portal is
+ * configured: nothing was released).
  */
 export async function releaseBlob(api, hash, size, opts = {}) {
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -72,13 +73,21 @@ export async function releaseBlob(api, hash, size, opts = {}) {
         signal: AbortSignal.timeout(opts.timeoutMs ?? PORTAL_TIMEOUT_MS),
       });
       if (!(res.ok || res.status === 404)) {
-        // the portal's own error words (never a path or a hash), reduced to a short slug
-        let said = '';
+        let body = '';
         try {
-          said = (await res.text()).slice(0, 200).replace(/[^A-Za-z ]+/g, ' ').trim().split(/\s+/).slice(0, 6).join('-').toLowerCase();
+          body = (await res.text()).slice(0, 200);
         } catch {
-          said = '';
+          body = '';
         }
+        // The stock S5 node drops our pin FIRST and only then removes the object from its store; when the object is
+        // already missing there, its S3 client throws "MinioError: object not found: key: /1/<hash>" and the route
+        // answers 500. Nothing is left to release (pin gone, bytes gone), so this counts as gone, like a 404;
+        // otherwise the entry would be retried every night for ever (host1, Nov 2026: 84 such entries).
+        if (res.status === 500 && /\bobject not found\b/i.test(body)) {
+          continue;
+        }
+        // the portal's own error words (never a path or a hash), reduced to a short slug
+        const said = body.replace(/[^A-Za-z ]+/g, ' ').trim().split(/\s+/).slice(0, 6).join('-').toLowerCase();
         why(`release-http-${res.status}${said ? `:${said}` : ''}`);
         return false;
       }
