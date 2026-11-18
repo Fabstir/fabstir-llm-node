@@ -3,16 +3,18 @@
 // ITS TEXT (a link to a web page is not a durable medium), and the buyer's
 // request to use the credits straight away when they made one.
 //
-// Two things are deliberately NOT here, because they are not decided:
-//   - the email delivery provider (legal list 1.12). `emailSenderFromEnv`
-//     returns undefined until one is wired in, and the webhook then logs that
-//     the confirmation was not sent. Nothing else changes when one is added:
-//     implement `EmailSender` and return it from `emailSenderFromEnv`.
-//   - the final text of the Terms (with the solicitors). The text is read at
-//     send time from FIAT_TERMS_DIR/<version>.txt, one plain-text file per
-//     Terms version, so no release is needed when the Terms change.
+// The delivery provider is Postmark (legal list 1.12, chosen 2026-11-18):
+// `emailSenderFromEnv` returns its sender when FIAT_POSTMARK_TOKEN is set (see
+// postmark-sender.ts) and undefined otherwise, and the webhook then logs that
+// the confirmation was not sent.
+//
+// The final text of the Terms is with the solicitors, so it is not in this
+// file: it is read at send time from FIAT_TERMS_DIR/<version>.txt, one
+// plain-text file per Terms version, and no release is needed when the Terms
+// change.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { postmarkSenderFromEnv } from './postmark-sender';
 import { SELLER } from './seller';
 
 export interface PurchaseConfirmation {
@@ -134,9 +136,9 @@ export function termsSourceFromEnv(): TermsSource | undefined {
   };
 }
 
-/** No delivery provider is chosen yet (legal list 1.12): undefined. */
-export function emailSenderFromEnv(): EmailSender | undefined {
-  return undefined;
+/** The Postmark sender when FIAT_POSTMARK_TOKEN is set; undefined otherwise. */
+export function emailSenderFromEnv(env: Record<string, string | undefined> = process.env): EmailSender | undefined {
+  return postmarkSenderFromEnv(env);
 }
 
 export type ConfirmationOutcome = 'sent' | 'no_sender' | 'no_address' | 'no_consent' | 'no_terms_text' | 'failed';
@@ -185,7 +187,7 @@ export async function sendPurchaseConfirmation(
 // ---------------------------------------------------------------------------
 // A purchase that was REFUSED and refunded (billing address outside the area
 // we sell to, or a payment that could not be credited): tell the buyer, by the
-// same send rules. Not sent until a provider is wired in.
+// same send rules.
 // ---------------------------------------------------------------------------
 
 export interface PurchaseRefusal {

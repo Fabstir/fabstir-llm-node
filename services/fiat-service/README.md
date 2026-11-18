@@ -289,7 +289,10 @@ is written above `reverseCashoutLeg` in `src/lib/ledger.ts` and walked for every
 in `test/tx1-refund-invariant.test.ts`.
 
 **The purchase confirmation email** (terms and cancellation form in its text) is built in
-`src/lib/purchase-confirmation.ts`; no delivery provider is wired in yet, so it is not sent.
+`src/lib/purchase-confirmation.ts` and sent through Postmark (`src/lib/postmark-sender.ts`) when
+`FIAT_POSTMARK_TOKEN`, `FIAT_EMAIL_FROM` and `FIAT_TERMS_DIR` are set; with no token nothing is sent. It is sent
+once, when the purchase is first credited; a send that fails is alarmed and not retried. No recipient address is
+written to the journal.
 
 **Journal format 2.** The ledger now refuses to start on a journal entry it does not
 understand. The pre-TX1 binary has no such guard: see "Rolling back" under Deploy.
