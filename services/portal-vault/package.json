@@ -1,0 +1,25 @@
+{
+  "name": "@fabstir/portal-vault",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Portal vault service: holds each account's wrapped vault on a regional portal and releases or replaces it only for a caller who proves control of the account's wallet.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run --no-file-parallelism",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "minio": "8.0.7",
+    "viem": "2.55.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3",
+    "vitest": "2.1.9"
+  }
+}
