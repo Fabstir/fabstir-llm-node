@@ -168,6 +168,37 @@ pub fn needs_image_generation(message: &str) -> bool {
     false
 }
 
+/// What to do about web search for one request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchDecision {
+    /// The client asked for a search.
+    Explicit,
+    /// The client did not say; the prompt looks like it needs fresh information.
+    AutoDetected,
+    /// Do not search.
+    No,
+}
+
+impl SearchDecision {
+    pub fn should_search(self) -> bool {
+        !matches!(self, SearchDecision::No)
+    }
+}
+
+/// The one rule for whether a request is searched.
+///
+/// An explicit `false` is final: the prompt is never inspected, so a client
+/// that has switched search off is never searched. Detection from the prompt
+/// applies only when the client did not state a choice.
+pub fn search_decision(explicit: Option<bool>, prompt: &str) -> SearchDecision {
+    match explicit {
+        Some(true) => SearchDecision::Explicit,
+        Some(false) => SearchDecision::No,
+        None if needs_web_search(prompt) => SearchDecision::AutoDetected,
+        None => SearchDecision::No,
+    }
+}
+
 /// Check if a message likely needs web search
 ///
 /// Returns true if the message contains indicators that

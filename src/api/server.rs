@@ -1555,7 +1555,7 @@ impl ApiServer {
         let mut search_metadata: Option<(bool, u32, String)> = None;
         let mut search_context = String::new();
 
-        if request.web_search {
+        if request.web_search == Some(true) {
             info!("Web search requested for inference");
 
             // Get search service
@@ -1871,14 +1871,17 @@ impl ApiServer {
         // Web search integration for streaming (v8.7.5+)
         // Auto-detect search intent from prompt if not explicitly requested (v8.7.8+)
         let mut search_context = String::new();
-        let should_search =
-            request.web_search || crate::search::query_extractor::needs_web_search(&request.prompt);
+        // An explicit `web_search: false` is final (v8.65.2+); detection applies
+        // only when the client did not state a choice.
+        let decision =
+            crate::search::query_extractor::search_decision(request.web_search, &request.prompt);
+        let should_search = decision.should_search();
 
         if should_search {
             info!(
                 "🔍 Web search triggered for streaming inference (explicit={}, auto-detected={})",
-                request.web_search,
-                !request.web_search && should_search
+                decision == crate::search::query_extractor::SearchDecision::Explicit,
+                decision == crate::search::query_extractor::SearchDecision::AutoDetected
             );
 
             // Get search service
@@ -5272,17 +5275,19 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                                                                 // Extract web_search fields from outer message (v8.7.9+)
                                                                 // SDK sends these at message level, not inside encrypted payload
-                                                                let web_search = decrypted_json
-                                                                    .get("web_search")
-                                                                    .and_then(|v| v.as_bool())
-                                                                    .or_else(|| {
-                                                                        json_msg
-                                                                            .get("web_search")
-                                                                            .and_then(|v| {
-                                                                                v.as_bool()
-                                                                            })
-                                                                    })
-                                                                    .unwrap_or(false);
+                                                                // Kept optional: an absent field must stay absent (detection allowed),
+                                                                // and an explicit false must stay false (never searched). v8.65.2+
+                                                                let web_search: Option<bool> =
+                                                                    decrypted_json
+                                                                        .get("web_search")
+                                                                        .and_then(|v| v.as_bool())
+                                                                        .or_else(|| {
+                                                                            json_msg
+                                                                                .get("web_search")
+                                                                                .and_then(|v| {
+                                                                                    v.as_bool()
+                                                                                })
+                                                                        });
 
                                                                 let max_searches = decrypted_json
                                                                     .get("max_searches")

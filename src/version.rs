@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.65.1-content-checks-2026-11-12";
+pub const VERSION: &str = "v8.65.2-web-search-explicit-no-2026-11-21";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.65.1";
+pub const VERSION_NUMBER: &str = "8.65.2";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,18 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 65;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 1;
+pub const VERSION_PATCH: u32 = 2;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-12";
+pub const BUILD_DATE: &str = "2026-11-21";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.65.2: a client's explicit `web_search: false` is final. The field is now optional: `true` searches, `false`
+    // never searches whatever the prompt says, and only an ABSENT field leaves the streaming path free to detect
+    // search intent from the prompt. Before this an explicit `false` could not be told from "not stated", so a
+    // prompt containing "latest", "today", "now" and the like was sent to the search provider regardless.
+    "web-search-explicit-no",
     // v8.65.1: a VFX Passes job (the relight route) has no result check: its outputs are technical passes computed
     // from the input clip, which the same job's input check has already passed (D5). One log line per job:
     // `ltx-check ... stage=c5 verdict=SKIPPED_TECHNICAL`. Every other route keeps its result check.
@@ -722,6 +727,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.65.2 - an explicit web_search: false is honoured (Nov 21, 2026)
+    "v8.65.2: POST /v1/inference and the WebSocket path no longer run a web search when the request says web_search: false (or webSearch: false). Search-intent detection from the prompt now applies only when the field is absent. A client that sent false and relied on detection must omit the field or send true.",
     // v8.65.0 - content checks on the video path (Nov 12, 2026)
     "BREAKING (LTX/relight hosts): LTX_CONTENT_CHECKS=off|shadow|enforce is REQUIRED whenever COMFY_URL or RELIGHT_URL is set; missing or unknown stops the node. shadow also needs LTX_CONTENT_CHECKS_SHADOW_UNTIL (YYYY-MM-DD), LTX_CHECKS_SOCKET, LTX_CHECKS_STAGING_DIR and LTX_CHECKS_STAGING_DIR_SERVICE. enforce also needs COMFY_INPUT_DIR and COMFY_OUTPUT_DIR (writable; RELIGHT_INPUT_DIR and RELIGHT_OUTPUT_DIR too when RELIGHT_URL is set), LTX_EVIDENCE_PUBKEY, LTX_EVIDENCE_DIR and LTX_CHECKS_BUNDLE_HASH",
     "BREAKING (LTX/relight hosts): the template bundle must be allowListVersion 50 or later (the four prompt-improvement graphs no longer load gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors; their template hashes moved). An older bundle is not loaded and every video job is refused. The provenance signer must allow node 8.65.0 and bundle 50",
@@ -1299,7 +1306,9 @@ mod tests {
         assert_eq!(VERSION_MINOR, 65);
         // v8.65.1
         assert!(FEATURES.contains(&"ltx-passes-result-check-skipped"));
-        assert_eq!(VERSION_PATCH, 1);
+        // v8.65.2
+        assert!(FEATURES.contains(&"web-search-explicit-no"));
+        assert_eq!(VERSION_PATCH, 2);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1524,15 +1533,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.65.1"));
-        assert!(version.contains("2026-11-12"));
+        assert!(version.contains("8.65.2"));
+        assert!(version.contains("2026-11-21"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.65.1-content-checks-2026-11-12");
-        assert_eq!(VERSION_NUMBER, "8.65.1");
-        assert_eq!(BUILD_DATE, "2026-11-12");
+        assert_eq!(VERSION, "v8.65.2-web-search-explicit-no-2026-11-21");
+        assert_eq!(VERSION_NUMBER, "8.65.2");
+        assert_eq!(BUILD_DATE, "2026-11-21");
     }
 
     #[test]

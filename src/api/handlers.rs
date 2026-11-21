@@ -22,9 +22,13 @@ pub struct InferenceRequest {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "chainId")]
     pub chain_id: Option<u64>, // Chain ID for multi-chain support (accepts chain_id or chainId)
-    /// Enable web search before inference (v8.7.0+)
+    /// Web search before inference (v8.7.0+).
+    /// `Some(true)`: search. `Some(false)`: never search, whatever the prompt
+    /// says (v8.65.2+). Absent: the streaming path may detect search intent
+    /// from the prompt. A plain bool could not tell "no" from "not stated",
+    /// so a client's explicit refusal used to be overridden by detection.
     #[serde(default, alias = "webSearch")]
-    pub web_search: bool,
+    pub web_search: Option<bool>,
     /// Maximum number of searches to perform (default 5, max 20)
     #[serde(default = "default_max_searches", alias = "maxSearches")]
     pub max_searches: u32,
