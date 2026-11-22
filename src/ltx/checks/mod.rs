@@ -98,6 +98,41 @@ impl ResultChecked {
     ) -> Self {
         ResultChecked { _minted: () }
     }
+
+    /// The token of a job whose RESULT was not judged because its template is on [`FIXED_GRAPH_TEMPLATES`], its
+    /// prompt is empty, and every one of its inputs went through its input check in this job and passed. The
+    /// facts are arguments, so there is no other way to this token.
+    fn fixed_graph_inputs_checked(
+        _template: &'static str,
+        _inputs_checked: std::num::NonZeroU32,
+    ) -> Self {
+        ResultChecked { _minted: () }
+    }
+}
+
+/// Templates that have opted in to [`ContentChecks::result_of_fixed_graph_template`]: the Cut-out (Alpha) mode
+/// (8.65.3). Its delivered preview is an alpha matte (a bright silhouette) made from the job's own, already
+/// checked source by a fixed graph; image models misread such a picture (session 1612, 22 Nov 2026: BLOCK_UNRESOLVED
+/// at 0.359 after 12 minutes of rendering). A future template is exempt only by being named here, and only while
+/// the job carries no prompt: the template does take one, and a prompt shapes the picture.
+pub const FIXED_GRAPH_TEMPLATES: &[&str] = &["ltx-alpha-hdr", "ltx-alpha-chain-hdr"];
+
+/// The IC-LoRA guide strength the pinned alpha graphs carry (`LTXAddVideoICLoRAGuide.strength`, checked by a test).
+pub const PINNED_GUIDE_STRENGTH: f64 = 1.0;
+
+/// Whether the job carries any client value, other than the prompt, that changes what the sampler draws from the
+/// pinned alpha graphs: the guide strength off the pinned value (a lower one hands authority away from the source),
+/// or a camera pose, a speed or a deep-input wire (none of which these graphs take: the patcher refuses them, and
+/// this says so a second time). The patcher writes nothing else of the client's into these graphs but the seed, the
+/// size, the frame rate and the frame count, the input names and the loader cap, which do not loosen the tie to the
+/// source. No guidance, steps, sigmas, sampler or adapter value is patchable.
+pub fn shapes_the_picture(job: &crate::ltx::types::LtxJob) -> bool {
+    job.strength.is_some_and(|s| s != PINNED_GUIDE_STRENGTH)
+        || job.azimuth.is_some()
+        || job.elevation.is_some()
+        || job.distance.is_some()
+        || job.speed.is_some()
+        || job.input_wire.is_some()
 }
 
 /// Which check. The tag appears in log lines, alerts and the refusals record, never in what the client is sent.
@@ -171,6 +206,9 @@ pub struct JobChecks {
     /// Inputs of this job that went through an input check and were not refused (8.65.1). Private: only the
     /// input checks count here.
     inputs_checked: u32,
+    /// The subset of those that are whole stills and clips (never deep-EXR frames): the count the empty-prompt
+    /// result exemption ([`ContentChecks::result_of_fixed_graph_template`]) compares with the job's inputs.
+    whole_inputs_checked: u32,
 }
 
 impl JobChecks {
@@ -356,6 +394,7 @@ impl ContentChecks {
             total: Duration::ZERO,
             deep_sample: None,
             inputs_checked: 0,
+            whole_inputs_checked: 0,
         }
     }
 
@@ -457,13 +496,19 @@ impl ContentChecks {
             }
         };
         job.total += began.elapsed();
-        result.map(|()| Self::input_checked(job))
+        result.map(|()| Self::whole_input_checked(job))
     }
 
     /// An input went through its check and was not refused: counted on the job, and the upload token minted.
     fn input_checked(job: &mut JobChecks) -> CheckedInput {
         job.inputs_checked = job.inputs_checked.saturating_add(1);
         CheckedInput { _minted: () }
+    }
+
+    /// [`Self::input_checked`] for a whole still or clip (the empty-prompt exemption counts only these).
+    fn whole_input_checked(job: &mut JobChecks) -> CheckedInput {
+        job.whole_inputs_checked = job.whole_inputs_checked.saturating_add(1);
+        Self::input_checked(job)
     }
 
     /// D6: a clip (a chained part's previous-part clip included), judged whole before it is uploaded.
@@ -480,7 +525,7 @@ impl ContentChecks {
             .judge(job, Stage::Clip, Item::File { bytes, ext: "mp4" })
             .await;
         job.total += began.elapsed();
-        result.map(|()| Self::input_checked(job))
+        result.map(|()| Self::whole_input_checked(job))
     }
 
     /// D6: one frame of a deep EXR input. The job's sampled frames (the first, the last, and random ones in
@@ -598,6 +643,47 @@ impl ContentChecks {
                 .await
                 .map(|()| ResultChecked { _minted: () }),
         }
+    }
+
+    /// 8.65.3, beside [`Self::result_of_technical_passes`]: the result step of a job on a [`FIXED_GRAPH_TEMPLATES`]
+    /// template (Cut-out). `None` means this rule does not apply and the caller runs [`Self::check_result`] as
+    /// always. The result is not sent to the service ONLY when ALL hold: the mode is `enforce` (where a passed
+    /// input is a real verdict, not a shadow-mode "no verdict"); `job.template_id` is on the list (the caller
+    /// passes the job the node verified against the pinned bundle at accept); the prompt is exactly empty (the
+    /// patcher writes it into the graph untrimmed, so a blank prompt is a prompt); no picture-shaping parameter
+    /// is off the template's own default ([`shapes_the_picture`]); and the job has at least one input, every one
+    /// of them a whole still or clip checked and passed in this job (a chained part's previous-part clip
+    /// included). One log line says so.
+    ///
+    /// RE-PINNING EITHER TEMPLATE REQUIRES RE-READING THIS RULE: a graph with a second patched text input, a
+    /// patched adapter or any other client-patched input would keep the exemption silently. The test
+    /// `the_pinned_alpha_graphs_expose_only_what_the_rule_constrains` reads the pinned bundle and fails on that.
+    pub fn result_of_fixed_graph_template(
+        &self,
+        checks: &JobChecks,
+        job: &crate::ltx::types::LtxJob,
+    ) -> Option<ResultChecked> {
+        if self.mode() != Mode::Enforce || !job.prompt.is_empty() || shapes_the_picture(job) {
+            return None;
+        }
+        let template = FIXED_GRAPH_TEMPLATES
+            .iter()
+            .find(|t| **t == job.template_id)?;
+        let expected = job.images.as_deref().map_or(0, <[String]>::len)
+            + job.videos.as_deref().map_or(0, <[String]>::len);
+        let inputs = std::num::NonZeroU32::new(checks.whole_inputs_checked)?;
+        if expected != checks.whole_inputs_checked as usize {
+            return None;
+        }
+        tracing::info!(
+            "ltx-check {} stage={} verdict=SKIPPED_FIXED_GRAPH template={} reason=\"empty prompt, inputs checked\" inputs={} bundle={}",
+            checks.ids(),
+            Stage::Result.tag(),
+            template,
+            inputs,
+            self.inner.cfg.bundle_hash.as_deref().unwrap_or("unpinned"),
+        );
+        Some(ResultChecked::fixed_graph_inputs_checked(template, inputs))
     }
 
     // ------------------------------------------------------------------ the engine

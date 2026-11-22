@@ -1865,13 +1865,22 @@ impl LtxGenerateTask {
                                 checks.result_of_technical_passes(&mut cjob, route).await
                             }
                             None => {
-                                if checks_on
-                                    && !send_stage(&progress_tx, "checking", 0, key, sid, rid).await
+                                // 8.65.3 (D5): the same family for Cut-out: a listed template, an empty prompt and
+                                // every input checked in this job. Otherwise the result is checked as always.
+                                if let Some(token) =
+                                    checks.result_of_fixed_graph_template(&cjob, &job)
                                 {
-                                    warn!("LTX job abandoned before its result check: client disconnected");
-                                    return;
+                                    Ok(token)
+                                } else {
+                                    if checks_on
+                                        && !send_stage(&progress_tx, "checking", 0, key, sid, rid)
+                                            .await
+                                    {
+                                        warn!("LTX job abandoned before its result check: client disconnected");
+                                        return;
+                                    }
+                                    checks.check_result(&mut cjob, &r.filename, &bytes).await
                                 }
-                                checks.check_result(&mut cjob, &r.filename, &bytes).await
                             }
                         };
                         match outcome {

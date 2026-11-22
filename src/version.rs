@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.65.2-web-search-explicit-no-2026-11-21";
+pub const VERSION: &str = "v8.65.3-cutout-result-check-2026-11-22";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.65.2";
+pub const VERSION_NUMBER: &str = "8.65.3";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,19 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 65;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 2;
+pub const VERSION_PATCH: u32 = 3;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-21";
+pub const BUILD_DATE: &str = "2026-11-22";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.65.3: a Cut-out (Alpha) job (`ltx-alpha-hdr`, `ltx-alpha-chain-hdr`) whose prompt is exactly empty, in
+    // `enforce`, with every input checked and passed in this job, has no result check: its matte is made from footage
+    // that has already been checked (session 1612: a matte falsely refused after a 12 minute render). One log line per
+    // job: `ltx-check ... stage=c5 verdict=SKIPPED_FIXED_GRAPH template=... reason="empty prompt, inputs checked"`.
+    // A Cut-out job given a prompt, and every other template, keeps its result check.
+    "ltx-cutout-result-check-skipped",
     // v8.65.2: a client's explicit `web_search: false` is final. The field is now optional: `true` searches, `false`
     // never searches whatever the prompt says, and only an ABSENT field leaves the streaming path free to detect
     // search intent from the prompt. Before this an explicit `false` could not be told from "not stated", so a
@@ -727,6 +733,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.65.3 - Cut-out result check skipped on an empty prompt (Nov 22, 2026)
+    "v8.65.3: the result of a Cut-out (Alpha) job (ltx-alpha-hdr or ltx-alpha-chain-hdr) is no longer sent to the content-check service when LTX_CONTENT_CHECKS=enforce, the prompt is exactly empty and every input of the job (the previous-part clip of a chained part included) was checked and passed in that job; the result of a job given a prompt, and of every other template, is checked as before. Terms and privacy policy wording follows (the Terms already say every result is checked except VFX Passes).",
     // v8.65.2 - an explicit web_search: false is honoured (Nov 21, 2026)
     "v8.65.2: POST /v1/inference and the WebSocket path no longer run a web search when the request says web_search: false (or webSearch: false). Search-intent detection from the prompt now applies only when the field is absent. A client that sent false and relied on detection must omit the field or send true.",
     // v8.65.0 - content checks on the video path (Nov 12, 2026)
@@ -1308,7 +1316,9 @@ mod tests {
         assert!(FEATURES.contains(&"ltx-passes-result-check-skipped"));
         // v8.65.2
         assert!(FEATURES.contains(&"web-search-explicit-no"));
-        assert_eq!(VERSION_PATCH, 2);
+        // v8.65.3
+        assert!(FEATURES.contains(&"ltx-cutout-result-check-skipped"));
+        assert_eq!(VERSION_PATCH, 3);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1533,15 +1543,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.65.2"));
-        assert!(version.contains("2026-11-21"));
+        assert!(version.contains("8.65.3"));
+        assert!(version.contains("2026-11-22"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.65.2-web-search-explicit-no-2026-11-21");
-        assert_eq!(VERSION_NUMBER, "8.65.2");
-        assert_eq!(BUILD_DATE, "2026-11-21");
+        assert_eq!(VERSION, "v8.65.3-cutout-result-check-2026-11-22");
+        assert_eq!(VERSION_NUMBER, "8.65.3");
+        assert_eq!(BUILD_DATE, "2026-11-22");
     }
 
     #[test]
