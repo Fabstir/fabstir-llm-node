@@ -90,6 +90,7 @@ pub fn rig_config(tmp: &std::path::Path, mode: Mode, pubkey: [u8; 33]) -> Checks
     cfg.evidence_pubkey = Some(pubkey);
     cfg.evidence_dir = Some(tmp.join("evidence"));
     cfg.refusals_file = Some(tmp.join("evidence").join("refusals.jsonl"));
+    cfg.cleared_file = Some(tmp.join("evidence").join("cleared-results.json"));
     cfg.bundle_hash = Some(BUNDLE.to_string());
     cfg.check_timeout = Duration::from_secs(2);
     cfg.job_budget = Duration::from_secs(5);

@@ -60,6 +60,8 @@ pub struct ChecksConfig {
     pub evidence_pubkey: Option<[u8; 33]>,
     pub evidence_dir: Option<PathBuf>,
     pub refusals_file: Option<PathBuf>,
+    /// 8.65.4: the record of cleared results (its default is `cleared-results.json` in the evidence directory).
+    pub cleared_file: Option<PathBuf>,
     /// The service bundle hash expected at deploy, without the `sha256:` prefix, lower case.
     pub bundle_hash: Option<String>,
     pub alert_url: Option<String>,
@@ -87,6 +89,7 @@ impl ChecksConfig {
             evidence_pubkey: None,
             evidence_dir: None,
             refusals_file: None,
+            cleared_file: None,
             bundle_hash: None,
             alert_url: None,
             check_timeout: CHECK_TIMEOUT,
@@ -183,6 +186,14 @@ impl ChecksConfig {
             .map(|f| abs_dir("LTX_REFUSALS_FILE", f))
             .transpose()?
             .or_else(|| cfg.evidence_dir.as_ref().map(|d| d.join("refusals.jsonl")));
+        cfg.cleared_file = val("LTX_CLEARED_RESULTS_FILE")
+            .map(|f| abs_dir("LTX_CLEARED_RESULTS_FILE", f))
+            .transpose()?
+            .or_else(|| {
+                cfg.evidence_dir
+                    .as_ref()
+                    .map(|d| d.join("cleared-results.json"))
+            });
         match cfg.mode {
             Mode::Shadow => {
                 let raw = need("LTX_CONTENT_CHECKS_SHADOW_UNTIL")?;
@@ -256,7 +267,13 @@ impl ChecksConfig {
                 }
             }
         }
-        if let Some(file) = &self.refusals_file {
+        for (var, file) in [
+            ("LTX_REFUSALS_FILE", &self.refusals_file),
+            ("LTX_CLEARED_RESULTS_FILE", &self.cleared_file),
+        ]
+        .into_iter()
+        .filter_map(|(v, f)| f.as_ref().map(|f| (v, f)))
+        {
             // the file itself may not exist yet: resolve its folder
             let file = match (file.parent(), file.file_name()) {
                 (Some(dir), Some(name)) => view(dir).join(name),
@@ -265,7 +282,7 @@ impl ChecksConfig {
             for (name, dir) in &folders {
                 if *name != "LTX_EVIDENCE_DIR" && file.starts_with(dir) {
                     return Err(format!(
-                        "LTX_REFUSALS_FILE lies inside {name}: it would be swept or deleted there"
+                        "{var} lies inside {name}: it would be swept or deleted there"
                     ));
                 }
             }

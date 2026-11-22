@@ -15,6 +15,7 @@
 //! or rule ended a job is in the log line and the refusals record, never on the wire (D10).
 
 pub mod alerts;
+pub mod cleared;
 pub mod client;
 pub mod config;
 pub mod cooldown;
@@ -24,6 +25,7 @@ pub mod seal;
 pub mod staging;
 
 use self::alerts::AlertSink;
+use self::cleared::{Cleared, ClearedResults};
 use self::client::{CallError, Outcome, ServiceClient, Verdict};
 use self::config::{ChecksConfig, Mode, RendererDirs};
 use self::files::{InUse, JobFiles};
@@ -81,10 +83,13 @@ pub struct CheckedInput {
     _minted: (),
 }
 
-/// Proof that a job's result went through the check step. Only this module can build one.
+/// Proof that a job's result went through the check step. Only this module can build one. `how` (8.65.4) is how
+/// the result was cleared, when that was in `enforce` by a real verdict or by one of the two exemptions (it is
+/// recorded as a cleared result once delivered); `None` in `off` and `shadow`.
 #[derive(Debug)]
 pub struct ResultChecked {
     _minted: (),
+    how: Option<Cleared>,
 }
 
 impl ResultChecked {
@@ -96,7 +101,10 @@ impl ResultChecked {
         _route: &crate::ltx::relight::RelightRoute,
         _inputs_checked: std::num::NonZeroU32,
     ) -> Self {
-        ResultChecked { _minted: () }
+        ResultChecked {
+            _minted: (),
+            how: Some(Cleared::Passes),
+        }
     }
 
     /// The token of a job whose RESULT was not judged because its template is on [`FIXED_GRAPH_TEMPLATES`], its
@@ -106,7 +114,15 @@ impl ResultChecked {
         _template: &'static str,
         _inputs_checked: std::num::NonZeroU32,
     ) -> Self {
-        ResultChecked { _minted: () }
+        ResultChecked {
+            _minted: (),
+            how: Some(Cleared::FixedGraph),
+        }
+    }
+
+    /// How this result was cleared, when it may be recorded as a cleared result (`enforce` only).
+    pub fn cleared_how(&self) -> Option<Cleared> {
+        self.how
     }
 }
 
@@ -133,6 +149,12 @@ pub fn shapes_the_picture(job: &crate::ltx::types::LtxJob) -> bool {
         || job.distance.is_some()
         || job.speed.is_some()
         || job.input_wire.is_some()
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Which check. The tag appears in log lines, alerts and the refusals record, never in what the client is sent.
@@ -271,6 +293,8 @@ enum Fail {
 
 struct Inner {
     cfg: ChecksConfig,
+    /// 8.65.4: results this host delivered after its own checks (see [`cleared`]).
+    cleared: ClearedResults,
     service: Option<ServiceClient>,
     staging: Option<Staging>,
     alerts: Arc<dyn AlertSink>,
@@ -321,9 +345,11 @@ impl ContentChecks {
             _ => None,
         };
         let breaker = (cfg.mode != Mode::Off).then(|| "starting".to_string());
+        let cleared = ClearedResults::load(cfg.cleared_file.clone());
         ContentChecks {
             inner: Arc::new(Inner {
                 cfg,
+                cleared,
                 service,
                 staging,
                 alerts,
@@ -486,6 +512,9 @@ impl ContentChecks {
         if self.mode() == Mode::Off {
             return Ok(CheckedInput { _minted: () });
         }
+        if let Some(token) = self.own_result(job, Stage::Still, bytes) {
+            return Ok(token);
+        }
         let began = Instant::now();
         let result = match sniff_still(bytes) {
             // not a png, jpeg or webp: the service could not read it either
@@ -497,6 +526,57 @@ impl ContentChecks {
         };
         job.total += began.elapsed();
         result.map(|()| Self::whole_input_checked(job))
+    }
+
+    /// 8.65.4: an input that is byte-identical to a result THIS host delivered after its own checks is not sent to
+    /// the classifier again. `enforce` only; any miss (unknown, expired, no record) returns `None` and the input
+    /// is checked exactly as before. It counts as a passed whole input.
+    fn own_result(&self, job: &mut JobChecks, stage: Stage, bytes: &[u8]) -> Option<CheckedInput> {
+        if self.mode() != Mode::Enforce {
+            return None;
+        }
+        let sha = hex::encode(Sha256::digest(bytes));
+        let how = self.inner.cleared.lookup(&sha, unix_now())?;
+        tracing::info!(
+            "ltx-check {} stage={} verdict=CLEARED_OWN_RESULT how={} bundle={}",
+            job.ids(),
+            stage.tag(),
+            how.as_str(),
+            self.inner.cfg.bundle_hash.as_deref().unwrap_or("unpinned"),
+        );
+        Some(Self::whole_input_checked(job))
+    }
+
+    /// 8.65.4: record a delivered result (`sha256` of the exact bytes delivered, lower-case hex) as cleared. The
+    /// generation task calls it just before `ltx_complete`, with the `how` of that job's [`ResultChecked`]; `how`
+    /// is `None` outside `enforce` and nothing is recorded then.
+    pub async fn record_cleared(&self, sha256: &str, how: Option<Cleared>) {
+        self.record_cleared_at(sha256, how, unix_now()).await
+    }
+
+    #[doc(hidden)]
+    pub async fn record_cleared_at(&self, sha256: &str, how: Option<Cleared>, now: u64) {
+        let Some(how) = how else { return };
+        if self.mode() != Mode::Enforce {
+            return;
+        }
+        let this = self.clone();
+        let sha = sha256.to_string();
+        let write = tokio::task::spawn_blocking(move || this.inner.cleared.insert(&sha, how, now));
+        match tokio::time::timeout(RECORD_BOUND, write).await {
+            Ok(Ok(Ok(()))) => {}
+            _ => tracing::error!("ltx-check cleared-results record could not be written"),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn cleared_lookup(&self, sha256: &str) -> Option<Cleared> {
+        self.inner.cleared.lookup(sha256, unix_now())
+    }
+
+    #[doc(hidden)]
+    pub fn cleared_len(&self) -> usize {
+        self.inner.cleared.len()
     }
 
     /// An input went through its check and was not refused: counted on the job, and the upload token minted.
@@ -519,6 +599,9 @@ impl ContentChecks {
     ) -> Result<CheckedInput, Refusal> {
         if self.mode() == Mode::Off {
             return Ok(CheckedInput { _minted: () });
+        }
+        if let Some(token) = self.own_result(job, Stage::Clip, bytes) {
+            return Ok(token);
         }
         let began = Instant::now();
         let result = self
@@ -599,7 +682,10 @@ impl ContentChecks {
         bytes: &[u8],
     ) -> Result<ResultChecked, Refusal> {
         if self.mode() == Mode::Off {
-            return Ok(ResultChecked { _minted: () });
+            return Ok(ResultChecked {
+                _minted: (),
+                how: None,
+            });
         }
         let began = Instant::now();
         let result = if filename.to_ascii_lowercase().ends_with(".mp4") {
@@ -610,7 +696,9 @@ impl ContentChecks {
             self.no_verdict(job, Stage::Result, Cause::NotVideo).await
         };
         job.total += began.elapsed();
-        result.map(|()| ResultChecked { _minted: () })
+        // in `enforce` a passing answer is a real verdict; in `shadow` it may be a missing one
+        let how = (self.mode() == Mode::Enforce).then_some(Cleared::C5Pass);
+        result.map(|()| ResultChecked { _minted: (), how })
     }
 
     /// D5 as amended in 8.65.1: the result step of a VFX Passes job (the relight route, proved by `route`). Its
@@ -625,7 +713,10 @@ impl ContentChecks {
         route: &crate::ltx::relight::RelightRoute,
     ) -> Result<ResultChecked, Refusal> {
         if self.mode() == Mode::Off {
-            return Ok(ResultChecked { _minted: () });
+            return Ok(ResultChecked {
+                _minted: (),
+                how: None,
+            });
         }
         match std::num::NonZeroU32::new(job.inputs_checked) {
             Some(inputs) => {
@@ -636,12 +727,19 @@ impl ContentChecks {
                     inputs,
                     self.inner.cfg.bundle_hash.as_deref().unwrap_or("unpinned"),
                 );
-                Ok(ResultChecked::technical_passes_input_checked(route, inputs))
+                let mut token = ResultChecked::technical_passes_input_checked(route, inputs);
+                if self.mode() != Mode::Enforce {
+                    token.how = None;
+                }
+                Ok(token)
             }
             None => self
                 .no_verdict(job, Stage::Result, Cause::NoCheckedInput)
                 .await
-                .map(|()| ResultChecked { _minted: () }),
+                .map(|()| ResultChecked {
+                    _minted: (),
+                    how: None,
+                }),
         }
     }
 

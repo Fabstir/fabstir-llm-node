@@ -214,7 +214,7 @@ fn the_tokens_are_minted_only_inside_the_checks_module() {
     };
     let checks = read("ltx/checks/mod.rs");
     assert!(checks.contains("pubstructCheckedInput{_minted:(),}"));
-    assert!(checks.contains("pubstructResultChecked{_minted:(),}"));
+    assert!(checks.contains("pubstructResultChecked{_minted:(),how:Option<Cleared>,}"));
     for other in [
         "ltx/client.rs",
         "ltx/provenance/finalise.rs",

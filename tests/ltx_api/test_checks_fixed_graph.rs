@@ -68,11 +68,12 @@ pub(super) struct Run {
     pub(super) renderer: Arc<Renderer>,
     pub(super) chain: Arc<Chain>,
     pub(super) ran: Ran,
+    pub(super) cm: Arc<fabstir_llm_node::contracts::checkpoint_manager::CheckpointManager>,
 }
 
 /// One job through the real handler and task. `inputs` are the job's clips in order; `spared` are the ones the
 /// service passes; `tweak` adjusts the rig's service before the run.
-async fn go(
+pub(super) async fn go(
     mode: Mode,
     template: &str,
     prompt: &str,
@@ -107,7 +108,25 @@ pub(super) async fn go_with(
     extra: &Value,
 ) -> Run {
     let rig = rig(mode).await;
-    let shas = spared.iter().map(|i| sha(&inputs[*i])).collect();
+    go_on(rig, template, prompt, inputs, spared, hash, jid, extra).await
+}
+
+/// [`go_with`] on a rig that already exists (its checks, and so its cleared-results record, carry over).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn go_on(
+    rig: Rig,
+    template: &str,
+    prompt: &str,
+    inputs: &[Vec<u8>],
+    spared: &[usize],
+    hash: Option<&str>,
+    jid: u64,
+    extra: &Value,
+) -> Run {
+    let mut shas: Vec<String> = spared.iter().map(|i| sha(&inputs[*i])).collect();
+    if extra.get("sparePreview").is_some() {
+        shas.push(sha(&preview())); // the service passes the result too
+    }
     *rig.svc.block_all_but.lock().unwrap() = Some((shas, ILLEGAL));
     let (renderer, client) = spawn_renderer(rig.dir("in"), rig.dir("out")).await;
     *renderer.output.lock().unwrap() = Some(preview());
@@ -120,7 +139,7 @@ pub(super) async fn go_with(
     let model =
         fabstir_llm_node::ltx::template::expected_session_model(st.entry(template), template);
     let (chain, url) = spawn_chain(model).await;
-    install_checkpoint_manager(&server, &url).await;
+    let cm = install_checkpoint_manager(&server, &url).await;
     let cids = serve_blobs(inputs).await;
     let wire = job(template, hash, prompt, &cids, extra);
     let ran = run_job(&server, &wire, "s-fg", Some(jid), Some(ADDR), false).await;
@@ -132,6 +151,7 @@ pub(super) async fn go_with(
         renderer,
         chain,
         ran,
+        cm,
     }
 }
 
@@ -283,62 +303,6 @@ async fn another_template_with_an_empty_prompt_is_sent_to_c5() {
     )
     .await;
     assert_checked(&r, &logs);
-}
-
-#[tokio::test]
-async fn a_job_claiming_the_alpha_id_with_another_hash_is_refused_as_before() {
-    // `verify` bypassed for the alpha ids -> accepted -> red
-    let _env = S5_ENV_LOCK.lock().await;
-    let r = go(
-        Mode::Enforce,
-        HDR,
-        "",
-        &[source()],
-        &[0],
-        Some("0xdead"),
-        709,
-    )
-    .await;
-    assert!(!r.ran.accepted);
-    assert_eq!(r.ran.code(), "VALIDATION_FAILED", "{:?}", r.ran.terminal);
-    assert_eq!(r.renderer.count("prompt"), 0);
-    // and the hash of ANOTHER pinned template is no better
-    let other = store50().template_hash("ltx-edit-hdr").unwrap().to_string();
-    let r = go(Mode::Enforce, HDR, "", &[source()], &[0], Some(&other), 710).await;
-    assert_eq!(r.ran.code(), "VALIDATION_FAILED");
-}
-
-#[tokio::test]
-async fn with_checks_off_or_shadow_this_rule_does_not_apply() {
-    // The `Mode::Enforce` guard removed -> the shadow run logs the skip and never sends the matte -> red
-    let _env = S5_ENV_LOCK.lock().await;
-    let (logs, _c) = Logs::capture();
-    let r = go(Mode::Off, HDR, "", &[source()], &[0], None, 711).await;
-    assert_eq!(
-        r.ran.terminal["type"], "ltx_complete",
-        "{:?}",
-        r.ran.terminal
-    );
-    assert!(!logs.text().contains("SKIPPED_FIXED_GRAPH"));
-    assert_eq!(
-        r.rig.svc.count("moderate mp4"),
-        1,
-        "off: only the probe, no check code runs"
-    );
-    let (logs, _c) = Logs::capture();
-    let r = go(Mode::Shadow, HDR, "", &[source()], &[0], None, 712).await;
-    assert!(!logs.text().contains("SKIPPED_FIXED_GRAPH"));
-    let seen: Vec<String> = r
-        .rig
-        .svc
-        .seen("mp4")
-        .into_iter()
-        .map(|f| f.sha256)
-        .collect();
-    assert!(
-        seen.contains(&sha(&preview())),
-        "shadow still judges the matte"
-    );
 }
 
 #[tokio::test]

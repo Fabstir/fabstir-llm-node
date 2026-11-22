@@ -1837,6 +1837,10 @@ impl LtxGenerateTask {
                 // Content checks (D5): set by the result check on the job's FIRST artefact; every output's marking
                 // needs it, so nothing is marked, uploaded or billed for a job whose result was not checked.
                 let mut result_checked: Option<crate::ltx::checks::ResultChecked> = None;
+                // 8.65.4: the SHA-256 of the marked first artefact (the mp4 the client receives) and how it was
+                // cleared; recorded as a cleared result only once the job completes.
+                let mut pending_clear: Option<(String, crate::ltx::checks::cleared::Cleared)> =
+                    None;
                 for (i, r) in output_refs.iter().enumerate() {
                     let dest = format!("home/ltx/job_{job_tag}/frame_{i:05}.bin");
                     // Pull the rendered file over ComfyUI's /view (no shared volume), then
@@ -1933,6 +1937,12 @@ impl LtxGenerateTask {
                             return;
                         }
                     };
+                    if i == 0 && r.filename.to_ascii_lowercase().ends_with(".mp4") {
+                        if let Some(how) = checked.cleared_how() {
+                            let sha = <sha2::Sha256 as sha2::Digest>::digest(&bytes);
+                            pending_clear = Some((hex::encode(sha), how));
+                        }
+                    }
                     // D3: relight frames get RELIGHT_UPLOAD_ATTEMPTS tries in total.
                     let attempts = if is_relight {
                         submit::RELIGHT_UPLOAD_ATTEMPTS
@@ -2216,6 +2226,11 @@ impl LtxGenerateTask {
                         .ltx_tracker()
                         .track(jid, Some(session_id.clone()), tokens, cost)
                         .await;
+                }
+                // 8.65.4: the delivered result is now a cleared result: recorded BEFORE the client can receive it
+                // and send it back as the next part's input.
+                if let Some((sha, how)) = pending_clear.take() {
+                    checks.record_cleared(&sha, Some(how)).await;
                 }
                 let _ = progress_tx
                     .send(build_encrypted_ltx_response(&inner, key, sid, None))

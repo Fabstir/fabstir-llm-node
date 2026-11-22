@@ -220,6 +220,11 @@ async fn a_passes_result_is_not_checked_and_the_job_bills_its_estimate() {
     assert!(logs.has("c3", "verdict=PASS"), "the input check ran");
     assert!(logs.has("c5", "verdict=SKIPPED_TECHNICAL inputs=1"));
     assert!(!logs.text().contains("stage=c5 refused"));
+    assert_eq!(
+        rig.checks.cleared_len(),
+        1,
+        "8.65.4: the delivered passes preview is recorded as cleared"
+    );
     assert!(rig.refusals().is_empty());
     // the rest of the job is as before: marked, delivered whole, and its files deleted at job end
     assert_eq!(passes.count("view"), 1 + FRAMES as usize);
