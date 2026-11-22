@@ -1,0 +1,42 @@
+name = "s5-uk"
+
+[keypair]
+seed = "SET_ON_THE_BOX"
+
+[cache]
+path = "/cache"
+maxSizeInGB = 4
+
+[database]
+path = "/db"
+
+[http.api]
+port = 5050
+bind = "127.0.0.1"
+domain = "s5-uk.platformlessai.ai"
+
+[p2p.self]
+disabled = true
+
+[p2p.peers]
+initial = []
+
+[store]
+default = "s3"
+
+[store.s3]
+endpointUrl = "http://127.0.0.1:3900"
+accessKey = "SET_ON_THE_BOX"
+secretKey = "SET_ON_THE_BOX"
+bucket = "s5-data"
+cdnUrls = ["https://s5-uk.platformlessai.ai/s5-data/"]
+
+[accounts]
+enabled = true
+authTokensForAccountRegistration = ["SET_ON_THE_BOX"]
+
+[accounts.database]
+path = "/db"
+
+[http.api.delete]
+enabled = true

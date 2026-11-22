@@ -1,0 +1,16 @@
+{
+  "name": "s5-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Auth proxy in front of an S5 portal node (regional kit version, settings from the environment)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.mjs",
+    "test:global": "PROXY_FILE=../global/server.js EXPECT_CDN=https://dl.platformlessai.ai/s5-data/ node --test test/*.test.mjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "ethers": "^6.16.0"
+  }
+}

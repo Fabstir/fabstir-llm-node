@@ -1,0 +1,16 @@
+[Unit]
+Description=S5 Auth Proxy (UK region)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/s5/proxy.env
+ExecStart=/usr/bin/node /opt/s5-proxy/server.js
+Restart=always
+RestartSec=5
+User=root
+WorkingDirectory=/opt/s5-proxy
+
+[Install]
+WantedBy=multi-user.target

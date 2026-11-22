@@ -1,0 +1,19 @@
+[Unit]
+Description=Garage S3 storage (S5 UK portal store)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=garage
+Group=garage
+Environment=RUST_LOG=garage=info
+ExecStart=/usr/local/bin/garage -c /etc/garage.toml server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

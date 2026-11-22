@@ -1,0 +1,60 @@
+s5.platformlessai.ai {
+    # WebSocket connections go directly to S5 (P2P)
+    @websocket {
+        path /s5/p2p
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websocket {
+        reverse_proxy localhost:5050
+    }
+    
+    # Also handle /s5/p2p without upgrade header (initial connection)
+    handle /s5/p2p {
+        reverse_proxy localhost:5050
+    }
+    
+    # Wallet-gated wrapped vaults (portal vault service, 127.0.0.1:5052)
+    handle /vault/* {
+        reverse_proxy 127.0.0.1:5052
+    }
+
+    # Not used by our clients; import would let an account make the node fetch any URL
+    @blocked path /s5/import/* /s5/debug/*
+    handle @blocked {
+        respond "Not Found" 404
+    }
+
+    # HTTP requests go through the auth proxy
+    handle {
+        reverse_proxy localhost:5051
+    }
+}
+
+dl.platformlessai.ai {
+    header {
+        Access-Control-Allow-Origin *
+        Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+        Access-Control-Allow-Headers "Range, Content-Type"
+        Access-Control-Expose-Headers "Content-Length, Content-Range, ETag"
+        Access-Control-Max-Age 86400
+    }
+    
+    @options method OPTIONS
+    handle @options {
+        respond 204
+    }
+    
+    # Handle /s5-data/* requests - rewrite to renterd API
+    handle /s5-data/* {
+        rewrite * /api/worker/object{path}?bucket=s5-data
+        uri replace /api/worker/object/s5-data/ /api/worker/object/
+        reverse_proxy localhost:9980 {
+            header_up Authorization "Basic REPLACE_WITH_RENTERD_BASIC_AUTH_BASE64"
+        }
+    }
+    
+    handle {
+        respond "Not Found" 404
+    }
+}

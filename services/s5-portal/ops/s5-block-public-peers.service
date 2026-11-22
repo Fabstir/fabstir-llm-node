@@ -1,0 +1,10 @@
+[Unit]
+Description=Refuse the S5 node outbound connections to remembered public peers
+After=network-online.target ufw.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/s5-block-public-peers.sh
+[Install]
+WantedBy=multi-user.target

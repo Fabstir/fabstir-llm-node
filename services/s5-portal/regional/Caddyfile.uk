@@ -1,0 +1,58 @@
+s5-uk.platformlessai.ai {
+    # Peer socket goes straight to the S5 node
+    @websocket {
+        path /s5/p2p
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websocket {
+        reverse_proxy 127.0.0.1:5050
+    }
+    handle /s5/p2p {
+        reverse_proxy 127.0.0.1:5050
+    }
+
+    # Downloads: read-only, straight from the Garage bucket on this box
+    @dl_options {
+        path /s5-data/*
+        method OPTIONS
+    }
+    handle @dl_options {
+        header Access-Control-Allow-Origin *
+        header Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+        header Access-Control-Allow-Headers "Range, Content-Type"
+        header Access-Control-Max-Age 86400
+        respond 204
+    }
+    @dl {
+        path /s5-data/*
+        method GET HEAD
+    }
+    handle @dl {
+        header Access-Control-Allow-Origin *
+        header Access-Control-Expose-Headers "Content-Length, Content-Range, ETag"
+        uri strip_prefix /s5-data
+        reverse_proxy 127.0.0.1:3902 {
+            header_up Host s5-data.web.s5-uk.localhost
+        }
+    }
+    handle /s5-data/* {
+        respond "Method Not Allowed" 405
+    }
+
+    # Wallet-gated wrapped vaults (portal vault service)
+    handle /vault/* {
+        reverse_proxy 127.0.0.1:5052
+    }
+
+    # Not used by our clients; import would let an account make the node fetch any URL
+    @blocked path /s5/import/* /s5/debug/*
+    handle @blocked {
+        respond "Not Found" 404
+    }
+
+    # Everything else goes through the auth proxy
+    handle {
+        reverse_proxy 127.0.0.1:5051
+    }
+}

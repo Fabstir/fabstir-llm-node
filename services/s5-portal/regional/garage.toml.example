@@ -1,0 +1,23 @@
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "127.0.0.1:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "GENERATED_ON_THE_BOX"
+
+[s3_api]
+s3_region = "us-east-1"   # signing label only, NOT a location: the S5 node S3 client cannot be told a region and signs as us-east-1
+api_bind_addr = "127.0.0.1:3900"
+root_domain = ".s3.s5-uk.localhost"
+
+[admin]
+api_bind_addr = "127.0.0.1:3903"
+admin_token = "GENERATED_ON_THE_BOX"
+metrics_token = "GENERATED_ON_THE_BOX"
+
+[s3_web]
+bind_addr = "127.0.0.1:3902"
+root_domain = ".web.s5-uk.localhost"

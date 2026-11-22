@@ -1,0 +1,33 @@
+[Unit]
+Description=Portal vault service (wallet-gated wrapped vaults for this region)
+After=network-online.target garage.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=s5vault
+Group=s5vault
+EnvironmentFile=/etc/s5/vault.env
+WorkingDirectory=/opt/s5-vault
+ExecStart=/usr/bin/node /opt/s5-vault/dist/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
