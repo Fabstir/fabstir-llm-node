@@ -28,4 +28,5 @@ mod test_types;
 mod test_v49_templates;
 mod test_v50_rules;
 mod test_v50_templates;
+mod test_v51_templates;
 mod test_weights;
