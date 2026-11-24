@@ -95,6 +95,14 @@ export class FiatCredentials {
     return this.byHash.get(hashToken(token))?.userId ?? null;
   }
 
+  /** As authenticate, but only for a credential minted for `purpose` (OP1.3a:
+   *  the owner relayer takes the browser's credential, never the helper's). */
+  authenticateFor(token: string, purpose: CredentialPurpose): string | null {
+    if (typeof token !== 'string' || token.length === 0) return null;
+    const meta = this.byHash.get(hashToken(token));
+    return meta && meta.purpose === purpose ? meta.userId : null;
+  }
+
   /** Server-side kill switch: revoke every credential of one user, all purposes. */
   revokeAll(userId: string): Promise<number> {
     return this.run(async () => {

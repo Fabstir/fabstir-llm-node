@@ -25,6 +25,9 @@ const BROWSER_ROUTES = new Set<string>([
   '/v1/fiat/cashout',
   '/v1/fiat/credential/challenge',
   '/v1/fiat/credential/self-serve',
+  // OP1.3a: Add a passkey (credential-authenticated, no cookies).
+  '/v1/fiat/owners/prepare',
+  '/v1/fiat/owners/submit',
 ]);
 
 function isBrowserRoute(pathname: string): boolean {

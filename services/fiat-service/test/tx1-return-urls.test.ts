@@ -9,7 +9,7 @@ import { testFeed } from './helpers/fx-feed';
 
 const ADDR = '0x1234567890abcDEF1234567890abcdef12345678';
 const CONSENT = { termsVersion: '2026-11-12.2', over18: true, useNow: true };
-const BLENDER = 'https://timeline.platformlessai.org';
+const BLENDER = 'https://timeline.platformlessai.ai';
 const MAP = JSON.stringify({ [BLENDER]: [`${BLENDER}/account?purchase=success`, `${BLENDER}/account?purchase=cancelled`] });
 
 function post(origin?: string) {

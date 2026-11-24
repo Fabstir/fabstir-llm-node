@@ -95,6 +95,8 @@ describe('actual requests on browser routes', () => {
       '/v1/fiat/cashout',
       '/v1/fiat/credential/challenge',
       '/v1/fiat/credential/self-serve',
+      '/v1/fiat/owners/prepare',
+      '/v1/fiat/owners/submit',
     ]) {
       const res = middleware(req(p, { method: 'POST', origin: UI }));
       expect(res.headers.get('access-control-allow-origin'), p).toBe(UI);
