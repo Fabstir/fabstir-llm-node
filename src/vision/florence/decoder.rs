@@ -14,7 +14,7 @@ use ort::value::Value;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Default maximum tokens to generate
 pub const DEFAULT_MAX_TOKENS: usize = 150;
@@ -237,11 +237,11 @@ impl FlorenceDecoder {
             info!("No prompt provided, using BOS-only start");
         }
 
-        // Log the actual token IDs for debugging
-        info!("Initial tokens: {:?} (len={})", tokens, tokens.len());
+        // Log the actual token IDs for debugging (NP1.4: token text only at trace)
+        trace!("Initial tokens: {:?} (len={})", tokens, tokens.len());
         for (i, &tid) in tokens.iter().enumerate() {
             let tok_str = self.tokenizer.decode(&[tid], false).unwrap_or_default();
-            info!("  Token {}: ID {} = '{}'", i, tid, tok_str);
+            trace!("  Token {}: ID {} = '{}'", i, tid, tok_str);
         }
 
         // Verify encoder output is valid (not all zeros or NaN)
@@ -281,15 +281,18 @@ impl FlorenceDecoder {
             // Greedy decoding: select highest probability token (mask recent tokens to prevent loops)
             let next_token = self.argmax(&logits, &tokens)?;
 
-            // Debug: show what token was selected and top logits
+            // Debug: show what token was selected and top logits (NP1.4: trace only,
+            // the decoded tokens are the model's output text)
             if step < 5 {
                 let token_text = self
                     .tokenizer
                     .decode(&[next_token], false)
                     .unwrap_or_default();
-                info!(
+                trace!(
                     "Step {}: selected token {} = '{}' (repetition masked)",
-                    step, next_token, token_text
+                    step,
+                    next_token,
+                    token_text
                 );
 
                 // Build mask set for display
@@ -310,7 +313,7 @@ impl FlorenceDecoder {
                     .collect();
                 indexed_logits
                     .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                info!(
+                trace!(
                     "  Top 5 logits (after masking {} tokens):",
                     mask_tokens.len()
                 );
@@ -319,7 +322,7 @@ impl FlorenceDecoder {
                         .tokenizer
                         .decode(&[*idx as u32], false)
                         .unwrap_or_default();
-                    info!("    ID {:5} = {:>10.4} '{}'", idx, val, tok);
+                    trace!("    ID {:5} = {:>10.4} '{}'", idx, val, tok);
                 }
             }
 

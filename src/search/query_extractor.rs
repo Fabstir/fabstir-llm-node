@@ -174,6 +174,7 @@ pub enum SearchDecision {
     /// The client asked for a search.
     Explicit,
     /// The client did not say; the prompt looks like it needs fresh information.
+    /// No longer returned by `search_decision` since v8.66.0 (NP1.2, search is opt-in).
     AutoDetected,
     /// Do not search.
     No,
@@ -188,13 +189,13 @@ impl SearchDecision {
 /// The one rule for whether a request is searched.
 ///
 /// An explicit `false` is final: the prompt is never inspected, so a client
-/// that has switched search off is never searched. Detection from the prompt
-/// applies only when the client did not state a choice.
-pub fn search_decision(explicit: Option<bool>, prompt: &str) -> SearchDecision {
+/// that has switched search off is never searched. NP1.2 (v8.66.0): search is
+/// opt-in, so an absent field is never searched either; the prompt is not
+/// inspected and is never sent to a search provider unless the client asked.
+pub fn search_decision(explicit: Option<bool>, _prompt: &str) -> SearchDecision {
     match explicit {
         Some(true) => SearchDecision::Explicit,
         Some(false) => SearchDecision::No,
-        None if needs_web_search(prompt) => SearchDecision::AutoDetected,
         None => SearchDecision::No,
     }
 }

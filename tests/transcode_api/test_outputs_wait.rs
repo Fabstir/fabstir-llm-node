@@ -10,12 +10,7 @@
 //! Sessions 1459 and 1460 sent a CID without "s5://": the sidecar dropped it
 //! ("Invalid source CID") while its status said "in progress" for 30 minutes.
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use axum::routing::post;
-use axum::Router;
 use fabstir_llm_node::api::server::ApiServer;
-use fabstir_llm_node::api::transcode::handler::transcode_submit_handler;
 use fabstir_llm_node::api::websocket::handlers::transcode::{
     completion_wait, handle_encrypted_transcode, output_wait_secs, source_cid_names_network,
     CompletionWait, OUTPUT_WAIT_SECS_DEFAULT,
@@ -24,7 +19,6 @@ use fabstir_llm_node::transcoder::TranscoderClient;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
-use tower::ServiceExt;
 
 const NOT_READY: &str = "Transcoding in progress";
 const OUTPUTS: &str = r#"[{"id":1,"ext":"mp4","cid":"s5://urqYSH9H"}]"#;
@@ -190,27 +184,4 @@ async fn test_ws_prefixed_cid_passes_the_check() {
         inner["error"]["code"], "VALIDATION_FAILED",
         "a valid CID was refused: {inner}"
     );
-}
-
-#[tokio::test]
-async fn test_http_bare_cid_400_before_the_sidecar() {
-    let server = Arc::new(server_with_sidecar().await);
-    let app = Router::new()
-        .route("/v1/transcode", post(transcode_submit_handler))
-        .with_state(server);
-    let body = json!({"sourceCid": "urqYSH2QNJOY", "mediaFormats": [{"id": 1, "ext": "mp4"}]});
-    let resp = app
-        .oneshot(
-            Request::post("/v1/transcode")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 16)
-        .await
-        .unwrap();
-    assert!(String::from_utf8_lossy(&bytes).contains("s5://"));
 }

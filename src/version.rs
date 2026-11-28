@@ -3,25 +3,35 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.65.4-own-result-inputs-2026-11-22";
+pub const VERSION: &str = "v8.66.0-no-plaintext-2026-11-23";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.65.4";
+pub const VERSION_NUMBER: &str = "8.66.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 65;
+pub const VERSION_MINOR: u32 = 66;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 4;
+pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-22";
+pub const BUILD_DATE: &str = "2026-11-23";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.66.0 NP1 (IMPLEMENTATION-NO-PLAINTEXT.md): no plaintext user content leaves the node. A checkpoint delta is
+    // buffered and uploaded only for a session with a recovery key, and always encrypted to it; a session without a
+    // key uploads no delta and no index entry and its proof goes ahead with an empty deltaCID. Clients should refuse
+    // a plaintext delta from a host that lists this marker.
+    "checkpoint-deltas-encrypted-only",
+    // v8.66.0 NP1.2: web search is opt-in. Only an explicit `web_search: true` searches, on every path (REST and
+    // WebSocket, encrypted and plaintext); an absent field no longer triggers detection from the prompt.
+    "web-search-opt-in",
+    // (v8.66.0 NP1.3 has no marker: POST /v1/transcode and GET /v1/transcode/:task_id are removed and now 404;
+    // GET /v1/transcode/capacity stays.)
     // v8.65.4: an input that is byte-identical (SHA-256 of the whole file) to a result this host delivered after its
     // own checks (the result check passed, or the VFX Passes or Cut-out exemption applied) is not sent to the
     // classifier again, in `enforce` only, and counts as a passed input (so a chained Cut-out part, whose previous
@@ -487,7 +497,6 @@ pub const FEATURES: &[&str] = &[
     "streaming-web-search",
     "websocket-web-search",
     // Auto-detect search intent (v8.7.8+)
-    "auto-search-intent-detection",
     // SDK web_search field support (v8.7.9+)
     "sdk-web-search-field",
     // System prompt web search instructions (v8.7.10+)
@@ -687,7 +696,6 @@ pub const FEATURES: &[&str] = &[
     "transcoder-rate-limiter",
     "websocket-transcode-handler",
     "transcode-progress-streaming",
-    "http-transcode-endpoints",
     "docker-transcoder-sidecar",
     // Transcoding trustless verification (v8.26.0)
     "transcoding-quality-metrics",
@@ -740,6 +748,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.66.0 - NP1: no plaintext user content leaves the node (Nov 23, 2026)
+    "v8.66.0: checkpoint deltas are uploaded only encrypted to the session's recovery key; a session without one (REST /v1/inference, plaintext session_init, an encrypted init without recoveryPublicKey) gets no delta and an empty deltaCID with its proof, so it has no conversation recovery. Web search runs only on an explicit web_search: true. GET /v1/transcode/:task_id and POST /v1/transcode are removed (404); /v1/transcode/capacity stays. Markers: checkpoint-deltas-encrypted-only, web-search-opt-in.",
     // v8.65.4 - own delivered results are not input-checked again (Nov 22, 2026)
     "v8.65.4: in LTX_CONTENT_CHECKS=enforce a clip or still that is byte-identical to a result this host delivered after its own checks is not sent to the content-check service as an input; the node keeps a record of delivered-result hashes in LTX_CLEARED_RESULTS_FILE (default cleared-results.json in LTX_EVIDENCE_DIR; hashes only, 7 days, 4096 entries). It must not lie inside a renderer folder (it is held to the same rule as the refusals file). Without it everything is checked as before.",
     // v8.65.3 - Cut-out result check skipped on an empty prompt (Nov 22, 2026)
@@ -1320,7 +1330,7 @@ mod tests {
         assert!(FEATURES.contains(&"ltx-check-unavailable-code"));
         assert!(FEATURES.contains(&"ltx-job-files-deleted"));
         assert!(FEATURES.contains(&"ltx-bundle-50"));
-        assert_eq!(VERSION_MINOR, 65);
+        assert!(VERSION_MINOR >= 65);
         // v8.65.1
         assert!(FEATURES.contains(&"ltx-passes-result-check-skipped"));
         // v8.65.2
@@ -1329,7 +1339,7 @@ mod tests {
         assert!(FEATURES.contains(&"ltx-cutout-result-check-skipped"));
         // v8.65.4
         assert!(FEATURES.contains(&"ltx-own-result-inputs-cleared"));
-        assert_eq!(VERSION_PATCH, 4);
+        assert!(VERSION_MINOR > 65 || VERSION_PATCH == 4);
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1443,7 +1453,9 @@ mod tests {
         assert!(FEATURES.contains(&"transcoder-rest-client"));
         assert!(FEATURES.contains(&"transcoder-billing"));
         assert!(FEATURES.contains(&"websocket-transcode-handler"));
-        assert!(FEATURES.contains(&"http-transcode-endpoints"));
+        // NP1.3: the HTTP transcode endpoints were removed (8.66.0)
+        assert!(!FEATURES.contains(&"http-transcode-endpoints"));
+        assert!(!FEATURES.contains(&"auto-search-intent-detection"));
         // v8.24.0 tx-queue
         assert!(FEATURES.contains(&"tx-queue"));
         assert!(FEATURES.contains(&"nonce-collision-prevention"));
@@ -1554,15 +1566,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.65.4"));
-        assert!(version.contains("2026-11-22"));
+        assert!(version.contains("8.66.0"));
+        assert!(version.contains("2026-11-23"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.65.4-own-result-inputs-2026-11-22");
-        assert_eq!(VERSION_NUMBER, "8.65.4");
-        assert_eq!(BUILD_DATE, "2026-11-22");
+        assert_eq!(VERSION, "v8.66.0-no-plaintext-2026-11-23");
+        assert_eq!(VERSION_NUMBER, "8.66.0");
+        assert_eq!(BUILD_DATE, "2026-11-23");
     }
 
     #[test]
@@ -1658,6 +1670,23 @@ mod tests {
         // v8.62.1: the outputs wait and the source CID network check.
         assert!(FEATURES.contains(&"transcode-outputs-wait"));
         assert!(FEATURES.contains(&"transcode-source-cid-network-check"));
+    }
+
+    #[test]
+    fn test_np1_no_plaintext_markers() {
+        // v8.66.0 NP1: both markers are on /v1/version, and the old encrypted-deltas marker stays.
+        let info = get_version_info();
+        let features = info["features"].as_array().unwrap();
+        for marker in [
+            "checkpoint-deltas-encrypted-only",
+            "web-search-opt-in",
+            "encrypted-checkpoint-deltas",
+        ] {
+            assert!(
+                features.iter().any(|f| f == marker),
+                "/v1/version must list {marker}"
+            );
+        }
     }
 
     #[test]

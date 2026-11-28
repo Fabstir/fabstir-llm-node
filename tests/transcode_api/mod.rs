@@ -1,7 +1,7 @@
 mod test_biller;
 mod test_biller_expiry;
 mod test_expiry_sweeper;
-mod test_http_handler;
+mod test_rest_routes_removed;
 mod test_job_work;
 mod test_live_duration;
 mod test_liveness;

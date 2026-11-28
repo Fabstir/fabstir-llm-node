@@ -2273,7 +2273,8 @@ impl CheckpointManager {
     /// Track a conversation message for checkpoint publishing
     ///
     /// Call this for each user prompt and assistant response.
-    /// Messages are buffered and included in the next checkpoint.
+    /// Messages are buffered and included in the next checkpoint, but only for a
+    /// session with a recovery key (NP1.1); without one nothing is kept.
     ///
     /// # Arguments
     /// * `session_id` - Session identifier
@@ -3276,6 +3277,10 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
+        // NP1.1: only a session with a recovery key buffers
+        publisher
+            .set_recovery_public_key(session_id, "0x02abc123".to_string())
+            .await;
         let message = CheckpointMessage::new_user("Hello".to_string(), timestamp);
         publisher.buffer_message(session_id, message).await;
 
@@ -3297,6 +3302,9 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
 
+        publisher
+            .set_recovery_public_key(session_id, "0x02abc123".to_string())
+            .await;
         let message = CheckpointMessage::new_assistant("Partial...".to_string(), timestamp, true);
         publisher.buffer_message(session_id, message).await;
 

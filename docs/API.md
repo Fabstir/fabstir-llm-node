@@ -564,7 +564,7 @@ Content-Type: application/json
 | `job_id` | Integer | No | - | Blockchain job ID for payment |
 | `session_id` | String | No | - | Session identifier |
 | `chain_id` | Integer | No | 84532 | Blockchain network ID (84532 for Base Sepolia, 5611 for opBNB Testnet) |
-| `web_search` | Boolean | No | false | Enable web search before inference. Works with both streaming and non-streaming modes (v8.7.0+, streaming support v8.7.5+) |
+| `web_search` | Boolean | No | absent | Enable web search before inference. Works with both streaming and non-streaming modes (v8.7.0+, streaming support v8.7.5+). Opt-in since v8.66.0 (marker `web-search-opt-in`): only an explicit `true` searches; an absent field or `false` never does, on every path (REST and WebSocket, encrypted and plaintext). The node no longer detects search intent from the prompt. |
 | `max_searches` | Integer | No | 5 | Maximum number of search queries (1-20) |
 | `search_queries` | Array<String> | No | null | Custom search queries (if null, derived from prompt) |
 | `thinking` | String | No | null | Thinking/reasoning mode (v8.17.0+). Values: `"enabled"`, `"disabled"`, `"low"`, `"medium"`, `"high"`. Harmony template maps to `Reasoning: none/low/medium/high` in system prompt. GLM-4 template maps to `/think` prefix when explicitly enabled (v8.22.4: no longer auto-injected). ChatML template maps to Qwen's own reasoning-effort instruction at the head of the system message — `low` and `high` (= Qwen's `xhigh`) inject a sentence, `medium`/`enabled` inject nothing (matching Qwen's template, which sets no instruction for medium), and `disabled` prefills an empty `<think></think>` on the assistant turn (v8.46.0+). Can also set globally via `DEFAULT_THINKING_MODE` env var. |
@@ -1654,7 +1654,41 @@ generationUnits = (width * height / 1,048,576) * (steps / 20) * modelMultiplier
 **Status**: Production Ready
 **Feature**: Video/audio transcoding via ffmpeg + NVIDIA NVENC transcoder sidecar
 
-Transcode video and audio files to multiple formats/resolutions. Source files are referenced by S5/IPFS CID; outputs are stored back to S5. For production use, prefer the [encrypted WebSocket transport](./WEBSOCKET_API_SDK_GUIDE.md#videoaudio-transcoding-over-encrypted-websocket-v8250) which provides progress streaming and E2E encryption. The HTTP endpoints are for testing only.
+Transcode video and audio files to multiple formats/resolutions. Source files are referenced by S5/IPFS CID; outputs are stored back to S5. For production use, prefer the [encrypted WebSocket transport](./WEBSOCKET_API_SDK_GUIDE.md#videoaudio-transcoding-over-encrypted-websocket-v8250) which provides progress streaming and E2E encryption. Over HTTP only the capacity endpoint remains (v8.66.0+).
+
+#### Submit and Status over REST: removed (v8.66.0)
+
+`POST /v1/transcode` and `GET /v1/transcode/:task_id` were removed in v8.66.0. They were unauthenticated: the status route returned task outputs that the WebSocket path sends only encrypted, and the submit route started a transcode with no payment gate. Both now return `404`. Submit transcodes and read their results over the [encrypted WebSocket transport](./WEBSOCKET_API_SDK_GUIDE.md#videoaudio-transcoding-over-encrypted-websocket-v8250). `GET /v1/transcode/capacity` (below) is unchanged.
+
+#### Billing Formula
+
+```
+generationUnits = (width * height / 1,048,576) * (steps / 20) * modelMultiplier
+```
+
+#### Status Codes
+
+- `200 OK` - Image generated successfully
+- `400 Bad Request` - Invalid request (empty prompt, invalid size, prompt blocked by safety filter)
+- `500 Internal Server Error` - Sidecar generation failure
+- `503 Service Unavailable` - Diffusion sidecar not configured or unavailable
+
+#### Performance Notes
+
+- FLUX.2 Klein 4B uses ~6.6GB VRAM with CPU offloading enabled
+- Generation at 1024x1024 with 4 steps: ~0.5-2 seconds on modern GPUs
+- Rate limited to 5 requests per minute per session (configurable via `IMAGE_GEN_RATE_LIMIT`)
+- Safety keyword check adds < 1 ms overhead
+- **Auto-routing (v8.16.1+)**: Set `AUTO_IMAGE_ROUTING=true` to auto-detect image intent from normal chat messages and route to the diffusion sidecar (default: off)
+
+---
+
+### Video/Audio Transcoding (v8.25.0+)
+
+**Status**: Production Ready
+**Feature**: Video/audio transcoding via ffmpeg + NVIDIA NVENC transcoder sidecar
+
+Transcode video and audio files to multiple formats/resolutions. Source files are referenced by S5/IPFS CID; outputs are stored back to S5. For production use, prefer the [encrypted WebSocket transport](./WEBSOCKET_API_SDK_GUIDE.md#videoaudio-transcoding-over-encrypted-websocket-v8250) which provides progress streaming and E2E encryption. Over HTTP only the capacity endpoint remains (v8.66.0+).
 
 #### Submit Transcode Job
 
@@ -1867,7 +1901,7 @@ These rules apply to an encrypted WebSocket transcode on a session job (a `jobId
 | `RESULT_STORE_UNAVAILABLE` | The host cannot keep results (see `TRANSCODE_RESULT_DIR`) |
 | `SESSION_SETTLED` / `SESSION_CLOSING` | The session is settled, or its completion has been decided; open a new session |
 
-**Source CID (v8.62.1).** `sourceCid` must name its storage network, as in `s5://<cid>`. A bare CID is refused before the sidecar: `transcode_error` `VALIDATION_FAILED` on the WebSocket, `400` on `POST /v1/transcode`. Earlier nodes passed it on, and the sidecar dropped it while reporting the task in progress until the 30 minute `TIMEOUT`.
+**Source CID (v8.62.1).** `sourceCid` must name its storage network, as in `s5://<cid>`. A bare CID is refused before the sidecar: `transcode_error` `VALIDATION_FAILED` on the WebSocket (and `400` on `POST /v1/transcode` until that route was removed in v8.66.0). Earlier nodes passed it on, and the sidecar dropped it while reporting the task in progress until the 30 minute `TIMEOUT`.
 
 **Billing in steps.** Once the sidecar reports the source duration, the node proves the work as it runs (at each quarter of progress, or when half the session's `proofTimeoutWindow` has passed and work done is still unproven, including while progress holds at 99), every proof awaited to a confirmed receipt, and re-reads the session every 20 s. `transcode_complete` is sent only after the final proof is confirmed. Its `billing` block is `{units, tokens, provenTokens}`: `tokens` is what the run cost, `provenTokens` what is proven on chain for it. They differ when the session's first proof is padded up to the contract minimum (on chain more) or the run is capped by the deposit (on chain less; the result is still released). Progress frames carry no billing.
 
@@ -2048,7 +2082,7 @@ Content-Type: application/json
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WEB_SEARCH_ENABLED` | `true` | Enable/disable web search (enabled by default) |
+| `WEB_SEARCH_ENABLED` | `true` | Enable/disable the search service. When enabled, a request is searched only if it sends `web_search: true` (v8.66.0+) |
 | `BRAVE_API_KEY` | - | Brave Search API key (optional) |
 | `BING_API_KEY` | - | Bing Search API key (optional) |
 | `SEARCH_PROVIDER` | `brave` | Preferred provider (brave, bing, duckduckgo) |
@@ -3120,6 +3154,8 @@ CRITICAL: Steps 1-4 MUST complete BEFORE step 5 (proof submission)
 
 **Critical Requirement**: If S5 upload fails, do NOT submit proof. Retry S5 upload first.
 
+**Encrypted only (v8.66.0+, marker `checkpoint-deltas-encrypted-only`)**: a delta is published only for a session that supplied a `recoveryPublicKey`, and it is always uploaded encrypted to that key. A session without a key (REST `/v1/inference`, plaintext WebSocket, an encrypted session that omits the key) buffers no messages and uploads no delta and no index entry; its proof is still submitted, with an empty `deltaCID`. A key set mid-session covers only messages tracked after it. Earlier nodes uploaded such deltas as plaintext JSON; clients should refuse a plaintext delta from a host that lists this marker.
+
 ### S5 Path Convention
 
 #### Checkpoint Index Path
@@ -3143,7 +3179,7 @@ bafybeig123...  (content-addressed, raw CID without prefix)
 
 ### Checkpoint Delta Format
 
-Each delta contains only the NEW messages since the last checkpoint:
+Each delta contains only the NEW messages since the last checkpoint. From v8.66.0 this structure exists only inside the encrypted envelope; it is never uploaded as plaintext:
 
 ```json
 {

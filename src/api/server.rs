@@ -1869,10 +1869,9 @@ impl ApiServer {
         };
 
         // Web search integration for streaming (v8.7.5+)
-        // Auto-detect search intent from prompt if not explicitly requested (v8.7.8+)
         let mut search_context = String::new();
-        // An explicit `web_search: false` is final (v8.65.2+); detection applies
-        // only when the client did not state a choice.
+        // NP1.2 (v8.66.0): search is opt-in. Only an explicit `web_search: true`
+        // searches; an absent field or `false` never does.
         let decision =
             crate::search::query_extractor::search_decision(request.web_search, &request.prompt);
         let should_search = decision.should_search();
@@ -2287,18 +2286,12 @@ impl ApiServer {
             .route("/v1/embed", post(embed_handler_wrapper))
             .route("/v1/search", post(search_handler_wrapper))
             .route("/v1/images/generate", post(generate_image_handler_wrapper))
-            .route(
-                "/v1/transcode",
-                post(crate::api::transcode::handler::transcode_submit_handler),
-            )
+            // NP1.3: POST /v1/transcode and GET /v1/transcode/:task_id were removed
+            // (unauthenticated, no payment gate); transcodes run over the encrypted WS.
             .route("/v1/transcode/capacity", get(transcode_capacity_handler))
             .route("/v1/training/capacity", get(training_capacity_handler))
             .route("/v1/training/advert", get(training_advert_handler))
             .route("/v1/training/tokenizer", get(training_tokenizer_handler))
-            .route(
-                "/v1/transcode/:task_id",
-                get(crate::api::transcode::handler::transcode_status_handler),
-            )
             .nest("/v1", vision_routes)
             .nest("/v1/moderate", moderation_routes)
             // FC1.6: the fiat helper presents its backend-signed client
@@ -5275,8 +5268,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                                                                 // Extract web_search fields from outer message (v8.7.9+)
                                                                 // SDK sends these at message level, not inside encrypted payload
-                                                                // Kept optional: an absent field must stay absent (detection allowed),
-                                                                // and an explicit false must stay false (never searched). v8.65.2+
+                                                                // Kept optional (v8.65.2+); only an explicit true searches (NP1.2, v8.66.0).
                                                                 let web_search: Option<bool> =
                                                                     decrypted_json
                                                                         .get("web_search")

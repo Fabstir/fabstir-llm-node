@@ -7,6 +7,10 @@
 //! the prompt merely looked like it wanted fresh information ("latest",
 //! "today", "now"). A user who had switched search off still had their prompt
 //! sent to the search provider.
+//!
+//! NP1.2 (v8.66.0): search is opt-in. Only an explicit `web_search: true` searches; an absent
+//! field never does, on every path (REST and WebSocket, encrypted and plaintext), so a prompt
+//! is never sent to a search provider because it merely looks like it wants fresh information.
 
 use fabstir_llm_node::api::InferenceRequest;
 use fabstir_llm_node::search::query_extractor::{search_decision, SearchDecision};
@@ -58,13 +62,34 @@ fn an_explicit_yes_always_searches() {
 }
 
 #[test]
-fn only_an_absent_field_leaves_the_decision_to_detection() {
+fn np1_2_an_absent_field_never_searches_whatever_the_prompt_says() {
+    for prompt in [
+        "What's the latest news today?",
+        "Current Bitcoin price right now",
+        "Search for quantum computing",
+        "Explain how recursion works",
+    ] {
+        assert_eq!(
+            search_decision(None, prompt),
+            SearchDecision::No,
+            "an absent field must not search for: {prompt}"
+        );
+    }
+}
+
+/// The encrypted WebSocket path rebuilds the request as JSON with `"web_search": <Option>`, so an
+/// encrypted message that omits the field arrives as `null`. It must not be searched.
+#[test]
+fn np1_2_an_encrypted_request_without_the_field_is_not_searched() {
+    let req = request(r#","web_search":null"#);
+    assert_eq!(req.web_search, None);
     assert_eq!(
-        search_decision(None, "What's the latest news today?"),
-        SearchDecision::AutoDetected
+        search_decision(req.web_search, &req.prompt),
+        SearchDecision::No
     );
+    let req = request("");
     assert_eq!(
-        search_decision(None, "Explain how recursion works"),
+        search_decision(req.web_search, &req.prompt),
         SearchDecision::No
     );
 }
@@ -77,8 +102,8 @@ fn the_decision_reports_whether_to_search() {
 }
 
 /// The streaming and WebSocket paths in `src/api/server.rs` must go through
-/// `search_decision`, and must not flatten an absent field to `false` (which
-/// would silently switch detection off) or bypass the rule with `||`.
+/// `search_decision` (the one rule), keep the field optional so an explicit
+/// value is never confused with an absent one, and not bypass the rule with `||`.
 #[test]
 fn the_server_paths_use_the_decision_and_keep_the_field_optional() {
     let src = include_str!("../src/api/server.rs");

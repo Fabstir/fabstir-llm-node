@@ -66,6 +66,10 @@ impl S5Storage for SlowMockS5 {
     }
 }
 
+/// NP1.1: only a session with a recovery key buffers and uploads, so each test sets one.
+const RECOVERY_PUBKEY: &str =
+    "0x02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
 fn generate_test_private_key() -> [u8; 32] {
     SigningKey::random(&mut OsRng).to_bytes().into()
 }
@@ -80,6 +84,9 @@ async fn test_failed_upload_does_not_write_index_entry() {
     let mock = MockS5Backend::new();
     mock.set_quota_limit(0).await;
 
+    publisher
+        .set_recovery_public_key("sess-fail", RECOVERY_PUBKEY.to_string())
+        .await;
     publisher
         .buffer_message(
             "sess-fail",
@@ -124,6 +131,9 @@ async fn test_set_recovery_key_not_blocked_by_publish() {
     let publisher = Arc::new(CheckpointPublisher::new("0xlock_test_host".to_string()));
 
     // Buffer messages so publish_checkpoint has work to do
+    publisher
+        .set_recovery_public_key("sess-lock", RECOVERY_PUBKEY.to_string())
+        .await;
     publisher
         .buffer_message(
             "sess-lock",
@@ -170,6 +180,9 @@ async fn test_set_recovery_key_not_blocked_by_publish() {
 async fn test_buffer_message_during_upload_not_lost() {
     let publisher = Arc::new(CheckpointPublisher::new("0xbuf_test".to_string()));
 
+    publisher
+        .set_recovery_public_key("sess-buf", RECOVERY_PUBKEY.to_string())
+        .await;
     publisher
         .buffer_message(
             "sess-buf",

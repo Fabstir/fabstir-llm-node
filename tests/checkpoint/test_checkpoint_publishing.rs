@@ -14,6 +14,9 @@ use fabstir_llm_node::storage::S5Storage;
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 
+// NP1.1: deltas are published only for a session with a recovery key, always encrypted.
+use super::test_no_plaintext_deltas::{decrypt_bytes, keyed};
+
 /// Generate a test private key
 fn generate_test_private_key() -> [u8; 32] {
     let signing_key = SigningKey::random(&mut OsRng);
@@ -30,6 +33,7 @@ async fn test_full_checkpoint_flow() -> Result<()> {
     let private_key = generate_test_private_key();
 
     // 2. Buffer user message
+    let user_key = keyed(&publisher, "session-flow").await;
     publisher
         .buffer_message(
             "session-flow",
@@ -58,7 +62,7 @@ async fn test_full_checkpoint_flow() -> Result<()> {
     // 5. Verify delta was uploaded
     let delta_path = "home/checkpoints/0xhostflow/session-flow/delta_0.json";
     let delta_bytes = mock.get(delta_path).await?;
-    let delta: CheckpointDelta = serde_json::from_slice(&delta_bytes)?;
+    let delta: CheckpointDelta = serde_json::from_slice(&decrypt_bytes(&delta_bytes, &user_key))?;
 
     assert_eq!(delta.session_id, "session-flow");
     assert_eq!(delta.checkpoint_index, 0);
@@ -90,6 +94,7 @@ async fn test_multiple_checkpoints() -> Result<()> {
     let private_key = generate_test_private_key();
 
     // Checkpoint 1: 0-1000 tokens
+    let user_key = keyed(&publisher, "session-multi").await;
     publisher
         .buffer_message(
             "session-multi",
@@ -180,7 +185,8 @@ async fn test_multiple_checkpoints() -> Result<()> {
             i
         );
         let delta_bytes = mock.get(&delta_path).await?;
-        let delta: CheckpointDelta = serde_json::from_slice(&delta_bytes)?;
+        let delta: CheckpointDelta =
+            serde_json::from_slice(&decrypt_bytes(&delta_bytes, &user_key))?;
         assert_eq!(delta.checkpoint_index, i as u32);
         assert_eq!(delta.messages.len(), 2);
     }
@@ -203,6 +209,7 @@ async fn test_checkpoint_recovery_by_sdk() -> Result<()> {
         ("assistant", "I don't have access to weather data."),
     ];
 
+    let user_key = keyed(&publisher, "session-sdk").await;
     for (i, (role, content)) in messages.iter().enumerate() {
         let timestamp = 1704844800000 + (i as u64 * 1000);
         if *role == "user" {
@@ -246,7 +253,7 @@ async fn test_checkpoint_recovery_by_sdk() -> Result<()> {
         index.checkpoints[0].index
     );
     let delta_bytes = mock.get(&delta_path).await?;
-    let delta: CheckpointDelta = serde_json::from_slice(&delta_bytes)?;
+    let delta: CheckpointDelta = serde_json::from_slice(&decrypt_bytes(&delta_bytes, &user_key))?;
 
     // SDK recovery: Verify delta has conversation messages
     assert_eq!(delta.messages.len(), 4);
@@ -281,6 +288,8 @@ async fn test_s5_failure_blocks_proof() -> Result<()> {
 
     let publisher = CheckpointPublisher::new("0xhostfail".to_string());
     let private_key = generate_test_private_key();
+
+    keyed(&publisher, "session-fail").await;
 
     publisher
         .buffer_message(
@@ -340,6 +349,7 @@ async fn test_session_resumption_from_s5() -> Result<()> {
     // Create new publisher and initialize from S5
     let publisher = CheckpointPublisher::new("0xhostresume".to_string());
     publisher.init_session("session-resume", &mock).await?;
+    keyed(&publisher, "session-resume").await;
 
     // Continue the session
     publisher
@@ -382,6 +392,7 @@ async fn test_cleanup_deletes_all_checkpoint_data() -> Result<()> {
     let private_key = generate_test_private_key();
 
     // Create checkpoints
+    keyed(&publisher, "session-clean").await;
     publisher
         .buffer_message(
             "session-clean",
@@ -443,6 +454,8 @@ async fn test_checkpoint_signatures_verifiable() -> Result<()> {
     let publisher = CheckpointPublisher::new("0xhostsig".to_string());
     let private_key = generate_test_private_key();
 
+    let user_key = keyed(&publisher, "session-sig").await;
+
     publisher
         .buffer_message(
             "session-sig",
@@ -457,7 +470,7 @@ async fn test_checkpoint_signatures_verifiable() -> Result<()> {
     // Fetch and verify delta signature
     let delta_path = "home/checkpoints/0xhostsig/session-sig/delta_0.json";
     let delta_bytes = mock.get(delta_path).await?;
-    let delta: CheckpointDelta = serde_json::from_slice(&delta_bytes)?;
+    let delta: CheckpointDelta = serde_json::from_slice(&decrypt_bytes(&delta_bytes, &user_key))?;
 
     // Verify signature format
     assert!(delta.host_signature.starts_with("0x"));
@@ -478,6 +491,8 @@ async fn test_json_keys_alphabetically_sorted() -> Result<()> {
     let publisher = CheckpointPublisher::new("0xhostsort".to_string());
     let private_key = generate_test_private_key();
 
+    let user_key = keyed(&publisher, "session-sort").await;
+
     publisher
         .buffer_message(
             "session-sort",
@@ -492,7 +507,7 @@ async fn test_json_keys_alphabetically_sorted() -> Result<()> {
     // Fetch delta JSON
     let delta_path = "home/checkpoints/0xhostsort/session-sort/delta_0.json";
     let delta_bytes = mock.get(delta_path).await?;
-    let delta_json = String::from_utf8(delta_bytes)?;
+    let delta_json = String::from_utf8(decrypt_bytes(&delta_bytes, &user_key))?;
 
     // Verify keys appear in alphabetical order in the JSON
     // For CheckpointMessage: content, metadata, role, timestamp

@@ -17,7 +17,6 @@ pub mod session_settled;
 pub mod session_auth;
 pub mod streaming;
 pub mod token_tracker;
-pub mod transcode;
 pub mod websocket;
 
 pub use describe_image::{describe_image_handler, DescribeImageRequest, DescribeImageResponse};
