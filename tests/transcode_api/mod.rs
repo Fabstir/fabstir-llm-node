@@ -14,3 +14,4 @@ mod test_final_claim;
 mod test_sidecar_status;
 mod test_chat_write;
 mod test_session_settled;
+mod test_init_ack_count;

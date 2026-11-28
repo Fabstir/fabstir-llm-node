@@ -51,6 +51,15 @@ pub struct JobState {
     pub other_connections: usize,
 }
 
+impl JobState {
+    /// The close path's test: a closing connection completes the job only when
+    /// no work is in flight and no other connection holds it. The
+    /// `session_init_ack` counts are read through the same rule.
+    pub fn completes_on_close(&self) -> bool {
+        self.work_in_flight == 0 && self.other_connections == 0
+    }
+}
+
 pub struct JobWork {
     jobs: Mutex<HashMap<u64, JobWorkEntry>>,
     completer: Completer,
@@ -100,6 +109,26 @@ impl JobWork {
         JobState {
             work_in_flight: entry.count,
             other_connections: entry.connections.len(),
+        }
+    }
+
+    /// What `connection_closed` would report for `conn_id`, without removing it
+    /// and without creating an entry: the OTHER connections holding the job and
+    /// its work in flight (the `session_init_ack` counts).
+    pub fn state_excluding(&self, job_id: u64, conn_id: &str) -> JobState {
+        match self.lock().get(&job_id) {
+            Some(entry) => JobState {
+                work_in_flight: entry.count,
+                other_connections: entry
+                    .connections
+                    .iter()
+                    .filter(|c| c.as_str() != conn_id)
+                    .count(),
+            },
+            None => JobState {
+                work_in_flight: 0,
+                other_connections: 0,
+            },
         }
     }
 
@@ -322,6 +351,19 @@ impl ConnectionJob {
         }
         self.job_id = job_id;
         left
+    }
+
+    /// What a close of this connection would find on its job right now: the
+    /// state excluding itself. Zeros when it carries no job (its close completes
+    /// nothing).
+    pub fn state(&self) -> JobState {
+        match self.job_id {
+            Some(job) => self.work.state_excluding(job, &self.conn_id),
+            None => JobState {
+                work_in_flight: 0,
+                other_connections: 0,
+            },
+        }
     }
 
     /// Deregister now (the connection is closing). Returns what is left on the job.

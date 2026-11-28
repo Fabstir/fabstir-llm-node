@@ -3549,12 +3549,17 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
 
                         // CRITICAL: Send response to session_init so SDK doesn't timeout!
                         // Must echo back the 'id' field for request-response correlation
+                        // What a close of this connection would find (same state the
+                        // close path reads; registration above is already done).
+                        let ack_state = connection_job.state();
                         let mut response = serde_json::json!({
                             "type": "session_init_ack",
                             "status": "success",
                             "session_id": session_id.clone().unwrap_or_else(|| "unknown".to_string()),
                             "job_id": job_id,
                             "chain_id": chain_id,
+                            "other_connections": ack_state.other_connections,
+                            "work_in_flight": ack_state.work_in_flight,
                             "message": "Session initialized successfully"
                         });
 
@@ -4096,6 +4101,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                     };
 
                                                     // Send session_init_ack response
+                                                    let ack_state = connection_job.state();
                                                     let mut response = json!({
                                                         "type": "session_init_ack",
                                                         "status": "success",
@@ -4103,6 +4109,8 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                         "job_id": job_id,
                                                         "chain_id": chain_id,
                                                         "client_address": client_address,
+                                                        "other_connections": ack_state.other_connections,
+                                                        "work_in_flight": ack_state.work_in_flight,
                                                         "message": "Encrypted session initialized successfully"
                                                     });
 
@@ -6823,7 +6831,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                 other_connections: 0,
             },
         );
-        if job_state.work_in_flight > 0 || job_state.other_connections > 0 {
+        if !job_state.completes_on_close() {
             info!(
                 "[SCI-C] job {}: {} unit(s) of work in flight, {} other connection(s); completion left to them",
                 jid, job_state.work_in_flight, job_state.other_connections

@@ -3,10 +3,10 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.67.0-uk-host-qwen4exp-2026-11-27";
+pub const VERSION: &str = "v8.67.1-init-ack-count-2026-11-28";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.67.0";
+pub const VERSION_NUMBER: &str = "8.67.1";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
@@ -15,13 +15,17 @@ pub const VERSION_MAJOR: u32 = 8;
 pub const VERSION_MINOR: u32 = 67;
 
 /// Patch version number
-pub const VERSION_PATCH: u32 = 0;
+pub const VERSION_PATCH: u32 = 1;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-27";
+pub const BUILD_DATE: &str = "2026-11-28";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.67.1: every session_init_ack (plaintext and encrypted) carries two integers, other_connections (the OTHER live
+    // connections holding the job) and work_in_flight (the job's units of work), read from the state the close path
+    // reads. 0 and 0 = a close of this connection with no work started on it completes the job.
+    "init-ack-connection-count",
     // v8.67.0 UKH1 U1: llama-cpp-2 and llama-cpp-sys-2 =0.1.161 (llama.cpp with LLM_ARCH_QWEN4EXP, Qwen3.8 Flash
     // Next). Tokenizing still parses special tokens and generated special tokens are still rendered, as on 0.1.154.
     "llama-cpp-0.1.161",
@@ -766,6 +770,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.67.1 - session_init_ack gains two integer fields (Nov 28, 2026); additive, nothing removed
+    "v8.67.1: session_init_ack gains other_connections and work_in_flight (integers, on every ack). Additive; a client that ignores unknown fields is unaffected. Marker: init-ack-connection-count.",
     // v8.67.0 - UKH1 UK host on 3XS-Z (Nov 27, 2026)
     "v8.67.0: the proof journal's prompt and response hashes are now HMAC-SHA256 keyed commitments (key = HKDF-SHA256 of the session key with info \"fabstir-proof-content-v1:<job id>\"), no longer plain SHA-256; a client comparing them with SHA-256 of its content must recompute with its session key. llama-cpp-2 0.1.161. New optional settings LLAMA_CPU_MOE_LAYERS, LLAMA_USE_MMAP, LLAMA_THREADS, LLAMA_THREADS_BATCH, ROPE_SCALING, YARN_ORIG_CTX, LLAMA_TOP_K, FABSTIR_REGION (all unset = unchanged). Marker: proof-content-keyed.",
     // v8.66.0 - NP1: no plaintext user content leaves the node (Nov 23, 2026)
@@ -1360,6 +1366,8 @@ mod tests {
         // v8.65.4
         assert!(FEATURES.contains(&"ltx-own-result-inputs-cleared"));
         assert!(VERSION_MINOR > 65 || VERSION_PATCH == 4);
+        // v8.67.1
+        assert!(FEATURES.contains(&"init-ack-connection-count"));
         // v8.67.0 UKH1
         for f in [
             "llama-cpp-0.1.161",
@@ -1597,15 +1605,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.67.0"));
-        assert!(version.contains("2026-11-27"));
+        assert!(version.contains("8.67.1"));
+        assert!(version.contains("2026-11-28"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.67.0-uk-host-qwen4exp-2026-11-27");
-        assert_eq!(VERSION_NUMBER, "8.67.0");
-        assert_eq!(BUILD_DATE, "2026-11-27");
+        assert_eq!(VERSION, "v8.67.1-init-ack-count-2026-11-28");
+        assert_eq!(VERSION_NUMBER, "8.67.1");
+        assert_eq!(BUILD_DATE, "2026-11-28");
     }
 
     #[test]
