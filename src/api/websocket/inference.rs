@@ -121,6 +121,7 @@ impl InferenceEngine {
 
         // Create base engine
         let mut base_engine = BaseEngine::new(engine_config).await?;
+        base_engine.set_tuning(crate::inference::llama_settings::LlamaTuning::from_env()?);
 
         // Load the model
         use crate::inference::engine::ModelConfig;

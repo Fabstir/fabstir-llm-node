@@ -6,8 +6,9 @@ use llama_cpp_2::{
     context::params::{KvCacheType, LlamaContextParams},
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{params::LlamaModelParams, AddBos, LlamaModel, Special},
+    model::{params::LlamaModelParams, LlamaModel},
     sampling::LlamaSampler,
+    token::LlamaToken,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,6 +20,29 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
+
+/// Tokenize `text` the way llama-cpp-2 0.1.154's `str_to_token` did: special
+/// tokens are ALWAYS parsed (`<|im_start|>` becomes one control token, not
+/// plain text), and BOS is added only when `add_bos` (the old `AddBos`).
+/// Getting `parse_special` wrong yields fluent garbage, not an error (U1).
+pub fn tokenize_like_0_1_154(model: &LlamaModel, text: &str, add_bos: bool) -> Vec<LlamaToken> {
+    model.vocab().tokenize(text.as_bytes(), add_bos, true)
+}
+
+/// Render one generated token as 0.1.154's
+/// `token_to_bytes(token, Special::Tokenize)` did: special tokens rendered
+/// (e.g. `<think>`), no lstrip. An empty piece was the old
+/// `UnknownTokenType` error and stays an error here.
+pub fn render_token_like_0_1_154(model: &LlamaModel, token: LlamaToken) -> Result<Vec<u8>> {
+    let bytes = model.vocab().token_to_piece(token, true, None);
+    if bytes.is_empty() {
+        return Err(anyhow!(
+            "token {} has no text (unknown token type)",
+            token.0
+        ));
+    }
+    Ok(bytes)
+}
 
 /// Sanitize prompt text for tokenization
 ///
@@ -362,9 +386,17 @@ pub struct LlmEngine {
     model_info: Arc<RwLock<HashMap<String, Model>>>,
     inference_count: Arc<RwLock<usize>>,
     metrics: Arc<RwLock<EngineMetrics>>,
+    /// UKH1 U2 settings; `Default` is today's behaviour.
+    tuning: crate::inference::llama_settings::LlamaTuning,
 }
 
 impl LlmEngine {
+    /// Apply the llama.cpp settings read by `LlamaTuning::from_env` (before
+    /// `load_model`). Not calling this keeps today's behaviour.
+    pub fn set_tuning(&mut self, tuning: crate::inference::llama_settings::LlamaTuning) {
+        self.tuning = tuning;
+    }
+
     pub async fn new(config: EngineConfig) -> Result<Self> {
         // Create models directory if it doesn't exist
         tokio::fs::create_dir_all(&config.models_directory).await?;
@@ -380,6 +412,7 @@ impl LlmEngine {
                 average_tokens_per_second: 0.0,
                 total_inference_time: Duration::default(),
             })),
+            tuning: Default::default(),
         })
     }
 
@@ -435,11 +468,29 @@ impl LlmEngine {
         let backend =
             LlamaBackend::init().map_err(|e| anyhow!("Failed to initialize backend: {:?}", e))?;
 
-        // Load the GGUF model
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(config.gpu_layers as u32);
+        // Load the GGUF model. U2: the CPU expert override string is declared
+        // BEFORE the params so it outlives them (the params hold a raw pointer
+        // into it until load_from_file returns and they drop).
+        let cpu_override = self.tuning.cpu_moe_override();
+        if let Some(ref p) = cpu_override {
+            tracing::info!(
+                "🧩 LLAMA_CPU_MOE_LAYERS={}: expert tensors matching {} go to RAM (CPU buffer)",
+                self.tuning.cpu_moe_layers,
+                p.to_string_lossy()
+            );
+        }
+        if self.tuning.disable_mmap {
+            tracing::info!("📥 LLAMA_USE_MMAP=false: weights read into memory, not mapped");
+        }
+        let model_params = self.tuning.model_params(
+            LlamaModelParams::default().with_n_gpu_layers(config.gpu_layers as u32),
+            cpu_override.as_deref(),
+        );
 
         let model = LlamaModel::load_from_file(&backend, &config.model_path, &model_params)
             .map_err(|e| anyhow!("Failed to load model: {:?}", e))?;
+        drop(model_params);
+        drop(cpu_override);
 
         let real_model = RealLlamaModel {
             backend,
@@ -497,7 +548,7 @@ impl LlmEngine {
     /// for the non-streaming path that reaches this function.
     ///
     /// KNOWN COST, worse than first recorded: `LlamaLoraAdapter` in
-    /// llama-cpp-2 0.1.154 has **no `Drop` impl and the crate never calls
+    /// llama-cpp-2 0.1.154 (and still 0.1.161) has **no `Drop` impl and the crate never calls
     /// `llama_adapter_lora_free`** (verified: zero of each in its source), so
     /// every `lora_adapter_init` LEAKS its adapter allocation — on a CUDA
     /// build, VRAM. Loading per request therefore leaks once per REQUEST,
@@ -561,12 +612,9 @@ impl LlmEngine {
                 }
 
                 // Tokenize the sanitized prompt
-                let tokens_list = model
-                    .model
-                    .str_to_token(&sanitized_prompt, AddBos::Always)
-                    .map_err(|e| anyhow!("Failed to tokenize: {:?}", e))?;
+                let tokens_list = tokenize_like_0_1_154(&model.model, &sanitized_prompt, true);
 
-                let eos = model.model.token_eos();
+                let eos = model.model.vocab().eos();
 
                 // Resolve stop tokens from template (or MODEL_STOP_TOKENS env override)
                 let template_name =
@@ -589,10 +637,9 @@ impl LlmEngine {
 
                 let mut stop_ids: Vec<llama_cpp_2::token::LlamaToken> = Vec::new();
                 for token_str in &stop_token_strings {
-                    if let Ok(tokens) = model.model.str_to_token(token_str, AddBos::Never) {
-                        if let Some(&tok) = tokens.first() {
-                            stop_ids.push(tok);
-                        }
+                    let tokens = tokenize_like_0_1_154(&model.model, token_str, false);
+                    if let Some(&tok) = tokens.first() {
+                        stop_ids.push(tok);
                     }
                 }
 
@@ -624,9 +671,11 @@ impl LlmEngine {
                 .ok_or_else(|| anyhow!("Model not found in storage"))?;
 
             // Create context
-            let mut ctx_params = LlamaContextParams::default()
+            let ctx_params = LlamaContextParams::default()
                 .with_n_ctx(NonZeroU32::new(context_size as u32))
                 .with_n_batch(self.config.batch_size as u32);
+            // U2: LLAMA_THREADS / LLAMA_THREADS_BATCH / ROPE_SCALING / YARN_ORIG_CTX
+            let mut ctx_params = self.tuning.apply_to_context(ctx_params);
 
             if let Some(ref type_k_str) = self.config.kv_cache_type_k {
                 if let Some(kv_type) = parse_kv_cache_type(type_k_str) {
@@ -641,17 +690,14 @@ impl LlmEngine {
                 }
             }
 
-            let mut context = model
-                .model
-                .new_context(&model.backend, ctx_params)
-                .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
-
-            // TD9 application point: immediately after context creation,
-            // inside the models-mutex scope, at scale 1.0 — and ONLY for a
-            // request carrying this session's own adapter. Bound to a local
-            // so it outlives generation and drops with the context; the
-            // engine keeps no adapter state between requests.
-            let _session_lora = match adapter_path.as_ref() {
+            // TD9: the session's own adapter, loaded BEFORE the context
+            // (llama-cpp-2 0.1.161's `lora_adapter_init` takes `&mut` model,
+            // which a live context borrows; 0.1.154 took `&self`). Declared
+            // before the context so it outlives it; applied right after
+            // context creation below. ONLY for a request carrying this
+            // session's own adapter; the engine keeps no adapter state
+            // between requests.
+            let mut session_lora = match adapter_path.as_ref() {
                 Some(path) => {
                     // The crate's `lora_adapter_init` carries a
                     // `debug_assert!(path.exists())`. A session ending
@@ -673,18 +719,28 @@ impl LlmEngine {
                             "the session LoRA adapter is no longer present (evicted?)"
                         ));
                     }
-                    let mut adapter = model
+                    let adapter = model
                         .model
                         .lora_adapter_init(path)
                         .map_err(|e| anyhow!("failed to load the session LoRA adapter: {e:?}"))?;
-                    context
-                        .lora_adapter_set(&mut adapter, 1.0)
-                        .map_err(|e| anyhow!("failed to apply the session LoRA adapter: {e:?}"))?;
-                    tracing::info!("🎯 session LoRA adapter applied at scale 1.0: {path:?}");
-                    Some(adapter)
+                    Some((adapter, path.clone()))
                 }
                 None => None,
             };
+
+            let mut context = model
+                .model
+                .new_context(&model.backend, ctx_params)
+                .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
+
+            // TD9 application point: immediately after context creation,
+            // inside the models-mutex scope, at scale 1.0.
+            if let Some((adapter, path)) = session_lora.as_mut() {
+                context
+                    .lora_adapter_set(adapter, 1.0)
+                    .map_err(|e| anyhow!("failed to apply the session LoRA adapter: {e:?}"))?;
+                tracing::info!("🎯 session LoRA adapter applied at scale 1.0: {path:?}");
+            }
 
             // Create batch with configured batch size
             let mut batch = LlamaBatch::new(self.config.batch_size, 1);
@@ -758,11 +814,16 @@ impl LlmEngine {
                 || request.presence_penalty != 0.0
             {
                 samplers.push(LlamaSampler::penalties(
+                    model.model.n_vocab(),
                     penalty_last_n,
                     request.repeat_penalty,
                     request.frequency_penalty,
                     request.presence_penalty,
                 ));
+            }
+            // U2: LLAMA_TOP_K only (unset = none, today); request.top_k is not used
+            if let Some(top_k) = self.tuning.top_k_sampler() {
+                samplers.push(top_k);
             }
             samplers.push(LlamaSampler::top_p(request.top_p, 1));
             if request.min_p > 0.0 {
@@ -820,7 +881,7 @@ impl LlmEngine {
                 }
 
                 // v8.23.0: Convert token to bytes and accumulate in UTF-8 buffer
-                match model.model.token_to_bytes(new_token_id, Special::Tokenize) {
+                match render_token_like_0_1_154(&model.model, new_token_id) {
                     Ok(bytes) => {
                         utf8_buf.extend_from_slice(&bytes);
                         utf8_token_ids.push(new_token_id.0 as i32);
@@ -869,7 +930,7 @@ impl LlmEngine {
                         tracing::error!(
                             token_id = new_token_id.0,
                             error = %e,
-                            "token_to_bytes failed"
+                            "token render failed"
                         );
                     }
                 }
@@ -1418,24 +1479,34 @@ mod tests {
 
     // === Think-tag passthrough tests (v8.21.1) ===
 
-    /// Verify that the engine source uses Special::Tokenize (not Special::Plaintext)
-    /// so that special tokens like <think> are rendered as text in output.
+    /// Verify that the engine renders special tokens (0.1.154's Special::Tokenize,
+    /// 0.1.161's `special = true`) so tokens like <think> appear as text, and
+    /// that tokenizing parses special tokens (0.1.154's str_to_token always did).
     #[test]
     fn test_token_to_bytes_uses_tokenize_mode() {
         let src = include_str!("engine.rs");
-        let pattern_tokenize = "model.token_to_bytes(new_token_id, Special::Tokenize)";
+        let pattern_render = "model.vocab().token_to_piece(token, true, None)";
         let pattern_suppress = {
-            let mut p = String::from("model.token_to_bytes(new_token_id, Special::Plain");
-            p.push_str("text)");
+            let mut p = String::from("token_to_piece(token, ");
+            p.push_str("false");
             p
         };
+        let pattern_parse = "model.vocab().tokenize(text.as_bytes(), add_bos, true)";
         assert!(
-            src.contains(pattern_tokenize),
-            "engine.rs must use Special::Tokenize to render special tokens (e.g. <think>)"
+            src.contains(pattern_render),
+            "engine.rs must render special tokens (e.g. <think>)"
         );
         assert!(
             !src.contains(&pattern_suppress),
             "engine.rs must not suppress special tokens"
+        );
+        assert!(
+            src.contains(pattern_parse),
+            "engine.rs must tokenize with parse_special = true"
+        );
+        assert!(
+            src.contains("match render_token_like_0_1_154(&model.model, new_token_id)"),
+            "the generation loop must render through render_token_like_0_1_154"
         );
     }
 
@@ -1446,10 +1517,10 @@ mod tests {
         let src = include_str!("engine.rs");
         let eos_check = src.find("if new_token_id == eos_token");
         let stop_check = src.find("if stop_token_ids.contains(&new_token_id)");
-        let render_call = src.find("token_to_bytes(new_token_id,");
+        let render_call = src.find("render_token_like_0_1_154(&model.model, new_token_id)");
         assert!(eos_check.is_some(), "EOS check must exist");
         assert!(stop_check.is_some(), "stop token check must exist");
-        assert!(render_call.is_some(), "token_to_bytes call must exist");
+        assert!(render_call.is_some(), "render call must exist");
         assert!(
             eos_check.unwrap() < render_call.unwrap(),
             "EOS check must come before rendering"
@@ -1744,8 +1815,8 @@ mod tests {
         let test_mod = src.find("#[cfg(test)]").expect("test module must exist");
         let prod_src = &src[..test_mod];
         assert!(
-            prod_src.contains("model.token_to_bytes(new_token_id, Special::Tokenize)"),
-            "Generation loop must use token_to_bytes, not token_to_str"
+            prod_src.contains("render_token_like_0_1_154(&model.model, new_token_id)"),
+            "Generation loop must render raw bytes (token_to_piece), not token_to_str"
         );
     }
 

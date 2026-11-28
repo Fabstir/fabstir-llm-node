@@ -35,6 +35,7 @@ services:
       BRIDGE_PORT: 5522
       BRIDGE_HOST: 0.0.0.0
       S5_SEED_PHRASE: ${S5_SEED_PHRASE:?S5_SEED_PHRASE is required}
+      S5_REGION: global
       S5_PORTAL_URL: ${S5_PORTAL_URL:-https://s5.platformlessai.ai}
       S5_INITIAL_PEERS: ${S5_INITIAL_PEERS:-wss://z2DcjTLqfj6PTMsDbFfgtuHtYmrKeibFTkvqY8QZeyR3YmE@s5.platformlessai.ai/s5/p2p}
       HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY}

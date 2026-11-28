@@ -47,7 +47,9 @@ http-body-util = "0.1"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # LLM Inference  
-llama-cpp-2 = { version = "=0.1.154", features = ["cuda"] }
+llama-cpp-2 = { version = "=0.1.161", features = ["cuda"] }
+# Exact pin of the sys crate too (llama-cpp-2 asks only for ^0.1.161), UKH1 D1
+llama-cpp-sys-2 = "=0.1.161"
 
 # Model Management
 hf-hub = "0.3"
@@ -90,7 +92,7 @@ jsonwebtoken = "9.2"
 # `--features kbs` build (canonical_policy_bytes survives: sort_json_keys inserts
 # sorted keys); tee_tests keep running without the feature.
 dcap-qvl = { version = "0.6", optional = true }
-zeroize = { version = "1", features = ["serde"], optional = true }
+zeroize = { version = "1", features = ["serde"] } # kbs, and NP2 proof content keys (8.67.0)
 
 # Storage
 ipfs-api = "0.17"
@@ -137,6 +139,7 @@ base64 = "0.22"
 k256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
+hmac = "0.12" # NP2 keyed proof content commitments (8.67.0)
 exr = "1.74"                    # content checks (D6): deep EXR input frames are converted to 8-bit PNG for the still check
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 
@@ -212,7 +215,7 @@ dev-tools = []
 # Phase 5 P4 key broker. Every bin in this crate links libcuda.so.1 (llama-cpp-2
 # cuda is non-optional); the broker VPS ships the A-1 driver stub. Build:
 #   cargo build --release --no-default-features --features inference,kbs --bin fabstir-kbs -j 4
-kbs = ["dep:dcap-qvl", "dep:zeroize"]
+kbs = ["dep:dcap-qvl"]
 
 [[bin]]
 name = "publish-adapter"

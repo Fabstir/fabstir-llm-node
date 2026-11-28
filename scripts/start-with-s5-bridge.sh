@@ -47,6 +47,15 @@ if [ -z "$S5_SEED_PHRASE" ]; then
     exit 1
 fi
 
+# Check S5_REGION is set (the bridge requires it and has no default: global or uk)
+if [ -z "$S5_REGION" ]; then
+    echo -e "${RED}❌ S5_REGION environment variable not set${NC}"
+    echo ""
+    echo "The bridge needs the storage region this host belongs to, with no default:"
+    echo "  export S5_REGION=global   # or uk; S5_PORTAL_URL and S5_INITIAL_PEERS must match it"
+    exit 1
+fi
+
 # Function to check bridge health
 check_bridge_health() {
     curl -sf "$BRIDGE_URL/health" > /dev/null 2>&1

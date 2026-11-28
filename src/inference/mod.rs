@@ -5,6 +5,7 @@ pub mod cache;
 pub mod chat_template;
 pub mod engine;
 pub mod format;
+pub mod llama_settings;
 pub mod models;
 
 // Re-export main types for convenience

@@ -36,15 +36,20 @@ pub struct SearchProviderConfig {
     pub preferred_provider: String,
 }
 
+/// The one reading of `WEB_SEARCH_ENABLED`: enabled unless the value is
+/// `false` (any case); unset means enabled. Shared with the region start
+/// check (`crate::region`) so the two never disagree.
+pub fn web_search_enabled(value: Option<&str>) -> bool {
+    value.map(|v| v.to_lowercase() != "false").unwrap_or(true)
+}
+
 impl SearchConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
         Self {
             // Web search enabled by default (DuckDuckGo requires no API key)
             // Set WEB_SEARCH_ENABLED=false to disable
-            enabled: env::var("WEB_SEARCH_ENABLED")
-                .map(|v| v.to_lowercase() != "false")
-                .unwrap_or(true),
+            enabled: web_search_enabled(env::var("WEB_SEARCH_ENABLED").ok().as_deref()),
             providers: SearchProviderConfig {
                 brave_api_key: env::var("BRAVE_API_KEY").ok(),
                 bing_api_key: env::var("BING_API_KEY").ok(),

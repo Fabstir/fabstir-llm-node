@@ -44,22 +44,39 @@ pub struct VerifiableResult {
     pub verification_key: Vec<u8>,
 }
 
+/// NP2 (8.67.0): `input_hash`/`output_hash` are keyed commitments
+/// (`HMAC-SHA256(k, content)`, `crate::crypto::proof_content`) under a random
+/// key held only by this generator, never a plain SHA-256 of user content.
+/// Only this generator can recompute them (`verify_proof`). No production
+/// path constructs it today (MessageRouter passes no ProofManager).
 #[derive(Clone)]
 pub struct ProofGenerator {
     config: ProofGenerationConfig,
     node_id: String,
+    content_key: std::sync::Arc<crate::crypto::proof_content::ProofContentKey>,
 }
 
 impl ProofGenerator {
     pub fn new(config: ProofGenerationConfig, node_id: String) -> Self {
-        Self { config, node_id }
+        Self {
+            config,
+            node_id,
+            content_key: std::sync::Arc::new(
+                crate::crypto::proof_content::ProofContentKey::random(),
+            ),
+        }
+    }
+
+    /// Keyed commitment of user content (prompt or response), hex.
+    fn content_commitment(&self, content: &[u8]) -> String {
+        hex::encode(self.content_key.commit(content))
     }
 
     pub async fn generate_proof(&self, result: &InferenceResult) -> Result<InferenceProof> {
         // Hash model, input, and output
         let model_hash = self.compute_data_hash(self.config.model_path.as_bytes());
-        let input_hash = self.compute_data_hash(result.prompt.as_bytes());
-        let output_hash = self.compute_data_hash(result.response.as_bytes());
+        let input_hash = self.content_commitment(result.prompt.as_bytes());
+        let output_hash = self.content_commitment(result.response.as_bytes());
 
         // Generate proof based on type
         let proof_data = match self.config.proof_type {
@@ -82,8 +99,8 @@ impl ProofGenerator {
                     let witness = WitnessBuilder::new()
                         .with_job_id_string(&result.job_id)
                         .with_model_path(&self.config.model_path)
-                        .with_input_string(&result.prompt)
-                        .with_output_string(&result.response)
+                        .with_input_hash(self.content_key.commit(result.prompt.as_bytes()))
+                        .with_output_hash(self.content_key.commit(result.response.as_bytes()))
                         .build()
                         .map_err(|e| anyhow::anyhow!("Failed to build EZKL witness: {}", e))?;
 
@@ -164,8 +181,8 @@ impl ProofGenerator {
     ) -> Result<bool> {
         // Recompute hashes
         let model_hash = self.compute_data_hash(self.config.model_path.as_bytes());
-        let input_hash = self.compute_data_hash(result.prompt.as_bytes());
-        let output_hash = self.compute_data_hash(result.response.as_bytes());
+        let input_hash = self.content_commitment(result.prompt.as_bytes());
+        let output_hash = self.content_commitment(result.response.as_bytes());
 
         // Check if hashes match
         if proof.model_hash != model_hash

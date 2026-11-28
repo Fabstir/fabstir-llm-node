@@ -339,6 +339,17 @@ async fn node_main() -> Result<()> {
         .parse::<usize>()
         .unwrap_or(35); // Default to GPU acceleration
 
+    // UKH1 U3: FABSTIR_REGION (unset or global = today). A regional host
+    // refuses to start with web search on or video without its alert sink.
+    // Cheap, so it runs before the model load.
+    let region = fabstir_llm_node::region::check_region_start(|k| env::var(k).ok())
+        .map_err(|e| anyhow::anyhow!("region check: {e}"))?;
+    println!("🌍 Region: {}", region.as_str());
+
+    // UKH1 U2: llama.cpp load/context settings (all default to today when unset).
+    let llama_tuning = fabstir_llm_node::inference::llama_settings::LlamaTuning::from_env()?;
+    println!("🔧 llama settings: {}", llama_tuning.describe());
+
     // Configure and initialize inference engine
     println!("🧠 Initializing LLM inference engine...");
 
@@ -373,6 +384,7 @@ async fn node_main() -> Result<()> {
     };
 
     let mut llm_engine = LlmEngine::new(engine_config).await?;
+    llm_engine.set_tuning(llama_tuning);
     println!("✅ Inference engine initialized");
 
     // ========================================================================

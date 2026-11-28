@@ -396,6 +396,9 @@ pub struct ApiServer {
     /// checkpoint manager (`CheckpointManager::with_settled_sessions`).
     settled_sessions: Arc<crate::api::session_settled::SettledSessions>,
     session_key_store: Arc<SessionKeyStore>,
+    /// UKH1: bearer token for `GET /v1/sessions/active` (ACTIVE_SESSIONS_TOKEN);
+    /// `None` = the route answers 404.
+    active_sessions_token: Option<String>,
     node_private_key: Option<[u8; 32]>,
     embedding_model_manager: Arc<RwLock<Option<Arc<crate::embeddings::EmbeddingModelManager>>>>,
     vision_model_manager: Arc<RwLock<Option<Arc<crate::vision::VisionModelManager>>>>,
@@ -539,6 +542,7 @@ impl ApiServer {
             expiry_sweeper: Arc::new(std::sync::Mutex::new(None)),
             settled_sessions: Arc::new(crate::api::session_settled::SettledSessions::new()),
             session_key_store: Arc::new(SessionKeyStore::new()),
+            active_sessions_token: None,
             node_private_key: None,
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
@@ -726,6 +730,9 @@ impl ApiServer {
             expiry_sweeper: Arc::new(std::sync::Mutex::new(None)),
             settled_sessions: Arc::new(crate::api::session_settled::SettledSessions::new()),
             session_key_store: Arc::new(SessionKeyStore::new()),
+            active_sessions_token: active_sessions_token_from_env(
+                std::env::var("ACTIVE_SESSIONS_TOKEN").ok(),
+            ),
             node_private_key,
             embedding_model_manager: Arc::new(RwLock::new(None)),
             vision_model_manager: Arc::new(RwLock::new(None)),
@@ -924,6 +931,7 @@ impl ApiServer {
             expiry_sweeper: self.expiry_sweeper.clone(),
             settled_sessions: self.settled_sessions.clone(),
             session_key_store: self.session_key_store.clone(),
+            active_sessions_token: self.active_sessions_token.clone(),
             node_private_key: self.node_private_key,
             embedding_model_manager: self.embedding_model_manager.clone(),
             vision_model_manager: self.vision_model_manager.clone(),
@@ -1477,6 +1485,40 @@ impl ApiServer {
         self.node_private_key = Some(key);
     }
 
+    /// TEST ONLY: the `GET /v1/sessions/active` token (production reads
+    /// ACTIVE_SESSIONS_TOKEN in `ApiServer::new`).
+    #[doc(hidden)]
+    pub fn set_active_sessions_token_for_test(&mut self, token: Option<String>) {
+        self.active_sessions_token = active_sessions_token_from_env(token);
+    }
+
+    /// NP2: the session key that keys a WebSocket request's proof content
+    /// commitments: the key THIS connection stored for this session (never
+    /// another connection's), or `None` (the job then gets a random
+    /// in-memory key). The one source both WebSocket inference call sites use.
+    pub async fn proof_session_key_for(
+        &self,
+        conn_id: &str,
+        session_id: Option<&str>,
+    ) -> Option<[u8; 32]> {
+        self.session_key_store
+            .get_key_for(conn_id, session_id?)
+            .await
+    }
+
+    /// NP2: the proof key for one WebSocket inference request, chosen by the
+    /// session the REQUEST names (`request.session_id`, after the branch's
+    /// own stamping), looked up for THIS connection only. Never the
+    /// connection's session paired with another request's job.
+    pub async fn proof_session_key_for_request(
+        &self,
+        conn_id: &str,
+        request: &InferenceRequest,
+    ) -> Option<[u8; 32]> {
+        self.proof_session_key_for(conn_id, request.session_id.as_deref())
+            .await
+    }
+
     /// Get session key metrics
     pub async fn session_key_metrics(&self) -> SessionKeyMetrics {
         SessionKeyMetrics {
@@ -1656,18 +1698,12 @@ impl ApiServer {
         let job_id =
             crate::api::session_settled::request_job(request.job_id, request.session_id.as_deref());
 
-        // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
-        let prompt_hash = {
-            let hash = Sha256::digest(full_prompt.as_bytes());
-            let mut hash_bytes = [0u8; 32];
-            hash_bytes.copy_from_slice(&hash);
-            hash_bytes
-        };
-
-        // Store prompt hash in checkpoint manager (non-streaming path)
+        // Phase 4 / NP2 (8.67.0): bind the prompt to the job's proof as a KEYED
+        // commitment. The REST path has no session key, so the job gets a
+        // random in-memory key; never a plain hash of the prompt.
         if let Some(jid) = job_id {
             if let Some(cm) = self.checkpoint_manager.read().await.as_ref() {
-                cm.set_prompt_hash(jid, prompt_hash).await;
+                cm.set_prompt_content(jid, &full_prompt, None).await;
             }
         }
 
@@ -1799,12 +1835,17 @@ impl ApiServer {
     /// so an eviction is always seen (round-1 F1(b)); a `Required` adapter
     /// that has gone missing fails the request instead of quietly answering
     /// from the base model.
+    ///
+    /// `proof_session_key` (NP2, 8.67.0) is the requesting connection's
+    /// symmetric session key, used only to derive the job's proof content key
+    /// (`crypto::proof_content`); `None` on a connection without one.
     pub async fn handle_streaming_request(
         &self,
         request: InferenceRequest,
         client_ip: String,
         cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
         session_adapter: crate::training::serve::SessionAdapter,
+        proof_session_key: Option<[u8; 32]>,
     ) -> Result<
         (
             mpsc::Receiver<StreamingResponse>,
@@ -1975,19 +2016,14 @@ impl ApiServer {
         let job_id =
             crate::api::session_settled::request_job(request.job_id, request.session_id.as_deref());
 
-        // Phase 4: Compute prompt hash for proof binding (v8.10.0+)
-        let prompt_hash = {
-            let hash = Sha256::digest(full_prompt.as_bytes());
-            let mut hash_bytes = [0u8; 32];
-            hash_bytes.copy_from_slice(&hash);
-            hash_bytes
-        };
-
-        // Store prompt hash in checkpoint manager
+        // Phase 4 / NP2 (8.67.0): bind the prompt to the job's proof as a KEYED
+        // commitment, keyed from this connection's session key when it has one
+        // (the client can recompute it), else a random in-memory per-job key.
         let checkpoint_manager = self.checkpoint_manager.read().await.clone();
         if let Some(jid) = job_id {
             if let Some(cm) = checkpoint_manager.as_ref() {
-                cm.set_prompt_hash(jid, prompt_hash).await;
+                cm.set_prompt_content(jid, &full_prompt, proof_session_key.as_ref())
+                    .await;
             }
         }
 
@@ -2280,6 +2316,8 @@ impl ApiServer {
             // /health; keeps the path consistent with the rest of /v1/*.
             .route("/v1/health", get(health_handler))
             .route("/v1/version", get(version_handler))
+            // UKH1: read-only count for `uk-host stop`'s open-chat warning.
+            .route("/v1/sessions/active", get(active_sessions_handler))
             .route("/v1/models", get(models_handler))
             .route("/v1/checkpoints/:session_id", get(checkpoints_handler))
             .route("/v1/inference", post(simple_inference_handler))
@@ -2486,6 +2524,64 @@ async fn models_handler(State(server): State<Arc<ApiServer>>) -> impl IntoRespon
         Ok(models) => (StatusCode::OK, axum::response::Json(models)).into_response(),
         Err(e) => ApiServer::error_response(e),
     }
+}
+
+/// ACTIVE_SESSIONS_TOKEN as configured: trimmed ONCE (a CRLF env file leaves a
+/// trailing `\r`), and `None` when blank after trimming (route 404).
+pub fn active_sessions_token_from_env(raw: Option<String>) -> Option<String> {
+    raw.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// Who may read `GET /v1/sessions/active`: nobody when no token is
+/// configured (404, so other hosts get no new surface), otherwise only a
+/// request carrying exactly `Authorization: Bearer <token>` (401 otherwise).
+/// The token is compared in constant time.
+pub fn active_sessions_authorised(
+    token: Option<&str>,
+    authorization: Option<&str>,
+) -> Result<(), StatusCode> {
+    let Some(token) = token.filter(|t| !t.trim().is_empty()) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    // RFC 7235: the auth scheme is case-insensitive ("Bearer", "bearer", ...)
+    let presented = authorization
+        .and_then(|h| {
+            let (scheme, rest) = h.split_at_checked(7)?;
+            scheme.eq_ignore_ascii_case("bearer ").then_some(rest)
+        })
+        .unwrap_or("");
+    if constant_time_eq(presented.as_bytes(), token.as_bytes()) {
+        Ok(())
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+/// Equal-length inputs are compared without an early exit; a length
+/// mismatch returns at once (it reveals only the token's length).
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// `GET /v1/sessions/active` (UKH1, 8.67.0): `{"active_sessions": N}`, the
+/// session key store's count (one per stored key, so two sockets on one
+/// session count twice). Nothing else: no session ids, no addresses. Served
+/// only with ACTIVE_SESSIONS_TOKEN set and the matching bearer token.
+async fn active_sessions_handler(
+    State(server): State<Arc<ApiServer>>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if let Err(code) = active_sessions_authorised(server.active_sessions_token.as_deref(), auth) {
+        return code.into_response();
+    }
+    let n = server.session_key_metrics().await.active_sessions;
+    axum::response::Json(serde_json::json!({ "active_sessions": n })).into_response()
 }
 
 async fn version_handler(State(server): State<Arc<ApiServer>>) -> impl IntoResponse {
@@ -5430,6 +5526,11 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                         None
                                                                     };
 
+                                                                    // NP2: the proof key of the session THIS request names (this connection's
+                                                                    // key for it), chosen before `request` moves into the call
+                                                                    let proof_key = server
+                                                                        .proof_session_key_for_request(connection_keys.conn_id(), &request)
+                                                                        .await;
                                                                     // Handle streaming inference
                                                                     match server
                                                                         .handle_streaming_request(
@@ -5437,6 +5538,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                                                             "ws-client".to_string(),
                                                                             cancel_flag.clone(),
                                                                             session_adapter.clone(),
+                                                                            proof_key,
                                                                         )
                                                                         .await
                                                                     {
@@ -6185,6 +6287,11 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                 None
                             };
 
+                            // NP2: the proof key of the session THIS request names (this connection's
+                            // key for it), chosen before `request` moves into the call
+                            let proof_key = server
+                                .proof_session_key_for_request(connection_keys.conn_id(), &request)
+                                .await;
                             // Handle streaming inference
                             match server
                                 .handle_streaming_request(
@@ -6192,6 +6299,7 @@ async fn handle_websocket(socket: WebSocket, server: Arc<ApiServer>) {
                                     "ws-client".to_string(),
                                     cancel_flag.clone(),
                                     session_adapter.clone(),
+                                    proof_key,
                                 )
                                 .await
                             {

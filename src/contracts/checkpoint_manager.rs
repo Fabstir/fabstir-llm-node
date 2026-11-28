@@ -17,6 +17,7 @@ use super::completion_guard::{session_status_for_completion, CompletionGuard};
 use crate::training::accept::SessionStatus;
 
 // S5 decentralized storage for off-chain proof storage (Phase 2.1)
+use crate::crypto::proof_content::ProofContentKey;
 use crate::storage::s5_client::{S5Client, S5Storage};
 
 // Checkpoint publishing for conversation recovery (Phase 2/3)
@@ -51,14 +52,195 @@ pub struct JobTokenTracker {
 ///
 /// Stores the actual prompt and response hashes to bind them into the STARK proof,
 /// replacing placeholder hashes with real content hashes.
-#[derive(Debug, Clone, Default)]
+///
+/// NP2 (8.67.0): both fields are keyed commitments, `HMAC-SHA256(k, content)`
+/// with `k` the job's [`ProofContentKey`] (derived from the session key, or
+/// random when the job has none). Never a plain hash of user content.
+/// `Debug` shows neither the content nor the key.
+#[derive(Default)]
 pub struct ContentHashes {
-    /// SHA256 of the original prompt (set at inference start)
+    /// Keyed commitment of the prompt (set at inference start)
     pub prompt_hash: Option<[u8; 32]>,
-    /// SHA256 of the generated response (computed at checkpoint time)
+    /// Keyed commitment of the response (computed at checkpoint time)
     pub response_hash: Option<[u8; 32]>,
     /// Accumulated response text (cleared after hash computation)
     response_buffer: String,
+    /// The job's commitment key; memory only, `Debug` redacts it.
+    content_key: Option<ProofContentKey>,
+}
+
+impl ContentHashes {
+    /// The job's key, made random when none is bound yet (no session key).
+    fn key_or_random(&mut self) -> &ProofContentKey {
+        self.content_key.get_or_insert_with(ProofContentKey::random)
+    }
+}
+
+impl std::fmt::Debug for ContentHashes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContentHashes")
+            .field("prompt_hash_set", &self.prompt_hash.is_some())
+            .field("response_finalised", &self.response_hash.is_some())
+            .field("response_len", &self.response_buffer.len())
+            .field(
+                "content_key",
+                &self.content_key.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+/// Per-job keyed content commitments for the proof (NP2). Owned by the
+/// `CheckpointManager`; a separate type so it is testable without a chain.
+/// `Debug` shows only how many jobs it holds.
+#[derive(Default)]
+pub struct ContentCommitments {
+    map: RwLock<HashMap<u64, ContentHashes>>,
+}
+
+impl std::fmt::Debug for ContentCommitments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let jobs = self.map.try_read().map(|m| m.len()).ok();
+        f.debug_struct("ContentCommitments")
+            .field("jobs", &jobs)
+            .finish()
+    }
+}
+
+impl ContentCommitments {
+    /// Bind the prompt to the job's proof (called at inference start).
+    ///
+    /// NP2: stores `HMAC-SHA256(k, prompt)`. `k` is derived from
+    /// `session_key` (the requesting connection's symmetric session key) and
+    /// the job id; with no session key the job keeps (or gets) a random key
+    /// held only in memory. The latest keyed request decides the key, so the
+    /// response commitment uses the same key as the prompt it answers.
+    pub async fn set_prompt_content(
+        &self,
+        job_id: u64,
+        prompt: &str,
+        session_key: Option<&[u8; 32]>,
+    ) {
+        let mut content_hashes = self.map.write().await;
+        let entry = content_hashes
+            .entry(job_id)
+            .or_insert_with(ContentHashes::default);
+        if let Some(sk) = session_key {
+            entry.content_key = Some(ProofContentKey::from_session_key(sk, job_id));
+        }
+        let key = entry.key_or_random();
+        let hash = key.commit(prompt.as_bytes());
+        entry.prompt_hash = Some(hash);
+        tracing::debug!(
+            "📝 Set keyed prompt commitment for job {} (session key: {})",
+            job_id,
+            session_key.is_some()
+        );
+    }
+
+    /// Append response text for a job (called during token streaming)
+    ///
+    /// Accumulates the response text so we can hash it at checkpoint time.
+    pub async fn append_response(&self, job_id: u64, text: &str) {
+        let mut content_hashes = self.map.write().await;
+        let entry = content_hashes
+            .entry(job_id)
+            .or_insert_with(ContentHashes::default);
+        entry.response_buffer.push_str(text);
+    }
+
+    /// Finalize and compute the response hash for a job
+    ///
+    /// Computes the keyed commitment of the accumulated response buffer, stores it,
+    /// and clears the buffer. Returns the computed hash.
+    pub async fn finalize_response_hash(&self, job_id: u64) -> [u8; 32] {
+        let mut content_hashes = self.map.write().await;
+        let entry = content_hashes
+            .entry(job_id)
+            .or_insert_with(ContentHashes::default);
+
+        // NP2: keyed commitment of the accumulated response
+        entry.key_or_random();
+        let hash_bytes = entry
+            .content_key
+            .as_ref()
+            .expect("key bound just above")
+            .commit(entry.response_buffer.as_bytes());
+
+        // Store the hash
+        entry.response_hash = Some(hash_bytes);
+
+        tracing::debug!(
+            "📝 Finalized response hash for job {}: 0x{} ({} chars)",
+            job_id,
+            hex::encode(&hash_bytes[..8]),
+            entry.response_buffer.len()
+        );
+
+        // Note: We don't clear the buffer here in case of retry
+        // It will be cleared when the job is cleaned up
+
+        hash_bytes
+    }
+
+    /// Get the content hashes for a job (prompt_hash, response_hash)
+    ///
+    /// The response commitment is ALWAYS recomputed here from the accumulated
+    /// buffer with the job's CURRENT key (a finalised value cached under an
+    /// earlier key is never returned, so a re-keyed job cannot mix keys).
+    /// The prompt commitment is set together with the key, so it is current
+    /// too. Returns None if the prompt is not set or there is no response yet.
+    pub async fn get_content_hashes(&self, job_id: u64) -> Option<([u8; 32], [u8; 32])> {
+        let content_hashes = self.map.read().await;
+        content_hashes.get(&job_id).and_then(|entry| {
+            // Must have prompt hash
+            let prompt_hash = entry.prompt_hash?;
+
+            // NP2: recomputed under the current key (a prompt commitment
+            // implies a bound key), finalised or partial alike
+            let response_hash =
+                if entry.response_hash.is_some() || !entry.response_buffer.is_empty() {
+                    let hash_bytes = entry
+                        .content_key
+                        .as_ref()?
+                        .commit(entry.response_buffer.as_bytes());
+                    tracing::debug!(
+                        "📝 Computing partial response hash for job {} ({} chars so far)",
+                        job_id,
+                        entry.response_buffer.len()
+                    );
+                    hash_bytes
+                } else {
+                    // No response data yet
+                    return None;
+                };
+
+            Some((prompt_hash, response_hash))
+        })
+    }
+
+    /// Clear content hashes for a job (called after successful checkpoint)
+    pub async fn clear_content_hashes(&self, job_id: u64) {
+        let mut content_hashes = self.map.write().await;
+        content_hashes.remove(&job_id);
+        tracing::debug!("🧹 Cleared content hashes for job {}", job_id);
+    }
+
+    /// TEST ONLY: one job's entry as `Debug` prints it.
+    #[doc(hidden)]
+    pub async fn debug_entry_for_test(&self, job_id: u64) -> String {
+        format!("{:?}", self.map.read().await.get(&job_id))
+    }
+
+    /// Get the current response buffer length for a job
+    #[cfg(test)]
+    pub async fn get_response_buffer_len(&self, job_id: u64) -> usize {
+        let content_hashes = self.map.read().await;
+        content_hashes
+            .get(&job_id)
+            .map(|e| e.response_buffer.len())
+            .unwrap_or(0)
+    }
 }
 
 /// Cached proof data for S5 propagation delay handling (v8.12.6)
@@ -183,7 +365,7 @@ pub struct CheckpointManager {
     /// chain from the proof. Never used for any payment decision.
     ltx_proof_jobs: Arc<RwLock<std::collections::HashSet<u64>>>,
     /// Content hashes for real prompt/response binding (Phase 4 - v8.10.0)
-    content_hashes: Arc<RwLock<HashMap<u64, ContentHashes>>>,
+    content_hashes: Arc<ContentCommitments>,
     proof_system_address: Address,
     host_address: Address,
     s5_storage: Box<dyn S5Storage>, // S5 storage for off-chain proof storage
@@ -253,7 +435,7 @@ impl CheckpointManager {
             web3_client,
             job_trackers: Arc::new(RwLock::new(HashMap::new())),
             ltx_proof_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
-            content_hashes: Arc::new(RwLock::new(HashMap::new())),
+            content_hashes: Arc::new(ContentCommitments::default()),
             proof_system_address,
             host_address,
             s5_storage,
@@ -591,114 +773,42 @@ impl CheckpointManager {
     // Phase 4: Content Hash Methods (v8.10.0)
     // ========================================================================
 
-    /// Set the prompt hash for a job (called at inference start)
-    ///
-    /// This should be called once when inference begins, with the SHA256 hash
-    /// of the actual prompt text.
-    pub async fn set_prompt_hash(&self, job_id: u64, hash: [u8; 32]) {
-        let mut content_hashes = self.content_hashes.write().await;
-        let entry = content_hashes
-            .entry(job_id)
-            .or_insert_with(ContentHashes::default);
-        entry.prompt_hash = Some(hash);
-        tracing::debug!(
-            "📝 Set prompt hash for job {}: 0x{}",
-            job_id,
-            hex::encode(&hash[..8])
-        );
+    /// See [`ContentCommitments::set_prompt_content`].
+    pub async fn set_prompt_content(
+        &self,
+        job_id: u64,
+        prompt: &str,
+        session_key: Option<&[u8; 32]>,
+    ) {
+        self.content_hashes
+            .set_prompt_content(job_id, prompt, session_key)
+            .await
     }
 
-    /// Append response text for a job (called during token streaming)
-    ///
-    /// Accumulates the response text so we can hash it at checkpoint time.
+    /// See [`ContentCommitments::append_response`].
     pub async fn append_response(&self, job_id: u64, text: &str) {
-        let mut content_hashes = self.content_hashes.write().await;
-        let entry = content_hashes
-            .entry(job_id)
-            .or_insert_with(ContentHashes::default);
-        entry.response_buffer.push_str(text);
+        self.content_hashes.append_response(job_id, text).await
     }
 
-    /// Finalize and compute the response hash for a job
-    ///
-    /// Computes SHA256 of the accumulated response buffer, stores it,
-    /// and clears the buffer. Returns the computed hash.
+    /// See [`ContentCommitments::finalize_response_hash`].
     pub async fn finalize_response_hash(&self, job_id: u64) -> [u8; 32] {
-        let mut content_hashes = self.content_hashes.write().await;
-        let entry = content_hashes
-            .entry(job_id)
-            .or_insert_with(ContentHashes::default);
-
-        // Compute SHA256 of accumulated response
-        let hash = Sha256::digest(entry.response_buffer.as_bytes());
-        let mut hash_bytes = [0u8; 32];
-        hash_bytes.copy_from_slice(&hash);
-
-        // Store the hash
-        entry.response_hash = Some(hash_bytes);
-
-        tracing::debug!(
-            "📝 Finalized response hash for job {}: 0x{} ({} chars)",
-            job_id,
-            hex::encode(&hash_bytes[..8]),
-            entry.response_buffer.len()
-        );
-
-        // Note: We don't clear the buffer here in case of retry
-        // It will be cleared when the job is cleaned up
-
-        hash_bytes
+        self.content_hashes.finalize_response_hash(job_id).await
     }
 
-    /// Get the content hashes for a job (prompt_hash, response_hash)
-    ///
-    /// For intermediate checkpoints (during streaming), computes partial response hash
-    /// from the accumulated buffer if finalized hash is not yet available.
-    /// Returns None only if prompt_hash is not set.
+    /// See [`ContentCommitments::get_content_hashes`].
     pub async fn get_content_hashes(&self, job_id: u64) -> Option<([u8; 32], [u8; 32])> {
-        let content_hashes = self.content_hashes.read().await;
-        content_hashes.get(&job_id).and_then(|entry| {
-            // Must have prompt hash
-            let prompt_hash = entry.prompt_hash?;
-
-            // Use finalized response hash if available, otherwise compute partial hash
-            let response_hash = if let Some(finalized) = entry.response_hash {
-                finalized
-            } else if !entry.response_buffer.is_empty() {
-                // Compute partial response hash for intermediate checkpoint
-                let hash = Sha256::digest(entry.response_buffer.as_bytes());
-                let mut hash_bytes = [0u8; 32];
-                hash_bytes.copy_from_slice(&hash);
-                tracing::debug!(
-                    "📝 Computing partial response hash for job {} ({} chars so far)",
-                    job_id,
-                    entry.response_buffer.len()
-                );
-                hash_bytes
-            } else {
-                // No response data yet
-                return None;
-            };
-
-            Some((prompt_hash, response_hash))
-        })
+        self.content_hashes.get_content_hashes(job_id).await
     }
 
-    /// Clear content hashes for a job (called after successful checkpoint)
+    /// Clear content hashes (and the job's key) for a job
     pub async fn clear_content_hashes(&self, job_id: u64) {
-        let mut content_hashes = self.content_hashes.write().await;
-        content_hashes.remove(&job_id);
-        tracing::debug!("🧹 Cleared content hashes for job {}", job_id);
+        self.content_hashes.clear_content_hashes(job_id).await
     }
 
     /// Get the current response buffer length for a job
     #[cfg(test)]
     pub async fn get_response_buffer_len(&self, job_id: u64) -> usize {
-        let content_hashes = self.content_hashes.read().await;
-        content_hashes
-            .get(&job_id)
-            .map(|e| e.response_buffer.len())
-            .unwrap_or(0)
+        self.content_hashes.get_response_buffer_len(job_id).await
     }
 
     // ========================================================================
@@ -1713,7 +1823,7 @@ impl CheckpointManager {
             info!("Cleaned up tracker for job {}", job_id);
         }
         drop(trackers);
-        self.content_hashes.write().await.remove(&job_id);
+        self.content_hashes.clear_content_hashes(job_id).await;
         self.proof_cache.cleanup_job(job_id).await;
     }
 
@@ -1739,7 +1849,7 @@ impl CheckpointManager {
             info!("Cleaned up tracker for job {}", job_id);
         }
         drop(trackers);
-        self.content_hashes.write().await.remove(&job_id);
+        self.content_hashes.clear_content_hashes(job_id).await;
         self.proof_cache.cleanup_job(job_id).await;
     }
 

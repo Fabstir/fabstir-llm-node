@@ -22,6 +22,7 @@ services:
       S5_SEED_PHRASE: ${S5_SEED_PHRASE:?S5_SEED_PHRASE is required}
 
       # S5 Network (Platformless AI Portal - Sia Storage)
+      S5_REGION: global
       S5_PORTAL_URL: ${S5_PORTAL_URL:-https://s5.platformlessai.ai}
       S5_INITIAL_PEERS: ${S5_INITIAL_PEERS:-wss://z2DcjTLqfj6PTMsDbFfgtuHtYmrKeibFTkvqY8QZeyR3YmE@s5.platformlessai.ai/s5/p2p}
 

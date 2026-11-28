@@ -1,0 +1,145 @@
+# UK host on 3XS-Z: Qwen3.8 Flash Next, UK storage only (UKH1, plan D13; SR1 P3 regional profile)
+# Copyright (c) 2026 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Run from the repo root on WSL, through scripts/uk-host (start, stop, status), which calls
+#   docker compose -f docker-compose.uk-3xsz.yml --env-file .env.uk-3xsz ...
+# Copy .env.uk-3xsz.example to .env.uk-3xsz and fill it in. Every required value stops the start when
+# missing (`:?`). Nothing here falls back to the Global portal, LTX, ComfyUI or web search.
+#
+# Network: the API is published on 127.0.0.1 only (Tailscale Funnel on Windows forwards to it, plan D18).
+# No P2P port is published. Neither service restarts by itself: the host runs only while Jules has
+# started it (plan Q1, Q9).
+
+name: fabstir-uk-3xsz
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  # S5 bridge, UK region. The region guard refuses to start if the portal or peer is not the UK one,
+  # or if after login any portal account is on another host (services/s5-bridge/src/region_guard.js).
+  s5-bridge:
+    logging: *default-logging
+    build:
+      context: ./services/s5-bridge
+      dockerfile: Dockerfile
+    container_name: s5-bridge-uk
+    restart: "no"
+    environment:
+      BRIDGE_PORT: 5522
+      BRIDGE_HOST: 0.0.0.0
+      S5_REGION: uk
+      S5_PORTAL_URL: https://s5-uk.platformlessai.ai
+      S5_INITIAL_PEERS: wss://z2DXG8VjbxzY23kt6nJuYPriFEjQKHXJSpnWGSc7SPCgwvc@s5-uk.platformlessai.ai/s5/p2p
+      # A fresh seed, never used on Global (SR1 D3, plan D8)
+      S5_SEED_PHRASE: ${S5_SEED_PHRASE:?S5_SEED_PHRASE is required (a fresh UK seed)}
+      HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY:?HOST_PRIVATE_KEY is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5522/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - uk-host
+
+  # Fabstir LLM node: Qwen3.8 Flash Next UD-Q4_K_XL, all layers on the GPU (plan Q1)
+  llm-node:
+    logging: *default-logging
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: llm-node-uk
+    restart: "no"
+    # WSL2 GPU block, as docker-compose.prod.yml
+    shm_size: "4g"
+    ipc: host
+    runtime: nvidia
+    ports:
+      - "127.0.0.1:${API_PORT:-8083}:${API_PORT:-8083}"
+    environment:
+      # NVIDIA GPU (WSL2)
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      NCCL_P2P_DISABLE: "1"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_DEBUG: "WARN"
+      # Keep the PTX compiled at first load (CUDA 12.4 build on a Blackwell card, plan R2). The cache is on a
+      # named volume, so `uk-host stop` (compose down) does not throw it away. The node runs as root
+      # (Dockerfile.production sets no USER), so the path is writable.
+      CUDA_CACHE_PATH: /app/cuda-cache
+      CUDA_CACHE_MAXSIZE: "4294967296"
+
+      # Storage: the UK bridge only
+      ENHANCED_S5_URL: http://s5-bridge:5522
+
+      # Region (SR1 D3b): the node refuses to start in a region with web search on
+      FABSTIR_REGION: uk
+      WEB_SEARCH_ENABLED: "false"
+
+      # Model: shard 1 of Jules's 2 September snapshot (revision 38bb39ee); the other three shards sit beside it
+      MODEL_PATH: /app/models/qwen38-flash-next/snapshots/38bb39ee97821de2c9009abb7e93950eec396e66/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+      MODEL_CHAT_TEMPLATE: chatml
+      GPU_LAYERS: "99"
+      LLAMA_USE_MMAP: "false"
+      LLAMA_TOP_K: "20"
+      # Set after the U4 measurements; empty means unset (llama.cpp defaults, no experts in RAM)
+      LLAMA_CPU_MOE_LAYERS: ${LLAMA_CPU_MOE_LAYERS:-}
+      LLAMA_THREADS: ${LLAMA_THREADS:-}
+      LLAMA_THREADS_BATCH: ${LLAMA_THREADS_BATCH:-}
+      MAX_CONTEXT_LENGTH: "131072"
+      DEFAULT_THINKING_MODE: xhigh
+      # false until U7 (the model approved and the host registered), then true in .env.uk-3xsz
+      REQUIRE_MODEL_VALIDATION: ${REQUIRE_MODEL_VALIDATION:-false}
+
+      # Bearer token for GET /v1/sessions/active (scripts/uk-host stop and status ask it for open sessions)
+      ACTIVE_SESSIONS_TOKEN: ${ACTIVE_SESSIONS_TOKEN:?ACTIVE_SESSIONS_TOKEN is required}
+
+      # Network
+      API_PORT: ${API_PORT:-8083}
+
+      # Chain (Base Sepolia). All required, no defaults
+      HOST_PRIVATE_KEY: ${HOST_PRIVATE_KEY:?HOST_PRIVATE_KEY is required}
+      CHAIN_ID: "84532"
+      BASE_SEPOLIA_RPC_URL: ${BASE_SEPOLIA_RPC_URL:?BASE_SEPOLIA_RPC_URL is required}
+      RPC_URL: ${BASE_SEPOLIA_RPC_URL:?BASE_SEPOLIA_RPC_URL is required}
+      CONTRACT_JOB_MARKETPLACE: ${CONTRACT_JOB_MARKETPLACE:?CONTRACT_JOB_MARKETPLACE is required}
+      CONTRACT_NODE_REGISTRY: ${CONTRACT_NODE_REGISTRY:?CONTRACT_NODE_REGISTRY is required}
+      CONTRACT_PROOF_SYSTEM: ${CONTRACT_PROOF_SYSTEM:?CONTRACT_PROOF_SYSTEM is required}
+      CONTRACT_HOST_EARNINGS: ${CONTRACT_HOST_EARNINGS:?CONTRACT_HOST_EARNINGS is required}
+      CONTRACT_MODEL_REGISTRY: ${CONTRACT_MODEL_REGISTRY:?CONTRACT_MODEL_REGISTRY is required}
+      USDC_TOKEN: ${USDC_TOKEN:?USDC_TOKEN is required}
+      FAB_TOKEN: ${FAB_TOKEN:?FAB_TOKEN is required}
+      MULTICALL3_ADDRESS: ${MULTICALL3_ADDRESS:?MULTICALL3_ADDRESS is required}
+
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+
+      # Deliberately absent: COMFY_URL (LTX stays off and needs no content check sink or provenance
+      # signer), VLM_ENDPOINT, DIFFUSION_ENDPOINT, TRANSCODER_ENDPOINT, search keys.
+    volumes:
+      # The Hugging Face cache folder for the model, whole, so snapshot links into blobs/ resolve (plan D9)
+      - ${QWEN_FLASH_NEXT_DIR:?QWEN_FLASH_NEXT_DIR is required}:/app/models/qwen38-flash-next:ro
+      # Embedding model for /v1/embed (the node reads ./models/all-MiniLM-L6-v2-onnx under /app)
+      - ./models/all-MiniLM-L6-v2-onnx:/app/models/all-MiniLM-L6-v2-onnx:ro
+      # Pre-built binary (from the release tarball), as docker-compose.prod.yml
+      - ./target/release/fabstir-llm-node:/usr/local/bin/fabstir-llm-node:ro
+      # CUDA JIT cache (CUDA_CACHE_PATH), kept across stop and start
+      - cuda-cache:/app/cuda-cache
+    depends_on:
+      s5-bridge:
+        condition: service_healthy
+    networks:
+      - uk-host
+
+networks:
+  uk-host:
+    driver: bridge
+
+volumes:
+  cuda-cache:

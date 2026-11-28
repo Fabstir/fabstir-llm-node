@@ -49,6 +49,7 @@ temp/
 *.env.local
 *.env.production
 .env.prod
+.env.uk-3xsz
 
 # Temporary test files
 s5-mock-service/

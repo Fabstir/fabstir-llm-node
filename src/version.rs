@@ -3,25 +3,43 @@
 // Version information for the Fabstir LLM Node
 
 /// Full version string with feature description
-pub const VERSION: &str = "v8.66.0-no-plaintext-2026-11-23";
+pub const VERSION: &str = "v8.67.0-uk-host-qwen4exp-2026-11-27";
 
 /// Semantic version number
-pub const VERSION_NUMBER: &str = "8.66.0";
+pub const VERSION_NUMBER: &str = "8.67.0";
 
 /// Major version number
 pub const VERSION_MAJOR: u32 = 8;
 
 /// Minor version number
-pub const VERSION_MINOR: u32 = 66;
+pub const VERSION_MINOR: u32 = 67;
 
 /// Patch version number
 pub const VERSION_PATCH: u32 = 0;
 
 /// Build date
-pub const BUILD_DATE: &str = "2026-11-23";
+pub const BUILD_DATE: &str = "2026-11-27";
 
 /// Supported features in this version
 pub const FEATURES: &[&str] = &[
+    // v8.67.0 UKH1 U1: llama-cpp-2 and llama-cpp-sys-2 =0.1.161 (llama.cpp with LLM_ARCH_QWEN4EXP, Qwen3.8 Flash
+    // Next). Tokenizing still parses special tokens and generated special tokens are still rendered, as on 0.1.154.
+    "llama-cpp-0.1.161",
+    // v8.67.0 UKH1 U2: llama.cpp settings, each unset = the behaviour before 8.67.0. LLAMA_CPU_MOE_LAYERS=N moves the
+    // routed experts of layers 0..N-1 to RAM (blk\.(0|..|N-1)\.ffn_(up|down|gate)_(ch|)exps); LLAMA_USE_MMAP=false
+    // reads weights into memory; LLAMA_THREADS / LLAMA_THREADS_BATCH; ROPE_SCALING=yarn + YARN_ORIG_CTX;
+    // LLAMA_TOP_K builds a top_k sampler before top_p (requests' top_k is not used).
+    "llama-cpu-moe-layers",
+    "llama-env-tuning",
+    "llama-top-k-env",
+    // v8.67.0 UKH1 U2b NP2: the proof journal's input/output hashes are keyed commitments,
+    // HMAC-SHA256(HKDF-SHA256(session key, info "fabstir-proof-content-v1:" + job id), content); a job without a
+    // session key gets a random in-memory key. Never a plain SHA-256 of user content. Guest program unchanged.
+    "proof-content-keyed",
+    // v8.67.0 UKH1 U3: FABSTIR_REGION (unset/global = today; uk). A uk node refuses to start with web search enabled
+    // (unset WEB_SEARCH_ENABLED counts as enabled) or with video configured and no explicit LTX_CHECKS_ALERT_URL.
+    "region-guard",
+    // (v8.67.0 also removes the unused src/cache prompt cache, which had no production caller.)
     // v8.66.0 NP1 (IMPLEMENTATION-NO-PLAINTEXT.md): no plaintext user content leaves the node. A checkpoint delta is
     // buffered and uploaded only for a session with a recovery key, and always encrypted to it; a session without a
     // key uploads no delta and no index entry and its proof goes ahead with an empty deltaCID. Clients should refuse
@@ -748,6 +766,8 @@ pub const SUPPORTED_CHAINS: &[u64] = &[
 
 /// Breaking changes from previous version
 pub const BREAKING_CHANGES: &[&str] = &[
+    // v8.67.0 - UKH1 UK host on 3XS-Z (Nov 27, 2026)
+    "v8.67.0: the proof journal's prompt and response hashes are now HMAC-SHA256 keyed commitments (key = HKDF-SHA256 of the session key with info \"fabstir-proof-content-v1:<job id>\"), no longer plain SHA-256; a client comparing them with SHA-256 of its content must recompute with its session key. llama-cpp-2 0.1.161. New optional settings LLAMA_CPU_MOE_LAYERS, LLAMA_USE_MMAP, LLAMA_THREADS, LLAMA_THREADS_BATCH, ROPE_SCALING, YARN_ORIG_CTX, LLAMA_TOP_K, FABSTIR_REGION (all unset = unchanged). Marker: proof-content-keyed.",
     // v8.66.0 - NP1: no plaintext user content leaves the node (Nov 23, 2026)
     "v8.66.0: checkpoint deltas are uploaded only encrypted to the session's recovery key; a session without one (REST /v1/inference, plaintext session_init, an encrypted init without recoveryPublicKey) gets no delta and an empty deltaCID with its proof, so it has no conversation recovery. Web search runs only on an explicit web_search: true. GET /v1/transcode/:task_id and POST /v1/transcode are removed (404); /v1/transcode/capacity stays. Markers: checkpoint-deltas-encrypted-only, web-search-opt-in.",
     // v8.65.4 - own delivered results are not input-checked again (Nov 22, 2026)
@@ -1340,6 +1360,17 @@ mod tests {
         // v8.65.4
         assert!(FEATURES.contains(&"ltx-own-result-inputs-cleared"));
         assert!(VERSION_MINOR > 65 || VERSION_PATCH == 4);
+        // v8.67.0 UKH1
+        for f in [
+            "llama-cpp-0.1.161",
+            "llama-cpu-moe-layers",
+            "llama-env-tuning",
+            "llama-top-k-env",
+            "proof-content-keyed",
+            "region-guard",
+        ] {
+            assert!(FEATURES.contains(&f), "{f}");
+        }
         // v8.60.7 K4
         assert!(FEATURES.contains(&"ltx-fixed-prompt"));
         assert!(FEATURES.contains(&"ltx-stored-encoding-check"));
@@ -1566,15 +1597,15 @@ mod tests {
     #[test]
     fn test_version_string() {
         let version = get_version_string();
-        assert!(version.contains("8.66.0"));
-        assert!(version.contains("2026-11-23"));
+        assert!(version.contains("8.67.0"));
+        assert!(version.contains("2026-11-27"));
     }
 
     #[test]
     fn test_version_format() {
-        assert_eq!(VERSION, "v8.66.0-no-plaintext-2026-11-23");
-        assert_eq!(VERSION_NUMBER, "8.66.0");
-        assert_eq!(BUILD_DATE, "2026-11-23");
+        assert_eq!(VERSION, "v8.67.0-uk-host-qwen4exp-2026-11-27");
+        assert_eq!(VERSION_NUMBER, "8.67.0");
+        assert_eq!(BUILD_DATE, "2026-11-27");
     }
 
     #[test]

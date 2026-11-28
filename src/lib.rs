@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pub mod api;
 pub mod blockchain;
-pub mod cache;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
@@ -30,6 +29,7 @@ pub mod payments;
 pub mod performance;
 pub mod qa;
 pub mod rag;
+pub mod region;
 pub mod result_submission;
 pub mod results;
 pub mod search;

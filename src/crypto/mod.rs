@@ -34,6 +34,7 @@ pub mod encryption;
 pub mod error;
 pub mod ezkl;
 pub mod private_key;
+pub mod proof_content;
 pub mod proof_signer;
 pub mod session_init;
 pub mod session_keys;

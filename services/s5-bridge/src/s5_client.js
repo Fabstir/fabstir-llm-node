@@ -24,7 +24,7 @@ import { base64UrlNoPaddingEncode, base64UrlNoPaddingDecode } from '@julesl23/s5
 import { FS5Advanced } from '@julesl23/s5js/advanced';
 import { ethers } from 'ethers';
 import { installTusLargeUpload } from './tus_upload.js';
-import { pinUploadPortal } from './upload_pin.js';
+import { enforceUploadRegion } from './region_guard.js';
 import { bridgeConfig } from './config.js';
 
 let s5Instance = null;
@@ -532,6 +532,16 @@ export async function initializeS5Client() {
         }
       }
 
+      // Storage region guard (region_guard.js): uploads go to OUR region
+      // portal only. Drop every other portal account from the live list
+      // (accounts.json untouched, see upload_pin.js), then refuse to continue
+      // if the pin did not take or any account left is off the region host.
+      // This runs before the filesystem is initialised, because initialising
+      // it can already upload.
+      const pin = enforceUploadRegion(s5.apiWithIdentity, bridgeConfig.portalUrl);
+      console.log(`📌 Upload portal pinned to ${pin.host} (${pin.before} -> ${pin.after} accounts), region ${bridgeConfig.region}`);
+      pin.dropped.forEach((id) => console.log(`   - dropped ${id}`));
+
       // Step 4: Initialize filesystem if account is ready
       if (accountReady) {
         console.log('🔧 Initializing filesystem for read/write operations...');
@@ -545,18 +555,6 @@ export async function initializeS5Client() {
       } else {
         console.log('📥 Skipping filesystem initialization (read-only mode)');
         console.log('✅ Bridge ready for downloading existing S5 content');
-      }
-
-      // Uploads go to OUR portal only: drop any public-portal account from the
-      // live list (accounts.json untouched). See upload_pin.js.
-      if (bridgeConfig.portalUrl) {
-        const pin = pinUploadPortal(s5.apiWithIdentity?.accountConfigs, bridgeConfig.portalUrl);
-        if (pin.pinned) {
-          console.log(`📌 Upload portal pinned to ${pin.host} (${pin.before} -> ${pin.after} accounts)`);
-          pin.dropped.forEach((id) => console.log(`   - dropped ${id}`));
-        } else {
-          console.warn(`⚠️  No ${pin.host} account among ${pin.before} portal accounts: upload portal NOT pinned`);
-        }
       }
 
       // CRITICAL: Verify portal accounts are configured for uploads
@@ -650,6 +648,7 @@ export async function getS5Status() {
       connected: true,
       peerCount: bridgeConfig.initialPeers.length,
       portal: bridgeConfig.portalUrl,
+      region: bridgeConfig.region,
     };
   } catch (error) {
     return {

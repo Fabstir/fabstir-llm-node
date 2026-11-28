@@ -135,13 +135,30 @@ Environment variables (see `.env.example`):
 |----------|---------|-------------|
 | `BRIDGE_PORT` | `5522` | HTTP server port |
 | `BRIDGE_HOST` | `localhost` | Bind address (localhost for security) |
-| `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase |
-| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL (Sia storage). Uploads are pinned to this portal's host: at boot the bridge drops every other portal account from its live list (`src/upload_pin.js`; `accounts.json` is untouched), and logs `Upload portal pinned to <host>` |
-| `S5_INITIAL_PEERS` | `wss://...@s5.platformlessai.ai/s5/p2p` | WebSocket P2P peers (comma-separated). Our own node only; never the public S5 nodes |
+| `S5_SEED_PHRASE` | *required* | 12-word identity seed phrase. A regional host uses a fresh seed, never one used in another region |
+| `S5_REGION` | *required, no default* | Storage region: `global` or `uk` (`eu` is not configured yet). See "Storage region guard" below |
+| `S5_PORTAL_URL` | `https://s5.platformlessai.ai` | S5 portal gateway URL. Its host must be the `S5_REGION` portal host; a uk host sets it explicitly. Uploads are pinned to this portal's host: at boot the bridge drops every other portal account from its live list (`src/upload_pin.js`; `accounts.json` is untouched), and logs `Upload portal pinned to <host>` |
+| `S5_INITIAL_PEERS` | `wss://...@s5.platformlessai.ai/s5/p2p` | WebSocket P2P peers (comma-separated). Our own node only; never the public S5 nodes. Every entry's host must be the `S5_REGION` peer host, and at least one is required |
 | `LOG_LEVEL` | `info` | Logging level (trace, debug, info, warn, error) |
 | `PRETTY_LOGS` | `true` | Enable pretty-printed logs |
 | `REQUEST_TIMEOUT_MS` | `30000` | Request timeout (30 seconds) |
 | `MAX_CONTENT_LENGTH` | `104857600` | Max upload size (100MB) |
+
+## Storage region guard
+
+A host has exactly one storage region (SR1 D3, `src/region_guard.js`). `S5_REGION` is required and has no default:
+
+| `S5_REGION` | Portal host | Peer host |
+|---|---|---|
+| `global` | `s5.platformlessai.ai` | `s5.platformlessai.ai` |
+| `uk` | `s5-uk.platformlessai.ai` | `s5-uk.platformlessai.ai` |
+
+The bridge exits with a non-zero status and names the reason when:
+
+- before the S5 client is created: `S5_REGION` is missing, empty or not in the table; the `S5_PORTAL_URL` host is not the region's portal host; any `S5_INITIAL_PEERS` entry cannot be parsed or its host is not the region's peer host; or no peer is given;
+- after login and before the filesystem is initialised: the upload pin did not take (no account on the region portal), or any account left in the live account list is on another host.
+
+The second check means a bridge whose portal registration fails now stops instead of running read only. Existing Global hosts set `S5_REGION=global` in the same deploy that brings this release (`docker-compose.prod.yml` already does).
 
 ## Development
 
@@ -190,7 +207,7 @@ npm run test:watch
 
 ### Uploads Landing on a Public Portal
 
-Every `UPLOAD COMPLETE` log line names its `portalAccount`; it must be on `S5_PORTAL_URL`'s host. If the boot log says `upload portal NOT pinned`, the identity has no account on our portal: fix the registration, never add a public portal back.
+Every `UPLOAD COMPLETE` log line names its `portalAccount`; it must be on `S5_PORTAL_URL`'s host. If the bridge exits with `upload pin did not take`, the identity has no account on our portal: fix the registration, never add a public portal back.
 
 ### Portal Registration Failing
 

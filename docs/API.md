@@ -277,6 +277,25 @@ GET /v1/version
 
 ---
 
+### Active Sessions (v8.67.0+)
+
+Read-only count for operator tooling (the UK host's `uk-host stop` warns before stopping while chats are open).
+**Off unless the operator sets `ACTIVE_SESSIONS_TOKEN`** (non-empty): without it the route answers `404 Not Found`,
+so hosts that do not set it expose nothing new. With it, the request must carry the token:
+
+```http
+GET /v1/sessions/active
+Authorization: Bearer <ACTIVE_SESSIONS_TOKEN>
+```
+
+```json
+{ "active_sessions": 2 }
+```
+
+A missing or wrong token gets `401 Unauthorized` (the token is compared in constant time).
+`active_sessions` is the number of session keys the node holds (one per encrypted connection and session, so two
+sockets on one session count twice). The body carries nothing else: no session ids, job ids or addresses.
+
 ### Node Status
 
 Get current node status, capabilities, and configuration.
@@ -2606,11 +2625,26 @@ interface ProofData {
   hash: string;            // SHA256 hash of proof
   proof_type: string;      // "ezkl", "risc0", "simple"
   model_hash: string;      // Hash of model used
-  input_hash: string;      // Hash of input prompt
-  output_hash: string;     // Hash of generated output
+  input_hash: string;      // Keyed commitment of the input prompt (8.67.0+, see below)
+  output_hash: string;     // Keyed commitment of the generated output (8.67.0+)
   timestamp: number;       // Millisecond timestamp
 }
 ```
+
+**Proof content commitments (8.67.0+, NP2; `/v1/version` marker `proof-content-keyed`).** The Risc0 journal's input
+and output hashes (and `input_hash`/`output_hash` above) are no longer plain SHA-256 of the content. They are
+
+```
+k          = HKDF-SHA256(ikm = session key (32 bytes), salt = none,
+                         info = "fabstir-proof-content-v1:" + decimal job id)   -> 32 bytes
+input_hash = HMAC-SHA256(k, full prompt bytes as the node built it)
+output_hash = HMAC-SHA256(k, response bytes generated so far)
+```
+
+The session key is the symmetric key of the encrypted session (`session_init` / E2EE), so the client can recompute
+both values and nobody else can. A job with no session key (REST `/v1/inference`, a plaintext WebSocket session)
+gets a random per-job key held only in the node's memory, so its commitments are opaque to everyone. The guest
+program and its image id are unchanged. Test vectors: `tests/ukh1/proof_content.rs` (`VECTORS`).
 
 #### Session Initialization
 ```json

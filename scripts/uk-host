@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Fabstir
+# SPDX-License-Identifier: BUSL-1.1
+#
+# uk-host: start, stop and check the UK host on 3XS-Z (UKH1, plan D13).
+#
+#   scripts/uk-host start            check free VRAM, start bridge and node, wait until the model is loaded
+#   scripts/uk-host stop [--force]   warn about open sessions, stop both, wait until the VRAM is free
+#   scripts/uk-host status           loaded or not, VRAM, sessions, public URL check
+#
+# Runs on WSL from the repo root (or anywhere: it changes to the repo root itself). It uses
+#   docker compose -f docker-compose.uk-3xsz.yml --env-file .env.uk-3xsz
+# Settings are read from the environment first, then from .env.uk-3xsz (the file is parsed, never sourced):
+#   API_PORT                      default 8083
+#   UK_HOST_MIN_FREE_MIB          free VRAM needed before start, default 90000 (PROVISIONAL: set from the U4
+#                                 measurement; nvidia-smi under WSL and CUDA inside the container have disagreed
+#                                 on this host, so the figure is checked against a real load)
+#   UK_HOST_START_TIMEOUT_SECS    how long start waits for the model, default 1800 (30 minutes)
+#   UK_HOST_STOP_TIMEOUT_SECS     how long stop waits for the node container to be gone, default 120
+#   UK_HOST_VRAM_SETTLE_SECS      how long stop then waits for the VRAM reading to settle, default 15
+#   UK_HOST_PUBLIC_URL            the public Funnel URL, checked by status
+#   UK_HOST_SESSIONS_PATH         API path whose JSON carries "active_sessions", default /v1/sessions/active
+#   ACTIVE_SESSIONS_TOKEN         bearer token for that route (the node gets the same value from the compose)
+# Exit status: 0 done, 1 failed, 2 refused (low VRAM, open sessions not confirmed).
+#
+# Open sessions: if the route does not answer with a count (node without the token: 404; wrong token: 401),
+# stop treats the count as unknown and asks before stopping a running node (--force skips the question).
+# The env file may have Windows (CRLF) line endings: a trailing carriage return is stripped.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+COMPOSE_FILE="${UK_HOST_COMPOSE_FILE:-docker-compose.uk-3xsz.yml}"
+ENV_FILE="${UK_HOST_ENV_FILE:-.env.uk-3xsz}"
+POLL_SECS="${UK_HOST_POLL_SECS:-5}"
+PROGRESS_SECS="${UK_HOST_PROGRESS_SECS:-30}"
+LOADED_LINE='Model loaded successfully'
+FAILED_LINE='Failed to load model'
+
+die() { echo "uk-host: $*" >&2; exit 1; }
+
+# setting NAME DEFAULT: the environment wins, then the env file, then the default.
+setting() {
+  local name="$1" default="$2" value=""
+  if [[ -n "${!name:-}" ]]; then
+    printf '%s' "${!name}"
+    return
+  fi
+  if [[ -f "$ENV_FILE" ]]; then
+    value="$(grep -E "^[[:space:]]*${name}=" "$ENV_FILE" | tail -n 1 | tr -d '\r' | sed -E "s/^[[:space:]]*${name}=//; s/^[\"']//; s/[\"'][[:space:]]*$//" || true)"
+  fi
+  printf '%s' "${value:-$default}"
+}
+
+API_PORT="$(setting API_PORT 8083)"
+MIN_FREE_MIB="$(setting UK_HOST_MIN_FREE_MIB 90000)"
+START_TIMEOUT="$(setting UK_HOST_START_TIMEOUT_SECS 1800)"
+STOP_TIMEOUT="$(setting UK_HOST_STOP_TIMEOUT_SECS 120)"
+SETTLE_SECS="$(setting UK_HOST_VRAM_SETTLE_SECS 15)"
+PUBLIC_URL="$(setting UK_HOST_PUBLIC_URL '')"
+SESSIONS_PATH="$(setting UK_HOST_SESSIONS_PATH /v1/sessions/active)"
+SESSIONS_TOKEN="$(setting ACTIVE_SESSIONS_TOKEN '')"
+API="http://127.0.0.1:${API_PORT}"
+
+for n in API_PORT MIN_FREE_MIB START_TIMEOUT STOP_TIMEOUT SETTLE_SECS POLL_SECS PROGRESS_SECS; do
+  [[ "${!n}" =~ ^[0-9]+$ ]] || die "$n must be a whole number, got '${!n}'"
+done
+
+dc() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
+
+# vram: prints "used free total" in MiB for the first GPU, or fails.
+vram() {
+  local line
+  line="$(nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1)" || return 1
+  [[ -n "$line" ]] || return 1
+  # "1234, 95000, 97887" -> "1234 95000 97887"
+  echo "$line" | tr -d ' ' | tr ',' ' '
+}
+
+print_vram() {
+  local v
+  if v="$(vram)"; then
+    read -r used free total <<<"$v"
+    echo "VRAM: ${used} MiB used, ${free} MiB free of ${total} MiB"
+  else
+    echo "VRAM: nvidia-smi gave no reading"
+  fi
+}
+
+node_answers() { curl -fsS --max-time 5 "${API}/v1/version" >/dev/null 2>&1; }
+node_running() { [[ -n "$(dc ps -q --status running llm-node 2>/dev/null)" ]]; }
+node_container_exists() { [[ -n "$(dc ps -a -q llm-node 2>/dev/null)" ]]; }
+# The whole log is read first: a pipe into `grep -q` would end at the first match and, under pipefail,
+# report the writer's SIGPIPE (141) as "not found" when the log is long.
+node_log_has() {
+  local log
+  log="$(dc logs --no-color llm-node 2>/dev/null || true)"
+  [[ "$log" == *"$1"* ]]
+}
+
+# sessions: prints the number of active sessions, or "unknown".
+sessions() {
+  local body n
+  if [[ -z "$SESSIONS_PATH" || -z "$SESSIONS_TOKEN" ]]; then
+    echo unknown
+    return
+  fi
+  # The token goes to curl on stdin (a config line), never on its command line.
+  if ! body="$(printf 'header = "Authorization: Bearer %s"\n' "$SESSIONS_TOKEN" |
+    curl -fsS --max-time 5 -K - "${API}${SESSIONS_PATH}" 2>/dev/null)"; then
+    echo unknown
+    return
+  fi
+  n="$(printf '%s' "$body" | grep -oE '"active_sessions"[[:space:]]*:[[:space:]]*[0-9]+' | head -n 1 | grep -oE '[0-9]+$' || true)"
+  echo "${n:-unknown}"
+}
+
+cmd_start() {
+  [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found: copy .env.uk-3xsz.example to $ENV_FILE and fill it in"
+  if node_answers && node_log_has "$LOADED_LINE"; then
+    echo "The UK host is already running and loaded."
+    print_vram
+    return 0
+  fi
+  # A load already in progress (container running, API not open yet): never recreate it, since a load over
+  # the Windows drive can take 10 minutes or more. Resume waiting with the same timeout instead.
+  if node_running; then
+    echo "The node container is already running and still loading: resuming the wait (no restart)."
+    wait_loaded
+    return 0
+  fi
+
+  local v used free total
+  v="$(vram)" || die "nvidia-smi gave no reading; is the GPU visible in WSL?"
+  read -r used free total <<<"$v"
+  if (( free < MIN_FREE_MIB )); then
+    echo "uk-host: refused: only ${free} MiB of VRAM free (${used} MiB used of ${total} MiB); the model needs ${MIN_FREE_MIB} MiB." >&2
+    echo "  Close whatever holds the GPU first: Unsloth Studio, DaVinci Resolve, Blender, or another model server." >&2
+    echo "  The threshold is provisional (set from the U4 measurement); to try with less, set UK_HOST_MIN_FREE_MIB." >&2
+    exit 2
+  fi
+  echo "VRAM free: ${free} MiB (need ${MIN_FREE_MIB}). Starting bridge and node..."
+
+  # The node container is absent or exited here. Fresh containers, so the node log holds this start only
+  # (a stopped container keeps its old log, whose "Failed to load model" would end this start at once).
+  if ! dc up -d --force-recreate; then
+    echo "uk-host: start failed. Bridge log (the region guard refuses here if the portal or peer is wrong):" >&2
+    dc logs --no-color --tail 30 s5-bridge >&2 || true
+    exit 1
+  fi
+  wait_loaded
+}
+
+# wait_loaded: waits until the node has loaded the model and answers, or fails (load error, node exited,
+# START_TIMEOUT), printing progress every PROGRESS_SECS.
+wait_loaded() {
+  local start=$SECONDS last=$SECONDS elapsed
+  while :; do
+    elapsed=$(( SECONDS - start ))
+    if node_log_has "$FAILED_LINE"; then
+      echo "uk-host: the node failed to load the model. Last node log lines:" >&2
+      dc logs --no-color --tail 40 llm-node >&2 || true
+      exit 1
+    fi
+    if ! node_running; then
+      echo "uk-host: the node is not running (it exited). Last node log lines:" >&2
+      dc logs --no-color --tail 40 llm-node >&2 || true
+      exit 1
+    fi
+    if node_log_has "$LOADED_LINE" && node_answers; then
+      break
+    fi
+    if (( elapsed >= START_TIMEOUT )); then
+      echo "uk-host: the model was not loaded and answering after ${START_TIMEOUT} s; the services are left running." >&2
+      echo "  See: docker compose -f $COMPOSE_FILE --env-file $ENV_FILE logs llm-node" >&2
+      exit 1
+    fi
+    if (( SECONDS - last >= PROGRESS_SECS )); then
+      last=$SECONDS
+      echo "  still loading after ${elapsed} s; $(print_vram)"
+    fi
+    sleep "$POLL_SECS"
+  done
+
+  echo "The UK host is loaded and answering on ${API} after $(( SECONDS - start )) s."
+  curl -fsS --max-time 5 "${API}/v1/version" 2>/dev/null && echo
+  print_vram
+}
+
+cmd_stop() {
+  local force=0
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      *) die "unknown option for stop: $a" ;;
+    esac
+  done
+
+  if node_answers; then
+    local n
+    n="$(sessions)"
+    if [[ "$n" != 0 ]] && (( force == 0 )); then
+      if [[ "$n" == unknown ]]; then
+        echo "The node is running and cannot report its open sessions; stopping ends any chat in progress."
+      else
+        echo "The node has ${n} open session(s); stopping ends them."
+      fi
+      if [[ ! -t 0 ]]; then
+        echo "uk-host: refused: no terminal to confirm on; run 'uk-host stop --force' to stop anyway." >&2
+        exit 2
+      fi
+      local reply=""
+      read -r -p "Stop anyway? [y/N] " reply || true
+      if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+        echo "uk-host: not stopped." >&2
+        exit 2
+      fi
+    fi
+  fi
+
+  local before_used="" v used free total
+  if v="$(vram)"; then read -r before_used _ _ <<<"$v"; fi
+
+  echo "Stopping bridge and node..."
+  dc down || die "docker compose down failed"
+
+  local start=$SECONDS
+  while node_container_exists; do
+    if (( SECONDS - start >= STOP_TIMEOUT )); then
+      echo "uk-host: the node container is still present after ${STOP_TIMEOUT} s; check 'docker ps -a'." >&2
+      print_vram >&2
+      exit 1
+    fi
+    sleep "$POLL_SECS"
+  done
+  echo "Stopped: the node container is gone."
+
+  # The driver may take a moment to report the memory as free.
+  start=$SECONDS
+  while :; do
+    if v="$(vram)"; then
+      read -r used free total <<<"$v"
+      (( free >= MIN_FREE_MIB )) && break
+    fi
+    (( SECONDS - start >= SETTLE_SECS )) && break
+    sleep "$POLL_SECS"
+  done
+  print_vram
+  if [[ -n "$before_used" && -n "${used:-}" ]]; then
+    echo "VRAM change: ${before_used} -> ${used} MiB used ($(( before_used - used )) MiB freed)."
+  fi
+  if [[ -n "${free:-}" ]] && (( free < MIN_FREE_MIB )); then
+    echo "Note: the node is gone, but ${used} MiB still in use by other programs (Windows or WSL), so ${free} MiB is free, below the ${MIN_FREE_MIB} MiB a start needs."
+  fi
+}
+
+cmd_status() {
+  if node_answers; then
+    if node_log_has "$LOADED_LINE"; then
+      echo "Node: loaded and answering on ${API}"
+    else
+      echo "Node: answering on ${API} but the model load line is not in its log"
+    fi
+    echo "Version: $(curl -fsS --max-time 5 "${API}/v1/version" 2>/dev/null || echo '?')"
+    echo "Active sessions: $(sessions)"
+  elif node_running; then
+    echo "Node: running, not answering yet (loading)"
+  else
+    echo "Node: stopped"
+  fi
+  print_vram
+  if [[ -n "$PUBLIC_URL" ]]; then
+    local body
+    if body="$(curl -fsS --max-time 10 "${PUBLIC_URL%/}/v1/version" 2>/dev/null)"; then
+      echo "Public URL ${PUBLIC_URL}: answering: ${body}"
+    else
+      echo "Public URL ${PUBLIC_URL}: NOT answering (Funnel off, or the node stopped)"
+    fi
+  else
+    echo "Public URL: UK_HOST_PUBLIC_URL not set"
+  fi
+}
+
+case "${1:-}" in
+  start) shift; cmd_start "$@" ;;
+  stop) shift; cmd_stop "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  *) echo "usage: uk-host start | stop [--force] | status" >&2; exit 64 ;;
+esac
